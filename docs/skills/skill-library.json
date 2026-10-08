@@ -17,9 +17,9 @@
     {
       "name": "control-plane-audit",
       "description": "Audit Control Plane milestone acceptance or production-readiness evidence across managed-cloud, Local, and self-hosted profiles. Use for repository-wide acceptance reviews, not ordinary isolated bug fixes.",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "files": ["SKILL.md"],
-      "skillMdBytes": 7409
+      "skillMdBytes": 8926
     },
     {
       "name": "incremental-implementation",
