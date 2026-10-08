@@ -44,6 +44,9 @@ export function readProcessEvidence(directory) {
 
 // Emitted recovery uses explicit compiled module paths and ordinary package exports.
 // Initial Bun admission still imports a test fixture with direct production source imports.
+const emittedProcessProduction = process.env.PI_CHILD_PROCESS_EMITTED === 'true'
+const usedProcessProductionModules = new Set()
+let processSourceHooksRegistered = false
 const processProductionModules = new Map([
   [
     '../packages/pi-durable-adapter/src/child-continuation-authority.ts',
@@ -82,14 +85,26 @@ const processProductionModules = new Map([
 export async function importProcessProduction(source) {
   const emitted = processProductionModules.get(source)
   assert.ok(emitted, 'Unknown process production module')
-  const target = process.env.PI_CHILD_PROCESS_EMITTED === 'true' ? emitted : source
+  const target = emittedProcessProduction ? emitted : source
   const url = new URL(target, import.meta.url)
   assert.ok(existsSync(fileURLToPath(url)), `Missing process production module: ${target}`)
-  return import(url.href)
+  const module = await import(url.href)
+  usedProcessProductionModules.add(target.slice(3))
+  return module
+}
+
+export function processProductionEvidence() {
+  return {
+    productionMode:
+      emittedProcessProduction && !processSourceHooksRegistered ? 'emitted' : 'source',
+    productionModulePaths: [...usedProcessProductionModules].toSorted(),
+    productionSourceHooksRegistered: processSourceHooksRegistered,
+  }
 }
 
 /** Node strip/transform-types must load this worktree, including emitted .js source imports. */
 export async function registerProcessSourceHooks() {
+  assert.equal(emittedProcessProduction, false, 'Emitted worker cannot install source hooks')
   const { registerHooks } = await import('node:module')
   const root = fileURLToPath(new URL('../', import.meta.url))
   const packages = join(root, 'packages')
@@ -114,6 +129,7 @@ export async function registerProcessSourceHooks() {
         )
     }
   }
+  processSourceHooksRegistered = true
   registerHooks({
     resolve(specifier, context, nextResolve) {
       if (aliases.has(specifier))
@@ -579,6 +595,7 @@ export async function inspectProcessSnapshot(directory, journal, ports) {
   const events = await inbox.list()
   return {
     stage: 'recovery_snapshot',
+    ...processProductionEvidence(),
     pid: process.pid,
     state: row.state,
     handle: row.admission.handle,
@@ -947,8 +964,7 @@ export async function recoveryWorker(directory, mode, baseUrl) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [directory, mode, baseUrl] = process.argv.slice(2)
-  if (!globalThis.Bun && process.env.PI_CHILD_PROCESS_EMITTED !== 'true')
-    await registerProcessSourceHooks()
+  if (!globalThis.Bun && !emittedProcessProduction) await registerProcessSourceHooks()
   if (['before_reservation', 'ambiguous_send', 'before_grant_retention'].includes(mode))
     await initialWorker(directory, mode, baseUrl)
   else await recoveryWorker(directory, mode, baseUrl)
