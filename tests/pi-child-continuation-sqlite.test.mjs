@@ -106,6 +106,7 @@ async function fixture({ crossScope = false } = {}) {
         state.reads++
         return structuredClone(state.metadata)
       },
+      readChildMetadataNow: () => structuredClone(state.metadata),
       assertCurrent: async () => {
         state.current++
         if (!state.active) throw new Error('private-revocation-canary')
@@ -240,7 +241,7 @@ async function fixture({ crossScope = false } = {}) {
     idempotencyKey: `delegation:${ids.delegationId}:attempt:${ids.childAttemptId}`,
     attemptBudget: budget,
   }
-  state.metadata = structuredClone({ handle, request: startRequest, admission })
+  state.metadata = structuredClone({ handle, request: startRequest, admission, state: 'running' })
   const grant = {
     schemaVersion: 'pi-child-continuation/v1',
     grantRef: `pcc_${'a'.repeat(32)}`,
@@ -712,5 +713,63 @@ test.each(['initial', 'retained'])(
       ).rejects.toThrow('PI_CHILD_CONTINUATION_DENIED')
       await expect(f.repository.retain(f.grant)).rejects.toThrow('PI_CHILD_CONTINUATION_DENIED')
     }
+  }
+)
+
+test.each(['completed', 'failed', 'cancelled', 'unknown', 'missing'])(
+  'new continuation cannot be retained from child journal %s',
+  async (state) => {
+    const f = await fixture()
+    if (state === 'missing') delete f.state.metadata.state
+    else f.state.metadata.state = state
+    await expect(f.repository.retain(f.grant)).rejects.toThrow('PI_CHILD_CONTINUATION_DENIED')
+    expect(
+      await f.repository.getByChildAttempt(ids.workspaceId, ids.childAttemptId)
+    ).toBeUndefined()
+  }
+)
+
+test('child completion during current authority await prevents a new continuation grant', async () => {
+  const f = await fixture()
+  f.repository.options.assertCurrent = async () => {
+    f.state.metadata.state = 'completed'
+  }
+  await expect(f.repository.retain(f.grant)).rejects.toThrow('PI_CHILD_CONTINUATION_DENIED')
+  expect(await f.repository.getByChildAttempt(ids.workspaceId, ids.childAttemptId)).toBeUndefined()
+})
+
+test('completed child journal preserves exact existing grant replay without minting authority', async () => {
+  const f = await fixture()
+  await f.repository.retain(f.grant)
+  f.state.metadata.state = 'completed'
+  await f.complete()
+  expect(await f.repository.retain(structuredClone(f.grant))).toEqual({
+    grant: f.grant,
+    replayed: true,
+  })
+  expect(await f.repository.getByChildAttempt(ids.workspaceId, ids.childAttemptId)).toEqual(f.grant)
+})
+
+test('revocation during the awaited journal read prevents a new continuation grant', async () => {
+  const f = await fixture()
+  let calls = 0
+  f.repository.options.readChildMetadata = async () => {
+    if (++calls === 2) f.state.active = false
+    return structuredClone(f.state.metadata)
+  }
+  await expect(f.repository.retain(f.grant)).rejects.toThrow('PI_CHILD_CONTINUATION_DENIED')
+  expect(await f.repository.getByChildAttempt(ids.workspaceId, ids.childAttemptId)).toBeUndefined()
+})
+
+test.each(['missing', 'async'])(
+  'new continuation fails closed without a synchronous final journal reader: %s',
+  async (fault) => {
+    const f = await fixture()
+    if (fault === 'missing') f.repository.options.readChildMetadataNow = undefined
+    else f.repository.options.readChildMetadataNow = async () => structuredClone(f.state.metadata)
+    await expect(f.repository.retain(f.grant)).rejects.toThrow('PI_CHILD_CONTINUATION_DENIED')
+    expect(
+      await f.repository.getByChildAttempt(ids.workspaceId, ids.childAttemptId)
+    ).toBeUndefined()
   }
 )

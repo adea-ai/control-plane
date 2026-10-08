@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
+import { createRequire } from 'node:module'
 import {
   closeSync,
   existsSync,
@@ -321,6 +322,8 @@ export async function continuationPorts(directory, journal, canonicalProvider) {
     }),
     readChildMetadata: async ({ grant }) =>
       readPiChildContinuationJournal(journal(), grant.child.handle),
+    readChildMetadataNow: ({ grant }) =>
+      readPiChildContinuationJournal(journal(), grant.child.handle),
     assertCurrent: async ({ grant }) => {
       const metadata = readPiChildContinuationJournal(journal(), grant.child.handle)
       await assertCurrentPiChildContinuation(grant, metadata, current, () =>
@@ -451,7 +454,6 @@ export async function initialWorker(directory, mode, baseUrl) {
     ports,
     f,
     fastTerminalSnapshot,
-    fastNativeInspection,
     physicalSendCount = 0,
     childModelCallbacks = 0,
     metadata = { publicationAudience: actor }
@@ -533,21 +535,6 @@ export async function initialWorker(directory, mode, baseUrl) {
             }
             try {
               childEngine = createPiDurableEngine(observedOptions)
-              const close = childEngine.close.bind(childEngine)
-              childEngine.close = async () => {
-                try {
-                  if (!fastNativeInspection) {
-                    const row = childRuntime.adapter.journal.list()[0]
-                    if (row) {
-                      fastNativeInspection = await childEngine.inspect(
-                        row.admission.handle.externalSessionId
-                      )
-                    }
-                  }
-                } finally {
-                  await close()
-                }
-              }
               return childEngine
             } finally {
               globalThis.fetch = originalFetch
@@ -689,27 +676,40 @@ export async function initialWorker(directory, mode, baseUrl) {
           await new Promise(() => {})
         }
         if (mode === 'fast_child_terminal_before_grant') {
-          await childRuntime.adapter.drain()
-          const terminalRow = childRuntime.adapter.journal.list()[0]
-          assert.ok(fastNativeInspection, 'native terminal metadata was not captured before close')
-          const generation = fastNativeInspection.tasks.find(
-            (item) => item.record.kind === 'pi.generation'
+          await observeProcessBoundary(directory, 'fast_child_drain', () =>
+            childRuntime.adapter.drain()
           )
-          let grantDenied = false
-          let grantDenialCode
-          try {
-            await ports.repository.retain(grant)
-          } catch (error) {
-            grantDenied = true
-            grantDenialCode = error instanceof Error ? error.message : 'NON_ERROR_RETENTION_FAILURE'
-          }
+          const terminalRow = childRuntime.adapter.journal.list()[0]
+          const generation = await observeProcessBoundary(directory, 'fast_terminal_storage', () =>
+            readProcessStoredGeneration(directory, childEngine, terminalRow.admission.handle)
+          )
+          appendProcessEvidence(directory, {
+            stage: 'fast_terminal_observed',
+            pid: process.pid,
+            handle: terminalRow.admission.handle,
+            nativeTaskId: generation.id,
+            nativeConversationId: generation.conversationId,
+            nativeKind: generation.kind,
+            nativeStatus: generation.state.status,
+            nativeOutcome: generation.state.outcome?.status,
+            observationApi: 'vendor_storage_task',
+          })
+          const retention = await observeProcessBoundary(directory, 'fast_terminal_retention', () =>
+            observeProcessFastTerminalRetention({
+              ports,
+              grant,
+              terminalRow,
+              nativeTask: generation,
+              readSnapshot: () =>
+                inspectProcessSnapshot(directory, childRuntime.adapter.journal, ports),
+            })
+          )
           fastTerminalSnapshot = {
-            ...(await inspectProcessSnapshot(directory, childRuntime.adapter.journal, ports)),
+            ...retention.snapshot,
             stage: 'fast_terminal_snapshot',
             childNativeState: terminalRow.state,
-            childNativeTask: generation?.record ?? null,
-            grantDenied,
-            ...(grantDenialCode ? { grantDenialCode } : {}),
+            childNativeTask: generation,
+            ...retention.observation,
             physicalSendCount,
             source: input.source,
             sourceRequestDigest: piChildContinuationRequestDigest(request),
@@ -823,6 +823,114 @@ export class ProcessPhysicalSendPendingError extends Error {
   constructor() {
     super('PI_PROCESS_PHYSICAL_SEND_PENDING')
     this.name = 'ProcessPhysicalSendPendingError'
+  }
+}
+
+/** Read the exact admitted generation through public vendor storage after the engine drains.
+ * Harness.inspect lists live tasks only and cannot establish completed task identity. */
+export async function readProcessStoredGeneration(directory, engine, handle) {
+  const reservations = readProcessEvidence(directory).filter(
+    (event) =>
+      event.stage === 'before_reservation' &&
+      event.pid === process.pid &&
+      event.handle?.handleId === handle.handleId
+  )
+  assert.equal(reservations.length, 1, 'fixture requires one exact native generation admission')
+  assert.deepEqual(reservations[0].handle, handle)
+  const admitted = reservations[0].task
+  assert.equal(admitted.kind, 'pi.generation')
+  assert.ok(Number.isSafeInteger(admitted.id) && admitted.id > 0)
+  assert.ok(Number.isSafeInteger(admitted.conversationId) && admitted.conversationId > 0)
+  // Resolve ordinary public vendor exports from their owning production package.
+  // This installs no hooks and does not redirect production imports to source files.
+  const require = createRequire(
+    new URL('../packages/pi-durable-adapter/package.json', import.meta.url)
+  )
+  const { openNodeSqliteStorage } = await import(
+    pathToFileURL(require.resolve('@earendil-works/pi-durable/storage/sqlite/node')).href
+  )
+  // Chord publishes this subpath for ESM imports only, not require conditions.
+  const chordManifestUrl = pathToFileURL(require.resolve('@earendil-works/chord/package.json'))
+  const chordManifest = JSON.parse(readFileSync(chordManifestUrl, 'utf8'))
+  const contextExport = chordManifest.exports['./context'].import
+  assert.equal(chordManifest.version, '1.1.0')
+  assert.equal(contextExport, './dist/context/index.js')
+  const { BACKGROUND_CONTEXT } = await import(new URL(contextExport, chordManifestUrl).href)
+  const storage = await openNodeSqliteStorage(engine.storePath(handle.externalSessionId))
+  try {
+    const task = await storage.task(admitted.id, BACKGROUND_CONTEXT)
+    assert.ok(task, 'stored generation must exist')
+    assert.equal(task.id, admitted.id)
+    assert.equal(task.conversationId, admitted.conversationId)
+    assert.equal(task.kind, admitted.kind)
+    assert.equal(task.version, admitted.version)
+    assert.deepEqual(task.input, admitted.input)
+    return task
+  } finally {
+    await storage.close(BACKGROUND_CONTEXT)
+  }
+}
+
+/** Observe the real retention result after native completion; never manufacture a denial. */
+export async function observeProcessFastTerminalRetention({
+  ports,
+  grant,
+  terminalRow,
+  nativeTask,
+  readSnapshot,
+}) {
+  assert.equal(terminalRow.state, 'completed')
+  assert.deepEqual(terminalRow.admission.handle, grant.child.handle)
+  assert.equal(nativeTask?.kind, 'pi.generation')
+  assert.equal(nativeTask.state.status, 'terminal')
+  assert.equal(nativeTask.state.outcome.status, 'completed')
+  const before = await readSnapshot()
+  assert.deepEqual(before.handle, grant.child.handle)
+  assert.equal(before.grant, null)
+  assert.ok(['running', 'awaiting_input'].includes(before.parentState))
+  assert.equal(before.modelUsageCount, 1)
+  assert.equal(before.openHoldCount, 0)
+  ports.resetPersistenceFailure()
+  let result
+  let rejection
+  try {
+    result = await ports.repository.retain(grant)
+  } catch (error) {
+    rejection = error
+  }
+  const original = ports.persistenceFailure()
+  if (result !== undefined) {
+    assert.equal(rejection, undefined)
+    assert.equal(original, undefined, 'a successful retain cannot hide a transaction failure')
+    assert.deepEqual(result.grant, grant)
+    const snapshot = await readSnapshot()
+    assert.deepEqual(snapshot.grant, grant)
+    return { snapshot, observation: { retentionOutcome: 'allowed', grantDenied: false } }
+  }
+  for (const error of [rejection, original]) {
+    assert.ok(error instanceof Error, 'terminal denial must have fresh transaction provenance')
+    assert.equal(error.message, 'PI_CHILD_CONTINUATION_DENIED')
+    assert.equal(error.code, undefined, 'storage failure cannot qualify as terminal denial')
+    assert.equal(error.errcode, undefined, 'SQLite failure cannot qualify as terminal denial')
+  }
+  const snapshot = await readSnapshot()
+  assert.equal(snapshot.grant, null)
+  assert.deepEqual(snapshot.handle, before.handle)
+  assert.equal(snapshot.parentState, before.parentState)
+  assert.equal(snapshot.modelUsageCount, before.modelUsageCount)
+  assert.equal(snapshot.openHoldCount, before.openHoldCount)
+  return {
+    snapshot,
+    observation: {
+      retentionOutcome: 'expected_terminal_denial',
+      grantDenied: true,
+      grantDenialCode: 'PI_CHILD_CONTINUATION_DENIED',
+      retentionRejection: {
+        code: 'PI_CHILD_CONTINUATION_DENIED',
+        classification: 'terminal_child',
+        persistenceFailureCode: null,
+      },
+    },
   }
 }
 

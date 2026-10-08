@@ -2,6 +2,7 @@ import { canonicalJsonStringify } from '@control-plane/contracts'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import {
   RuntimeExecutionHandleSchema,
+  RuntimeExecutionStateSchema,
   RuntimeStartRequestSchema,
   type RuntimeExecutionHandle,
 } from '@control-plane/runtime-sdk'
@@ -134,5 +135,10 @@ export function readPiChildContinuationJournal(
     request.attemptId !== handle.attemptId
   )
     denied()
-  return { handle: storedHandle, request, admission }
+  return {
+    handle: storedHandle,
+    request,
+    admission,
+    state: RuntimeExecutionStateSchema.parse(record.state),
+  }
 }
