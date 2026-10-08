@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.74.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.73.5...workspace-v1.74.0) (2026-10-08)
+
+
+### Features
+
+* **models:** add pinned BYO model connections and selection ([#948](https://github.com/adea-ai/control-plane/issues/948)) ([465aa72](https://github.com/adea-ai/control-plane/commit/465aa72870b5dccdba8adb32b0caeb261f74518c))
+
 ## [1.73.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.73.4...workspace-v1.73.5) (2026-10-08)
 
 
