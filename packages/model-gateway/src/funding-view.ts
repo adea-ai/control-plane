@@ -5,7 +5,7 @@ import {
   type ModelSelectionFundingView,
 } from '@control-plane/contracts'
 import { ModelPriceSnapshotSchema } from '@control-plane/usage-ledger'
-import { RecordedModelSpendingAuthorizationSchema } from './litellm-http.js'
+import { RecordedModelSpendingAuthorizationSchema } from './recorded-spending-authorization.js'
 import {
   ExecutionModelSelectionBindingSchema,
   type ExecutionModelSelectionBinding,
