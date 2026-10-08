@@ -9,8 +9,8 @@
     {
       "name": "@control-plane/acp-adapter",
       "path": "packages/acp-adapter",
-      "version": "1.8.3",
-      "lockVersion": "1.8.3",
+      "version": "1.9.0",
+      "lockVersion": "1.9.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -59,8 +59,8 @@
     {
       "name": "@control-plane/context",
       "path": "packages/context",
-      "version": "1.9.6",
-      "lockVersion": "1.9.6",
+      "version": "1.10.0",
+      "lockVersion": "1.10.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -74,8 +74,8 @@
     {
       "name": "@control-plane/contracts",
       "path": "packages/contracts",
-      "version": "1.14.0",
-      "lockVersion": "1.14.0",
+      "version": "1.17.0",
+      "lockVersion": "1.17.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -89,8 +89,8 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.19.0",
-      "lockVersion": "1.19.0",
+      "version": "1.22.0",
+      "lockVersion": "1.22.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -154,8 +154,8 @@
     {
       "name": "@control-plane/credential-vault",
       "path": "packages/credential-vault",
-      "version": "1.3.0",
-      "lockVersion": "1.3.0",
+      "version": "1.4.0",
+      "lockVersion": "1.4.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -169,8 +169,8 @@
     {
       "name": "@control-plane/database",
       "path": "packages/database",
-      "version": "1.41.2",
-      "lockVersion": "1.41.2",
+      "version": "1.43.0",
+      "lockVersion": "1.43.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -216,8 +216,8 @@
     {
       "name": "@control-plane/domain",
       "path": "packages/domain",
-      "version": "1.27.0",
-      "lockVersion": "1.27.0",
+      "version": "1.28.0",
+      "lockVersion": "1.28.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -239,8 +239,8 @@
     {
       "name": "@control-plane/events",
       "path": "packages/events",
-      "version": "1.9.0",
-      "lockVersion": "1.9.0",
+      "version": "1.10.0",
+      "lockVersion": "1.10.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -258,8 +258,8 @@
     {
       "name": "@control-plane/execution-plan",
       "path": "packages/execution-plan",
-      "version": "1.8.0",
-      "lockVersion": "1.8.0",
+      "version": "1.9.0",
+      "lockVersion": "1.9.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -278,8 +278,8 @@
     {
       "name": "@control-plane/hosted-control-plane",
       "path": "apps/hosted-control-plane",
-      "version": "1.18.0",
-      "lockVersion": "1.18.0",
+      "version": "1.19.0",
+      "lockVersion": "1.19.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -316,8 +316,8 @@
     {
       "name": "@control-plane/langgraph-adapter",
       "path": "packages/langgraph-adapter",
-      "version": "1.8.1",
-      "lockVersion": "1.8.1",
+      "version": "1.9.0",
+      "lockVersion": "1.9.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -347,8 +347,8 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.27.1",
-      "lockVersion": "1.27.1",
+      "version": "1.29.0",
+      "lockVersion": "1.29.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -395,8 +395,8 @@
     {
       "name": "@control-plane/managed-pi-adapter",
       "path": "packages/managed-pi-adapter",
-      "version": "1.8.1",
-      "lockVersion": "1.8.1",
+      "version": "1.9.0",
+      "lockVersion": "1.9.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -430,8 +430,8 @@
     {
       "name": "@control-plane/model-gateway",
       "path": "packages/model-gateway",
-      "version": "1.2.4",
-      "lockVersion": "1.2.4",
+      "version": "1.4.0",
+      "lockVersion": "1.4.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -491,6 +491,25 @@
       "layer": "core-port"
     },
     {
+      "name": "@control-plane/pi-cloudflare-host",
+      "path": "packages/pi-cloudflare-host",
+      "version": "0.1.0",
+      "lockVersion": "0.1.0",
+      "kind": "package",
+      "private": true,
+      "browser": false,
+      "exports": ["."],
+      "workspaceDependencies": ["@control-plane/runtime-sdk"],
+      "externalDependencies": [
+        "@earendil-works/chord",
+        "@earendil-works/pi-ai",
+        "@earendil-works/pi-durable"
+      ],
+      "developmentWorkspaceDependencies": [],
+      "developmentExternalDependencies": ["miniflare"],
+      "layer": "adapter-infrastructure"
+    },
+    {
       "name": "@control-plane/policy",
       "path": "packages/policy",
       "version": "1.4.1",
@@ -523,8 +542,8 @@
     {
       "name": "@control-plane/profile-portability",
       "path": "packages/profile-portability",
-      "version": "1.5.0",
-      "lockVersion": "1.5.0",
+      "version": "1.6.0",
+      "lockVersion": "1.6.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -621,8 +640,8 @@
     {
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
-      "version": "1.12.0",
-      "lockVersion": "1.12.0",
+      "version": "1.13.1",
+      "lockVersion": "1.13.1",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -677,16 +696,16 @@
     {
       "name": "@control-plane/sdk",
       "path": "packages/control-sdk",
-      "version": "1.11.0",
-      "lockVersion": "1.11.0",
+      "version": "1.14.0",
+      "lockVersion": "1.14.0",
       "kind": "package",
       "private": false,
       "browser": false,
       "exports": [".", "./testing"],
       "workspaceDependencies": ["@control-plane/contracts"],
-      "externalDependencies": [],
+      "externalDependencies": ["zod"],
       "developmentWorkspaceDependencies": [],
-      "developmentExternalDependencies": ["zod"],
+      "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
     },
     {
@@ -707,8 +726,8 @@
     {
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
-      "version": "1.33.2",
-      "lockVersion": "1.33.2",
+      "version": "1.34.0",
+      "lockVersion": "1.34.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -818,8 +837,8 @@
     {
       "name": "@control-plane/usage-ledger",
       "path": "packages/usage-ledger",
-      "version": "1.3.5",
-      "lockVersion": "1.3.5",
+      "version": "1.4.0",
+      "lockVersion": "1.4.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -855,8 +874,8 @@
     {
       "name": "@control-plane/workflow-worker",
       "path": "apps/workflow-worker",
-      "version": "1.14.0",
-      "lockVersion": "1.14.0",
+      "version": "1.15.0",
+      "lockVersion": "1.15.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -2467,6 +2486,57 @@
       ],
       "inOpenApi": true,
       "openApiOperationId": "model-defaults.set",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-MODEL-SELECTION-FUNDING-GET",
+      "name": "getModelSelectionFunding",
+      "operation": "model-selection.funding.get",
+      "method": "POST",
+      "path": "/v1/model-connections/selection/funding/get",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing credential:read scope plus authenticated server accepted-execution reader/audience, caller and workspace binding",
+        "service": "ModelConnectionsController -> ConfiguredModelConnectionService -> createRecordedModelFundingViewResolver -> current execution/account and recorded payer authority",
+        "persistence": "Reads immutable accepted selection and authenticated recorded spending/payer evidence; no new writes or secrets",
+        "execution": "Display only; exact execution/attempt/plan/actor/selection and current authority; no lease, budget, provider call or spending capability",
+        "delivery": "Strict additive model-funding-display/v1 ready/blocked view; bounded errors and explicit payer only",
+        "cleanup": "Stateless read; no credential, lease, registry or provider object retained"
+      },
+      "assessment": "Deterministic gateway fault and authenticated HTTP/SDK contract tests cover exact binding, explicit payer, revocation, malformed evidence and safe denial. Production accepted-execution/account/payer integrations, combined R1/Adea proof and live-provider qualification remain open; unconfigured hosts fail closed.",
+      "gap": {
+        "issue": 931,
+        "severity": "high",
+        "owner": "Control Plane R2/R1 implementation owners",
+        "disposition": "Retain opt-in gate until integrated runtime and live provider/account/harness/location qualification. No new credentials or provider spending authorized."
+      },
+      "evidence": [
+        {
+          "kind": "contract",
+          "path": "packages/contracts/src/model-funding.ts"
+        },
+        {
+          "kind": "implementation",
+          "path": "apps/control-api/src/models/recorded-model-funding.ts"
+        },
+        {
+          "kind": "test",
+          "path": "packages/model-gateway/src/funding-view.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/models/model-connections.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/model-connections.test.mjs"
+        }
+      ],
+      "inOpenApi": true,
+      "openApiOperationId": "model-selection.funding.get",
       "openApiResponseStatuses": ["200", "default"],
       "openApiSecured": true,
       "openApiHasRequestSchema": true,

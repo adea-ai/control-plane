@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
-import { canonicalJsonStringify, IdentifierSchemas } from '@control-plane/contracts'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import {
   DurableUsageLedger,
   ModelPriceSnapshotSchema,
   PinnedModelPrice,
 } from '@control-plane/usage-ledger'
 import { z } from 'zod'
+import { RecordedModelSpendingAuthorizationSchema } from './recorded-spending-authorization.js'
+export { RecordedModelSpendingAuthorizationSchema } from './recorded-spending-authorization.js'
 import {
   ManagedModelRequestSchema,
   ModelProviderError,
@@ -20,31 +22,6 @@ const Reference = z
   .max(256)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/)
 const Amount = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
-
-/** Produced from a trusted recorded spending decision, separately from plan allowances.
- * Neither this schema nor a fundingSource field authenticates a caller-supplied grant.
- */
-export const RecordedModelSpendingAuthorizationSchema = z
-  .object({
-    schemaVersion: z.literal(1),
-    authorizationId: Reference,
-    evidenceRef: Reference,
-    workspaceId: IdentifierSchemas.workspaceId,
-    executionId: IdentifierSchemas.executionId,
-    attemptId: IdentifierSchemas.attemptId,
-    deploymentId: Reference,
-    credentialRef: Reference,
-    principalRef: Reference,
-    alias: Reference,
-    policySnapshotDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-    currency: z.literal('USD'),
-    fundingSource: z.enum(['hq_managed', 'external_subscription', 'byo_api']),
-    maximumMicrounits: Amount,
-    maximumTokens: Amount,
-    issuedAt: z.iso.datetime(),
-    expiresAt: z.iso.datetime(),
-  })
-  .strict()
 
 export interface ModelHttpAuthorization {
   readonly grant: unknown

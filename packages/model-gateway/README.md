@@ -65,14 +65,15 @@ binding. Unconfigured deployments return `MODEL_CONNECTIONS_NOT_CONFIGURED`.
 All paths use the existing authenticated service envelope and workspace scope.
 No new token, auth scope or credential setup is performed by this slice.
 
-| POST path under `/v1/model-connections` | Envelope operation         | Existing scope     |
-| --------------------------------------- | -------------------------- | ------------------ |
-| `create`                                | `model-connections.create` | `credential:write` |
-| `revoke`                                | `model-connections.revoke` | `credential:write` |
-| `list`                                  | `model-connections.list`   | `credential:read`  |
-| `defaults/get`                          | `model-defaults.get`       | `credential:read`  |
-| `defaults/set`                          | `model-defaults.set`       | `credential:write` |
-| `selection/resolve`                     | `model-selection.resolve`  | `credential:read`  |
+| POST path under `/v1/model-connections` | Envelope operation            | Existing scope     |
+| --------------------------------------- | ----------------------------- | ------------------ |
+| `create`                                | `model-connections.create`    | `credential:write` |
+| `revoke`                                | `model-connections.revoke`    | `credential:write` |
+| `list`                                  | `model-connections.list`      | `credential:read`  |
+| `defaults/get`                          | `model-defaults.get`          | `credential:read`  |
+| `defaults/set`                          | `model-defaults.set`          | `credential:write` |
+| `selection/resolve`                     | `model-selection.resolve`     | `credential:read`  |
+| `selection/funding/get`                 | `model-selection.funding.get` | `credential:read`  |
 
 Create/revoke/defaults-set use command envelopes. Create takes only
 `{credentialRef, credentialRevision}`; the trusted grant resolver supplies account
@@ -114,3 +115,77 @@ and live-provider qualification remain release gates.
 
 Tracks [R2 #931](https://github.com/adea-ai/control-plane/issues/931), with runtime
 integration owned by [R1 #930](https://github.com/adea-ai/control-plane/issues/930).
+
+## Current authority composition
+
+`createCurrentModelConnectionComposition` in Control API explicitly installs
+`CurrentModelAccountAuthorization` into the existing administration and selection
+services. The host's `CurrentModelAccountAuthority.readCurrent` must perform an
+authenticated current provider/account read for every connection, readiness,
+admission and inference boundary. Its strict `model-account-authority/v1` evidence
+pins credential revision, provider/account/auth/funding, workspace grant, allowed
+connection administrators, exact models and harness/version/binding/location,
+entitlement, quota and residency. Previously stored evidence cannot substitute
+for this read: `observedAt` must be at least the requested boundary time, no later
+than the host clock, and still unexpired. Missing, stale, unknown, revoked or
+incompatible state denies with a bounded reason. No production host or real
+provider qualification is installed by this package.
+
+`createPiLeadModelAdmissionReadiness` supplies R1's trusted Node
+`assertProviderReady({evidence, plan, ids, actorPrincipalId})` callback after
+canonical plan/scope validation and before marker, command acceptance, attempt or
+budget creation. It resolves only metadata, checks exact target and selection,
+reuses the gateway route/policy/capability/residency/entitlement/token checks,
+and rereads readiness before returning. `buildRequest` is a server-owned
+projection. The original product actor comes from authenticated canonical
+product evidence; transport reader, admission and vault lease principals are
+separate. The Node owner supplies current kernel scope/product audience checks.
+
+For admitted inference, `createExecutionBoundModelSelectionService` retains only
+the strict host-derived `execution-model-selection/v1` binding. It pins workspace,
+execution/attempt/request, plan ID/digest/version, policy digest, original actor,
+admission/lease principals, model alias, authority revision and selection ref/revision.
+`CurrentModelExecutionAuthority.assertCurrent` recomputes the accepted binding and
+current kernel scope, actor audience, grant and expiry from server-owned records.
+The facade rereads this authority and account/credential readiness before resolving
+and inside each credential callback. R1 constructs, uses and disposes its pinned
+Pi Models registry inside that callback. No provider implementation or secret may
+escape. `createExecutionBoundModelHttpAuthority` similarly wraps the existing
+HTTP authority and chains these checks into `assertActive` immediately before
+physical send, closing a newly acquired lease when a later check denies. The
+existing recorded spending decision, price and per-physical-send ledger retain
+ownership of spending and reconciliation; readiness never authorizes funds.
+
+## Explicit payer disclosure
+
+The additive SDK method `getModelSelectionFunding` sends
+`model-selection.funding.get` to `POST /v1/model-connections/selection/funding/get`.
+Its read envelope requires workspace and caller plus
+`{executionId, attemptId, selectionRef, selectionRevision}`. Existing six model
+response schemas and signed execution plans do not change.
+
+Hosts compose `createRecordedModelFundingViewResolver` with an authenticated
+`AcceptedModelFundingExecutionAuthority.resolveForReader` that authorizes the
+transport reader against the accepted product intent/audience and derives the
+full execution binding from server records. Caller parameters are references,
+never authority. Its `assertCurrent` independently rechecks original actor and
+current scope. `RecordedModelFundingAuthority.readCurrent` reads the authenticated
+recorded spending decision plus an explicit payer record; it must deny missing,
+revoked or unknown payer evidence. The helper validates the existing recorded
+grant and price schemas, exact plan/selection/actor/principal/alias/policy/credential
+bindings, funding and validity. It does not mint a grant or allocate a budget.
+
+`model-funding-display/v1` always includes workspace, execution, attempt and
+selection ref/revision. `ready` adds provider/model/account/auth/funding,
+`fundingOwner:{ownerRef,kind,displayName,revision,evidenceRef}`, authorization ref,
+authority revision and an expiry bounded by grant and price validity. `blocked`
+includes only that binding and a bounded reason code. Connection owner or account
+reference never substitutes for payer. No credential lease is created to read the
+view. A ready display confers no execution or physical-send authority; the native
+spending boundary must reread its own current recorded decision and price.
+
+Deterministic fault and HTTP/SDK tests exercise these compositions without live
+provider access. Combined kernel/R1/Adea integration, explicit production account
+and payer adapters, funding UI and live-provider qualification remain open under
+#931. Unconfigured funding and model hosts return unavailable and must preserve
+independent direct/native sessions, persona and drafts without fallback inference.

@@ -9,10 +9,10 @@ revision 85 at `2026-08-24T20:34:22.007Z`, and revision 96 at
 `2026-08-28T06:03:21.730Z`; revision 96 file metadata was
 `2026-08-28T06:03:21.899Z`. Both versions were fetched by explicit revision ID.
 
-The current source snapshot reviewed September 30 is revision 110, modified
+The September 30 extraction baseline is revision 110, modified
 `2026-09-29T02:22:57.922Z`; file metadata reports `2026-09-29T02:22:58.053Z`. Its exact
 fetched-text SHA-256 is in the [current-source inventory](control-plane-source-inventory.md).
-The TDD internal review marker is 2026-09-28, earlier than this file modification. Historical
+That snapshot's internal review marker is 2026-09-28, earlier than its file modification. Historical
 revision-85/revision-96 hashes and comparisons remain unchanged; they are not current-candidate
 evidence.
 
@@ -70,3 +70,46 @@ The ledger's historical source timestamp remains unchanged until its requirement
 re-audited. High-severity reconciliation remains owned by documentation governance under #186
 and #195, with behavior and operational proof under #188 and #194 as applicable. The #195
 source inventory and marketplace reconciliation remain open.
+
+## October 8 Pi Durable amendment comparison
+
+The [machine-readable amendment audit](control-plane-tdd-amendment-audit-2026-10-08.v1.json)
+records all 19 changed blocks between captured revision 110 and observed revision
+139 (modified `2026-10-08T04:17:18.396Z`). Drive readback on October 8 confirmed
+revision 139 remained current. Its exact fetched UTF-8 text SHA-256 is
+`7927e73c156fdf1ef4b67ba51a759f5b37f5eb1df9cf70167e3e60b4546c6b86`.
+These are comparison blocks, not 19 atomic requirements or a whole-source audit.
+
+The source describes Pi Durable as the accepted future target and discloses dated
+implementation gaps. The comparison retains live Local/Hosted/managed execution,
+authorization and approvals, effect and charge certainty, credential custody,
+retention, recovery, drain/history and rollback until a replacement qualifies.
+In particular, managed upgrades and deterministic configuration generation for
+Local/self-hosted Managed Pi remain explicit obligations; generic configuration
+and version pinning do not replace them.
+
+Two independent agents reviewed the source interpretation and confirmed that
+correction. They did not certify implementation, deployed profiles or independent
+approval provenance. The JSON records per-block line ranges, content hashes,
+dispositions and retained obligations. Original acceptance ownership stays with
+[#186](https://github.com/adea-ai/control-plane/issues/186) and
+[#195](https://github.com/adea-ai/control-plane/issues/195).
+
+The linked [Adea TDD](https://docs.google.com/document/d/1QwKfYCXagfmNNQ3NkaHrigGZWuPzEokwCigoz4q0KFY/edit)
+was captured at revision 163, modified `2026-10-08T04:17:08.425Z`, and its current
+revision was also rechecked. The numbered REQ090–REQ177 span defines 51 explicit
+clauses; the source also defines A01–A40 and 23 S labels. The 37 undefined numeric
+IDs in that span reflect sparse numbering, not missing requirements or code
+defects. Unnumbered obligations remain required. S-label referents/versions and
+ADR-038 approval provenance remain unverified.
+
+Matching planned P1–P3 Mermaid source from canonical Diagram Sources revision 83
+is now [versioned in the repository](../architecture/diagram-sources.md) through
+[PR #953](https://github.com/adea-ai/control-plane/pull/953). This does not establish
+independent pixel review, replacement of canonical embedded figures, or runtime
+qualification.
+
+The existing 6,093-clause register and 200 bounded requirement rows retain their
+historical source/candidate pins. This delta record does not regenerate those
+inventories, complete the full clause-to-requirement/code/test/profile mapping,
+resolve every contradiction, or satisfy final frozen-candidate acceptance.

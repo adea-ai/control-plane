@@ -1,3 +1,17 @@
+export * from './current-authority.js'
+export * from './pi-durable-account.js'
+export * from './funding-preparation.js'
+export * from './file-recorded-funding.js'
+export * from './funding-view.js'
+export {
+  ModelFundingOwnerSchema,
+  ModelSelectionFundingViewSchema,
+  ModelSelectionFundingRequestSchema,
+  ModelSelectionFundingResponseSchema,
+  type ModelFundingOwner,
+  type ModelSelectionFundingView,
+} from '@control-plane/contracts'
+export * from './execution-selection.js'
 export * from './connection-administration.js'
 export * from './qualification.js'
 export * from './api-contract.js'
@@ -291,6 +305,12 @@ export class ManagedModelGateway {
     this.#adapters = options.adapters
     this.#decisionPoint = options.decisionPoint
     this.#now = options.now ?? (() => new Date().toISOString())
+  }
+
+  /** Metadata/policy check only: no provider operation, credential lease or ledger write. */
+  async assertRequestReady(input: unknown): Promise<void> {
+    const { request } = await this.#prepare(input)
+    await this.#checkSelection(request)
   }
 
   async complete(input: unknown, signal?: AbortSignal): Promise<ManagedModelResult> {

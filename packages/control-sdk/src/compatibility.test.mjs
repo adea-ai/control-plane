@@ -53,6 +53,7 @@ describe('Control API generated contract', () => {
       '/v1/model-connections/defaults/set',
       '/v1/model-connections/list',
       '/v1/model-connections/revoke',
+      '/v1/model-connections/selection/funding/get',
       '/v1/model-connections/selection/resolve',
       '/v1/profiles/resolve',
       '/v1/project-states/initialize',

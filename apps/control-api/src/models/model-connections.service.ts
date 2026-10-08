@@ -5,7 +5,13 @@ import {
   ForbiddenException,
   ServiceUnavailableException,
 } from '@nestjs/common'
-import { canonicalJsonStringify } from '@control-plane/contracts'
+import {
+  canonicalJsonStringify,
+  ModelSelectionFundingRequestSchema,
+  ModelSelectionFundingResponseSchema,
+  ModelSelectionFundingViewSchema,
+  type ModelSelectionFundingView,
+} from '@control-plane/contracts'
 import {
   ModelConnectionCreateRequestSchema,
   ModelConnectionRevokeRequestSchema,
@@ -24,6 +30,7 @@ import {
 
 export const MODEL_CONNECTION_SERVICE = Symbol('MODEL_CONNECTION_SERVICE')
 export interface ModelConnectionService {
+  funding?(input: unknown, principalId: string): Promise<unknown>
   create(input: unknown, principalId: string): Promise<unknown>
   revoke(input: unknown, principalId: string): Promise<unknown>
   list(input: unknown, principalId: string): Promise<unknown>
@@ -54,8 +61,44 @@ export class UnavailableModelConnectionService implements ModelConnectionService
 export class ConfiguredModelConnectionService implements ModelConnectionService {
   constructor(
     readonly selections: ModelSelectionService,
-    readonly administration?: ModelConnectionAdministration
+    readonly administration?: ModelConnectionAdministration,
+    readonly fundingView?: {
+      /** Authenticate the transport reader against the accepted canonical intent/audience.
+       * Resolve all execution/actor/plan/funding bindings from server-owned records.
+       */
+      resolve(input: {
+        workspaceId: string
+        principalId: string
+        executionId: string
+        attemptId: string
+        selectionRef: string
+        selectionRevision: number
+      }): Promise<ModelSelectionFundingView>
+    }
   ) {}
+  async funding(input: unknown, principalId: string) {
+    const request = parse(ModelSelectionFundingRequestSchema, input, principalId)
+    if (!this.fundingView) return unavailable()
+    const resolver = this.fundingView
+    return safely(async () => {
+      const funding = ModelSelectionFundingViewSchema.parse(
+        await resolver.resolve({
+          workspaceId: request.workspaceId,
+          principalId,
+          ...request.parameters,
+        })
+      )
+      if (
+        funding.workspaceId !== request.workspaceId ||
+        funding.executionId !== request.parameters.executionId ||
+        funding.attemptId !== request.parameters.attemptId ||
+        funding.selectionRef !== request.parameters.selectionRef ||
+        funding.selectionRevision !== request.parameters.selectionRevision
+      )
+        throw new ModelSelectionError('SELECTION_CHANGED')
+      return ModelSelectionFundingResponseSchema.parse({ ...identity(request), data: { funding } })
+    })
+  }
   async create(input: unknown, principalId: string) {
     const request = parse(ModelConnectionCreateRequestSchema, input, principalId)
     return safely(async () => {

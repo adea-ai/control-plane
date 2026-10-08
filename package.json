@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/workspace",
-  "version": "1.76.0",
+  "version": "1.78.0",
   "private": true,
   "workspaces": [
     "apps/*",
@@ -107,7 +107,9 @@
   },
   "overrides": {
     "esbuild": "0.28.2",
-    "fastify": "5.12.5"
+    "fastify": "5.12.5",
+    "sharp": "0.35.5",
+    "undici": "7.29.1"
   },
   "engines": {
     "bun": ">=1.4.0 <2",

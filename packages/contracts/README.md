@@ -34,6 +34,16 @@ import { EnvelopeSchemas, IdentifierSchemas, PaginationSchemas } from '@adea-ai/
 See [`docs/contracts.md`](../../docs/contracts.md) in the repository for the
 full contract reference, including the identifier prefix table.
 
+## Model funding display
+
+`ModelSelectionFunding{Request,Response,View}Schema` and `ModelFundingOwnerSchema`
+export the additive `model-funding-display/v1` disclosure contract. The request
+uses `model-selection.funding.get` and requires workspace/caller plus accepted
+execution, attempt and immutable selection reference/revision. Ready responses
+include explicit recorded payer metadata; blocked responses contain only the
+binding and a bounded reason code. This is display data, never admission, a
+credential or spending authority. Existing model connection DTOs remain unchanged.
+
 ## License
 
 Apache-2.0

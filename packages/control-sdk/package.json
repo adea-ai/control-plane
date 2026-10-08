@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/sdk",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "description": "Typed client for the Control Plane API with transport, response mapping, OpenAPI baseline, and testing helpers.",
   "keywords": [
     "agents",
@@ -49,9 +49,7 @@
     "test": "bun test src/*.test.mjs"
   },
   "dependencies": {
-    "@control-plane/contracts": "workspace:^"
-  },
-  "devDependencies": {
+    "@control-plane/contracts": "workspace:^",
     "zod": "4.6.5"
   },
   "engines": {

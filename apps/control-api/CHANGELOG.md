@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.23.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.22.0...control-api-v1.23.0) (2026-10-08)
+
+
+### Features
+
+* **models:** retain Pi lead payer confirmation across send boundaries ([#962](https://github.com/adea-ai/control-plane/issues/962)) ([8135624](https://github.com/adea-ai/control-plane/commit/813562406f26259027154a40e8566ebbe5a797ab))
+
+## [1.22.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.21.0...control-api-v1.22.0) (2026-10-08)
+
+
+### Features
+
+* **models:** bind current execution authority and recorded payer reads ([#957](https://github.com/adea-ai/control-plane/issues/957)) ([85449ba](https://github.com/adea-ai/control-plane/commit/85449baf3ea9c57997954246bf40a7e4d5589312))
+
 ## [1.21.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.20.0...control-api-v1.21.0) (2026-10-08)
 
 

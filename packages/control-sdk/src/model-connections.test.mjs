@@ -4,6 +4,16 @@ import { CredentialApiFixtures, ControlApiOperations, ControlPlaneClient } from 
 test('released model SDK operations send scoped references and reject credential-bearing payloads before transport', async () => {
   const cases = [
     [
+      'getModelSelectionFunding',
+      false,
+      {
+        executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+        attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+        selectionRef: `msel_${'2'.repeat(32)}`,
+        selectionRevision: 1,
+      },
+    ],
+    [
       'createModelConnection',
       true,
       { credentialRef: 'crd_01JABCDEF0123456789ABCDEFG', credentialRevision: 1 },
@@ -85,4 +95,64 @@ test('released model SDK operations send scoped references and reject credential
     await expect(client[name](secretInput)).rejects.toThrow()
     expect(sends).toBe(1)
   }
+})
+
+test('typed funding read parses bounded ready/blocked views and rejects response secrets', async () => {
+  const operation = ControlApiOperations.getModelSelectionFunding
+  const parameters = {
+    executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+    attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+    selectionRef: `msel_${'2'.repeat(32)}`,
+    selectionRevision: 1,
+  }
+  const input = {
+    ...CredentialApiFixtures.get.request,
+    caller: { servicePrincipalId: 'svc_workspace-admin' },
+    operation: operation.operation,
+    parameters,
+  }
+  const binding = {
+    schemaVersion: 'model-funding-display/v1',
+    workspaceId: input.workspaceId,
+    ...parameters,
+  }
+  let funding = {
+    ...binding,
+    state: 'ready',
+    provider: 'openai',
+    providerModel: 'fixture',
+    accountRef: 'account:one',
+    authKind: 'api_key',
+    fundingSource: 'byo_api',
+    fundingOwner: {
+      ownerRef: 'payer:explicit',
+      kind: 'workspace_account',
+      displayName: 'Fixture payer',
+      revision: 1,
+      evidenceRef: 'payer-proof:1',
+    },
+    authorizationRef: 'auth:one',
+    authorityRevision: 1,
+    expiresAt: '2026-10-08T13:00:00.000Z',
+  }
+  const client = new ControlPlaneClient({
+    baseUrl: 'https://control-plane.test',
+    credential: 'fixture',
+    fetch: async () =>
+      Response.json({
+        contractVersion: input.contractVersion,
+        requestId: input.requestId,
+        correlation: input.correlation,
+        data: { funding },
+      }),
+  })
+  expect((await client.getModelSelectionFunding(input)).data.funding.fundingOwner.ownerRef).toBe(
+    'payer:explicit'
+  )
+  funding = { ...binding, state: 'blocked', reasonCode: 'CREDENTIAL_REVOKED' }
+  expect((await client.getModelSelectionFunding(input)).data.funding.reasonCode).toBe(
+    'CREDENTIAL_REVOKED'
+  )
+  funding = { ...funding, secret: 'private-canary' }
+  await expect(client.getModelSelectionFunding(input)).rejects.toThrow()
 })

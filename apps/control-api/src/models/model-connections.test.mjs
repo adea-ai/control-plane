@@ -7,6 +7,7 @@ import {
 import { createControlApiApplication, createOpenApiDocument } from '../application.ts'
 import { PolicyServiceAuthenticator } from '../auth/service-authentication.ts'
 import { ConfiguredModelConnectionService } from './model-connections.service.ts'
+import { createCurrentModelConnectionComposition } from './current-model-composition.ts'
 const connection = {
   connectionRef: `mconn_${'1'.repeat(32)}`,
   revision: 1,
@@ -66,33 +67,48 @@ afterEach(async () => {
   await app?.close()
   app = undefined
 })
-async function fixture(enabled = true) {
+async function fixture(enabled = true, currentAccountAuthority, fundingView) {
   scope = ['credential:read', 'credential:write']
   logs = []
   credentialStatus = 'active'
   const repository = new InMemoryModelSelectionRepository()
   await repository.saveConnection(0, connection)
-  const selections = new ModelSelectionService({
-    repository,
-    vault: {
-      metadata: async () => ({
-        credentialId: connection.credentialRef,
-        workspaceId: connection.workspaceId,
-        provider: 'openai',
-        revision: 1,
-        status: credentialStatus,
-      }),
-    },
-    qualification: { evaluate: async () => 'READY' },
-    now: () => '2026-10-08T12:00:00.000Z',
-  })
+  const vault = {
+    metadata: async () => ({
+      credentialId: connection.credentialRef,
+      workspaceId: connection.workspaceId,
+      provider: 'openai',
+      revision: 1,
+      status: credentialStatus,
+    }),
+  }
+  const composed = currentAccountAuthority
+    ? createCurrentModelConnectionComposition({
+        repository,
+        vault,
+        currentAccountAuthority,
+        now: () => '2026-10-08T12:00:00.000Z',
+      })
+    : undefined
+  const selections =
+    composed?.selections ??
+    new ModelSelectionService({
+      repository,
+      vault,
+      qualification: { evaluate: async () => 'READY' },
+      now: () => '2026-10-08T12:00:00.000Z',
+    })
   app = await createControlApiApplication({
     health: () => ({ status: 'ok', metadata }),
     logger: { write: (entry) => logs.push(entry) },
     metadata,
     readiness: () => ({ status: 'ready', metadata }),
     ...(enabled
-      ? { modelConnectionService: new ConfiguredModelConnectionService(selections) }
+      ? {
+          modelConnectionService:
+            composed?.modelConnectionService ??
+            new ConfiguredModelConnectionService(selections, undefined, fundingView),
+        }
       : {}),
     serviceAuthenticator: new PolicyServiceAuthenticator({
       audience: 'control-plane',
@@ -117,7 +133,7 @@ async function fixture(enabled = true) {
       now: () => new Date('2026-10-08T12:00:00.000Z'),
     }),
   })
-  return { repository }
+  return { repository, selections }
 }
 const post = (path, payload, authorized = true) =>
   app
@@ -129,6 +145,66 @@ const post = (path, payload, authorized = true) =>
       ...(authorized ? { headers: { authorization: 'Bearer fixture-token' } } : {}),
       payload,
     })
+
+test('explicit current-authority composition rereads quota and grant faults through authenticated HTTP', async () => {
+  let quota = 'available'
+  let grantActive = true
+  let reads = 0
+  const { selections } = await fixture(true, {
+    readCurrent: async (query) => {
+      reads++
+      return {
+        schemaVersion: 'model-account-authority/v1',
+        evidenceRef: 'current-proof:fixture',
+        observedAt: query.requestedAt,
+        expiresAt: '2026-10-08T13:00:00.000Z',
+        workspaceId: query.workspaceId,
+        credentialRef: query.credentialRef,
+        credentialRevision: query.credentialRevision,
+        provider: connection.provider,
+        accountRef: connection.accountRef,
+        authKind: connection.authKind,
+        fundingSource: connection.fundingSource,
+        models: connection.models,
+        workspaceGrant: {
+          ...connection.workspaceGrant,
+          status: grantActive ? 'active' : 'revoked',
+        },
+        allowedPrincipalRefs: [principalId],
+        targets: [target],
+        entitlement: 'allowed',
+        quota,
+        residencyAllowed: true,
+      }
+    },
+  })
+  const choice = { connectionRef: connection.connectionRef, providerModel: 'gpt-5' }
+  const admitted = await post(
+    'selection/resolve',
+    read('model-selection.resolve', { role: 'lead', target, override: choice })
+  )
+  expect(admitted.statusCode).toBe(200)
+  const snapshot = admitted.json().data.selection
+  expect(snapshot).toMatchObject({
+    accountRef: connection.accountRef,
+    authKind: 'api_key',
+    fundingSource: 'byo_api',
+  })
+  quota = 'exhausted'
+  const listed = await post('list', read('model-connections.list', { target }))
+  expect(listed.json().data.connections[0].models[0].readiness.reasonCode).toBe('QUOTA_EXHAUSTED')
+  await expect(selections.assertReady(snapshot)).rejects.toThrow('QUOTA_EXHAUSTED')
+  const denied = await post(
+    'selection/resolve',
+    read('model-selection.resolve', { role: 'lead', target, override: choice })
+  )
+  expect(denied.statusCode).toBe(409)
+  expect(denied.json().error.code).toBe('QUOTA_EXHAUSTED')
+  quota = 'available'
+  grantActive = false
+  await expect(selections.assertReady(snapshot)).rejects.toThrow('WORKSPACE_GRANT_REVOKED')
+  expect(reads).toBeGreaterThan(4)
+})
 
 test('authenticated model surfaces expose readiness, CAS defaults and selected override without secrets', async () => {
   await fixture()
@@ -273,4 +349,90 @@ test('connection create derives account/grant from trusted authority and revocat
   await expect(service.create(create, principalId)).rejects.toMatchObject({
     response: { code: 'SELECTION_CHANGED' },
   })
+})
+
+test('funding read requires authenticated caller, accepted execution binding and configured recorded payer authority', async () => {
+  const parameters = {
+    executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+    attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+    selectionRef: `msel_${'2'.repeat(32)}`,
+    selectionRevision: 1,
+  }
+  const request = read('model-selection.funding.get', parameters)
+  let reads = 0
+  let output = {
+    schemaVersion: 'model-funding-display/v1',
+    workspaceId: connection.workspaceId,
+    ...parameters,
+    state: 'ready',
+    provider: 'openai',
+    providerModel: 'gpt-5',
+    accountRef: connection.accountRef,
+    authKind: 'api_key',
+    fundingSource: 'byo_api',
+    fundingOwner: {
+      ownerRef: 'payer:explicit',
+      kind: 'workspace_account',
+      displayName: 'Fixture payer',
+      revision: 1,
+      evidenceRef: 'payer:proof',
+    },
+    authorizationRef: 'funding:recorded',
+    authorityRevision: 1,
+    expiresAt: '2026-10-08T13:00:00.000Z',
+  }
+  await fixture(true, undefined, {
+    resolve: async (input) => {
+      reads++
+      expect(input).toEqual({ workspaceId: connection.workspaceId, principalId, ...parameters })
+      return output
+    },
+  })
+  expect((await post('selection/funding/get', request, false)).statusCode).toBe(401)
+  expect(reads).toBe(0)
+  scope = ['execution:read']
+  expect((await post('selection/funding/get', request)).statusCode).toBe(403)
+  scope = ['credential:read']
+  expect(
+    (
+      await post('selection/funding/get', {
+        ...request,
+        caller: { servicePrincipalId: 'svc_other' },
+      })
+    ).statusCode
+  ).toBe(403)
+  expect(
+    (
+      await post('selection/funding/get', {
+        ...request,
+        parameters: { ...parameters, secret: 'private-canary' },
+      })
+    ).statusCode
+  ).toBe(400)
+  expect(reads).toBe(0)
+  const ready = await post('selection/funding/get', request)
+  expect(ready.statusCode).toBe(200)
+  expect(ready.json().data.funding.fundingOwner.ownerRef).toBe('payer:explicit')
+  output = {
+    schemaVersion: 'model-funding-display/v1',
+    workspaceId: connection.workspaceId,
+    ...parameters,
+    state: 'blocked',
+    reasonCode: 'CREDENTIAL_REVOKED',
+  }
+  const blocked = await post('selection/funding/get', request)
+  expect(blocked.statusCode).toBe(200)
+  expect(blocked.json().data.funding).toEqual(output)
+  output = { ...output, selectionRevision: 2 }
+  const foreign = await post('selection/funding/get', request)
+  expect(foreign.statusCode).toBe(409)
+  expect(foreign.json().error.code).toBe('SELECTION_CHANGED')
+  output = { ...output, secret: 'private-canary' }
+  const malformed = await post('selection/funding/get', request)
+  expect(malformed.statusCode).toBe(503)
+  expect(JSON.stringify(malformed.json())).not.toContain('private-canary')
+  await app.close()
+  app = undefined
+  await fixture(true)
+  expect((await post('selection/funding/get', request)).statusCode).toBe(503)
 })
