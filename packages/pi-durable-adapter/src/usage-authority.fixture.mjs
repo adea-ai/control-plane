@@ -20,7 +20,15 @@ export const ids = {
   attemptId: 'att_01JABCDEF0123456789ABCDEFG',
 }
 
-export async function withUsageAuthorityContext(run) {
+export async function withUsageAuthorityContext(
+  run,
+  {
+    maximumTokens = 100,
+    maximumInputTokens = 64,
+    maximumMicrounits = 1000,
+    maximumChildExecutions,
+  } = {}
+) {
   const directory = await mkdtemp(join(tmpdir(), 'pi-ledger-'))
   const path = join(directory, 'ledger.sqlite')
   let provider = new SqlitePersistenceProvider({ path })
@@ -28,6 +36,11 @@ export async function withUsageAuthorityContext(run) {
     profileCapabilityRequirements: [],
     skillRequiredCapabilities: [],
   })
+  if (maximumChildExecutions !== undefined) {
+    inputs.constraints.limits.childExecutions.maximumTotal = maximumChildExecutions
+    inputs.profile.definition.executionConstraints.limits.childExecutions.maximumTotal =
+      maximumChildExecutions
+  }
   const plan = new ExecutionPlanCompiler('1.0.0').compile(inputs)
   const workspaceId = plan.correlation.workspaceId
   const authority = {
@@ -43,8 +56,8 @@ export async function withUsageAuthorityContext(run) {
         executionPlanDigest: plan.contentDigest,
         reservationKey: `runtime-attempt:${ids.attemptId}`,
         currency: 'USD',
-        maximumMicrounits: 1000,
-        maximumTokens: 100,
+        maximumMicrounits,
+        maximumTokens,
       },
     },
     admission: {
@@ -69,7 +82,7 @@ export async function withUsageAuthorityContext(run) {
     fundingSource: 'hq_managed',
     validFrom: at,
     validUntil: '2027-01-01T00:00:00.000Z',
-    maximumInputTokens: 64,
+    maximumInputTokens,
     maximumOutputTokens: 32,
     ratesMicrounitsPerMillionTokens: { input: 1_000_000, cachedInput: 500_000, output: 2_000_000 },
   }
@@ -136,16 +149,16 @@ export async function withUsageAuthorityContext(run) {
       workspaceId,
       executionId: ids.executionId,
       currency: 'USD',
-      maximumMicrounits: 1000,
-      maximumTokens: 100,
+      maximumMicrounits,
+      maximumTokens,
       source: { sourceId: 'funded', idempotencyKey: 'funded' },
     })
     await ledger.reserve({
       workspaceId,
       ...ids,
       reservationKey: authority.request.attemptBudget.reservationKey,
-      maximumMicrounits: 1000,
-      maximumTokens: 100,
+      maximumMicrounits,
+      maximumTokens,
       source: { sourceId: 'attempt', idempotencyKey: 'attempt' },
     })
     await run({

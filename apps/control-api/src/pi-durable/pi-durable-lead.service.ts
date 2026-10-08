@@ -320,6 +320,15 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     const request = parse(PiDurableLeadDispatchRequestSchema, input)
     checkPrincipal(request, principal, 'execution:accept')
     verifyPayload(request)
+    if (this.options.preparations)
+      await this.#preparationOperation(async () =>
+        this.options.preparations!.assertDispatchReference(
+          request.payload.preparationRef,
+          request.workspaceId,
+          request.payload.intentId,
+          principal
+        )
+      )
     // The trusted resolver can admit a canonical attempt and reserve its budget.
     // Fence the transport key atomically before entering that mutating boundary.
     await this.#bind(request, principal)
@@ -368,6 +377,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       // A retry reacquires the SAME immutable admitted attempt. The adapter owns
       // restart reconciliation; this service never invents a replacement attempt.
       await this.options.authority.assertCurrent(admission, principal, 'dispatch')
+      let dispatchClaim: string | undefined
       if (this.options.preparations)
         await this.#preparationOperation(async () => {
           await this.options.preparations!.assertDispatch(
@@ -378,15 +388,28 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
           // Payer disclosure may await independently of the canonical transport
           // audience. Recheck that authority before retaining the dispatch claim.
           await this.options.authority.assertCurrent(admission, principal, 'dispatch')
-          this.options.preparations!.markDispatching(request.payload.preparationRef!)
+          dispatchClaim = this.options.preparations!.markDispatching(
+            request.payload.preparationRef!
+          )
         })
       let handle: RuntimeExecutionHandle
       try {
+        this.options.preparations?.assertDispatchClaim(
+          request.payload.preparationRef!,
+          dispatchClaim
+        )
         handle = RuntimeExecutionHandleSchema.parse(
           await this.options.adapter.start(admission.startRequest)
         )
+        this.options.preparations?.markDispatched(
+          request.payload.preparationRef!,
+          dispatchClaim,
+          handle
+        )
       } catch {
         fail('PI_LEAD_UNAVAILABLE')
+      } finally {
+        this.options.preparations?.finishDispatchClaim(dispatchClaim)
       }
       if (handle.attemptId !== receipt.attemptId || !handle.externalSessionId)
         fail('PI_LEAD_AUTHORITY_CONFLICT')

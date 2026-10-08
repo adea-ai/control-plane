@@ -7,6 +7,50 @@ import { PiDurableRuntimeAdapter } from './adapter.ts'
 import { fixture } from './adapter.fixture.mjs'
 
 const at = '2026-10-08T00:00:00.000Z'
+test('revocation while provider readiness awaits prevents durable runtime admission', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-provider-admission-fence-'))
+  let adapter
+  let release, entered
+  const pending = new Promise((resolve) => {
+    release = resolve
+  })
+  const reached = new Promise((resolve) => {
+    entered = resolve
+  })
+  let revoked = false
+  let engines = 0
+  try {
+    const { options, request } = fixture(directory)
+    const provider = options.resolveProvider
+    options.resolveProvider = async (...args) => {
+      entered()
+      await pending
+      return provider(...args)
+    }
+    options.assertAuthority = async () => {
+      if (revoked) throw new Error('CURRENT_ATTEMPT_CANCELLED')
+    }
+    options.engineFactory = async () => {
+      engines++
+      throw new Error('ENGINE_MUST_NOT_START')
+    }
+    adapter = new PiDurableRuntimeAdapter(options)
+    const start = adapter.start(request)
+    await reached
+    revoked = true
+    release()
+    await expect(start).rejects.toThrow('PI_AUTHORITY_REJECTED')
+    expect(adapter.journal.list()).toHaveLength(0)
+    await adapter.close()
+    adapter = new PiDurableRuntimeAdapter(options)
+    expect(await adapter.findExistingHandle(request)).toBeUndefined()
+    expect(engines).toBe(0)
+  } finally {
+    release()
+    await adapter?.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
 test('runtime admission replay and cursor survive a physical store reopen', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-adapter-'))
   try {

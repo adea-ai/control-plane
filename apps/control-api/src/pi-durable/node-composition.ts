@@ -110,7 +110,12 @@ export async function createNodePiDurableLeadComposition(
         : {}),
     })
     const preparations = options.preparationAuthority
-      ? new SqlitePiLeadPreparations(database, options.preparationAuthority, options.admission.now)
+      ? new SqlitePiLeadPreparations(
+          database,
+          options.preparationAuthority,
+          options.admission.now,
+          { findRuntimeHandle: (request) => runtime!.adapter.findExistingHandle(request) }
+        )
       : undefined
     const recoverUnclaimedPreparations = async () => {
       if (!preparations || !options.preparationAuthority) return undefined

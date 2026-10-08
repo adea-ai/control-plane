@@ -60,6 +60,8 @@ export interface PiDurableEngineOptions {
   /** Rebuild Models and hold eligible credential access only for this callback. */
   readonly withModels: <T>(use: (models: Models) => Promise<T>) => Promise<T>
   readonly governedDelegateChild?: PiDurableGovernedDelegateChildEnginePort
+  /** Settle only committed native assistant receipts before admitting another generation or effect. */
+  readonly retainInferences?: (inferences: PiDurableEngineResult['inferences']) => Promise<void>
 }
 
 export interface PiDurableEngineRun {
@@ -241,6 +243,7 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
     { error: PiDurableEngineToolBlockedError; closing: Promise<void> }
   >()
   const physicalFetch = globalThis.fetch
+  const turns = new Map<string, string>()
   let closed = false
 
   const storePath = (sessionId: string) => join(options.directory, `${digest(sessionId)}.sqlite`)
@@ -276,6 +279,25 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
       })
       let inferenceId: string | undefined
       let harness: Harness
+      const retainCommitted = async (last?: EntryId) => {
+        if (!options.retainInferences) return
+        const requestId = turns.get(sessionId)
+        if (!requestId) throw new Error('PI_RETAINED_TURN_REQUIRED')
+        const root = await harness.root(BACKGROUND_CONTEXT)
+        const submission = await root.commit(
+          (tx) => tx.submissionByRequest(root.id, requestId),
+          BACKGROUND_CONTEXT
+        )
+        if (
+          !submission ||
+          submission.type !== 'input' ||
+          submission.status === 'queued' ||
+          submission.entry === undefined
+        )
+          return
+        const committed = await receipts(root, submission.entry, last)
+        if (committed.length) await options.retainInferences(committed)
+      }
       const delegate = options.governedDelegateChild
       const tools = delegate
         ? [
@@ -333,6 +355,7 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
                     },
                   }
                   const verified = await verifyPiDurableToolSource(source, args, reader)
+                  await retainCommitted(assistant as EntryId)
                   context.abortSignal?.throwIfAborted()
                   const outcome = PiDurableDelegateChildOutcomeSchema.parse(
                     await delegate.execute(
@@ -392,7 +415,8 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
         tools,
         hooks: [
           hook(GenerationTask, {
-            beforeRequest: (_request, api) => {
+            beforeRequest: async (_request, api) => {
+              await retainCommitted()
               inferenceId = `pi-generation:${String(api.taskId)}`
               return undefined
             },
@@ -617,6 +641,7 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
           delegate.source.admittedTurnKey !== request.requestId)
       )
         throw new Error('PI_TOOL_TURN_SCOPE_MISMATCH')
+      turns.set(request.sessionId, request.requestId)
       const harness = await open(request.sessionId)
       const root = await harness.root(BACKGROUND_CONTEXT)
       await root.commit(async (tx) => {
@@ -637,7 +662,21 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
         settled = await submission.wait(BACKGROUND_CONTEXT)
       } catch (error) {
         const pending = blocked.get(request.sessionId)
-        if (!pending) throw error
+        if (!pending) {
+          const retained = await root.commit(
+            (tx) => tx.submissionByRequest(root.id, request.requestId),
+            BACKGROUND_CONTEXT
+          )
+          if (
+            retained?.type === 'input' &&
+            retained.status !== 'queued' &&
+            retained.entry !== undefined
+          ) {
+            const committed = await receipts(root, retained.entry)
+            if (committed.length) await options.retainInferences?.(committed)
+          }
+          throw error
+        }
         await pending.closing
         opened.delete(request.sessionId)
         blocked.delete(request.sessionId)
@@ -657,6 +696,7 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
       if (entry?.byTaskId === undefined) throw new Error('PI_NATIVE_INFERENCE_RECEIPT_MISSING')
       const inferences = await receipts(root, settled.entry, settled.answer)
       if (!inferences.length) throw new Error('PI_NATIVE_INFERENCE_RECEIPT_MISSING')
+      await options.retainInferences?.(inferences)
       const trustedCounts = inferences.reduce(
         (total, inference) => ({
           inputTokens: total.inputTokens + inference.usage.inputTokens,
@@ -696,6 +736,7 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
         })
       )
       opened.clear()
+      turns.clear()
     },
   }
 }

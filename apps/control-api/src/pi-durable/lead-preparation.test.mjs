@@ -284,16 +284,17 @@ test('changed funding cannot replace the accepted attempt winner or renew its TT
 test('retained dispatch fence prohibits expiry, rejection or refreshed funding from releasing in-flight allocation', async () =>
   fixture(async (f) => {
     const prepared = await f.store.prepare(f.admission, f.principal)
-    f.store.markDispatching(prepared.preparationRef)
-    f.store.markDispatching(prepared.preparationRef)
+    const claim = f.store.markDispatching(prepared.preparationRef)
+    expect(() => f.store.markDispatching(prepared.preparationRef)).toThrow(stale)
     await f.store.rejectPreparation(prepared.preparationRef)
     f.advance(300_000)
     await f.store.recoverExpired()
     await expect(f.store.prepare(f.admission, f.principal)).rejects.toThrow(stale)
     expect(f.releaseCalls()).toBe(0)
     expect(f.rows(f.db).find((row) => row.preparationRef === prepared.preparationRef).state).toBe(
-      'dispatched'
+      'dispatching'
     )
+    f.store.finishDispatchClaim(claim)
   }))
 
 test('dispatch checks expiry atomically even when no scanner has run', async () =>

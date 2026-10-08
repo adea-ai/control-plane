@@ -198,6 +198,7 @@ export interface PiDurableRuntimeOptions {
       assertActive: () => Promise<void>
     }>
     withModels: <T>(use: (models: Models) => Promise<T>) => Promise<T>
+    readonly retainInferences?: (inferences: PiEngineResult['inferences']) => Promise<void>
     readonly governedDelegateChild?: PiDurableGovernedDelegateChildEnginePort
   }) => Promise<DurablePiEngine>
 }

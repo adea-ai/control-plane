@@ -471,6 +471,11 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     this.#assertOpen()
     const provider = await this.#provider(authority)
     this.#assertOpen()
+    // Provider readiness may await while a canonical attempt is cancelled or its
+    // unused allocation is reclaimed. Fence that change before retaining a
+    // runtime admission; readiness itself never grants execution authority.
+    await this.#authority(authority)
+    this.#assertOpen()
     const id = digest([request.attemptBudget.workspaceId, request.attemptId]).slice(7, 39)
     const handle = RuntimeExecutionHandleSchema.parse({
       handleId: `pi-durable:${id}`,
@@ -773,6 +778,9 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         model: { provider: provider.binding.provider, modelId: provider.binding.providerModel },
         maxOutputTokens: authority.request.attemptBudget!.maximumTokens,
         assertAuthority: assertCurrent,
+        retainInferences: async (inferences) => {
+          await this.#retainInferences(record, epoch, authority, inferences, assertCurrent)
+        },
         authorizeInference: async (inference) => {
           await assertCurrent()
           const allowance = await this.#options.authorizeInference(
@@ -975,6 +983,25 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         fail('PI_INFERENCE_RECEIPT_REQUIRED', 'validation')
       await assertCurrent()
       const key = `${turnKey(record)}:${inference.inferenceId}`
+      const retained = this.journal.get(record.handleId).detail['inferenceReceipts'] as
+        | Record<
+            string,
+            {
+              turnKey: string
+              nativeDigest: string
+              usage: ReturnType<typeof RuntimeUsageSchema.parse>
+            }
+          >
+        | undefined
+      if (retained?.[key]) {
+        if (
+          retained[key].turnKey !== turnKey(record) ||
+          retained[key].nativeDigest !== digest(inference.usage)
+        )
+          fail('PI_INFERENCE_RECEIPT_CONFLICT', 'conflict')
+        RuntimeUsageSchema.parse(retained[key].usage)
+        continue
+      }
       const usage = RuntimeUsageSchema.parse(
         await this.#options.settleUsage(
           authority,
