@@ -12056,6 +12056,2079 @@
         "security": [{ "serviceBearer": [] }]
       }
     },
+    "/v1/model-connections/create": {
+      "post": {
+        "operationId": "model-connections.create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "caller": {
+                    "properties": {
+                      "servicePrincipalId": {
+                        "maxLength": 64,
+                        "minLength": 5,
+                        "pattern": "^svc_[a-z][a-z0-9-]*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": ["servicePrincipalId"],
+                    "type": "object"
+                  },
+                  "commandId": { "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "contractVersion": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "major": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                    },
+                    "required": ["major", "minor"],
+                    "type": "object"
+                  },
+                  "correlation": {
+                    "properties": {
+                      "causationCommandId": {
+                        "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "parentEventId": {
+                        "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "traceId": { "pattern": "^trc_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                    },
+                    "required": ["traceId"],
+                    "type": "object"
+                  },
+                  "idempotencyKey": {
+                    "maxLength": 128,
+                    "minLength": 16,
+                    "pattern": "^[A-Za-z0-9._:-]+$",
+                    "type": "string"
+                  },
+                  "issuedAt": {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                    "type": "string"
+                  },
+                  "operation": { "const": "model-connections.create", "type": "string" },
+                  "payload": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "credentialRef": {
+                        "pattern": "^crd_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "credentialRevision": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    },
+                    "required": ["credentialRef", "credentialRevision"],
+                    "type": "object"
+                  },
+                  "payloadHash": { "pattern": "^[a-f0-9]{64}$", "type": "string" },
+                  "requestId": { "pattern": "^req_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "workspaceId": { "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                },
+                "required": [
+                  "caller",
+                  "contractVersion",
+                  "requestId",
+                  "workspaceId",
+                  "correlation",
+                  "commandId",
+                  "idempotencyKey",
+                  "payloadHash",
+                  "operation",
+                  "issuedAt",
+                  "payload"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "connection": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "accountRef": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                              "type": "string"
+                            },
+                            "authKind": {
+                              "enum": ["api_key", "provider_subscription", "local_runtime"],
+                              "type": "string"
+                            },
+                            "connectionRef": {
+                              "pattern": "^mconn_[a-f0-9]{32}$",
+                              "type": "string"
+                            },
+                            "credentialRef": {},
+                            "credentialRevision": {
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "fundingSource": {
+                              "enum": ["hq_managed", "external_subscription", "byo_api"],
+                              "type": "string"
+                            },
+                            "models": {
+                              "items": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                "type": "string"
+                              },
+                              "maxItems": 256,
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "ownerRef": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                              "type": "string"
+                            },
+                            "provider": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[a-z][a-z0-9.-]*$",
+                              "type": "string"
+                            },
+                            "revision": {
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "status": { "enum": ["active", "revoked"], "type": "string" },
+                            "workspaceGrant": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "expiresAt": {
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                                  "type": "string"
+                                },
+                                "grantRef": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991,
+                                  "type": "integer"
+                                },
+                                "status": { "enum": ["active", "revoked"], "type": "string" }
+                              },
+                              "required": ["grantRef", "revision", "status", "expiresAt"],
+                              "type": "object"
+                            },
+                            "workspaceId": {}
+                          },
+                          "required": [
+                            "connectionRef",
+                            "revision",
+                            "workspaceId",
+                            "ownerRef",
+                            "credentialRef",
+                            "credentialRevision",
+                            "provider",
+                            "accountRef",
+                            "authKind",
+                            "fundingSource",
+                            "status",
+                            "models",
+                            "workspaceGrant"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": ["connection"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "class": {
+                          "enum": [
+                            "validation",
+                            "authentication",
+                            "authorization",
+                            "conflict",
+                            "stale_reference",
+                            "capability_mismatch",
+                            "runtime_unavailable",
+                            "internal"
+                          ],
+                          "type": "string"
+                        },
+                        "code": {
+                          "maxLength": 96,
+                          "minLength": 1,
+                          "pattern": "^[A-Z][A-Z0-9_]*$",
+                          "type": "string"
+                        },
+                        "details": {
+                          "additionalProperties": {},
+                          "propertyNames": { "maxLength": 64, "type": "string" },
+                          "type": "object"
+                        },
+                        "message": { "maxLength": 512, "minLength": 1, "type": "string" },
+                        "remediation": { "maxLength": 256, "minLength": 1, "type": "string" },
+                        "retryable": { "type": "boolean" },
+                        "source": {
+                          "enum": [
+                            "client",
+                            "auth",
+                            "policy",
+                            "runtime",
+                            "provider",
+                            "persistence",
+                            "workflow",
+                            "system"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["class", "code", "message", "retryable", "source"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "error"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Normalized error response"
+          }
+        },
+        "security": [{ "serviceBearer": [] }]
+      }
+    },
+    "/v1/model-connections/defaults/get": {
+      "post": {
+        "operationId": "model-defaults.get",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "caller": {
+                    "properties": {
+                      "servicePrincipalId": {
+                        "maxLength": 64,
+                        "minLength": 5,
+                        "pattern": "^svc_[a-z][a-z0-9-]*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": ["servicePrincipalId"],
+                    "type": "object"
+                  },
+                  "contractVersion": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "major": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                    },
+                    "required": ["major", "minor"],
+                    "type": "object"
+                  },
+                  "correlation": {
+                    "properties": {
+                      "causationCommandId": {
+                        "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "parentEventId": {
+                        "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "traceId": { "pattern": "^trc_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                    },
+                    "required": ["traceId"],
+                    "type": "object"
+                  },
+                  "operation": { "const": "model-defaults.get", "type": "string" },
+                  "parameters": {
+                    "additionalProperties": false,
+                    "properties": {},
+                    "type": "object"
+                  },
+                  "requestId": { "pattern": "^req_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "requestedAt": {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                    "type": "string"
+                  },
+                  "workspaceId": { "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                },
+                "required": [
+                  "caller",
+                  "contractVersion",
+                  "requestId",
+                  "workspaceId",
+                  "correlation",
+                  "operation",
+                  "requestedAt",
+                  "parameters"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "defaults": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "child": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "connectionRef": {
+                                      "pattern": "^mconn_[a-f0-9]{32}$",
+                                      "type": "string"
+                                    },
+                                    "providerModel": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["connectionRef", "providerModel"],
+                                  "type": "object"
+                                },
+                                "direct": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "connectionRef": {
+                                      "pattern": "^mconn_[a-f0-9]{32}$",
+                                      "type": "string"
+                                    },
+                                    "providerModel": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["connectionRef", "providerModel"],
+                                  "type": "object"
+                                },
+                                "lead": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "connectionRef": {
+                                      "pattern": "^mconn_[a-f0-9]{32}$",
+                                      "type": "string"
+                                    },
+                                    "providerModel": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["connectionRef", "providerModel"],
+                                  "type": "object"
+                                },
+                                "revision": {
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991,
+                                  "type": "integer"
+                                },
+                                "workspaceId": {}
+                              },
+                              "required": ["workspaceId", "revision"],
+                              "type": "object"
+                            },
+                            { "type": "null" }
+                          ]
+                        }
+                      },
+                      "required": ["defaults"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "class": {
+                          "enum": [
+                            "validation",
+                            "authentication",
+                            "authorization",
+                            "conflict",
+                            "stale_reference",
+                            "capability_mismatch",
+                            "runtime_unavailable",
+                            "internal"
+                          ],
+                          "type": "string"
+                        },
+                        "code": {
+                          "maxLength": 96,
+                          "minLength": 1,
+                          "pattern": "^[A-Z][A-Z0-9_]*$",
+                          "type": "string"
+                        },
+                        "details": {
+                          "additionalProperties": {},
+                          "propertyNames": { "maxLength": 64, "type": "string" },
+                          "type": "object"
+                        },
+                        "message": { "maxLength": 512, "minLength": 1, "type": "string" },
+                        "remediation": { "maxLength": 256, "minLength": 1, "type": "string" },
+                        "retryable": { "type": "boolean" },
+                        "source": {
+                          "enum": [
+                            "client",
+                            "auth",
+                            "policy",
+                            "runtime",
+                            "provider",
+                            "persistence",
+                            "workflow",
+                            "system"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["class", "code", "message", "retryable", "source"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "error"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Normalized error response"
+          }
+        },
+        "security": [{ "serviceBearer": [] }]
+      }
+    },
+    "/v1/model-connections/defaults/set": {
+      "post": {
+        "operationId": "model-defaults.set",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "caller": {
+                    "properties": {
+                      "servicePrincipalId": {
+                        "maxLength": 64,
+                        "minLength": 5,
+                        "pattern": "^svc_[a-z][a-z0-9-]*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": ["servicePrincipalId"],
+                    "type": "object"
+                  },
+                  "commandId": { "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "contractVersion": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "major": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                    },
+                    "required": ["major", "minor"],
+                    "type": "object"
+                  },
+                  "correlation": {
+                    "properties": {
+                      "causationCommandId": {
+                        "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "parentEventId": {
+                        "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "traceId": { "pattern": "^trc_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                    },
+                    "required": ["traceId"],
+                    "type": "object"
+                  },
+                  "idempotencyKey": {
+                    "maxLength": 128,
+                    "minLength": 16,
+                    "pattern": "^[A-Za-z0-9._:-]+$",
+                    "type": "string"
+                  },
+                  "issuedAt": {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                    "type": "string"
+                  },
+                  "operation": { "const": "model-defaults.set", "type": "string" },
+                  "payload": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "child": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "connectionRef": { "pattern": "^mconn_[a-f0-9]{32}$", "type": "string" },
+                          "providerModel": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": ["connectionRef", "providerModel"],
+                        "type": "object"
+                      },
+                      "direct": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "connectionRef": { "pattern": "^mconn_[a-f0-9]{32}$", "type": "string" },
+                          "providerModel": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": ["connectionRef", "providerModel"],
+                        "type": "object"
+                      },
+                      "expectedRevision": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "lead": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "connectionRef": { "pattern": "^mconn_[a-f0-9]{32}$", "type": "string" },
+                          "providerModel": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": ["connectionRef", "providerModel"],
+                        "type": "object"
+                      }
+                    },
+                    "required": ["expectedRevision"],
+                    "type": "object"
+                  },
+                  "payloadHash": { "pattern": "^[a-f0-9]{64}$", "type": "string" },
+                  "requestId": { "pattern": "^req_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "workspaceId": { "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                },
+                "required": [
+                  "caller",
+                  "contractVersion",
+                  "requestId",
+                  "workspaceId",
+                  "correlation",
+                  "commandId",
+                  "idempotencyKey",
+                  "payloadHash",
+                  "operation",
+                  "issuedAt",
+                  "payload"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "defaults": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "child": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "connectionRef": {
+                                      "pattern": "^mconn_[a-f0-9]{32}$",
+                                      "type": "string"
+                                    },
+                                    "providerModel": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["connectionRef", "providerModel"],
+                                  "type": "object"
+                                },
+                                "direct": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "connectionRef": {
+                                      "pattern": "^mconn_[a-f0-9]{32}$",
+                                      "type": "string"
+                                    },
+                                    "providerModel": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["connectionRef", "providerModel"],
+                                  "type": "object"
+                                },
+                                "lead": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "connectionRef": {
+                                      "pattern": "^mconn_[a-f0-9]{32}$",
+                                      "type": "string"
+                                    },
+                                    "providerModel": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["connectionRef", "providerModel"],
+                                  "type": "object"
+                                },
+                                "revision": {
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991,
+                                  "type": "integer"
+                                },
+                                "workspaceId": {}
+                              },
+                              "required": ["workspaceId", "revision"],
+                              "type": "object"
+                            },
+                            { "type": "null" }
+                          ]
+                        }
+                      },
+                      "required": ["defaults"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "class": {
+                          "enum": [
+                            "validation",
+                            "authentication",
+                            "authorization",
+                            "conflict",
+                            "stale_reference",
+                            "capability_mismatch",
+                            "runtime_unavailable",
+                            "internal"
+                          ],
+                          "type": "string"
+                        },
+                        "code": {
+                          "maxLength": 96,
+                          "minLength": 1,
+                          "pattern": "^[A-Z][A-Z0-9_]*$",
+                          "type": "string"
+                        },
+                        "details": {
+                          "additionalProperties": {},
+                          "propertyNames": { "maxLength": 64, "type": "string" },
+                          "type": "object"
+                        },
+                        "message": { "maxLength": 512, "minLength": 1, "type": "string" },
+                        "remediation": { "maxLength": 256, "minLength": 1, "type": "string" },
+                        "retryable": { "type": "boolean" },
+                        "source": {
+                          "enum": [
+                            "client",
+                            "auth",
+                            "policy",
+                            "runtime",
+                            "provider",
+                            "persistence",
+                            "workflow",
+                            "system"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["class", "code", "message", "retryable", "source"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "error"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Normalized error response"
+          }
+        },
+        "security": [{ "serviceBearer": [] }]
+      }
+    },
+    "/v1/model-connections/list": {
+      "post": {
+        "operationId": "model-connections.list",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "caller": {
+                    "properties": {
+                      "servicePrincipalId": {
+                        "maxLength": 64,
+                        "minLength": 5,
+                        "pattern": "^svc_[a-z][a-z0-9-]*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": ["servicePrincipalId"],
+                    "type": "object"
+                  },
+                  "contractVersion": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "major": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                    },
+                    "required": ["major", "minor"],
+                    "type": "object"
+                  },
+                  "correlation": {
+                    "properties": {
+                      "causationCommandId": {
+                        "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "parentEventId": {
+                        "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "traceId": { "pattern": "^trc_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                    },
+                    "required": ["traceId"],
+                    "type": "object"
+                  },
+                  "operation": { "const": "model-connections.list", "type": "string" },
+                  "parameters": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "target": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "harness": {
+                            "enum": ["pi", "pi_durable", "cloudflare_agents", "acp"],
+                            "type": "string"
+                          },
+                          "harnessVersion": {
+                            "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                            "type": "string"
+                          },
+                          "location": {
+                            "enum": ["local_device", "remote_host", "agent_hq_cloud"],
+                            "type": "string"
+                          },
+                          "providerBinding": {
+                            "enum": [
+                              "pi_model_runtime",
+                              "pi_durable_models",
+                              "cloudflare_binding",
+                              "native_harness"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": ["location", "harness", "harnessVersion", "providerBinding"],
+                        "type": "object"
+                      }
+                    },
+                    "required": ["target"],
+                    "type": "object"
+                  },
+                  "requestId": { "pattern": "^req_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "requestedAt": {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                    "type": "string"
+                  },
+                  "workspaceId": { "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                },
+                "required": [
+                  "caller",
+                  "contractVersion",
+                  "requestId",
+                  "workspaceId",
+                  "correlation",
+                  "operation",
+                  "requestedAt",
+                  "parameters"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "connections": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "connection": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "accountRef": {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                    "type": "string"
+                                  },
+                                  "authKind": {
+                                    "enum": ["api_key", "provider_subscription", "local_runtime"],
+                                    "type": "string"
+                                  },
+                                  "connectionRef": {
+                                    "pattern": "^mconn_[a-f0-9]{32}$",
+                                    "type": "string"
+                                  },
+                                  "credentialRef": {},
+                                  "credentialRevision": {
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991,
+                                    "type": "integer"
+                                  },
+                                  "fundingSource": {
+                                    "enum": ["hq_managed", "external_subscription", "byo_api"],
+                                    "type": "string"
+                                  },
+                                  "models": {
+                                    "items": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    },
+                                    "maxItems": 256,
+                                    "minItems": 1,
+                                    "type": "array"
+                                  },
+                                  "ownerRef": {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                    "type": "string"
+                                  },
+                                  "provider": {
+                                    "maxLength": 128,
+                                    "minLength": 1,
+                                    "pattern": "^[a-z][a-z0-9.-]*$",
+                                    "type": "string"
+                                  },
+                                  "revision": {
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991,
+                                    "type": "integer"
+                                  },
+                                  "status": { "enum": ["active", "revoked"], "type": "string" },
+                                  "workspaceGrant": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "expiresAt": {
+                                        "format": "date-time",
+                                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                                        "type": "string"
+                                      },
+                                      "grantRef": {
+                                        "maxLength": 256,
+                                        "minLength": 1,
+                                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                        "type": "string"
+                                      },
+                                      "revision": {
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 9007199254740991,
+                                        "type": "integer"
+                                      },
+                                      "status": { "enum": ["active", "revoked"], "type": "string" }
+                                    },
+                                    "required": ["grantRef", "revision", "status", "expiresAt"],
+                                    "type": "object"
+                                  },
+                                  "workspaceId": {}
+                                },
+                                "required": [
+                                  "connectionRef",
+                                  "revision",
+                                  "workspaceId",
+                                  "ownerRef",
+                                  "credentialRef",
+                                  "credentialRevision",
+                                  "provider",
+                                  "accountRef",
+                                  "authKind",
+                                  "fundingSource",
+                                  "status",
+                                  "models",
+                                  "workspaceGrant"
+                                ],
+                                "type": "object"
+                              },
+                              "models": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "providerModel": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    },
+                                    "readiness": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "ready": { "type": "boolean" },
+                                        "reasonCode": {
+                                          "enum": [
+                                            "READY",
+                                            "CONNECTION_MISSING",
+                                            "CONNECTION_REVOKED",
+                                            "CREDENTIAL_MISSING",
+                                            "CREDENTIAL_EXPIRED",
+                                            "CREDENTIAL_REVOKED",
+                                            "CREDENTIAL_REVISION_CHANGED",
+                                            "WORKSPACE_GRANT_EXPIRED",
+                                            "WORKSPACE_GRANT_REVOKED",
+                                            "SELECTION_CHANGED",
+                                            "MODEL_UNAVAILABLE",
+                                            "QUOTA_EXHAUSTED",
+                                            "INCOMPATIBLE_HARNESS",
+                                            "INCOMPATIBLE_LOCATION",
+                                            "AUTH_MODE_UNSUPPORTED",
+                                            "PROVIDER_POLICY_DENIED",
+                                            "READINESS_UNAVAILABLE"
+                                          ],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": ["ready", "reasonCode"],
+                                      "type": "object"
+                                    }
+                                  },
+                                  "required": ["providerModel", "readiness"],
+                                  "type": "object"
+                                },
+                                "maxItems": 256,
+                                "type": "array"
+                              }
+                            },
+                            "required": ["connection", "models"],
+                            "type": "object"
+                          },
+                          "maxItems": 128,
+                          "type": "array"
+                        }
+                      },
+                      "required": ["connections"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "class": {
+                          "enum": [
+                            "validation",
+                            "authentication",
+                            "authorization",
+                            "conflict",
+                            "stale_reference",
+                            "capability_mismatch",
+                            "runtime_unavailable",
+                            "internal"
+                          ],
+                          "type": "string"
+                        },
+                        "code": {
+                          "maxLength": 96,
+                          "minLength": 1,
+                          "pattern": "^[A-Z][A-Z0-9_]*$",
+                          "type": "string"
+                        },
+                        "details": {
+                          "additionalProperties": {},
+                          "propertyNames": { "maxLength": 64, "type": "string" },
+                          "type": "object"
+                        },
+                        "message": { "maxLength": 512, "minLength": 1, "type": "string" },
+                        "remediation": { "maxLength": 256, "minLength": 1, "type": "string" },
+                        "retryable": { "type": "boolean" },
+                        "source": {
+                          "enum": [
+                            "client",
+                            "auth",
+                            "policy",
+                            "runtime",
+                            "provider",
+                            "persistence",
+                            "workflow",
+                            "system"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["class", "code", "message", "retryable", "source"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "error"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Normalized error response"
+          }
+        },
+        "security": [{ "serviceBearer": [] }]
+      }
+    },
+    "/v1/model-connections/revoke": {
+      "post": {
+        "operationId": "model-connections.revoke",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "caller": {
+                    "properties": {
+                      "servicePrincipalId": {
+                        "maxLength": 64,
+                        "minLength": 5,
+                        "pattern": "^svc_[a-z][a-z0-9-]*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": ["servicePrincipalId"],
+                    "type": "object"
+                  },
+                  "commandId": { "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "contractVersion": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "major": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                    },
+                    "required": ["major", "minor"],
+                    "type": "object"
+                  },
+                  "correlation": {
+                    "properties": {
+                      "causationCommandId": {
+                        "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "parentEventId": {
+                        "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "traceId": { "pattern": "^trc_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                    },
+                    "required": ["traceId"],
+                    "type": "object"
+                  },
+                  "idempotencyKey": {
+                    "maxLength": 128,
+                    "minLength": 16,
+                    "pattern": "^[A-Za-z0-9._:-]+$",
+                    "type": "string"
+                  },
+                  "issuedAt": {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                    "type": "string"
+                  },
+                  "operation": { "const": "model-connections.revoke", "type": "string" },
+                  "payload": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "connectionRef": { "pattern": "^mconn_[a-f0-9]{32}$", "type": "string" },
+                      "expectedRevision": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    },
+                    "required": ["connectionRef", "expectedRevision"],
+                    "type": "object"
+                  },
+                  "payloadHash": { "pattern": "^[a-f0-9]{64}$", "type": "string" },
+                  "requestId": { "pattern": "^req_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "workspaceId": { "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                },
+                "required": [
+                  "caller",
+                  "contractVersion",
+                  "requestId",
+                  "workspaceId",
+                  "correlation",
+                  "commandId",
+                  "idempotencyKey",
+                  "payloadHash",
+                  "operation",
+                  "issuedAt",
+                  "payload"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "connection": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "accountRef": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                              "type": "string"
+                            },
+                            "authKind": {
+                              "enum": ["api_key", "provider_subscription", "local_runtime"],
+                              "type": "string"
+                            },
+                            "connectionRef": {
+                              "pattern": "^mconn_[a-f0-9]{32}$",
+                              "type": "string"
+                            },
+                            "credentialRef": {},
+                            "credentialRevision": {
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "fundingSource": {
+                              "enum": ["hq_managed", "external_subscription", "byo_api"],
+                              "type": "string"
+                            },
+                            "models": {
+                              "items": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                "type": "string"
+                              },
+                              "maxItems": 256,
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "ownerRef": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                              "type": "string"
+                            },
+                            "provider": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[a-z][a-z0-9.-]*$",
+                              "type": "string"
+                            },
+                            "revision": {
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "status": { "enum": ["active", "revoked"], "type": "string" },
+                            "workspaceGrant": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "expiresAt": {
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                                  "type": "string"
+                                },
+                                "grantRef": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991,
+                                  "type": "integer"
+                                },
+                                "status": { "enum": ["active", "revoked"], "type": "string" }
+                              },
+                              "required": ["grantRef", "revision", "status", "expiresAt"],
+                              "type": "object"
+                            },
+                            "workspaceId": {}
+                          },
+                          "required": [
+                            "connectionRef",
+                            "revision",
+                            "workspaceId",
+                            "ownerRef",
+                            "credentialRef",
+                            "credentialRevision",
+                            "provider",
+                            "accountRef",
+                            "authKind",
+                            "fundingSource",
+                            "status",
+                            "models",
+                            "workspaceGrant"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": ["connection"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "class": {
+                          "enum": [
+                            "validation",
+                            "authentication",
+                            "authorization",
+                            "conflict",
+                            "stale_reference",
+                            "capability_mismatch",
+                            "runtime_unavailable",
+                            "internal"
+                          ],
+                          "type": "string"
+                        },
+                        "code": {
+                          "maxLength": 96,
+                          "minLength": 1,
+                          "pattern": "^[A-Z][A-Z0-9_]*$",
+                          "type": "string"
+                        },
+                        "details": {
+                          "additionalProperties": {},
+                          "propertyNames": { "maxLength": 64, "type": "string" },
+                          "type": "object"
+                        },
+                        "message": { "maxLength": 512, "minLength": 1, "type": "string" },
+                        "remediation": { "maxLength": 256, "minLength": 1, "type": "string" },
+                        "retryable": { "type": "boolean" },
+                        "source": {
+                          "enum": [
+                            "client",
+                            "auth",
+                            "policy",
+                            "runtime",
+                            "provider",
+                            "persistence",
+                            "workflow",
+                            "system"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["class", "code", "message", "retryable", "source"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "error"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Normalized error response"
+          }
+        },
+        "security": [{ "serviceBearer": [] }]
+      }
+    },
+    "/v1/model-connections/selection/resolve": {
+      "post": {
+        "operationId": "model-selection.resolve",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "caller": {
+                    "properties": {
+                      "servicePrincipalId": {
+                        "maxLength": 64,
+                        "minLength": 5,
+                        "pattern": "^svc_[a-z][a-z0-9-]*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": ["servicePrincipalId"],
+                    "type": "object"
+                  },
+                  "contractVersion": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "major": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                    },
+                    "required": ["major", "minor"],
+                    "type": "object"
+                  },
+                  "correlation": {
+                    "properties": {
+                      "causationCommandId": {
+                        "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "parentEventId": {
+                        "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "traceId": { "pattern": "^trc_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                    },
+                    "required": ["traceId"],
+                    "type": "object"
+                  },
+                  "operation": { "const": "model-selection.resolve", "type": "string" },
+                  "parameters": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "override": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "connectionRef": { "pattern": "^mconn_[a-f0-9]{32}$", "type": "string" },
+                          "providerModel": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": ["connectionRef", "providerModel"],
+                        "type": "object"
+                      },
+                      "role": { "enum": ["lead", "child", "direct"], "type": "string" },
+                      "target": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "harness": {
+                            "enum": ["pi", "pi_durable", "cloudflare_agents", "acp"],
+                            "type": "string"
+                          },
+                          "harnessVersion": {
+                            "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                            "type": "string"
+                          },
+                          "location": {
+                            "enum": ["local_device", "remote_host", "agent_hq_cloud"],
+                            "type": "string"
+                          },
+                          "providerBinding": {
+                            "enum": [
+                              "pi_model_runtime",
+                              "pi_durable_models",
+                              "cloudflare_binding",
+                              "native_harness"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": ["location", "harness", "harnessVersion", "providerBinding"],
+                        "type": "object"
+                      }
+                    },
+                    "required": ["role", "target"],
+                    "type": "object"
+                  },
+                  "requestId": { "pattern": "^req_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "requestedAt": {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                    "type": "string"
+                  },
+                  "workspaceId": { "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                },
+                "required": [
+                  "caller",
+                  "contractVersion",
+                  "requestId",
+                  "workspaceId",
+                  "correlation",
+                  "operation",
+                  "requestedAt",
+                  "parameters"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "selection": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "accountRef": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                              "type": "string"
+                            },
+                            "authKind": {
+                              "enum": ["api_key", "provider_subscription", "local_runtime"],
+                              "type": "string"
+                            },
+                            "configurationRevision": {
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "connectionRef": {
+                              "pattern": "^mconn_[a-f0-9]{32}$",
+                              "type": "string"
+                            },
+                            "connectionRevision": {
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "credentialRef": {},
+                            "credentialRevision": {
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "fundingSource": {
+                              "enum": ["hq_managed", "external_subscription", "byo_api"],
+                              "type": "string"
+                            },
+                            "harness": {
+                              "enum": ["pi", "pi_durable", "cloudflare_agents", "acp"],
+                              "type": "string"
+                            },
+                            "harnessVersion": {
+                              "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                              "type": "string"
+                            },
+                            "location": {
+                              "enum": ["local_device", "remote_host", "agent_hq_cloud"],
+                              "type": "string"
+                            },
+                            "provider": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[a-z][a-z0-9.-]*$",
+                              "type": "string"
+                            },
+                            "providerBinding": {
+                              "enum": [
+                                "pi_model_runtime",
+                                "pi_durable_models",
+                                "cloudflare_binding",
+                                "native_harness"
+                              ],
+                              "type": "string"
+                            },
+                            "providerModel": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                              "type": "string"
+                            },
+                            "schemaVersion": { "const": "model-selection/v1", "type": "string" },
+                            "selectionRef": { "pattern": "^msel_[a-f0-9]{32}$", "type": "string" },
+                            "selectionRevision": {
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "workspaceGrant": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "grantRef": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": ["grantRef", "revision"],
+                              "type": "object"
+                            },
+                            "workspaceId": {}
+                          },
+                          "required": [
+                            "schemaVersion",
+                            "selectionRef",
+                            "selectionRevision",
+                            "workspaceId",
+                            "connectionRef",
+                            "connectionRevision",
+                            "credentialRef",
+                            "credentialRevision",
+                            "provider",
+                            "accountRef",
+                            "authKind",
+                            "fundingSource",
+                            "providerModel",
+                            "location",
+                            "harness",
+                            "harnessVersion",
+                            "providerBinding",
+                            "workspaceGrant",
+                            "configurationRevision"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": ["selection"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "class": {
+                          "enum": [
+                            "validation",
+                            "authentication",
+                            "authorization",
+                            "conflict",
+                            "stale_reference",
+                            "capability_mismatch",
+                            "runtime_unavailable",
+                            "internal"
+                          ],
+                          "type": "string"
+                        },
+                        "code": {
+                          "maxLength": 96,
+                          "minLength": 1,
+                          "pattern": "^[A-Z][A-Z0-9_]*$",
+                          "type": "string"
+                        },
+                        "details": {
+                          "additionalProperties": {},
+                          "propertyNames": { "maxLength": 64, "type": "string" },
+                          "type": "object"
+                        },
+                        "message": { "maxLength": 512, "minLength": 1, "type": "string" },
+                        "remediation": { "maxLength": 256, "minLength": 1, "type": "string" },
+                        "retryable": { "type": "boolean" },
+                        "source": {
+                          "enum": [
+                            "client",
+                            "auth",
+                            "policy",
+                            "runtime",
+                            "provider",
+                            "persistence",
+                            "workflow",
+                            "system"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["class", "code", "message", "retryable", "source"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "error"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Normalized error response"
+          }
+        },
+        "security": [{ "serviceBearer": [] }]
+      }
+    },
     "/v1/profiles/resolve": {
       "post": {
         "operationId": "profile.resolve",

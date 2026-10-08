@@ -196,6 +196,36 @@ async function fixture(fetch, overrides = {}) {
 }
 
 describe('ledger LiteLLM physical HTTP sends', () => {
+  test('paid BYO physical sends require recorded monetary authority and retain truthful provenance', async () => {
+    let sends = 0
+    const f = await fixture(
+      async () => {
+        sends++
+        return response()
+      },
+      { fundingSource: 'byo_api' }
+    )
+    const selectedInput = input({
+      context: {
+        request: { ...request, fundingSource: 'byo_api' },
+        deployment: { ...deployment, fundingSource: 'byo_api' },
+      },
+    })
+    await f.client.complete(selectedInput)
+    expect(sends).toBe(1)
+    expect(
+      (await f.ledger.publicSummary(workspaceId, executionId)).funding.byoApiMicrounits
+    ).toBeGreaterThan(0)
+    const denied = await fixture(
+      async () => {
+        sends++
+        return response()
+      },
+      { fundingSource: 'byo_api', maximumMicrounits: 999 }
+    )
+    await expect(denied.client.complete(selectedInput)).rejects.toThrow()
+    expect(sends).toBe(1)
+  })
   test.each(['disconnect', 'shutdown', 'timeout'])(
     'native %s aborts an active physical stream and retains its hold',
     async (action) => {

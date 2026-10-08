@@ -1,4 +1,16 @@
 import {
+  ModelConnectionCreateRequestSchema,
+  ModelConnectionListRequestSchema,
+  ModelConnectionListResponseSchema,
+  ModelConnectionResponseSchema,
+  ModelConnectionRevokeRequestSchema,
+  ModelDefaultsGetRequestSchema,
+  ModelDefaultsResponseSchema,
+  ModelDefaultsSetRequestSchema,
+  ModelSelectionResolveRequestSchema,
+  ModelSelectionResponseSchema,
+} from '@control-plane/contracts'
+import {
   CredentialCreateRequestSchema,
   CredentialGetRequestSchema,
   CredentialListRequestSchema,
@@ -70,6 +82,49 @@ import {
 } from '@control-plane/contracts'
 
 export const ControlApiOperations = Object.freeze({
+  createModelConnection: {
+    operation: 'model-connections.create',
+    method: 'POST',
+    path: '/v1/model-connections/create',
+    requestSchema: ModelConnectionCreateRequestSchema,
+    responseSchema: ModelConnectionResponseSchema,
+  },
+  revokeModelConnection: {
+    operation: 'model-connections.revoke',
+    method: 'POST',
+    path: '/v1/model-connections/revoke',
+    requestSchema: ModelConnectionRevokeRequestSchema,
+    responseSchema: ModelConnectionResponseSchema,
+  },
+  listModelConnections: {
+    operation: 'model-connections.list',
+    method: 'POST',
+    path: '/v1/model-connections/list',
+    requestSchema: ModelConnectionListRequestSchema,
+    responseSchema: ModelConnectionListResponseSchema,
+  },
+  getModelDefaults: {
+    operation: 'model-defaults.get',
+    method: 'POST',
+    path: '/v1/model-connections/defaults/get',
+    requestSchema: ModelDefaultsGetRequestSchema,
+    responseSchema: ModelDefaultsResponseSchema,
+  },
+  setModelDefaults: {
+    operation: 'model-defaults.set',
+    method: 'POST',
+    path: '/v1/model-connections/defaults/set',
+    requestSchema: ModelDefaultsSetRequestSchema,
+    responseSchema: ModelDefaultsResponseSchema,
+  },
+  resolveModelSelection: {
+    operation: 'model-selection.resolve',
+    method: 'POST',
+    path: '/v1/model-connections/selection/resolve',
+    requestSchema: ModelSelectionResolveRequestSchema,
+    responseSchema: ModelSelectionResponseSchema,
+  },
+
   createCredential: {
     operation: 'credential.create',
     method: 'POST',

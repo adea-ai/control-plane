@@ -28,6 +28,7 @@ export const usageLedgerEntryKind = pgEnum('usage_ledger_entry_kind', [
 export const usageFundingSource = pgEnum('usage_funding_source', [
   'hq_managed',
   'external_subscription',
+  'byo_api',
 ])
 
 export const usageLedgerEntries = pgTable(

@@ -126,7 +126,8 @@ export async function createManagedPiModelConnection(
     at < Date.parse(price.validFrom) ||
     at >= Date.parse(price.validUntil) ||
     grant.maximumTokens < budget.maximumTokens ||
-    (grant.fundingSource === 'hq_managed' && grant.maximumMicrounits < budget.maximumMicrounits)
+    (grant.fundingSource !== 'external_subscription' &&
+      grant.maximumMicrounits < budget.maximumMicrounits)
   )
     throw new Error('MANAGED_PI_MODEL_SPENDING_DENIED')
   assertProxyEndpoint(record.endpoint)

@@ -197,3 +197,18 @@ describe('pinned server model pricing', () => {
     )
   })
 })
+
+test('paid BYO API quote retains nonzero exact price provenance', () => {
+  const price = new PinnedModelPrice(snapshot({ fundingSource: 'byo_api' }), {
+    now: () => '2026-10-07T12:00:00.000Z',
+  })
+  const byoQuote = price.quote({
+    requestDigest: `sha256:${'d'.repeat(64)}`,
+    maximumOutputTokens: 10,
+  })
+  expect(byoQuote.fundingSource).toBe('byo_api')
+  expect(byoQuote.priceUsage({ inputTokens: 10, outputTokens: 2 })).toMatchObject({
+    costExact: true,
+  })
+  expect(byoQuote.maximumMicrounits).toBeGreaterThan(0)
+})

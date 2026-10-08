@@ -204,3 +204,5 @@ export {
   LANGGRAPH_CHECKPOINT_SCHEMA_VERSION,
   verifyLangGraphCheckpointSchema,
 } from './langgraph-checkpoint-schema.js'
+
+export * from './model-selection-repository.js'

@@ -1,3 +1,15 @@
+import type {
+  ModelConnectionCreateRequest,
+  ModelConnectionListRequest,
+  ModelConnectionListResponse,
+  ModelConnectionResponse,
+  ModelConnectionRevokeRequest,
+  ModelDefaultsGetRequest,
+  ModelDefaultsResponse,
+  ModelDefaultsSetRequest,
+  ModelSelectionResolveRequest,
+  ModelSelectionResponse,
+} from '@control-plane/contracts'
 import {
   type CredentialCreateRequest,
   type CredentialGetRequest,
@@ -148,6 +160,30 @@ export class ControlPlaneClient {
     if (!Number.isSafeInteger(this.#timeoutMs) || this.#timeoutMs <= 0) {
       throw new Error('Control Plane client timeout must be a positive integer')
     }
+  }
+
+  createModelConnection(input: ModelConnectionCreateRequest): Promise<ModelConnectionResponse> {
+    return this.#request(ControlApiOperations.createModelConnection, input)
+  }
+
+  revokeModelConnection(input: ModelConnectionRevokeRequest): Promise<ModelConnectionResponse> {
+    return this.#request(ControlApiOperations.revokeModelConnection, input)
+  }
+
+  listModelConnections(input: ModelConnectionListRequest): Promise<ModelConnectionListResponse> {
+    return this.#request(ControlApiOperations.listModelConnections, input)
+  }
+
+  getModelDefaults(input: ModelDefaultsGetRequest): Promise<ModelDefaultsResponse> {
+    return this.#request(ControlApiOperations.getModelDefaults, input)
+  }
+
+  setModelDefaults(input: ModelDefaultsSetRequest): Promise<ModelDefaultsResponse> {
+    return this.#request(ControlApiOperations.setModelDefaults, input)
+  }
+
+  resolveModelSelection(input: ModelSelectionResolveRequest): Promise<ModelSelectionResponse> {
+    return this.#request(ControlApiOperations.resolveModelSelection, input)
   }
 
   /** Sends the secret once; the response carries metadata only. */

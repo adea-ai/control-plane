@@ -49,7 +49,7 @@ export const UsageLedgerEntrySchema = z
       .string()
       .regex(/^sha256:[a-f0-9]{64}$/)
       .optional(),
-    fundingSource: z.enum(['hq_managed', 'external_subscription']),
+    fundingSource: z.enum(['hq_managed', 'external_subscription', 'byo_api']),
     quantity: z
       .object({
         unit: z.enum(['tokens', 'calls', 'milliseconds', 'bytes', 'microunits']),
@@ -270,7 +270,7 @@ export class InMemoryUsageLedger {
       readonly value: number
     }
     readonly costMicrounits: number
-    readonly fundingSource: 'hq_managed' | 'external_subscription'
+    readonly fundingSource: 'hq_managed' | 'external_subscription' | 'byo_api'
   }): UsageLedgerEntry {
     const budget = this.#budget(input.executionId)
     if (budget.workspaceId !== input.workspaceId) throw new UsageLedgerError('BUDGET_NOT_FOUND')
@@ -298,7 +298,7 @@ export class InMemoryUsageLedger {
       {
         ...input,
         currency: budget.currency,
-        costExact: input.fundingSource === 'hq_managed',
+        costExact: input.fundingSource !== 'external_subscription',
       },
       input
     )
@@ -470,6 +470,7 @@ export class InMemoryUsageLedger {
     readonly funding: {
       readonly hqManagedMicrounits: number
       readonly externalSubscriptionEffects: number
+      readonly byoApiMicrounits?: number
     }
     readonly usage: Readonly<Record<string, number>>
     readonly settled: boolean
@@ -482,15 +483,21 @@ export class InMemoryUsageLedger {
     const usage: Record<string, number> = {}
     let hqManagedMicrounits = 0
     let externalSubscriptionEffects = 0
+    let byoApiMicrounits = 0
     for (const entry of billable) {
       usage[entry.quantity.unit] = (usage[entry.quantity.unit] ?? 0) + entry.quantity.value
       if (entry.fundingSource === 'hq_managed') hqManagedMicrounits += entry.costMicrounits
+      else if (entry.fundingSource === 'byo_api') byoApiMicrounits += entry.costMicrounits
       else externalSubscriptionEffects += 1
     }
     return deepFreeze({
       executionId,
       currency: budget.currency,
-      funding: { hqManagedMicrounits, externalSubscriptionEffects },
+      funding: {
+        hqManagedMicrounits,
+        externalSubscriptionEffects,
+        ...(byoApiMicrounits === 0 ? {} : { byoApiMicrounits }),
+      },
       usage,
       settled: budget.settled,
     })

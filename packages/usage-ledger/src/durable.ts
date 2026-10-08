@@ -44,7 +44,7 @@ const ReserveInputSchema = z
 const ModelRequestInputSchema = ReserveInputSchema.extend({
   attemptId: IdentifierSchemas.attemptId,
   modelCallId: IdentifierSchemas.modelCallId,
-  fundingSource: z.enum(['hq_managed', 'external_subscription']),
+  fundingSource: z.enum(['hq_managed', 'external_subscription', 'byo_api']),
   priceSnapshotDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   requestDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
 })
@@ -79,7 +79,7 @@ const ChargeInputSchema = z
       })
       .strict(),
     costMicrounits: AmountSchema,
-    fundingSource: z.enum(['hq_managed', 'external_subscription']),
+    fundingSource: z.enum(['hq_managed', 'external_subscription', 'byo_api']),
     source: DurableUsageSourceSchema,
   })
   .strict()
@@ -137,6 +137,7 @@ const PublicSummarySchema = z
       .object({
         hqManagedMicrounits: AmountSchema,
         externalSubscriptionEffects: AmountSchema,
+        byoApiMicrounits: AmountSchema.optional(),
       })
       .strict(),
     usage: z.record(z.string(), AmountSchema),
@@ -188,7 +189,7 @@ export interface ChargeDurableUsageInput {
     readonly value: number
   }
   readonly costMicrounits: number
-  readonly fundingSource: 'hq_managed' | 'external_subscription'
+  readonly fundingSource: 'hq_managed' | 'external_subscription' | 'byo_api'
   readonly source: DurableUsageSource
 }
 
@@ -425,7 +426,7 @@ export class DurableUsageLedger {
         quantity: data.quantity,
         currency: budget.currency,
         costMicrounits: data.costMicrounits,
-        costExact: data.fundingSource === 'hq_managed',
+        costExact: data.fundingSource !== 'external_subscription',
       })
       await this.#writeMutation(transaction, [budget], [entry])
       return entry
@@ -576,7 +577,7 @@ export class DurableUsageLedger {
             fundingSource: data.fundingSource,
             quantity: { unit: 'microunits', value: data.maximumMicrounits },
             costMicrounits: data.maximumMicrounits,
-            costExact: data.fundingSource === 'hq_managed',
+            costExact: data.fundingSource !== 'external_subscription',
             reservedTokens: data.maximumTokens,
             priceSnapshotDigest: data.priceSnapshotDigest,
             requestDigest: data.requestDigest,
@@ -624,7 +625,7 @@ export class DurableUsageLedger {
       const fields = {
         ...modelEntryScope(budget, reservation, data.modelCallId),
         fundingSource: request.fundingSource,
-        costExact: request.fundingSource === 'hq_managed',
+        costExact: request.fundingSource !== 'external_subscription',
       }
       const charge = this.#makeEntry(budget, data.source, 'settleModelRequest', 'model_usage', {
         ...fields,
@@ -877,6 +878,7 @@ export class DurableUsageLedger {
       const usage: Record<string, number> = {}
       let hqManagedMicrounits = 0
       let externalSubscriptionEffects = 0
+      let byoApiMicrounits = 0
       for (const entry of loaded.entries) {
         if (!BillableKinds.has(entry.kind)) continue
         usage[entry.quantity.unit] = safeAddOrThrow(
@@ -887,6 +889,12 @@ export class DurableUsageLedger {
         if (entry.fundingSource === 'hq_managed') {
           hqManagedMicrounits = safeAddOrThrow(
             hqManagedMicrounits,
+            entry.costMicrounits,
+            'STORE_STATE_INVALID'
+          )
+        } else if (entry.fundingSource === 'byo_api') {
+          byoApiMicrounits = safeAddOrThrow(
+            byoApiMicrounits,
             entry.costMicrounits,
             'STORE_STATE_INVALID'
           )
@@ -901,7 +909,11 @@ export class DurableUsageLedger {
       const result = PublicSummarySchema.parse({
         executionId: loaded.budget.executionId,
         currency: loaded.budget.currency,
-        funding: { hqManagedMicrounits, externalSubscriptionEffects },
+        funding: {
+          hqManagedMicrounits,
+          externalSubscriptionEffects,
+          ...(byoApiMicrounits === 0 ? {} : { byoApiMicrounits }),
+        },
         usage,
         settled: loaded.budget.status === 'settled',
       })
@@ -1212,7 +1224,7 @@ function validateLocalLedger(
     if (
       (entry.fundingSource === 'external_subscription' &&
         (entry.costMicrounits !== 0 || entry.costExact)) ||
-      (entry.fundingSource === 'hq_managed' && !entry.costExact) ||
+      (entry.fundingSource !== 'external_subscription' && !entry.costExact) ||
       (reservation.attemptId !== undefined && entry.attemptId !== reservation.attemptId)
     ) {
       throw usageError('STORE_STATE_INVALID')
@@ -1417,7 +1429,7 @@ function validateModelRequestEntries(
       entry.reservationKey !== request.reservation.reservationKey ||
       entry.attemptId !== request.reservation.attemptId ||
       entry.fundingSource !== request.hold.fundingSource ||
-      entry.costExact !== (request.hold.fundingSource === 'hq_managed')
+      entry.costExact !== (request.hold.fundingSource !== 'external_subscription')
     )
       throw usageError('STORE_STATE_INVALID')
   }

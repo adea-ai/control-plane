@@ -1244,3 +1244,25 @@ describe('durable usage ledger', () => {
     }).toThrow()
   })
 })
+
+test('paid BYO model request survives reopen with exact cost and separate funding summary', async () => {
+  const store = new TransactionalMemoryStore()
+  const ledger = await reservedAttempt(store)
+  await ledger.reserveModelRequest(modelRequest({ fundingSource: 'byo_api' }))
+  const settlement = {
+    workspaceId: ids.workspaceId,
+    executionId: ids.executionId,
+    attemptId: ids.attemptId,
+    reservationKey: attemptReservationKey,
+    modelCallId,
+    costMicrounits: 200,
+    tokens: 20,
+    source: source('byo-settle'),
+  }
+  const charged = await makeLedger(store).settleModelRequest(settlement)
+  expect(charged).toMatchObject({ fundingSource: 'byo_api', costExact: true, costMicrounits: 200 })
+  expect(await makeLedger(store).settleModelRequest(settlement)).toEqual(charged)
+  expect((await makeLedger(store).publicSummary(ids.workspaceId, ids.executionId)).funding).toEqual(
+    { hqManagedMicrounits: 0, externalSubscriptionEffects: 0, byoApiMicrounits: 200 }
+  )
+})

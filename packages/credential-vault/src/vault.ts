@@ -285,6 +285,7 @@ export class CredentialVault {
   async lease(input: {
     readonly credentialLeaseId: string
     readonly credentialId: string
+    readonly expectedCredentialRevision?: number
     readonly requestId: string
     readonly workspaceId: string
     readonly principalRef: string
@@ -300,6 +301,11 @@ export class CredentialVault {
     if (metadata.status === 'revoked') fail('CREDENTIAL_REVOKED')
     if (metadata.status === 'expired') fail('CREDENTIAL_EXPIRED')
     if (metadata.status === 'secret_required') fail('CREDENTIAL_SECRET_REQUIRED')
+    if (
+      input.expectedCredentialRevision !== undefined &&
+      input.expectedCredentialRevision !== metadata.revision
+    )
+      fail('CREDENTIAL_REVISION_CONFLICT')
     if (metadata.workspaceId !== input.workspaceId) fail('LEASE_SCOPE_MISMATCH')
     const issuedAt = TimestampSchema.parse(this.#now())
     const requestedAt = TimestampSchema.parse(input.requestedAt)
@@ -415,7 +421,9 @@ export class CredentialVault {
       fail('LEASE_EXPIRED')
     }
     const credential = await this.#credential(lease.credentialId)
-    if (credential.metadata.status === 'revoked') fail('CREDENTIAL_REVOKED')
+    const effective = this.#effective(credential.metadata)
+    if (effective.status === 'revoked') fail('CREDENTIAL_REVOKED')
+    if (effective.status === 'expired') fail('CREDENTIAL_EXPIRED')
     if (
       lease.workspaceId !== scope.workspaceId ||
       credential.metadata.workspaceId !== scope.workspaceId ||

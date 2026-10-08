@@ -79,6 +79,7 @@ export const INTEGRATION_SHARDS = [
           'src/project-state-initialization.integration.test.mjs',
           'src/workspace-catalog.integration.test.mjs',
           'src/credential-vault-repository.integration.test.mjs',
+          'src/model-selection-repository.integration.test.mjs',
           'src/hosted-graph-operations.integration.test.mjs',
           'src/retention-hold-operator.integration.test.mjs',
           'src/retention-hold-repository.integration.test.mjs',
