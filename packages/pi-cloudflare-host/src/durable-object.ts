@@ -4,7 +4,7 @@ import type {
   RuntimeStartRequest,
   RuntimeSessionOperation,
 } from '@control-plane/runtime-sdk'
-import { RuntimeSessionOperationSchema } from '@control-plane/runtime-sdk'
+import { RuntimeAdapterError, RuntimeSessionOperationSchema } from '@control-plane/runtime-sdk'
 import type { DurableObjectSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/cloudflare'
 import type { CloudflareReconciliationAuthority } from './reconciliation.js'
 import {
@@ -19,6 +19,12 @@ import { CloudflarePiHost } from './host.js'
 import type { CloudflareCurrentAuthority, CloudflarePiEngine } from './host.js'
 import { CloudflareOwnerJournal } from './owner.js'
 import type { CloudflareOwnerPins, CloudflareOwnerStorage } from './owner.js'
+import {
+  assertCloudflareTaskCompatibility,
+  pinCloudflareTaskCatalog,
+} from './task-compatibility.js'
+import type { CloudflareNativeTaskCatalog } from './task-compatibility.js'
+import type { RegistryReader } from '@earendil-works/pi-durable'
 import { openCloudflarePiStorage } from './storage.js'
 
 export interface CloudflareOwnerContext {
@@ -32,10 +38,12 @@ export interface CloudflareOwnerBindings {
   readonly pins: CloudflareOwnerPins
   readonly reconciliation?: CloudflareReconciliationAuthority
   readonly sessionAuthority?: CloudflareSessionAuthority
+  readonly nativeTaskCatalog?: CloudflareNativeTaskCatalog
   readonly authority: CloudflareCurrentAuthority
   readonly now: () => number
   readonly openEngine: (
-    storage: Awaited<ReturnType<typeof openCloudflarePiStorage>>
+    storage: Awaited<ReturnType<typeof openCloudflarePiStorage>>,
+    registry: RegistryReader
   ) => Promise<CloudflarePiEngine>
 }
 
@@ -52,6 +60,9 @@ export class CloudflarePiDurableOwner {
     private readonly bindings: CloudflareOwnerBindings
   ) {
     const pins = Object.freeze({ ...bindings.pins })
+    const catalog = bindings.nativeTaskCatalog
+      ? pinCloudflareTaskCatalog(bindings.nativeTaskCatalog, pins)
+      : undefined
     this.ready = context.blockConcurrencyWhile(async () => {
       const journal = new CloudflareOwnerJournal(context.storage, pins, bindings.now)
       // On every constructor reentry, repair persisted wake intent before serving events.
@@ -60,10 +71,24 @@ export class CloudflarePiDurableOwner {
         journal,
         pins,
         bindings.authority,
-        async () => {
+        async (_task, beforeEffect) => {
+          if (!catalog)
+            throw new RuntimeAdapterError({
+              code: 'CLOUDFLARE_TASK_CATALOG_UNAVAILABLE',
+              classification: 'unsupported',
+              message: 'CLOUDFLARE_TASK_CATALOG_UNAVAILABLE',
+              retryable: false,
+            })
           const storage = await openCloudflarePiStorage(context.storage)
           try {
-            const engine = await bindings.openEngine(storage)
+            await assertCloudflareTaskCompatibility(
+              storage,
+              catalog,
+              beforeEffect,
+              bindings.context
+            )
+            await beforeEffect()
+            const engine = await bindings.openEngine(storage, catalog.registry)
             return {
               run: (task, effect) => engine.run(task, effect),
               close: async () => {

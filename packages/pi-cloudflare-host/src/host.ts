@@ -38,7 +38,10 @@ export class CloudflarePiHost {
     private readonly journal: CloudflareOwnerJournal,
     pins: CloudflareOwnerPins,
     private readonly authority: CloudflareCurrentAuthority,
-    private readonly openEngine: () => Promise<CloudflarePiEngine>,
+    private readonly openEngine: (
+      task: CloudflareAcceptedTask,
+      beforeEffect: () => Promise<void>
+    ) => Promise<CloudflarePiEngine>,
     private readonly reconciliation?: CloudflareReconciliationAuthority
   ) {
     this.journal.assertPins(pins)
@@ -116,7 +119,7 @@ export class CloudflarePiHost {
     let engine: CloudflarePiEngine | undefined
     try {
       await this.assertEffect(current.task)
-      engine = await this.openEngine()
+      engine = await this.openEngine(current.task, () => this.assertEffect(current.task))
       await this.assertEffect(current.task)
       const result = RuntimeExecutionResultSchema.parse(
         await engine.run(current.task, () => this.assertEffect(current.task))
