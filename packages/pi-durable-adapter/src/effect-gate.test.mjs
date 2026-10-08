@@ -18,8 +18,12 @@ import { InMemoryInteractionRepository, InteractionService } from '@control-plan
 import { PiDurableEffectGate, SqliteDurableEffectGateStore } from './effect-gate.ts'
 
 const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
-const at = '2026-10-08T09:00:00.000Z'
-const expiry = '2026-10-08T10:00:00.000Z'
+// ToolGateway intentionally uses wall time for grant expiry; keep valid fixture
+// evidence relative to this run while advancing only the gate clock for expiry faults.
+const admittedAt = Date.now()
+const at = new Date(admittedAt).toISOString()
+const expiry = new Date(admittedAt + 60 * 60 * 1000).toISOString()
+const changedExpiry = new Date(admittedAt + 2 * 60 * 60 * 1000).toISOString()
 const request = (changes = {}) => ({
   requestId: id('req'),
   toolCallId: id('tlc'),
@@ -456,9 +460,9 @@ describe('persistent Pi governed effect gate', () => {
         { operation: 'read' },
         { toolVersionId: id('tlv').replace(/G$/, 'H') },
         { audit: { ...original.audit, principalRef: 'principal:attacker' } },
-        { grant: { ...original.grant, expiresAt: '2026-10-09T10:00:00.000Z' } },
+        { grant: { ...original.grant, expiresAt: changedExpiry } },
         { approval: { ...original.approval, allowedPrincipalIds: ['principal:attacker'] } },
-        { approval: { ...original.approval, expiresAt: '2026-10-09T10:00:00.000Z' } },
+        { approval: { ...original.approval, expiresAt: changedExpiry } },
         { approval: { ...original.approval, interactionId: id('int').replace(/G$/, 'H') } },
       ])
         await expect(gate.execute(request(changes))).rejects.toThrow('PI_EFFECT_IDENTITY_CONFLICT')
