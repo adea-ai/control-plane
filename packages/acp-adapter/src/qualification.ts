@@ -110,10 +110,27 @@ export const ExecutorObservationSchema = z.strictObject({
 export type ExecutorObservation = z.output<typeof ExecutorObservationSchema>
 
 /**
+ * Route fields that decide evidence-to-observation route identity, in the
+ * fixed precedence used to attribute a typed denial when no record matches the
+ * requested route. The order is content-based: evidence array order never
+ * decides authorization.
+ */
+const routeDriftFieldPrecedence = [
+  'authentication',
+  'harnessVersion',
+  'location',
+  'nativeInstallation',
+  'configurationDigest',
+] as const
+type RouteDriftField = (typeof routeDriftFieldPrecedence)[number]
+
+/**
  * Typed fail-closed reasons. `evidence_missing`, `evidence_expired`,
  * `evidence_revoked` and `evidence_mismatch` cover missing, stale, revoked and
- * drifted evidence; the transport reasons are local denials that never suggest
- * or enable a cloud reroute (`fallback: 'none'`).
+ * drifted evidence; `evidence_conflict` denies evidence records contending for
+ * the same route identity, in every array order; the transport reasons are
+ * local denials that never suggest or enable a cloud reroute
+ * (`fallback: 'none'`).
  */
 export type ExecutorQualificationFailure =
   | { readonly reason: 'evidence_invalid'; readonly detail: string }
@@ -122,14 +139,10 @@ export type ExecutorQualificationFailure =
   | { readonly reason: 'evidence_revoked'; readonly revokedAt: string }
   | {
       readonly reason: 'evidence_mismatch'
-      readonly field:
-        | 'harnessVersion'
-        | 'location'
-        | 'nativeInstallation'
-        | 'configurationDigest'
-        | 'deploymentPin'
+      readonly field: Exclude<RouteDriftField, 'authentication'> | 'deploymentPin'
       readonly detail: string
     }
+  | { readonly reason: 'evidence_conflict'; readonly detail: string }
   | { readonly reason: 'auth_unsupported'; readonly authentication: AuthenticationMode }
   | { readonly reason: 'location_unauthorized'; readonly location: ExecutionLocation }
   | { readonly reason: 'transport_offline'; readonly fallback: 'none' }
@@ -189,6 +202,89 @@ function nativeInstallationMatches(
   )
 }
 
+const routeDriftDetails: Record<Exclude<RouteDriftField, 'authentication'>, string> = {
+  harnessVersion: 'HARNESS_VERSION_CHANGED',
+  location: 'EXECUTION_LOCATION_CHANGED',
+  nativeInstallation: 'NATIVE_INSTALLATION_CHANGED',
+  configurationDigest: 'CONFIGURATION_DIGEST_CHANGED',
+}
+
+/** Route fields in which one evidence record differs from the observation, in fixed precedence order. */
+function routeDriftFields(
+  record: ExecutorQualificationEvidence,
+  observed: ExecutorObservation
+): RouteDriftField[] {
+  return routeDriftFieldPrecedence.filter((field) =>
+    routeDriftFieldDiffers(record, observed, field)
+  )
+}
+
+function routeDriftFieldDiffers(
+  record: ExecutorQualificationEvidence,
+  observed: ExecutorObservation,
+  field: RouteDriftField
+): boolean {
+  switch (field) {
+    case 'authentication':
+      return record.authentication !== observed.authentication
+    case 'harnessVersion':
+      return record.harnessVersion !== observed.harnessVersion
+    case 'location':
+      return record.location !== observed.location
+    case 'nativeInstallation':
+      return !nativeInstallationMatches(record.nativeInstallation, observed.nativeInstallation)
+    case 'configurationDigest':
+      return record.configurationDigest !== observed.configurationDigest
+  }
+}
+
+/**
+ * Full requested-route identity: authentication mode, harness build, execution
+ * location, native installation and configuration bindings must all equal the
+ * observation for a record to govern it.
+ */
+function routeMatches(
+  record: ExecutorQualificationEvidence,
+  observed: ExecutorObservation
+): boolean {
+  return routeDriftFieldPrecedence.every(
+    (field) => !routeDriftFieldDiffers(record, observed, field)
+  )
+}
+
+/**
+ * Attribute the typed denial for an observation no evidence record matches.
+ * Candidates are ranked by how few route fields differ, then the field is
+ * chosen by fixed precedence, so the reported reason depends only on record
+ * content — never on evidence array order.
+ */
+function attributeRouteDenial(
+  candidates: readonly ExecutorQualificationEvidence[],
+  observed: ExecutorObservation
+): ExecutorQualificationFailure {
+  const driftSets = candidates.map((candidate) => routeDriftFields(candidate, observed))
+  const closest = Math.min(...driftSets.map((fields) => fields.length))
+  for (const field of routeDriftFieldPrecedence) {
+    if (!driftSets.some((fields) => fields.length === closest && fields.includes(field))) continue
+    if (field === 'authentication') {
+      // Only executor-owned credentials qualify; cloud vaults and delegated
+      // sessions never do, whatever the evidence claims.
+      return { reason: 'auth_unsupported', authentication: observed.authentication }
+    }
+    if (
+      field === 'location' &&
+      (observed.location === 'agent_hq_cloud' ||
+        candidates.some((candidate) => candidate.location === 'agent_hq_cloud'))
+    ) {
+      return { reason: 'location_unauthorized', location: observed.location }
+    }
+    return { reason: 'evidence_mismatch', field, detail: routeDriftDetails[field] }
+  }
+  // Unreachable in practice: same-harness candidates existed and none matched
+  // the route, so some precedence field always differs. Kept fail-closed.
+  return { reason: 'evidence_conflict', detail: 'EVIDENCE_ROUTE_CONTENTION' }
+}
+
 /**
  * Fail-closed executor qualification evaluator. Evidence records are parsed
  * once at construction (malformed trusted evidence throws); observations are
@@ -221,25 +317,38 @@ export class ExecutorQualificationEvaluator {
     if (observed.transport === 'revoked') {
       return { ...unqualified, failure: { reason: 'transport_revoked', fallback: 'none' } }
     }
-    const record = this.#records.find((candidate) => candidate.harness === observed.harness)
-    if (!record)
+    // Evidence selection matches the FULL requested route identity —
+    // authentication mode, harness build, execution location, native
+    // installation and configuration bindings — so distinct legitimate routes
+    // stay independently evaluable and array order never decides authorization.
+    const sameHarness = this.#records.filter((candidate) => candidate.harness === observed.harness)
+    if (sameHarness.length === 0) {
       return { ...unqualified, failure: { reason: 'evidence_missing', harness: observed.harness } }
-    // Only executor-owned credentials qualify; cloud vaults and delegated
-    // sessions never do, whatever the evidence claims.
-    if (
-      record.authentication !== 'native_owned' ||
-      observed.authentication !== record.authentication
-    ) {
+    }
+    const matching = sameHarness.filter((candidate) => routeMatches(candidate, observed))
+    // Records contending for one route identity are a deployment-evidence
+    // conflict: deny in every order rather than letting array order pick a
+    // winner.
+    if (matching.length > 1) {
+      return {
+        ...unqualified,
+        failure: { reason: 'evidence_conflict', detail: 'EVIDENCE_ROUTE_CONTENTION' },
+      }
+    }
+    const record = matching[0]
+    if (!record) {
+      return { ...unqualified, failure: attributeRouteDenial(sameHarness, observed) }
+    }
+    // Route matching already aligned authentication and location with the
+    // observation; the hard semantic denials are re-checked on the governing
+    // record so only `native_owned`, deployment-authorized routes can proceed.
+    if (record.authentication !== 'native_owned') {
       return {
         ...unqualified,
         failure: { reason: 'auth_unsupported', authentication: observed.authentication },
       }
     }
-    if (
-      !record.deploymentAuthorized ||
-      record.location === 'agent_hq_cloud' ||
-      observed.location === 'agent_hq_cloud'
-    ) {
+    if (!record.deploymentAuthorized || record.location === 'agent_hq_cloud') {
       return {
         ...unqualified,
         failure: { reason: 'location_unauthorized', location: observed.location },
@@ -256,47 +365,6 @@ export class ExecutorQualificationEvaluator {
       return {
         ...unqualified,
         failure: { reason: 'evidence_expired', expiredAt: record.validUntil },
-      }
-    }
-    // Native configuration drift against the qualified evidence fails closed.
-    if (observed.harnessVersion !== record.harnessVersion) {
-      return {
-        ...unqualified,
-        failure: {
-          reason: 'evidence_mismatch',
-          field: 'harnessVersion',
-          detail: 'HARNESS_VERSION_CHANGED',
-        },
-      }
-    }
-    if (observed.location !== record.location) {
-      return {
-        ...unqualified,
-        failure: {
-          reason: 'evidence_mismatch',
-          field: 'location',
-          detail: 'EXECUTION_LOCATION_CHANGED',
-        },
-      }
-    }
-    if (!nativeInstallationMatches(observed.nativeInstallation, record.nativeInstallation)) {
-      return {
-        ...unqualified,
-        failure: {
-          reason: 'evidence_mismatch',
-          field: 'nativeInstallation',
-          detail: 'NATIVE_INSTALLATION_CHANGED',
-        },
-      }
-    }
-    if (observed.configurationDigest !== record.configurationDigest) {
-      return {
-        ...unqualified,
-        failure: {
-          reason: 'evidence_mismatch',
-          field: 'configurationDigest',
-          detail: 'CONFIGURATION_DIGEST_CHANGED',
-        },
       }
     }
     // The codex route additionally must match the pinned ACP build exactly;

@@ -14,10 +14,18 @@ keys.
 - Fail-closed typed reasons (`ExecutorQualificationFailure`): `evidence_invalid`,
   `evidence_missing`, `evidence_expired`, `evidence_revoked`, `evidence_mismatch`
   (version, location, native-installation or configuration-digest drift, and
-  codex deployment-pin drift), `auth_unsupported`, `location_unauthorized`,
-  `transport_offline`, `transport_revoked`. Every failure yields empty
-  capability/governed-path allow-lists and `usageReporting: false`; nothing
-  defaults to permissive.
+  codex deployment-pin drift), `evidence_conflict` (multiple evidence records
+  contending for the same route identity), `auth_unsupported`,
+  `location_unauthorized`, `transport_offline`, `transport_revoked`. Every
+  failure yields empty capability/governed-path allow-lists and
+  `usageReporting: false`; nothing defaults to permissive.
+- Evidence is selected by full route identity: authentication mode, harness
+  build version, execution location, native installation and configuration
+  digest must all equal the observation. Records for other routes never shadow
+  a route, contending duplicates for one route deny as `evidence_conflict` in
+  every array order, and when no record matches the route the typed denial is
+  attributed by fixed content precedence — evidence array order never decides
+  authorization.
 - Offline and revoked transports are local denials with `fallback: 'none'`;
   the result never suggests or enables a cloud reroute, and the denial is
   evaluated before evidence is consulted.
@@ -43,7 +51,9 @@ keys.
    (repository/tag/commit/bundleSha256 verified at qualification time),
    `configurationDigest`, the explicit `capabilities` allow-list,
    `usageReporting`, `governedPaths` with per-path `policyEnforced`,
-   `validUntil`, and optional `revokedAt`.
+   `validUntil`, and optional `revokedAt`. Supply at most one record per route
+   identity: two records contending for the same route deny every evaluation
+   for that route as `evidence_conflict`.
 2. **Observation detection (executor side).** Produce the `ExecutorObservation`
    from live detection: harness identity/version, execution location,
    authentication mode, native-installation identity (for codex, the manifest
