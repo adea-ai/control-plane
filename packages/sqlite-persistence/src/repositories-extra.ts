@@ -21,6 +21,7 @@ import {
 import type { PersistenceProvider, PersistenceTransaction } from '@control-plane/deployment'
 import {
   AppliedStateMutationSchema,
+  executionRetentionScope,
   ProjectStateInitializationReceiptSchema,
   ProjectStateSchema,
   parseInitialization,
@@ -305,11 +306,7 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
             transaction,
             {
               classId: 'context-packages',
-              scope: {
-                kind: 'project',
-                workspaceId: package_.projectState.workspaceId,
-                projectId: package_.projectState.projectId,
-              },
+              scope: executionRetentionScope(package_.projectState),
             },
             options.retentionHoldPolicy
           )

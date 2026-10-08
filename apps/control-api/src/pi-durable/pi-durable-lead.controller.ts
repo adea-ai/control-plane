@@ -26,6 +26,28 @@ import {
 export class PiDurableLeadController {
   constructor(@Inject(PI_DURABLE_LEAD_SERVICE) private readonly service: PiDurableLeadService) {}
 
+  @Post('lookup')
+  @HttpCode(HttpStatus.OK)
+  @RequireServiceAuthentication('execution:read')
+  @ApiOperation({
+    summary: 'Recover a retained dispatch receipt by canonical intent without inference',
+  })
+  @ApiOkResponse({ description: 'Existing dispatch metadata or no receipt; no runtime started' })
+  lookup(@Body() input: unknown, @Req() request: FastifyRequest) {
+    return this.#invoke('lookup', input, request)
+  }
+
+  @Post('prepare')
+  @HttpCode(HttpStatus.OK)
+  @RequireServiceAuthentication('execution:accept')
+  @ApiOperation({
+    summary: 'Prepare canonical lead admission and funding disclosure before inference',
+  })
+  @ApiOkResponse({ description: 'Canonical payer confirmation; no runtime started' })
+  prepare(@Body() input: unknown, @Req() request: FastifyRequest) {
+    return this.#invoke('prepare', input, request)
+  }
+
   @Post('dispatch')
   @HttpCode(HttpStatus.ACCEPTED)
   @RequireServiceAuthentication('execution:accept')
@@ -76,7 +98,12 @@ export class PiDurableLeadController {
       if (code === 'PI_LEAD_INVALID') throw new BadRequestException(response)
       if (code === 'PI_LEAD_SCOPE_REJECTED') throw new ForbiddenException(response)
       if (code === 'PI_LEAD_MISSING') throw new NotFoundException(response)
-      if (code.endsWith('_CONFLICT') || code === 'PI_LEAD_DEADLINE_EXPIRED')
+      if (
+        code.endsWith('_CONFLICT') ||
+        code === 'PI_LEAD_DEADLINE_EXPIRED' ||
+        code === 'PI_LEAD_PREPARATION_REQUIRED' ||
+        code === 'PI_LEAD_FUNDING_CONFIRMATION_STALE'
+      )
         throw new ConflictException(response)
       throw new ServiceUnavailableException(response)
     }

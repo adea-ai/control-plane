@@ -12,6 +12,22 @@ const scopeDigest = `sha256:${'a'.repeat(64)}`
 const now = '2026-08-25T12:00:00.000Z'
 
 describe('optional context provider resolution', () => {
+  test('project provider resolution rejects workspace execution scope before invoking providers', async () => {
+    let retrieved = false
+    const provider = fake('A')
+    provider.retrieve = async () => {
+      retrieved = true
+      return []
+    }
+    await expect(
+      resolver([provider]).resolve({
+        ...request(),
+        executionScope: { schemaVersion: 1, kind: 'workspace' },
+      })
+    ).rejects.toThrow()
+    expect(retrieved).toBe(false)
+  })
+
   test('preserves the no-provider execution path when disabled or unconfigured', async () => {
     const disabled = await resolver([]).resolve(request({ mode: 'disabled' }))
     expect(disabled).toEqual({

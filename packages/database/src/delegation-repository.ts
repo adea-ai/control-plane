@@ -1,7 +1,13 @@
+import { executionScopeFieldsFromRow } from './execution-scope.js'
+import { executionScopesEqual, executionScopeCanNarrow } from '@control-plane/domain'
 import { isDeepStrictEqual } from 'node:util'
 import { assertContextPackageIntegrity } from '@control-plane/context'
 import { compareCodePointOrder } from '@control-plane/contracts'
-import { assertExecutionPlanIntegrity, type ExecutionPlan } from '@control-plane/execution-plan'
+import {
+  assertExecutionPlanIntegrity,
+  assertExecutionPlanDerivedFrom,
+  type ExecutionPlan,
+} from '@control-plane/execution-plan'
 import { and, eq, or } from 'drizzle-orm'
 import {
   DelegationRecordSchema,
@@ -255,6 +261,7 @@ function verifyReferenceRows(
     ) {
       throw new Error(REFERENCE_INTEGRITY_ERROR)
     }
+    assertExecutionPlanDerivedFrom(parentPlan, childPlan, ancestorContextPackage, contextPackage)
   } catch {
     throw new Error(REFERENCE_INTEGRITY_ERROR)
   }
@@ -286,7 +293,10 @@ function verifyReferenceRows(
     record.parentExecutionId === record.childExecutionId ||
     childExecution.parentExecutionId !== record.parentExecutionId ||
     parentExecution.workspaceId !== childExecution.workspaceId ||
-    parentExecution.projectId !== childExecution.projectId ||
+    !executionScopeCanNarrow(
+      { workspaceId: parentExecution.workspaceId, ...executionScopeFieldsFromRow(parentExecution) },
+      { workspaceId: childExecution.workspaceId, ...executionScopeFieldsFromRow(childExecution) }
+    ) ||
     record.parentExecutionPlanId !== parentExecution.executionPlanId ||
     record.parentExecutionPlanDigest !== parentExecution.executionPlanDigest ||
     record.childExecutionPlanId !== childExecution.executionPlanId ||
@@ -299,15 +309,17 @@ function verifyReferenceRows(
     childExecution.executionPlanSchemaVersion !== childPlan.schemaVersion ||
     !executionMatchesPlan(parentExecution, parentPlan) ||
     !executionMatchesPlan(childExecution, childPlan) ||
-    !sameScope(parentPlan.correlation, childPlan.correlation) ||
+    !executionScopeCanNarrow(parentPlan.correlation, childPlan.correlation) ||
     childPlan.parentExecutionPlan?.executionPlanId !== parentPlan.executionPlanId ||
     childPlan.parentExecutionPlan.contentDigest !== parentPlan.contentDigest ||
     (!sameContext && !derivedContext) ||
     record.contextPackageId !== contextPackage.contextPackageId ||
     record.contextPackageDigest !== contextPackage.contentDigest ||
     contextPackage.contentDigest !== record.contextPackageDigest ||
-    contextPackage.projectState.workspaceId !== parentExecution.workspaceId ||
-    contextPackage.projectState.projectId !== parentExecution.projectId
+    !executionScopesEqual(contextPackage.projectState, {
+      workspaceId: childExecution.workspaceId,
+      ...executionScopeFieldsFromRow(childExecution),
+    })
   ) {
     throw new Error(REFERENCE_INTEGRITY_ERROR)
   }
@@ -322,7 +334,8 @@ function contextRowMatches(
     row.contentDigest === contextPackage.contentDigest &&
     row.schemaVersion === contextPackage.schemaVersion &&
     row.workspaceId === contextPackage.projectState.workspaceId &&
-    row.projectId === contextPackage.projectState.projectId &&
+    row.projectId === (contextPackage.projectState.projectId ?? null) &&
+    isDeepStrictEqual(row.executionScope, contextPackage.projectState.executionScope ?? null) &&
     row.compiledAt.toISOString() === contextPackage.compiledAt
   )
 }
@@ -357,7 +370,8 @@ function planRowMatches(row: typeof executionPlans.$inferSelect, plan: Execution
     row.contentDigest === plan.contentDigest &&
     row.schemaVersion === plan.schemaVersion &&
     row.workspaceId === plan.correlation.workspaceId &&
-    row.projectId === plan.correlation.projectId &&
+    row.projectId === (plan.correlation.projectId ?? null) &&
+    isDeepStrictEqual(row.executionScope, plan.correlation.executionScope ?? null) &&
     row.taskId === plan.correlation.taskId &&
     row.agentId === plan.correlation.agentId &&
     row.compiledAt.toISOString() === plan.compiledAt
@@ -370,17 +384,11 @@ function executionMatchesPlan(
 ): boolean {
   return (
     execution.workspaceId === plan.correlation.workspaceId &&
-    execution.projectId === plan.correlation.projectId &&
+    execution.projectId === (plan.correlation.projectId ?? null) &&
+    isDeepStrictEqual(execution.executionScope, plan.correlation.executionScope ?? null) &&
     execution.taskId === plan.correlation.taskId &&
     execution.agentId === plan.correlation.agentId
   )
-}
-
-function sameScope(
-  left: Pick<ExecutionPlan['correlation'], 'workspaceId' | 'projectId'>,
-  right: Pick<ExecutionPlan['correlation'], 'workspaceId' | 'projectId'>
-): boolean {
-  return left.workspaceId === right.workspaceId && left.projectId === right.projectId
 }
 
 function sameImmutableDelegation(left: DelegationRecord, right: DelegationRecord): boolean {

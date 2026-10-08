@@ -64,13 +64,39 @@ evidence as the dispatch payload. CP derives deterministic execution/attempt and
 command identities from workspace plus UUID intent, persists a marker before
 acceptance, and repairs incomplete admission without another command or budget.
 
-Current canonical plans require a project. Product evidence can be workspace
-scoped, but absent/null project returns `PI_LEAD_PROJECT_SCOPE_REQUIRED` before
-creating any marker, execution, attempt or budget. No synthetic project is added.
-Project-free lead execution needs a deliberate canonical plan/domain extension.
-The additive `execution.scope.workspace.v1` capability vocabulary reserves that
-interface. This runtime increment does not advertise it until its canonical
-workspace authority and plan integration are verified.
+Workspace leads use the version2 canonical plan and context from the workspace
+scope kernel. The host must inject `CurrentExecutionScopeAuthority` and the
+actual adapter must advertise `execution.scope.workspace.v1`. The Node bridge
+checks the original product actor, exact plan pin, scope, current grant, audience
+and expiry before any marker, execution, attempt or budget. The runtime retains
+that actor and rechecks the same authority on restart, resume and inference.
+No project is invented. A host without these integrations still returns
+`PI_LEAD_PROJECT_SCOPE_REQUIRED`; an unsupported adapter fails closed. Legacy
+project plans retain their original version1 serialization.
+
+Explicit-scope evidence must include `canonicalActorPrincipalId` from the trusted
+product authority. The transport service principal remains a separate read
+audience; it cannot substitute for the original message sender. The host must
+also supply `assertProviderReady({evidence,plan,ids,actorPrincipalId})`. This
+metadata-only check runs before the first admission marker, followed by fresh
+product and scope reads. It does not lease credentials or authorize spending.
+Inference separately rechecks the pinned selection and recorded spending
+decision inside the credential-use lifetime and immediately before each physical
+send.
+
+`createPiLeadModelProductAuthority` adapts fresh, strictly parsed product evidence
+to the canonical model host's explicit scope fields. Workspace evidence with a
+null project requires the host's current workspace capability check; the adapter
+omits that null and preserves the declared workspace scope. Genuine project IDs
+remain unchanged. It does not derive scope from a stored plan or client payload,
+and removes prompt/profile content from the model metadata projection.
+
+The actual running journal boundary invokes `SqlitePiLeadRunningLifecycle` before
+constructing the native engine. It advances the exact canonical queued attempt
+through versioned lifecycle transitions and retains an immutable actual runtime
+handle receipt. Attempt runtime metadata remains unchanged. Terminal canonical
+synchronization and child continuation after a completed parent remain separate
+qualification requirements.
 
 The strict request/response schemas and `PiDurableLeadHttpContract` are exported
 from `@control-plane/runtime-sdk`. Control API mounts the following existing
@@ -79,7 +105,9 @@ otherwise requests return `PI_LEAD_NOT_CONFIGURED`.
 
 | POST route under `/v3/pi-durable/lead-dispatches` | Operation                  | Existing scope     | References                               |
 | ------------------------------------------------- | -------------------------- | ------------------ | ---------------------------------------- |
+| `prepare`                                         | `pi-durable.lead.prepare`  | `execution:accept` | UUID `payload.intentId`                  |
 | `dispatch`                                        | `pi-durable.lead.dispatch` | `execution:accept` | UUID `payload.intentId`                  |
+| `lookup`                                          | `pi-durable.lead.lookup`   | `execution:read`   | UUID `parameters.intentId`               |
 | `status`                                          | `pi-durable.lead.status`   | `execution:read`   | `parameters.dispatchId`                  |
 | `progress`                                        | `pi-durable.lead.progress` | `execution:read`   | Dispatch ID and optional `afterSequence` |
 | `cancel`                                          | `pi-durable.lead.cancel`   | `execution:cancel` | `payload.dispatchId`                     |
@@ -91,13 +119,31 @@ identity includes operation, caller, workspace/project, command key and immutabl
 intent evidence. Reuse with changed input conflicts. Read/publication rereads the
 current product audience and canonical attempt even after runtime completion.
 
-The public Control SDK adds `dispatchPiDurableLead`, `getPiDurableLeadStatus`,
+With funding preparation configured, `prepare` accepts the canonical intent and
+returns `pi-lead-preparation/v1`: an opaque `prep_<32hex>` reference, execution,
+attempt and selection references, the authenticated payer display and expiry.
+It does not start the runtime, construct Models or lease credentials. Explicit
+dispatch supplies that reference and rechecks the entire immutable funding view.
+Expiry is bounded by five minutes, the funding record and admission deadline.
+A changed payer cannot refresh the same accepted attempt; cancellation or unused
+expiry cleanup and a fresh canonical attempt are required. Startup and periodic
+scanners release proven unused allocations, including admission interrupted
+before a preparation receipt exists. In-flight or ambiguous sends retain holds.
+
+`lookup` reads the actual retained receipt by intent after a lost dispatch reply.
+It may attach the exact existing journal handle to that receipt after current
+read authorization, but never starts or reconciles inference. A missing receipt
+returns null. A receipt without an actual session remains incomplete; consumers
+must not manufacture a session or treat lookup as a funding renewal.
+
+The public Control SDK adds `preparePiDurableLead`, `lookupPiDurableLead`,
+`dispatchPiDurableLead`, `getPiDurableLeadStatus`,
 `getPiDurableLeadProgress` and `cancelPiDurableLead`, validated against these exact
 schemas. An isolated tarball consumer test covers the SDK/runtime-sdk dependency
 boundary. These source artifacts do not claim a new SDK release is already
-published. Adea's existing signer lacks the required execution scopes;
-this work does not create grants or credentials. Its U2 intent remains blocked
-until an authorized compatible client and signer integration exists.
+published. Production integration requires a compatible authorized signer; this
+work creates no grants or credentials. Candidate tests use synthetic policy and
+provider transport.
 
 ## Provider, spend and recovery gates
 
@@ -136,9 +182,15 @@ in the startup scan; other retained records continue recovering.
 Pending input and approval identity are committed atomically. Concurrent input
 admissions compare the expected epoch/state so a loser cannot overwrite a retained
 turn. The effect gate journals intent before the existing tool executor, retains
-exact pending approval and refuses ambiguous replay. Native tools are not exposed;
-J1's agreed objective-only `delegate_child` host adapter must compose and pass a
-real registry/gate/callback test before model-driven delegation is qualified.
+exact pending approval and refuses ambiguous replay. The only optional native
+tool is objective-only `delegate_child`, registered when the host supplies the
+verified source compiler, full existing policy/approval gate, independently
+admitted child authority and retained inbox scanner. Native call identity is
+verified against the actual Pi task and assistant entry; payloads carry no
+parent, attempt, provider or funding authority. Controlled process tests compose
+the real registry, gate, canonical J1 bridge, separate child Pi runtime and SQLite
+terminal inbox. These synthetic-account tests do not qualify a live provider or
+authorize a child to outlive a completed canonical parent without current authority.
 
 ## Reproducible evidence and activation prerequisites
 
@@ -163,11 +215,11 @@ HTTP module and Node composition on loopback, with a deterministic provider and
 synthetic policy scoped to the fixture workspace. It exposes the pinned fixture
 profile/selection, an intent-registration control and canonical record counts.
 Adea owns the real PostgreSQL canonical message/UUID intent consumer and provides
-the authorized product evidence. Its workspace-only intent must return
-`PI_LEAD_PROJECT_SCOPE_REQUIRED` with zero CP admission, command, execution,
-attempt and budget records. A separate explicitly project-scoped CP fixture
-checks dispatch, status, cursor progress and cancellation through the four SDK
-methods; it never adds a project to the Adea workspace. Test controls and synthetic
+the authorized product evidence. The fixture defaults to the legacy project
+configuration, which rejects workspace-only intents before canonical admission.
+Its explicit test-only workspace option (`PI_CANDIDATE_WORKSPACE_SCOPE=true`)
+wires the actual current-scope port and compiles a project-free version2 plan and
+context. Both profiles check the four SDK methods. Test controls and synthetic
 authentication are not production routes, grants or account credentials.
 
 The cross-repository candidate consumer passed against Adea's actual PostgreSQL
@@ -184,8 +236,8 @@ selection-to-runtime deployment.
 Before activating a real account, the accountable composition owner must supply
 an eligible R2 selection service and recorded-spend reader for that exact account,
 price and deployment; the account owner must provide an already authorized vault
-credential if one is absent. Product integration also needs compatible project
-scope, published client artifacts and existing authorized signer scopes. The runtime
+credential if one is absent. Product integration also needs the current scope
+authority, compatible client artifacts and existing authorized signer scopes. The runtime
 owner then repeats physical-send, revocation, paid-usage, cancellation and restart
 qualification against that exact profile. No access, funding or deployment is
 created by this PR. Retain legacy paths for rollback and until integrated cutover

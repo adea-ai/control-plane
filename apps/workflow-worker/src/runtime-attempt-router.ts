@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto'
-import { compareCodePointOrder } from '@control-plane/contracts'
+import {
+  compareCodePointOrder,
+  executionScopeOf,
+  executionScopesEqual,
+} from '@control-plane/contracts'
 import type { RuntimeConnectionDiscoveryReadModel } from '@control-plane/contracts'
 import type { Execution, ExecutionAttempt } from '@control-plane/domain'
 import type { ExecutionPlan } from '@control-plane/execution-plan'
@@ -45,10 +49,17 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
     readonly execution: Execution
     readonly executionPlan: ExecutionPlan
   }): Promise<SelectedRuntime> {
+    const scope = executionScopeOf(input.execution.correlation)
+    if (
+      scope.kind !== 'project' ||
+      !executionScopesEqual(input.execution.correlation, input.executionPlan.correlation)
+    ) {
+      throw new Error('WORKFLOW_RUNTIME_SCOPE_UNSUPPORTED')
+    }
     const evaluatedAt = this.#now()
     const discovered = await this.#discovery.listRuntimeConnections({
       workspaceId: input.execution.correlation.workspaceId,
-      projectId: input.execution.correlation.projectId,
+      projectId: scope.projectId,
     })
     const candidates = discovered
       .map((connection) => candidate(connection, input.executionPlan, evaluatedAt))

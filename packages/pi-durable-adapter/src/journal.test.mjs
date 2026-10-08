@@ -78,3 +78,61 @@ test('a second dispatch key cannot give the same attempt another owner', () => {
   ).toThrow('ATTEMPT_CONFLICT')
   journal.close()
 })
+
+test('interaction transition checks the full snapshot and atomically commits epoch and cursor', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-journal-interaction-'))
+  const path = join(directory, 'journal.sqlite')
+  const first = new SqliteDurableJournal(path)
+  const second = new SqliteDurableJournal(path)
+  try {
+    const admission = first.admit({
+      handleId: 'handle',
+      attemptId: 'attempt',
+      startKey: 'key',
+      admission: { opaque: true },
+      at: '2026-10-08T00:00:00.000Z',
+    })
+    const completed = first.update('handle', admission.epoch, {
+      state: 'completed',
+      detail: { inferencePending: false },
+    })
+    const events = first.events('handle', 0)
+    const closed = second.update('handle', completed.epoch, {
+      detail: { ...completed.detail, sessionClosed: true },
+    })
+    let guarded = false
+    expect(() =>
+      first.transition(completed, () => {
+        guarded = true
+        return { change: { state: 'awaiting_input' } }
+      })
+    ).toThrow('STALE_STATE')
+    expect(guarded).toBe(false)
+    expect(first.get('handle')).toEqual(closed)
+    expect(first.events('handle', 0)).toEqual(events)
+    expect(() =>
+      first.transition(closed, () => {
+        throw new Error('GUARD_DENIED')
+      })
+    ).toThrow('GUARD_DENIED')
+    expect(first.get('handle')).toEqual(closed)
+    const open = second.update('handle', closed.epoch, { detail: { inferencePending: false } })
+    const next = first.transition(open, (current) => ({
+      change: { state: 'awaiting_input', detail: { ...current.detail, pendingInput: 'exact' } },
+      event: {
+        type: 'interaction',
+        data: { interactionId: 'exact', kind: 'input' },
+        at: admission.at,
+      },
+    }))
+    expect(next.epoch).toBe(open.epoch + 1)
+    expect(second.get('handle')).toEqual(next)
+    expect(second.events('handle', 0)).toHaveLength(events.length + 1)
+    expect(second.transition(next, () => undefined)).toEqual(next)
+    expect(first.events('handle', 0)).toHaveLength(events.length + 1)
+  } finally {
+    first.close()
+    second.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})

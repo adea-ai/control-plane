@@ -14,7 +14,7 @@ export const DurableModelRequestHoldSchema = z
     modelCallId: IdentifierSchemas.modelCallId,
     maximumMicrounits: AmountSchema,
     maximumTokens: AmountSchema,
-    fundingSource: z.enum(['hq_managed', 'external_subscription']),
+    fundingSource: z.enum(['hq_managed', 'external_subscription', 'byo_api']),
     priceSnapshotDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
     requestDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
     status: z.enum(['open', 'settled']),

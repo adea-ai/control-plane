@@ -32,6 +32,79 @@ export const EXPIRY_INDEX_STATEMENTS = {
       AND json_extract(value, '$.retentionExpiresAt') GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'`,
 } as const
 
+// Added in v3. Scope is validated at the JSON ownership boundary; no retained
+// payload is rewritten, so signed legacy project records keep their bytes.
+function executionScopeTrigger(
+  action: 'INSERT' | 'UPDATE',
+  suffix: string,
+  path: string,
+  namespaces: string
+): string {
+  const scope = `${path}.executionScope`
+  const project = `${path}.projectId`
+  const valid = `json_type(NEW.value, '${scope}') = 'object'
+    AND json_type(NEW.value, '${path}.workspaceId') = 'text'
+    AND length(json_extract(NEW.value, '${path}.workspaceId')) > 0
+    AND json_type(NEW.value, '${scope}.schemaVersion') = 'integer'
+    AND json_extract(NEW.value, '${scope}.schemaVersion') = 1
+    AND (SELECT count(*) FROM json_each(NEW.value, '${scope}')) = CASE json_extract(NEW.value, '${scope}.kind') WHEN 'workspace' THEN 2 WHEN 'project' THEN 3 ELSE 0 END
+    AND (NEW.namespace <> 'command-inbox' OR (
+      json_type(NEW.value, '$.callerPrincipalId') = 'text'
+      AND json_type(NEW.value, '$.operation') = 'text'
+      AND json_type(NEW.value, '$.idempotencyKey') = 'text'
+    ))
+    AND (
+      (json_extract(NEW.value, '${scope}.kind') = 'workspace'
+        AND json_type(NEW.value, '${project}') IS NULL
+        AND json_type(NEW.value, '${scope}.projectId') IS NULL)
+      OR (json_extract(NEW.value, '${scope}.kind') = 'project'
+        AND json_type(NEW.value, '${project}') = 'text'
+        AND length(json_extract(NEW.value, '${project}')) > 0
+        AND json_extract(NEW.value, '${scope}.projectId') = json_extract(NEW.value, '${project}'))
+    )`
+  return `CREATE TRIGGER IF NOT EXISTS control_plane_records_scope_${suffix}_${action.toLowerCase()}
+    BEFORE ${action} ON control_plane_records
+    WHEN NEW.namespace IN (${namespaces}) AND (
+      (json_type(NEW.value, '${scope}') IS NOT NULL AND NOT coalesce((${valid}), 0))
+      OR (NEW.namespace IN ('execution-plans', 'context-packages') AND (
+        (json_extract(NEW.value, '$.schemaVersion') = 2 AND json_type(NEW.value, '${scope}') IS NULL)
+        OR (json_extract(NEW.value, '$.schemaVersion') = 1 AND json_type(NEW.value, '${scope}') IS NOT NULL)
+      ))
+      OR (NEW.namespace = 'context-packages' AND (
+        json_type(NEW.value, '$.executionScope') IS NOT NULL
+        OR (json_type(NEW.value, '${scope}') IS NULL AND NOT coalesce((json_type(NEW.value, '${project}') = 'text' AND length(json_extract(NEW.value, '${project}')) > 0), 0))
+      ))
+    )
+    BEGIN SELECT RAISE(ABORT, 'SQLITE_EXECUTION_SCOPE_INVALID'); END`
+}
+
+export const EXECUTION_SCOPE_STATEMENTS = {
+  control_plane_records_workspace_command_identity: `CREATE UNIQUE INDEX IF NOT EXISTS control_plane_records_workspace_command_identity
+    ON control_plane_records(
+      json_extract(value, '$.callerPrincipalId'), json_extract(value, '$.operation'),
+      json_extract(value, '$.workspaceId'), json_extract(value, '$.idempotencyKey')
+    ) WHERE namespace = 'command-inbox'
+      AND json_extract(value, '$.executionScope.kind') = 'workspace'`,
+  control_plane_records_project_command_identity: `CREATE UNIQUE INDEX IF NOT EXISTS control_plane_records_project_command_identity
+    ON control_plane_records(
+      json_extract(value, '$.callerPrincipalId'), json_extract(value, '$.operation'),
+      json_extract(value, '$.workspaceId'), json_extract(value, '$.projectId'), json_extract(value, '$.idempotencyKey')
+    ) WHERE namespace = 'command-inbox' AND json_type(value, '$.projectId') = 'text'`,
+  ...Object.fromEntries(
+    (['INSERT', 'UPDATE'] as const).flatMap((action) =>
+      [
+        ['command', '$', "'command-inbox'"],
+        ['correlation', '$.correlation', "'executions', 'execution-plans', 'execution-events'"],
+        ['cancellation', '$.request', "'execution-cancellation-receipts'"],
+        ['context', '$.projectState', "'context-packages'"],
+      ].map(([suffix, path, namespaces]) => [
+        `control_plane_records_scope_${suffix}_${action.toLowerCase()}`,
+        executionScopeTrigger(action, suffix!, path!, namespaces!),
+      ])
+    )
+  ),
+} as const
+
 interface SqliteMigration {
   readonly version: number
   readonly statements: readonly string[]
@@ -41,6 +114,7 @@ interface SqliteMigration {
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 1, statements: Object.values(SCHEMA_STATEMENTS) },
   { version: 2, statements: Object.values(EXPIRY_INDEX_STATEMENTS) },
+  { version: 3, statements: Object.values(EXECUTION_SCOPE_STATEMENTS) },
 ]
 export const SCHEMA_VERSION = SQLITE_MIGRATIONS.length
 

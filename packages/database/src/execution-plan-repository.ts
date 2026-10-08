@@ -1,3 +1,4 @@
+import { executionRetentionScopeFromRow } from './execution-scope.js'
 import { isDeepStrictEqual } from 'node:util'
 import {
   ExecutionPlanReferenceSchema,
@@ -106,7 +107,7 @@ export class PostgresExecutionPlanRepository implements ExecutionPlanRepository 
       } catch (error) {
         if (error !== RETRY_EXECUTION_PLAN_REFERENCE_PUT) throw error
         if (retriedReferencePut) {
-          throw new Error('EXECUTION_PLAN_REFERENCE_CONFLICT_RETRY_EXHAUSTED')
+          throw new Error('EXECUTION_PLAN_REFERENCE_CONFLICT_RETRY_EXHAUSTED', { cause: error })
         }
         // Awaiting the transaction rejection completes the rollback/savepoint
         // before a retry reacquires references in the global lock order.
@@ -118,7 +119,7 @@ export class PostgresExecutionPlanRepository implements ExecutionPlanRepository 
   async get(input: ExecutionPlanReference): Promise<ExecutionPlan | undefined> {
     const reference = ExecutionPlanReferenceSchema.parse(input)
     const [row] = await this.database
-      .select({ plan: executionPlans.plan })
+      .select()
       .from(executionPlans)
       .where(
         and(
@@ -127,7 +128,7 @@ export class PostgresExecutionPlanRepository implements ExecutionPlanRepository 
         )
       )
       .limit(1)
-    return row ? assertExecutionPlanIntegrity(row.plan) : undefined
+    return row ? fromPlanRow(row) : undefined
   }
 
   async #getById(
@@ -135,11 +136,11 @@ export class PostgresExecutionPlanRepository implements ExecutionPlanRepository 
     executionPlanId: string
   ): Promise<ExecutionPlan | undefined> {
     const [row] = await database
-      .select({ plan: executionPlans.plan })
+      .select()
       .from(executionPlans)
       .where(eq(executionPlans.executionPlanId, executionPlanId))
       .limit(1)
-    return row ? assertExecutionPlanIntegrity(row.plan) : undefined
+    return row ? fromPlanRow(row) : undefined
   }
 }
 
@@ -152,13 +153,31 @@ export async function lockExecutionPlanReference(
   return (await lockAndResetReferenceRetentionWindows(database, { executionPlans: [input] })).ok
 }
 
+function fromPlanRow(row: typeof executionPlans.$inferSelect): ExecutionPlan {
+  const plan = assertExecutionPlanIntegrity(row.plan)
+  if (
+    row.executionPlanId !== plan.executionPlanId ||
+    row.contentDigest !== plan.contentDigest ||
+    row.schemaVersion !== plan.schemaVersion ||
+    row.workspaceId !== plan.correlation.workspaceId ||
+    row.projectId !== (plan.correlation.projectId ?? null) ||
+    !isDeepStrictEqual(row.executionScope, plan.correlation.executionScope ?? null) ||
+    row.taskId !== plan.correlation.taskId ||
+    row.agentId !== plan.correlation.agentId ||
+    row.compiledAt.toISOString() !== plan.compiledAt
+  )
+    throw new Error('EXECUTION_PLAN_PERSISTENCE_INTEGRITY_ERROR')
+  return plan
+}
+
 function toRow(plan: ExecutionPlan): typeof executionPlans.$inferInsert {
   return {
     executionPlanId: plan.executionPlanId,
     contentDigest: plan.contentDigest,
     schemaVersion: plan.schemaVersion,
     workspaceId: plan.correlation.workspaceId,
-    projectId: plan.correlation.projectId,
+    projectId: plan.correlation.projectId ?? null,
+    executionScope: plan.correlation.executionScope ?? null,
     taskId: plan.correlation.taskId,
     agentId: plan.correlation.agentId,
     plan,
@@ -240,6 +259,7 @@ export class PostgresExecutionPlanRetention {
             unreferencedSince: executionPlans.unreferencedSince,
             workspaceId: executionPlans.workspaceId,
             projectId: executionPlans.projectId,
+            executionScope: executionPlans.executionScope,
             plan: executionPlans.plan,
           })
           .from(executionPlans)
@@ -257,7 +277,11 @@ export class PostgresExecutionPlanRetention {
           canonicalPlan.executionPlanId !== candidate.executionPlanId ||
           canonicalPlan.contentDigest !== stored.contentDigest ||
           canonicalPlan.correlation.workspaceId !== stored.workspaceId ||
-          canonicalPlan.correlation.projectId !== stored.projectId
+          (canonicalPlan.correlation.projectId ?? null) !== stored.projectId ||
+          !isDeepStrictEqual(
+            canonicalPlan.correlation.executionScope ?? null,
+            stored.executionScope
+          )
         ) {
           return { verdict: undefined, removed: false, raced: true }
         }
@@ -269,11 +293,7 @@ export class PostgresExecutionPlanRetention {
           transaction,
           {
             classId: 'execution-plans',
-            scope: {
-              kind: 'project',
-              workspaceId: canonicalPlan.correlation.workspaceId,
-              projectId: canonicalPlan.correlation.projectId,
-            },
+            scope: executionRetentionScopeFromRow(stored),
           },
           options.retentionHoldPolicy
         )

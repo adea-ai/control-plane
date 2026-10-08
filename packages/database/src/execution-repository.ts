@@ -1,9 +1,11 @@
+import { executionScopeFieldsFromRow, executionRetentionScopeFromRow } from './execution-scope.js'
 import {
   CommandInboxError,
   ExecutionAttemptSchema,
   ExecutionSchema,
   RetentionAssessmentCounter,
   evaluateRetentionEligibility,
+  executionScopesEqual,
   type Execution,
   type ExecutionAttempt,
   type ExecutionRepository,
@@ -28,7 +30,10 @@ import { interactionCommands } from './schema/interaction-commands.js'
 import { interactionRequests } from './schema/interactions.js'
 import { runtimeCommands } from './schema/runtime-commands.js'
 import { reconciliationCheckpoints } from './schema/reconciliation.js'
-import { lockExecutionPlanReference } from './execution-plan-repository.js'
+import {
+  lockExecutionPlanReference,
+  PostgresExecutionPlanRepository,
+} from './execution-plan-repository.js'
 import { usageLedgerEntries } from './schema/usage-ledger.js'
 import { usageBudgetStates, usageOperationReceipts } from './schema/usage-budget-state.js'
 import { memoryWriteProposals } from './schema/memory-write-proposals.js'
@@ -146,6 +151,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
             terminalAt: executions.terminalAt,
             workspaceId: executions.workspaceId,
             projectId: executions.projectId,
+            executionScope: executions.executionScope,
             attemptCount: executions.attemptCount,
             latestAttemptId: executions.latestAttemptId,
           })
@@ -183,11 +189,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
           transaction,
           {
             classId: 'executions',
-            scope: {
-              kind: 'project',
-              workspaceId: owner.workspaceId,
-              projectId: owner.projectId,
-            },
+            scope: executionRetentionScopeFromRow(owner),
           },
           options.retentionHoldPolicy
         )
@@ -558,6 +560,19 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       if (!(await lockExecutionPlanReference(transaction, parsed.executionPlan))) {
         throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
       }
+      if (parsed.correlation.executionScope !== undefined) {
+        const plan = await new PostgresExecutionPlanRepository(transaction).get(
+          parsed.executionPlan
+        )
+        if (
+          plan === undefined ||
+          !executionScopesEqual(plan.correlation, parsed.correlation) ||
+          plan.correlation.taskId !== parsed.correlation.taskId ||
+          plan.correlation.agentId !== parsed.correlation.agentId ||
+          plan.correlation.requestId !== parsed.correlation.requestId
+        )
+          throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+      }
       const inserted = await transaction
         .insert(executions)
         .values(toExecutionRow(parsed))
@@ -706,7 +721,8 @@ export function toExecutionRow(execution: Execution): typeof executions.$inferIn
     state: execution.state,
     version: execution.version,
     workspaceId: execution.correlation.workspaceId,
-    projectId: execution.correlation.projectId,
+    projectId: execution.correlation.projectId ?? null,
+    executionScope: execution.correlation.executionScope ?? null,
     taskId: execution.correlation.taskId,
     agentId: execution.correlation.agentId,
     requestId: execution.correlation.requestId,
@@ -744,7 +760,7 @@ export function fromExecutionRow(row: ExecutionRow): Execution {
     version: row.version,
     correlation: {
       workspaceId: row.workspaceId,
-      projectId: row.projectId,
+      ...executionScopeFieldsFromRow(row),
       taskId: row.taskId,
       agentId: row.agentId,
       requestId: row.requestId,

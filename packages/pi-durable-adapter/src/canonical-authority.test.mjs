@@ -3,13 +3,13 @@ import { ExecutionLifecycleService, InMemoryExecutionRepository } from '@control
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { InMemoryExecutionPlanRepository } from '@control-plane/execution-plan'
 import { CanonicalPiDurableAuthority } from './canonical-authority.ts'
+import { workspacePlan } from './workspace-scope.fixture.mjs'
 const at = '2026-10-08T00:00:00.000Z'
 const later = '2026-10-08T01:00:00.000Z'
 const intentId = 'f643a115-617d-4bae-8d52-cfe458c0b8ac'
 const executionId = 'exe_01JABCDEF0123456789ABCDEFG'
 const attemptId = 'att_01JABCDEF0123456789ABCDEFG'
-async function fixture() {
-  const plan = createExecutionPlanTestFixture()
+async function fixture(plan = createExecutionPlanTestFixture()) {
   const executions = new InMemoryExecutionRepository()
   const lifecycle = new ExecutionLifecycleService(executions)
   const execution = await lifecycle.createExecution({
@@ -35,6 +35,12 @@ async function fixture() {
     intentId,
     workspaceId: plan.correlation.workspaceId,
     projectId: plan.correlation.projectId,
+    ...(plan.correlation.executionScope
+      ? {
+          executionScope: plan.correlation.executionScope,
+          canonicalActorPrincipalId: 'principal:user',
+        }
+      : {}),
     messageRef: 'message:one',
     executionId,
     attemptId,
@@ -306,4 +312,49 @@ test('read purpose retains canonical audience and allocation while terminal infe
   await expect(
     setup.authority.get(intentId, setup.intent.workspaceId, 'principal:user', 'read')
   ).rejects.toThrow('PI_CANONICAL_AUTHORITY_REJECTED')
+})
+
+test('workspace canonical intent retains actor independently of authorized read audience', async () => {
+  const setup = await fixture(workspacePlan())
+  setup.intent.canonicalActorPrincipalId = 'product:original-sender'
+  setup.intent.allowedPrincipalIds.push('principal:observer')
+  const result = await setup.authority.get(intentId, setup.intent.workspaceId, 'principal:observer')
+  expect(result.admission.canonicalActorPrincipalId).toBe('product:original-sender')
+  expect(result.allowedPrincipalIds).not.toContain('product:original-sender')
+  expect(result.startRequest.executionPlan.schemaVersion).toBe(2)
+  expect(result.startRequest.executionPlan.correlation.projectId).toBeUndefined()
+  await setup.authority.assertAuthority({
+    request: result.startRequest,
+    admission: result.admission,
+  })
+  setup.intent.canonicalActorPrincipalId = 'principal:observer'
+  await expect(
+    setup.authority.assertAuthority({ request: result.startRequest, admission: result.admission })
+  ).rejects.toThrow('PI_CANONICAL_AUTHORITY_REJECTED')
+})
+
+test('workspace canonical intent requires original actor and rejects cross-scope replacement', async () => {
+  for (const mutation of [
+    (intent) => {
+      delete intent.canonicalActorPrincipalId
+    },
+    (intent) => {
+      intent.projectId = 'prj_01JABCDEF0123456789ABCDEFG'
+      intent.executionScope = { schemaVersion: 1, kind: 'project', projectId: intent.projectId }
+    },
+  ]) {
+    const setup = await fixture(workspacePlan())
+    mutation(setup.intent)
+    await expect(admitted(setup)).rejects.toThrow('PI_CANONICAL_AUTHORITY_REJECTED')
+  }
+})
+
+test('legacy canonical admission keeps absent scope and actor absent from serialized bytes', async () => {
+  const setup = await fixture()
+  const result = await admitted(setup)
+  expect(Object.hasOwn(result.admission, 'canonicalActorPrincipalId')).toBe(false)
+  expect(Object.hasOwn(result.startRequest.executionPlan.correlation, 'executionScope')).toBe(false)
+  expect(result.startRequest.executionPlan.contentDigest).toBe(
+    'sha256:dc03a107d310cf14591b6d34fba4ed6443faedfb8e972ac31f2a50957b3d86fe'
+  )
 })

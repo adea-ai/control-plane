@@ -1,3 +1,4 @@
+import type { ExecutionScope } from '@control-plane/contracts'
 import { IdentifierSchemas, canonicalJsonStringify } from '@control-plane/contracts'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
@@ -836,7 +837,8 @@ export interface ReconciliationCommandPort {
     callerPrincipalId: string
     operation: string
     workspaceId: string
-    projectId: string
+    projectId?: string | undefined
+    executionScope?: ExecutionScope | undefined
     idempotencyKey: string
     expectedVersion: number
     to: CommandInboxStatus
@@ -876,6 +878,7 @@ export async function markCommandReconciliationRequiredWithRetry(
         operation: current.operation,
         workspaceId: current.workspaceId,
         projectId: current.projectId,
+        executionScope: current.executionScope,
         idempotencyKey: current.idempotencyKey,
         expectedVersion: current.version,
         to: 'reconciliation_required',
@@ -909,6 +912,7 @@ export async function advanceCommandToProcessingWithRetry(
         operation: current.operation,
         workspaceId: current.workspaceId,
         projectId: current.projectId,
+        executionScope: current.executionScope,
         idempotencyKey: current.idempotencyKey,
         expectedVersion: current.version,
         to: 'processing',

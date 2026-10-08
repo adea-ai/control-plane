@@ -15,6 +15,9 @@ import { z } from 'zod'
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 const MAX_CONTRIBUTION_BYTES = 262_144
 export const ContextProviderRequestSchema = z.object({
+  // Existing provider bindings carry mapped project grants; they must not
+  // silently reinterpret workspace execution as a provider project request.
+  executionScope: z.never().optional(),
   workspaceId: IdentifierSchemas.workspaceId,
   scopeDigest: DigestSchema,
   principalRef: z.string().min(1).max(256),

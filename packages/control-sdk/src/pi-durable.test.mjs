@@ -12,6 +12,7 @@ const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
 const at = '2026-10-08T09:00:00.000Z'
 const dispatchId = `dispatch_${'a'.repeat(32)}`
 const intentId = 'f643a115-617d-4bae-8d52-cfe458c0b8ac'
+const preparationRef = `prep_${'b'.repeat(32)}`
 const identity = {
   caller: { servicePrincipalId: 'svc_agent-hq' },
   contractVersion: PublicContractManifest.current,
@@ -30,7 +31,9 @@ const command = (operation, payload) => ({
 })
 const read = (operation, parameters) => ({ ...identity, operation, requestedAt: at, parameters })
 const requests = {
+  preparePiDurableLead: command('pi-durable.lead.prepare', { intentId }),
   dispatchPiDurableLead: command('pi-durable.lead.dispatch', { intentId }),
+  lookupPiDurableLead: read('pi-durable.lead.lookup', { intentId }),
   getPiDurableLeadStatus: read('pi-durable.lead.status', { dispatchId }),
   getPiDurableLeadProgress: read('pi-durable.lead.progress', { dispatchId, afterSequence: 1 }),
   cancelPiDurableLead: command('pi-durable.lead.cancel', { dispatchId }),
@@ -51,7 +54,54 @@ const handle = {
 }
 const status = { handle, state: 'cancelled', observedAt: at }
 const responses = {
+  preparePiDurableLead: {
+    schemaVersion: 'pi-lead-preparation/v1',
+    preparationRef,
+    intentId,
+    executionId: id('exe'),
+    attemptId: id('att'),
+    selectionRef: `msel_${'c'.repeat(32)}`,
+    selectionRevision: 1,
+    funding: {
+      schemaVersion: 'model-funding-display/v1',
+      state: 'ready',
+      workspaceId: identity.workspaceId,
+      executionId: id('exe'),
+      attemptId: id('att'),
+      selectionRef: `msel_${'c'.repeat(32)}`,
+      selectionRevision: 1,
+      provider: 'openai',
+      providerModel: 'gpt-test',
+      accountRef: 'account:test',
+      authKind: 'api_key',
+      fundingSource: 'byo_api',
+      fundingOwner: {
+        ownerRef: 'payer:test',
+        kind: 'provider_account',
+        displayName: 'Test payer',
+        revision: 1,
+        evidenceRef: 'payer-evidence:test',
+      },
+      authorizationRef: 'spend:test',
+      authorityRevision: 1,
+      expiresAt: at,
+    },
+    expiresAt: at,
+    replayed: false,
+  },
   dispatchPiDurableLead: { ...receipt, state: 'running', replayed: false },
+  lookupPiDurableLead: {
+    schemaVersion: 'pi-lead-lookup/v1',
+    workspaceId: identity.workspaceId,
+    intentId,
+    receipt: {
+      dispatchId,
+      executionId: receipt.executionId,
+      attemptId: receipt.attemptId,
+      state: 'dispatched',
+      runtimeSessionId: receipt.runtimeSessionId,
+    },
+  },
   getPiDurableLeadStatus: { ...receipt, state: 'cancelled', status },
   getPiDurableLeadProgress: {
     ...receipt,
@@ -75,7 +125,7 @@ const response = (data) => ({
   data,
 })
 
-test('four Pi Durable methods send exact authenticated v3 routes and parse public response schemas', async () => {
+test('Pi Durable preparation and execution methods send exact authenticated v3 routes and parse public response schemas', async () => {
   const calls = []
   const client = new ControlPlaneClient({
     baseUrl: 'https://control-plane.example',
@@ -96,7 +146,7 @@ test('four Pi Durable methods send exact authenticated v3 routes and parse publi
     expect(ControlApiOperations[method].operation).toBe(request.operation)
   }
   expect(calls.map((call) => new URL(call.url).pathname)).toEqual(
-    ['dispatch', 'status', 'progress', 'cancel'].map(
+    ['prepare', 'dispatch', 'lookup', 'status', 'progress', 'cancel'].map(
       (route) => `/v3/pi-durable/lead-dispatches/${route}`
     )
   )
@@ -151,6 +201,194 @@ test('strict opaque-reference requests reject caller prompt, credentials, native
     client.dispatchPiDurableLead({ ...requests.dispatchPiDurableLead, credential: 'secret-canary' })
   ).rejects.toThrow()
   expect(calls).toBe(0)
+})
+
+test('preparation discloses ready funding without accepting caller grants or runtime state', async () => {
+  const calls = []
+  const client = new ControlPlaneClient({
+    baseUrl: 'https://control-plane.example',
+    credential: 'test-service-credential',
+    fetch: async (_url, init) => {
+      const request = JSON.parse(init.body)
+      calls.push(request)
+      return Response.json(
+        response(
+          request.operation === 'pi-durable.lead.prepare'
+            ? responses.preparePiDurableLead
+            : responses.dispatchPiDurableLead
+        )
+      )
+    },
+  })
+  const prepared = (await client.preparePiDurableLead(requests.preparePiDurableLead)).data
+  expect(prepared.funding.fundingOwner.displayName).toBe('Test payer')
+  expect(prepared.preparationRef).toBe(preparationRef)
+  expect(prepared.runtimeSessionId).toBeUndefined()
+  expect(prepared.handle).toBeUndefined()
+  const payload = { intentId, preparationRef }
+  await client.dispatchPiDurableLead(command('pi-durable.lead.dispatch', payload))
+  expect(calls[1].payload).toEqual(payload)
+  for (const invalid of [
+    { intentId, funding: prepared.funding },
+    { intentId, authorizationRef: 'spend:test' },
+    { intentId, preparationRef },
+    { intentId, runtimeSessionId: id('ses') },
+  ]) {
+    await expect(
+      client.preparePiDurableLead({ ...requests.preparePiDurableLead, payload: invalid })
+    ).rejects.toThrow()
+  }
+  await expect(
+    client.dispatchPiDurableLead(
+      command('pi-durable.lead.dispatch', { intentId, preparationRef: 'invalid' })
+    )
+  ).rejects.toThrow()
+  expect(calls).toHaveLength(2)
+})
+
+test('preparation rejects blocked, mismatched or capability-bearing funding disclosures', async () => {
+  let data
+  const client = new ControlPlaneClient({
+    baseUrl: 'https://control-plane.example',
+    credential: 'test-service-credential',
+    fetch: async () => Response.json(response(data)),
+  })
+  const preparation = responses.preparePiDurableLead
+  for (const invalid of [
+    {
+      ...preparation,
+      funding: {
+        schemaVersion: 'model-funding-display/v1',
+        state: 'blocked',
+        workspaceId: identity.workspaceId,
+        executionId: id('exe'),
+        attemptId: id('att'),
+        selectionRef: preparation.selectionRef,
+        selectionRevision: 1,
+        reasonCode: 'READINESS_UNAVAILABLE',
+      },
+    },
+    { ...preparation, funding: { ...preparation.funding, selectionRevision: 2 } },
+    { ...preparation, funding: { ...preparation.funding, credential: 'secret-canary' } },
+    { ...preparation, runtimeSessionId: id('ses') },
+    { ...preparation, expiresAt: '2026-10-09T09:00:00.000Z' },
+  ]) {
+    data = invalid
+    await expect(client.preparePiDurableLead(requests.preparePiDurableLead)).rejects.toMatchObject({
+      code: 'INVALID_CONTROL_PLANE_RESPONSE',
+    })
+  }
+})
+
+test('preparation rejects otherwise valid transport responses bound to a foreign workspace or intent', async () => {
+  let data
+  const calls = []
+  const client = new ControlPlaneClient({
+    baseUrl: 'https://control-plane.example',
+    credential: 'test-service-credential',
+    fetch: async (_url, init) => {
+      calls.push(JSON.parse(init.body))
+      return Response.json(response(data))
+    },
+  })
+  const preparation = responses.preparePiDurableLead
+  for (const invalid of [
+    { ...preparation, intentId: '447bcb01-7aee-4c25-9f99-a75e1c36b3bf' },
+    {
+      ...preparation,
+      funding: { ...preparation.funding, workspaceId: id('wsp').replace(/G$/, 'H') },
+    },
+  ]) {
+    data = invalid
+    expect(
+      ControlApiOperations.preparePiDurableLead.responseSchema.safeParse(response(data)).success
+    ).toBe(true)
+    await expect(client.preparePiDurableLead(requests.preparePiDurableLead)).rejects.toMatchObject({
+      code: 'INVALID_CONTROL_PLANE_RESPONSE',
+      requestId: identity.requestId,
+      status: 200,
+    })
+  }
+  expect(calls).toEqual([requests.preparePiDurableLead, requests.preparePiDurableLead])
+  data = preparation
+  expect((await client.preparePiDurableLead(requests.preparePiDurableLead)).data).toEqual(
+    preparation
+  )
+})
+
+test('lookup recovers stored metadata by intent without preparation, grants or invented sessions', async () => {
+  let data = responses.lookupPiDurableLead
+  const calls = []
+  const client = new ControlPlaneClient({
+    baseUrl: 'https://control-plane.example',
+    credential: 'test-service-credential',
+    fetch: async (_url, init) => {
+      calls.push(JSON.parse(init.body))
+      return Response.json(response(data))
+    },
+  })
+  expect((await client.lookupPiDurableLead(requests.lookupPiDurableLead)).data).toEqual(data)
+  for (const state of ['dispatching', 'dispatched', 'reconciliation_required']) {
+    const { runtimeSessionId: _session, ...stored } = data.receipt
+    data = { ...data, receipt: { ...stored, state } }
+    const result = (await client.lookupPiDurableLead(requests.lookupPiDurableLead)).data
+    expect(result.receipt.state).toBe(state)
+    expect(result.receipt.runtimeSessionId).toBeUndefined()
+  }
+  data = { ...data, receipt: null }
+  expect((await client.lookupPiDurableLead(requests.lookupPiDurableLead)).data.receipt).toBeNull()
+  for (const extra of [
+    { grant: 'caller-grant' },
+    { preparationRef },
+    { funding: responses.preparePiDurableLead.funding },
+    { runtimeSessionId: id('ses') },
+    { dispatchId },
+  ]) {
+    await expect(
+      client.lookupPiDurableLead({
+        ...requests.lookupPiDurableLead,
+        parameters: { intentId, ...extra },
+      })
+    ).rejects.toThrow()
+  }
+  expect(calls).toEqual(Array(5).fill(requests.lookupPiDurableLead))
+})
+
+test('lookup rejects foreign resources and malformed or capability-bearing stored receipts', async () => {
+  let data
+  const client = new ControlPlaneClient({
+    baseUrl: 'https://control-plane.example',
+    credential: 'test-service-credential',
+    fetch: async () => Response.json(response(data)),
+  })
+  const lookup = responses.lookupPiDurableLead
+  for (const foreign of [
+    { ...lookup, intentId: '447bcb01-7aee-4c25-9f99-a75e1c36b3bf' },
+    { ...lookup, workspaceId: identity.workspaceId.replace(/G$/, 'H') },
+    { ...lookup, workspaceId: identity.workspaceId.replace(/G$/, 'H'), receipt: null },
+  ]) {
+    data = foreign
+    expect(
+      ControlApiOperations.lookupPiDurableLead.responseSchema.safeParse(response(data)).success
+    ).toBe(true)
+    await expect(client.lookupPiDurableLead(requests.lookupPiDurableLead)).rejects.toMatchObject({
+      code: 'INVALID_CONTROL_PLANE_RESPONSE',
+      requestId: identity.requestId,
+    })
+  }
+  for (const malformed of [
+    { ...lookup, receipt: undefined },
+    { ...lookup, receipt: {} },
+    { ...lookup, receipt: { ...lookup.receipt, state: 'running' } },
+    { ...lookup, receipt: { ...lookup.receipt, runtimeSessionId: 'invented-session' } },
+    { ...lookup, receipt: { ...lookup.receipt, grant: 'secret-canary' } },
+    { ...lookup, funding: responses.preparePiDurableLead.funding },
+  ]) {
+    data = malformed
+    await expect(client.lookupPiDurableLead(requests.lookupPiDurableLead)).rejects.toMatchObject({
+      code: 'INVALID_CONTROL_PLANE_RESPONSE',
+    })
+  }
 })
 
 test('invalid or secret-bearing successful responses are rejected without exposing their payload', async () => {
@@ -222,7 +460,7 @@ test('Pi Durable OpenAPI routes remain additive to the frozen v3 baseline with s
   )
   const generated = createControlApiOpenApiDocument()
   expect(findBreakingContractChanges(baseline, generated)).toEqual([])
-  for (const route of ['dispatch', 'status', 'progress', 'cancel']) {
+  for (const route of ['prepare', 'dispatch', 'lookup', 'status', 'progress', 'cancel']) {
     const operation = generated.paths[`/v3/pi-durable/lead-dispatches/${route}`].post
     expect(operation.operationId).toBe(`pi-durable.lead.${route}`)
     expect(operation.security).toEqual([{ serviceBearer: [] }])
@@ -232,7 +470,9 @@ test('Pi Durable OpenAPI routes remain additive to the frozen v3 baseline with s
     const schema = operation.requestBody.content['application/json'].schema
     expect(schema.additionalProperties).toBe(false)
     const body =
-      schema.properties[route === 'dispatch' || route === 'cancel' ? 'payload' : 'parameters']
+      schema.properties[
+        route === 'prepare' || route === 'dispatch' || route === 'cancel' ? 'payload' : 'parameters'
+      ]
     expect(body.additionalProperties).toBe(false)
     expect(body.properties.credential).toBeUndefined()
     expect(body.properties.prompt).toBeUndefined()

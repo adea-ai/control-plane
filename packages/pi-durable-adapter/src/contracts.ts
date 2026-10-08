@@ -1,7 +1,13 @@
 import { z } from 'zod'
 import type { Models } from '@earendil-works/pi-ai/models'
+import type { CurrentExecutionScopeAuthority } from '@control-plane/execution-plan'
+import { IdentifierSchemas } from '@control-plane/contracts'
+import type { DurableToolCallRequest } from '@control-plane/tool-sdk'
+import type { PiDurableEffectGate } from './effect-gate.js'
+import type { PiDurableToolSource, PiDurableToolSourceReader } from './tool-source.js'
 import type {
   RuntimeStartRequest,
+  RuntimeExecutionHandle,
   RuntimeUsage,
   RuntimeApprovalRequest,
 } from '@control-plane/runtime-sdk'
@@ -19,6 +25,8 @@ export const PiDurableAdmissionSchema = z
   .object({
     schemaVersion: z.literal('pi-durable-admission/v1'),
     prompt: z.string().min(1).max(1_000_000),
+    /** Trusted canonical product actor; never inferred from the executing service. */
+    canonicalActorPrincipalId: z.string().min(1).max(256).optional(),
     selection: ProviderSelectionReferenceSchema,
     authority: z
       .object({
@@ -60,6 +68,12 @@ export interface DurableExecutionAuthority {
   readonly admission: PiDurableAdmission
 }
 
+/** Actual committed running boundary; supplied only by the journal owner. */
+export interface PiDurableRunningAuthority extends DurableExecutionAuthority {
+  readonly handle: RuntimeExecutionHandle
+  readonly observedAt: string
+}
+
 export interface PiEngineResult {
   readonly text: string
   readonly submissionId: string
@@ -83,11 +97,59 @@ export interface DurablePiEngine {
   close(): Promise<void>
 }
 
+export const PiDurableDelegateChildOutcomeSchema = z.strictObject({
+  schemaVersion: z.literal('pi-delegate-child-outcome/v1'),
+  state: z.enum(['succeeded', 'awaiting_approval', 'reconciliation_required', 'denied']),
+  toolCallId: IdentifierSchemas.toolCallId,
+  interactionId: IdentifierSchemas.interactionId.optional(),
+  reasonCode: z
+    .enum(['PI_CHILD_APPROVAL_PENDING', 'PI_CHILD_OUTCOME_UNKNOWN', 'PI_CHILD_DELEGATION_DENIED'])
+    .optional(),
+  delegationId: IdentifierSchemas.delegationId.optional(),
+  childExecutionId: IdentifierSchemas.executionId.optional(),
+  childAttemptId: IdentifierSchemas.attemptId.optional(),
+  externalSessionId: IdentifierSchemas.externalSessionId.optional(),
+})
+export type PiDurableDelegateChildOutcome = z.output<typeof PiDurableDelegateChildOutcomeSchema>
+export interface PiDurableVerifiedToolSource {
+  readonly source: PiDurableToolSource
+  readonly sourceKey: string
+  readonly objective: string
+}
+export interface PiDurableGovernedDelegateChildEnginePort {
+  readonly source: Pick<
+    PiDurableToolSource,
+    | 'workspaceId'
+    | 'parentExecutionId'
+    | 'parentAttemptId'
+    | 'runtimeHandleId'
+    | 'externalSessionId'
+    | 'admittedTurnKey'
+  >
+  readonly assertCurrent: (source: PiDurableToolSource) => Promise<void>
+  readonly execute: (
+    input: PiDurableVerifiedToolSource,
+    reader: Pick<PiDurableToolSourceReader, 'readTask' | 'readAssistantEntry'>,
+    signal?: AbortSignal
+  ) => Promise<PiDurableDelegateChildOutcome>
+}
+/** Host compiler retains the full originating request by verified native source identity. */
+export interface PiDurableGovernedDelegateChildCompiler {
+  readonly prepare: (
+    authority: DurableExecutionAuthority,
+    input: PiDurableVerifiedToolSource
+  ) => Promise<DurableToolCallRequest>
+}
+
 export interface PiDurableRuntimeOptions {
   readonly directory: string
   readonly now?: () => string
   readonly resolveAdmission: (request: RuntimeStartRequest) => Promise<PiDurableAdmission>
   readonly assertAuthority: (authority: DurableExecutionAuthority) => Promise<void>
+  /** Synchronize canonical host lifecycle before constructing or resuming native tasks. */
+  readonly onExecutionRunning?: (authority: PiDurableRunningAuthority) => Promise<void>
+  /** Server-owned current scope read; required for every explicit plan2 scope. */
+  readonly scopeAuthority?: CurrentExecutionScopeAuthority
   readonly resolveProvider: (
     reference: ProviderSelectionReference,
     authority: DurableExecutionAuthority
@@ -117,6 +179,9 @@ export interface PiDurableRuntimeOptions {
     effectIdentity: string,
     request: RuntimeApprovalRequest
   ) => Promise<boolean>
+  readonly governedDelegateChild?: PiDurableGovernedDelegateChildCompiler & {
+    readonly gate: () => PiDurableEffectGate
+  }
   readonly engineFactory?: (options: {
     directory: string
     model: { provider: string; modelId: string }
@@ -133,5 +198,6 @@ export interface PiDurableRuntimeOptions {
       assertActive: () => Promise<void>
     }>
     withModels: <T>(use: (models: Models) => Promise<T>) => Promise<T>
+    readonly governedDelegateChild?: PiDurableGovernedDelegateChildEnginePort
   }) => Promise<DurablePiEngine>
 }

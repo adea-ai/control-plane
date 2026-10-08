@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto'
 import { ContextPackageSchema, type ContextPackageRepository } from '@control-plane/context'
 import {
   RuntimeConnectionDiscoveryReadModelSchema,
+  executionScopeOf,
+  type ExecutionScopeFields,
   type RuntimeConnectionDiscoveryReadModel,
 } from '@control-plane/contracts'
 import type { Execution, ExecutionAttempt, InteractionRepository } from '@control-plane/domain'
@@ -63,6 +65,9 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
     readonly effectKey: string
     readonly issuedAt?: string
   }): Promise<GatewayCommandEnvelope> {
+    if (executionScopeOf(input.executionPlan.correlation).kind !== 'project') {
+      throw new Error('REMOTE_RUNTIME_WORKSPACE_SCOPE_UNSUPPORTED')
+    }
     const contextPackageValue = await this.#contextPackages.get({
       contextPackageId: input.executionPlan.contextPackage.contextPackageId,
       contentDigest: input.executionPlan.contextPackage.contentDigest,
@@ -217,13 +222,15 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
 
   async #runtime(
     attempt: ExecutionAttempt,
-    correlation: { readonly workspaceId: string; readonly projectId: string }
+    correlation: ExecutionScopeFields
   ): Promise<RuntimeConnectionDiscoveryReadModel> {
+    const scope = executionScopeOf(correlation)
+    if (scope.kind !== 'project') throw new Error('REMOTE_RUNTIME_WORKSPACE_SCOPE_UNSUPPORTED')
     const runtimeConnectionId = attempt.runtime?.runtimeConnectionId
     if (runtimeConnectionId === undefined) throw new Error('REMOTE_RUNTIME_ROUTE_MISSING')
     const value = await this.#runtimeDiscovery.getRuntimeConnection({
       workspaceId: correlation.workspaceId,
-      projectId: correlation.projectId,
+      projectId: scope.projectId,
       runtimeConnectionId,
     })
     if (value === undefined) throw new Error('REMOTE_RUNTIME_CONNECTION_MISSING')

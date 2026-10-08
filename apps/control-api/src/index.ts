@@ -1,3 +1,8 @@
+export { createCurrentModelConnectionComposition } from './models/current-model-composition.js'
+export {
+  createPiLeadModelAdmissionReadiness,
+  type PiLeadModelAdmissionInput,
+} from './models/pi-lead-model-readiness.js'
 import type { GraphAdministrationService } from './graphs/graph-administration.service.js'
 import type { PiDurableLeadService } from './pi-durable/pi-durable-lead.service.js'
 import type { WorkspaceCatalogService } from './catalog/workspace-catalog.service.js'
@@ -238,3 +243,15 @@ export * from './catalog/workspace-catalog.service.js'
 export * from './pi-durable/pi-durable-lead.service.js'
 export * from './pi-durable/node-admission.js'
 export * from './pi-durable/node-composition.js'
+export * from './pi-durable/lead-preparation.js'
+export * from './pi-durable/unused-lead-allocation.js'
+export * from './pi-durable/child-progress-scanner.js'
+export * from './pi-durable/lead-running-lifecycle.js'
+export * from './pi-durable/model-product-authority.js'
+
+export * from './models/model-connections.service.js'
+
+export * from './models/recorded-model-funding.js'
+export * from './models/canonical-model-host.js'
+export * from './models/sqlite-funding-confirmations.js'
+export * from './models/canonical-model-composition.js'

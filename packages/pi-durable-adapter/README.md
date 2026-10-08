@@ -11,6 +11,12 @@ immutable compiled plans, budget-enabled command acceptance, current provider
 eligibility, authenticated recorded spending decisions and recovery policy.
 There are no default credentials, grants or funding approvals.
 
+Explicit version2 plans require the host's `CurrentExecutionScopeAuthority` and
+the original canonical product actor. Workspace capability is advertised only
+when this port is configured. It rechecks the exact plan, scope, actor, current
+grant and audience before execution, resume and inference; legacy project plan
+serialization stays unchanged.
+
 `createPiDurableProviderResolver` consumes an immutable gateway selection and
 reconstructs a fresh Models registry inside the gateway's `withCredential`
 callback. The concrete provider binding is OpenAI Responses with an API key.
@@ -25,10 +31,19 @@ ledger's physical-dispatch fence and settles authoritative usage. Accepted plan
 allowance and selection readiness do not authorize spending. Uncertain sends
 remain held; replay never silently issues another paid request.
 
-The first engine profile returns committed output snapshots. Native tools,
-compaction, deferred requests, retries, redirects and positive cache writes are
-disabled. The separately exported effect gate is a host integration with the
-existing policy-controlled tool service; it does not register native tools.
+The engine returns committed output snapshots. Compaction, deferred requests,
+retries, redirects and positive cache writes are disabled. The optional native
+`delegate_child` tool requires a verified retained source, the existing full
+policy/approval effect gate, independently admitted child authority and a retained
+inbox scanner. It accepts only a bounded objective. Other native tools remain
+unavailable.
+
+Funding preparation is opt-in in the Control API composition. It displays the
+immutable recorded payer before explicit dispatch, and never starts inference.
+Both provider and spending ports must share the canonical host's confirmed
+execution facade. Unused preparation allocations are recovered after restart;
+ambiguous physical sends keep their ledger holds. Intent-only receipt lookup
+repairs lost dispatch acknowledgements without starting another model call.
 
 Run `bun test src --timeout 30000` from this package. Process fixtures use Node
 from `CONTROL_PLANE_TEST_NODE` when specified, otherwise `node` on PATH. Tests

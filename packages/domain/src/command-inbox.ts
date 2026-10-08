@@ -1,4 +1,11 @@
-import { IdentifierSchemas, type ErrorClass } from '@control-plane/contracts'
+import {
+  executionScopeFields,
+  validateExecutionScopeFields,
+  executionScopeOf,
+  type ExecutionScope,
+  IdentifierSchemas,
+  type ErrorClass,
+} from '@control-plane/contracts'
 import { z } from 'zod'
 import {
   ExecutionPlanPinSchema,
@@ -38,15 +45,16 @@ export const CommandInboxStatusSchema = z.enum([
   'reconciliation_required',
 ])
 
-export const CommandInboxScopeSchema = z.object({
-  callerPrincipalId: ServicePrincipalIdSchema,
-  operation: OperationSchema,
-  workspaceId: IdentifierSchemas.workspaceId,
-  projectId: IdentifierSchemas.projectId,
-  idempotencyKey: IdempotencyKeySchema,
-})
+export const CommandInboxScopeSchema = z
+  .object({
+    callerPrincipalId: ServicePrincipalIdSchema,
+    operation: OperationSchema,
+    ...executionScopeFields,
+    idempotencyKey: IdempotencyKeySchema,
+  })
+  .superRefine(validateExecutionScopeFields)
 
-export const CommandInboxRecordSchema = CommandInboxScopeSchema.extend({
+export const CommandInboxRecordSchema = CommandInboxScopeSchema.safeExtend({
   commandId: IdentifierSchemas.commandId,
   requestId: IdentifierSchemas.requestId,
   taskId: IdentifierSchemas.taskId,
@@ -115,7 +123,7 @@ export class InMemoryCommandAcceptanceRepository implements CommandAcceptanceRep
     command: CommandInboxRecord,
     execution: Execution
   ): Promise<CommandAcceptanceResult> {
-    const key = scopeKey(command)
+    const key = commandInboxScopeKey(command)
     const existing = this.#commands.get(key)
     if (existing) {
       const existingExecution = this.#executions.get(existing.executionId)
@@ -144,7 +152,9 @@ export class InMemoryCommandAcceptanceRepository implements CommandAcceptanceRep
   }
 
   async get(scope: CommandInboxScope): Promise<CommandInboxRecord | undefined> {
-    return cloneOptional(this.#commands.get(scopeKey(CommandInboxScopeSchema.parse(scope))))
+    return cloneOptional(
+      this.#commands.get(commandInboxScopeKey(CommandInboxScopeSchema.parse(scope)))
+    )
   }
 
   async getByExecutionId(executionId: string): Promise<CommandInboxRecord | undefined> {
@@ -160,7 +170,7 @@ export class InMemoryCommandAcceptanceRepository implements CommandAcceptanceRep
 
   async compareAndSet(expectedVersion: number, command: CommandInboxRecord): Promise<boolean> {
     const parsed = CommandInboxRecordSchema.parse(command)
-    const key = scopeKey(parsed)
+    const key = commandInboxScopeKey(parsed)
     const current = this.#commands.get(key)
     if (current?.version !== expectedVersion || !sameImmutableCommand(current, parsed)) return false
     this.#commands.set(key, clone(parsed))
@@ -175,10 +185,19 @@ export class InMemoryCommandAcceptanceRepository implements CommandAcceptanceRep
 export type ExecutionPlanReplayAuthorization = boolean | 'historical_plan_missing'
 
 export interface ExecutionPlanAcceptanceValidator {
+  /** Explicit scopes require a current server-owned authority check; legacy validators fail closed. */
+  authorizeScope?(input: {
+    readonly executionPlan: z.output<typeof ExecutionPlanPinSchema>
+    readonly workspaceId: string
+    readonly projectId?: string | undefined
+    readonly executionScope?: ExecutionScope | undefined
+    readonly callerPrincipalId: string
+  }): Promise<boolean>
   authorize(input: {
     readonly executionPlan: z.output<typeof ExecutionPlanPinSchema>
     readonly workspaceId: string
-    readonly projectId: string
+    readonly projectId?: string | undefined
+    readonly executionScope?: ExecutionScope | undefined
     readonly taskId: string
     readonly agentId: string
     readonly callerPrincipalId: string
@@ -186,7 +205,8 @@ export interface ExecutionPlanAcceptanceValidator {
   validate(input: {
     readonly executionPlan: z.output<typeof ExecutionPlanPinSchema>
     readonly workspaceId: string
-    readonly projectId: string
+    readonly projectId?: string | undefined
+    readonly executionScope?: ExecutionScope | undefined
     readonly taskId: string
     readonly agentId: string
     readonly callerPrincipalId: string
@@ -223,12 +243,12 @@ const AcceptExecutionSchema = z
     payloadHash: PayloadHashSchema,
     correlation: z
       .object({
-        workspaceId: IdentifierSchemas.workspaceId,
-        projectId: IdentifierSchemas.projectId,
+        ...executionScopeFields,
         taskId: IdentifierSchemas.taskId,
         agentId: IdentifierSchemas.agentId,
       })
-      .strict(),
+      .strict()
+      .superRefine(validateExecutionScopeFields),
     executionPlan: ExecutionPlanPinSchema,
     marketplacePluginReferences: z.array(MarketplacePluginReferenceSchema).max(128).optional(),
     parentExecutionId: IdentifierSchemas.executionId.optional(),
@@ -257,12 +277,13 @@ const TransitionCommandSchema = z.object({
   operation: z.literal('execution.accept'),
   workspaceId: IdentifierSchemas.workspaceId.optional(),
   projectId: IdentifierSchemas.projectId.optional(),
+  executionScope: executionScopeFields.executionScope,
   idempotencyKey: IdempotencyKeySchema,
   correlation: z
     .object({
-      workspaceId: IdentifierSchemas.workspaceId,
-      projectId: IdentifierSchemas.projectId,
+      ...executionScopeFields,
     })
+    .superRefine(validateExecutionScopeFields)
     .optional(),
   expectedVersion: z.number().int().positive(),
   to: CommandInboxStatusSchema,
@@ -343,12 +364,29 @@ export class CommandInboxService {
     const parsed = AcceptExecutionSchema.parse(input)
     const scope = scopeFromInput(parsed)
     const existing = await this.repository.get(scope)
+    const admitted = existing ?? { ...scope, executionPlan: parsed.executionPlan }
+    // Explicit project requests retain historical project replay keys. When an
+    // old command wins that key, require current authority for its exact pin
+    // without adding scope fields to the historical command or execution.
+    const admittedScope = admitted.executionScope ?? parsed.correlation.executionScope
+    if (
+      admittedScope !== undefined &&
+      !(await this.#executionPlanValidator.authorizeScope?.({
+        workspaceId: admitted.workspaceId,
+        projectId: admitted.projectId,
+        executionScope: admittedScope,
+        executionPlan: admitted.executionPlan,
+        callerPrincipalId: admitted.callerPrincipalId,
+      }))
+    )
+      fail('INVALID_EXECUTION_PLAN_REFERENCE')
     if (existing) {
       if (existing.payloadHash === parsed.payloadHash) {
         const authorization = await this.#executionPlanValidator.authorize({
           executionPlan: existing.executionPlan,
           workspaceId: existing.workspaceId,
           projectId: existing.projectId,
+          executionScope: existing.executionScope,
           taskId: existing.taskId,
           agentId: existing.agentId,
           callerPrincipalId: existing.callerPrincipalId,
@@ -367,6 +405,7 @@ export class CommandInboxService {
         executionPlan: parsed.executionPlan,
         workspaceId: parsed.correlation.workspaceId,
         projectId: parsed.correlation.projectId,
+        executionScope: parsed.correlation.executionScope,
         taskId: parsed.correlation.taskId,
         agentId: parsed.correlation.agentId,
         callerPrincipalId: parsed.callerPrincipalId,
@@ -421,6 +460,28 @@ export class CommandInboxService {
     if (result.outcome === 'conflict') fail('IDEMPOTENCY_PAYLOAD_CONFLICT')
     if (result.outcome === 'duplicate') {
       await this.repository.verifyAdmission?.(result.command, result.execution)
+      // A concurrent winner may have a different retained pin than the input.
+      // Recheck its current authority, rather than carrying the loser's grant.
+      const winnerScope = result.command.executionScope ?? parsed.correlation.executionScope
+      if (winnerScope !== undefined) {
+        const replayInput = {
+          executionPlan: result.command.executionPlan,
+          workspaceId: result.command.workspaceId,
+          projectId: result.command.projectId,
+          executionScope: winnerScope,
+          taskId: result.command.taskId,
+          agentId: result.command.agentId,
+          callerPrincipalId: result.command.callerPrincipalId,
+        }
+        if (!(await this.#executionPlanValidator.authorizeScope?.(replayInput)))
+          fail('INVALID_EXECUTION_PLAN_REFERENCE')
+        const authorization = await this.#executionPlanValidator.authorize(replayInput)
+        const dispatchPending =
+          result.command.status === 'accepted' ||
+          result.command.status === 'reconciliation_required'
+        if (authorization === 'historical_plan_missing' ? dispatchPending : !authorization)
+          fail('INVALID_EXECUTION_PLAN_REFERENCE')
+      }
     }
     return {
       replayed: result.outcome === 'duplicate',
@@ -436,6 +497,7 @@ export class CommandInboxService {
       operation: parsed.operation,
       workspaceId: parsed.workspaceId ?? parsed.correlation?.workspaceId,
       projectId: parsed.projectId ?? parsed.correlation?.projectId,
+      executionScope: parsed.executionScope ?? parsed.correlation?.executionScope,
       idempotencyKey: parsed.idempotencyKey,
     })
     const current = await this.repository.get(scope)
@@ -491,6 +553,7 @@ export class CommandInboxService {
           operation: current.operation,
           workspaceId: current.workspaceId,
           projectId: current.projectId,
+          executionScope: current.executionScope,
           idempotencyKey: current.idempotencyKey,
           expectedVersion: current.version,
           to: parsed.to,
@@ -617,11 +680,23 @@ function scopeFromInput(input: z.output<typeof AcceptExecutionSchema>): CommandI
     operation: input.operation,
     workspaceId: input.correlation.workspaceId,
     projectId: input.correlation.projectId,
+    executionScope: input.correlation.executionScope,
     idempotencyKey: input.idempotencyKey,
   })
 }
 
-function scopeKey(scope: CommandInboxScope): string {
+export function commandInboxScopeKey(input: CommandInboxScope): string {
+  const scope = CommandInboxScopeSchema.parse(input)
+  if (executionScopeOf(scope).kind === 'workspace') {
+    return JSON.stringify([
+      'execution-scope/v1',
+      'workspace',
+      scope.callerPrincipalId,
+      scope.operation,
+      scope.workspaceId,
+      scope.idempotencyKey,
+    ])
+  }
   return [
     scope.callerPrincipalId,
     scope.operation,
@@ -633,7 +708,7 @@ function scopeKey(scope: CommandInboxScope): string {
 
 function sameImmutableCommand(left: CommandInboxRecord, right: CommandInboxRecord): boolean {
   return (
-    scopeKey(left) === scopeKey(right) &&
+    commandInboxScopeKey(left) === commandInboxScopeKey(right) &&
     left.commandId === right.commandId &&
     left.requestId === right.requestId &&
     left.taskId === right.taskId &&

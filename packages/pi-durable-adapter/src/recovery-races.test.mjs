@@ -1,12 +1,13 @@
 import { expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { PiDurableRuntimeAdapter } from './adapter.ts'
 import { createNodePiDurableRuntime } from './composition.ts'
+import { writeRecoverySourceOverride } from './recovery-races.fixture.mjs'
 
 const at = '2026-10-08T00:00:00.000Z'
 const interactionId = 'int_01JABCDEF0123456789ABCDEFG'
@@ -108,6 +109,367 @@ function fixture(directory, overrides = {}) {
   return { request, options }
 }
 
+test.each(['running', 'unknown', 'cancelling'])(
+  'reopened %s inference cannot become a fresh input or approval while reconciliation is unresolved',
+  async (state) => {
+    const directory = mkdtempSync(join(tmpdir(), 'pi-input-uncertain-'))
+    let sends = 0
+    const setup = fixture(directory, {
+      engineFactory: async () => ({
+        run: async () => {
+          sends++
+          return result
+        },
+        close: async () => {},
+        cancel: async () => {},
+      }),
+    })
+    let adapter = new PiDurableRuntimeAdapter(setup.options)
+    try {
+      const handle = await adapter.start(setup.request)
+      await adapter.drain()
+      const prior = adapter.journal.get(handle.handleId)
+      adapter.journal.update(handle.handleId, prior.epoch, {
+        state,
+        detail: { ...prior.detail, result: undefined, inferencePending: true },
+      })
+      await adapter.close()
+      adapter = new PiDurableRuntimeAdapter(setup.options)
+      await adapter.reconcile(handle)
+      const retained = adapter.journal.get(handle.handleId)
+      const events = adapter.journal.events(handle.handleId, 0)
+      await expect(adapter.awaitInput(handle, interactionId)).rejects.toThrow(
+        'PI_RECONCILIATION_REQUIRED'
+      )
+      await expect(
+        adapter.submitInput(handle, {
+          interactionId,
+          idempotencyKey: 'input:bypass',
+          text: 'Unsafe new request',
+        })
+      ).rejects.toThrow()
+      await expect(adapter.awaitApproval(handle, interactionId, 'effect:bypass')).rejects.toThrow(
+        'PI_RECONCILIATION_REQUIRED'
+      )
+      await adapter.drain()
+      expect(adapter.journal.get(handle.handleId)).toEqual(retained)
+      expect(adapter.journal.events(handle.handleId, 0)).toEqual(events)
+      expect(sends).toBe(1)
+    } finally {
+      await adapter.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }
+)
+
+test('retained pending input cannot clear unresolved inference or replace an outstanding approval', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-input-pending-fence-'))
+  const setup = fixture(directory)
+  let adapter = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    const handle = await adapter.start(setup.request)
+    await adapter.drain()
+    await adapter.awaitInput(handle, interactionId)
+    const pending = adapter.journal.get(handle.handleId)
+    adapter.journal.update(handle.handleId, pending.epoch, {
+      detail: { ...pending.detail, inferencePending: true },
+    })
+    await adapter.close()
+    adapter = new PiDurableRuntimeAdapter(setup.options)
+    const retained = adapter.journal.get(handle.handleId)
+    await expect(
+      adapter.submitInput(handle, {
+        interactionId,
+        idempotencyKey: 'input:unresolved',
+        text: 'Unsafe input',
+      })
+    ).rejects.toThrow('PI_RECONCILIATION_REQUIRED')
+    expect(adapter.journal.get(handle.handleId)).toEqual(retained)
+    // A legitimate approval may be created once the prior inference has a committed resolution.
+    adapter.journal.update(handle.handleId, retained.epoch, {
+      detail: { ...retained.detail, inferencePending: false, pendingInput: undefined },
+    })
+    await adapter.awaitApproval(handle, interactionId, 'effect:pending')
+    const approval = adapter.journal.get(handle.handleId)
+    await expect(adapter.awaitInput(handle, interactionId)).rejects.toThrow(
+      'PI_APPROVAL_NOT_RESOLVED'
+    )
+    expect(adapter.journal.get(handle.handleId)).toEqual(approval)
+  } finally {
+    await adapter.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('pending approval replay preserves its exact interaction and effect without replacing evidence', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-approval-identity-fence-'))
+  const setup = fixture(directory)
+  const adapter = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    const handle = await adapter.start(setup.request)
+    await adapter.drain()
+    await adapter.awaitApproval(handle, interactionId, 'effect:exact-pending')
+    const retained = adapter.journal.get(handle.handleId)
+    const events = adapter.journal.events(handle.handleId, 0)
+    await expect(
+      adapter.awaitApproval(handle, interactionId, 'effect:replacement')
+    ).rejects.toThrow('PI_APPROVAL_IDENTITY_CONFLICT')
+    await expect(
+      adapter.awaitApproval(handle, 'int_01JABCDEF0123456789ABCDEFH', 'effect:exact-pending')
+    ).rejects.toThrow('PI_APPROVAL_IDENTITY_CONFLICT')
+    await adapter.awaitApproval(handle, interactionId, 'effect:exact-pending')
+    expect(adapter.journal.get(handle.handleId)).toEqual(retained)
+    expect(adapter.journal.events(handle.handleId, 0)).toEqual(events)
+  } finally {
+    await adapter.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('pending input replay keeps exact identity and cannot be replaced by input or approval', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-input-identity-fence-'))
+  const setup = fixture(directory)
+  const adapter = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    const handle = await adapter.start(setup.request)
+    await adapter.drain()
+    await adapter.awaitInput(handle, interactionId)
+    const retained = adapter.journal.get(handle.handleId)
+    const events = adapter.journal.events(handle.handleId, 0)
+    await expect(adapter.awaitInput(handle, 'int_01JABCDEF0123456789ABCDEFH')).rejects.toThrow(
+      'PI_INPUT_IDENTITY_CONFLICT'
+    )
+    await expect(
+      adapter.awaitApproval(handle, interactionId, 'effect:replace-input')
+    ).rejects.toThrow('PI_INPUT_NOT_RESOLVED')
+    await adapter.awaitInput(handle, interactionId)
+    expect(adapter.journal.get(handle.handleId)).toEqual(retained)
+    expect(adapter.journal.events(handle.handleId, 0)).toEqual(events)
+  } finally {
+    await adapter.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('cancelled attempts remain final after reopen and cannot reopen interaction gates', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-input-cancel-final-'))
+  const setup = fixture(directory)
+  let adapter = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    const handle = await adapter.start(setup.request)
+    await adapter.drain()
+    await adapter.awaitInput(handle, interactionId)
+    await adapter.cancel(handle, { idempotencyKey: 'cancel:final', requestedAt: at })
+    await adapter.close()
+    adapter = new PiDurableRuntimeAdapter(setup.options)
+    const cancelled = adapter.journal.get(handle.handleId)
+    await expect(adapter.awaitInput(handle, interactionId)).rejects.toThrow('PI_EXECUTION_TERMINAL')
+    await expect(adapter.awaitApproval(handle, interactionId, 'effect:cancelled')).rejects.toThrow(
+      'PI_EXECUTION_TERMINAL'
+    )
+    await expect(
+      adapter.submitInput(handle, {
+        interactionId,
+        idempotencyKey: 'input:cancelled',
+        text: 'Late input',
+      })
+    ).rejects.toThrow()
+    expect(adapter.journal.get(handle.handleId)).toEqual(cancelled)
+  } finally {
+    await adapter.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('another process retaining a completed generation owner blocks new interaction claims', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-input-remote-owner-'))
+  const setup = fixture(directory)
+  const seed = new PiDurableRuntimeAdapter(setup.options)
+  let worker, observer
+  try {
+    const handle = await seed.start(setup.request)
+    await seed.drain()
+    const prior = seed.journal.get(handle.handleId)
+    seed.journal.update(handle.handleId, prior.epoch, { state: 'starting', detail: {} })
+    await seed.close()
+    const path = join(directory, 'owned-generation.mjs')
+    writeFileSync(
+      path,
+      `
+import { PiDurableRuntimeAdapter } from ${JSON.stringify(new URL('./adapter.ts', import.meta.url).href)};
+setInterval(()=>{},1000);
+const admission=${JSON.stringify(prior.admission.admission)};
+const adapter=new PiDurableRuntimeAdapter({directory:${JSON.stringify(directory)},now:()=>${JSON.stringify(at)},
+resolveAdmission:async()=>admission,assertAuthority:async()=>{},
+resolveProvider:async()=>({...admission.selection,workspaceId:${JSON.stringify(setup.request.attemptBudget.workspaceId)},provider:'scripted',providerModel:'race-model',location:'remote_host',harness:'pi_durable',harnessVersion:'1.1.0',providerBinding:'pi_durable_models',withModels:async use=>use({})}),
+authorizeInference:async()=>({maxOutputTokens:10,maximumInputTokens:64,assertActive:async()=>{}}),settleUsage:async(_authority,_key,usage)=>usage,reconcileInference:async()=> 'unresolved',
+engineFactory:async()=>({run:async()=>(${JSON.stringify(result)}),cancel:async()=>{},close:async()=>{process.stdout.write(JSON.stringify({ownerPid:process.pid})+'\\n');await new Promise(()=>{});}})});
+await adapter.start(${JSON.stringify(setup.request)});
+await adapter.drain();
+`
+    )
+    const overrideIndex = process.execArgv.indexOf('--tsconfig-override')
+    const inlineOverride = process.execArgv
+      .find((argument) => argument.startsWith('--tsconfig-override='))
+      ?.slice('--tsconfig-override='.length)
+    const sourceOverride =
+      process.env.CONTROL_PLANE_TEST_TSCONFIG_OVERRIDE ??
+      inlineOverride ??
+      (overrideIndex < 0 ? undefined : process.execArgv[overrideIndex + 1]) ??
+      writeRecoverySourceOverride(directory)
+    const sourceResolution = ['--tsconfig-override', sourceOverride]
+    worker = Bun.spawn([process.execPath, ...sourceResolution, path], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const readiness = worker.stdout.getReader()
+    let output = ''
+    while (!output.includes('\n')) {
+      const next = await readiness.read()
+      if (next.done) throw new Error(await new Response(worker.stderr).text())
+      output += new TextDecoder().decode(next.value)
+    }
+    const owner = JSON.parse(output.trim())
+    observer = new PiDurableRuntimeAdapter(setup.options)
+    const retained = observer.journal.get(handle.handleId)
+    expect(retained.state).toBe('completed')
+    expect(retained.detail.inferencePending).toBe(false)
+    expect(retained.detail.ownerPid).toBe(owner.ownerPid)
+    expect(owner.ownerPid).not.toBe(process.pid)
+    await expect(observer.awaitInput(handle, interactionId)).rejects.toThrow('PI_EXECUTION_BUSY')
+    await expect(
+      observer.awaitApproval(handle, interactionId, 'effect:other-process')
+    ).rejects.toThrow('PI_EXECUTION_BUSY')
+    expect(observer.journal.get(handle.handleId)).toEqual(retained)
+    worker.kill()
+    await worker.exited
+    await observer.awaitInput(handle, interactionId)
+    expect((await observer.status(handle)).state).toBe('awaiting_input')
+  } finally {
+    worker?.kill()
+    if (worker) await worker.exited
+    if (observer) await observer.close()
+    await seed.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+}, 10000)
+
+test('input authority suspended across an unchanged-epoch inference marker cannot erase that marker', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-input-marker-race-'))
+  const entered = deferred(),
+    resume = deferred()
+  let paused = false
+  const setup = fixture(directory, {
+    assertAuthority: async () => {
+      if (paused) {
+        entered.resolve()
+        await resume.promise
+      }
+    },
+  })
+  const adapter = new PiDurableRuntimeAdapter(setup.options)
+  const other = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    const handle = await adapter.start(setup.request)
+    await adapter.drain()
+    await adapter.awaitInput(handle, interactionId)
+    paused = true
+    const submission = adapter.submitInput(handle, {
+      interactionId,
+      idempotencyKey: 'input:stale-marker',
+      text: 'Unsafe replacement',
+    })
+    await entered.promise
+    const current = other.journal.get(handle.handleId)
+    const retained = other.journal.update(handle.handleId, current.epoch, {
+      detail: { ...current.detail, inferencePending: true },
+    })
+    paused = false
+    resume.resolve()
+    await expect(submission).rejects.toThrow('PI_RUNTIME_STATE_CONFLICT')
+    expect(adapter.journal.get(handle.handleId)).toEqual(retained)
+  } finally {
+    paused = false
+    resume.resolve()
+    await adapter.close()
+    await other.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+}, 10000)
+
+test.each(['awaitInput', 'awaitApproval'])(
+  'cross-instance cleanup at %s transaction entry cannot resurrect a closed session',
+  async (operation) => {
+    const directory = mkdtempSync(join(tmpdir(), 'pi-interaction-close-transaction-'))
+    const setup = fixture(directory)
+    const adapter = new PiDurableRuntimeAdapter(setup.options)
+    const other = new PiDurableRuntimeAdapter(setup.options)
+    let cleanup, closed
+    try {
+      const handle = await adapter.start(setup.request)
+      await adapter.drain()
+      const events = adapter.journal.events(handle.handleId, 0)
+      const exec = adapter.journal.database.exec.bind(adapter.journal.database)
+      let armed = true
+      // Two actual SQLite connections: cleanup wins at the old check/write gap.
+      adapter.journal.database.exec = (sql) => {
+        if (armed && sql === 'BEGIN IMMEDIATE') {
+          armed = false
+          cleanup = other.cleanup(handle)
+          cleanup.catch(() => {})
+          closed = other.journal.get(handle.handleId)
+        }
+        return exec(sql)
+      }
+      const mutation =
+        operation === 'awaitInput'
+          ? adapter.awaitInput(handle, interactionId)
+          : adapter.awaitApproval(handle, interactionId, 'effect:closed-transaction')
+      await expect(mutation).rejects.toThrow('PI_RUNTIME_STATE_CONFLICT')
+      await cleanup
+      expect(closed.detail.sessionClosed).toBe(true)
+      expect(adapter.journal.get(handle.handleId)).toEqual(closed)
+      expect(adapter.journal.events(handle.handleId, 0)).toEqual(events)
+    } finally {
+      if (cleanup) await cleanup
+      await adapter.close()
+      await other.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }
+)
+
+test('an interaction winner fences a close built from the prior terminal snapshot', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-interaction-close-stale-'))
+  const setup = fixture(directory)
+  const adapter = new PiDurableRuntimeAdapter(setup.options)
+  const other = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    const handle = await adapter.start(setup.request)
+    await adapter.drain()
+    let deferredWrite
+    const update = other.journal.update.bind(other.journal)
+    other.journal.update = (...args) => {
+      deferredWrite = () => update(...args)
+      return other.journal.get(handle.handleId)
+    }
+    await other.cleanup(handle)
+    other.journal.update = update
+    await adapter.awaitInput(handle, interactionId)
+    const pending = adapter.journal.get(handle.handleId)
+    expect(() => deferredWrite()).toThrow('STALE_OWNER')
+    await expect(
+      other.session({ operation: 'close', sessionId: handle.externalSessionId })
+    ).rejects.toThrow('PI_SESSION_BUSY')
+    expect(adapter.journal.get(handle.handleId)).toEqual(pending)
+    expect(pending.detail.sessionClosed).toBeUndefined()
+  } finally {
+    await adapter.close()
+    await other.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('competing inputs from the same pending snapshot admit one exact turn and harmless retry', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-input-race-'))
   const arrivals = deferred(),
@@ -188,9 +550,9 @@ test('awaitApproval commits one approval snapshot without transient input and re
     const handle = await adapter.start(setup.request)
     await adapter.drain()
     const snapshots = []
-    const update = adapter.journal.update.bind(adapter.journal)
-    adapter.journal.update = (...args) => {
-      const value = update(...args)
+    const transition = adapter.journal.transition.bind(adapter.journal)
+    adapter.journal.transition = (...args) => {
+      const value = transition(...args)
       snapshots.push(adapter.journal.get(handle.handleId))
       return value
     }

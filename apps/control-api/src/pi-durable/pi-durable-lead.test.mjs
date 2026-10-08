@@ -15,6 +15,7 @@ import { PiDurableRuntimeAdapter } from '@control-plane/pi-durable-adapter'
 import { PolicyServiceAuthenticator } from '../auth/service-authentication.ts'
 import { NormalizedExceptionFilter } from '../http/errors.ts'
 import { PiDurableLeadModule } from './pi-durable-lead.module.ts'
+import { SqlitePiLeadPreparations } from './lead-preparation.ts'
 import {
   DurablePiDurableLeadService,
   PiDurableLeadError,
@@ -44,6 +45,9 @@ async function fixture(run, changes = {}) {
     audience: [principalId],
     changeAdmission: false,
     starts: 0,
+    fundingRevision: 1,
+    releases: 0,
+    fundingReads: 0,
   }
   // A scripted LOCAL HTTP provider exercises the actual pinned Pi transport.
   // It is not a live-provider or real-account qualification claim.
@@ -225,6 +229,47 @@ async function fixture(run, changes = {}) {
     })
     const receipts = new SqlitePiDurableLeadReceiptStore(adapter.journal.database)
     service = new DurablePiDurableLeadService({
+      ...(changes.preparations
+        ? {
+            preparations: new SqlitePiLeadPreparations(
+              adapter.journal.database,
+              {
+                async readFunding(lead) {
+                  state.fundingReads++
+                  await changes.onFundingRead?.(state)
+                  return {
+                    schemaVersion: 'model-funding-display/v1',
+                    state: 'ready',
+                    workspaceId,
+                    executionId: lead.admittedAttempt.executionId,
+                    attemptId: lead.admittedAttempt.attemptId,
+                    selectionRef: admission.selection.selectionRef,
+                    selectionRevision: admission.selection.selectionRevision,
+                    provider: 'scripted-http',
+                    providerModel: 'scripted-1',
+                    accountRef: 'account:test',
+                    authKind: 'api_key',
+                    fundingSource: 'byo_api',
+                    fundingOwner: {
+                      ownerRef: 'payer:test',
+                      kind: 'provider_account',
+                      displayName: 'Test payer',
+                      revision: state.fundingRevision,
+                      evidenceRef: 'payer-evidence:test',
+                    },
+                    authorizationRef: 'authorization:test',
+                    authorityRevision: state.fundingRevision,
+                    expiresAt: deadlineAt,
+                  }
+                },
+                async releaseExpired() {
+                  state.releases++
+                },
+              },
+              () => at
+            ),
+          }
+        : {}),
       adapter: {
         start: async (request) => {
           state.starts++
@@ -235,6 +280,7 @@ async function fixture(run, changes = {}) {
         cancel: (...args) => adapter.cancel(...args),
       },
       receipts: overrides.receipts?.(receipts) ?? receipts,
+      findRuntimeHandle: (request) => adapter.findExistingHandle(request),
       now: () => at,
       authority: {
         resolveIntent: async ({ intentId: submitted }) => {
@@ -256,7 +302,8 @@ async function fixture(run, changes = {}) {
           }
         },
         assertCurrent: async () => {
-          if (state.revoked) throw new PiDurableLeadError('PI_LEAD_SCOPE_REJECTED')
+          if (state.revoked || !state.audience.includes(principalId))
+            throw new PiDurableLeadError('PI_LEAD_SCOPE_REJECTED')
         },
       },
     })
@@ -315,6 +362,172 @@ async function fixture(run, changes = {}) {
 }
 
 describe('composed Pi Durable lead HTTP endpoints', () => {
+  test('audience revoked during final funding await prevents dispatch claim, runtime start and native send', async () => {
+    let signalEntered, resumeFunding
+    const entered = new Promise((resolve) => {
+      signalEntered = resolve
+    })
+    const gate = new Promise((resolve) => {
+      resumeFunding = resolve
+    })
+    await fixture(
+      async (context) => {
+        const { inject, envelope, state } = context
+        const prepared = await inject(
+          'prepare',
+          envelope('pi-durable.lead.prepare', { intentId }, 'prepare-for-final-await')
+        )
+        expect(prepared.statusCode).toBe(200)
+        const preparationRef = prepared.json().data.preparationRef
+        let claims = 0
+        const store = context.service.options.preparations
+        const mark = store.markDispatching.bind(store)
+        store.markDispatching = (ref) => {
+          claims++
+          return mark(ref)
+        }
+        const pending = inject(
+          'dispatch',
+          envelope('pi-durable.lead.dispatch', { intentId, preparationRef }, 'dispatch-final-await')
+        )
+        await entered
+        state.audience = ['svc_other']
+        resumeFunding()
+        const denied = await pending
+        expect(denied.statusCode).toBe(403)
+        await context.adapter.drain()
+        expect(claims).toBe(0)
+        expect(state.starts).toBe(0)
+        expect(state.requests).toHaveLength(0)
+        const record = context.adapter.journal.database
+          .prepare('SELECT record FROM pi_lead_preparations WHERE preparation_ref = ?')
+          .get(preparationRef)
+        expect(JSON.parse(record.record).state).toBe('prepared')
+        expect(denied.body).not.toContain('private-provider-secret')
+      },
+      {
+        preparations: true,
+        onFundingRead: async (state) => {
+          if (state.fundingReads === 3) {
+            signalEntered()
+            await gate
+          }
+        },
+      }
+    )
+  })
+
+  test('intent-only lookup repairs lost dispatch ACK without funding replay or another inference', () =>
+    fixture(
+      async (context) => {
+        const { inject, envelope, read, state, open } = context
+        let failOnce = true
+        await open({
+          receipts: (store) => ({
+            get: (...args) => store.get(...args),
+            insert: (...args) => store.insert(...args),
+            bindCommand: (...args) => store.bindCommand(...args),
+            compareAndSet: async (...args) => {
+              if (failOnce) {
+                failOnce = false
+                throw new Error('simulated-lost-receipt-ACK')
+              }
+              return store.compareAndSet(...args)
+            },
+          }),
+        })
+        const body = read('pi-durable.lead.lookup', { intentId })
+        expect((await inject('lookup', body)).json().data.receipt).toBeNull()
+        expect(state.starts).toBe(0)
+        const preparation = (
+          await inject(
+            'prepare',
+            envelope('pi-durable.lead.prepare', { intentId }, 'prepare-for-lost-ack')
+          )
+        ).json().data
+        const rejected = await inject(
+          'dispatch',
+          envelope(
+            'pi-durable.lead.dispatch',
+            { intentId, preparationRef: preparation.preparationRef },
+            'lost-ack-dispatch'
+          )
+        )
+        expect(rejected.statusCode).toBe(503)
+        await context.adapter.drain()
+        const counts = {
+          starts: state.starts,
+          requests: state.requests.length,
+          fundingReads: state.fundingReads,
+        }
+        state.fundingRevision++
+        const recovered = await inject('lookup', body)
+        expect(recovered.statusCode).toBe(200)
+        const receipt = recovered.json().data.receipt
+        expect(receipt.state).toBe('dispatched')
+        expect(receipt.runtimeSessionId).toMatch(/^ses_[0-9A-HJKMNP-TV-Z]{26}$/)
+        expect((await inject('lookup', body)).json().data.receipt).toEqual(receipt)
+        expect({
+          starts: state.starts,
+          requests: state.requests.length,
+          fundingReads: state.fundingReads,
+        }).toEqual(counts)
+        expect(counts.requests).toBe(1)
+      },
+      { preparations: true }
+    ))
+
+  test('prepare retains funding without runtime start; explicit dispatch rejects changed payer evidence', () =>
+    fixture(
+      async ({ inject, envelope, state, adapter }) => {
+        const body = envelope('pi-durable.lead.prepare', { intentId })
+        const prepared = await inject('prepare', body)
+        expect(prepared.statusCode).toBe(200)
+        const data = prepared.json().data
+        expect(data.preparationRef).toMatch(/^prep_[a-f0-9]{32}$/)
+        expect(data.funding.fundingOwner.displayName).toBe('Test payer')
+        expect(data.runtimeSessionId).toBeUndefined()
+        expect(state.starts).toBe(0)
+        expect(state.requests).toHaveLength(0)
+        expect((await inject('prepare', body)).json().data).toEqual({ ...data, replayed: true })
+        await adapter.drain()
+        expect(state.requests).toHaveLength(0)
+        state.fundingRevision++
+        const stale = await inject(
+          'dispatch',
+          envelope(
+            'pi-durable.lead.dispatch',
+            { intentId, preparationRef: data.preparationRef },
+            'stale-confirmation'
+          )
+        )
+        expect(stale.statusCode).toBe(409)
+        expect(stale.json().error.code).toBe('PI_LEAD_FUNDING_CONFIRMATION_STALE')
+        expect(state.starts).toBe(0)
+        const refreshed = await inject(
+          'prepare',
+          envelope('pi-durable.lead.prepare', { intentId }, 'refresh-preparation')
+        )
+        expect(refreshed.statusCode).toBe(409)
+        expect(state.starts).toBe(0)
+        state.fundingRevision--
+        const accepted = await inject(
+          'dispatch',
+          envelope(
+            'pi-durable.lead.dispatch',
+            { intentId, preparationRef: data.preparationRef },
+            'confirmed-dispatch'
+          )
+        )
+        expect(accepted.statusCode).toBe(202)
+        await adapter.drain()
+        expect(state.starts).toBe(1)
+        expect(state.requests).toHaveLength(1)
+        expect(state.releases).toBe(0)
+      },
+      { preparations: true }
+    ))
+
   test('real Pi Models HTTP transport completes and receipt/session/cursor survive reopen without inference replay', () =>
     fixture(async (context) => {
       const { inject, envelope, read, state, close, open } = context

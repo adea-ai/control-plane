@@ -7,10 +7,12 @@ import type {
 import {
   ExecutionCancellationReceiptSchema,
   ExecutionSchema,
+  executionScopesEqual,
   executionCancellationScopeKey,
   type ExecutionCancellationRepository,
   type ExecutionCancellationReceipt,
   type ExecutionCancellationScope,
+  type ExecutionScopeFields,
 } from '@control-plane/domain'
 
 const namespace = 'execution-cancellation-receipts'
@@ -30,10 +32,7 @@ async function requireExecutionOwner(
   const parsed = ExecutionSchema.safeParse(row.value)
   if (!parsed.success || parsed.data.executionId !== executionId)
     throw new Error('SQLITE_EXECUTION_CANCELLATION_EXECUTION_MALFORMED')
-  if (
-    parsed.data.correlation.workspaceId !== receipt.request.workspaceId ||
-    parsed.data.correlation.projectId !== receipt.request.projectId
-  )
+  if (!executionScopesEqual(parsed.data.correlation, receipt.request))
     throw new Error('SQLITE_EXECUTION_CANCELLATION_SCOPE_MISMATCH')
 }
 
@@ -92,12 +91,12 @@ export class SqliteExecutionCancellationRepository implements ExecutionCancellat
    * against an execution, capped at `limit`. Lets remediation effects respect a
    * recorded operator cancel intent without scanning unbounded history.
    */
-  listByExecution(input: {
-    readonly executionId: string
-    readonly workspaceId: string
-    readonly projectId: string
-    readonly limit: number
-  }): Promise<readonly ExecutionCancellationReceipt[]> {
+  listByExecution(
+    input: ExecutionScopeFields & {
+      readonly executionId: string
+      readonly limit: number
+    }
+  ): Promise<readonly ExecutionCancellationReceipt[]> {
     if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) {
       throw new Error('INVALID_LIMIT')
     }
@@ -106,8 +105,7 @@ export class SqliteExecutionCancellationRepository implements ExecutionCancellat
         .map((record) => ExecutionCancellationReceiptSchema.parse(record.value))
         .filter(
           (receipt) =>
-            receipt.request.workspaceId === input.workspaceId &&
-            receipt.request.projectId === input.projectId &&
+            executionScopesEqual(receipt.request, input) &&
             receipt.request.payload.executionId === input.executionId
         )
         .slice(0, input.limit)

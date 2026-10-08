@@ -4,15 +4,13 @@ Production-shaped TypeScript monorepo for the Control Plane. The repository is o
 
 ## Current delivery sequence
 
-- **M9: Managed Cloud Deployment, Hardening & Evals.** Make the Railway + Neon + R2 + Restate managed-cloud profile fully operational and freeze deployment-independent behavior.
-- **M10: Local & Hosted Portability.** Port the accepted M9 semantics to embedded Local and user-controlled VPS/container profiles.
-- **M11: Feature Completion & Production Audit.** Independently audit managed cloud, Local, and Hosted.
-- **M12: Cross-Product Integration & Release.** Connect the approved Control Plane candidate to Adea and optional Cortana. Per the [2026-09-24 owner decision in #195](https://github.com/adea-ai/control-plane/issues/195#issuecomment-5822863459), CP-M12 also includes the Local/Hosted deployment-profile substrate and the cross-product certification/release built on it.
+The current milestone display labels define implementation order; GitHub URL/database IDs are stable identifiers and can differ from those labels. [GitHub milestones](https://github.com/adea-ai/control-plane/milestones) own live status, dependencies and acceptance.
 
-M9 replaced the former AWS/ECS/Terraform and Temporal implementation with the active Cloud profile:
-Railway + Neon + Cloudflare R2 + Restate. The product has exactly three deployment profiles: Cloud,
-Hosted, and Local. M10 ports the same application semantics to Hosted and Local; AWS/ECS/Terraform
-is historical context, not an active compatibility or portability target.
+- **M11–M18: Pi Durable implementation.** Build workspace leads/global conversation foundations, Pi runtime/authority, durable jobs/native harness bridges, responsive lead/project UX, authorized groups, graph retirement, runtime/profile simplification and migration acceptance. The selected architecture is planned; individual changes require their own qualification evidence.
+- **[M19: Feature Completion & Production Audit](https://github.com/adea-ai/control-plane/milestone/11).** Complete the retained original issues #186–#197 and current follow-ups against the integrated Pi candidate. Security, authority and data-preservation repairs needed by the migration proceed alongside it.
+- **[M21: Cross-Product Integration & Release](https://github.com/adea-ai/control-plane/milestone/10).** Certify and release the integrated Control Plane, Adea and optional Cortana profiles after their dependencies qualify.
+
+The original M9 managed-cloud and M10 portability work remains historical implementation and evidence context. The managed-cloud reference uses Railway + Neon + Cloudflare R2 + Restate; Hosted retains its supported simple/server Compose profiles and Restate, while Local retains embedded SQLite and direct transport. These paths remain until qualified replacement and cutover. Local uses no Restate process under owner-approved #548. AWS/ECS/Terraform and Temporal are historical, not active targets. Superseding an engine or renumbering a milestone does not waive recovery, authority, retention, rollback or profile acceptance. See the [planned target and retained diagram sources](docs/architecture/diagram-sources.md).
 
 ## Prerequisites
 

@@ -114,3 +114,5 @@ export { contextCommands } from './context-commands.js'
 export { runtimeChannelSequences } from './runtime-channel-sequences.js'
 export { contextCommandGrants } from './context-command-grants.js'
 export { contextProviderRegistrations } from './context-provider-registrations.js'
+
+export { modelSelectionRecords } from './model-selections.js'

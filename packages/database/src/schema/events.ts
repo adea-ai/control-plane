@@ -1,3 +1,4 @@
+import { executionScopeColumn, executionScopeCheck } from './execution-scope.js'
 import {
   index,
   integer,
@@ -45,7 +46,8 @@ export const executionEvents = pgTable(
     schemaVersion: integer('schema_version').notNull(),
     requestId: identifier('request_id').notNull(),
     workspaceId: identifier('workspace_id').notNull(),
-    projectId: identifier('project_id').notNull(),
+    projectId: identifier('project_id'),
+    executionScope: executionScopeColumn(),
     taskId: identifier('task_id').notNull(),
     agentId: identifier('agent_id').notNull(),
     commandId: identifier('command_id'),
@@ -73,6 +75,7 @@ export const executionEvents = pgTable(
     publicationErrorReference: varchar('publication_error_reference', { length: 512 }),
   },
   (table) => [
+    executionScopeCheck('execution_events_scope_check', table),
     uniqueIndex('execution_events_execution_sequence_unique').on(table.executionId, table.sequence),
     index('execution_events_replay_index').on(table.executionId, table.sequence, table.archivedAt),
     index('execution_events_publication_index').on(table.publicationStatus, table.recordedAt),

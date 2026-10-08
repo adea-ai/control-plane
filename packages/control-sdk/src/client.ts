@@ -1,4 +1,8 @@
 import type {
+  PiDurableLeadPrepareRequest,
+  PiDurableLeadPrepareResponse,
+  PiDurableLeadLookupRequest,
+  PiDurableLeadLookupResponse,
   PiDurableLeadDispatchRequest,
   PiDurableLeadDispatchResponse,
   PiDurableLeadStatusRequest,
@@ -8,6 +12,20 @@ import type {
   PiDurableLeadCancelRequest,
   PiDurableLeadCancelResponse,
 } from '@control-plane/runtime-sdk'
+import type {
+  ModelSelectionFundingRequest,
+  ModelSelectionFundingResponse,
+  ModelConnectionCreateRequest,
+  ModelConnectionListRequest,
+  ModelConnectionListResponse,
+  ModelConnectionResponse,
+  ModelConnectionRevokeRequest,
+  ModelDefaultsGetRequest,
+  ModelDefaultsResponse,
+  ModelDefaultsSetRequest,
+  ModelSelectionResolveRequest,
+  ModelSelectionResponse,
+} from '@control-plane/contracts'
 import {
   type CredentialCreateRequest,
   type CredentialGetRequest,
@@ -158,6 +176,35 @@ export class ControlPlaneClient {
     if (!Number.isSafeInteger(this.#timeoutMs) || this.#timeoutMs <= 0) {
       throw new Error('Control Plane client timeout must be a positive integer')
     }
+  }
+
+  createModelConnection(input: ModelConnectionCreateRequest): Promise<ModelConnectionResponse> {
+    return this.#request(ControlApiOperations.createModelConnection, input)
+  }
+
+  revokeModelConnection(input: ModelConnectionRevokeRequest): Promise<ModelConnectionResponse> {
+    return this.#request(ControlApiOperations.revokeModelConnection, input)
+  }
+
+  listModelConnections(input: ModelConnectionListRequest): Promise<ModelConnectionListResponse> {
+    return this.#request(ControlApiOperations.listModelConnections, input)
+  }
+
+  getModelDefaults(input: ModelDefaultsGetRequest): Promise<ModelDefaultsResponse> {
+    return this.#request(ControlApiOperations.getModelDefaults, input)
+  }
+
+  setModelDefaults(input: ModelDefaultsSetRequest): Promise<ModelDefaultsResponse> {
+    return this.#request(ControlApiOperations.setModelDefaults, input)
+  }
+
+  resolveModelSelection(input: ModelSelectionResolveRequest): Promise<ModelSelectionResponse> {
+    return this.#request(ControlApiOperations.resolveModelSelection, input)
+  }
+  getModelSelectionFunding(
+    input: ModelSelectionFundingRequest
+  ): Promise<ModelSelectionFundingResponse> {
+    return this.#request(ControlApiOperations.getModelSelectionFunding, input)
   }
 
   /** Sends the secret once; the response carries metadata only. */
@@ -353,6 +400,20 @@ export class ControlPlaneClient {
     return this.#request(ControlApiOperations.marketplaceInstallationUninstall, input)
   }
 
+  async preparePiDurableLead(
+    input: PiDurableLeadPrepareRequest
+  ): Promise<PiDurableLeadPrepareResponse> {
+    const request = ControlApiOperations.preparePiDurableLead.requestSchema.parse(input)
+    const response = await this.#request(ControlApiOperations.preparePiDurableLead, request)
+    if (
+      response.data.intentId !== request.payload.intentId ||
+      response.data.funding.workspaceId !== request.workspaceId
+    ) {
+      throw invalidResponse(request.requestId, 200)
+    }
+    return response
+  }
+
   dispatchPiDurableLead(
     input: PiDurableLeadDispatchRequest
   ): Promise<PiDurableLeadDispatchResponse> {
@@ -361,6 +422,20 @@ export class ControlPlaneClient {
 
   getPiDurableLeadStatus(input: PiDurableLeadStatusRequest): Promise<PiDurableLeadStatusResponse> {
     return this.#request(ControlApiOperations.getPiDurableLeadStatus, input)
+  }
+
+  async lookupPiDurableLead(
+    input: PiDurableLeadLookupRequest
+  ): Promise<PiDurableLeadLookupResponse> {
+    const request = ControlApiOperations.lookupPiDurableLead.requestSchema.parse(input)
+    const response = await this.#request(ControlApiOperations.lookupPiDurableLead, request)
+    if (
+      response.data.intentId !== request.parameters.intentId ||
+      response.data.workspaceId !== request.workspaceId
+    ) {
+      throw invalidResponse(request.requestId, 200)
+    }
+    return response
   }
 
   getPiDurableLeadProgress(

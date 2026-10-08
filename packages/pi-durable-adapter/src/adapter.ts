@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
-import { canonicalJsonStringify } from '@control-plane/contracts'
-import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
+import { canonicalJsonStringify, IdentifierSchemas } from '@control-plane/contracts'
+import {
+  assertExecutionPlanIntegrity,
+  currentExecutionScopeAllows,
+} from '@control-plane/execution-plan'
 import {
   RuntimeAdapterError,
   RuntimeStartRequestSchema,
@@ -19,6 +22,7 @@ import {
   type RuntimeAdapter,
   type RuntimeExecutionHandle,
   type RuntimeExecutionStatus,
+  type RuntimeStartRequest,
 } from '@control-plane/runtime-sdk'
 import {
   PiDurableAdmissionSchema,
@@ -29,8 +33,22 @@ import {
   type PiDurableRuntimeOptions,
 } from './contracts.js'
 import { SqliteDurableJournal, type JournalRecord } from './journal.js'
-import { createPiDurableEngine } from './pi-engine.js'
+import { createPiDurableEngine, PiDurableEngineToolBlockedError } from './pi-engine.js'
 import { NodeSessionLease } from './lease.js'
+import { DurableToolCallRequestSchema, type DurableToolCallRequest } from '@control-plane/tool-sdk'
+import { z } from 'zod'
+import { PiDurableEffectGate, type DurableEffectGateOutcome } from './effect-gate.js'
+import {
+  PiDurableToolSourceSchema,
+  verifyPiDurableToolSource,
+  piDurableToolSourceKey,
+  type PiDurableToolSource,
+} from './tool-source.js'
+import {
+  PiDurableDelegateChildOutcomeSchema,
+  type PiDurableGovernedDelegateChildEnginePort,
+  type PiEngineResult,
+} from './contracts.js'
 
 interface StoredAdmission extends DurableExecutionAuthority {
   readonly version: typeof PiDurableVersion
@@ -68,6 +86,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       'session.close',
       'session.history',
       'model.select',
+      ...(this.#options.governedDelegateChild ? ['execution.child'] : []),
+      ...(this.#options.scopeAuthority ? ['execution.scope.workspace.v1'] : []),
     ].map((name) => ({ name, support: 'supported' as const }))
     const parsed = RuntimeAdapterInspectionSchema.parse({
       metadata: {
@@ -83,7 +103,9 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       capabilities,
       limitations: [
         'NODE_SQLITE_REMOTE_HOST_ONLY',
-        'NATIVE_TOOLS_DISABLED',
+        ...(this.#options.governedDelegateChild
+          ? ['GOVERNED_DELEGATE_CHILD_ONLY', 'NATIVE_AMBIENT_TOOLS_DISABLED']
+          : ['NATIVE_TOOLS_DISABLED']),
         'CLOUD_PROFILE_UNQUALIFIED',
         'PAID_INFERENCE_RESTART_REQUIRES_RECONCILIATION',
         'PROGRESS_COMMITTED_SNAPSHOT_ONLY',
@@ -98,6 +120,38 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     })
   }
 
+  /** Host-only metadata recovery after a lost receipt acknowledgement.
+   * The host MUST authorize the original actor/audience and current read scope
+   * separately. This lookup validates retained immutable pins; it does not
+   * require provider/spending readiness, create admission, or resume inference.
+   */
+  async findExistingHandle(
+    input: RuntimeStartRequest
+  ): Promise<RuntimeExecutionHandle | undefined> {
+    this.#assertOpen()
+    const request = RuntimeStartRequestSchema.parse(input)
+    assertExecutionPlanIntegrity(request.executionPlan)
+    if (!request.executionId || !request.attemptBudget)
+      fail('PI_ATTEMPT_AUTHORITY_REQUIRED', 'validation')
+    const startKey = `${request.attemptBudget.workspaceId}:${request.idempotencyKey}`
+    const record = this.journal
+      .list()
+      .find(
+        (candidate) => candidate.startKey === startKey || candidate.attemptId === request.attemptId
+      )
+    if (!record) return undefined
+    const retained = this.#stored(record)
+    if (
+      record.startKey !== startKey ||
+      retained.request.executionId !== request.executionId ||
+      retained.request.attemptId !== request.attemptId ||
+      digest(retained.request) !== digest(request) ||
+      canonicalJsonStringify(retained.request) !== canonicalJsonStringify(request)
+    )
+      fail('PI_ADMISSION_CONFLICT', 'conflict')
+    return structuredClone(retained.handle)
+  }
+
   async awaitInput(handle: RuntimeExecutionHandle, interactionId: string): Promise<void> {
     const record = this.#record(handle)
     if (record.detail['sessionClosed']) fail('PI_SESSION_CLOSED', 'conflict')
@@ -109,21 +163,25 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       idempotencyKey: 'validate',
       text: 'validate',
     })
-    const epoch = this.#claim(record)
-    this.journal.update(
-      record.handleId,
-      epoch,
-      {
-        state: 'awaiting_input',
-        detail: {
-          ...record.detail,
-          result: undefined,
-          observedAt: this.#now(),
-          pendingInput: parsed.interactionId,
+    this.#transitionInteraction(record, 'input', (current) => {
+      if (current.detail['pendingInput']) {
+        if (current.detail['pendingInput'] !== parsed.interactionId)
+          fail('PI_INPUT_IDENTITY_CONFLICT', 'conflict')
+        return undefined
+      }
+      return {
+        change: {
+          state: 'awaiting_input',
+          detail: {
+            ...current.detail,
+            result: undefined,
+            observedAt: this.#now(),
+            pendingInput: parsed.interactionId,
+          },
         },
-      },
-      { type: 'interaction', data: { interactionId, kind: 'input' }, at: this.#now() }
-    )
+        event: { type: 'interaction', data: { interactionId, kind: 'input' }, at: this.#now() },
+      }
+    })
   }
 
   async awaitApproval(
@@ -139,26 +197,33 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     RuntimeInputRequestSchema.parse({ interactionId, idempotencyKey: 'validate', text: 'validate' })
     if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/.test(effectIdentity))
       fail('PI_EFFECT_IDENTITY_INVALID', 'validation')
-    const epoch = this.#claim(record)
-    this.journal.update(
-      record.handleId,
-      epoch,
-      {
-        state: 'awaiting_input',
-        detail: {
-          ...record.detail,
-          result: undefined,
-          pendingInput: undefined,
-          pendingApproval: { interactionId, effectIdentity },
-          observedAt: this.#now(),
-        },
-      },
-      {
-        type: 'interaction',
-        data: { interactionId, kind: 'approval', effectIdentity },
-        at: this.#now(),
+    this.#transitionInteraction(record, 'approval', (current) => {
+      const pending = current.detail['pendingApproval'] as
+        | { interactionId: string; effectIdentity: string }
+        | undefined
+      if (pending) {
+        if (pending.interactionId !== interactionId || pending.effectIdentity !== effectIdentity)
+          fail('PI_APPROVAL_IDENTITY_CONFLICT', 'conflict')
+        return undefined
       }
-    )
+      return {
+        change: {
+          state: 'awaiting_input',
+          detail: {
+            ...current.detail,
+            result: undefined,
+            pendingInput: undefined,
+            pendingApproval: { interactionId, effectIdentity },
+            observedAt: this.#now(),
+          },
+        },
+        event: {
+          type: 'interaction',
+          data: { interactionId, kind: 'approval', effectIdentity },
+          at: this.#now(),
+        },
+      }
+    })
   }
 
   async submitInput(
@@ -181,23 +246,27 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       record.detail['pendingInput'] !== request.interactionId
     )
       fail('PI_INPUT_NOT_PENDING', 'conflict')
-    const epoch = this.#claim(record)
-    const next = this.journal.update(
-      record.handleId,
-      epoch,
-      {
-        state: 'starting',
-        detail: {
-          observedAt: this.#now(),
-          actions: { ...actions, [request.idempotencyKey]: digest(request) },
-          turn: {
-            requestId: `pi-input:${record.attemptId}:${request.idempotencyKey}`,
-            input: request.text,
+    const next = this.#transitionInteraction(record, 'input', (current) => {
+      if (
+        current.state !== 'awaiting_input' ||
+        current.detail['pendingInput'] !== request.interactionId
+      )
+        fail('PI_INPUT_NOT_PENDING', 'conflict')
+      return {
+        change: {
+          state: 'starting',
+          detail: {
+            observedAt: this.#now(),
+            actions: { ...actions, [request.idempotencyKey]: digest(request) },
+            turn: {
+              requestId: `pi-input:${record.attemptId}:${request.idempotencyKey}`,
+              input: request.text,
+            },
           },
         },
-      },
-      { type: 'status', data: { state: 'starting' }, at: this.#now() }
-    )
+        event: { type: 'status', data: { state: 'starting' }, at: this.#now() },
+      }
+    })
     this.#schedule(next)
     return this.status(handle)
   }
@@ -329,6 +398,13 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     const record = records.find(
       (item) => this.#stored(item).handle.externalSessionId === operation.sessionId
     )
+    if (operation.operation === 'resume' && record) {
+      const authority = this.#stored(record)
+      if (authority.request.executionPlan.schemaVersion === 2) {
+        await this.#authority(authority)
+        this.#assertOpen()
+      }
+    }
     if (operation.operation === 'history') {
       return RuntimeSessionResultSchema.parse({
         operation: 'history',
@@ -439,6 +515,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       state: record.state,
       observedAt: record.detail['observedAt'] ?? record.at,
       ...(record.detail['result'] ? { result: record.detail['result'] } : {}),
+      ...(record.detail['error'] ? { error: record.detail['error'] } : {}),
+      ...(record.detail['terminalUsage'] ? { terminalUsage: record.detail['terminalUsage'] } : {}),
     })
   }
 
@@ -478,6 +556,22 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         },
         { type: 'status', data: { state }, at: this.#now() }
       )
+    } else if (
+      !this.#active.has(handle.handleId) &&
+      record.state === 'awaiting_input' &&
+      record.detail['nativeToolBlocked'] &&
+      !record.detail['pendingApproval']
+    ) {
+      // An acknowledgement admits no child effect. Explicit recovery reopens the same
+      // native task; its retained full request still passes the independent effect gate.
+      const epoch = this.#claim(record)
+      const next = this.journal.update(
+        record.handleId,
+        epoch,
+        { state: 'starting', detail: { ...record.detail, observedAt: this.#now() } },
+        { type: 'status', data: { state: 'starting' }, at: this.#now() }
+      )
+      this.#schedule(next)
     } else if (
       !this.#active.has(handle.handleId) &&
       ['running', 'unknown'].includes(record.state)
@@ -531,6 +625,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
 
   async #run(record: JournalRecord): Promise<void> {
     const authority = this.#stored(record)
+    const plan = assertExecutionPlanIntegrity(authority.request.executionPlan)
+    const nativeAdmissions = new Map<string, DurableToolCallRequest>()
     let epoch: number
     try {
       epoch = this.journal.claimProcess(record.handleId, record)
@@ -547,15 +643,131 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       this.journal.releaseProcess(record.handleId, epoch)
       return // A live owner is responsible; do not fence it or open its Pi store.
     }
+    const assertCurrent = async () => {
+      this.journal.assertOwner(record.handleId, epoch)
+      await this.#authority(authority)
+      this.journal.assertOwner(record.handleId, epoch)
+    }
     try {
       await this.#authority(authority)
       const provider = await this.#provider(authority)
       if (digest(provider.binding) !== authority.providerDigest)
         fail('PI_PROVIDER_BINDING_CHANGED', 'conflict')
-      const assertCurrent = async () => {
-        this.journal.assertOwner(record.handleId, epoch)
-        await this.#authority(authority)
+      const governance =
+        plan.constraints.limits.childExecutions.maximumTotal === 1 &&
+        authority.admission.canonicalActorPrincipalId
+          ? this.#options.governedDelegateChild
+          : undefined
+      const sourcePrefix = {
+        workspaceId: IdentifierSchemas.workspaceId.parse(
+          authority.request.attemptBudget!.workspaceId
+        ),
+        parentExecutionId: IdentifierSchemas.executionId.parse(authority.request.executionId),
+        parentAttemptId: IdentifierSchemas.attemptId.parse(authority.request.attemptId),
+        runtimeHandleId: record.handleId,
+        externalSessionId: authority.handle.externalSessionId!,
+        admittedTurnKey: turnKey(record),
       }
+      const assertToolCurrent = async (input: PiDurableToolSource) => {
+        const source = PiDurableToolSourceSchema.parse(input)
+        await assertCurrent()
+        const retained = this.journal.get(record.handleId)
+        if (
+          retained.state !== 'running' ||
+          turnKey(retained) !== sourcePrefix.admittedTurnKey ||
+          Object.entries(sourcePrefix).some(([key, value]) => Reflect.get(source, key) !== value)
+        )
+          fail('PI_TOOL_SOURCE_REJECTED', 'conflict')
+      }
+      const governedDelegateChild: PiDurableGovernedDelegateChildEnginePort | undefined = governance
+        ? {
+            source: sourcePrefix,
+            assertCurrent: assertToolCurrent,
+            execute: async (input, reader, signal) => {
+              try {
+                signal?.throwIfAborted()
+                const nativeReader = { ...reader, assertCurrent: assertToolCurrent }
+                const verified = await verifyPiDurableToolSource(
+                  input.source,
+                  { objective: input.objective },
+                  nativeReader
+                )
+                if (verified.sourceKey !== input.sourceKey)
+                  fail('PI_TOOL_SOURCE_REJECTED', 'conflict')
+                signal?.throwIfAborted()
+                const request = DurableToolCallRequestSchema.parse(
+                  await governance.prepare(structuredClone(authority), structuredClone(verified))
+                )
+                if (
+                  request.workspaceId !== sourcePrefix.workspaceId ||
+                  request.executionId !== sourcePrefix.parentExecutionId ||
+                  request.attemptId !== sourcePrefix.parentAttemptId ||
+                  request.profileId !== plan.profile.profileId ||
+                  !authority.admission.canonicalActorPrincipalId ||
+                  request.audit.principalRef !== authority.admission.canonicalActorPrincipalId ||
+                  request.operation !== 'delegate-child' ||
+                  canonicalJsonStringify(
+                    z
+                      .strictObject({ objective: z.string().trim().min(1).max(8192) })
+                      .parse(request.input)
+                  ) !== canonicalJsonStringify({ objective: verified.objective })
+                )
+                  fail('PI_CHILD_REQUEST_AUTHORITY_REJECTED', 'conflict')
+                await verifyPiDurableToolSource(
+                  verified.source,
+                  { objective: verified.objective },
+                  nativeReader
+                )
+                signal?.throwIfAborted()
+                nativeAdmissions.set(verified.sourceKey, request)
+                const base = governance.gate()
+                const gate = new PiDurableEffectGate({
+                  ...base.options,
+                  assertAuthority: async (call, boundary) => {
+                    signal?.throwIfAborted()
+                    await verifyPiDurableToolSource(
+                      verified.source,
+                      { objective: verified.objective },
+                      nativeReader
+                    )
+                    await base.options.assertAuthority(call, boundary)
+                    await assertToolCurrent(verified.source)
+                    signal?.throwIfAborted()
+                  },
+                })
+                return delegateChildOutcome(
+                  await gate.execute(request, signal ? { signal } : {}),
+                  request
+                )
+              } catch {
+                fail('PI_CHILD_DELEGATION_REJECTED', 'conflict')
+              }
+            },
+          }
+        : undefined
+      const runningAt = this.#now()
+      this.journal.update(
+        record.handleId,
+        epoch,
+        {
+          state: 'running',
+          detail: {
+            ...record.detail,
+            ownerPid: process.pid,
+            ownerEpoch: epoch,
+            observedAt: runningAt,
+            inferencePending: true,
+          },
+        },
+        { type: 'status', data: { state: 'running' }, at: runningAt }
+      )
+      await this.#options.onExecutionRunning?.({
+        request: structuredClone(authority.request),
+        admission: structuredClone(authority.admission),
+        handle: structuredClone(authority.handle),
+        observedAt: runningAt,
+      })
+      await assertCurrent()
       const engine = await (this.#options.engineFactory ?? createPiDurableEngine)({
         directory: join(this.#options.directory, 'sessions'),
         model: { provider: provider.binding.provider, modelId: provider.binding.providerModel },
@@ -593,23 +805,10 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             fail('PI_PROVIDER_BINDING_CHANGED', 'conflict')
           return current.access.withModels(use)
         },
+        ...(governedDelegateChild ? { governedDelegateChild } : {}),
       })
       this.#engines.set(record.handleId, engine)
-      this.journal.update(
-        record.handleId,
-        epoch,
-        {
-          state: 'running',
-          detail: {
-            ...record.detail,
-            ownerPid: process.pid,
-            ownerEpoch: epoch,
-            observedAt: this.#now(),
-            inferencePending: true,
-          },
-        },
-        { type: 'status', data: { state: 'running' }, at: this.#now() }
-      )
+      await assertCurrent()
       const turn = record.detail['turn'] as { requestId: string; input: string } | undefined
       const result = await engine.run({
         sessionId: authority.handle.externalSessionId!,
@@ -617,26 +816,13 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         input: turn?.input ?? authority.admission.prompt,
       })
       await assertCurrent()
-      const settlements = []
-      for (const inference of result.inferences) {
-        const receipt = RuntimeUsageSchema.parse({
-          inputTokens: inference.usage.inputTokens,
-          outputTokens: inference.usage.outputTokens,
-          durationMs: inference.usage.durationMs,
-        })
-        settlements.push(
-          RuntimeUsageSchema.parse(
-            await this.#options.settleUsage(
-              authority,
-              `${turnKey(record)}:${inference.inferenceId}`,
-              receipt,
-              inference.usage
-            )
-          )
-        )
-      }
-      if (settlements.length !== 1) fail('PI_INFERENCE_RECEIPT_REQUIRED', 'validation')
-      const usage = settlements[0]!
+      const usage = await this.#retainInferences(
+        record,
+        epoch,
+        authority,
+        result.inferences,
+        assertCurrent
+      )
       if (usage.inputTokens + usage.outputTokens > authority.request.attemptBudget!.maximumTokens)
         fail('PI_USAGE_EXCEEDS_AUTHORITY', 'validation')
       await assertCurrent()
@@ -646,7 +832,11 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         {
           state: 'completed',
           detail: {
-            ...record.detail,
+            ...this.journal.get(record.handleId).detail,
+            nativeToolBlocked: undefined,
+            pendingApproval: undefined,
+            error: undefined,
+            terminalUsage: undefined,
             ownerPid: process.pid,
             ownerEpoch: epoch,
             inferencePending: false,
@@ -659,7 +849,81 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           { type: 'status', data: { state: 'completed' }, at: this.#now() },
         ]
       )
-    } catch {
+    } catch (error) {
+      if (error instanceof PiDurableEngineToolBlockedError) {
+        try {
+          const source = PiDurableToolSourceSchema.parse(error.source)
+          const request = nativeAdmissions.get(error.sourceKey)
+          const outcome = PiDurableDelegateChildOutcomeSchema.parse(error.outcome)
+          if (
+            !request ||
+            error.sourceKey !== piDurableToolSourceKey(source) ||
+            request.toolCallId !== outcome.toolCallId ||
+            source.runtimeHandleId !== record.handleId ||
+            source.admittedTurnKey !== turnKey(record) ||
+            source.parentAttemptId !== record.attemptId
+          )
+            fail('PI_TOOL_SOURCE_REJECTED', 'conflict')
+          const usage = await this.#retainInferences(
+            record,
+            epoch,
+            authority,
+            error.inferences,
+            assertCurrent
+          )
+          const state =
+            outcome.state === 'awaiting_approval'
+              ? 'awaiting_input'
+              : outcome.state === 'denied'
+                ? 'failed'
+                : 'unknown'
+          if (outcome.state === 'succeeded') fail('PI_CHILD_OUTCOME_INVALID', 'conflict')
+          await assertCurrent()
+          this.journal.update(
+            record.handleId,
+            epoch,
+            {
+              state,
+              detail: {
+                ...this.journal.get(record.handleId).detail,
+                inferencePending: false,
+                observedAt: this.#now(),
+                nativeToolBlocked: { source, sourceKey: error.sourceKey, outcome },
+                ...(state === 'awaiting_input' && request.approval
+                  ? {
+                      pendingApproval: {
+                        interactionId: request.approval.interactionId,
+                        effectIdentity: digest(request),
+                      },
+                    }
+                  : {}),
+                ...(state === 'failed'
+                  ? {
+                      error: {
+                        code: 'PI_CHILD_DELEGATION_DENIED',
+                        classification: 'conflict',
+                        message: 'PI_CHILD_DELEGATION_DENIED',
+                        retryable: false,
+                      },
+                      terminalUsage: usage,
+                    }
+                  : {}),
+              },
+            },
+            [
+              { type: 'usage', data: { usage }, at: this.#now() },
+              {
+                type: state === 'awaiting_input' ? 'interaction' : 'status',
+                data: { ...outcome, state },
+                at: this.#now(),
+              },
+            ]
+          )
+          return
+        } catch {
+          // Failed receipt/authority retention remains unresolved rather than admitting effects again.
+        }
+      }
       try {
         this.journal.update(
           record.handleId,
@@ -693,11 +957,101 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     }
   }
 
+  async #retainInferences(
+    record: JournalRecord,
+    epoch: number,
+    authority: DurableExecutionAuthority,
+    inferences: PiEngineResult['inferences'],
+    assertCurrent: () => Promise<void>
+  ) {
+    if (
+      !inferences.length ||
+      inferences.length > 1024 ||
+      new Set(inferences.map((item) => item.inferenceId)).size !== inferences.length
+    )
+      fail('PI_INFERENCE_RECEIPT_REQUIRED', 'validation')
+    for (const inference of inferences) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/.test(inference.inferenceId))
+        fail('PI_INFERENCE_RECEIPT_REQUIRED', 'validation')
+      await assertCurrent()
+      const key = `${turnKey(record)}:${inference.inferenceId}`
+      const usage = RuntimeUsageSchema.parse(
+        await this.#options.settleUsage(
+          authority,
+          key,
+          RuntimeUsageSchema.parse({
+            inputTokens: inference.usage.inputTokens,
+            outputTokens: inference.usage.outputTokens,
+            durationMs: inference.usage.durationMs,
+          }),
+          inference.usage
+        )
+      )
+      await assertCurrent()
+      const current = this.journal.get(record.handleId)
+      const receipts = (current.detail['inferenceReceipts'] ?? {}) as Record<
+        string,
+        {
+          turnKey: string
+          nativeDigest: string
+          usage: ReturnType<typeof RuntimeUsageSchema.parse>
+        }
+      >
+      const value = { turnKey: turnKey(record), nativeDigest: digest(inference.usage), usage }
+      if (receipts[key] && canonicalJsonStringify(receipts[key]) !== canonicalJsonStringify(value))
+        fail('PI_INFERENCE_RECEIPT_CONFLICT', 'conflict')
+      if (!receipts[key]) {
+        if (Object.keys(receipts).length >= 1024) fail('PI_INFERENCE_RECEIPT_LIMIT', 'validation')
+        this.journal.update(record.handleId, epoch, {
+          detail: { ...current.detail, inferenceReceipts: { ...receipts, [key]: value } },
+        })
+      }
+    }
+    const receipts = this.journal.get(record.handleId).detail['inferenceReceipts'] as Record<
+      string,
+      { turnKey: string; usage: ReturnType<typeof RuntimeUsageSchema.parse> }
+    >
+    const total = aggregateUsage(Object.values(receipts).map((value) => value.usage))
+    if (
+      total.inputTokens + total.outputTokens > authority.request.attemptBudget!.maximumTokens ||
+      (total.accounting?.chargedMicrounits ?? 0) >
+        authority.request.attemptBudget!.maximumMicrounits
+    )
+      fail('PI_USAGE_EXCEEDS_AUTHORITY', 'validation')
+    return aggregateUsage(
+      Object.entries(receipts)
+        .filter(([, value]) => value.turnKey === turnKey(record))
+        .map(([, value]) => value.usage)
+    )
+  }
+
   async #authority(authority: DurableExecutionAuthority): Promise<void> {
     if (Date.parse(authority.admission.authority.expiresAt) <= Date.parse(this.#now()))
       fail('PI_AUTHORITY_EXPIRED', 'conflict')
     try {
       await this.#options.assertAuthority(authority)
+      const plan = assertExecutionPlanIntegrity(authority.request.executionPlan)
+      if (plan.schemaVersion === 2) {
+        const actor = authority.admission.canonicalActorPrincipalId
+        if (
+          !actor ||
+          !this.#options.scopeAuthority ||
+          !(await currentExecutionScopeAllows(
+            this.#options.scopeAuthority,
+            {
+              ...plan.correlation,
+              callerPrincipalId: actor,
+              executionPlan: {
+                executionPlanId: plan.executionPlanId,
+                contentDigest: plan.contentDigest,
+                schemaVersion: plan.schemaVersion,
+              },
+            },
+            this.#now()
+          ))
+        )
+          fail('PI_EXECUTION_SCOPE_REJECTED', 'conflict')
+      }
     } catch {
       fail('PI_AUTHORITY_REJECTED', 'conflict')
     }
@@ -756,6 +1110,56 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     }
   }
 
+  #transitionInteraction(
+    record: JournalRecord,
+    kind: 'input' | 'approval',
+    operation: Parameters<SqliteDurableJournal['transition']>[1]
+  ): JournalRecord {
+    this.#assertOpen()
+    try {
+      return this.journal.transition(record, (current) => {
+        this.#assertInteractionQuiescent(current, kind)
+        return operation(current)
+      })
+    } catch (error) {
+      if (error instanceof Error && error.message === 'STALE_STATE')
+        fail('PI_RUNTIME_STATE_CONFLICT', 'conflict')
+      throw error
+    }
+  }
+
+  #assertInteractionQuiescent(current: JournalRecord, kind: 'input' | 'approval'): void {
+    this.#assertOpen()
+    if (current.detail['sessionClosed']) fail('PI_SESSION_CLOSED', 'conflict')
+    if (this.#active.has(current.handleId)) fail('PI_EXECUTION_BUSY', 'conflict')
+    if (
+      current.detail['inferencePending'] ||
+      ['starting', 'running', 'unknown', 'cancelling'].includes(current.state)
+    )
+      fail('PI_RECONCILIATION_REQUIRED', 'conflict')
+    if (!['completed', 'awaiting_input'].includes(current.state))
+      fail('PI_EXECUTION_TERMINAL', 'conflict')
+    if (kind === 'input' && current.detail['pendingApproval'])
+      fail('PI_APPROVAL_NOT_RESOLVED', 'conflict')
+    if (kind === 'approval' && current.detail['pendingInput'])
+      fail('PI_INPUT_NOT_RESOLVED', 'conflict')
+    // A completed receipt can precede engine/store release. Consult the durable
+    // owner rather than treating this adapter's empty #active map as quiescence.
+    const ownerPid = current.detail['ownerPid']
+    if (ownerPid !== undefined) {
+      if (typeof ownerPid !== 'number' || !Number.isSafeInteger(ownerPid) || ownerPid < 1)
+        fail('PI_EXECUTION_BUSY', 'conflict')
+      let live = true
+      try {
+        process.kill(ownerPid, 0)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') fail('PI_EXECUTION_BUSY', 'conflict')
+        live = false
+      }
+      if (live) fail('PI_EXECUTION_BUSY', 'conflict')
+    }
+  }
+
   #assertOpen(): void {
     if (this.#closing || this.#closed) fail('PI_ADAPTER_CLOSED', 'unavailable')
   }
@@ -769,6 +1173,100 @@ function turnKey(record: JournalRecord): string {
 }
 function digest(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonicalJsonStringify(value)).digest('hex')}`
+}
+
+function delegateChildOutcome(outcome: DurableEffectGateOutcome, request: DurableToolCallRequest) {
+  const toolCallId = 'call' in outcome ? outcome.call.toolCallId : outcome.toolCallId
+  if (toolCallId !== request.toolCallId) fail('PI_CHILD_OUTCOME_INVALID', 'conflict')
+  const identity = {
+    schemaVersion: 'pi-delegate-child-outcome/v1' as const,
+    state: outcome.state,
+    toolCallId,
+  }
+  if (outcome.state === 'succeeded') {
+    const refs = z
+      .object({
+        delegationId: IdentifierSchemas.delegationId,
+        childExecutionId: IdentifierSchemas.executionId,
+        childAttemptId: IdentifierSchemas.attemptId,
+        externalSessionId: IdentifierSchemas.externalSessionId.optional(),
+      })
+      .parse(outcome.result.output)
+    return PiDurableDelegateChildOutcomeSchema.parse({ ...identity, ...refs })
+  }
+  if (outcome.state === 'awaiting_approval') {
+    if (!request.approval || outcome.call.approvalInteractionId !== request.approval.interactionId)
+      fail('PI_CHILD_OUTCOME_INVALID', 'conflict')
+    return PiDurableDelegateChildOutcomeSchema.parse({
+      ...identity,
+      interactionId: request.approval.interactionId,
+      reasonCode: 'PI_CHILD_APPROVAL_PENDING',
+    })
+  }
+  return PiDurableDelegateChildOutcomeSchema.parse({
+    ...identity,
+    reasonCode:
+      outcome.state === 'denied' ? 'PI_CHILD_DELEGATION_DENIED' : 'PI_CHILD_OUTCOME_UNKNOWN',
+  })
+}
+
+function aggregateUsage(receipts: readonly ReturnType<typeof RuntimeUsageSchema.parse>[]) {
+  if (!receipts.length) fail('PI_INFERENCE_RECEIPT_REQUIRED', 'validation')
+  if (receipts.length === 1) return receipts[0]!
+  const accounting = receipts.map((item) => item.accounting)
+  const costs = receipts.map((item) => item.cost)
+  if (
+    (accounting.some(Boolean) && accounting.some((item) => !item)) ||
+    (costs.some(Boolean) && costs.some((item) => !item))
+  )
+    fail('PI_USAGE_ACCOUNTING_SCOPE_MISMATCH', 'conflict')
+  const scope = accounting[0]
+  if (
+    (scope &&
+      accounting.some(
+        (item) =>
+          item!.fundingSource !== scope.fundingSource ||
+          item!.currency !== scope.currency ||
+          item!.costExact !== scope.costExact
+      )) ||
+    (costs[0] && costs.some((item) => item!.currency !== costs[0]!.currency))
+  )
+    fail('PI_USAGE_ACCOUNTING_SCOPE_MISMATCH', 'conflict')
+  const sum = (values: readonly number[]) => {
+    const value = values.reduce((total, item) => total + BigInt(item), 0n)
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) fail('PI_USAGE_EXCEEDS_AUTHORITY', 'validation')
+    return Number(value)
+  }
+  let cost
+  if (costs[0]) {
+    const charged = costs.reduce((total, item) => {
+      const [whole, fraction = ''] = item!.amount.split('.')
+      if (whole!.length > 10 || /[1-9]/.test(fraction.slice(6)))
+        fail('PI_USAGE_ACCOUNTING_SCOPE_MISMATCH', 'conflict')
+      return total + BigInt(whole!) * 1_000_000n + BigInt(fraction.slice(0, 6).padEnd(6, '0'))
+    }, 0n)
+    if (charged > BigInt(Number.MAX_SAFE_INTEGER)) fail('PI_USAGE_EXCEEDS_AUTHORITY', 'validation')
+    cost = {
+      amount: `${charged / 1_000_000n}.${String(charged % 1_000_000n).padStart(6, '0')}`,
+      currency: costs[0].currency,
+    }
+  }
+  return RuntimeUsageSchema.parse({
+    inputTokens: sum(receipts.map((item) => item.inputTokens)),
+    outputTokens: sum(receipts.map((item) => item.outputTokens)),
+    durationMs: sum(receipts.map((item) => item.durationMs)),
+    ...(cost ? { cost } : {}),
+    ...(scope
+      ? {
+          accounting: {
+            ...scope,
+            // A bounded composite provenance reference; each underlying source receipt stays retained.
+            sourceId: `pi-turn-usage:${digest(accounting.map((item) => item!.sourceId).toSorted()).slice(7)}`,
+            chargedMicrounits: sum(accounting.map((item) => item!.chargedMicrounits)),
+          },
+        }
+      : {}),
+  })
 }
 function externalSession(hex: string): string {
   const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'

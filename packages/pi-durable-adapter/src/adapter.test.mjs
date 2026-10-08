@@ -118,6 +118,138 @@ test('runtime admission replay and cursor survive a physical store reopen', asyn
   }
 })
 
+test('host metadata lookup repairs a lost receipt ACK after store reopen without admission, provider readiness, inference or journal writes', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-receipt-lookup-'))
+  let adapter
+  let sends = 0
+  try {
+    const { options, request } = fixture(directory)
+    const factory = options.engineFactory
+    options.engineFactory = async (...args) => {
+      const engine = await factory(...args)
+      return {
+        ...engine,
+        run: async (...runArgs) => {
+          sends++
+          return engine.run(...runArgs)
+        },
+      }
+    }
+    adapter = new PiDurableRuntimeAdapter(options)
+    expect(await adapter.findExistingHandle(request)).toBeUndefined()
+    expect(adapter.journal.list()).toHaveLength(0)
+    let persistedHandle
+    const acceptWithLostReceiptAck = async () => {
+      persistedHandle = await adapter.start(request)
+      throw new Error('FIXTURE_SERVICE_RECEIPT_ACK_LOST')
+    }
+    await expect(acceptWithLostReceiptAck()).rejects.toThrow('FIXTURE_SERVICE_RECEIPT_ACK_LOST')
+    await adapter.drain()
+    await adapter.close()
+    let forbiddenPorts = 0
+    const forbidden = async () => {
+      forbiddenPorts++
+      throw new Error('PROVIDER_OR_ADMISSION_UNAVAILABLE')
+    }
+    adapter = new PiDurableRuntimeAdapter({
+      ...options,
+      now: () => '2028-01-01T00:00:00.000Z',
+      resolveAdmission: forbidden,
+      assertAuthority: forbidden,
+      resolveProvider: forbidden,
+      authorizeInference: forbidden,
+      reconcileInference: forbidden,
+      engineFactory: forbidden,
+    })
+    const before = adapter.journal.list()
+    const eventsBefore = adapter.journal.events(persistedHandle.handleId, 0)
+    const recovered = await adapter.findExistingHandle(request)
+    expect(recovered).toEqual(persistedHandle)
+    expect(recovered.externalSessionId).toBe(persistedHandle.externalSessionId)
+    recovered.externalSessionId = 'ses_01JBBCDEF0123456789ABCDEFG'
+    expect(await adapter.findExistingHandle(request)).toEqual(persistedHandle)
+    expect(adapter.journal.list()).toEqual(before)
+    expect(adapter.journal.events(persistedHandle.handleId, 0)).toEqual(eventsBefore)
+    expect(sends).toBe(1)
+    expect(forbiddenPorts).toBe(0)
+    await adapter.close()
+  } finally {
+    await adapter?.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('host metadata lookup rejects changed immutable request, attempt and plan and returns missing only for an unrelated identity', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-lookup-conflict-'))
+  let adapter
+  try {
+    const { options, request } = fixture(directory)
+    adapter = new PiDurableRuntimeAdapter(options)
+    const handle = await adapter.start(request)
+    await adapter.drain()
+    const before = adapter.journal.list()
+    for (const changed of [
+      { ...request, idempotencyKey: 'changed-key' },
+      {
+        ...request,
+        attemptId: 'att_01JBBCDEF0123456789ABCDEFG',
+        attemptBudget: {
+          ...request.attemptBudget,
+          attemptId: 'att_01JBBCDEF0123456789ABCDEFG',
+          reservationKey: 'runtime-attempt:att_01JBBCDEF0123456789ABCDEFG',
+        },
+      },
+      { ...request, attemptBudget: { ...request.attemptBudget, maximumTokens: 99 } },
+      {
+        ...request,
+        executionId: 'exe_01JBBCDEF0123456789ABCDEFG',
+        attemptBudget: { ...request.attemptBudget, executionId: 'exe_01JBBCDEF0123456789ABCDEFG' },
+      },
+    ])
+      await expect(adapter.findExistingHandle(changed)).rejects.toThrow('PI_ADMISSION_CONFLICT')
+    const plan = createExecutionPlanTestFixture({
+      profileCapabilityRequirements: ['execution.cancel'],
+      skillRequiredCapabilities: [],
+    })
+    await expect(
+      adapter.findExistingHandle({
+        ...request,
+        executionPlan: plan,
+        attemptBudget: {
+          ...request.attemptBudget,
+          executionPlanId: plan.executionPlanId,
+          executionPlanDigest: plan.contentDigest,
+        },
+      })
+    ).rejects.toThrow('PI_ADMISSION_CONFLICT')
+    await expect(
+      adapter.findExistingHandle({
+        ...request,
+        executionPlan: { ...request.executionPlan, contentDigest: `sha256:${'f'.repeat(64)}` },
+      })
+    ).rejects.toThrow()
+    expect(
+      await adapter.findExistingHandle({
+        ...request,
+        idempotencyKey: 'unrelated-message',
+        attemptId: 'att_01JBBCDEF0123456789ABCDEFG',
+        attemptBudget: {
+          ...request.attemptBudget,
+          attemptId: 'att_01JBBCDEF0123456789ABCDEFG',
+          reservationKey: 'runtime-attempt:att_01JBBCDEF0123456789ABCDEFG',
+        },
+      })
+    ).toBeUndefined()
+    expect(adapter.journal.list()).toEqual(before)
+    expect(await adapter.findExistingHandle(request)).toEqual(handle)
+    await adapter.close()
+    await expect(adapter.findExistingHandle(request)).rejects.toThrow('PI_ADAPTER_CLOSED')
+  } finally {
+    await adapter?.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('interrupted inference stays unknown until explicit trusted reconciliation', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-adapter-'))
   try {
@@ -295,3 +427,106 @@ test('unknown persisted runtime and journal versions fail closed after store res
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
+test('trusted running hook observes committed journal handle before native factory and run', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-running-hook-'))
+  let adapter
+  try {
+    const steps = []
+    const f = fixture(directory)
+    adapter = new PiDurableRuntimeAdapter({
+      ...f.options,
+      onExecutionRunning: async (authority) => {
+        const record = adapter.journal.get(authority.handle.handleId)
+        expect(record.state).toBe('running')
+        expect(record.detail.inferencePending).toBe(true)
+        expect(authority.handle).toEqual(record.admission.handle)
+        expect(authority.request).toEqual(f.request)
+        expect(authority.observedAt).toBe(at)
+        steps.push('hook')
+      },
+      engineFactory: async (options) => {
+        expect(steps).toEqual(['hook'])
+        steps.push('factory')
+        const engine = await f.options.engineFactory(options)
+        return {
+          ...engine,
+          run: async (input) => {
+            steps.push('run')
+            return engine.run(input)
+          },
+        }
+      },
+    })
+    const handle = await adapter.start(f.request)
+    await adapter.drain()
+    expect(steps).toEqual(['hook', 'factory', 'run'])
+    expect((await adapter.status(handle)).state).toBe('completed')
+  } finally {
+    await adapter?.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+for (const boundary of ['hook', 'factory'])
+  test(`revocation during ${boundary} await prevents native run and retains conservative unknown inference`, async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'pi-running-revoked-'))
+    let adapter
+    try {
+      let active = true,
+        constructed = 0,
+        runs = 0,
+        closed = 0
+      let reached, release
+      const pause = new Promise((resolve) => {
+        release = resolve
+      })
+      const entered = new Promise((resolve) => {
+        reached = resolve
+      })
+      const f = fixture(directory)
+      adapter = new PiDurableRuntimeAdapter({
+        ...f.options,
+        assertAuthority: async () => {
+          if (!active) throw new Error('revoked-current')
+        },
+        onExecutionRunning: async () => {
+          if (boundary === 'hook') {
+            reached()
+            await pause
+          }
+        },
+        engineFactory: async () => {
+          constructed++
+          if (boundary === 'factory') {
+            reached()
+            await pause
+          }
+          return {
+            run: async () => {
+              runs++
+              throw new Error('unexpected-run')
+            },
+            cancel: async () => {},
+            close: async () => {
+              closed++
+            },
+          }
+        },
+      })
+      const handle = await adapter.start(f.request)
+      await entered
+      active = false
+      release()
+      await adapter.drain()
+      const record = adapter.journal.get(handle.handleId)
+      expect(record.state).toBe('unknown')
+      expect(record.detail.inferencePending).toBe(true)
+      expect(runs).toBe(0)
+      expect(constructed).toBe(boundary === 'factory' ? 1 : 0)
+      expect(closed).toBe(boundary === 'factory' ? 1 : 0)
+    } finally {
+      await adapter?.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })

@@ -8,6 +8,8 @@ import {
   RetentionHoldSchema,
   countMatchingActiveRetentionHolds,
   parseRetentionHoldPolicy,
+  parseRetentionHoldTargetScope,
+  type ExecutionScope,
   retentionHoldClassLockKey,
   sameRetentionHoldIdentity,
   validateStoredHold,
@@ -23,10 +25,11 @@ import { retentionHolds } from './schema/retention-holds.js'
 
 type PostgresRetentionHoldTarget = {
   readonly classId: string
-  readonly scope?:
+  readonly scope?: (
     | { readonly kind: 'class' }
     | { readonly kind: 'workspace'; readonly workspaceId: string }
     | { readonly kind: 'project'; readonly workspaceId: string; readonly projectId: string }
+  ) & { readonly executionScope?: ExecutionScope }
 }
 
 /** Authority is read from the authenticated connection, not request or URL claims. */
@@ -176,8 +179,7 @@ export async function countPostgresMatchingActiveRetentionHolds(
 ): Promise<number> {
   if (policyInput === undefined) {
     await readPostgresRetentionHolds(transaction)
-    if (target.scope !== undefined && !RetentionHoldScopeSchema.safeParse(target.scope).success)
-      throw new RetentionHoldError('RETENTION_HOLD_TARGET_SCOPE_MISSING')
+    canonicalPostgresTargetScope(target.scope)
     return 0
   }
 
@@ -186,9 +188,10 @@ export async function countPostgresMatchingActiveRetentionHolds(
   if (!parsedClassId.success) throw new RetentionHoldError('RETENTION_HOLD_CLASS_UNCONFIGURED')
   let canonicalTarget: RetentionHoldTarget = { classId: parsedClassId.data }
   if (target.scope !== undefined) {
-    const parsedScope = RetentionHoldScopeSchema.safeParse(target.scope)
-    if (!parsedScope.success) throw new RetentionHoldError('RETENTION_HOLD_TARGET_SCOPE_MISSING')
-    canonicalTarget = { classId: parsedClassId.data, scope: parsedScope.data }
+    canonicalTarget = {
+      classId: parsedClassId.data,
+      scope: canonicalPostgresTargetScope(target.scope),
+    }
   }
 
   // The full namespace is validated once at the start of each retention pass.
@@ -367,4 +370,16 @@ function replayReleaseOrConflict(current: RetentionHold, requested: RetentionHol
     return { released: false, hold: current }
   }
   throw new RetentionHoldError('RETENTION_HOLD_ALREADY_RELEASED')
+}
+
+function canonicalPostgresTargetScope(
+  input: PostgresRetentionHoldTarget['scope']
+): RetentionHoldTarget['scope'] {
+  if (input === undefined) return undefined
+  const { executionScope, ...owner } = input
+  const parsed = RetentionHoldScopeSchema.safeParse(owner)
+  if (!parsed.success) throw new RetentionHoldError('RETENTION_HOLD_TARGET_SCOPE_MISSING')
+  const target = { ...parsed.data, ...(executionScope === undefined ? {} : { executionScope }) }
+  parseRetentionHoldTargetScope(target)
+  return target
 }

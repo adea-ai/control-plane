@@ -1,8 +1,10 @@
+import { executionScopeFieldsFromRow, executionRetentionScopeFromRow } from './execution-scope.js'
 import {
   ExecutionSchema,
   RetentionAssessmentCounter,
   RetentionHoldError,
   evaluateRetentionEligibility,
+  executionScopesEqual,
   type Execution,
   type RetentionAssessment,
   type RetentionDeletionResult,
@@ -61,6 +63,7 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
         executionState: executions.state,
         workspaceId: executions.workspaceId,
         projectId: executions.projectId,
+        executionScope: executions.executionScope,
       })
       .from(executionEvents)
       .innerJoin(executions, eq(executions.executionId, executionEvents.executionId))
@@ -76,11 +79,7 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
           transaction,
           {
             classId: 'execution-events',
-            scope: {
-              kind: 'project',
-              workspaceId: candidate.workspaceId,
-              projectId: candidate.projectId,
-            },
+            scope: executionRetentionScopeFromRow(candidate),
           },
           options.retentionHoldPolicy
         )
@@ -140,6 +139,7 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
         executionState: executions.state,
         workspaceId: executions.workspaceId,
         projectId: executions.projectId,
+        executionScope: executions.executionScope,
       })
       .from(executionEvents)
       .innerJoin(executions, eq(executions.executionId, executionEvents.executionId))
@@ -158,6 +158,7 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
             state: executions.state,
             workspaceId: executions.workspaceId,
             projectId: executions.projectId,
+            executionScope: executions.executionScope,
           })
           .from(executions)
           .where(eq(executions.executionId, candidate.executionId))
@@ -170,6 +171,7 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
             sequence: executionEvents.sequence,
             workspaceId: executionEvents.workspaceId,
             projectId: executionEvents.projectId,
+            executionScope: executionEvents.executionScope,
             retentionExpiresAt: executionEvents.retentionExpiresAt,
             publicationStatus: executionEvents.publicationStatus,
           })
@@ -190,7 +192,7 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
           transaction,
           {
             classId: 'execution-events',
-            scope: { kind: 'project', workspaceId: owner.workspaceId, projectId: owner.projectId },
+            scope: executionRetentionScopeFromRow(owner),
           },
           options.retentionHoldPolicy
         )
@@ -523,6 +525,21 @@ export async function appendExecutionEventInTransaction(
     .where(eq(retiredExecutionEventIds.eventId, sanitized.eventId))
     .limit(1)
   if (retired !== undefined) return undefined
+  const [owner] = await transaction
+    .select()
+    .from(executions)
+    .where(eq(executions.executionId, sanitized.executionId))
+    .limit(1)
+    .for('key share')
+  if (
+    owner === undefined ||
+    !executionScopesEqual(
+      { workspaceId: owner.workspaceId, ...executionScopeFieldsFromRow(owner) },
+      sanitized.correlation
+    )
+  ) {
+    throw new Error('EXECUTION_EVENT_SCOPE_MISMATCH')
+  }
   const [latest] = await transaction
     .select({ sequence: executionEvents.sequence })
     .from(executionEvents)
@@ -564,7 +581,8 @@ function toRow(event: ExecutionEvent): typeof executionEvents.$inferInsert {
     schemaVersion: event.schemaVersion,
     requestId: event.correlation.requestId,
     workspaceId: event.correlation.workspaceId,
-    projectId: event.correlation.projectId,
+    projectId: event.correlation.projectId ?? null,
+    executionScope: event.correlation.executionScope ?? null,
     taskId: event.correlation.taskId,
     agentId: event.correlation.agentId,
     commandId: event.correlation.commandId ?? null,
@@ -600,7 +618,7 @@ export function fromExecutionEventRow(row: EventRow): ExecutionEvent {
     schemaVersion: row.schemaVersion,
     correlation: {
       workspaceId: row.workspaceId,
-      projectId: row.projectId,
+      ...executionScopeFieldsFromRow(row),
       taskId: row.taskId,
       agentId: row.agentId,
       requestId: row.requestId,

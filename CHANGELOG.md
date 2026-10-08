@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.76.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.75.1...workspace-v1.76.0) (2026-10-08)
+
+
+### Features
+
+* **execution:** add canonical workspace execution scope ([#951](https://github.com/adea-ai/control-plane/issues/951)) ([4ccc0de](https://github.com/adea-ai/control-plane/commit/4ccc0deb04cfb9cd47672b36e4a37b16e8b1e024))
+
+## [1.75.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.75.0...workspace-v1.75.1) (2026-10-08)
+
+
+### Tests
+
+* **runtime:** cover workspace scope capability eligibility ([#955](https://github.com/adea-ai/control-plane/issues/955)) ([a79c1fd](https://github.com/adea-ai/control-plane/commit/a79c1fdf03ab56997dd9f1371b21d26d5be427ff))
+
+## [1.75.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.74.0...workspace-v1.75.0) (2026-10-08)
+
+
+### Features
+
+* **runtime:** add workspace scope capability vocabulary ([#952](https://github.com/adea-ai/control-plane/issues/952)) ([c76e25c](https://github.com/adea-ai/control-plane/commit/c76e25c376cb19b92875f2cf3a93f19180a0067e))
+
+
+### Documentation
+
+* reconcile Pi target diagrams and delivery sequence ([05a5e24](https://github.com/adea-ai/control-plane/commit/05a5e2495bdb4adec05ba37840fa4a42b2d5472c))
+* reconcile planned Pi diagrams and milestone sequence ([#953](https://github.com/adea-ai/control-plane/issues/953)) ([05a5e24](https://github.com/adea-ai/control-plane/commit/05a5e2495bdb4adec05ba37840fa4a42b2d5472c))
+
+## [1.74.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.73.5...workspace-v1.74.0) (2026-10-08)
+
+
+### Features
+
+* **models:** add pinned BYO model connections and selection ([#948](https://github.com/adea-ai/control-plane/issues/948)) ([465aa72](https://github.com/adea-ai/control-plane/commit/465aa72870b5dccdba8adb32b0caeb261f74518c))
+
 ## [1.73.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.73.4...workspace-v1.73.5) (2026-10-08)
 
 

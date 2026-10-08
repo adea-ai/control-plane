@@ -333,7 +333,7 @@ test('native private config carries only the broker capability and accounts dist
   })
 })
 
-test.each(['missing', 'scope', 'plan', 'expired', 'world-readable', 'symlink'])(
+test.each(['missing', 'scope', 'plan', 'expired', 'world-readable', 'symlink', 'byo-underfunded'])(
   'denies %s spending authority before a listener or request',
   async (mode) => {
     await fixture(async (f) => {
@@ -346,6 +346,12 @@ test.each(['missing', 'scope', 'plan', 'expired', 'world-readable', 'symlink'])(
         if (mode === 'scope') f.record.grant.workspaceId = 'wsp_01JBBCDEF0123456789ABCDEFG'
         if (mode === 'plan') f.record.executionPlanDigest = `sha256:${'f'.repeat(64)}`
         if (mode === 'expired') f.record.grant.expiresAt = '2021-01-01T00:00:00.000Z'
+        if (mode === 'byo-underfunded') {
+          f.record.grant.fundingSource = 'byo_api'
+          f.record.price.fundingSource = 'byo_api'
+          f.record.grant.maximumMicrounits =
+            f.options.configuration.limits.budget.maximumMicrounits - 1
+        }
         await writeFile(f.recordPath, JSON.stringify(f.record), { mode: 0o600 })
       }
       await expect(f.connect()).rejects.toThrow()

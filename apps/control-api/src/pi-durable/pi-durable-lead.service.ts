@@ -8,6 +8,7 @@ import {
   type ServicePrincipal,
 } from '@control-plane/contracts'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
+import { PiLeadPreparationError, type SqlitePiLeadPreparations } from './lead-preparation.js'
 import {
   RuntimeExecutionHandleSchema,
   RuntimeExecutionProgressSchema,
@@ -21,6 +22,10 @@ import {
 export const PI_DURABLE_LEAD_SERVICE = Symbol('PI_DURABLE_LEAD_SERVICE')
 import {
   PiDurableLeadDispatchRequestSchema,
+  PiDurableLeadPrepareRequestSchema,
+  PiDurableLeadPrepareResponseSchema,
+  PiDurableLeadLookupRequestSchema,
+  PiDurableLeadLookupResponseSchema,
   PiDurableLeadStatusRequestSchema,
   PiDurableLeadProgressRequestSchema,
   PiDurableLeadCancelRequestSchema,
@@ -32,6 +37,12 @@ import {
   PiDurableLeadReadEnvelopeSchema as read,
 } from '@control-plane/runtime-sdk'
 export {
+  PiDurableLeadPrepareRequestSchema,
+  PiDurableLeadPrepareResponseSchema,
+  PiDurableLeadPreparationSchema,
+  PiDurableLeadPreparationRefSchema,
+  PiDurableLeadLookupRequestSchema,
+  PiDurableLeadLookupResponseSchema,
   PiDurableLeadDispatchRequestSchema,
   PiDurableLeadStatusRequestSchema,
   PiDurableLeadProgressRequestSchema,
@@ -69,13 +80,13 @@ export interface PiDurableLeadAuthority {
     readonly workspaceId: string
     readonly intentId: string
     readonly principal: ServicePrincipal
-    readonly operation?: 'dispatch' | 'status' | 'progress' | 'cancel'
+    readonly operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
   }): Promise<PiDurableLeadAdmission>
   /** Checks canonical audience, current accepted attempt, pinned plan, deadline and budget. */
   assertCurrent(
     admission: PiDurableLeadAdmission,
     principal: ServicePrincipal,
-    operation: 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
   ): Promise<void>
 }
 
@@ -151,6 +162,8 @@ export type PiDurableLeadErrorCode =
   | 'PI_LEAD_INVALID'
   | 'PI_LEAD_PROJECT_SCOPE_REQUIRED'
   | 'PI_LEAD_SCOPE_REJECTED'
+  | 'PI_LEAD_WORKSPACE_SCOPE_UNSUPPORTED'
+  | 'PI_LEAD_PROVIDER_READINESS_REQUIRED'
   | 'PI_LEAD_MISSING'
   | 'PI_LEAD_AUTHORITY_CONFLICT'
   | 'PI_LEAD_COMMAND_CONFLICT'
@@ -158,6 +171,8 @@ export type PiDurableLeadErrorCode =
   | 'PI_LEAD_DEADLINE_EXPIRED'
   | 'PI_LEAD_UNAVAILABLE'
   | 'PI_LEAD_NOT_CONFIGURED'
+  | 'PI_LEAD_PREPARATION_REQUIRED'
+  | 'PI_LEAD_FUNDING_CONFIRMATION_STALE'
 export class PiDurableLeadError extends Error {
   constructor(readonly code: PiDurableLeadErrorCode) {
     super(code)
@@ -166,6 +181,8 @@ export class PiDurableLeadError extends Error {
 }
 
 export interface PiDurableLeadService {
+  lookup(input: unknown, principal: ServicePrincipal): Promise<unknown>
+  prepare(input: unknown, principal: ServicePrincipal): Promise<unknown>
   dispatch(input: unknown, principal: ServicePrincipal): Promise<unknown>
   status(input: unknown, principal: ServicePrincipal): Promise<unknown>
   progress(input: unknown, principal: ServicePrincipal): Promise<unknown>
@@ -177,6 +194,11 @@ export interface DurablePiDurableLeadServiceOptions {
   readonly receipts: PiDurableLeadReceiptStore
   readonly adapter: Pick<RuntimeAdapter, 'start' | 'status' | 'progress' | 'cancel'>
   readonly now?: () => string
+  readonly preparations?: SqlitePiLeadPreparations
+  /** Metadata-only journal read. Must never start, reconcile or invoke a provider. */
+  readonly findRuntimeHandle?: (
+    request: RuntimeStartRequest
+  ) => Promise<RuntimeExecutionHandle | undefined>
 }
 
 export class DurablePiDurableLeadService implements PiDurableLeadService {
@@ -185,10 +207,122 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     this.#now = options.now ?? (() => new Date().toISOString())
   }
 
+  async prepare(input: unknown, principal: ServicePrincipal) {
+    const request = parse(PiDurableLeadPrepareRequestSchema, input)
+    checkPrincipal(request, principal, 'execution:accept')
+    verifyPayload(request)
+    if (!this.options.preparations) fail('PI_LEAD_NOT_CONFIGURED')
+    await this.#bind(request, principal)
+    const admission = await this.#resolve(
+      request.workspaceId,
+      request.payload.intentId,
+      principal,
+      'prepare'
+    )
+    const prepared = await this.#preparationOperation(() =>
+      this.options.preparations!.prepare(admission, principal)
+    )
+    try {
+      await this.options.authority.assertCurrent(admission, principal, 'prepare')
+      return PiDurableLeadPrepareResponseSchema.parse(
+        success(request, {
+          schemaVersion: 'pi-lead-preparation/v1',
+          intentId: admission.intentId,
+          executionId: admission.admittedAttempt.executionId,
+          attemptId: admission.admittedAttempt.attemptId,
+          selectionRef: prepared.funding.selectionRef,
+          selectionRevision: prepared.funding.selectionRevision,
+          ...prepared,
+        })
+      )
+    } catch (error) {
+      try {
+        await this.options.preparations.rejectPreparation(prepared.preparationRef)
+      } catch {
+        // Release failure is retained for the recovery scanner; preserve the admission denial.
+      }
+      throw error
+    }
+  }
+
+  async lookup(input: unknown, principal: ServicePrincipal) {
+    const request = parse(PiDurableLeadLookupRequestSchema, input)
+    checkPrincipal(request, principal, 'execution:read')
+    const dispatchId = `dispatch_${hash([request.workspaceId, request.parameters.intentId]).slice(7, 39)}`
+    let receipt = await this.options.receipts.get(dispatchId)
+    let admission: PiDurableLeadAdmission
+    try {
+      admission = await this.#resolve(
+        request.workspaceId,
+        request.parameters.intentId,
+        principal,
+        'status'
+      )
+    } catch (error) {
+      if (!receipt && error instanceof PiDurableLeadError && error.code === 'PI_LEAD_MISSING')
+        return PiDurableLeadLookupResponseSchema.parse(
+          success(request, {
+            schemaVersion: 'pi-lead-lookup/v1',
+            workspaceId: request.workspaceId,
+            intentId: request.parameters.intentId,
+            receipt: null,
+          })
+        )
+      throw error
+    }
+    if (receipt) {
+      verifyReceipt(receipt, admission)
+      if (!receipt.handle && this.options.findRuntimeHandle) {
+        const handle = await this.options.findRuntimeHandle(admission.startRequest)
+        await this.options.authority.assertCurrent(admission, principal, 'status')
+        if (handle) {
+          const verified = RuntimeExecutionHandleSchema.parse(handle)
+          if (verified.attemptId !== receipt.attemptId || !verified.externalSessionId)
+            fail('PI_LEAD_AUTHORITY_CONFLICT')
+          const next = ReceiptSchema.parse({
+            ...receipt,
+            revision: receipt.revision + 1,
+            state: 'dispatched',
+            handle: verified,
+          })
+          if (await this.options.receipts.compareAndSet(receipt.revision, next)) receipt = next
+          else {
+            receipt = await this.options.receipts.get(dispatchId)
+            if (!receipt || hash(receipt.handle) !== hash(verified))
+              fail('PI_LEAD_DISPATCH_CONFLICT')
+            verifyReceipt(receipt, admission)
+          }
+        }
+      }
+    }
+    await this.options.authority.assertCurrent(admission, principal, 'status')
+    return PiDurableLeadLookupResponseSchema.parse(
+      success(request, {
+        schemaVersion: 'pi-lead-lookup/v1',
+        workspaceId: request.workspaceId,
+        intentId: request.parameters.intentId,
+        receipt: receipt
+          ? {
+              dispatchId: receipt.dispatchId,
+              executionId: receipt.executionId,
+              attemptId: receipt.attemptId,
+              state: receipt.state,
+              ...(receipt.handle?.externalSessionId
+                ? { runtimeSessionId: receipt.handle.externalSessionId }
+                : {}),
+            }
+          : null,
+      })
+    )
+  }
+
   async dispatch(input: unknown, principal: ServicePrincipal) {
     const request = parse(PiDurableLeadDispatchRequestSchema, input)
     checkPrincipal(request, principal, 'execution:accept')
     verifyPayload(request)
+    // The trusted resolver can admit a canonical attempt and reserve its budget.
+    // Fence the transport key atomically before entering that mutating boundary.
+    await this.#bind(request, principal)
     const admission = await this.#resolve(
       request.workspaceId,
       request.payload.intentId,
@@ -196,7 +330,14 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       'dispatch'
     )
     const dispatchId = `dispatch_${hash([request.workspaceId, admission.intentId]).slice(7, 39)}`
-    await this.#bind(request, principal)
+    if (this.options.preparations)
+      await this.#preparationOperation(() =>
+        this.options.preparations!.assertDispatch(
+          request.payload.preparationRef,
+          admission,
+          principal
+        )
+      )
     const immutable = {
       schemaVersion: 'pi-lead-receipt/v1' as const,
       dispatchId,
@@ -227,6 +368,18 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       // A retry reacquires the SAME immutable admitted attempt. The adapter owns
       // restart reconciliation; this service never invents a replacement attempt.
       await this.options.authority.assertCurrent(admission, principal, 'dispatch')
+      if (this.options.preparations)
+        await this.#preparationOperation(async () => {
+          await this.options.preparations!.assertDispatch(
+            request.payload.preparationRef,
+            admission,
+            principal
+          )
+          // Payer disclosure may await independently of the canonical transport
+          // audience. Recheck that authority before retaining the dispatch claim.
+          await this.options.authority.assertCurrent(admission, principal, 'dispatch')
+          this.options.preparations!.markDispatching(request.payload.preparationRef!)
+        })
       let handle: RuntimeExecutionHandle
       try {
         handle = RuntimeExecutionHandleSchema.parse(
@@ -353,7 +506,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     workspaceId: string,
     intentId: string,
     principal: ServicePrincipal,
-    operation: 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
   ) {
     const admission = structuredClone(
       await this.options.authority.resolveIntent({ workspaceId, intentId, principal, operation })
@@ -365,7 +518,8 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       admission.workspaceId !== workspaceId ||
       admission.intentId !== intentId ||
       plan.correlation.workspaceId !== workspaceId ||
-      !principal.projectIds.includes(plan.correlation.projectId) ||
+      (plan.correlation.projectId !== undefined &&
+        !principal.projectIds.includes(plan.correlation.projectId)) ||
       !admission.allowedPrincipalIds.includes(principal.principalId)
     )
       fail('PI_LEAD_SCOPE_REJECTED')
@@ -413,9 +567,23 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     })
     if (!(await this.options.receipts.bindCommand(key, digest))) fail('PI_LEAD_COMMAND_CONFLICT')
   }
+  async #preparationOperation<Value>(operation: () => Promise<Value>): Promise<Value> {
+    try {
+      return await operation()
+    } catch (error) {
+      if (error instanceof PiLeadPreparationError) fail(error.code)
+      throw error
+    }
+  }
 }
 
 export class UnavailablePiDurableLeadService implements PiDurableLeadService {
+  async lookup(): Promise<never> {
+    fail('PI_LEAD_NOT_CONFIGURED')
+  }
+  async prepare(): Promise<never> {
+    fail('PI_LEAD_NOT_CONFIGURED')
+  }
   async dispatch(): Promise<never> {
     fail('PI_LEAD_NOT_CONFIGURED')
   }

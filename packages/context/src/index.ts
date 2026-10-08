@@ -4,6 +4,8 @@ import {
   ContextContributionSchema,
   ContextProviderPolicySchema,
   ContextAuthoringInputsSchema,
+  ExecutionScopeFieldsSchema,
+  executionScopeOf,
   IdentifierSchemas,
   type ContextContribution,
 } from '@control-plane/contracts'
@@ -55,7 +57,10 @@ export const ContextPackageReferenceSchema = z.object({
 
 export const ContextPackageSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.union([z.literal(1), z.literal(2)]),
+    // Scope is retained inside projectState; never strip an injected flat scope
+    // before checking an existing signed package.
+    executionScope: z.never().optional(),
     contextPackageId: IdentifierSchemas.contextPackageId,
     contentDigest: DigestSchema,
     compiler: z.object({
@@ -64,11 +69,9 @@ export const ContextPackageSchema = z
     }),
     compiledAt: TimestampSchema,
     objective: z.string().min(1).max(16_384),
-    projectState: z.object({
-      workspaceId: IdentifierSchemas.workspaceId,
-      projectId: IdentifierSchemas.projectId,
+    projectState: ExecutionScopeFieldsSchema.safeExtend({
       revision: z.number().int().nonnegative(),
-    }),
+    }).strict(),
     stateItems: z.array(ContextStateItemSchema).max(10_000),
     artifactRefs: z.array(ContextArtifactRefSchema).max(10_000),
     constraints: z.object({
@@ -110,6 +113,28 @@ export const ContextPackageSchema = z
       })
       .optional(),
     parentContextPackage: ContextPackageReferenceSchema.optional(),
+  })
+  .superRefine((package_, context) => {
+    const scope = package_.projectState.executionScope
+    if (package_.schemaVersion === 1 ? scope !== undefined : scope === undefined) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Context scope must match its schema version',
+        path: ['projectState', 'executionScope'],
+      })
+    }
+    if (
+      scope?.kind === 'workspace' &&
+      (package_.stateItems.length > 0 ||
+        package_.constraints.allowedStateItemIds.length > 0 ||
+        package_.providerComposition !== undefined)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Workspace context cannot contain project state or project provider composition',
+        path: ['projectState'],
+      })
+    }
   })
   .refine(
     (package_) =>
@@ -161,6 +186,8 @@ export type ContextCompilationErrorCode =
   | 'CHILD_SCOPE_EXPANSION'
   | 'CHILD_BUDGET_EXPANSION'
   | 'CONTEXT_PROVIDER_INPUT_REQUIRED'
+  | 'WORKSPACE_CONTEXT_UNSUPPORTED'
+  | 'WORKSPACE_CONTEXT_PROVIDER_UNSUPPORTED'
 
 export class ContextCompilationError extends Error {
   constructor(
@@ -180,6 +207,7 @@ export class ContextPackageCompiler {
   }
 
   compile(input: unknown): ContextPackage {
+    assertProjectOnlyInput(input)
     const parsed = CompilationInputSchema.parse(input)
     if (parsed.projectState.revision !== parsed.expectedProjectStateRevision) {
       fail('STALE_PROJECT_STATE', `revision:${parsed.expectedProjectStateRevision}`)
@@ -261,10 +289,69 @@ export class ContextPackageCompiler {
       truncation: { truncated: excluded.length > 0, excluded },
     })
   }
+
+  /**
+   * Server composition only: all constraints and artifact authorization must
+   * already be derived from current workspace authority. This compiler pins
+   * that evidence; it neither looks up a project nor grants access to resources.
+   * Revision pins the host's workspace authority evidence, not project state.
+   */
+  compileWorkspace(input: unknown): ContextPackage {
+    const parsed = z
+      .strictObject({
+        workspaceId: IdentifierSchemas.workspaceId,
+        executionScope: z.strictObject({
+          schemaVersion: z.literal(1),
+          kind: z.literal('workspace'),
+        }),
+        revision: z.number().int().nonnegative(),
+        objective: CompilationInputSchema.shape.objective,
+        artifacts: CompilationInputSchema.shape.artifacts,
+        constraints: ContextPackageSchema.shape.constraints,
+        permissions: ContextPackageSchema.shape.permissions,
+        successCriteria: ContextPackageSchema.shape.successCriteria,
+        returnContract: ContextPackageSchema.shape.returnContract,
+        budgets: ContextPackageSchema.shape.budgets,
+        compiledAt: TimestampSchema,
+      })
+      .parse(input)
+    if (parsed.constraints.allowedStateItemIds.length > 0) fail('WORKSPACE_CONTEXT_UNSUPPORTED')
+    assertUniqueArtifacts(parsed.artifacts)
+    const artifactsById = new Map(
+      parsed.artifacts.map((artifact) => [artifact.artifactId, artifact])
+    )
+    const artifactRefs = parsed.artifacts
+      .map((artifact) => resolveArtifact(artifact.artifactId, artifactsById, parsed.constraints))
+      .toSorted((left, right) => compareCodePointOrder(left.artifactId, right.artifactId))
+    const usage = calculateUsage([], artifactRefs)
+    if (usage.bytes > parsed.budgets.maximumBytes || usage.tokens > parsed.budgets.maximumTokens)
+      fail('REQUIRED_CONTEXT_EXCEEDS_BUDGET')
+    return finalizePackage({
+      schemaVersion: 2,
+      compiler: { name: 'control-plane-context', version: this.version },
+      compiledAt: parsed.compiledAt,
+      objective: parsed.objective,
+      projectState: {
+        workspaceId: parsed.workspaceId,
+        executionScope: parsed.executionScope,
+        revision: parsed.revision,
+      },
+      stateItems: [],
+      artifactRefs,
+      constraints: normalizeConstraints(parsed.constraints),
+      permissions: [...parsed.permissions].toSorted(),
+      successCriteria: parsed.successCriteria,
+      returnContract: parsed.returnContract,
+      budgets: parsed.budgets,
+      usage,
+      truncation: { truncated: false, excluded: [] },
+    })
+  }
 }
 
 export function deriveContextPackage(parentInput: unknown, input: unknown): ContextPackage {
   const parent = ContextPackageSchema.parse(parentInput)
+  assertPackageIntegrity(parent)
   const parsed = z
     .object({
       objective: z.string().min(1).max(16_384),
@@ -344,6 +431,8 @@ export function composeProviderContextPackage(
 ): ContextPackage {
   const package_ = ContextPackageSchema.parse(packageInput)
   assertPackageIntegrity(package_)
+  if (package_.projectState.executionScope?.kind === 'workspace')
+    fail('WORKSPACE_CONTEXT_PROVIDER_UNSUPPORTED')
   const composition = z
     .object({
       callerContextRefs: z.array(z.string().min(1).max(512)).max(128),
@@ -380,6 +469,67 @@ export function composeProviderContextPackage(
   })
 }
 
+/**
+ * Bind an independently compiled project child to its workspace parent. This
+ * verifies immutable resource/budget narrowing only. The execution composition
+ * must separately verify the real project's membership and current principal,
+ * audience and grant authority before admitting the child or allowing effects.
+ */
+export function bindProjectContextPackageToWorkspaceParent(
+  parentInput: unknown,
+  childInput: unknown
+): ContextPackage {
+  const parent = assertContextPackageIntegrity(parentInput)
+  const child = assertContextPackageIntegrity(childInput)
+  if (
+    executionScopeOf(parent.projectState).kind !== 'workspace' ||
+    executionScopeOf(child.projectState).kind !== 'project' ||
+    parent.projectState.workspaceId !== child.projectState.workspaceId ||
+    child.stateItems.length > 0 ||
+    child.constraints.allowedStateItemIds.length > 0 ||
+    child.providerComposition !== undefined
+  )
+    fail('CHILD_SCOPE_EXPANSION')
+  assertSubset(child.constraints.allowedSensitivities, parent.constraints.allowedSensitivities)
+  assertSubset(child.constraints.allowedArtifactIds, parent.constraints.allowedArtifactIds)
+  assertSubset(
+    child.constraints.allowedArtifactIds,
+    parent.artifactRefs.map((artifact) => artifact.artifactId)
+  )
+  assertSubset(child.permissions, parent.permissions)
+  if (
+    child.parentContextPackage !== undefined &&
+    (child.parentContextPackage.contextPackageId !== parent.contextPackageId ||
+      child.parentContextPackage.contentDigest !== parent.contentDigest)
+  )
+    fail('CONTRADICTORY_CONTEXT_REFERENCE', child.contextPackageId)
+  const parentArtifacts = new Map(
+    parent.artifactRefs.map((artifact) => [artifact.artifactId, artifact])
+  )
+  for (const artifact of child.artifactRefs) {
+    if (
+      !child.constraints.allowedArtifactIds.includes(artifact.artifactId) ||
+      !child.constraints.allowedSensitivities.includes(artifact.sensitivity) ||
+      canonical(parentArtifacts.get(artifact.artifactId)) !== canonical(artifact)
+    )
+      fail('CHILD_SCOPE_EXPANSION', artifact.artifactId)
+  }
+  if (
+    child.budgets.maximumBytes > parent.budgets.maximumBytes ||
+    child.budgets.maximumTokens > parent.budgets.maximumTokens
+  )
+    fail('CHILD_BUDGET_EXPANSION')
+  if (canonical(child.usage) !== canonical(calculateUsage(child.stateItems, child.artifactRefs)))
+    fail('CONTRADICTORY_CONTEXT_REFERENCE', child.contextPackageId)
+  return finalizePackage({
+    ...withoutPackageIdentity(child),
+    parentContextPackage: {
+      contextPackageId: parent.contextPackageId,
+      contentDigest: parent.contentDigest,
+    },
+  })
+}
+
 export interface ContextPackageRepository {
   put(package_: ContextPackage): Promise<ContextPackageReference>
   get(reference: ContextPackageReference): Promise<ContextPackage | undefined>
@@ -387,6 +537,7 @@ export interface ContextPackageRepository {
 }
 
 export const ContextAuthoringRequestSchema = ContextAuthoringInputsSchema.extend({
+  executionScope: z.never().optional(),
   workspaceId: IdentifierSchemas.workspaceId,
   projectId: IdentifierSchemas.projectId,
   projectStateRevision: z.number().int().nonnegative(),
@@ -507,6 +658,7 @@ export class ContextPackageAuthoringService {
     idempotencyKey: string,
     input: unknown
   ): Promise<ContextPackageReference> {
+    assertProjectOnlyInput(input)
     const repository = this.options.commands
     if (!repository) throw new Error('CONTEXT_AUTHORING_COMMANDS_NOT_CONFIGURED')
     const request = ContextAuthoringRequestSchema.parse(input)
@@ -552,6 +704,7 @@ export class ContextPackageAuthoringService {
     input: unknown,
     operationId = `context-read:${randomUUID()}`
   ): Promise<ContextPackage> {
+    assertProjectOnlyInput(input)
     const principalRef = z.string().min(1).max(256).parse(principalInput)
     const request = ContextAuthoringRequestSchema.parse(input)
     const decisionInput = await this.options.authority.authorize(
@@ -708,15 +861,20 @@ export function assertContextPackageDerivedFrom(
     fail('CONTRADICTORY_CONTEXT_REFERENCE', child.contextPackageId)
   }
 
-  const derived = deriveContextPackage(parent, {
-    objective: child.objective,
-    allowedStateItemIds: child.constraints.allowedStateItemIds,
-    allowedArtifactIds: child.constraints.allowedArtifactIds,
-    budgets: child.budgets,
-    successCriteria: child.successCriteria,
-    returnContract: child.returnContract,
-    compiledAt: child.compiledAt,
-  })
+  const crossScope =
+    executionScopeOf(parent.projectState).kind === 'workspace' &&
+    executionScopeOf(child.projectState).kind === 'project'
+  const derived = crossScope
+    ? bindProjectContextPackageToWorkspaceParent(parent, child)
+    : deriveContextPackage(parent, {
+        objective: child.objective,
+        allowedStateItemIds: child.constraints.allowedStateItemIds,
+        allowedArtifactIds: child.constraints.allowedArtifactIds,
+        budgets: child.budgets,
+        successCriteria: child.successCriteria,
+        returnContract: child.returnContract,
+        compiledAt: child.compiledAt,
+      })
   if (canonical(withoutPackageIdentity(derived)) !== canonical(withoutPackageIdentity(child))) {
     fail('CONTRADICTORY_CONTEXT_REFERENCE', child.contextPackageId)
   }
@@ -861,7 +1019,8 @@ function assertPackageIntegrity(package_: ContextPackage): void {
   const verifiedDigest =
     package_.contentDigest === expectedDigest
       ? expectedDigest
-      : sha256Legacy(normalizeLegacy(content)) === package_.contentDigest
+      : package_.schemaVersion === 1 &&
+          sha256Legacy(normalizeLegacy(content)) === package_.contentDigest
         ? package_.contentDigest
         : undefined
   if (
@@ -949,6 +1108,20 @@ function isAfter(left: string, right: string): boolean {
 }
 function fail(code: ContextCompilationErrorCode, reference?: string): never {
   throw new ContextCompilationError(code, reference)
+}
+
+function assertProjectOnlyInput(input: unknown): void {
+  if (!input || typeof input !== 'object') return
+  const fields = input as Record<string, unknown>
+  const state = fields['projectState']
+  if (
+    fields['executionScope'] !== undefined ||
+    (state &&
+      typeof state === 'object' &&
+      'executionScope' in state &&
+      state.executionScope !== undefined)
+  )
+    fail('WORKSPACE_CONTEXT_UNSUPPORTED')
 }
 
 function serializationFixture(objective: string): ContextPackage {

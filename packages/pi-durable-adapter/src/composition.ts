@@ -1,10 +1,17 @@
 import type { PolicyControlledToolExecutionService } from '@control-plane/tool-execution'
 import type { DelegationEvent } from '@control-plane/orchestration'
 import { PiDurableRuntimeAdapter } from './adapter.js'
-import type { PiDurableRuntimeOptions } from './contracts.js'
+import type {
+  PiDurableRuntimeOptions,
+  PiDurableGovernedDelegateChildCompiler,
+} from './contracts.js'
 import { PiDurableEffectGate, SqliteDurableEffectGateStore } from './effect-gate.js'
 
-export interface NodePiDurableCompositionOptions extends PiDurableRuntimeOptions {
+export interface NodePiDurableCompositionOptions extends Omit<
+  PiDurableRuntimeOptions,
+  'governedDelegateChild'
+> {
+  readonly governedDelegateChild?: PiDurableGovernedDelegateChildCompiler
   /** Bind this port to the canonical parent in the host, never to model/request input. */
   readonly parentInbox?: { list(): Promise<readonly DelegationEvent[]> }
   /** Independently authorize/deduplicate publications; reading inbox evidence never infers. */
@@ -20,7 +27,24 @@ export interface NodePiDurableCompositionOptions extends PiDurableRuntimeOptions
 
 /** Opt-in Node SQLite composition. No native tools, credential defaults or cloud fallback. */
 export async function createNodePiDurableRuntime(options: NodePiDurableCompositionOptions) {
-  const adapter = new PiDurableRuntimeAdapter(options)
+  if (options.governedDelegateChild && !options.tools)
+    throw new Error('PI_GOVERNED_TOOL_GATE_REQUIRED')
+  let effects: PiDurableEffectGate | undefined
+  const { governedDelegateChild, ...runtimeOptions } = options
+  const adapter = new PiDurableRuntimeAdapter({
+    ...runtimeOptions,
+    ...(governedDelegateChild
+      ? {
+          governedDelegateChild: {
+            prepare: governedDelegateChild.prepare,
+            gate: () => {
+              if (!effects) throw new Error('PI_GOVERNED_TOOL_GATE_REQUIRED')
+              return effects
+            },
+          },
+        }
+      : {}),
+  })
 
   async function recover(): Promise<void> {
     const blocked: Array<{ handleId: string; code: 'PI_RECOVERY_AUTHORITY_BLOCKED' }> = []
@@ -56,7 +80,7 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
   let recoveryBlocked: readonly { handleId: string; code: 'PI_RECOVERY_AUTHORITY_BLOCKED' }[] = []
 
   try {
-    const effects = options.tools
+    effects = options.tools
       ? new PiDurableEffectGate({
           store: new SqliteDurableEffectGateStore(adapter.journal.database),
           service: options.tools.service,

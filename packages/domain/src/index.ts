@@ -1,4 +1,16 @@
 export * from './backoff.js'
+export {
+  ExecutionScopeSchema,
+  ExecutionScopeFieldsSchema,
+  executionScopeFields,
+  validateExecutionScopeFields,
+  executionScopeOf,
+  executionScopesEqual,
+  executionScopeCanNarrow,
+  executionRetentionScope,
+  type ExecutionScope,
+  type ExecutionScopeFields,
+} from '@control-plane/contracts'
 export { canonicalJsonStringify, compareCodePointOrder } from '@control-plane/contracts'
 export * from './with-timeout.js'
 export * from './catalog-models.js'

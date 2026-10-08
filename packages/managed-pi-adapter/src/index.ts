@@ -70,7 +70,10 @@ const ContextPackagePinSchema = z
 const OutputContractSchema = z.object({ contractRef: z.string().min(1).max(512) }).strict()
 
 const ManagedPiExecutionPlanSchema = z.object({
-  schemaVersion: z.number().int().positive(),
+  schemaVersion: z.literal(1),
+  correlation: z
+    .object({ executionScope: z.object({ kind: z.literal('project') }).optional() })
+    .optional(),
   executionPlanId: ReferenceSchema,
   contentDigest: DigestSchema,
   profile: ProfilePinSchema,
@@ -373,6 +376,8 @@ export class ManagedPiDriver implements RuntimeAdapter {
     requestInput: Parameters<RuntimeAdapter['start']>[0]
   ): Promise<RuntimeExecutionHandle> {
     const request = RuntimeStartRequestSchema.parse(requestInput)
+    if (!ManagedPiExecutionPlanSchema.safeParse(request.executionPlan).success)
+      fail('MANAGED_PI_EXECUTION_SCOPE_UNSUPPORTED', 'unsupported', false)
     const fingerprint = stable(request)
     const replay = this.#starts.get(request.idempotencyKey)
     if (replay) {

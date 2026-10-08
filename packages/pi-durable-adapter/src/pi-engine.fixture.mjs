@@ -1,7 +1,8 @@
 // Scripted Models boundary only; this is a real Pi Harness / Node SQLite process.
 import { createModels } from '@earendil-works/pi-ai/models'
 import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux'
-import { createPiDurableEngine } from './pi-engine.ts'
+await import('./pi-engine-source-loader.fixture.mjs')
+const { createPiDurableEngine } = await import('./pi-engine.ts')
 
 const [directory, mode] = process.argv.slice(2)
 const faux = fauxProvider()

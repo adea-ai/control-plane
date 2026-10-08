@@ -97,7 +97,7 @@ export interface PostgresReconciliationEffectsOptions {
     readonly listByExecution: (input: {
       readonly executionId: string
       readonly workspaceId: string
-      readonly projectId: string
+      readonly projectId?: string
       readonly limit: number
     }) => Promise<readonly ExecutionCancellationReceipt[]>
   }

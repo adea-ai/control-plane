@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { spawnSync } from 'node:child_process'
+import { setImmediate as nextTurn } from 'node:timers/promises'
 import {
   InMemoryToolRegistryRepository,
   InMemoryToolRateLimiter,
@@ -134,7 +135,7 @@ async function fixture(run) {
         },
       ],
       executor: { type: 'connector', reference: 'records-v1' },
-      limits: { maxInputBytes: 256, maxOutputBytes: 256, timeoutMs: 1000 },
+      limits: { maxInputBytes: 256, maxOutputBytes: 256, timeoutMs: changes.timeoutMs ?? 1000 },
       createdAt: at,
       publishedAt: at,
     })
@@ -199,7 +200,67 @@ async function fixture(run) {
   }
 }
 
+async function delayedGuardAbortRegression(mode) {
+  await fixture(async ({ open, close, state, path }) => {
+    state.approved = true
+    let entered, resume
+    const guarding = new Promise((resolve) => {
+      entered = resolve
+    })
+    const paused = new Promise((resolve) => {
+      resume = resolve
+    })
+    const controller = new AbortController()
+    const { gate, store } = await open({
+      timeoutMs: mode === 'timeout' ? 20 : 1000,
+      assertAuthority: async (boundary) => {
+        // The second approval review is the final guard before executor entry.
+        if (boundary === 'approval' && state.reviews === 2) {
+          entered()
+          await paused
+        }
+      },
+    })
+    try {
+      const pending = gate.execute(request(), { signal: controller.signal })
+      await guarding
+      if (mode === 'caller') controller.abort(new Error('credential-secret-never-persist'))
+      const outcome = await pending
+      expect(outcome).toMatchObject({
+        state: 'reconciliation_required',
+        call: { errorCode: mode === 'caller' ? 'ABORTED' : 'TIMEOUT' },
+      })
+      const key = JSON.stringify([request().workspaceId, request().idempotencyKey])
+      const evidence = await store.get(key)
+      expect(state.effects).toBe(0)
+      resume()
+      // Drain the guard's continuations after the gateway has already returned its ambiguity receipt.
+      await nextTurn()
+      expect(state.effects).toBe(0)
+      expect(await store.get(key)).toEqual(evidence)
+      expect(await gate.execute(request())).toEqual(outcome)
+      expect(state.effects).toBe(0)
+      close()
+      const reopened = await open()
+      expect(await reopened.gate.execute(request())).toEqual(outcome)
+      expect(await reopened.store.get(key)).toEqual(evidence)
+      expect(state.effects).toBe(0)
+      close()
+      expect((await readFile(path)).toString()).not.toContain('credential-secret-never-persist')
+    } finally {
+      resume()
+      await nextTurn()
+    }
+  })
+}
+
 describe('persistent Pi governed effect gate', () => {
+  test('caller abort during the delayed final guard cannot invoke a non-abort-aware executor', () =>
+    delayedGuardAbortRegression('caller'))
+
+  test('gateway timeout during the delayed final guard cannot invoke a non-abort-aware executor', () =>
+    delayedGuardAbortRegression('timeout'))
+
   test('pending approval survives SQLite close/reopen and succeeded receipt replays without effects', () =>
     fixture(async ({ open, close, state }) => {
       let { gate } = await open()

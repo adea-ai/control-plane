@@ -1,4 +1,8 @@
 import {
+  PiDurableLeadPrepareRequestSchema,
+  PiDurableLeadPrepareResponseSchema,
+  PiDurableLeadLookupRequestSchema,
+  PiDurableLeadLookupResponseSchema,
   PiDurableLeadDispatchRequestSchema,
   PiDurableLeadDispatchResponseSchema,
   PiDurableLeadStatusRequestSchema,
@@ -8,6 +12,20 @@ import {
   PiDurableLeadCancelRequestSchema,
   PiDurableLeadCancelResponseSchema,
 } from '@control-plane/runtime-sdk'
+import {
+  ModelSelectionFundingRequestSchema,
+  ModelSelectionFundingResponseSchema,
+  ModelConnectionCreateRequestSchema,
+  ModelConnectionListRequestSchema,
+  ModelConnectionListResponseSchema,
+  ModelConnectionResponseSchema,
+  ModelConnectionRevokeRequestSchema,
+  ModelDefaultsGetRequestSchema,
+  ModelDefaultsResponseSchema,
+  ModelDefaultsSetRequestSchema,
+  ModelSelectionResolveRequestSchema,
+  ModelSelectionResponseSchema,
+} from '@control-plane/contracts'
 import {
   CredentialCreateRequestSchema,
   CredentialGetRequestSchema,
@@ -80,6 +98,56 @@ import {
 } from '@control-plane/contracts'
 
 export const ControlApiOperations = Object.freeze({
+  getModelSelectionFunding: {
+    operation: 'model-selection.funding.get',
+    method: 'POST',
+    path: '/v1/model-connections/selection/funding/get',
+    requestSchema: ModelSelectionFundingRequestSchema,
+    responseSchema: ModelSelectionFundingResponseSchema,
+  },
+  createModelConnection: {
+    operation: 'model-connections.create',
+    method: 'POST',
+    path: '/v1/model-connections/create',
+    requestSchema: ModelConnectionCreateRequestSchema,
+    responseSchema: ModelConnectionResponseSchema,
+  },
+  revokeModelConnection: {
+    operation: 'model-connections.revoke',
+    method: 'POST',
+    path: '/v1/model-connections/revoke',
+    requestSchema: ModelConnectionRevokeRequestSchema,
+    responseSchema: ModelConnectionResponseSchema,
+  },
+  listModelConnections: {
+    operation: 'model-connections.list',
+    method: 'POST',
+    path: '/v1/model-connections/list',
+    requestSchema: ModelConnectionListRequestSchema,
+    responseSchema: ModelConnectionListResponseSchema,
+  },
+  getModelDefaults: {
+    operation: 'model-defaults.get',
+    method: 'POST',
+    path: '/v1/model-connections/defaults/get',
+    requestSchema: ModelDefaultsGetRequestSchema,
+    responseSchema: ModelDefaultsResponseSchema,
+  },
+  setModelDefaults: {
+    operation: 'model-defaults.set',
+    method: 'POST',
+    path: '/v1/model-connections/defaults/set',
+    requestSchema: ModelDefaultsSetRequestSchema,
+    responseSchema: ModelDefaultsResponseSchema,
+  },
+  resolveModelSelection: {
+    operation: 'model-selection.resolve',
+    method: 'POST',
+    path: '/v1/model-connections/selection/resolve',
+    requestSchema: ModelSelectionResolveRequestSchema,
+    responseSchema: ModelSelectionResponseSchema,
+  },
+
   createCredential: {
     operation: 'credential.create',
     method: 'POST',
@@ -348,6 +416,13 @@ export const ControlApiOperations = Object.freeze({
     requestSchema: MarketplaceInstallationUninstallRequestSchema,
     responseSchema: MarketplaceInstallationUninstallResponseSchema,
   },
+  preparePiDurableLead: {
+    operation: 'pi-durable.lead.prepare',
+    method: 'POST',
+    path: '/v3/pi-durable/lead-dispatches/prepare',
+    requestSchema: PiDurableLeadPrepareRequestSchema,
+    responseSchema: PiDurableLeadPrepareResponseSchema,
+  },
   dispatchPiDurableLead: {
     operation: 'pi-durable.lead.dispatch',
     method: 'POST',
@@ -355,6 +430,13 @@ export const ControlApiOperations = Object.freeze({
     requestSchema: PiDurableLeadDispatchRequestSchema,
     responseSchema: PiDurableLeadDispatchResponseSchema,
     responseStatus: 202,
+  },
+  lookupPiDurableLead: {
+    operation: 'pi-durable.lead.lookup',
+    method: 'POST',
+    path: '/v3/pi-durable/lead-dispatches/lookup',
+    requestSchema: PiDurableLeadLookupRequestSchema,
+    responseSchema: PiDurableLeadLookupResponseSchema,
   },
   getPiDurableLeadStatus: {
     operation: 'pi-durable.lead.status',

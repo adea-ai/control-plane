@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import type { PersistenceTransaction } from '@control-plane/deployment'
-import { ExecutionSchema } from '@control-plane/domain'
+import { ExecutionSchema, executionScopesEqual } from '@control-plane/domain'
 import { assertSqliteStoredPlanReference } from './repositories.js'
 
 /** Local lifecycle-job admission; caller holds the same writer transaction as enqueue. */
@@ -48,7 +48,9 @@ export async function assertSqliteWorkflowExecutionReference(
   )
     throw new Error('WORKFLOW_EXECUTION_REFERENCE_INVALID')
   const plan = await assertSqliteStoredPlanReference(transaction, reference)
-  for (const key of ['workspaceId', 'projectId', 'taskId', 'agentId'] as const)
+  if (!executionScopesEqual(execution.correlation, plan.correlation))
+    throw new Error('WORKFLOW_EXECUTION_REFERENCE_INVALID')
+  for (const key of ['taskId', 'agentId'] as const)
     if (execution.correlation[key] !== plan.correlation[key])
       throw new Error('WORKFLOW_EXECUTION_REFERENCE_INVALID')
 }

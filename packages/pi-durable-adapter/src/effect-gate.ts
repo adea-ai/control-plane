@@ -290,6 +290,8 @@ class AuthorityCheckedGateway extends ToolGateway {
       executor: {
         execute: async (request, version, signal) => {
           await this.beforeEffect(prepared.operation.approvalMode === 'always')
+          // The gateway may abort while the final authority guard awaits.
+          signal.throwIfAborted()
           return executor.execute(request, version, signal)
         },
       },

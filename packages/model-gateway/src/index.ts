@@ -1,3 +1,23 @@
+export * from './current-authority.js'
+export * from './pi-durable-account.js'
+export * from './funding-preparation.js'
+export * from './file-recorded-funding.js'
+export * from './funding-view.js'
+export {
+  ModelFundingOwnerSchema,
+  ModelSelectionFundingViewSchema,
+  ModelSelectionFundingRequestSchema,
+  ModelSelectionFundingResponseSchema,
+  type ModelFundingOwner,
+  type ModelSelectionFundingView,
+} from '@control-plane/contracts'
+export * from './execution-selection.js'
+export * from './connection-administration.js'
+export * from './qualification.js'
+export * from './api-contract.js'
+export * from './selection-repository.js'
+export * from './selection.js'
+export * from './selection-service.js'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import { compareCodePointOrder } from '@control-plane/contracts'
 import { withTimeout } from '@control-plane/domain'
@@ -8,6 +28,12 @@ import {
   type PolicyDecisionPoint,
 } from '@control-plane/policy'
 import { z } from 'zod'
+import {
+  ModelFundingSourceSchema,
+  RuntimeProviderSelectionSchema,
+  type RuntimeProviderSelection,
+} from './selection.js'
+import type { ModelSelectionService } from './selection-service.js'
 
 const ReferenceSchema = z
   .string()
@@ -48,7 +74,8 @@ export const ManagedModelRequestSchema = z
     requirement: ModelRequirementSchema,
     policySnapshot: PolicySnapshotReferenceSchema,
     traceId: IdentifierSchemas.traceId,
-    fundingSource: z.enum(['hq_managed', 'external_subscription']),
+    fundingSource: ModelFundingSourceSchema,
+    selection: RuntimeProviderSelectionSchema.optional(),
     routing: z
       .object({
         entitlements: z.array(AliasSchema).max(64),
@@ -94,7 +121,7 @@ export const ManagedModelResultSchema = z
       })
       .strict(),
     traceId: IdentifierSchemas.traceId,
-    fundingSource: z.enum(['hq_managed', 'external_subscription']),
+    fundingSource: ModelFundingSourceSchema,
     policySnapshot: PolicySnapshotReferenceSchema,
     policyDecisionId: z.string().regex(/^sha256:[a-f0-9]{64}$/),
     route: z
@@ -138,7 +165,8 @@ export interface ModelDeployment {
   readonly credentialRef: string
   readonly adapterRef: string
   readonly enabled: boolean
-  readonly fundingSource: 'hq_managed' | 'external_subscription'
+  readonly fundingSource: 'hq_managed' | 'external_subscription' | 'byo_api'
+  readonly selection?: RuntimeProviderSelection
   readonly maxContextTokens: number
   readonly maxOutputTokens: number
   readonly costClass: 'low' | 'standard' | 'premium'
@@ -262,6 +290,7 @@ export class ManagedModelGateway {
   readonly #adapters: ReadonlyMap<string, ModelProviderAdapter>
   readonly #decisionPoint: PolicyDecisionPoint
   readonly #now: () => string
+  readonly #selectionService: Pick<ModelSelectionService, 'assertReady'> | undefined
   readonly #calls = new Map<string, string>()
 
   constructor(options: {
@@ -269,11 +298,19 @@ export class ManagedModelGateway {
     readonly adapters: ReadonlyMap<string, ModelProviderAdapter>
     readonly decisionPoint: PolicyDecisionPoint
     readonly now?: () => string
+    readonly selectionService?: Pick<ModelSelectionService, 'assertReady'>
   }) {
+    this.#selectionService = options.selectionService
     this.#registry = options.registry
     this.#adapters = options.adapters
     this.#decisionPoint = options.decisionPoint
     this.#now = options.now ?? (() => new Date().toISOString())
+  }
+
+  /** Metadata/policy check only: no provider operation, credential lease or ledger write. */
+  async assertRequestReady(input: unknown): Promise<void> {
+    const { request } = await this.#prepare(input)
+    await this.#checkSelection(request)
   }
 
   async complete(input: unknown, signal?: AbortSignal): Promise<ManagedModelResult> {
@@ -286,6 +323,7 @@ export class ManagedModelGateway {
       const candidate = candidates[index]
       if (!candidate) continue
       const { deployment, adapter, decision } = candidate
+      await this.#checkSelection(request)
       this.#calls.set(request.modelCallId, deployment.adapterRef)
       let completion: AdapterCompletion
       try {
@@ -300,7 +338,7 @@ export class ManagedModelGateway {
             )
       } catch (error) {
         const retryable = error instanceof ModelProviderError && error.retryable
-        if (retryable && index + 1 < candidates.length) {
+        if (!request.selection && retryable && index + 1 < candidates.length) {
           fallbackFrom ??= deployment.deploymentId
           continue
         }
@@ -343,6 +381,7 @@ export class ManagedModelGateway {
     const selected = candidates[0]
     if (!selected) throw new ModelGatewayError('MODEL_UNAVAILABLE')
     const { deployment, adapter } = selected
+    await this.#checkSelection(request)
     this.#calls.set(request.modelCallId, deployment.adapterRef)
     let sequence = 0
     let completed = false
@@ -393,13 +432,44 @@ export class ManagedModelGateway {
     }
   }
 
+  async #checkSelection(request: ManagedModelRequest) {
+    if (!request.selection) return
+    try {
+      if (!this.#selectionService) throw new Error('MODEL_SELECTION_UNAVAILABLE')
+      await this.#selectionService.assertReady(request.selection)
+    } catch {
+      throw new ModelGatewayError('MODEL_POLICY_DENIED')
+    }
+  }
+
   async #prepare(input: unknown) {
     const parsed = ManagedModelRequestSchema.safeParse(input)
     if (!parsed.success) throw new ModelGatewayError('INVALID_REQUEST')
     const request = parsed.data
+    if (request.fundingSource === 'byo_api' && !request.selection)
+      throw new ModelGatewayError('INVALID_REQUEST')
+    if (request.selection) {
+      if (
+        !this.#selectionService ||
+        request.selection.workspaceId !== request.workspaceId ||
+        request.selection.fundingSource !== request.fundingSource
+      )
+        throw new ModelGatewayError('MODEL_POLICY_DENIED')
+      try {
+        await this.#selectionService.assertReady(request.selection)
+      } catch {
+        throw new ModelGatewayError('MODEL_POLICY_DENIED')
+      }
+    }
     const eligibleDeployments = this.#registry
       .resolve(request.alias)
-      .filter((candidate) => eligible(candidate, request))
+      .filter(
+        (candidate) =>
+          eligible(candidate, request) &&
+          (!request.selection || pinnedDeploymentMatches(candidate, request.selection))
+      )
+    if (request.selection && eligibleDeployments.length !== 1)
+      throw new ModelGatewayError('MODEL_UNAVAILABLE')
     if (eligibleDeployments.length === 0) throw new ModelGatewayError('MODEL_UNAVAILABLE')
     const candidates: {
       deployment: ModelDeployment
@@ -685,3 +755,39 @@ function clone<Value>(value: Value): Value {
 }
 
 export const packageName = 'model-gateway'
+
+function pinnedDeploymentMatches(
+  deployment: ModelDeployment,
+  selection: RuntimeProviderSelection
+): boolean {
+  if (
+    !deployment.selection ||
+    deployment.provider !== selection.provider ||
+    deployment.providerModel !== selection.providerModel ||
+    deployment.fundingSource !== selection.fundingSource
+  )
+    return false
+  const left = deployment.selection
+  return (
+    [
+      'workspaceId',
+      'connectionRef',
+      'connectionRevision',
+      'credentialRef',
+      'credentialRevision',
+      'provider',
+      'providerModel',
+      'accountRef',
+      'authKind',
+      'fundingSource',
+      'location',
+      'harness',
+      'harnessVersion',
+      'providerBinding',
+    ].every((key) => Reflect.get(left, key) === Reflect.get(selection, key)) &&
+    left.workspaceGrant.grantRef === selection.workspaceGrant.grantRef &&
+    left.workspaceGrant.revision === selection.workspaceGrant.revision &&
+    deployment.credentialRef ===
+      `vault://${selection.credentialRef}/${selection.credentialRevision}`
+  )
+}

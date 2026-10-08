@@ -30,6 +30,8 @@ export class PostgresExecutionValidationCommandRepository implements ExecutionVa
   ): Promise<ExecutionValidationCommandRecord> {
     const plan = assertExecutionPlanIntegrity(planInput)
     const record = assertExecutionValidationCommandPlan(input, plan)
+    const projectId = record.scope.projectId
+    if (projectId === undefined) throw new Error('WORKSPACE_EXECUTION_VALIDATION_UNSUPPORTED')
     return this.database.transaction(async (transaction) => {
       const key = executionValidationCommandKey(record.scope)
       // Serialize competing candidates before either the command or plan is inserted.
@@ -44,7 +46,7 @@ export class PostgresExecutionValidationCommandRepository implements ExecutionVa
       await transaction.insert(executionValidationCommands).values({
         commandKey: key,
         workspaceId: record.scope.workspaceId,
-        projectId: record.scope.projectId,
+        projectId,
         executionPlanId: plan.executionPlanId,
         record,
       })

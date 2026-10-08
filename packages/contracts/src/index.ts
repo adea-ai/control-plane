@@ -1,9 +1,11 @@
 export * from './authentication.js'
+export * from './model-funding.js'
 export * from './canonical-json.js'
 export * from './control-api.js'
 export * from './context-providers.js'
 export * from './decision-resolution.js'
 export * from './envelopes.js'
+export * from './execution-scope.js'
 export * from './fixtures.js'
 export * from './graphs.js'
 export * from './identifiers.js'
@@ -14,3 +16,5 @@ export * from './versioning.js'
 export * from './workspace-catalog.js'
 
 export const packageName = 'contracts'
+
+export * from './model-connections.js'

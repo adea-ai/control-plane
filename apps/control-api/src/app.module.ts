@@ -1,3 +1,9 @@
+import { ModelConnectionsController } from './models/model-connections.controller.js'
+import {
+  MODEL_CONNECTION_SERVICE,
+  UnavailableModelConnectionService,
+  type ModelConnectionService,
+} from './models/model-connections.service.js'
 import { GraphAdministrationController } from './graphs/graph-administration.controller.js'
 import { WorkspaceAgentProfileCatalogController } from './catalog/workspace-profile-catalog.controller.js'
 import { WorkspaceSkillCatalogController } from './catalog/workspace-skill-catalog.controller.js'
@@ -124,6 +130,7 @@ import {
 
 export interface AppModuleOptions extends ApiRuntimeBindings {
   readonly piDurableLeadService?: PiDurableLeadService
+  readonly modelConnectionService?: ModelConnectionService
   readonly graphAdministrationService?: GraphAdministrationService
   readonly workspaceCatalogService?: WorkspaceCatalogService
   readonly credentialAdministrationService?: CredentialAdministrationService
@@ -163,6 +170,7 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
     module: AppModule,
     controllers: [
       PiDurableLeadController,
+      ModelConnectionsController,
       AuthenticationController,
       GraphAdministrationController,
       WorkspaceSkillCatalogController,
@@ -186,6 +194,10 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       {
         provide: PI_DURABLE_LEAD_SERVICE,
         useValue: options.piDurableLeadService ?? new UnavailablePiDurableLeadService(),
+      },
+      {
+        provide: MODEL_CONNECTION_SERVICE,
+        useValue: options.modelConnectionService ?? new UnavailableModelConnectionService(),
       },
       {
         provide: GRAPH_ADMINISTRATION_SERVICE,

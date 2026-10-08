@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import {
   createAssistantMessageEventStream,
+  Type,
   type Api,
   type AssistantMessage,
   type Model,
@@ -16,11 +17,26 @@ import {
   createRegistry,
   defineDoc,
   defineExtension,
+  defineTool,
   GenerationTask,
   Harness,
   hook,
+  type Conversation,
+  type Cursor,
+  type EntryId,
 } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
+import { z } from 'zod'
+import {
+  PiDurableDelegateChildOutcomeSchema,
+  type PiDurableDelegateChildOutcome,
+  type PiDurableGovernedDelegateChildEnginePort,
+} from './contracts.js'
+import {
+  verifyPiDurableToolSource,
+  piDurableToolSourceKey,
+  type PiDurableToolSource,
+} from './tool-source.js'
 
 export const PI_DURABLE_RUNTIME_VERSION = '1.1.0'
 
@@ -43,6 +59,7 @@ export interface PiDurableEngineOptions {
   }>
   /** Rebuild Models and hold eligible credential access only for this callback. */
   readonly withModels: <T>(use: (models: Models) => Promise<T>) => Promise<T>
+  readonly governedDelegateChild?: PiDurableGovernedDelegateChildEnginePort
 }
 
 export interface PiDurableEngineRun {
@@ -70,6 +87,66 @@ export interface PiDurableEngineResult {
       readonly reasoningTokens: number
     }
   }[]
+}
+
+export class PiDurableEngineToolBlockedError extends Error {
+  readonly outcome: PiDurableDelegateChildOutcome
+  readonly source: PiDurableToolSource
+  readonly sourceKey: string
+  readonly inferences: PiDurableEngineResult['inferences']
+
+  constructor(
+    outcome: PiDurableDelegateChildOutcome,
+    source: PiDurableToolSource,
+    sourceKey: string,
+    inferences: PiDurableEngineResult['inferences']
+  ) {
+    super('PI_GOVERNED_TOOL_BLOCKED')
+    this.name = 'PiDurableEngineToolBlockedError'
+    this.outcome = outcome
+    this.source = source
+    this.sourceKey = sourceKey
+    this.inferences = inferences
+  }
+}
+
+const DelegateObjective = z.strictObject({ objective: z.string().trim().min(1).max(8192) })
+const DelegateParameters = Type.Object(
+  { objective: Type.String({ minLength: 1, maxLength: 8192 }) },
+  { additionalProperties: false }
+)
+
+async function receipts(root: Conversation, first: EntryId, last?: EntryId) {
+  const result: PiDurableEngineResult['inferences'][number][] = []
+  let cursor: Cursor | undefined
+  do {
+    const page = await root.entries(
+      {
+        minEntryId: first,
+        ...(last === undefined ? {} : { maxEntryId: last }),
+        order: 'ascending',
+      },
+      256,
+      cursor,
+      BACKGROUND_CONTEXT
+    )
+    for (const entry of page.items) {
+      if (entry.kind !== 'pi.assistant') continue
+      const message = entry.model?.find(
+        (value): value is AssistantMessage => value.role === 'assistant'
+      )
+      if (!message || message.stopReason === 'error' || message.stopReason === 'aborted') continue
+      if (entry.byTaskId === undefined) throw new Error('PI_NATIVE_INFERENCE_RECEIPT_MISSING')
+      if (!Number.isSafeInteger(message.durationMs) || message.durationMs! < 0)
+        throw new Error('PI_NATIVE_INFERENCE_DURATION_MISSING')
+      result.push({
+        inferenceId: `pi-generation:${String(entry.byTaskId)}`,
+        usage: { ...counts(message.usage), durationMs: message.durationMs! },
+      })
+    }
+    cursor = page.next
+  } while (cursor !== undefined)
+  return result
 }
 
 function counts(usage: Usage) {
@@ -113,6 +190,7 @@ const EngineState = defineDoc<{
   provider: string
   modelId: string
   inputs: Record<string, string>
+  governedTools?: 'delegate_child/v1'
 }>({
   kind: 'adea.pi.engine',
   version: 1,
@@ -158,6 +236,10 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
     throw new Error('PI_OUTPUT_BUDGET_REQUIRED')
   }
   const opened = new Map<string, Promise<Harness>>()
+  const blocked = new Map<
+    string,
+    { error: PiDurableEngineToolBlockedError; closing: Promise<void> }
+  >()
   const physicalFetch = globalThis.fetch
   let closed = false
 
@@ -193,8 +275,121 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
         } satisfies Model<Api>
       })
       let inferenceId: string | undefined
+      let harness: Harness
+      const delegate = options.governedDelegateChild
+      const tools = delegate
+        ? [
+            defineTool({
+              name: 'delegate_child',
+              description:
+                'Delegate a bounded objective through the host governed child execution service.',
+              parameters: DelegateParameters,
+              replay: 'safe',
+              executionMode: 'sequential',
+              outputLimits: { maxBytes: 8192, maxLines: 64 },
+              async execute(args, api, context) {
+                try {
+                  context.abortSignal?.throwIfAborted()
+                  await options.assertAuthority()
+                  const task = await api.getTask(api.taskId, context)
+                  const assistant =
+                    task?.input && typeof task.input === 'object' && !Array.isArray(task.input)
+                      ? task.input['assistant']
+                      : undefined
+                  if (
+                    typeof assistant !== 'number' ||
+                    !Number.isSafeInteger(assistant) ||
+                    assistant < 1
+                  )
+                    throw new Error('PI_TOOL_SOURCE_REJECTED')
+                  const candidate = {
+                    schemaVersion: 'pi-tool-source/v1' as const,
+                    ...delegate.source,
+                    conversationId: String(api.conversationId),
+                    taskId: String(api.taskId),
+                    assistantEntryId: String(assistant),
+                    callId: api.callId,
+                  }
+                  const source = await api.memo('adea.delegate-child.source/v1', candidate, context)
+                  if (piDurableToolSourceKey(source) !== piDurableToolSourceKey(candidate))
+                    throw new Error('PI_TOOL_SOURCE_REJECTED')
+                  const reader = {
+                    assertCurrent: async (retained: PiDurableToolSource) => {
+                      await options.assertAuthority()
+                      await delegate.assertCurrent(retained)
+                    },
+                    readTask: async (retained: PiDurableToolSource) => {
+                      if (retained.taskId !== String(api.taskId))
+                        throw new Error('PI_TOOL_SOURCE_REJECTED')
+                      return api.getTask(api.taskId, context)
+                    },
+                    readAssistantEntry: async (retained: PiDurableToolSource) => {
+                      if (retained.assistantEntryId !== String(assistant))
+                        throw new Error('PI_TOOL_SOURCE_REJECTED')
+                      return api.commit(
+                        (tx) => tx.entry(AssistantEntry, assistant as EntryId),
+                        context
+                      )
+                    },
+                  }
+                  const verified = await verifyPiDurableToolSource(source, args, reader)
+                  context.abortSignal?.throwIfAborted()
+                  const outcome = PiDurableDelegateChildOutcomeSchema.parse(
+                    await delegate.execute(
+                      verified,
+                      { readTask: reader.readTask, readAssistantEntry: reader.readAssistantEntry },
+                      context.abortSignal
+                    )
+                  )
+                  await reader.assertCurrent(verified.source)
+                  context.abortSignal?.throwIfAborted()
+                  if (outcome.state !== 'succeeded') {
+                    const root = await harness.root(BACKGROUND_CONTEXT)
+                    const submission = await api.commit(
+                      (tx) =>
+                        tx.submissionByRequest(api.conversationId, delegate.source.admittedTurnKey),
+                      context
+                    )
+                    if (
+                      submission?.type !== 'input' ||
+                      submission.status === 'queued' ||
+                      submission.entry === undefined
+                    )
+                      throw new Error('PI_TOOL_TURN_NOT_RETAINED')
+                    const inferences = await receipts(root, submission.entry, assistant as EntryId)
+                    const error = new PiDurableEngineToolBlockedError(
+                      outcome,
+                      verified.source,
+                      verified.sourceKey,
+                      inferences
+                    )
+                    const closing = harness.close(BACKGROUND_CONTEXT)
+                    blocked.set(sessionId, { error, closing })
+                    // Closing the native scheduler aborts this invocation without writing a tool outcome.
+                    context.abortSignal?.throwIfAborted()
+                    await new Promise<never>((_resolve, reject) =>
+                      context.abortSignal?.addEventListener(
+                        'abort',
+                        () => reject(new Error('PI_GOVERNED_TOOL_BLOCKED')),
+                        { once: true }
+                      )
+                    )
+                    throw new Error('PI_GOVERNED_TOOL_BLOCKED')
+                  }
+                  return { content: [{ type: 'text' as const, text: JSON.stringify(outcome) }] }
+                } catch {
+                  // Never serialize host compiler/gate/source diagnostics into the native transcript.
+                  if (!context.abortSignal?.aborted)
+                    void harness.close(BACKGROUND_CONTEXT).catch(() => {})
+                  throw new Error('PI_GOVERNED_TOOL_BLOCKED')
+                }
+              },
+            }),
+          ]
+        : []
       const guard = defineExtension({
         name: 'adea.inference-authority',
+        tools,
         hooks: [
           hook(GenerationTask, {
             beforeRequest: (_request, api) => {
@@ -284,7 +479,15 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
                 } else if (
                   event.type === 'done' &&
                   (event.message.deferred ||
-                    event.message.content.some((part) => part.type === 'toolCall') ||
+                    event.message.content.some(
+                      (part) =>
+                        part.type === 'toolCall' &&
+                        (!delegate ||
+                          part.name !== 'delegate_child' ||
+                          !DelegateObjective.safeParse(part.arguments).success ||
+                          !/^[A-Za-z0-9][A-Za-z0-9._:/|-]{0,255}$/.test(part.id) ||
+                          event.message.stopReason !== 'toolUse')
+                    ) ||
                     event.message.usage.cacheWrite > 0)
                 ) {
                   output.push({
@@ -345,7 +548,7 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
       try {
         const registry = createRegistry()
         registry.install(guard)
-        const harness = await Harness.open(
+        harness = await Harness.open(
           storage,
           {
             models,
@@ -360,7 +563,11 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
           BACKGROUND_CONTEXT
         )
         const root = await harness.root(BACKGROUND_CONTEXT, {
-          agent: { model: options.model, extensions: [guard], tools: [] },
+          agent: {
+            model: options.model,
+            extensions: [guard],
+            tools,
+          },
         })
         await root.commit(async (tx) => {
           const state = await tx.doc(EngineState, root.id)
@@ -374,6 +581,14 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
           }
           state.provider = options.model.provider
           state.modelId = options.model.modelId
+          const governedTools = delegate ? 'delegate_child/v1' : undefined
+          if (
+            state.inputs &&
+            Object.keys(state.inputs).length > 0 &&
+            state.governedTools !== governedTools
+          )
+            throw new Error('PI_STORED_TOOL_POLICY_MISMATCH')
+          if (governedTools) state.governedTools = governedTools
         }, BACKGROUND_CONTEXT)
         return harness
       } catch (error) {
@@ -395,6 +610,13 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
     async run(request: PiDurableEngineRun): Promise<PiDurableEngineResult> {
       const startedAt = performance.now()
       if (!request.requestId) throw new Error('PI_REQUEST_ID_REQUIRED')
+      const delegate = options.governedDelegateChild
+      if (
+        delegate &&
+        (delegate.source.externalSessionId !== request.sessionId ||
+          delegate.source.admittedTurnKey !== request.requestId)
+      )
+        throw new Error('PI_TOOL_TURN_SCOPE_MISMATCH')
       const harness = await open(request.sessionId)
       const root = await harness.root(BACKGROUND_CONTEXT)
       await root.commit(async (tx) => {
@@ -410,7 +632,17 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
         { type: 'input', requestId: request.requestId, content: request.input },
         BACKGROUND_CONTEXT
       )
-      const settled = await submission.wait(BACKGROUND_CONTEXT)
+      let settled
+      try {
+        settled = await submission.wait(BACKGROUND_CONTEXT)
+      } catch (error) {
+        const pending = blocked.get(request.sessionId)
+        if (!pending) throw error
+        await pending.closing
+        opened.delete(request.sessionId)
+        blocked.delete(request.sessionId)
+        throw pending.error
+      }
       if (settled.type !== 'input' || settled.status !== 'done')
         throw new Error('PI_SUBMISSION_UNANSWERED')
       const entry = await root.commit(
@@ -423,7 +655,15 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
       if (!answer || answer.stopReason === 'error' || answer.stopReason === 'aborted')
         throw new Error('PI_SUBMISSION_UNANSWERED')
       if (entry?.byTaskId === undefined) throw new Error('PI_NATIVE_INFERENCE_RECEIPT_MISSING')
-      const trustedCounts = counts(answer.usage)
+      const inferences = await receipts(root, settled.entry, settled.answer)
+      if (!inferences.length) throw new Error('PI_NATIVE_INFERENCE_RECEIPT_MISSING')
+      const trustedCounts = inferences.reduce(
+        (total, inference) => ({
+          inputTokens: total.inputTokens + inference.usage.inputTokens,
+          outputTokens: total.outputTokens + inference.usage.outputTokens,
+        }),
+        { inputTokens: 0, outputTokens: 0 }
+      )
       const durationMs = answer.durationMs ?? Math.round(performance.now() - startedAt)
       return {
         submissionId: String(submission.id),
@@ -437,12 +677,7 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
           costUsd: String(answer.usage.cost.total),
           durationMs,
         },
-        inferences: [
-          {
-            inferenceId: `pi-generation:${String(entry.byTaskId)}`,
-            usage: { ...trustedCounts, durationMs },
-          },
-        ],
+        inferences,
       }
     },
     async inspect(sessionId: string) {

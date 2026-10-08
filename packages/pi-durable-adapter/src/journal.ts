@@ -104,6 +104,33 @@ export class SqliteDurableJournal {
     })
   }
 
+  /** Validate the entire retained snapshot, synchronously guard it, and commit
+   * its interaction state/epoch/cursor together. Undefined is an exact replay.
+   */
+  transition(
+    expected: JournalRecord,
+    operation: (current: JournalRecord) =>
+      | {
+          change: Partial<Pick<JournalRecord, 'state' | 'detail'>>
+          event?: JournalEvent | readonly JournalEvent[]
+        }
+      | undefined
+  ): JournalRecord {
+    return this.transaction(() => {
+      const current = this.get(expected.handleId)
+      if (canonicalJsonStringify(current) !== canonicalJsonStringify(expected))
+        throw new Error('STALE_STATE')
+      const mutation = operation(current)
+      if (!mutation) return current
+      const next = { ...current, ...mutation.change, epoch: current.epoch + 1 }
+      this.save(next)
+      if (mutation.event)
+        for (const event of Array.isArray(mutation.event) ? mutation.event : [mutation.event])
+          this.event(current.handleId, event as JournalEvent)
+      return next
+    })
+  }
+
   /** Serialize local process ownership before touching the native Pi store or lock file. */
   claimProcess(handleId: string, expected?: { epoch: number; state: string }): number {
     return this.transaction(() => {

@@ -28,7 +28,7 @@ import type {
   PersistenceProvider,
   PersistenceTransaction,
 } from '@control-plane/deployment'
-import { compareCodePointOrder } from '@control-plane/domain'
+import { compareCodePointOrder, executionScopeOf } from '@control-plane/domain'
 import {
   REFERENCE_RETENTION_NAMESPACES,
   appendSqliteCredentialAudit,
@@ -857,6 +857,8 @@ function parseImportedContextPackage(record: PortableRecord) {
   }
   try {
     package_ = assertContextPackageIntegrity(package_)
+    if (package_.schemaVersion !== 1 || executionScopeOf(package_.projectState).kind !== 'project')
+      throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
   } catch {
     throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
   }
@@ -881,6 +883,8 @@ function parseImportedExecutionPlan(record: PortableRecord) {
   }
   try {
     plan = assertExecutionPlanIntegrity(plan)
+    if (plan.schemaVersion !== 1 || executionScopeOf(plan.correlation).kind !== 'project')
+      throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
   } catch {
     throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
   }
@@ -905,6 +909,8 @@ async function readStoredContextPackage(
   let package_: ReturnType<typeof ContextPackageSchema.parse>
   try {
     package_ = assertContextPackageIntegrity(ContextPackageSchema.parse(stored.value))
+    if (package_.schemaVersion !== 1 || executionScopeOf(package_.projectState).kind !== 'project')
+      throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [reference.contextPackageId])
   } catch {
     throw new PortableMigrationError('PORTABLE_PLAN_STALE', [reference.contextPackageId])
   }
@@ -951,6 +957,8 @@ function assertPlanContextScope(
     plan.contextPackage.contentDigest !== context.contentDigest ||
     plan.contextPackage.schemaVersion !== context.schemaVersion ||
     plan.contextPackage.compilerVersion !== context.compiler.version ||
+    plan.correlation.projectId === undefined ||
+    context.projectState.projectId === undefined ||
     plan.correlation.workspaceId !== context.projectState.workspaceId ||
     plan.correlation.projectId !== context.projectState.projectId
   ) {

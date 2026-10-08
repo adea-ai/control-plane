@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import {
   IdentifierSchemas,
+  ModelSelectionFundingViewSchema,
+  ModelSelectionRefSchema,
   ReadRequestEnvelopeSchema,
   StateChangingCommandEnvelopeSchema,
   SuccessResponseEnvelopeSchema,
@@ -14,6 +16,7 @@ import {
 
 const IntentId = z.uuid()
 const DispatchId = z.string().regex(/^dispatch_[a-f0-9]{32}$/)
+export const PiDurableLeadPreparationRefSchema = z.string().regex(/^prep_[a-f0-9]{32}$/)
 const Caller = StateChangingCommandEnvelopeSchema.shape.caller.unwrap().strict()
 const Correlation = StateChangingCommandEnvelopeSchema.shape.correlation.strict()
 export const PiDurableLeadCommandEnvelopeSchema = StateChangingCommandEnvelopeSchema.extend({
@@ -24,13 +27,23 @@ export const PiDurableLeadReadEnvelopeSchema = ReadRequestEnvelopeSchema.extend(
   caller: Caller,
   correlation: Correlation,
 }).strict()
+export const PiDurableLeadPrepareRequestSchema = PiDurableLeadCommandEnvelopeSchema.extend({
+  operation: z.literal('pi-durable.lead.prepare'),
+  payload: z.object({ intentId: IntentId }).strict(),
+})
 export const PiDurableLeadDispatchRequestSchema = PiDurableLeadCommandEnvelopeSchema.extend({
   operation: z.literal('pi-durable.lead.dispatch'),
-  payload: z.object({ intentId: IntentId }).strict(),
+  payload: z
+    .object({ intentId: IntentId, preparationRef: PiDurableLeadPreparationRefSchema.optional() })
+    .strict(),
 })
 export const PiDurableLeadStatusRequestSchema = PiDurableLeadReadEnvelopeSchema.extend({
   operation: z.literal('pi-durable.lead.status'),
   parameters: z.object({ dispatchId: DispatchId }).strict(),
+})
+export const PiDurableLeadLookupRequestSchema = PiDurableLeadReadEnvelopeSchema.extend({
+  operation: z.literal('pi-durable.lead.lookup'),
+  parameters: z.object({ intentId: IntentId }).strict(),
 })
 export const PiDurableLeadProgressRequestSchema = PiDurableLeadReadEnvelopeSchema.extend({
   operation: z.literal('pi-durable.lead.progress'),
@@ -57,6 +70,62 @@ export const PiDurableLeadReceiptResponseSchema = z
   })
   .strict()
 const response = SuccessResponseEnvelopeSchema.extend({ correlation: Correlation }).strict()
+/** Disclosure bound to a prepared canonical attempt; never a spending or runtime capability. */
+export const PiDurableLeadPreparationSchema = z
+  .object({
+    schemaVersion: z.literal('pi-lead-preparation/v1'),
+    preparationRef: PiDurableLeadPreparationRefSchema,
+    intentId: IntentId,
+    executionId: IdentifierSchemas.executionId,
+    attemptId: IdentifierSchemas.attemptId,
+    selectionRef: ModelSelectionRefSchema,
+    selectionRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    funding: ModelSelectionFundingViewSchema.options[0],
+    expiresAt: z.iso.datetime(),
+    replayed: z.boolean(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    for (const key of ['executionId', 'attemptId', 'selectionRef', 'selectionRevision'] as const) {
+      if (value[key] !== value.funding[key])
+        context.addIssue({
+          code: 'custom',
+          path: ['funding', key],
+          message: 'Funding disclosure must match the prepared attempt and selection',
+        })
+    }
+    if (Date.parse(value.expiresAt) > Date.parse(value.funding.expiresAt))
+      context.addIssue({
+        code: 'custom',
+        path: ['expiresAt'],
+        message: 'Preparation cannot outlive its funding disclosure',
+      })
+  })
+export const PiDurableLeadPrepareResponseSchema = response.extend({
+  data: PiDurableLeadPreparationSchema,
+})
+/** Stored dispatch metadata; lookup never creates an execution or runtime session. */
+export const PiDurableLeadLookupResponseSchema = response.extend({
+  data: z
+    .object({
+      schemaVersion: z.literal('pi-lead-lookup/v1'),
+      workspaceId: IdentifierSchemas.workspaceId,
+      intentId: IntentId,
+      receipt: z
+        .object({
+          dispatchId: DispatchId,
+          executionId: IdentifierSchemas.executionId,
+          attemptId: IdentifierSchemas.attemptId,
+          state: z.enum(['dispatching', 'dispatched', 'reconciliation_required']),
+          runtimeSessionId: RuntimeExecutionHandleSchema.shape.externalSessionId
+            .unwrap()
+            .optional(),
+        })
+        .strict()
+        .nullable(),
+    })
+    .strict(),
+})
 export const PiDurableLeadDispatchResponseSchema = response.extend({
   data: PiDurableLeadReceiptResponseSchema.extend({
     state: RuntimeExecutionStateSchema,
@@ -82,12 +151,26 @@ export const PiDurableLeadHttpContract = Object.freeze({
   schemaVersion: 'pi-lead-dispatch/v1',
   basePath: '/v3/pi-durable/lead-dispatches',
   method: 'POST',
+  prepare: Object.freeze({
+    route: 'prepare',
+    operation: 'pi-durable.lead.prepare',
+    scope: 'execution:accept',
+    requestSchema: PiDurableLeadPrepareRequestSchema,
+    responseSchema: PiDurableLeadPrepareResponseSchema,
+  }),
   dispatch: Object.freeze({
     route: 'dispatch',
     operation: 'pi-durable.lead.dispatch',
     scope: 'execution:accept',
     requestSchema: PiDurableLeadDispatchRequestSchema,
     responseSchema: PiDurableLeadDispatchResponseSchema,
+  }),
+  lookup: Object.freeze({
+    route: 'lookup',
+    operation: 'pi-durable.lead.lookup',
+    scope: 'execution:read',
+    requestSchema: PiDurableLeadLookupRequestSchema,
+    responseSchema: PiDurableLeadLookupResponseSchema,
   }),
   status: Object.freeze({
     route: 'status',
@@ -112,6 +195,11 @@ export const PiDurableLeadHttpContract = Object.freeze({
   }),
 })
 
+export type PiDurableLeadPrepareRequest = z.output<typeof PiDurableLeadPrepareRequestSchema>
+export type PiDurableLeadPrepareResponse = z.output<typeof PiDurableLeadPrepareResponseSchema>
+export type PiDurableLeadPreparation = z.output<typeof PiDurableLeadPreparationSchema>
+export type PiDurableLeadLookupRequest = z.output<typeof PiDurableLeadLookupRequestSchema>
+export type PiDurableLeadLookupResponse = z.output<typeof PiDurableLeadLookupResponseSchema>
 export type PiDurableLeadDispatchRequest = z.output<typeof PiDurableLeadDispatchRequestSchema>
 export type PiDurableLeadDispatchResponse = z.output<typeof PiDurableLeadDispatchResponseSchema>
 export type PiDurableLeadStatusRequest = z.output<typeof PiDurableLeadStatusRequestSchema>

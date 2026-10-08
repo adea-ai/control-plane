@@ -177,6 +177,7 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
       const contextPackage = await this.options.contextPackages.get(reference)
       if (
         !contextPackage ||
+        contextPackage.projectState.projectId === undefined ||
         contextPackage.projectState.workspaceId !== request.workspaceId ||
         contextPackage.projectState.projectId !== projectId ||
         contextPackage.projectState.revision !== state.revision ||

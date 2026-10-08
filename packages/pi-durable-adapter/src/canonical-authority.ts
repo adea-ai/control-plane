@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto'
-import { IdentifierSchemas } from '@control-plane/contracts'
+import {
+  IdentifierSchemas,
+  executionScopeFields,
+  executionScopesEqual,
+  validateExecutionScopeFields,
+} from '@control-plane/contracts'
 import {
   ExecutionSchema,
   ExecutionAttemptSchema,
@@ -35,8 +40,8 @@ const AudienceSchema = z
 const CanonicalLeadIntentSchema = z
   .object({
     intentId: z.uuid(),
-    workspaceId: IdentifierSchemas.workspaceId,
-    projectId: IdentifierSchemas.projectId,
+    ...executionScopeFields,
+    canonicalActorPrincipalId: ReferenceSchema.optional(),
     messageRef: ReferenceSchema,
     executionId: IdentifierSchemas.executionId,
     attemptId: IdentifierSchemas.attemptId,
@@ -48,6 +53,14 @@ const CanonicalLeadIntentSchema = z
     allowedPrincipalIds: AudienceSchema,
   })
   .strict()
+  .superRefine(validateExecutionScopeFields)
+  .superRefine((intent, context) => {
+    if (intent.executionScope !== undefined && !intent.canonicalActorPrincipalId)
+      context.addIssue({
+        code: 'custom',
+        message: 'Explicit scope requires canonical product actor',
+      })
+  })
 const CanonicalLeadMessageAuthoritySchema = z
   .object({
     prompt: PiDurableAdmissionSchema.shape.prompt,
@@ -203,6 +216,9 @@ export class CanonicalPiDurableAuthority {
       schemaVersion: 'pi-durable-admission/v1',
       prompt: message.prompt,
       selection: { selectionRef: intent.selectionRef, selectionRevision: intent.selectionRevision },
+      ...(intent.executionScope !== undefined
+        ? { canonicalActorPrincipalId: intent.canonicalActorPrincipalId }
+        : {}),
       authority: {
         revision: intent.authorityRevision,
         principalRef: intent.principalRef,
@@ -261,8 +277,7 @@ function assertLifecycle(
   if (
     execution.executionId !== intent.executionId ||
     execution.latestAttemptId !== intent.attemptId ||
-    execution.correlation.workspaceId !== intent.workspaceId ||
-    execution.correlation.projectId !== intent.projectId ||
+    !executionScopesEqual(execution.correlation, intent) ||
     attempt.attemptId !== intent.attemptId ||
     attempt.executionId !== execution.executionId ||
     attempt.sequence !== execution.attemptCount ||

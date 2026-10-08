@@ -25,6 +25,8 @@
     "@control-plane/contracts": "workspace:*",
     "@control-plane/domain": "workspace:*",
     "@control-plane/execution-plan": "workspace:*",
+    "@control-plane/runtime-sdk": "workspace:*",
+    "@control-plane/tool-sdk": "workspace:*",
     "zod": "4.6.5"
   },
   "engines": {

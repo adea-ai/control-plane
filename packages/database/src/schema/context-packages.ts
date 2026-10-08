@@ -1,3 +1,4 @@
+import { executionScopeColumn, executionScopeCheck } from './execution-scope.js'
 import type { ContextPackage } from '@control-plane/context'
 import {
   index,
@@ -18,7 +19,8 @@ export const contextPackages = pgTable(
     contentDigest: varchar('content_digest', { length: 71 }).notNull(),
     schemaVersion: integer('schema_version').notNull(),
     workspaceId: identifier('workspace_id').notNull(),
-    projectId: identifier('project_id').notNull(),
+    projectId: identifier('project_id'),
+    executionScope: executionScopeColumn(),
     contextPackage: jsonb('context_package').$type<ContextPackage>().notNull(),
     compiledAt: timestamp('compiled_at', { mode: 'date', withTimezone: true }).notNull(),
     // Retention metadata, not part of the immutable package/digest. Reference
@@ -27,6 +29,7 @@ export const contextPackages = pgTable(
     createdAt: timestamp('created_at', { mode: 'date', withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
+    executionScopeCheck('context_packages_scope_check', table),
     uniqueIndex('context_packages_content_digest_unique').on(table.contentDigest),
     index('context_packages_scope_index').on(table.workspaceId, table.projectId, table.compiledAt),
   ]

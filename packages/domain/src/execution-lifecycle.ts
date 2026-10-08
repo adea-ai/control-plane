@@ -1,4 +1,8 @@
-import { IdentifierSchemas } from '@control-plane/contracts'
+import {
+  executionScopeFields,
+  validateExecutionScopeFields,
+  IdentifierSchemas,
+} from '@control-plane/contracts'
 import { z } from 'zod'
 
 const TimestampSchema = z.iso.datetime()
@@ -56,13 +60,13 @@ export const MarketplacePluginReferenceSchema = z
 
 export const ExecutionCorrelationSchema = z
   .object({
-    workspaceId: IdentifierSchemas.workspaceId,
-    projectId: IdentifierSchemas.projectId,
+    ...executionScopeFields,
     taskId: IdentifierSchemas.taskId,
     agentId: IdentifierSchemas.agentId,
     requestId: IdentifierSchemas.requestId,
   })
   .strict()
+  .superRefine(validateExecutionScopeFields)
 
 export const AttemptRoutingDecisionSchema = z
   .object({
@@ -136,6 +140,15 @@ export const ExecutionSchema = z
   })
   .strict()
   .superRefine((execution, context) => {
+    if (
+      (execution.executionPlan.schemaVersion === 1) !==
+      (execution.correlation.executionScope === undefined)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Execution scope and pinned plan version must agree',
+      })
+    }
     if (execution.parentExecutionId === execution.executionId) {
       context.addIssue({ code: 'custom', message: 'Execution cannot be its own parent' })
     }
@@ -401,7 +414,7 @@ export class ExecutionLifecycleService {
     const parsed = ExecutionTransitionSchema.parse(input)
     const current = await this.getExecution(parsed.executionId)
     assertExpectedVersion(current.version, parsed.expectedVersion, 'execution')
-    const next = transition(current, parsed)
+    const next = previewLifecycleTransition(current, parsed)
     if (!(await this.repository.compareAndSetExecution(parsed.expectedVersion, next))) {
       const latest = await this.repository.getExecution(parsed.executionId)
       fail('STALE_EXECUTION_VERSION', latest?.version)
@@ -414,7 +427,7 @@ export class ExecutionLifecycleService {
     const current = await this.repository.getAttempt(parsed.attemptId)
     if (!current) fail('ATTEMPT_MISSING')
     assertExpectedVersion(current.version, parsed.expectedVersion, 'attempt')
-    const next = transition(current, parsed)
+    const next = previewLifecycleTransition(current, parsed)
     if (!(await this.repository.compareAndSetAttempt(parsed.expectedVersion, next))) {
       const latest = await this.repository.getAttempt(parsed.attemptId)
       fail('STALE_ATTEMPT_VERSION', latest?.version)
@@ -491,7 +504,8 @@ const timestampFields: Partial<Record<ExecutionState, string>> = {
   reconciliation_required: 'reconciliationRequiredAt',
 }
 
-function transition<Lifecycle extends Execution | ExecutionAttempt>(
+/** Derive and validate a lifecycle transition without performing persistence effects. */
+export function previewLifecycleTransition<Lifecycle extends Execution | ExecutionAttempt>(
   current: Lifecycle,
   input: {
     to: ExecutionState

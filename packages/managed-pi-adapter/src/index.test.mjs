@@ -177,6 +177,30 @@ class RecordingManagedPiClient {
 }
 
 describe('ManagedPiAdapter plan translation', () => {
+  test.each([
+    { schemaVersion: 2 },
+    {
+      correlation: {
+        workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
+        executionScope: { schemaVersion: 1, kind: 'workspace' },
+      },
+    },
+  ])('rejects unsupported execution scope before native start: %j', async (scope) => {
+    const client = new RecordingManagedPiClient()
+    await expect(
+      managedPiAdapter(client).start({
+        attemptId,
+        idempotencyKey: 'workspace-denial',
+        executionPlan: { ...plan(), ...scope },
+      })
+    ).rejects.toMatchObject({
+      code: 'MANAGED_PI_EXECUTION_SCOPE_UNSUPPORTED',
+      classification: 'unsupported',
+    })
+    expect(client.starts).toEqual([])
+    expect(() => translateExecutionPlanToManagedPi({ ...plan(), ...scope }, '1.0.0')).toThrow()
+  })
+
   test('deterministically pins profile, skills, context, policy, tools, models, limits, and output', () => {
     const firstPlan = plan()
     const reordered = globalThis.structuredClone(firstPlan)
