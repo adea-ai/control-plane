@@ -11,6 +11,8 @@ export interface NodePiDurableCompositionOptions extends Omit<
   PiDurableRuntimeOptions,
   'governedDelegateChild'
 > {
+  /** Trusted host initialization, completed before any retained recovery is scheduled. */
+  readonly onAdapterReady?: (adapter: PiDurableRuntimeAdapter) => void | Promise<void>
   readonly governedDelegateChild?: PiDurableGovernedDelegateChildCompiler
   /** Bind this port to the canonical parent in the host, never to model/request input. */
   readonly parentInbox?: { list(): Promise<readonly DelegationEvent[]> }
@@ -30,7 +32,7 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
   if (options.governedDelegateChild && !options.tools)
     throw new Error('PI_GOVERNED_TOOL_GATE_REQUIRED')
   let effects: PiDurableEffectGate | undefined
-  const { governedDelegateChild, ...runtimeOptions } = options
+  const { governedDelegateChild, onAdapterReady, ...runtimeOptions } = options
   const adapter = new PiDurableRuntimeAdapter({
     ...runtimeOptions,
     ...(governedDelegateChild
@@ -88,6 +90,7 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
           ...(options.now ? { now: options.now } : {}),
         })
       : undefined
+    await onAdapterReady?.(adapter)
     await recover()
     return {
       adapter,

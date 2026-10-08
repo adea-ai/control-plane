@@ -99,3 +99,44 @@ test('current CP revocation during the final journal read cannot produce a publi
   await expect(service.current(request, principal)).rejects.toThrow('CP_GRANT_REVOKED')
   expect(reads).toBe(2)
 })
+test('fuller authority returns cannot override canonical publication pins or committed output digest', async () => {
+  const extra = {
+    attemptId: 'att_01JBBCDEF0123456789ABCDEFG',
+    executionId: 'exe_01JBBCDEF0123456789ABCDEFG',
+    canonicalActorPrincipalId: `user:${randomUUID()}`,
+    resultContentDigest: `sha256:${'f'.repeat(64)}`,
+    output: { text: 'Unrelated output' },
+  }
+  for (const [field, value] of Object.entries(extra)) {
+    const service = new PiLeadPublicationService({
+      readRetained: async () => ({ binding, status }),
+      assertCurrent: async () => ({
+        authorityRevision: 2,
+        expiresAt: '2026-10-08T00:00:20.000Z',
+        [field]: value,
+      }),
+      now: () => '2026-10-08T00:00:02.000Z',
+    })
+    const publication = (await service.current(request, principal)).data.publication
+    expect(publication).toMatchObject(binding)
+    expect(publication.resultContentDigest).toBe(
+      `sha256:${createHash('sha256').update(status.result.output.text, 'utf8').digest('hex')}`
+    )
+    expect(publication).not.toHaveProperty('output')
+    expect(publication.authorityRevision).toBe(2)
+  }
+})
+test('malformed current authority revision or expiry denies publication', async () => {
+  for (const authority of [
+    { authorityRevision: 0, expiresAt: '2026-10-08T00:00:20.000Z' },
+    { authorityRevision: 1, expiresAt: 'invalid' },
+    { authorityRevision: 1, expiresAt: '2026-10-08T00:00:01.000Z' },
+  ]) {
+    const service = new PiLeadPublicationService({
+      readRetained: async () => ({ binding, status }),
+      assertCurrent: async () => authority,
+      now: () => '2026-10-08T00:00:02.000Z',
+    })
+    await expect(service.current(request, principal)).rejects.toThrow()
+  }
+})

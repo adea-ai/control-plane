@@ -75,7 +75,8 @@ export class PiLeadPublicationService {
     const authority = await this.ports.assertCurrent(structuredClone(first.binding), principal)
     const publication = PiLeadPublicationSchema.parse({
       ...first.binding,
-      ...authority,
+      authorityRevision: authority.authorityRevision,
+      expiresAt: authority.expiresAt,
       resultContentDigest: digest,
     })
     const at = Date.parse(this.ports.now?.() ?? new Date().toISOString())

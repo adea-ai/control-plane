@@ -10,6 +10,7 @@ import { createPiLeadModelAdmissionReadiness } from './pi-lead-model-readiness.j
 import { createProductionLeadProductAuthority } from './production-lead-product.js'
 import { createProductionLeadReadiness } from './production-lead-readiness.js'
 import { createProductionFacadeRetention } from './production-facade-retention.js'
+import { createProductionRuntimeBinding } from './production-runtime-binding.js'
 import { createPiLeadModelProductAuthority } from '../pi-durable/model-product-authority.js'
 import {
   createNodePiDurableLeadComposition,
@@ -67,6 +68,7 @@ export async function createProductionPiLeadComposition(
   let fundingDatabase: DatabaseSync | undefined
   let intentDatabase: DatabaseSync | undefined
   let runtime: Awaited<ReturnType<typeof createNodePiDurableLeadComposition>> | undefined
+  const runtimeBinding = createProductionRuntimeBinding()
   let retentionTimer: ReturnType<typeof setInterval> | undefined
   const closeDatabases = () => {
     try {
@@ -100,19 +102,7 @@ export async function createProductionPiLeadComposition(
         product: createPiLeadModelProductAuthority({
           product,
           workspaceScope: {
-            assertSupported: async () => {
-              if (!runtime) throw new Error('PI_RUNTIME_NOT_INITIALIZED')
-              const inspection = await runtime.adapter.inspect()
-              if (
-                inspection.health !== 'healthy' ||
-                !inspection.capabilities.some(
-                  (capability) =>
-                    capability.name === 'execution.scope.workspace.v1' &&
-                    capability.support === 'supported'
-                )
-              )
-                throw new Error('PI_LEAD_WORKSPACE_SCOPE_UNSUPPORTED')
-            },
+            assertSupported: runtimeBinding.assertSupported,
           },
         }),
         scopeAuthority: options.admission.scopeAuthority,
@@ -166,6 +156,7 @@ export async function createProductionPiLeadComposition(
       selections: metadata.selections,
     })
     runtime = await createNodePiDurableLeadComposition({
+      onAdapterReady: runtimeBinding.onAdapterReady,
       directory: options.directory,
       admission: {
         ...options.admission,
