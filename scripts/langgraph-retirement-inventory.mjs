@@ -12,7 +12,9 @@
 // NEVER establish that production has zero retained work; the global
 // "none-observed-in-scope" classification is emitted only for an explicitly
 // attested deployed-dsn observation whose in-flight sections were read in
-// full. Anything less reports "unknown" with the scope rule attached.
+// full. Orphaned or unparseable checkpoint threads report unknown in-flight
+// state and block every zero claim. Anything less reports "unknown" with the
+// scope rule attached.
 //
 // Safety: the tool opens the store read-only, never migrates, never writes,
 // never prints or embeds store paths or credentials, and never adopts,
@@ -784,6 +786,7 @@ function collectCheckpoints(database, context) {
   let writeRows = 0
   let unclassifiedThreads = 0
   let threadsOnInFlightExecutions = 0
+  let threadsOnUnknownExecutions = 0
   const threads = new Map()
   try {
     scanNamespaceRecords(database, NAMESPACES.langgraphCheckpoints, context, (record) => {
@@ -821,6 +824,7 @@ function collectCheckpoints(database, context) {
     const onInFlightExecution = executionState?.inFlight === true
     if (onInFlightExecution) threadsOnInFlightExecutions += 1
     if (parsed === undefined) unclassifiedThreads += 1
+    else if (executionState === undefined) threadsOnUnknownExecutions += 1
     if (onGraphExecution)
       checkpointRowsByExecution.set(
         graphKey,
@@ -844,18 +848,28 @@ function collectCheckpoints(database, context) {
       ...(parsed?.workspaceId === undefined ? {} : { workspaceId: parsed.workspaceId }),
     })
   }
+  // Orphaned (execution unknown) or unparseable threads must surface as typed
+  // incompleteness: their in-flight state is unknown, so they can never be
+  // silently excluded from in-flight accounting or a zero-live-work claim.
+  const unknownStateReasons = []
+  if (unclassifiedThreads > 0) unknownStateReasons.push('CHECKPOINT_THREADS_UNCLASSIFIED')
+  if (threadsOnUnknownExecutions > 0)
+    unknownStateReasons.push('CHECKPOINT_THREADS_WITH_UNKNOWN_EXECUTION_STATE')
   return {
     ...sectionHeader([NAMESPACES.langgraphCheckpoints], identity, observedAt),
-    ...sectionOutcome({
-      attempted: true,
-      readError: undefined,
-      rowCount,
-      malformedCount,
-      truncated,
-      newestUpdatedAtValue: newestUpdatedAt(database, [NAMESPACES.langgraphCheckpoints]),
-      maxAgeDays: limits.maxAgeDays,
-      observedAt,
-    }),
+    ...outcomeWithExtraReasons(
+      sectionOutcome({
+        attempted: true,
+        readError: undefined,
+        rowCount,
+        malformedCount,
+        truncated,
+        newestUpdatedAtValue: newestUpdatedAt(database, [NAMESPACES.langgraphCheckpoints]),
+        maxAgeDays: limits.maxAgeDays,
+        observedAt,
+      }),
+      unknownStateReasons
+    ),
     counts: {
       total: rowCount,
       checkpointRows,
@@ -863,6 +877,7 @@ function collectCheckpoints(database, context) {
       distinctThreads: threads.size,
       unclassifiedThreads,
       threadsOnInFlightExecutions,
+      threadsOnUnknownExecutions,
     },
     entries: entries.toSorted(
       (left, right) =>
@@ -1263,26 +1278,40 @@ function emptyCheckpointsSection(identity, observedAt, normalizedLimits) {
 }
 
 /**
+ * A section supports "fully read" conclusions (exact attribution, zero claims)
+ * only when it was read completely: observed or zero, untruncated, with no
+ * malformed rows. Incomplete, stale, unknown and inaccessible sections do not.
+ */
+function sectionFullyRead(section) {
+  return (
+    (section?.status === OBSERVATION_STATUS.OBSERVED ||
+      section?.status === OBSERVATION_STATUS.ZERO) &&
+    section?.truncated === false &&
+    (section?.malformedRecords ?? 0) === 0
+  )
+}
+
+/**
  * The zero-vs-unknown rule, encoded. `none-observed-in-scope` requires an
  * explicitly attested deployed-dsn observation whose in-flight sections were
  * fully read (observed or zero, no truncation, no malformed rows) and show no
- * in-flight work. Every other observation is 'unknown' or 'present' and
- * carries the typed reasons why the stronger claim is not available.
+ * in-flight work and no orphan or unclassified checkpoint threads. Every other
+ * observation is 'unknown' or 'present' and carries the typed reasons why the
+ * stronger claim is not available.
  */
 export function retainedWorkEpistemics({ observationScope, executions, checkpoints }) {
   const inFlightEvidence =
     (executions?.counts?.inFlight ?? 0) > 0 ||
     (checkpoints?.counts?.threadsOnInFlightExecutions ?? 0) > 0
-  const fullyRead = (section) =>
-    (section?.status === OBSERVATION_STATUS.OBSERVED ||
-      section?.status === OBSERVATION_STATUS.ZERO) &&
-    section?.truncated === false &&
-    (section?.malformedRecords ?? 0) === 0
+  const unclassifiedThreads = checkpoints?.counts?.unclassifiedThreads ?? 0
+  const threadsOnUnknownExecutions = checkpoints?.counts?.threadsOnUnknownExecutions ?? 0
+  const unknownStateEvidence = unclassifiedThreads > 0 || threadsOnUnknownExecutions > 0
   const claimAllowed =
     observationScope === 'deployed-dsn' &&
     !inFlightEvidence &&
-    fullyRead(executions) &&
-    fullyRead(checkpoints)
+    !unknownStateEvidence &&
+    sectionFullyRead(executions) &&
+    sectionFullyRead(checkpoints)
   const classification = inFlightEvidence
     ? 'present'
     : claimAllowed
@@ -1291,12 +1320,15 @@ export function retainedWorkEpistemics({ observationScope, executions, checkpoin
   const reasons = []
   if (!claimAllowed) {
     if (inFlightEvidence) reasons.push('IN_FLIGHT_WORK_OBSERVED')
+    if (unclassifiedThreads > 0) reasons.push('CHECKPOINT_THREADS_UNCLASSIFIED')
+    if (threadsOnUnknownExecutions > 0)
+      reasons.push('CHECKPOINT_THREADS_WITH_UNKNOWN_EXECUTION_STATE')
     if (observationScope !== 'deployed-dsn')
       reasons.push(
         `OBSERVATION_SCOPE_${observationScope.toUpperCase()}_CANNOT_ESTABLISH_ZERO_LIVE_WORK`
       )
-    if (!fullyRead(executions)) reasons.push('EXECUTIONS_SECTION_NOT_FULLY_READ')
-    if (!fullyRead(checkpoints)) reasons.push('CHECKPOINTS_SECTION_NOT_FULLY_READ')
+    if (!sectionFullyRead(executions)) reasons.push('EXECUTIONS_SECTION_NOT_FULLY_READ')
+    if (!sectionFullyRead(checkpoints)) reasons.push('CHECKPOINTS_SECTION_NOT_FULLY_READ')
   }
   return {
     statusVocabulary: {

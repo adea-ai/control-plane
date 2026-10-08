@@ -40,6 +40,7 @@ const ids = {
   workspaceTwo: 'wsp_01JBBBBBBBBBBBBBBBBBBBBBB2',
   executionRunning: 'exe_01JCCCCCCCCCCCCCCCCCCCCCC1',
   executionCancelled: 'exe_01JCCCCCCCCCCCCCCCCCCCCCC2',
+  executionOrphan: 'exe_01JCCCCCCCCCCCCCCCCCCCCCC3',
   attempt: 'att_01JEEEEEEEEEEEEEEEEEEEEEE1',
   workflow: 'wfl_01JDDDDDDDDDDDDDDDDDDDDDD1',
   callerOne: 'svc_inventory-fixture',
@@ -79,12 +80,20 @@ function alphaNodes() {
  * - now: () => Date — provider clock (drives updated_at; use an old clock for
  *   staleness scenarios). Defaults to the fixed fixture instant.
  * - injectMalformedDefinition: writes one unparseable graph-definitions row.
+ * - injectMalformedExecution: writes one unparseable executions row.
  * - injectMalformedCheckpoint: writes one checkpoint row with an unknown version.
+ * - injectOrphanCheckpoint: writes a well-formed checkpoint row whose thread
+ *   names an execution that has no record in the executions namespace.
+ * - injectUnclassifiedCheckpoint: writes a well-formed checkpoint row whose
+ *   thread name cannot be parsed into a workspace/execution pair.
  */
 export async function createInventoryFixtureStore({
   now = () => new Date(FIXTURE_AT),
   injectMalformedDefinition = false,
+  injectMalformedExecution = false,
   injectMalformedCheckpoint = false,
+  injectOrphanCheckpoint = false,
+  injectUnclassifiedCheckpoint = false,
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'langgraph-retirement-inventory-'))
   const path = join(directory, 'state.sqlite')
@@ -212,6 +221,31 @@ export async function createInventoryFixtureStore({
       checkpointId: 'ck-inventory-0003',
       kind: 'checkpoint',
     })
+    if (injectMalformedExecution) {
+      await provider.transaction(async (transaction) => {
+        await transaction.put({
+          namespace: 'executions',
+          id: `e-${createHash('sha256').update('fixture-malformed-execution').digest('hex')}`,
+          value: { broken: true },
+        })
+      })
+    }
+    if (injectOrphanCheckpoint) {
+      await putCheckpointRow(provider, {
+        scope: 'managed-graphs',
+        thread: `${ids.workspaceOne}:${ids.executionOrphan}:graph:${ids.executionOrphan}`,
+        checkpointId: 'ck-inventory-0004',
+        kind: 'checkpoint',
+      })
+    }
+    if (injectUnclassifiedCheckpoint) {
+      await putCheckpointRow(provider, {
+        scope: 'managed-graphs',
+        thread: 'legacy-retained-thread-without-execution-scope',
+        checkpointId: 'ck-inventory-0005',
+        kind: 'checkpoint',
+      })
+    }
     if (injectMalformedCheckpoint) {
       await provider.transaction(async (transaction) => {
         await transaction.put({

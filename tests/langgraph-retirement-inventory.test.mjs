@@ -324,6 +324,32 @@ describe('langgraph retirement inventory', () => {
         expect(checkpoints.counts.checkpointRows).toBe(3)
       })
     })
+
+    test('checkpoint threads on unknown executions are typed, never treated as not in flight', async () => {
+      await withFixtureStore({ injectOrphanCheckpoint: true }, async ({ store }) => {
+        const checkpoints = buildManifest(store).sections.checkpoints
+        // The orphan thread references an execution absent from the executions
+        // namespace: its in-flight state is unknown and must be reported as
+        // such instead of silently excluded from in-flight accounting.
+        expect(checkpoints.counts.distinctThreads).toBe(3)
+        expect(checkpoints.counts.threadsOnUnknownExecutions).toBe(1)
+        expect(checkpoints.counts.threadsOnInFlightExecutions).toBe(1)
+        expect(checkpoints.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+        expect(checkpoints.reasons).toContain('CHECKPOINT_THREADS_WITH_UNKNOWN_EXECUTION_STATE')
+      })
+    })
+
+    test('unparseable checkpoint threads are typed unclassified with exact counts', async () => {
+      await withFixtureStore({ injectUnclassifiedCheckpoint: true }, async ({ store }) => {
+        const checkpoints = buildManifest(store).sections.checkpoints
+        expect(checkpoints.counts.total).toBe(5)
+        expect(checkpoints.counts.checkpointRows).toBe(4)
+        expect(checkpoints.counts.distinctThreads).toBe(3)
+        expect(checkpoints.counts.unclassifiedThreads).toBe(1)
+        expect(checkpoints.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+        expect(checkpoints.reasons).toContain('CHECKPOINT_THREADS_UNCLASSIFIED')
+      })
+    })
   })
 
   describe('zero-vs-unknown epistemics', () => {
@@ -410,6 +436,55 @@ describe('langgraph retirement inventory', () => {
       expect(Object.keys(OBSERVATION_STATUS).length).toBe(6)
       expect(OBSERVATION_SCOPES.length).toBe(3)
       expect(DISPOSITION_KINDS).toEqual(['keep', 'replace', 'drain', 'retire'])
+    })
+
+    test('orphan or unclassified checkpoint threads block the zero-live-work claim', () => {
+      const fullyReadExecutions = {
+        status: 'zero',
+        truncated: false,
+        malformedRecords: 0,
+        counts: { inFlight: 0 },
+      }
+      const unknownState = retainedWorkEpistemics({
+        observationScope: 'deployed-dsn',
+        executions: fullyReadExecutions,
+        checkpoints: {
+          status: 'incomplete',
+          truncated: false,
+          malformedRecords: 0,
+          counts: {
+            inFlight: 0,
+            unclassifiedThreads: 1,
+            threadsOnUnknownExecutions: 1,
+            threadsOnInFlightExecutions: 0,
+          },
+        },
+      })
+      expect(unknownState.retainedWorkClassification).toBe('unknown')
+      expect(unknownState.zeroLiveWorkClaim.claimAllowed).toBe(false)
+      expect(unknownState.zeroLiveWorkClaim.reasons).toContain('CHECKPOINT_THREADS_UNCLASSIFIED')
+      expect(unknownState.zeroLiveWorkClaim.reasons).toContain(
+        'CHECKPOINT_THREADS_WITH_UNKNOWN_EXECUTION_STATE'
+      )
+
+      // Classified threads on terminal executions keep the strong claim available.
+      const clean = retainedWorkEpistemics({
+        observationScope: 'deployed-dsn',
+        executions: fullyReadExecutions,
+        checkpoints: {
+          status: 'zero',
+          truncated: false,
+          malformedRecords: 0,
+          counts: {
+            inFlight: 0,
+            unclassifiedThreads: 0,
+            threadsOnUnknownExecutions: 0,
+            threadsOnInFlightExecutions: 0,
+          },
+        },
+      })
+      expect(clean.retainedWorkClassification).toBe('none-observed-in-scope')
+      expect(clean.zeroLiveWorkClaim.claimAllowed).toBe(true)
     })
   })
 
