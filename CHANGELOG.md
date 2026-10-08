@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.84.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.83.0...workspace-v1.84.0) (2026-10-08)
+
+
+### Features
+
+* **pi-cloudflare:** add canonical read-only session binding ([#985](https://github.com/adea-ai/control-plane/issues/985)) ([e35b1fc](https://github.com/adea-ai/control-plane/commit/e35b1fcf62ffe5accbe97e49a049365d42267706))
+
+
+### Tests
+
+* keep Pi interruption worker alive until signalled ([#984](https://github.com/adea-ai/control-plane/issues/984)) ([e5a224a](https://github.com/adea-ai/control-plane/commit/e5a224ab60fa98dfad629186bcc23727c9fcc612))
+
 ## [1.83.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.82.0...workspace-v1.83.0) (2026-10-08)
 
 
