@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.84.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.84.0...workspace-v1.84.1) (2026-10-08)
+
+
+### Tests
+
+* compose stored model selections with prepared lead host ([#983](https://github.com/adea-ai/control-plane/issues/983)) ([357f41c](https://github.com/adea-ai/control-plane/commit/357f41c32331788cf5a3d6bf05ef4044e17fb383))
+
 ## [1.84.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.83.0...workspace-v1.84.0) (2026-10-08)
 
 
