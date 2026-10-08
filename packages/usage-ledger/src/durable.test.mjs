@@ -174,6 +174,66 @@ describe('durable model request holds', () => {
     source: source('request-settle'),
     ...overrides,
   })
+  test('admits a model dispatch once across concurrent ledger instances and refuses replay after settlement', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = await reservedAttempt(store)
+    let sends = 0
+    const send = async () => {
+      const receipt = await makeLedger(store).reserveModelRequestForDispatch(modelRequest())
+      sends += 1
+      return receipt
+    }
+    const results = await Promise.allSettled(Array.from({ length: 8 }, send))
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+    expect(sends).toBe(1)
+    expect(
+      results
+        .filter((r) => r.status === 'rejected')
+        .every((r) => r.reason.code === 'MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED')
+    ).toBe(true)
+    const held = results.find((r) => r.status === 'fulfilled').value
+    // Read/reconciliation replay still works; it never authorizes another send.
+    expect(await ledger.reserveModelRequest(modelRequest())).toEqual(held)
+    await ledger.settleModelRequest(settleRequest())
+    await expect(send()).rejects.toMatchObject({ code: 'MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED' })
+    expect(sends).toBe(1)
+    expect(
+      (await ledger.entries(ids.workspaceId, ids.executionId)).filter(
+        (e) => e.kind === 'model_reservation'
+      )
+    ).toHaveLength(1)
+  })
+
+  test('keeps a committed dispatch held on lost provider acknowledgement and only retries failed persistence', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = await reservedAttempt(store)
+    const before = await store.snapshot(ids.workspaceId)
+    let sends = 0
+    const send = async () => {
+      await makeLedger(store).reserveModelRequestForDispatch(modelRequest())
+      sends += 1
+      throw new Error('PROVIDER_ACK_UNKNOWN')
+    }
+    store.failNextEffect = true
+    await expect(send()).rejects.toThrow('injected effect write failure')
+    expect(await store.snapshot(ids.workspaceId)).toEqual(before)
+    expect(sends).toBe(0)
+    await expect(send()).rejects.toThrow('PROVIDER_ACK_UNKNOWN')
+    await expect(send()).rejects.toMatchObject({ code: 'MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED' })
+    expect(sends).toBe(1)
+    expect((await ledger.entries(ids.workspaceId, ids.executionId)).at(-1).kind).toBe(
+      'model_reservation'
+    )
+    await expect(
+      ledger.settle({
+        workspaceId: ids.workspaceId,
+        executionId: ids.executionId,
+        reservationKey: attemptReservationKey,
+        source: source('unknown-dispatch-cannot-release'),
+      })
+    ).rejects.toMatchObject({ code: 'SETTLEMENT_INCOMPLETE' })
+  })
+
   test('serializes request holds inside an already fully reserved attempt', async () => {
     const store = new TransactionalMemoryStore()
     const ledger = await reservedAttempt(store)

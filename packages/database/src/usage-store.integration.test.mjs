@@ -229,7 +229,7 @@ describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
         maximumTokens: 100,
         source: source('request-attempt'),
       })
-      const held = await service.reserveModelRequest({
+      const request = {
         ...attempt,
         modelCallId: nextId('mdc'),
         maximumMicrounits: 80,
@@ -238,7 +238,8 @@ describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
         priceSnapshotDigest: `sha256:${'c'.repeat(64)}`,
         requestDigest: `sha256:${'d'.repeat(64)}`,
         source: source('request-hold'),
-      })
+      }
+      const held = await service.reserveModelRequestForDispatch(request)
       const databaseUrl = new URL(credentials.application.url)
       databaseUrl.pathname = `/${isolated.name}`
       const reconnected = createPostgresConnection({
@@ -247,6 +248,10 @@ describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
       })
       try {
         const reopened = ledger(reconnected.database)
+        await expect(reopened.reserveModelRequestForDispatch(request)).rejects.toMatchObject({
+          code: 'MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED',
+        })
+        expect(await reopened.reserveModelRequest(request)).toEqual(held)
         expect((await reopened.entries(scope.workspaceId, scope.executionId)).at(-1)).toEqual(held)
         const settleAttempt = {
           ...scope,
@@ -266,6 +271,9 @@ describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
         const settled = await reopened.settleModelRequest(knownUsage)
         await expect(service.settleModelRequest(knownUsage)).resolves.toEqual(settled)
         expect((await reopened.settle(settleAttempt)).releasedMicrounits).toBe(70)
+        await expect(reopened.reserveModelRequestForDispatch(request)).rejects.toMatchObject({
+          code: 'MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED',
+        })
         expect(await reopened.publicSummary(scope.workspaceId, scope.executionId)).toMatchObject({
           funding: { hqManagedMicrounits: 30, externalSubscriptionEffects: 0 },
           usage: { tokens: 20 },

@@ -128,6 +128,15 @@ Concurrent open holds plus actual charges must fit both attempt ceilings. The
 execution totals count the attempt envelope once; nested holds do not allocate
 its capacity again. Each hold has an immutable `model_reservation` entry.
 
+`reserveModelRequestForDispatch` creates the same hold and receipt atomically but
+rejects an existing receipt with `MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED`, even
+after known settlement or process restart. A physical send must use this method
+once, then forward only if admission succeeds. A committed hold with a lost ACK
+requires reconciliation; replaying it is never permission to send again. The
+ordinary `reserveModelRequest` remains idempotent for accounting/reconciliation.
+Do not prepare a hold with that method and then attempt to dispatch it. Both APIs
+require trusted grant, scope, funding and price evidence supplied by the server.
+
 `settleModelRequest` accepts authoritative known usage, charges it once, and
 records the unused monetary hold in a `model_release` entry within the same
 transaction. Its funding class comes from the original hold. External
@@ -151,3 +160,33 @@ authenticate a price quote, authorize a provider send, or intercept native Pi
 requests, compaction, retries, or cached responses. Activation requires a trusted
 funding/quote authority and enforcement at the actual provider-send boundary.
 A missing or uncertain usage receipt must not be replaced with zero-cost usage.
+
+### Pinned server model prices
+
+`PinnedModelPrice` validates and privately copies a versioned text-model price
+snapshot from the operator/provider side of the server boundary. The snapshot
+binds deployment, provider/model, funding class, USD rates, input/output ceilings
+and a validity interval; its canonical digest changes when any of these change.
+Parsing it does not authenticate its source or grant access to a provider.
+
+`quote` checks price validity against its server-owned clock; callers cannot
+backdate a request to revive an expired snapshot. It binds an exact outbound
+request digest and bounded output maximum. It
+reserves the full configured input ceiling, without accepting a caller's token
+estimate. Input/output rates are integer USD microunits per million tokens;
+products and sums use `bigint`, and the final aggregate rounds upward once. An
+unsafe monetary result fails closed. Cached input must be a subset of input and
+cannot have a higher rate. Reasoning tokens must be a subset of output and are
+not counted twice. Protocol adapters must normalize those semantics; modalities,
+cache writes or other priced units outside this text-only snapshot are unsupported.
+
+The immutable quote prices validated authoritative usage within its original
+ceilings. Missing, malformed or excessive usage cannot become zero cost. External
+subscription snapshots require zero HQ rates, retain token ceilings and produce
+`costExact: false`; this does not claim that external inference is free.
+
+The price producer and dispatch fence are prerequisites for the native broker.
+Local/remote composition still needs to supply approved grants and price snapshots,
+intercept every physical provider send (including retries and compaction), keep
+credentials outside the native process, and reconcile ambiguous outcomes. These
+component APIs do not activate those paths by themselves.
