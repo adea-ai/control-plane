@@ -260,7 +260,7 @@ const pin = (plan) => ({
 })
 const actor = 'user:original-canonical-actor'
 
-export async function continuationPorts(directory, journal) {
+export async function continuationPorts(directory, journal, canonicalProvider) {
   const sqlite = await import('@control-plane/sqlite-persistence')
   const { createPiChildContinuationAuthority, readPiChildContinuationJournal } =
     await importProcessProduction(
@@ -272,10 +272,15 @@ export async function continuationPorts(directory, journal) {
   const { SqlitePiChildContinuationRepository } = await importProcessProduction(
     '../apps/control-api/src/pi-durable/sqlite-child-continuations.ts'
   )
-  const provider = new sqlite.SqlitePersistenceProvider({
-    path: join(directory, 'canonical.sqlite'),
-  })
-  await provider.migrate()
+  // The initial governed host already owns this canonical writer. Sharing its
+  // queue avoids synchronous BEGIN IMMEDIATE contention across two connections.
+  // Standalone recovery owns a fresh provider after the original process exits.
+  const provider =
+    canonicalProvider ??
+    new sqlite.SqlitePersistenceProvider({
+      path: join(directory, 'canonical.sqlite'),
+    })
+  if (!canonicalProvider) await provider.migrate()
   const executions = new sqlite.SqliteExecutionRepository(provider)
   const plans = new sqlite.SqliteExecutionPlanRepository(provider)
   const descriptor = () =>
@@ -352,7 +357,19 @@ export async function continuationPorts(directory, journal) {
       assert.equal(metadata.publicationAudience, actor)
     },
   })
-  return { provider, executions, plans, repository, authority, sqlite, current, descriptor }
+  return {
+    provider,
+    executions,
+    plans,
+    repository,
+    authority,
+    sqlite,
+    current,
+    descriptor,
+    close: () => {
+      if (!canonicalProvider) provider.close()
+    },
+  }
 }
 
 function safeProcessFailure(error) {
@@ -423,8 +440,12 @@ export async function initialWorker(directory, mode, baseUrl) {
   const heartbeat = setInterval(() => {}, 1000)
   try {
     f = await createGovernedChildCompositionFixture(directory, {
-      childRuntimeFactory: async (options) => {
-        ports = await continuationPorts(directory, () => childRuntime.adapter.journal)
+      childRuntimeFactory: async (options, { canonicalProvider }) => {
+        ports = await continuationPorts(
+          directory,
+          () => childRuntime.adapter.journal,
+          canonicalProvider
+        )
         const originalResolve = options.resolveAdmission
         childRuntime = await createNodePiDurableRuntime({
           ...options,
@@ -713,7 +734,7 @@ export async function initialWorker(directory, mode, baseUrl) {
   } finally {
     clearInterval(heartbeat)
     await f?.close()
-    await ports?.provider.close()
+    await ports?.close()
   }
 }
 
@@ -1119,7 +1140,7 @@ export async function recoveryWorker(directory, mode, baseUrl) {
     await runtime?.close()
     await probe?.close()
     observer.close()
-    await ports?.provider.close()
+    await ports?.close()
   }
 }
 
