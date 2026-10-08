@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/sqlite-persistence",
-  "version": "1.33.2",
+  "version": "1.34.0",
   "private": true,
   "files": [
     "dist"

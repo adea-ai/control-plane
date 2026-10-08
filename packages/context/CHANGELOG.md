@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/adea-ai/control-plane/compare/context-v1.9.6...context-v1.10.0) (2026-10-08)
+
+
+### Features
+
+* **execution:** add canonical workspace execution scope ([#951](https://github.com/adea-ai/control-plane/issues/951)) ([4ccc0de](https://github.com/adea-ai/control-plane/commit/4ccc0deb04cfb9cd47672b36e4a37b16e8b1e024))
+
 ## [1.9.6](https://github.com/adea-ai/control-plane/compare/context-v1.9.5...context-v1.9.6) (2026-10-01)
 
 
