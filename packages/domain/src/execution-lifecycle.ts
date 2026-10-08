@@ -414,7 +414,7 @@ export class ExecutionLifecycleService {
     const parsed = ExecutionTransitionSchema.parse(input)
     const current = await this.getExecution(parsed.executionId)
     assertExpectedVersion(current.version, parsed.expectedVersion, 'execution')
-    const next = transition(current, parsed)
+    const next = previewLifecycleTransition(current, parsed)
     if (!(await this.repository.compareAndSetExecution(parsed.expectedVersion, next))) {
       const latest = await this.repository.getExecution(parsed.executionId)
       fail('STALE_EXECUTION_VERSION', latest?.version)
@@ -427,7 +427,7 @@ export class ExecutionLifecycleService {
     const current = await this.repository.getAttempt(parsed.attemptId)
     if (!current) fail('ATTEMPT_MISSING')
     assertExpectedVersion(current.version, parsed.expectedVersion, 'attempt')
-    const next = transition(current, parsed)
+    const next = previewLifecycleTransition(current, parsed)
     if (!(await this.repository.compareAndSetAttempt(parsed.expectedVersion, next))) {
       const latest = await this.repository.getAttempt(parsed.attemptId)
       fail('STALE_ATTEMPT_VERSION', latest?.version)
@@ -504,7 +504,8 @@ const timestampFields: Partial<Record<ExecutionState, string>> = {
   reconciliation_required: 'reconciliationRequiredAt',
 }
 
-function transition<Lifecycle extends Execution | ExecutionAttempt>(
+/** Derive and validate a lifecycle transition without performing persistence effects. */
+export function previewLifecycleTransition<Lifecycle extends Execution | ExecutionAttempt>(
   current: Lifecycle,
   input: {
     to: ExecutionState

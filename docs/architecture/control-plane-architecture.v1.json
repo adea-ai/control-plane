@@ -481,7 +481,9 @@
         "@control-plane/context",
         "@control-plane/contracts",
         "@control-plane/domain",
-        "@control-plane/execution-plan"
+        "@control-plane/execution-plan",
+        "@control-plane/runtime-sdk",
+        "@control-plane/tool-sdk"
       ],
       "externalDependencies": ["zod"],
       "developmentWorkspaceDependencies": [],
