@@ -711,6 +711,10 @@ export async function recoveryWorker(directory, mode, baseUrl) {
       const grant = await readProcessGrantMetadata(ports, descriptor.request.attemptId)
       assert.ok(grant)
       assert.deepEqual(grant, descriptor.grant)
+      const originalReplay = await ports.repository.retain(grant)
+      assert.equal(originalReplay.replayed, true)
+      assert.deepEqual(originalReplay.grant, grant)
+      assert.deepEqual(await readProcessGrantMetadata(ports, descriptor.request.attemptId), grant)
       let replayChangedDenied = true
       for (const changed of [
         { ...grant, expiresAt: '2026-08-25T18:09:01.000Z' },
@@ -733,8 +737,10 @@ export async function recoveryWorker(directory, mode, baseUrl) {
       assert.deepEqual(await readProcessGrantMetadata(ports, descriptor.request.attemptId), grant)
       const snapshot = {
         ...(await inspectProcessSnapshot(directory, observer, ports)),
+        replayOriginalRetained: true,
         replayChangedDenied,
       }
+      appendProcessEvidence(directory, snapshot)
       process.stdout.write(`${JSON.stringify(snapshot)}\n`)
       return snapshot
     }
