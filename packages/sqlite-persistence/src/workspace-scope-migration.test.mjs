@@ -142,17 +142,32 @@ test('repair: raw context package scope constraints reject version, flat and own
       projectState: { workspaceId: command.workspaceId, projectId: project.projectId, revision: 4 },
     }
     insert(database, 'context-packages', 'legacy-context', legacy)
+    const explicitProject = {
+      ...legacy,
+      schemaVersion: 2,
+      projectState: { ...legacy.projectState, executionScope: project },
+    }
+    insert(database, 'context-packages', 'project-context', explicitProject)
+    expect(
+      JSON.parse(
+        database
+          .prepare('SELECT value FROM control_plane_records WHERE id = ?')
+          .get('project-context').value
+      )
+    ).toEqual(explicitProject)
+    database
+      .prepare('UPDATE control_plane_records SET value = ? WHERE id = ?')
+      .run(JSON.stringify(explicitProject), 'valid-context')
+    expect(
+      JSON.parse(
+        database
+          .prepare('SELECT value FROM control_plane_records WHERE id = ?')
+          .get('valid-context').value
+      )
+    ).toEqual(explicitProject)
     for (const invalid of [
       { ...valid, schemaVersion: 1 },
       { ...valid, projectState: { ...valid.projectState, workspaceId: null } },
-      {
-        ...valid,
-        projectState: {
-          ...valid.projectState,
-          projectId: project.projectId,
-          executionScope: project,
-        },
-      },
       { ...legacy, schemaVersion: 2 },
       { ...legacy, executionScope: workspace },
       { ...legacy, projectState: { ...legacy.projectState, projectId: null } },

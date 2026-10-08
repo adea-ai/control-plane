@@ -24,17 +24,19 @@ adapters and project-only operations fail closed before project reads/effects.
 R1 owns the runtime capability enum, opt-in Pi adapter, SDK lead operations and
 Node admission composition.
 
-The capability prerequisite is the enum and compatibility schema from runtime
-draft #949 at `c1fe684a0e4fd2cd5b3cd93347fe99f940d76633`. Local qualification
-uses those immutable overlays, excluded from this kernel commit. The forward
-publication order is an independently qualified minimal capability prerequisite
-on main, then this kernel on that canonical dependency, then the full runtime
+The capability prerequisite is the minimal enum and compatibility schema in
+#952, merged as `c76e25c376cb19b92875f2cf3a93f19180a0067e`. Earlier local
+qualification used exact immutable overlays from runtime draft #949 at
+`c1fe684a0e4fd2cd5b3cd93347fe99f940d76633`, excluded from the kernel commits.
+Those two files now come from canonical main. This kernel still needs fresh
+exact-head qualification on that dependency, followed by full runtime
 composition on the canonical kernel. The original full runtime draft is not a
-merge prerequisite. Required exact-head gates must run after canonical
-dependencies are present; overlay checks alone cannot qualify a published head.
+merge prerequisite; earlier overlay checks alone do not qualify a new head.
 
 Context version 2 retains the `projectState` property name for repository
-compatibility but carries workspace scope with no project ID or state items.
+compatibility and supports either explicit scope. Workspace scope carries no
+project ID or state items; explicit project scope requires the matching real
+project ID. SQLite and PostgreSQL enforce the same scope/version pairing.
 `ContextPackageCompiler.compileWorkspace` takes a server-owned authority
 revision and already authorized workspace resources. It does not invent a
 project, query project state or authorize resources itself. Legacy context
@@ -108,3 +110,17 @@ registry publication are outside this task's authorization. Rollout must retain
 compatible readers, current authority and single-attempt ownership; old readers
 cannot be assumed to understand new version 2 records. No destructive rollback
 or cleanup is performed here.
+
+## Kernel acceptance map
+
+| Invariant                                                            | Deterministic evidence                                                                                                     | Remaining owner proof                                           |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Historical project digests and replay identities survive             | Context/execution-plan historical negative fixtures, CommandInbox legacy replay, SQLite migration checksum/reopen fixtures | Composed runtime retries                                        |
+| Workspace scope has no synthetic project                             | Workspace context/plan compiler and admission round trips in both stores                                                   | R1 Node/Pi opt-in and Adea canonical intent                     |
+| Current scope is required on admission and replay                    | Exact plan-pin, absent-port, revoked audience/grant/principal, expiry and concurrent-winner fixtures                       | Product actor and transport-service authority at each effect    |
+| Unsupported adapters fail closed                                     | Workspace capability requirements and project-only consumer guards                                                         | R1 actual adapter inspection/start                              |
+| Nullable projects cannot duplicate admissions                        | SQLite unique index and independent connections; PostgreSQL partial unique index/concurrent fixtures                       | Composed HTTP retries                                           |
+| Restart, cancellation, events and retention preserve scope           | SQLite process-exit/reopen, event/tombstone ownership, cancellation and retention; native PostgreSQL restart/readback      | Runtime recovery and public cursor/cancel proof                 |
+| Workspace parent narrows only to a real same-workspace project child | Current authority on both immutable pins, plan/context lineage and default-budget-disabled SQLite/PostgreSQL fixtures      | J1 governed child bridge                                        |
+| Context version2 supports matching project and workspace scope       | SQLite raw INSERT/UPDATE positives and mismatch negatives; PostgreSQL scope constraints                                    | No runtime authority is implied by context storage              |
+| Provider spending remains independently governed                     | Existing broker/per-send budget tests and unchanged reservation authority                                                  | R2 trusted per-physical-send composition and live qualification |

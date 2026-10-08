@@ -73,7 +73,6 @@ function executionScopeTrigger(
       OR (NEW.namespace = 'context-packages' AND (
         json_type(NEW.value, '$.executionScope') IS NOT NULL
         OR (json_type(NEW.value, '${scope}') IS NULL AND NOT coalesce((json_type(NEW.value, '${project}') = 'text' AND length(json_extract(NEW.value, '${project}')) > 0), 0))
-        OR (json_extract(NEW.value, '$.schemaVersion') = 2 AND json_extract(NEW.value, '${scope}.kind') <> 'workspace')
       ))
     )
     BEGIN SELECT RAISE(ABORT, 'SQLITE_EXECUTION_SCOPE_INVALID'); END`

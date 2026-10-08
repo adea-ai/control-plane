@@ -138,7 +138,8 @@
                 "session.history",
                 "session.load",
                 "model.select",
-                "execution.child"
+                "execution.child",
+                "execution.scope.workspace.v1"
               ]
             }
           },
