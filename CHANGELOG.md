@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.85.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.84.1...workspace-v1.85.0) (2026-10-08)
+
+
+### Features
+
+* pi-child-continuation ([#981](https://github.com/adea-ai/control-plane/issues/981)) ([a9d8228](https://github.com/adea-ai/control-plane/commit/a9d8228d70ee6eb6234204c24c9b46dc2fc38d7a))
+
+## [1.84.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.84.0...workspace-v1.84.1) (2026-10-08)
+
+
+### Tests
+
+* compose stored model selections with prepared lead host ([#983](https://github.com/adea-ai/control-plane/issues/983)) ([357f41c](https://github.com/adea-ai/control-plane/commit/357f41c32331788cf5a3d6bf05ef4044e17fb383))
+
+## [1.84.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.83.0...workspace-v1.84.0) (2026-10-08)
+
+
+### Features
+
+* **pi-cloudflare:** add canonical read-only session binding ([#985](https://github.com/adea-ai/control-plane/issues/985)) ([e35b1fc](https://github.com/adea-ai/control-plane/commit/e35b1fcf62ffe5accbe97e49a049365d42267706))
+
+
+### Tests
+
+* keep Pi interruption worker alive until signalled ([#984](https://github.com/adea-ai/control-plane/issues/984)) ([e5a224a](https://github.com/adea-ai/control-plane/commit/e5a224ab60fa98dfad629186bcc23727c9fcc612))
+
+## [1.83.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.82.0...workspace-v1.83.0) (2026-10-08)
+
+
+### Features
+
+* compose partial Cloudflare runtime adapter ([#977](https://github.com/adea-ai/control-plane/issues/977)) ([cd26e7f](https://github.com/adea-ai/control-plane/commit/cd26e7f55065e39998b633c78ec518747d777d1c))
+
 ## [1.82.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.81.0...workspace-v1.82.0) (2026-10-08)
 
 
