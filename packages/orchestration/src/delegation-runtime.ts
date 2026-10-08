@@ -155,11 +155,15 @@ export class CanonicalDelegationRuntimeBridge {
     assertNotAborted(signal)
     await this.options.assertAuthority(structuredClone(current))
     assertNotAborted(signal)
+    // The host authority check also awaits: canonical cancellation/attempt fences must
+    // be read after it returns, including recovery callers without an AbortSignal.
+    const final = await this.resolve(admission.identity)
+    assertNotAborted(signal)
     return RuntimeStartRequestSchema.parse({
-      attemptId: current.attempt.attemptId,
-      executionId: current.record.childExecutionId,
-      executionPlan: current.plan,
-      idempotencyKey: `delegation:${current.record.delegationId}:attempt:${current.attempt.attemptId}`,
+      attemptId: final.attempt.attemptId,
+      executionId: final.record.childExecutionId,
+      executionPlan: final.plan,
+      idempotencyKey: `delegation:${final.record.delegationId}:attempt:${final.attempt.attemptId}`,
       attemptBudget,
     })
   }

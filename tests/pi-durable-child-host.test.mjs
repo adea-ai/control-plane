@@ -476,3 +476,102 @@ test('reusable host compiler drives governed workspace lead to a real project ch
   )
   expect(f.starts).toHaveLength(1)
 })
+
+async function mutateCanonicalStartFence(f, mutation) {
+  const executionId =
+    mutation === 'child_latest_attempt' ? ids.childExecutionId : ids.parentExecutionId
+  const execution = await f.lifecycle.getExecution(executionId)
+  if (mutation === 'parent_cancelled') {
+    await f.lifecycle.transitionExecution({
+      executionId,
+      expectedVersion: execution.version,
+      to: 'cancelled',
+      transitionedAt: '2026-08-25T18:02:01.000Z',
+    })
+  } else {
+    // Another canonical writer wins the latest-attempt fence during the host await.
+    expect(
+      await f.executions.compareAndSetExecution(execution.version, {
+        ...execution,
+        version: execution.version + 1,
+        latestAttemptId: 'att_01JCBCDEF0123456789ABCDEFG',
+        attemptCount: execution.attemptCount + 1,
+      })
+    ).toBe(true)
+  }
+}
+
+for (const mutation of ['parent_cancelled', 'parent_latest_attempt', 'child_latest_attempt']) {
+  test(`final authority await fences ${mutation} on first dispatch without an abort signal`, async () => {
+    let checks = 0
+    const f = await fixture({
+      async onAuthority(_admission, host) {
+        if (++checks === 2) await mutateCanonicalStartFence(host, mutation)
+      },
+    })
+    const outcome = await f.service.execute(f.request)
+    expect(outcome.state).not.toBe('succeeded')
+    expect(checks).toBe(2)
+    expect(f.starts).toHaveLength(0)
+  })
+  test(`final authority await fences ${mutation} on recovery without an abort signal`, async () => {
+    const f = await fixture()
+    expect((await f.service.execute(f.request)).state).toBe('succeeded')
+    let checks = 0
+    const bridge = new CanonicalDelegationRuntimeBridge({
+      ...f.bridgeOptions,
+      async assertAuthority(admission) {
+        await f.bridgeOptions.assertAuthority(admission)
+        if (++checks === 2) await mutateCanonicalStartFence(f, mutation)
+      },
+    })
+    await expect(bridge.startChild(identity)).rejects.toThrow('DELEGATION_RUNTIME_ADMISSION_DENIED')
+    expect(checks).toBe(2)
+    expect(f.starts).toHaveLength(1)
+  })
+}
+
+test('SQLite delegation admission rejects a composed child context that expands workspace ancestry', async () => {
+  const { workspaceInput, currentSnapshot, actor, now } =
+    await import('../packages/orchestration/src/delegation-workspace-fixtures.mjs')
+  const { composeProviderContextPackage } = await import('@control-plane/context')
+  const { deriveExecutionPlanWithAuthority, assertExecutionPlanDerivedFrom } =
+    await import('@control-plane/execution-plan')
+  const workspace = workspaceInput()
+  const expanded = composeProviderContextPackage(workspace.childContext, {
+    callerContextRefs: ['context://extra'],
+    localProjectGrantRefs: [],
+    contributions: [],
+  })
+  workspace.command.childPlan.contextPackage = expanded
+  workspace.scopeAdmission = {
+    now: () => now,
+    resolveCallerPrincipalId: async () => actor,
+    authority: { readCurrent: async (input) => currentSnapshot(input) },
+  }
+  const plan = await deriveExecutionPlanWithAuthority(
+    workspace.parentPlan,
+    workspace.command.childPlan,
+    { callerPrincipalId: actor, authority: workspace.scopeAdmission.authority, now }
+  )
+  expect(() =>
+    assertExecutionPlanDerivedFrom(workspace.parentPlan, plan, workspace.parentContext, expanded)
+  ).toThrow('CHILD_SCOPE_EXPANSION')
+  const directory = await mkdtemp(join(tmpdir(), 'pi-child-expanded-'))
+  const provider = new SqlitePersistenceProvider({ path: join(directory, 'canonical.sqlite') })
+  try {
+    await provider.migrate()
+    const storage = persistentStorage(provider)
+    await storage.contexts.put(workspace.parentContext)
+    await storage.contexts.put(expanded)
+    const f = await fixture({ workspace, principalRef: actor, storage })
+    await expect(f.bridgeOptions.delegations.delegate(f.command.delegation)).rejects.toThrow(
+      'CHILD_SCOPE_EXPANSION'
+    )
+    expect(await storage.delegations.listByParent(ids.parentExecutionId)).toEqual([])
+    expect(f.starts).toHaveLength(0)
+  } finally {
+    await provider.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

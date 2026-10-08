@@ -5,6 +5,7 @@ import {
 } from '@control-plane/contracts'
 import type { PersistenceProvider, PersistenceTransaction } from '@control-plane/deployment'
 import { ExecutionSchema } from '@control-plane/domain'
+import { assertExecutionPlanDerivedFrom } from '@control-plane/execution-plan'
 import {
   DelegationRecordSchema,
   type DelegationRecord,
@@ -124,6 +125,26 @@ async function assertReferences(
   tx: PersistenceTransaction,
   record: DelegationRecord
 ): Promise<void> {
+  const parentPlan = await assertSqliteStoredPlanReference(tx, {
+    executionPlanId: record.parentExecutionPlanId,
+    contentDigest: record.parentExecutionPlanDigest,
+  })
+  const childPlan = await assertSqliteStoredPlanReference(tx, {
+    executionPlanId: record.childExecutionPlanId,
+    contentDigest: record.childExecutionPlanDigest,
+  })
+  const parentContext = await tx.get(
+    'context-packages',
+    recordId(parentPlan.contextPackage.contextPackageId)
+  )
+  const childContext = await tx.get(
+    'context-packages',
+    recordId(childPlan.contextPackage.contextPackageId)
+  )
+  if (!parentContext || !childContext) throw new Error('DELEGATION_REFERENCE_INVALID')
+  // Digest-valid parent pins alone do not prove narrowed resources/provider composition.
+  // Validate the complete canonical ancestry inside the same admission transaction.
+  assertExecutionPlanDerivedFrom(parentPlan, childPlan, parentContext.value, childContext.value)
   for (const [executionId, executionPlanId, contentDigest] of [
     [record.parentExecutionId, record.parentExecutionPlanId, record.parentExecutionPlanDigest],
     [record.childExecutionId, record.childExecutionPlanId, record.childExecutionPlanDigest],
