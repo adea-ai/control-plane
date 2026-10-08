@@ -45,7 +45,9 @@ An optional trusted current-product fixture reader requires both
 `PI_SELECTED_PRODUCT_READER_URL` and `PI_SELECTED_PRODUCT_READER_CREDENTIAL`.
 Only an HTTP loopback URL is accepted. The host POSTs
 `{ workspaceId, intentId, principalId }`, authenticated with the synthetic fixture
-credential. `principalId` is the CP transport reader, not the original DB actor.
+credential. The launcher explicitly projects these three identifiers from the
+internal versioned Node request, validating its literal version and refusing
+extra authority fields. `principalId` is the CP transport reader, not the original DB actor.
 HTTP 200 must return the raw strict `VerifiedPiLeadIntentEvidence` projection.
 Denied reads return a non-success response. Each canonical read parses and
 compares the complete accepted evidence; missing or changed evidence denies
@@ -75,11 +77,21 @@ Subsequent runs reached preparation and exact funding reread, then timed out at
 dispatch under the unchanged 30-second test limit. Diagnostic counters retained
 one runtime admission/dispatch receipt and one catalog credential callback, with
 zero physical provider requests and no spending read at the observed checkpoint.
-These are unresolved qualification failures, not acceptance or zero-allocation
-claims. Safe callback completion counters support further diagnosis.
+The clean published `0dbbda21` diagnostic subsequently passed one test with
+22 assertions in 11.96 seconds without a source, guard or deadline change.
+Both catalog and inference callbacks completed, exactly one provider request
+and model usage were recorded, and actor-race/revocation assertions were reached.
+The earlier timing failures remain preserved with no demonstrated root cause.
 
-The connected Adea PG selected-model journey is pending. Optional live product
-reader support is source-only until that journey proves it. Metadata physical
+The connected Adea PG preparation diagnostic on `0dbbda21` failed before
+admission: metadata operations passed, prepare returned HTTP 503, host product
+reads were one and successfully returned PG reads were zero; all admission,
+budget, credential and provider counters were zero. The launcher forwarded
+the internal fourth `schemaVersion` field to the strict three-key HTTP handler,
+which rejected it before calling PG. The explicit three-identifier serializer
+repairs this protocol mismatch; its two pure regressions pass eight assertions.
+A new connected PG run remains pending, and this source repair alone does not
+qualify the live product reader. Metadata physical
 reopen does not prove runtime/intent restart: registration maps and host lifetime
 remain process-local. No timeline publication authority, natural cancellation,
 device integration, live provider, registry release or activation is claimed.

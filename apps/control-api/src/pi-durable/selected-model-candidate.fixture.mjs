@@ -2,6 +2,7 @@
 // Real Nest auth/routes, canonical CP admission, SQLite, ledger and Pi Harness;
 // synthetic bearer/product/spending evidence and scripted loopback provider.
 import 'reflect-metadata'
+import { currentProductHttpRequest } from './current-product-request.fixture.mjs'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -1198,7 +1199,7 @@ if (import.meta.main) {
             authorization: `Bearer ${productCredential}`,
             'content-type': 'application/json',
           },
-          body: JSON.stringify(input),
+          body: JSON.stringify(currentProductHttpRequest(input)),
           signal: AbortSignal.timeout(5000),
           redirect: 'error',
         })
