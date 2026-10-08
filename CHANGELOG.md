@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.85.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.84.1...workspace-v1.85.0) (2026-10-08)
+
+
+### Features
+
+* pi-child-continuation ([#981](https://github.com/adea-ai/control-plane/issues/981)) ([a9d8228](https://github.com/adea-ai/control-plane/commit/a9d8228d70ee6eb6234204c24c9b46dc2fc38d7a))
+
 ## [1.84.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.84.0...workspace-v1.84.1) (2026-10-08)
 
 
