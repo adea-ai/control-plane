@@ -4,6 +4,7 @@ import {
   compareCodePointOrder,
   IdentifierSchemas,
 } from '@control-plane/contracts'
+import type { AttemptId } from '@control-plane/contracts'
 import { ExecutionFailureClassificationSchema } from '@control-plane/domain'
 import type { DelegationEvent } from './delegation.js'
 import { z } from 'zod'
@@ -20,18 +21,22 @@ import { z } from 'zod'
  * approval / human-input requests (`awaiting_input`). When a packet bound
  * would be exceeded, the open packet is sealed and a fresh one is started —
  * bounds shrink packet size, never the retained evidence set. The serialized
- * byte limit covers the whole packet (headers, sequence, digest and all
- * entries/snapshots), including the very first observation of a window, and
- * every emitted packet satisfies its own parser and bound.
+ * byte limit covers the whole packet (headers, sequence, digest, all
+ * entries/snapshots and the delivery counters), including the very first
+ * observation of a window, and every emitted packet satisfies its own parser
+ * and bound.
  *
  * Every observation carries the full job/attempt identity (`delegationId`,
  * `childExecutionId`, `childAttemptId`, owner-owned `generation`) and
  * provenance (`eventId`, `observedAt`). Duplicate deliveries are deduplicated
- * by `eventId` against a content fingerprint; a reused `eventId` with changed
+ * by `eventId` against a content fingerprint that is committed only after an
+ * event is actually retained, so a delivery that failed placement is retried
+ * instead of misreported as a duplicate; a reused `eventId` with changed
  * content, or a changed child/attempt identity inside an existing delegation
- * generation, is rejected with an explicit receipt rather than folded
- * silently — as are events from a superseded generation, events arriving
- * after a generation went terminal, and events for a foreign parent. All
+ * generation (the first `childAttemptId` observed within a generation binds
+ * it), is rejected with an explicit receipt rather than folded silently — as
+ * are events from a superseded generation, events arriving after a generation
+ * went terminal, and events for a foreign parent. All
  * payload-shaped fields are opaque identifiers, digests, enums, timestamps or
  * bounded integers: evidence travels as authorized references (artifact,
  * interaction, result), never as copied secrets or unrelated private context.
@@ -325,6 +330,8 @@ export interface ChildProgressEvidenceBufferOptions {
 interface DelegationWindow {
   generation: number
   terminal: boolean
+  /** Attempt identity bound to this generation; undefined until first observed. */
+  attemptId: AttemptId | undefined
   snapshot: ChildProgressSnapshot
 }
 
@@ -373,6 +380,23 @@ function isEmptyWindow(window: OpenWindow): boolean {
   )
 }
 
+/**
+ * Fresh-window projection with placeholder timestamps of real length. Used
+ * when no window is open yet, and whenever a candidate must be checked
+ * against an otherwise-empty packet.
+ */
+function freshProjectionWindow(): OpenWindow {
+  return {
+    firstEventAt: TIMESTAMP_PLACEHOLDER,
+    lastEventAt: TIMESTAMP_PLACEHOLDER,
+    entries: [],
+    childSnapshots: [],
+    coalescedEventCount: 0,
+    duplicateEventCount: 0,
+    rejectedEventCount: 0,
+  }
+}
+
 function eventFingerprint(event: ChildProgressEvidenceEvent): string {
   return createHash('sha256').update(canonicalJsonStringify(event)).digest('hex')
 }
@@ -393,6 +417,8 @@ export class ChildProgressEvidenceBuffer {
   readonly #windows = new Map<string, DelegationWindow>()
   readonly #ready: ChildProgressEvidencePacket[] = []
   #open: OpenWindow | undefined
+  /** Observation time of the accept in flight; seeds windows it creates. */
+  #pendingEventTime: string | undefined
   #sequence = 0
   #lifetimeDuplicates = 0
   #lifetimeRejections = 0
@@ -433,7 +459,7 @@ export class ChildProgressEvidenceBuffer {
   accept(event: unknown): ChildProgressEvidenceReceipt {
     const parsed = ChildProgressEvidenceEventSchema.parse(event)
     if (parsed.parentExecutionId !== this.#parentExecutionId) {
-      return this.#reject('foreign_parent', parsed.eventId, parsed.delegationId)
+      return this.#reject('foreign_parent', parsed)
     }
     const fingerprint = eventFingerprint(parsed)
     const seenFingerprint = this.#seenEventIds.get(parsed.eventId)
@@ -441,43 +467,64 @@ export class ChildProgressEvidenceBuffer {
       if (seenFingerprint !== fingerprint) {
         // Same delivery identity, different content: never treat as a
         // duplicate — one of the two deliveries is lying.
-        return this.#reject('conflicting_event', parsed.eventId, parsed.delegationId)
+        return this.#reject('conflicting_event', parsed)
       }
       this.#lifetimeDuplicates += 1
-      if (this.#open) this.#open.duplicateEventCount += 1
+      this.#foldDeliveryCount('duplicateEventCount', parsed.observedAt)
       return { outcome: 'duplicate', eventId: parsed.eventId }
     }
-    this.#trackEventId(parsed.eventId, fingerprint)
 
     const window = this.#windows.get(parsed.delegationId)
     if (window) {
       if (parsed.generation < window.generation) {
-        return this.#reject('stale_generation', parsed.eventId, parsed.delegationId)
+        return this.#reject('stale_generation', parsed)
       }
       if (parsed.childExecutionId !== window.snapshot.childExecutionId) {
-        return this.#reject('conflicting_child_identity', parsed.eventId, parsed.delegationId)
+        return this.#reject('conflicting_child_identity', parsed)
       }
       if (parsed.generation === window.generation) {
         if (window.terminal) {
-          return this.#reject('terminated_generation', parsed.eventId, parsed.delegationId)
+          return this.#reject('terminated_generation', parsed)
         }
         if (
           parsed.childAttemptId !== undefined &&
-          window.snapshot.childAttemptId !== undefined &&
-          parsed.childAttemptId !== window.snapshot.childAttemptId
+          window.attemptId !== undefined &&
+          parsed.childAttemptId !== window.attemptId
         ) {
-          return this.#reject('conflicting_child_identity', parsed.eventId, parsed.delegationId)
+          return this.#reject('conflicting_child_identity', parsed)
         }
       }
+    }
+    // The first attempt identity observed within a generation binds it; any
+    // later different attempt inside the same generation is the conflict
+    // rejected above. A new generation rebinds freely (retries may use a new
+    // attempt).
+    if (
+      window !== undefined &&
+      parsed.generation === window.generation &&
+      parsed.childAttemptId !== undefined &&
+      window.attemptId === undefined
+    ) {
+      window.attemptId = parsed.childAttemptId
     }
 
     const critical = parsed.phase !== 'running'
     const entry: ChildProgressEvidenceEntry | undefined = critical ? toEntry(parsed) : undefined
 
-    // Timestamp the window before any placement decision: every packet that
-    // seals from here on — including under byte pressure — carries a valid
-    // observation window. Stamped again after placement: a window created by
-    // a mid-accept seal+retry must not outlive the event without carrying it.
+    // A critical entry must fit some packet before any state mutates: an
+    // observation that can never be placed fails loudly while the buffer is
+    // untouched, keeping accept atomic for at-least-once redelivery (the
+    // dedupe fingerprint below is committed only on success).
+    if (entry !== undefined && !this.#fitsInPacket({ entry }, { freshWindow: true })) {
+      throw new ChildProgressEvidenceError(
+        'BOUNDS_EXCEEDED',
+        `A single evidence entry exceeds the configured maximumBytes budget (${this.#maximumBytes})`
+      )
+    }
+
+    // Timestamp the observation before any placement decision: every packet
+    // sealed from here on — including a window freshly created by a
+    // mid-accept seal-and-retry — carries a valid observation window.
     this.#noteEventTime(parsed.observedAt)
 
     // Critical observations must survive packet pressure: seal the open
@@ -495,6 +542,8 @@ export class ChildProgressEvidenceBuffer {
     }
     if (entry && !this.#appendEntry(entry)) {
       sealedPacket = this.#sealToQueue() ?? sealedPacket
+      // The fresh-window pre-check above already proved this entry fits an
+      // otherwise-empty packet, so the retry after a pressure seal fits too.
       if (!this.#appendEntry(entry)) {
         throw new ChildProgressEvidenceError(
           'BOUNDS_EXCEEDED',
@@ -502,7 +551,11 @@ export class ChildProgressEvidenceBuffer {
         )
       }
     }
-    this.#noteEventTime(parsed.observedAt)
+
+    // Retained successfully — only now commit the dedupe fingerprint, so a
+    // redelivery after a failed placement re-attempts placement instead of
+    // returning a phantom `duplicate` for evidence nothing kept.
+    this.#trackEventId(parsed.eventId, fingerprint)
 
     if (!critical) {
       return {
@@ -564,12 +617,41 @@ export class ChildProgressEvidenceBuffer {
 
   #reject(
     reason: ChildProgressEvidenceRejectionReason,
-    eventId: string,
-    delegationId: string
+    parsed: ChildProgressEvidenceEvent
   ): ChildProgressEvidenceReceipt {
     this.#lifetimeRejections += 1
-    if (this.#open) this.#open.rejectedEventCount += 1
-    return { outcome: 'rejected', reason, eventId, delegationId }
+    this.#foldDeliveryCount('rejectedEventCount', parsed.observedAt)
+    return {
+      outcome: 'rejected',
+      reason,
+      eventId: parsed.eventId,
+      delegationId: parsed.delegationId,
+    }
+  }
+
+  /**
+   * Folds a duplicate/rejection delivery into the open packet's counters. The
+   * serialized projection includes the counter's growth — a counter gaining a
+   * digit at the byte limit must not overflow the packet — so the window is
+   * sealed under pressure first and the count lands in the fresh packet.
+   * With no window open, the delivery surfaces through the lifetime stats
+   * only.
+   */
+  #foldDeliveryCount(
+    field: 'duplicateEventCount' | 'rejectedEventCount',
+    observedAt: string
+  ): void {
+    if (this.#open === undefined) return
+    const delta = field === 'duplicateEventCount' ? { duplicateDelta: 1 } : { rejectedDelta: 1 }
+    if (!this.#fitsInPacket(delta)) this.#sealToQueue()
+    this.#noteEventTime(observedAt)
+    this.#withOpenWindow((open) => {
+      if (field === 'duplicateEventCount') {
+        open.duplicateEventCount += 1
+      } else {
+        open.rejectedEventCount += 1
+      }
+    })
   }
 
   #trackEventId(eventId: string, fingerprint: string): void {
@@ -582,19 +664,22 @@ export class ChildProgressEvidenceBuffer {
   }
 
   /**
-   * Stamps the observation time on the open window, creating the window if
-   * needed. Runs before every placement decision so a packet sealed under
-   * pressure always carries a valid observation window.
+   * Records the observation time of the accept in flight. The open window's
+   * span is extended in place; when no window is open yet, the time is
+   * remembered and seeds the next window created during this accept (see
+   * {@link #withOpenWindow}), so a packet sealed under pressure never carries
+   * empty timestamps.
    */
   #noteEventTime(observedAt: string): void {
-    this.#withOpenWindow((open) => {
-      if (open.firstEventAt === '' || observedAt < open.firstEventAt) {
-        open.firstEventAt = observedAt
-      }
-      if (open.lastEventAt === '' || observedAt > open.lastEventAt) {
-        open.lastEventAt = observedAt
-      }
-    })
+    this.#pendingEventTime = observedAt
+    const open = this.#open
+    if (!open) return
+    if (open.firstEventAt === '' || observedAt < open.firstEventAt) {
+      open.firstEventAt = observedAt
+    }
+    if (open.lastEventAt === '' || observedAt > open.lastEventAt) {
+      open.lastEventAt = observedAt
+    }
   }
 
   /**
@@ -624,6 +709,7 @@ export class ChildProgressEvidenceBuffer {
       this.#windows.set(event.delegationId, {
         generation: event.generation,
         terminal: isTerminalPhase(event.phase),
+        attemptId: event.childAttemptId,
         snapshot,
       })
       this.#replaceSnapshotInOpenWindow(snapshot)
@@ -640,6 +726,8 @@ export class ChildProgressEvidenceBuffer {
     const supersedes = event.observedAt >= window.snapshot.lastObservedAt
     const merged: ChildProgressSnapshot = {
       ...window.snapshot,
+      // Surface the attempt bound to this generation once it is known.
+      ...(window.attemptId !== undefined ? { childAttemptId: window.attemptId } : {}),
       ...(supersedes ? { phase: event.phase, lastObservedAt: event.observedAt } : {}),
       observedEventCount: window.snapshot.observedEventCount + 1,
       metrics: accumulateMetrics(window.snapshot.metrics, event.metrics),
@@ -648,6 +736,7 @@ export class ChildProgressEvidenceBuffer {
     this.#windows.set(event.delegationId, {
       generation: window.generation,
       terminal: window.terminal || (supersedes && isTerminalPhase(event.phase)),
+      attemptId: window.attemptId,
       snapshot: merged,
     })
     this.#replaceSnapshotInOpenWindow(merged)
@@ -658,7 +747,17 @@ export class ChildProgressEvidenceBuffer {
   }
 
   #withOpenWindow(mutate: (open: OpenWindow) => void): void {
-    if (!this.#open) this.#open = emptyWindow()
+    if (!this.#open) {
+      const open = emptyWindow()
+      // Seed a window created mid-accept with the observation time already
+      // recorded for this accept, so pressure-sealed packets always carry a
+      // valid observation window.
+      if (this.#pendingEventTime !== undefined) {
+        open.firstEventAt = this.#pendingEventTime
+        open.lastEventAt = this.#pendingEventTime
+      }
+      this.#open = open
+    }
     mutate(this.#open)
   }
 
@@ -683,26 +782,24 @@ export class ChildProgressEvidenceBuffer {
 
   /**
    * Projects the exact packet that sealing would emit — headers, sequence,
-   * entries, snapshots, delivery counters and a digest placeholder of the
-   * real digest's length — and reports whether it stays within the
-   * serialized byte budget. Runs against the open window or, when none is
-   * open yet, against a fresh window, so the first observation of a window
-   * is bounded too.
+   * entries, snapshots, delivery counters (candidate growth included) and a
+   * digest placeholder of the real digest's length — and reports whether it
+   * stays within the serialized byte budget. Runs against the open window or,
+   * when none is open yet (or `freshWindow` is set), against a fresh window,
+   * so the first observation of a window is bounded too.
    */
-  #fitsInPacket(candidate: {
-    readonly snapshot?: ChildProgressSnapshot
-    readonly entry?: ChildProgressEvidenceEntry
-    readonly coalescedDelta?: number
-  }): boolean {
-    const open = this.#open ?? {
-      firstEventAt: TIMESTAMP_PLACEHOLDER,
-      lastEventAt: TIMESTAMP_PLACEHOLDER,
-      entries: [],
-      childSnapshots: [],
-      coalescedEventCount: 0,
-      duplicateEventCount: 0,
-      rejectedEventCount: 0,
-    }
+  #fitsInPacket(
+    candidate: {
+      readonly snapshot?: ChildProgressSnapshot
+      readonly entry?: ChildProgressEvidenceEntry
+      readonly coalescedDelta?: number
+      readonly duplicateDelta?: number
+      readonly rejectedDelta?: number
+    },
+    projection: { readonly freshWindow?: boolean } = {}
+  ): boolean {
+    const open =
+      projection.freshWindow || this.#open === undefined ? freshProjectionWindow() : this.#open
     const entries =
       candidate.entry !== undefined ? [...open.entries, candidate.entry] : open.entries
     const snapshot = candidate.snapshot
@@ -724,8 +821,8 @@ export class ChildProgressEvidenceBuffer {
       entries,
       childSnapshots,
       coalescedEventCount: open.coalescedEventCount + (candidate.coalescedDelta ?? 0),
-      duplicateEventCount: open.duplicateEventCount,
-      rejectedEventCount: open.rejectedEventCount,
+      duplicateEventCount: open.duplicateEventCount + (candidate.duplicateDelta ?? 0),
+      rejectedEventCount: open.rejectedEventCount + (candidate.rejectedDelta ?? 0),
     }
     const projected = encoder.encode(
       canonicalJsonStringify({ ...body, contentDigest: DIGEST_PLACEHOLDER })

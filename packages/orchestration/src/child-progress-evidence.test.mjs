@@ -76,8 +76,11 @@ const serializedBytes = (packet) => encoder.encode(canonicalJsonStringify(packet
 
 /**
  * Wraps a buffer and enforces the emission invariant on every packet the
- * buffer produces in any test: each packet must satisfy its own parser and
- * respect the configured serialized byte limit.
+ * buffer produces in any test: each packet — whether delivered through a
+ * receipt's `sealedPacket`, drained from `readyPackets()`, or returned by
+ * `flush()` — must satisfy its own parser and respect the configured
+ * serialized byte limit. `emitted` records every distinct packet exactly once
+ * (packet objects are compared by identity).
  */
 function trackedBuffer(options) {
   const buffer = new ChildProgressEvidenceBuffer(options)
@@ -86,7 +89,7 @@ function trackedBuffer(options) {
   const verify = (packet) => {
     expect(parseChildProgressEvidencePacket(packet)).toEqual(packet)
     expect(serializedBytes(packet)).toBeLessThanOrEqual(maximumBytes)
-    emitted.push(packet)
+    if (!emitted.includes(packet)) emitted.push(packet)
   }
   return {
     emitted,
@@ -101,7 +104,9 @@ function trackedBuffer(options) {
       return packet
     },
     readyPackets() {
-      return buffer.readyPackets()
+      const packets = buffer.readyPackets()
+      for (const packet of packets) verify(packet)
+      return packets
     },
     stats() {
       return buffer.stats()
@@ -331,6 +336,31 @@ describe('child progress evidence packets', () => {
         })
       )
     ).toMatchObject({ outcome: 'rejected', reason: 'conflicting_child_identity' })
+  })
+
+  test('binds childAttemptId on first knowledge and rejects later attempts in the generation', () => {
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+    // Early deliveries may not know the attempt yet.
+    expect(buffer.accept(runningEvent({ observedAt: at(0) })).outcome).toBe('coalesced')
+    expect(buffer.accept(runningEvent({ observedAt: at(1_000) })).outcome).toBe('coalesced')
+    // The first delivery that names an attempt binds it to generation 1.
+    expect(
+      buffer.accept(runningEvent({ childAttemptId: ids.attemptIdA, observedAt: at(2_000) })).outcome
+    ).toBe('coalesced')
+    // A different attempt inside the same generation is a conflict.
+    expect(
+      buffer.accept(runningEvent({ childAttemptId: ids.attemptIdB, observedAt: at(3_000) }))
+    ).toMatchObject({ outcome: 'rejected', reason: 'conflicting_child_identity' })
+    const packet = buffer.flush()
+    // The bound attempt is visible on the coalesced snapshot.
+    expect(packet.childSnapshots[0].childAttemptId).toBe(ids.attemptIdA)
+    expect(packet.childSnapshots[0].observedEventCount).toBe(3)
+    // A fresh generation may move to a different attempt.
+    expect(
+      buffer.accept(
+        runningEvent({ generation: 2, childAttemptId: ids.attemptIdB, observedAt: at(4_000) })
+      ).outcome
+    ).toBe('coalesced')
   })
 
   test('rejects stale generations and never regresses snapshots on out-of-order updates', () => {
@@ -602,6 +632,40 @@ describe('child progress evidence packets', () => {
     expect(buffer.stats().openPacket).toBe(false)
   })
 
+  test('does not commit the dedupe fingerprint of an event that failed placement', () => {
+    const oversizedMetrics = Object.fromEntries(
+      Array.from({ length: 16 }, (_, index) => [
+        `metrics.oversized.longKeyName.${String(index).padStart(2, '0')}`.padEnd(110, 'x'),
+        7,
+      ])
+    )
+    const buffer = trackedBuffer({
+      parentExecutionId: ids.parentExecutionId,
+      maximumBytes: 2048,
+    })
+    const oversized = runningEvent({
+      phase: 'failed',
+      observedAt: at(0),
+      failure: { classification: 'runtime_error', code: 'X'.repeat(256) },
+      metrics: oversizedMetrics,
+    })
+    expect(() => buffer.accept(oversized)).toThrow(ChildProgressEvidenceError)
+    // The retry re-attempts placement and hits the same bounds error; it must
+    // never be misreported as a duplicate of an event nothing retained.
+    let retry
+    try {
+      retry = buffer.accept(oversized)
+    } catch (error) {
+      retry = error
+    }
+    expect(retry).toBeInstanceOf(ChildProgressEvidenceError)
+    expect(retry.code).toBe('BOUNDS_EXCEEDED')
+    expect(buffer.stats().lifetimeDuplicateCount).toBe(0)
+    expect(buffer.stats().openPacket).toBe(false)
+    expect(buffer.flush()).toBeUndefined()
+    expect(buffer.emitted).toHaveLength(0)
+  })
+
   test('seals with valid timestamps when a large entry follows a fitting snapshot', () => {
     const largeMetrics = Object.fromEntries(
       Array.from({ length: 12 }, (_, index) => [
@@ -637,6 +701,54 @@ describe('child progress evidence packets', () => {
     // The failure observation survived the split across both packets.
     expect(buffer.emitted).toHaveLength(2)
     expect(buffer.emitted.map((packet) => packet.sequence)).toStrictEqual([1, 2])
+  })
+
+  test('seals with valid timestamps when child-count pressure is followed by byte pressure', () => {
+    const largeMetrics = Object.fromEntries(
+      Array.from({ length: 12 }, (_, index) => [
+        `metrics.largeentry.longKeyName.${String(index).padStart(2, '0')}`.padEnd(90, 'y'),
+        7,
+      ])
+    )
+    const buffer = trackedBuffer({
+      parentExecutionId: ids.parentExecutionId,
+      maximumChildren: 1,
+      maximumBytes: 2048,
+    })
+    buffer.accept(runningEvent({ observedAt: at(0) }))
+    const receipt = buffer.accept(
+      runningEvent({
+        delegationId: ids.delegationIdB,
+        childExecutionId: ids.childExecutionIdB,
+        phase: 'failed',
+        observedAt: at(1_000),
+        failure: { classification: 'runtime_error', code: 'X'.repeat(256) },
+        metrics: largeMetrics,
+      })
+    )
+    expect(receipt).toMatchObject({ outcome: 'retained', entryKind: 'terminal' })
+    expect(receipt.sealedPacket).toBeDefined()
+    // First seal: the child budget (child A's open window). The fresh window
+    // created for child B then seals under byte pressure when B's entry does
+    // not fit beside B's snapshot — that second packet must still carry a
+    // valid observation window, not empty timestamps.
+    const drained = buffer.readyPackets()
+    const flushed = buffer.flush()
+    const packets = [...drained, flushed].filter(Boolean)
+    expect(packets).toHaveLength(3)
+    expect(buffer.emitted).toHaveLength(3)
+    for (const packet of packets) {
+      expect(packet.firstEventAt).toMatch(/^2026-08-25T18:05:/)
+      expect(packet.lastEventAt).toMatch(/^2026-08-25T18:05:/)
+    }
+    // Nothing was dropped: A's snapshot, B's snapshot, and B's failure entry
+    // each landed in some packet.
+    expect(
+      packets.flatMap((packet) => packet.childSnapshots).map((snapshot) => snapshot.delegationId)
+    ).toStrictEqual([ids.delegationIdA, ids.delegationIdB])
+    const entries = packets.flatMap((packet) => packet.entries)
+    expect(entries).toHaveLength(1)
+    expect(entries[0].failure.code).toBe('X'.repeat(256))
   })
 
   test('seals on the serialized byte budget when snapshots grow', () => {
@@ -682,6 +794,75 @@ describe('child progress evidence packets', () => {
       ids.delegationIdB,
       ids.delegationIdC,
     ])
+  })
+
+  test('keeps duplicate-counter growth inside the serialized byte budget', () => {
+    const maximumBytes = 2048
+    // Deterministic calibration: pad child A's metrics so a window holding
+    // A's snapshot with duplicateEventCount 9 serializes to exactly
+    // budget - 2 bytes. The 9→10, 99→100 and 999→1000 counter digit
+    // crossings each add one serialized byte, so an unguarded duplicate
+    // counter pushes the window one byte past the limit.
+    const padKey = (length) => `metrics.dupcounter.pad.${'p'.repeat(length)}`
+    const fillerKey = (index) =>
+      `metrics.dupcounter.filler.${String(index).padStart(2, '0')}`.padEnd(96, 'f')
+    const projectedWindowBytes = (metrics, duplicateCount) => {
+      const body = {
+        schemaVersion: 2,
+        parentExecutionId: ids.parentExecutionId,
+        sequence: 1,
+        firstEventAt: at(0),
+        lastEventAt: at(0),
+        entries: [],
+        childSnapshots: [
+          {
+            delegationId: ids.delegationIdA,
+            childExecutionId: ids.childExecutionIdA,
+            generation: 1,
+            phase: 'running',
+            lastObservedAt: at(0),
+            observedEventCount: 1,
+            metrics,
+          },
+        ],
+        coalescedEventCount: 1,
+        duplicateEventCount: duplicateCount,
+        rejectedEventCount: 0,
+      }
+      return encoder.encode(canonicalJsonStringify({ ...body, contentDigest: digest('0') }))
+        .byteLength
+    }
+    let calibrated
+    for (let fillers = 0; fillers <= 14 && calibrated === undefined; fillers += 1) {
+      for (let pad = 1; pad <= 200; pad += 1) {
+        const metrics = {}
+        for (let index = 0; index < fillers; index += 1) metrics[fillerKey(index)] = 1
+        metrics[padKey(pad)] = 1
+        if (projectedWindowBytes(metrics, 9) === maximumBytes - 2) {
+          calibrated = metrics
+          break
+        }
+      }
+    }
+    expect(calibrated).toBeDefined()
+
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId, maximumBytes })
+    const progress = runningEvent({ observedAt: at(0), metrics: calibrated })
+    expect(buffer.accept(progress).outcome).toBe('coalesced')
+    for (let index = 0; index < 1_000; index += 1) {
+      expect(buffer.accept(progress).outcome).toBe('duplicate')
+    }
+    const drained = buffer.readyPackets()
+    const flushed = buffer.flush()
+    const packets = [...drained, flushed].filter(Boolean)
+    expect(packets.length).toBeGreaterThanOrEqual(2)
+    for (const packet of packets) {
+      expect(serializedBytes(packet)).toBeLessThanOrEqual(maximumBytes)
+    }
+    // Every duplicate is accounted for across the packet windows.
+    expect(packets.reduce((sum, packet) => sum + packet.duplicateEventCount, 0)).toBe(1_000)
+    expect(buffer.stats().lifetimeDuplicateCount).toBe(1_000)
+    expect(buffer.emitted.map((packet) => packet.sequence)).toStrictEqual([1, 2])
   })
 
   test('metric accumulation ignores inherited keys and saturates at safe integers', () => {
