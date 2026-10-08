@@ -589,9 +589,17 @@ function collectCatalogCallers(database, context) {
   }
 }
 
-/** Execution plans index: the only durable graph reference on the execution path. */
+/**
+ * Execution plans index: the only durable graph reference on the execution
+ * path. A plan whose graph identity is missing or malformed — no graph
+ * selection, or a reference without a usable graphDefinitionId or
+ * graphVersion — is never silently excluded or benignly bucketed as an
+ * unknown graph or a non-graph workflow: it is recorded as
+ * attribution-incomplete evidence that conservatively blocks retirement.
+ */
 function collectPlanGraphReferences(database, context) {
   const planGraphs = new Map()
+  const plansWithMalformedGraphIdentity = new Set()
   let planCount = 0
   let malformedPlans = 0
   let readError
@@ -604,23 +612,35 @@ function collectPlanGraphReferences(database, context) {
         return
       }
       const graph = record.value?.graph?.reference
-      planGraphs.set(
-        planId,
-        graph !== null && typeof graph === 'object'
-          ? {
-              graphDefinitionId:
-                typeof graph.graphDefinitionId === 'string' ? graph.graphDefinitionId : 'unknown',
-              graphVersion: typeof graph.graphVersion === 'string' ? graph.graphVersion : 'unknown',
-              contentDigest:
-                typeof graph.contentDigest === 'string' ? graph.contentDigest : 'unknown',
-            }
-          : undefined
-      )
+      const graphDefinitionId =
+        graph !== null && typeof graph === 'object' ? graph.graphDefinitionId : undefined
+      const graphVersion =
+        graph !== null && typeof graph === 'object' ? graph.graphVersion : undefined
+      if (
+        typeof graphDefinitionId !== 'string' ||
+        graphDefinitionId.length === 0 ||
+        typeof graphVersion !== 'string' ||
+        graphVersion.length === 0
+      ) {
+        plansWithMalformedGraphIdentity.add(planId)
+        return
+      }
+      planGraphs.set(planId, {
+        graphDefinitionId,
+        graphVersion,
+        contentDigest: typeof graph.contentDigest === 'string' ? graph.contentDigest : 'unknown',
+      })
     })
   } catch {
     readError = 'NAMESPACE_SCAN_FAILED'
   }
-  return { planGraphs, planCount, malformedPlans, readError }
+  return {
+    planGraphs,
+    plansWithMalformedGraphIdentity,
+    planCount,
+    malformedPlans,
+    readError,
+  }
 }
 
 /** Retained executions; entries bounded to in-flight work. */
@@ -635,8 +655,8 @@ function collectExecutions(database, context) {
   const executionStatesById = new Map()
   const inFlightEntries = []
   let inFlightPlansMissing = 0
+  let inFlightPlansWithMalformedGraphIdentity = 0
   let inFlightAttributed = 0
-  let inFlightNonGraph = 0
   try {
     scanNamespaceRecords(database, NAMESPACES.executions, context, (record) => {
       rowCount += 1
@@ -656,6 +676,8 @@ function collectExecutions(database, context) {
       const planId =
         typeof planPin?.executionPlanId === 'string' ? planPin.executionPlanId : undefined
       const planKnown = planId !== undefined && planIndex.planGraphs.has(planId)
+      const planIdentityMalformed =
+        planId !== undefined && planIndex.plansWithMalformedGraphIdentity.has(planId) === true
       const graphReference = planKnown ? planIndex.planGraphs.get(planId) : undefined
       let graphKey
       if (graphReference !== undefined) {
@@ -670,11 +692,14 @@ function collectExecutions(database, context) {
       }
       executionStatesById.set(executionId, { inFlight, workspaceId })
       if (!inFlight) return
-      if (graphReference !== undefined) {
-        inFlightAttributed += 1
+      if (planIdentityMalformed) {
+        // The plan exists but its graph identity is missing or malformed: the
+        // execution cannot be attributed to any workflow. It is never benignly
+        // bucketed as a non-graph workflow or an unknown graph — the real
+        // graph cannot pass a retire check while this stays unresolved.
+        inFlightPlansWithMalformedGraphIdentity += 1
       } else if (planKnown) {
-        // The plan exists but pins no graph: a non-graph workflow execution.
-        inFlightNonGraph += 1
+        inFlightAttributed += 1
       } else {
         // A retained in-flight execution whose plan is gone cannot be
         // attributed to a workflow: an explicit incompleteness, never silence.
@@ -712,6 +737,8 @@ function collectExecutions(database, context) {
     .reduce((summand, [, count]) => summand + count, 0)
   const extraReasons = []
   if (planIndex.readError !== undefined) extraReasons.push('PLAN_NAMESPACE_SCAN_FAILED')
+  if (planIndex.plansWithMalformedGraphIdentity.size > 0)
+    extraReasons.push('PLAN_GRAPH_IDENTITY_MALFORMED')
   return {
     ...sectionHeader([NAMESPACES.executions, NAMESPACES.executionPlans], identity, observedAt),
     ...outcomeWithExtraReasons(
@@ -735,7 +762,7 @@ function collectExecutions(database, context) {
       inFlight: inFlightTotal,
       terminal: rowCount - inFlightTotal - malformedCount,
       inFlightAttributed,
-      inFlightNonGraph,
+      inFlightPlansWithMalformedGraphIdentity,
       inFlightPlansMissing,
       byState: mapCountsToObject(byState),
     },
@@ -766,7 +793,7 @@ function failedExecutionsSection(identity, observedAt, limits) {
       inFlight: 0,
       terminal: 0,
       inFlightAttributed: 0,
-      inFlightNonGraph: 0,
+      inFlightPlansWithMalformedGraphIdentity: 0,
       inFlightPlansMissing: 0,
     },
     entries: [],
@@ -995,7 +1022,13 @@ export function buildInventoryManifest({
 
   const planIndex = storeAvailable
     ? collectPlanGraphReferences(database, scanContext)
-    : { planGraphs: new Map(), planCount: 0, malformedPlans: 0, readError: 'STORE_UNAVAILABLE' }
+    : {
+        planGraphs: new Map(),
+        plansWithMalformedGraphIdentity: new Set(),
+        planCount: 0,
+        malformedPlans: 0,
+        readError: 'STORE_UNAVAILABLE',
+      }
 
   const executions = storeAvailable
     ? collectExecutions(database, {
@@ -1269,7 +1302,7 @@ function emptyExecutionsSection(identity, observedAt, normalizedLimits) {
       inFlight: 0,
       terminal: 0,
       inFlightAttributed: 0,
-      inFlightNonGraph: 0,
+      inFlightPlansWithMalformedGraphIdentity: 0,
       inFlightPlansMissing: 0,
     },
     entries: [],
@@ -1392,13 +1425,18 @@ const DISPOSITION_EVIDENCE_MATRIX = Object.freeze({
  * Workflow identity is workspace-scoped — a proposal names
  * (workspaceId, graphDefinitionId, graphVersion).
  *
- * Retirement (`retire`) additionally blocks while execution evidence does not
- * support a zero-live-work conclusion for the store: running executions whose
- * plan vanished are unattributable (IN_FLIGHT_EXECUTION_WITHOUT_PLAN), and an
- * executions section that was not fully read (incomplete, stale, truncated,
- * malformed, or out of scope) means a zero in-flight count is not trustworthy
- * attribution (IN_FLIGHT_ATTRIBUTION_INCOMPLETE). Missing attribution is never
- * counted as zero.
+ * Retirement (`retire`) additionally blocks while the store's evidence does
+ * not support a zero-live-work conclusion: running executions whose plan
+ * vanished are unattributable (IN_FLIGHT_EXECUTION_WITHOUT_PLAN); a retained
+ * plan whose graph identity is missing or malformed leaves its executions
+ * unattributable (PLAN_GRAPH_IDENTITY_MALFORMED) — the real graph cannot pass
+ * while that attribution is unresolved; an executions section that was not
+ * fully read (incomplete, stale, truncated, malformed, or out of scope) means
+ * a zero in-flight count is not trustworthy attribution
+ * (IN_FLIGHT_ATTRIBUTION_INCOMPLETE); and checkpoint evidence that is not
+ * fully read or carries orphan/unclassified threads leaves resume-state
+ * coverage unresolved (CHECKPOINT_EVIDENCE_INCOMPLETE /
+ * CHECKPOINT_EVIDENCE_UNKNOWN). Missing attribution is never counted as zero.
  */
 export function validateDispositions(document, manifest) {
   if (document === null || typeof document !== 'object' || !Array.isArray(document.dispositions))
@@ -1458,9 +1496,23 @@ export function validateDispositions(document, manifest) {
     if (disposition === 'retire') {
       if (inFlight > 0) reasons.push('IN_FLIGHT_WORK_PRESENT')
       const executionsSection = manifest?.sections?.executions
+      const checkpointsSection = manifest?.sections?.checkpoints
       if ((executionsSection?.counts?.inFlightPlansMissing ?? 0) > 0)
         reasons.push('IN_FLIGHT_EXECUTION_WITHOUT_PLAN')
+      if ((executionsSection?.counts?.inFlightPlansWithMalformedGraphIdentity ?? 0) > 0)
+        reasons.push('PLAN_GRAPH_IDENTITY_MALFORMED')
       if (!sectionFullyRead(executionsSection)) reasons.push('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+      // Checkpoint evidence quality gates retirement as well: orphaned or
+      // unclassified threads could belong to the workflow being retired, and
+      // an incomplete or stale checkpoint scan leaves resume-state coverage
+      // unresolved. Only fully-read, attributed checkpoint evidence permits a
+      // retire verdict.
+      if (
+        (checkpointsSection?.counts?.unclassifiedThreads ?? 0) > 0 ||
+        (checkpointsSection?.counts?.threadsOnUnknownExecutions ?? 0) > 0
+      )
+        reasons.push('CHECKPOINT_EVIDENCE_UNKNOWN')
+      if (!sectionFullyRead(checkpointsSection)) reasons.push('CHECKPOINT_EVIDENCE_INCOMPLETE')
     }
     if (missingEvidence.size > 0) reasons.push('MISSING_REQUIRED_EVIDENCE')
     if (Array.isArray(proposal.unresolvedBlockers) && proposal.unresolvedBlockers.length > 0)
@@ -1468,7 +1520,10 @@ export function validateDispositions(document, manifest) {
     const blocked =
       reasons.includes('UNRESOLVED_BLOCKERS_DECLARED') ||
       reasons.includes('IN_FLIGHT_EXECUTION_WITHOUT_PLAN') ||
-      reasons.includes('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+      reasons.includes('PLAN_GRAPH_IDENTITY_MALFORMED') ||
+      reasons.includes('IN_FLIGHT_ATTRIBUTION_INCOMPLETE') ||
+      reasons.includes('CHECKPOINT_EVIDENCE_INCOMPLETE') ||
+      reasons.includes('CHECKPOINT_EVIDENCE_UNKNOWN')
     const verdict = blocked
       ? 'blocked'
       : reasons.length === 0 && missingEvidence.size === 0
@@ -1580,9 +1635,11 @@ is workspace-scoped):
      "unresolvedBlockers": []              // nonempty -> verdict blocked
   }]}
 
-Retire verdicts block while execution evidence is not fully read (incomplete,
-stale, truncated, or out of scope) or any running execution lost its plan —
-unattributed in-flight work is never counted as zero.
+Retire verdicts block while execution or checkpoint evidence is not fully read
+(incomplete, stale, truncated, or out of scope), any running execution lost its
+plan, any retained plan's graph identity is missing or malformed, or checkpoint
+threads are orphaned/unclassified — unattributed in-flight work and resume
+state are never counted as zero.
 
 Output: a single deterministic JSON manifest on stdout. Failures print one
 sanitized LANGGRAPH_RETIREMENT_INVENTORY_FAILED:<CODE> line on stderr.

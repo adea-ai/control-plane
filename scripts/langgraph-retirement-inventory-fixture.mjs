@@ -86,6 +86,11 @@ function alphaNodes() {
  *   names an execution that has no record in the executions namespace.
  * - injectUnclassifiedCheckpoint: writes a well-formed checkpoint row whose
  *   thread name cannot be parsed into a workspace/execution pair.
+ * - mutateRunningPlanGraphIdentity: rewrites the running execution's retained
+ *   plan record in place so its graph identity is unusable —
+ *   'missing-graph-id' (reference without graphDefinitionId),
+ *   'missing-graph-version' (non-string graphVersion), or
+ *   'missing-graph-reference' (no graph selection at all).
  */
 export async function createInventoryFixtureStore({
   now = () => new Date(FIXTURE_AT),
@@ -94,6 +99,7 @@ export async function createInventoryFixtureStore({
   injectMalformedCheckpoint = false,
   injectOrphanCheckpoint = false,
   injectUnclassifiedCheckpoint = false,
+  mutateRunningPlanGraphIdentity = undefined,
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'langgraph-retirement-inventory-'))
   const path = join(directory, 'state.sqlite')
@@ -191,6 +197,9 @@ export async function createInventoryFixtureStore({
       executionId: ids.executionCancelled,
       planInputs,
     })
+    if (mutateRunningPlanGraphIdentity !== undefined) {
+      await mutatePlanGraphIdentity(provider, lifecycle, mutateRunningPlanGraphIdentity)
+    }
 
     // LangGraph checkpoint rows in the checkpointer's exact storage shape.
     const runningThread = `${ids.workspaceOne}:${ids.executionRunning}:graph:${ids.executionRunning}`
@@ -336,6 +345,33 @@ async function seedCancelledExecution({ plans, lifecycle, graph, executionId, pl
     acceptedAt: FIXTURE_AT,
   })
   await transitionExecutionTo(lifecycle, executionId, 'cancelled')
+}
+
+/**
+ * Rewrites the running execution's retained plan record in place so its graph
+ * identity is missing or malformed. This simulates a corrupted plan row that
+ * can no longer be attributed to a workflow: the inventory must never benignly
+ * bucket such a plan as an unknown graph or a non-graph workflow.
+ */
+async function mutatePlanGraphIdentity(provider, lifecycle, mutation) {
+  const execution = await lifecycle.getExecution(ids.executionRunning)
+  const planId = execution.executionPlan.executionPlanId
+  const id = `r-${createHash('sha256').update(planId).digest('hex')}`
+  await provider.transaction(async (transaction) => {
+    const record = await transaction.get('execution-plans', id)
+    if (record === undefined) throw new Error('fixture plan record missing')
+    const plan = record.value
+    if (mutation === 'missing-graph-id') delete plan.graph.reference.graphDefinitionId
+    else if (mutation === 'missing-graph-version') plan.graph.reference.graphVersion = 1
+    else if (mutation === 'missing-graph-reference') delete plan.graph
+    else throw new Error(`unknown plan graph identity mutation: ${mutation}`)
+    await transaction.put({
+      namespace: 'execution-plans',
+      id,
+      expectedRevision: record.revision,
+      value: plan,
+    })
+  })
 }
 
 function compilePlanWithGraph(graph, planInputs) {

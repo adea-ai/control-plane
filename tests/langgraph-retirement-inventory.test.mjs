@@ -815,6 +815,136 @@ describe('langgraph retirement inventory', () => {
       })
     })
 
+    test('orphan checkpoint evidence blocks retirement until checkpoint attribution resolves', async () => {
+      await withFixtureStore({ injectOrphanCheckpoint: true }, async ({ store }) => {
+        const manifest = buildManifest(store)
+        // The orphan thread names an execution that has no record in the
+        // executions namespace: checkpoint attribution is unresolved and the
+        // section is not fully read.
+        expect(manifest.sections.checkpoints.counts.threadsOnUnknownExecutions).toBe(1)
+        expect(manifest.sections.checkpoints.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+        // The beta workflow has no in-flight work and a fully-read executions
+        // section, so checkpoint evidence quality is the only remaining gate:
+        // it must block rather than let the workflow retire while orphaned
+        // resume state that could belong to it is unattributed.
+        const betaRetire = {
+          ...fullProposal('retire', {
+            graphDefinitionId: 'graph:inventory-beta',
+            requiredBehavior: undefined,
+            replacementEvidence: undefined,
+            inFlightAcknowledged: undefined,
+          }),
+        }
+        const report = validateDispositions({ dispositions: [betaRetire] }, manifest)
+        expect(report.verdicts[0].verdict).toBe('blocked')
+        expect(report.verdicts[0].reasons).toContain('CHECKPOINT_EVIDENCE_UNKNOWN')
+        expect(report.verdicts[0].reasons).toContain('CHECKPOINT_EVIDENCE_INCOMPLETE')
+        expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+        // The zero-claim stays blocked on the same orphan evidence.
+        expect(manifest.epistemics.retainedWorkClassification).toBe('present')
+        expect(manifest.epistemics.zeroLiveWorkClaim.claimAllowed).toBe(false)
+        expect(manifest.epistemics.zeroLiveWorkClaim.reasons).toContain(
+          'CHECKPOINT_THREADS_WITH_UNKNOWN_EXECUTION_STATE'
+        )
+      })
+    })
+
+    test('malformed checkpoint rows block retirement as incomplete checkpoint evidence', async () => {
+      await withFixtureStore({ injectMalformedCheckpoint: true }, async ({ store }) => {
+        const manifest = buildManifest(store)
+        expect(manifest.sections.checkpoints.malformedRecords).toBe(1)
+        const betaRetire = {
+          ...fullProposal('retire', {
+            graphDefinitionId: 'graph:inventory-beta',
+            requiredBehavior: undefined,
+            replacementEvidence: undefined,
+            inFlightAcknowledged: undefined,
+          }),
+        }
+        const report = validateDispositions({ dispositions: [betaRetire] }, manifest)
+        expect(report.verdicts[0].verdict).toBe('blocked')
+        expect(report.verdicts[0].reasons).toContain('CHECKPOINT_EVIDENCE_INCOMPLETE')
+        expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+      })
+    })
+
+    test('a running plan with a missing graph id blocks retirement of the real graph', async () => {
+      await withFixtureStore(
+        { mutateRunningPlanGraphIdentity: 'missing-graph-id' },
+        async ({ store }) => {
+          const manifest = buildManifest(store)
+          const executions = manifest.sections.executions
+          // The plan exists but pins no usable graph identity: the running
+          // execution is unattributable — never benignly bucketed as an unknown
+          // graph or a non-graph workflow — so attribution is typed incomplete.
+          expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
+          expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(executions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+          expect(executions.entries[0].graphWorkflow).toBe(false)
+          expect(executions.entries[0].graphReference).toBeUndefined()
+          // The real graph of the running workflow cannot pass the retire check
+          // while its attribution is unresolved (previously it was approved).
+          const report = validateDispositions({ dispositions: [fullProposal('retire')] }, manifest)
+          expect(report.verdicts[0].verdict).toBe('blocked')
+          expect(report.verdicts[0].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(report.verdicts[0].reasons).toContain('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+          expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+        }
+      )
+    })
+
+    test('a running plan with a malformed graph version blocks retirement of the real graph', async () => {
+      await withFixtureStore(
+        { mutateRunningPlanGraphIdentity: 'missing-graph-version' },
+        async ({ store }) => {
+          const manifest = buildManifest(store)
+          const executions = manifest.sections.executions
+          expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
+          expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(executions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+          expect(executions.entries[0].graphReference).toBeUndefined()
+          const report = validateDispositions({ dispositions: [fullProposal('retire')] }, manifest)
+          expect(report.verdicts[0].verdict).toBe('blocked')
+          expect(report.verdicts[0].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(report.verdicts[0].reasons).toContain('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+          expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+        }
+      )
+    })
+
+    test('a running plan with no graph selection is malformed evidence, not a non-graph workflow', async () => {
+      await withFixtureStore(
+        { mutateRunningPlanGraphIdentity: 'missing-graph-reference' },
+        async ({ store }) => {
+          const manifest = buildManifest(store)
+          const executions = manifest.sections.executions
+          // The benign non-graph bucket is gone: a plan without a graph
+          // selection is attribution-incomplete evidence, conservatively
+          // blocking retirement for every workflow in the store.
+          expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
+          expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          const report = validateDispositions(
+            {
+              dispositions: [
+                fullProposal('retire'),
+                {
+                  ...fullProposal('retire', {
+                    graphDefinitionId: 'graph:inventory-beta',
+                    requiredBehavior: undefined,
+                    replacementEvidence: undefined,
+                    inFlightAcknowledged: undefined,
+                  }),
+                },
+              ],
+            },
+            manifest
+          )
+          expect(report.verdicts.map((verdict) => verdict.verdict)).toEqual(['blocked', 'blocked'])
+          expect(report.verdicts[1].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+        }
+      )
+    })
+
     test('retirement without a read execution source is blocked, not approved', () => {
       const report = validateDispositions(
         { dispositions: [fullProposal('retire')] },
