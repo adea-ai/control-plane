@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.79.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.78.0...workspace-v1.79.0) (2026-10-08)
+
+
+### Features
+
+* **runtime:** add pinned Cloudflare Pi recovery boundary ([#964](https://github.com/adea-ai/control-plane/issues/964)) ([21908ca](https://github.com/adea-ai/control-plane/commit/21908cab327daef7ac63683c1aa208557a7b7351))
+
 ## [1.78.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.77.1...workspace-v1.78.0) (2026-10-08)
 
 
