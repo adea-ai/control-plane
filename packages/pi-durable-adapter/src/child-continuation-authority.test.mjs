@@ -297,7 +297,7 @@ test('read-only child journal metadata survives physical reopen and binds exact 
     journal.close()
     journal = new SqliteDurableJournal(path)
     const metadata = readPiChildContinuationJournal(journal, handle)
-    expect(metadata).toEqual({ ...f.authority, handle })
+    expect(metadata).toEqual({ ...f.authority, handle, state: before.state })
     expect(journal.get(handle.handleId)).toEqual(before)
     expect(await f.wrapper.assertResume(metadata, metadata.handle)).toEqual(f.grant)
     for (const changed of [

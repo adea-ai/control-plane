@@ -58,6 +58,8 @@ export interface PiChildContinuationTransactionContext {
   readonly mode: 'retain' | 'resume'
 }
 export interface PiChildContinuationJournalMetadata {
+  /** Fresh server journal state; mandatory for minting, not a new replay grant. */
+  readonly state: string
   readonly handle: RuntimeExecutionHandle
   readonly request: RuntimeStartRequest
   readonly admission: PiDurableAdmission
@@ -71,6 +73,11 @@ export interface SqlitePiChildContinuationRepositoryOptions {
   readonly readChildMetadata?: (
     input: PiChildContinuationTransactionContext
   ) => Promise<PiChildContinuationJournalMetadata | undefined>
+  /** Synchronous read-only native journal check after all awaited guards.
+   * Required for new retention; must not yield, mutate authority, or claim an owner. */
+  readonly readChildMetadataNow?: (
+    input: PiChildContinuationTransactionContext
+  ) => PiChildContinuationJournalMetadata | undefined
   /** Mandatory current actor, source, approval-grant, policy, provider and spending authority.
    * Canonical reads must use the supplied transaction; never call nested repositories. */
   /** Server-owned live parent/child scope grants; required for explicit scope plans.
@@ -285,7 +292,11 @@ export class SqlitePiChildContinuationRepository implements PiChildContinuationG
         denied()
     }
     const metadata = await readChildMetadata(context)
-    if (!metadata) denied()
+    if (
+      !metadata ||
+      (mode === 'retain' && !['starting', 'running', 'awaiting_input'].includes(metadata.state))
+    )
+      denied()
     const handle = RuntimeExecutionHandleSchema.parse(metadata.handle)
     const request = RuntimeStartRequestSchema.parse(metadata.request)
     const runtimeAdmission = PiDurableAdmissionSchema.parse(metadata.admission)
@@ -308,7 +319,24 @@ export class SqlitePiChildContinuationRepository implements PiChildContinuationG
       },
       { mode, now }
     )
+    if (mode === 'retain') {
+      const refreshedMetadata = await readChildMetadata(context)
+      if (!refreshedMetadata || !same(refreshedMetadata, metadata)) denied()
+    }
     await assertCurrent(context)
+    if (mode === 'retain') {
+      // No awaited native read after the final current-authority check.
+      // The real journal reader is synchronous and cannot introduce a new await gap.
+      const readNow = this.options.readChildMetadataNow
+      if (!readNow) denied()
+      const finalMetadata = readNow(context)
+      if (
+        !finalMetadata ||
+        !['starting', 'running', 'awaiting_input'].includes(finalMetadata.state) ||
+        !same(finalMetadata, metadata)
+      )
+        denied()
+    }
     // Awaited metadata/current ports cannot authorize an expired grant.
     const finalNow = this.options.now()
     if (

@@ -322,6 +322,8 @@ export async function continuationPorts(directory, journal, canonicalProvider) {
     }),
     readChildMetadata: async ({ grant }) =>
       readPiChildContinuationJournal(journal(), grant.child.handle),
+    readChildMetadataNow: ({ grant }) =>
+      readPiChildContinuationJournal(journal(), grant.child.handle),
     assertCurrent: async ({ grant }) => {
       const metadata = readPiChildContinuationJournal(journal(), grant.child.handle)
       await assertCurrentPiChildContinuation(grant, metadata, current, () =>
