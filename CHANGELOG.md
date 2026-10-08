@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.83.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.82.0...workspace-v1.83.0) (2026-10-08)
+
+
+### Features
+
+* compose partial Cloudflare runtime adapter ([#977](https://github.com/adea-ai/control-plane/issues/977)) ([cd26e7f](https://github.com/adea-ai/control-plane/commit/cd26e7f55065e39998b633c78ec518747d777d1c))
+
 ## [1.82.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.81.0...workspace-v1.82.0) (2026-10-08)
 
 
