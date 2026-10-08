@@ -91,8 +91,16 @@ function alphaNodes() {
  *   graphDefinitionId), 'blank-graph-id' (empty-string graphDefinitionId),
  *   'missing-graph-version' (non-string graphVersion), 'invalid-graph-version'
  *   (nonempty but canonically invalid graphVersion), or
- *   'missing-graph-reference' (no graph selection at all: a legal non-graph
- *   workflow, not malformed identity).
+ *   'missing-graph-reference' (deletes the graph selection the plan was
+ *   compiled with, leaving the retained digest stale: corrupted evidence,
+ *   never a legal non-graph workflow).
+ * - compileRunningPlanGraphless: compiles the running execution's plan with no
+ *   graph selection at all, the way a genuine non-graph workflow is built;
+ *   the plan's digest and the execution's pin stay self-consistent.
+ * - corruptRunningPlanContent: edits the running plan's retained content
+ *   (schema-valid, but no longer the content the retained digest covers).
+ * - mutateRunningExecutionPin: rewrites the running execution's plan pin to a
+ *   well-formed digest that belongs to no retained plan.
  */
 export async function createInventoryFixtureStore({
   now = () => new Date(FIXTURE_AT),
@@ -102,6 +110,9 @@ export async function createInventoryFixtureStore({
   injectOrphanCheckpoint = false,
   injectUnclassifiedCheckpoint = false,
   mutateRunningPlanGraphIdentity = undefined,
+  compileRunningPlanGraphless = false,
+  corruptRunningPlanContent = false,
+  mutateRunningExecutionPin = false,
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'langgraph-retirement-inventory-'))
   const path = join(directory, 'state.sqlite')
@@ -191,6 +202,7 @@ export async function createInventoryFixtureStore({
       graph: alpha,
       executionId: ids.executionRunning,
       planInputs,
+      graphless: compileRunningPlanGraphless,
     })
     await seedCancelledExecution({
       plans,
@@ -201,6 +213,14 @@ export async function createInventoryFixtureStore({
     })
     if (mutateRunningPlanGraphIdentity !== undefined) {
       await mutatePlanGraphIdentity(provider, lifecycle, mutateRunningPlanGraphIdentity)
+    }
+    if (corruptRunningPlanContent) {
+      await rewriteRunningPlanRecord(provider, lifecycle, (plan) => {
+        plan.compiledAt = '2026-09-15T00:00:00.000Z'
+      })
+    }
+    if (mutateRunningExecutionPin) {
+      await rewriteRunningExecutionPin(provider, lifecycle)
     }
 
     // LangGraph checkpoint rows in the checkpointer's exact storage shape.
@@ -300,8 +320,17 @@ export async function createInventoryFixtureStore({
   }
 }
 
-async function seedRunningExecution({ plans, lifecycle, graph, executionId, planInputs }) {
-  const compiled = compilePlanWithGraph(graph, planInputs)
+async function seedRunningExecution({
+  plans,
+  lifecycle,
+  graph,
+  executionId,
+  planInputs,
+  graphless,
+}) {
+  const compiled = graphless
+    ? compileGraphlessPlan(planInputs)
+    : compilePlanWithGraph(graph, planInputs)
   const planReference = await plans.put(compiled)
   await lifecycle.createExecution({
     executionId,
@@ -355,11 +384,48 @@ async function seedCancelledExecution({ plans, lifecycle, graph, executionId, pl
  * 'missing-graph-version', 'invalid-graph-version') simulate corrupted plan
  * rows that can no longer be attributed to a workflow: the inventory must
  * never benignly bucket such a plan as an unknown graph. The
- * 'missing-graph-reference' mutation instead removes the graph selection the
- * way a legal non-graph workflow plan looks: no selection at all, which is
- * never malformed identity evidence.
+ * 'missing-graph-reference' mutation deletes the graph selection a compiled
+ * plan carries without updating the plan's digest or the execution's pin:
+ * the retained digest no longer covers the retained content, so the record
+ * is corrupted evidence — not a legal non-graph workflow.
  */
 async function mutatePlanGraphIdentity(provider, lifecycle, mutation) {
+  await rewriteRunningPlanRecord(provider, lifecycle, (plan) => {
+    if (mutation === 'missing-graph-id') delete plan.graph.reference.graphDefinitionId
+    else if (mutation === 'blank-graph-id') plan.graph.reference.graphDefinitionId = ''
+    else if (mutation === 'missing-graph-version') plan.graph.reference.graphVersion = 1
+    else if (mutation === 'invalid-graph-version') plan.graph.reference.graphVersion = '?'
+    else if (mutation === 'missing-graph-reference') delete plan.graph
+    else throw new Error(`unknown plan graph identity mutation: ${mutation}`)
+  })
+}
+
+/**
+ * Rewrites the running execution's retained record so its plan pin names a
+ * well-formed digest that belongs to no retained plan: the pin no longer
+ * matches the plan record it references.
+ */
+async function rewriteRunningExecutionPin(provider, lifecycle) {
+  const execution = await lifecycle.getExecution(ids.executionRunning)
+  const id = `r-${createHash('sha256').update(execution.executionId).digest('hex')}`
+  await provider.transaction(async (transaction) => {
+    const record = await transaction.get('executions', id)
+    if (record === undefined) throw new Error('fixture execution record missing')
+    const stored = record.value
+    stored.executionPlan.contentDigest = `sha256:${createHash('sha256')
+      .update('fixture-foreign-plan-digest')
+      .digest('hex')}`
+    await transaction.put({
+      namespace: 'executions',
+      id,
+      expectedRevision: record.revision,
+      value: stored,
+    })
+  })
+}
+
+/** Applies a rewrite to the running execution's retained plan record. */
+async function rewriteRunningPlanRecord(provider, lifecycle, rewrite) {
   const execution = await lifecycle.getExecution(ids.executionRunning)
   const planId = execution.executionPlan.executionPlanId
   const id = `r-${createHash('sha256').update(planId).digest('hex')}`
@@ -367,12 +433,7 @@ async function mutatePlanGraphIdentity(provider, lifecycle, mutation) {
     const record = await transaction.get('execution-plans', id)
     if (record === undefined) throw new Error('fixture plan record missing')
     const plan = record.value
-    if (mutation === 'missing-graph-id') delete plan.graph.reference.graphDefinitionId
-    else if (mutation === 'blank-graph-id') plan.graph.reference.graphDefinitionId = ''
-    else if (mutation === 'missing-graph-version') plan.graph.reference.graphVersion = 1
-    else if (mutation === 'invalid-graph-version') plan.graph.reference.graphVersion = '?'
-    else if (mutation === 'missing-graph-reference') delete plan.graph
-    else throw new Error(`unknown plan graph identity mutation: ${mutation}`)
+    rewrite(plan)
     await transaction.put({
       namespace: 'execution-plans',
       id,
@@ -387,6 +448,15 @@ function compilePlanWithGraph(graph, planInputs) {
     ...planInputs,
     graph: { reference: graph.reference, input: { message: 'inventory' } },
   })
+}
+
+/**
+ * A genuine non-graph workflow plan: the compiler itself writes it with no
+ * graph selection at all, so the canonical digest covers exactly the retained
+ * content and the execution's pin derives from this compilation.
+ */
+function compileGraphlessPlan(planInputs) {
+  return new ExecutionPlanCompiler('1.0.0').compile({ ...planInputs })
 }
 
 async function putCheckpointRow(

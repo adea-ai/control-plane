@@ -912,30 +912,34 @@ describe('langgraph retirement inventory', () => {
       )
     })
 
-    test('an integrity-valid plan with no graph selection is a legal non-graph workflow', async () => {
+    test('a graph selection deleted from a retained plan is malformed evidence, not a legal non-graph workflow', async () => {
       await withFixtureStore(
         { mutateRunningPlanGraphIdentity: 'missing-graph-reference' },
         async ({ store }) => {
           const manifest = buildManifest(store)
           const executions = manifest.sections.executions
-          // Reviewer-directed semantic change: a plan whose integrity is valid
-          // but that carries no graph selection is a legal non-graph workflow.
-          // It is counted separately (inFlightNonGraph) and neither flags
-          // malformed graph identity nor blocks any graph's retirement.
-          expect(executions.counts.inFlightNonGraph).toBe(1)
-          expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(0)
-          expect(executions.reasons).not.toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
-          expect(executions.status).toBe(OBSERVATION_STATUS.OBSERVED)
+          // Reviewer-directed semantic change (previously classified as a
+          // legal non-graph workflow): deleting the graph selection from a
+          // plan that was compiled with one leaves the retained digest
+          // covering content that no longer exists. The plan fails canonical
+          // plan integrity, so it is corrupted evidence — counted in the
+          // malformed bucket, never as a legal non-graph workflow.
+          expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
+          expect(executions.counts.inFlightNonGraph).toBe(0)
+          expect(executions.counts.inFlightAttributed).toBe(0)
+          expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(executions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+          expect(executions.entries[0].graphWorkflow).toBe(false)
+          expect(executions.entries[0].graphReference).toBeUndefined()
+          expect(executions.entries[0].executionPlan).toBeDefined()
           // The running execution stays pinned to its retained plan and keeps
           // the store's in-flight evidence honest: the zero-live-work claim is
           // still not available.
           expect(executions.counts.inFlight).toBe(1)
-          expect(executions.entries[0].graphWorkflow).toBe(false)
-          expect(executions.entries[0].executionPlan).toBeDefined()
           expect(manifest.epistemics.retainedWorkClassification).toBe('present')
           expect(manifest.epistemics.zeroLiveWorkClaim.claimAllowed).toBe(false)
-          // A graph with no other in-flight work can be retired: legal
-          // non-graph plans never block graph retire verdicts.
+          // Graph deletion is malformed evidence: no graph's retirement can
+          // pass while the attribution is unresolved.
           const report = validateDispositions(
             {
               dispositions: [
@@ -956,13 +960,100 @@ describe('langgraph retirement inventory', () => {
             },
             manifest
           )
-          expect(report.verdicts.map((verdict) => verdict.verdict)).toEqual([
-            'approved',
-            'approved',
-          ])
-          expect(report.summary).toEqual({ total: 2, approved: 2, rejected: 0, blocked: 0 })
+          expect(report.verdicts.map((verdict) => verdict.verdict)).toEqual(['blocked', 'blocked'])
+          expect(report.verdicts[0].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(report.verdicts[0].reasons).toContain('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+          expect(report.summary).toEqual({ total: 2, approved: 0, rejected: 0, blocked: 2 })
         }
       )
+    })
+
+    test('a genuinely compiled graphless plan with a matching pin is a legal non-graph workflow', async () => {
+      await withFixtureStore({ compileRunningPlanGraphless: true }, async ({ store }) => {
+        const manifest = buildManifest(store)
+        const executions = manifest.sections.executions
+        // The compiler wrote this plan with no graph selection from the start:
+        // its canonical digest covers exactly the retained content and the
+        // execution's full pin (id and digest) matches it. This is the legal
+        // non-graph path.
+        expect(executions.counts.inFlightNonGraph).toBe(1)
+        expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(0)
+        expect(executions.counts.inFlightAttributed).toBe(0)
+        expect(executions.reasons).not.toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+        expect(executions.status).toBe(OBSERVATION_STATUS.OBSERVED)
+        expect(executions.counts.inFlight).toBe(1)
+        expect(executions.entries[0].graphWorkflow).toBe(false)
+        expect(executions.entries[0].executionPlan).toBeDefined()
+        // In-flight work remains in evidence: the zero-live-work claim stays
+        // unavailable even though no graph is pinned.
+        expect(manifest.epistemics.retainedWorkClassification).toBe('present')
+        expect(manifest.epistemics.zeroLiveWorkClaim.claimAllowed).toBe(false)
+        // Legal non-graph plans never block graph retire verdicts.
+        const report = validateDispositions(
+          {
+            dispositions: [
+              fullProposal('retire', {
+                requiredBehavior: undefined,
+                replacementEvidence: undefined,
+                inFlightAcknowledged: undefined,
+              }),
+              {
+                ...fullProposal('retire', {
+                  graphDefinitionId: 'graph:inventory-beta',
+                  requiredBehavior: undefined,
+                  replacementEvidence: undefined,
+                  inFlightAcknowledged: undefined,
+                }),
+              },
+            ],
+          },
+          manifest
+        )
+        expect(report.verdicts.map((verdict) => verdict.verdict)).toEqual(['approved', 'approved'])
+        expect(report.summary).toEqual({ total: 2, approved: 2, rejected: 0, blocked: 0 })
+      })
+    })
+
+    test('a corrupted plan whose retained digest does not match canonical content blocks retirement', async () => {
+      await withFixtureStore({ corruptRunningPlanContent: true }, async ({ store }) => {
+        const manifest = buildManifest(store)
+        const executions = manifest.sections.executions
+        // The plan's content was edited after its digest was retained: the
+        // compiler's canonical integrity check fails no matter what the
+        // record's (intact-looking) graph selection claims, so the execution
+        // is unattributable and the evidence is malformed.
+        expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
+        expect(executions.counts.inFlightAttributed).toBe(0)
+        expect(executions.counts.inFlightNonGraph).toBe(0)
+        expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+        expect(executions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+        const report = validateDispositions({ dispositions: [fullProposal('retire')] }, manifest)
+        expect(report.verdicts[0].verdict).toBe('blocked')
+        expect(report.verdicts[0].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+        expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+      })
+    })
+
+    test('a mismatched execution plan pin blocks retirement as malformed evidence', async () => {
+      await withFixtureStore({ mutateRunningExecutionPin: true }, async ({ store }) => {
+        const manifest = buildManifest(store)
+        const executions = manifest.sections.executions
+        // The retained plan is canonically intact, but the execution's pin
+        // names a different plan digest: the execution cannot be attributed
+        // to the plan record that survives, and the mismatch is malformed
+        // evidence — never attributed and never non-graph.
+        expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
+        expect(executions.counts.inFlightAttributed).toBe(0)
+        expect(executions.counts.inFlightNonGraph).toBe(0)
+        expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+        expect(executions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+        expect(executions.entries[0].graphWorkflow).toBe(false)
+        expect(executions.entries[0].executionPlan).toBeDefined()
+        const report = validateDispositions({ dispositions: [fullProposal('retire')] }, manifest)
+        expect(report.verdicts[0].verdict).toBe('blocked')
+        expect(report.verdicts[0].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+        expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+      })
     })
 
     test('a nonempty but invalid graph version is malformed identity, not an attribution', async () => {
