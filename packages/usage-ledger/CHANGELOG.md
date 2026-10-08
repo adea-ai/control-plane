@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.5](https://github.com/adea-ai/control-plane/compare/usage-ledger-v1.3.4...usage-ledger-v1.3.5) (2026-10-08)
+
+
+### Bug Fixes
+
+* **runtime:** route native Pi through ledger-backed model broker ([#934](https://github.com/adea-ai/control-plane/issues/934)) ([2780e4c](https://github.com/adea-ai/control-plane/commit/2780e4c364dbb634b6196f499d58cbbfdc578fb0))
+
 ## [1.3.4](https://github.com/adea-ai/control-plane/compare/usage-ledger-v1.3.3...usage-ledger-v1.3.4) (2026-10-08)
 
 

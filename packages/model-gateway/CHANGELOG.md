@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.4](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.2.3...model-gateway-v1.2.4) (2026-10-08)
+
+
+### Bug Fixes
+
+* **runtime:** route native Pi through ledger-backed model broker ([#934](https://github.com/adea-ai/control-plane/issues/934)) ([2780e4c](https://github.com/adea-ai/control-plane/commit/2780e4c364dbb634b6196f499d58cbbfdc578fb0))
+
 ## [1.2.3](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.2.2...model-gateway-v1.2.3) (2026-10-01)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.73.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.73.3...workspace-v1.73.4) (2026-10-08)
+
+
+### Bug Fixes
+
+* **runtime:** route native Pi through ledger-backed model broker ([#934](https://github.com/adea-ai/control-plane/issues/934)) ([2780e4c](https://github.com/adea-ai/control-plane/commit/2780e4c364dbb634b6196f499d58cbbfdc578fb0))
+
 ## [1.73.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.73.2...workspace-v1.73.3) (2026-10-08)
 
 
