@@ -4,6 +4,22 @@ Record changes that alter Skill routing, behavior, or supporting validation.
 Each entry should name the affected Skills, old/new versions, the decision
 changed, validation performed, and any evidence or compatibility limits.
 
+## Unreleased — 2026-10-08
+
+- `control-plane-audit` 1.0.0 → 1.1.0: retrieve the current milestone and
+  follow-up membership alongside the original twelve M11 issues. Apply source
+  and milestone reconciliations while retaining legacy support and substantive
+  acceptance gates. Route equivalent independent reproduction to agent evidence,
+  isolate genuine authority/access prerequisites, and record explicit environment
+  substitutions without weakening functional assertions.
+- Updated registry guidance and generated inventory. Structural checks do not
+  establish cold-audit agreement, measured efficiency/calibration, live-profile
+  acceptance or complete M11 evidence.
+- Validation: `bun scripts/validate-skills.mjs --refresh` validated all nine
+  skills; `bun test ./tests/agent-skill-library.test.mjs ./tests/skill-library.test.mjs`
+  passed 15 tests and 335 assertions. These are structural/library regression
+  checks, not execution of the routed acceptance procedures.
+
 ## Unreleased — 2026-09-29
 
 - Extended the smoke-lane command-reference check from each `SKILL.md` to every

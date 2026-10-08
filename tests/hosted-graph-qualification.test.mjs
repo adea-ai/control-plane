@@ -102,6 +102,17 @@ test.skipIf(!timeoutExecutable)(
   }
 )
 
+test('Hosted graph qualifier keeps ownership readable during a slow state write', async () => {
+  await fixture(async (context) => {
+    const result = await context.run('signal-active', { FAKE_SLOW_LEDGER: 'true' })
+    if (result.exitCode !== 143) console.error(result.stdout, result.stderr)
+    expect(result.exitCode).toBe(143)
+    expect(await readdir(context.runner)).toEqual(['caller-data'])
+    expect((await context.lifecycle()).some((entry) => entry.state === 'terminated')).toBe(true)
+    expect(await readFile(context.caller, 'utf8')).toBe('caller-owned')
+  })
+})
+
 for (const failure of ['remove', 'wrong-owner', 'lookup', 'lingering']) {
   test(`Hosted graph qualifier preserves reconciliation data after ${failure}`, async () => {
     await fixture(async (context) => {
@@ -159,6 +170,18 @@ async function fixture(operation) {
     for (const command of ['docker', 'bun', 'node', 'timeout', 'curl', 'sleep']) {
       await writeFile(join(bin, command), `#!${process.execPath}\n${fakeCommands}`, { mode: 0o700 })
     }
+    const ledgerDelay = join(directory, 'ledger-delay.sh')
+    await writeFile(
+      ledgerDelay,
+      `printf() {
+  if [[ "\${FAKE_SLOW_LEDGER:-}" == true && "$1" == *'"test":'* && "\${@: -2:1}" == running ]]; then
+    : > "$FAKE_STATE.ledger-writing"
+    while [[ ! -f "$FAKE_STATE.ownership-read" ]]; do /bin/sleep 0.01; done
+    /bin/sleep 0.05
+  fi
+  builtin printf "$@"
+}\n`
+    )
     await operation({
       runner,
       caller,
@@ -208,6 +231,7 @@ async function fixture(operation) {
             FAKE_CALLS: calls,
             FAKE_STATE: state,
             FAKE_PROCESSES: join(directory, 'children.jsonl'),
+            BASH_ENV: ledgerDelay,
             ...overrides,
           },
           stdout: 'pipe',
@@ -240,7 +264,7 @@ async function fixture(operation) {
 }
 
 const fakeCommands = String.raw`
-import { readFileSync, writeFileSync, appendFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 const command = basename(process.argv[1])
@@ -299,6 +323,10 @@ if (command === 'docker') {
   } else throw new Error('unexpected Docker command')
 }
 if (command === 'bun') {
+  if (process.env.FAKE_SLOW_LEDGER === 'true') {
+    while (!existsSync(process.env.FAKE_STATE + '.ledger-writing')) await Bun.sleep(1)
+    writeFileSync(process.env.FAKE_STATE + '.ownership-read', '')
+  }
   const testLedger = JSON.parse(readFileSync(resolve(process.env.HOSTED_GRAPH_TEST_PUBLIC_KEY_FILE, '..', 'resources.json'), 'utf8'))
   if (!['planned', 'running'].includes(testLedger.test?.state)) throw new Error('test not recorded before startup')
   if (process.env.RUN_DATABASE_INTEGRATION !== 'true' || process.env.RUN_HOSTED_GRAPH_RESTATE_INTEGRATION !== 'true') throw new Error('qualification flags missing')

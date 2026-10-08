@@ -88,8 +88,11 @@ function runMigrationGate({
   renamePaths = [],
   baseFiles = {},
   changedFiles = {},
+  intermediateCommits = [],
+  pushBefore = 'parent',
   baselineMode = 'ancestor',
   response = undefined,
+  parentResponse = undefined,
   jobsResponses = undefined,
   failQuery = false,
   failJobs = false,
@@ -147,6 +150,13 @@ function runMigrationGate({
       runGateGit(repository, ['checkout', '--quiet', 'main'])
     }
 
+    for (const commit of intermediateCommits) {
+      for (const relativePath of commit.changedPaths ?? []) {
+        writeGateFile(repository, relativePath, commit.changedFiles?.[relativePath] ?? 'changed\n')
+      }
+      runGateGit(repository, ['add', '--all'])
+      runGateGit(repository, ['commit', '--quiet', '-m', commit.message ?? 'intermediate'])
+    }
     for (const relativePath of changedPaths) {
       writeGateFile(repository, relativePath, changedFiles[relativePath] ?? 'changed\n')
     }
@@ -156,6 +166,7 @@ function runMigrationGate({
     runGateGit(repository, ['add', '--all'])
     runGateGit(repository, ['commit', '--quiet', '--allow-empty', '-m', headMessage])
     const head = runGateGit(repository, ['rev-parse', 'HEAD'])
+    const parent = runGateGit(repository, ['rev-parse', 'HEAD^'])
 
     const fakeGh = join(fakeBin, 'gh')
     writeFileSync(
@@ -172,7 +183,7 @@ if (isJobsRequest) {
   process.stdout.write(typeof response === 'string' ? response : JSON.stringify(response))
 } else {
   if (process.env.GH_FAIL_QUERY === '1') process.exit(17)
-  process.stdout.write(process.env.GH_RESPONSE)
+  process.stdout.write(args.includes('head_sha=') ? process.env.GH_PARENT_RESPONSE : process.env.GH_RESPONSE)
 }
 `
     )
@@ -191,7 +202,11 @@ if (isJobsRequest) {
       typeof response === 'function'
         ? response({ baseline, head })
         : (response ?? { workflow_runs: [successfulRun(baseline)] })
-    const jobsResponseBody = jobsResponses ?? { 42: verifiedJobs() }
+    const parentResponseBody =
+      typeof parentResponse === 'function'
+        ? parentResponse({ baseline, head, parent })
+        : (parentResponse ?? { workflow_runs: [successfulRun(parent, { id: 43 })] })
+    const jobsResponseBody = jobsResponses ?? { 42: verifiedJobs(), 43: verifiedJobs() }
     const result = spawnSync(realNode, [migrationGateScript], {
       cwd: repository,
       encoding: 'utf8',
@@ -200,10 +215,17 @@ if (isJobsRequest) {
         PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ''}`,
         GITHUB_OUTPUT: outputPath,
         GITHUB_SHA: head,
+        GITHUB_EVENT_BEFORE:
+          pushBefore === 'parent'
+            ? runGateGit(repository, ['rev-parse', 'HEAD^'])
+            : pushBefore === 'baseline'
+              ? mainBase
+              : pushBefore,
         GH_CALL_LOG: ghCallLog,
         GH_FAIL_QUERY: failQuery ? '1' : '',
         GH_FAIL_JOBS: failJobs ? '1' : '',
         GH_RESPONSE: JSON.stringify(responseBody),
+        GH_PARENT_RESPONSE: JSON.stringify(parentResponseBody),
         GH_JOBS_RESPONSES: JSON.stringify(jobsResponseBody),
         GIT_REAL: realGit,
         GH_TOKEN: 'synthetic-token',
@@ -980,6 +1002,125 @@ describe('Neon trusted-main migration gating', () => {
     expect(result.ghCall).toContain('/actions/runs/42/jobs?filter=latest&per_page=100')
   }, 30_000)
 
+  test('a version-only push skips on its own parent diff even with a stale anchor', () => {
+    const result = runMigrationGate({
+      // The anchor race fixture: the verified baseline predates the feature
+      // commit, and the head commit only bumps release metadata on top of it.
+      baseFiles: {
+        'package.json': '{"name":"pkg","version":"1.0.0"}\n',
+        '.release-please-manifest.json': '{"pkg":"1.0.0"}\n',
+        'packages/database/CHANGELOG.md': 'changelog\n',
+      },
+      intermediateCommits: [
+        {
+          changedPaths: ['apps/api/migrations/0002-feature.sql'],
+          message: 'feat: add migration',
+        },
+      ],
+      changedPaths: ['.release-please-manifest.json', 'CHANGELOG.md', 'package.json'],
+      changedFiles: {
+        'package.json': '{"name":"pkg","version":"1.0.1"}\n',
+        '.release-please-manifest.json': '{"pkg":"1.0.1"}\n',
+      },
+      response: ({ baseline }) => ({ workflow_runs: [successfulRun(baseline)] }),
+    })
+    expect(result.status).toBe(0)
+    expect(result.output).toBe('verify=false\n')
+    expect(result.stdout).toContain(
+      'pushed commit changes release metadata without changing migration-relevant content'
+    )
+    // Query exact-parent verification without consulting the stale listing.
+    expect(result.ghCall).toContain('head_sha=')
+    expect(result.ghCall).toContain('/actions/runs/43/jobs?filter=latest&per_page=100')
+    expect(result.ghCall).not.toContain('status=success&per_page=25')
+  }, 30_000)
+
+  test('a multi-commit push ending in release metadata still verifies its migration', () => {
+    const result = runMigrationGate({
+      pushBefore: 'baseline',
+      baseFiles: { 'package.json': '{"name":"pkg","version":"1.0.0"}\n' },
+      intermediateCommits: [{ changedPaths: ['packages/database/migrations/0002-feature.sql'] }],
+      changedPaths: ['package.json'],
+      changedFiles: { 'package.json': '{"name":"pkg","version":"1.0.1"}\n' },
+    })
+    expect(result.status).toBe(0)
+    expect(result.output).toBe('verify=true\n')
+    expect(result.ghCall).toContain('neon_workflow.yml/runs')
+  }, 30_000)
+
+  test('release metadata with an unavailable push start falls back to verification', () => {
+    for (const pushBefore of ['', 'invalid', '0'.repeat(40)]) {
+      const result = runMigrationGate({
+        pushBefore,
+        baseFiles: { 'package.json': '{"name":"pkg","version":"1.0.0"}\n' },
+        changedPaths: ['package.json'],
+        changedFiles: { 'package.json': '{"name":"pkg","version":"1.0.1"}\n' },
+        failQuery: true,
+      })
+      expect(result.status).toBe(0)
+      expect(result.output).toBe('verify=true\n')
+      expect(result.ghCall).toContain('neon_workflow.yml/runs')
+    }
+  }, 30_000)
+
+  test('release metadata never hides failed or missing parent verification', () => {
+    const credentialSkippedJobs = verifiedJobs()
+    credentialSkippedJobs.jobs[0].steps.find(
+      (step) => step.name === migrationVerifyStep
+    ).conclusion = 'skipped'
+    for (const options of [
+      { parentResponse: { workflow_runs: [] } },
+      { parentResponse: ({ baseline }) => ({ workflow_runs: [successfulRun(baseline)] }) },
+      {
+        parentResponse: ({ parent }) => ({
+          workflow_runs: [successfulRun(parent, { conclusion: 'failure' })],
+        }),
+      },
+      { jobsResponses: { 42: verifiedJobs(), 43: credentialSkippedJobs } },
+    ]) {
+      const result = runMigrationGate({
+        baseFiles: { 'package.json': '{"name":"pkg","version":"1.0.0"}\n' },
+        intermediateCommits: [
+          { changedPaths: ['packages/database/migrations/0002-unverified.sql'] },
+        ],
+        changedPaths: ['package.json'],
+        changedFiles: { 'package.json': '{"name":"pkg","version":"1.0.1"}\n' },
+        ...options,
+      })
+      expect(result.status).toBe(0)
+      expect(result.output).toBe('verify=true\n')
+      expect(result.ghCall).toContain('neon_workflow.yml/runs')
+    }
+  }, 30_000)
+
+  test('release metadata with unrelated docs skips with an accurate notice', () => {
+    const result = runMigrationGate({
+      baseFiles: { 'package.json': '{"name":"pkg","version":"1.0.0"}\n' },
+      changedPaths: ['package.json', 'docs/notes.md'],
+      changedFiles: { 'package.json': '{"name":"pkg","version":"1.0.1"}\n' },
+    })
+    expect(result.status).toBe(0)
+    expect(result.output).toBe('verify=false\n')
+    expect(result.stdout).toContain('without changing migration-relevant content')
+    expect(result.ghCall).toContain('head_sha=')
+  }, 30_000)
+
+  test('a version-only push that also carries a migration still verifies', () => {
+    const result = runMigrationGate({
+      baseFiles: {
+        'package.json': '{"name":"pkg","version":"1.0.0"}\n',
+        '.release-please-manifest.json': '{"pkg":"1.0.0"}\n',
+      },
+      changedPaths: ['packages/database/migrations/0003-mixed.sql', 'package.json', 'CHANGELOG.md'],
+      changedFiles: {
+        'package.json': '{"name":"pkg","version":"1.0.1"}\n',
+      },
+      response: ({ baseline }) => ({ workflow_runs: [successfulRun(baseline)] }),
+    })
+    expect(result.status).toBe(0)
+    expect(result.output).toBe('verify=true\n')
+  }, 30_000)
+
   test('requires a recent completed successful main push as the baseline candidate', () => {
     for (const response of [
       { workflow_runs: [] },
@@ -1148,7 +1289,7 @@ describe('Neon trusted-main migration gating', () => {
     expect(result.output).toBe('verify=true\n')
   }, 30_000)
 
-  test('skips a Release Please commit only when a successful baseline proves metadata-only changes', () => {
+  test('skips a proven single-commit Release Please push with a verified parent', () => {
     const result = runMigrationGate({
       baseFiles: {
         'package.json': JSON.stringify({ name: 'fixture', version: '1.0.0', private: true }),
@@ -1169,6 +1310,7 @@ describe('Neon trusted-main migration gating', () => {
 
   test('the workflow checks out full history for baseline ancestry and diffing', () => {
     expect(workflow).toContain('fetch-depth: 0')
+    expect(workflow).toContain('GITHUB_EVENT_BEFORE: ${{ github.event.before }}')
     expect(migrationGateSource).toContain('merge-base')
     expect(migrationGateSource).toContain('.workflow_runs')
   })

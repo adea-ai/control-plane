@@ -174,11 +174,12 @@ function hasSuccessfulVerificationJobs(repository, run) {
   return verifiedShards.size === 3
 }
 
-function findVerifiedBaseline(repository, response) {
+function findVerifiedBaseline(repository, response, requiredSha) {
   if (!Array.isArray(response?.workflow_runs)) return undefined
 
   for (const run of response.workflow_runs.slice(0, MAX_BASELINE_CANDIDATES)) {
     if (
+      (requiredSha !== undefined && run?.head_sha !== requiredSha) ||
       run?.status !== 'completed' ||
       run?.conclusion !== 'success' ||
       run?.head_branch !== 'main' ||
@@ -214,6 +215,62 @@ function main() {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? '') || !isCommitSha(headSha)) {
     requireVerification(outputPath, 'The repository or pushed commit could not be validated.')
     return
+  }
+
+  // A proven single-commit metadata push can reuse its exact parent's
+  // successful shard verification even when the recent-baseline listing is
+  // stale. An unverified parent or missing event history retains the baseline
+  // comparison, so a release cannot hide an earlier migration failure.
+  const pushBefore = process.env.GITHUB_EVENT_BEFORE
+  let parentSha
+  try {
+    parentSha = execFileSync('git', ['rev-parse', `${headSha}^`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+  } catch {
+    parentSha = undefined
+  }
+  if (isCommitSha(pushBefore) && parentSha === pushBefore) {
+    try {
+      const pushedDiff = execFileSync(
+        'git',
+        ['diff', '--no-renames', '--name-only', '-z', parentSha, headSha],
+        { encoding: 'buffer', stdio: ['ignore', 'pipe', 'ignore'] }
+      )
+      const pushedPaths = pushedDiff
+        .toString('utf8')
+        .split('\0')
+        .filter((path) => path.length > 0)
+      const pushedReleaseMetadata = pushedPaths.filter((path) =>
+        isReleaseMetadata(path, parentSha, headSha)
+      )
+      const pushedRelevant = pushedPaths.find(
+        (path) => isMigrationRelevantPath(path) && !isReleaseMetadata(path, parentSha, headSha)
+      )
+      if (pushedReleaseMetadata.length > 0 && !pushedRelevant) {
+        const parentRuns = JSON.parse(
+          execFileSync(
+            'gh',
+            [
+              'api',
+              `repos/${repository}/actions/workflows/neon_workflow.yml/runs?branch=main&event=push&status=success&head_sha=${parentSha}&per_page=${MAX_BASELINE_CANDIDATES}`,
+            ],
+            { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+          )
+        )
+        if (findVerifiedBaseline(repository, parentRuns, parentSha) === parentSha) {
+          publishVerification(
+            outputPath,
+            'false',
+            'The pushed commit changes release metadata without changing migration-relevant content; its exact parent has successful Neon shard verification.'
+          )
+          return
+        }
+      }
+    } catch {
+      // Fall through to the baseline comparison if the parent diff or verification lookup fails.
+    }
   }
 
   let response
