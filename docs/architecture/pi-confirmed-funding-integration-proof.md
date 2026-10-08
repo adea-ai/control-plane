@@ -22,3 +22,7 @@ bun test src/models/pi-confirmed-funding-candidate.test.mjs
 ```
 
 Record the candidate commit/tree, public tarball manifest hashes, test-source hashes and exact command with results. Keep earlier failures. A mocked device reader or transport/service credential revocation must not be labeled as actual device revocation. The candidate currently has no device-specific authority hook, so that integration claim remains unresolved. These proofs confer no live-provider, paid-call, credential setup or activation qualification.
+
+The supplementary `pi-inference-reopen-candidate.test.mjs` profile uses R1's native/governed-child/SQLite fixture at a 1100-token attempt ceiling, 1024-token input context and 32-token output limit. A scripted generation-two HTTP503 must preserve generation one's committed 11-token usage and generation two's unknown hold. Reconciliation and a physical ledger close/reopen must not authorize another send, duplicate settlement or silently replace a conflicting receipt. Spending authority in this native sequencing fixture is mocked; it does not extend the actual payer proof.
+
+Configure `PI_NATIVE_REPAIR_SOURCE` with the candidate's `packages/pi-durable-adapter/src` directory and `PI_NATIVE_REPAIR_HEAD` with its exact commit. Dirty-source probing additionally requires `PI_NATIVE_REPAIR_ALLOW_DIRTY=true` and must be recorded as WIP evidence, not immutable candidate qualification. Rerun without that override against the owner's committed repair checkpoint before claiming the new native repair qualified.
