@@ -24,8 +24,8 @@ import {
   runInventoryCli,
   stableJsonStringify,
   validateDispositions,
-} from './langgraph-retirement-inventory.mjs'
-import { createInventoryFixtureStore } from './langgraph-retirement-inventory-fixture.mjs'
+} from '../scripts/langgraph-retirement-inventory.mjs'
+import { createInventoryFixtureStore } from '../scripts/langgraph-retirement-inventory-fixture.mjs'
 
 const OBSERVED_AT = '2026-10-08T00:00:00.000Z'
 
