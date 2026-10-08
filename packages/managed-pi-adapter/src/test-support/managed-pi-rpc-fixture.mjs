@@ -1,12 +1,21 @@
 import { chmod, writeFile } from 'node:fs/promises'
 
-export async function writeManagedPiRpcFixture(executablePath, { runtimeVersion = '0.84.2' } = {}) {
-  await writeFile(executablePath, managedPiRpcFixtureSource(runtimeVersion), { mode: 0o700 })
+export async function writeManagedPiRpcFixture(
+  executablePath,
+  { runtimeVersion = '0.84.2', mockMode, mockRecordPath } = {}
+) {
+  await writeFile(
+    executablePath,
+    managedPiRpcFixtureSource(runtimeVersion, mockMode, mockRecordPath),
+    { mode: 0o700 }
+  )
   await chmod(executablePath, 0o700)
 }
 
-const managedPiRpcFixtureSource = (runtimeVersion) => `#!/usr/bin/env node
+const managedPiRpcFixtureSource = (runtimeVersion, mockMode, mockRecordPath) => `#!/usr/bin/env node
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
+${mockMode === undefined ? '' : `process.env.MOCK_MODE = ${JSON.stringify(mockMode)}`}
+${mockRecordPath === undefined ? '' : `process.env.MOCK_RECORD_PATH = ${JSON.stringify(mockRecordPath)}`}
 if (process.env.MOCK_PROCESS_RECEIPT_PATH) {
   appendFileSync(process.env.MOCK_PROCESS_RECEIPT_PATH, JSON.stringify({
     pid: process.pid, cwd: process.cwd(), args: process.argv.slice(2),

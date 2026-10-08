@@ -163,6 +163,28 @@ async function reservedAttempt(store) {
 }
 
 describe('durable model request holds', () => {
+  test('returns validated immutable attempt allocation for trusted spending authorization', async () => {
+    const ledger = await reservedAttempt(new TransactionalMemoryStore())
+    const allocation = await ledger.attemptAllocation(
+      ids.workspaceId,
+      ids.executionId,
+      ids.attemptId
+    )
+    expect(allocation).toEqual({ currency: 'USD', maximumMicrounits: 1000, maximumTokens: 100 })
+    expect(Object.isFrozen(allocation)).toBe(true)
+    await expect(
+      ledger.attemptAllocation(ids.workspaceId, ids.executionId, 'att_01JABCDEF0123456789ABCDEFH')
+    ).rejects.toMatchObject({ code: 'RESERVATION_NOT_FOUND' })
+    await ledger.settle({
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      reservationKey: attemptReservationKey,
+      source: source('finish'),
+    })
+    await expect(
+      ledger.attemptAllocation(ids.workspaceId, ids.executionId, ids.attemptId)
+    ).rejects.toMatchObject({ code: 'RESERVATION_SETTLED' })
+  })
   const settleRequest = (overrides = {}) => ({
     workspaceId: ids.workspaceId,
     executionId: ids.executionId,

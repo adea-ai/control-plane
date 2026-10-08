@@ -47,17 +47,49 @@ jobs:
         shell: bash
         run: bash ../../scripts/run-hosted-compose-acceptance.sh
 
+  native-pi:
+    name: Native Pi
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPOSE_PROJECT_NAME: native-pi-${{ github.run_id }}-${{ github.run_attempt }}
+    defaults:
+      run:
+        working-directory: infrastructure/compose
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build pinned native runtime
+        run: timeout --signal=TERM --kill-after=10s 900s docker compose -f compose.native-pi-test.yaml --profile native-pi-test build
+      - name: Certify SQLite and Restate model dispatch
+        shell: bash
+        run: |
+          for backend in embedded-sqlite restate; do
+            M11_REAL_PI_DURABLE_EXECUTION="$backend" timeout --signal=TERM --kill-after=10s 180s \
+              docker compose -f compose.native-pi-test.yaml --profile native-pi-test run --rm --no-deps native-pi-certification
+          done
+      - name: Remove owned native runtime resources
+        if: always()
+        shell: bash
+        run: |
+          timeout --signal=TERM --kill-after=10s 90s docker compose -f compose.native-pi-test.yaml --profile native-pi-test down --volumes --remove-orphans --timeout 30
+          test -z "$(docker ps -aq --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME")"
+
   gate:
     name: M10 Operability / Gate
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    needs: [contracts, hosted-compose]
+    needs: [contracts, hosted-compose, native-pi]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
       CONTRACTS_RESULT: ${{ needs.contracts.result }}
       HOSTED_COMPOSE_RESULT: ${{ needs.hosted-compose.result }}
+      NATIVE_PI_RESULT: ${{ needs.native-pi.result }}
     steps:
       - name: Require every M10 lane
         run: |
           test "$CONTRACTS_RESULT" = success
           test "$HOSTED_COMPOSE_RESULT" = success
+          test "$NATIVE_PI_RESULT" = success

@@ -47,6 +47,13 @@ export interface ManagedPiProcessInvocation {
   readonly prompt: string
   readonly provider: string
   readonly model: string
+  /** Server-owned attempt connection. Its environment replaces ambient launcher
+   * configuration; close revokes the broker and removes private native config.
+   */
+  readonly modelConnection?: {
+    readonly environment: Readonly<Record<string, string>>
+    close(): Promise<void>
+  }
 }
 
 export interface ManagedPiProcessInputResolver {
@@ -65,6 +72,8 @@ export interface ManagedPiProcessInvocationContext {
   readonly attemptId: string
   readonly executionId?: string
   readonly attemptBudget?: RuntimeAttemptBudgetAuthority
+  /** Owned client shutdown, never supplied by native request metadata. */
+  readonly signal?: AbortSignal
 }
 
 export interface ManagedPiProcessClientOptions {
@@ -88,6 +97,7 @@ interface ProcessExecution {
   readonly startedAtMs: number
   readonly events: ManagedPiEvent[]
   readonly waiters: Set<() => void>
+  readonly closeModelConnection: () => Promise<void>
   state: 'running' | 'succeeded' | 'errored' | 'cancelled' | 'timed_out'
   deadlineTimer?: ReturnType<typeof setTimeout>
   output: string
@@ -111,6 +121,10 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   readonly #now: () => Date
   readonly #rpcTimeoutMs: number
   readonly #spawnPolicy: NodeProcessSpawnPolicy | undefined
+  readonly #shutdown = new AbortController()
+  readonly #preflights = new Set<Promise<string>>()
+  #closed = false
+  #closing: Promise<void> | undefined
 
   constructor(options: ManagedPiProcessClientOptions) {
     this.#executablePath = options.executablePath
@@ -168,6 +182,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   }
 
   async start(commandInput: Parameters<ManagedPiClient['start']>[0]) {
+    if (this.#closed) throw new Error('PI_CLIENT_CLOSED')
     const idempotencyKey = commandInput.idempotencyKey
     if (
       typeof idempotencyKey !== 'string' ||
@@ -186,9 +201,17 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       if (this.#inputResolver.resolveWorkspace === undefined) {
         throw new Error('PI_ATTEMPT_ALLOCATION_SCOPE_UNAVAILABLE')
       }
-      const workspaceId = await this.#inputResolver.resolveWorkspace(
+      const lookup = this.#inputResolver.resolveWorkspace(
         ManagedPiConfigurationSchema.parse(configuration)
       )
+      this.#preflights.add(lookup)
+      let workspaceId: string
+      try {
+        workspaceId = await lookup
+      } finally {
+        this.#preflights.delete(lookup)
+      }
+      if (this.#closed) throw new Error('PI_CLIENT_CLOSED')
       if (context.attemptBudget.workspaceId !== workspaceId) {
         throw new Error('PI_ATTEMPT_ALLOCATION_MISMATCH')
       }
@@ -249,37 +272,56 @@ export class ManagedPiProcessClient implements ManagedPiClient {
         throw error
       }
     }
-    const invocation = await this.#inputResolver.resolve(configuration, context)
-    const directory = join(this.#dataDirectory, handle.attemptId)
-    await mkdir(directory, { recursive: true, mode: 0o700 })
-    const systemPromptPath = join(directory, 'system-prompt.md')
-    await writeFile(systemPromptPath, invocation.systemPrompt, { encoding: 'utf8', mode: 0o600 })
-    await chmod(systemPromptPath, 0o600)
-
-    const rpc = new PiRpcProcess({
-      executablePath: this.#executablePath,
-      cwd: directory,
-      environment: this.#environment,
-      ...(this.#spawnPolicy === undefined ? {} : { spawnPolicy: this.#spawnPolicy }),
-      args: [
-        '--mode',
-        'rpc',
-        '--no-session',
-        '--no-tools',
-        '--no-extensions',
-        '--no-skills',
-        '--no-prompt-templates',
-        '--no-themes',
-        '--no-context-files',
-        '--no-approve',
-        '--system-prompt',
-        systemPromptPath,
-        '--provider',
-        invocation.provider,
-        '--model',
-        invocation.model,
-      ],
+    if (this.#closed) throw new Error('PI_CLIENT_CLOSED')
+    const invocation = await this.#inputResolver.resolve(configuration, {
+      ...context,
+      signal: this.#shutdown.signal,
     })
+    let modelConnectionClosing: Promise<void> | undefined
+    const closeModelConnection = () => {
+      modelConnectionClosing ??= invocation.modelConnection?.close() ?? Promise.resolve()
+      return modelConnectionClosing
+    }
+    const directory = join(this.#dataDirectory, handle.attemptId)
+    if (this.#closed) {
+      await closeModelConnection()
+      throw new Error('PI_CLIENT_CLOSED')
+    }
+    const systemPromptPath = join(directory, 'system-prompt.md')
+    let rpc: PiRpcProcess
+    try {
+      await mkdir(directory, { recursive: true, mode: 0o700 })
+      await writeFile(systemPromptPath, invocation.systemPrompt, { encoding: 'utf8', mode: 0o600 })
+      await chmod(systemPromptPath, 0o600)
+      if (this.#closed) throw new Error('PI_CLIENT_CLOSED')
+      rpc = new PiRpcProcess({
+        executablePath: this.#executablePath,
+        cwd: directory,
+        environment: invocation.modelConnection?.environment ?? this.#environment,
+        ...(this.#spawnPolicy === undefined ? {} : { spawnPolicy: this.#spawnPolicy }),
+        args: [
+          '--mode',
+          'rpc',
+          '--no-session',
+          '--no-tools',
+          '--no-extensions',
+          '--no-skills',
+          '--no-prompt-templates',
+          '--no-themes',
+          '--no-context-files',
+          '--no-approve',
+          '--system-prompt',
+          systemPromptPath,
+          '--provider',
+          invocation.provider,
+          '--model',
+          invocation.model,
+        ],
+      })
+    } catch (error) {
+      await closeModelConnection()
+      throw error
+    }
     const execution: ProcessExecution = {
       handle,
       rpc,
@@ -287,6 +329,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       startedAtMs: this.#now().getTime(),
       events: [],
       waiters: new Set(),
+      closeModelConnection,
       state: 'running',
       output: '',
     }
@@ -429,16 +472,49 @@ export class ManagedPiProcessClient implements ManagedPiClient {
     const handle = RuntimeExecutionHandleSchema.parse(handleInput)
     if (!this.#executions.has(handle.handleId)) {
       await readTerminalRecord(this.#dataDirectory, handle)
+      this.#admissions.delete(handle.handleId)
       return
     }
     const execution = this.#require(handleInput)
-    if (execution.terminalFinalization) await execution.terminalFinalization
-    await execution.rpc.stop()
-    // Stopping a still-running process can create its failure receipt.
-    if (execution.terminalFinalization) await execution.terminalFinalization
-    if (execution.persistence) await execution.persistence
-    await rm(execution.directory, { recursive: true, force: true })
-    this.#executions.delete(execution.handle.handleId)
+    try {
+      if (execution.terminalFinalization) await execution.terminalFinalization
+      await execution.rpc.stop()
+      // Stopping a still-running process can create its failure receipt.
+      if (execution.terminalFinalization) await execution.terminalFinalization
+      await execution.closeModelConnection()
+      if (execution.persistence) await execution.persistence
+      await rm(execution.directory, { recursive: true, force: true })
+      this.#executions.delete(execution.handle.handleId)
+      this.#admissions.delete(execution.handle.handleId)
+    } finally {
+      await execution.closeModelConnection()
+    }
+  }
+
+  async close(): Promise<void> {
+    this.#closed = true
+    this.#shutdown.abort()
+    this.#closing ??= this.#closeAll()
+    await this.#closing
+  }
+
+  async #closeAll(): Promise<void> {
+    const pending = Promise.allSettled([
+      ...this.#preflights,
+      ...[...this.#admissions.values()].map((entry) => entry.result),
+    ])
+    const stopped = await Promise.allSettled(
+      [...this.#executions.values()].map(async (execution) => {
+        try {
+          await this.cancel(execution.handle)
+        } finally {
+          await this.cleanup(execution.handle)
+        }
+      })
+    )
+    await pending
+    if (stopped.some((result) => result.status === 'rejected'))
+      throw new Error('PI_SHUTDOWN_INCOMPLETE')
   }
 
   #observe(execution: ProcessExecution, event: Record<string, unknown>): void {
@@ -584,7 +660,11 @@ export class ManagedPiProcessClient implements ManagedPiClient {
     }
     // Publish the durable terminal receipt only after the owned child is reaped.
     // Unconfirmed stopping retains admission and working state for reconciliation.
-    await execution.rpc.stop()
+    try {
+      await execution.rpc.stop()
+    } finally {
+      await execution.closeModelConnection()
+    }
     this.#persist(execution)
     if (execution.persistence) await execution.persistence
   }

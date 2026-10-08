@@ -86,6 +86,44 @@ describe('RepositoryManagedPiProcessInputResolver', () => {
     expect(invocation.prompt).toContain(plan.contentDigest)
     expect(invocation.prompt).not.toContain('OPENAI_API_KEY')
 
+    const connection = { environment: { HOME: '/private/attempt' }, close: async () => {} }
+    let binding
+    const native = new RepositoryManagedPiProcessInputResolver(
+      {
+        catalog: {
+          getAgentProfileVersion: async () => profile,
+          getSkillVersion: async () => skill,
+        },
+        contextPackages: { get: async () => contextPackage },
+      },
+      {
+        provider: 'openai-codex',
+        model: 'gpt-5.4',
+        modelAlias: 'reasoning.standard',
+        modelCapabilities: ['tool_calling', 'structured_output'],
+        providerClass: 'managed',
+        dataResidency: 'us',
+      },
+      async (nativeConfiguration, nativeContext, workspaceId) => {
+        binding = { configuration: nativeConfiguration, context: nativeContext, workspaceId }
+        return connection
+      }
+    )
+    const context = {
+      attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+      executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+    }
+    expect(await native.resolve(configuration, context)).toMatchObject({
+      provider: 'control-plane',
+      model: 'reasoning.standard',
+      modelConnection: connection,
+    })
+    expect(binding).toMatchObject({
+      configuration,
+      context,
+      workspaceId: contextPackage.projectState.workspaceId,
+    })
+
     const denied = globalThis.structuredClone(configuration)
     denied.modelPolicy[0].providerPolicy.deniedProviders = ['openai-codex']
     await expect(resolver.resolve(denied)).rejects.toThrow('MANAGED_PI_MODEL_ROUTE_INELIGIBLE')
