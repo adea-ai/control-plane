@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.75.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.75.0...workspace-v1.75.1) (2026-10-08)
+
+
+### Tests
+
+* **runtime:** cover workspace scope capability eligibility ([#955](https://github.com/adea-ai/control-plane/issues/955)) ([a79c1fd](https://github.com/adea-ai/control-plane/commit/a79c1fdf03ab56997dd9f1371b21d26d5be427ff))
+
 ## [1.75.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.74.0...workspace-v1.75.0) (2026-10-08)
 
 
