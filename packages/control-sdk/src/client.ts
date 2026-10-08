@@ -1,4 +1,6 @@
 import type {
+  ModelSelectionFundingRequest,
+  ModelSelectionFundingResponse,
   ModelConnectionCreateRequest,
   ModelConnectionListRequest,
   ModelConnectionListResponse,
@@ -184,6 +186,11 @@ export class ControlPlaneClient {
 
   resolveModelSelection(input: ModelSelectionResolveRequest): Promise<ModelSelectionResponse> {
     return this.#request(ControlApiOperations.resolveModelSelection, input)
+  }
+  getModelSelectionFunding(
+    input: ModelSelectionFundingRequest
+  ): Promise<ModelSelectionFundingResponse> {
+    return this.#request(ControlApiOperations.getModelSelectionFunding, input)
   }
 
   /** Sends the secret once; the response carries metadata only. */

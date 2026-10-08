@@ -64,6 +64,7 @@ const publicOperations = [
   'model-connections.revoke',
   'model-defaults.get',
   'model-defaults.set',
+  'model-selection.funding.get',
   'model-selection.resolve',
   'profile.resolve',
   'project-state.initialize',
