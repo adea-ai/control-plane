@@ -188,8 +188,9 @@ Cancellation keys retain their exact request; changed retry bodies conflict.
 
 This partial adapter advertises **no capabilities**, rejects unsupported required
 plan capabilities before admission, and reports degraded inspection. Input,
-approval, session and cleanup operations throw explicit non-retryable unsupported
-errors. There is no Worker transport, profile registration, production authority
+approval, session mutation/history and cleanup operations throw explicit
+non-retryable unsupported errors. Session load/list also default to unsupported;
+they require an explicitly injected canonical session authority port. There is no Worker transport, profile registration, production authority
 composition, live activation or native checkpoint resumption. Production current
 actor/audience/grant and physical-send spending/credential authority remain
 mandatory independent ports; a local scripted engine does not qualify them.
@@ -198,5 +199,31 @@ Acceptance map for #930: pinned native driver/versioned owner, exact accepted
 runtime/configuration pins, isolated context, hibernation/restart/upgrade and
 interrupted-no-resend evidence are merged in #964/#971. This facade closes the
 local public start/status/progress/cancel/reconcile composition seam. Full
-RuntimeAdapter interaction/session/cleanup, production provider authority and
+RuntimeAdapter interaction/session mutation/history/cleanup, production provider authority and
 safe native checkpoint continuation remain open; no full acceptance is claimed.
+
+### Canonical read-only session composition
+
+An optional server-only `sessionAuthority` enables binding an existing canonical
+session ID to an existing Pi conversation and exact accepted attempt. Binding is
+immutable and idempotent: changed session/native/attempt mappings conflict, and
+owner replacement fences stale writers. Public operations cannot register aliases.
+The authority port must verify the active canonical mapping, original actor,
+separate caller, current audience/grants/expiry and exact plan/budget pins. Both
+execution and session authority are rechecked after every native-storage await,
+including close; SQLite columns and serialized bindings must agree.
+
+`session({operation:'load', sessionId})` and `session({operation:'list'})` read
+only Pi 1.1.0 `Storage.conversation` records and return canonical metadata.
+Lists fail closed above 64 bound sessions; revoked authority is checked even for
+an empty list or unknown alias. They never construct Harness, enable scheduling,
+change checkpoints, or release unknown-send quarantine. This source slice adds
+no advertised capability, production transport or activation.
+
+Pinned vendor evidence: `harness/types.d.ts` exposes `Conversation.submit` and
+`Harness.resume` as scheduling operations; `types.d.ts` exposes the read-only
+`Storage.conversation` lookup. Pi 1.1.0 provides no public canonical approval or
+exact interaction-scoped resume operation. Input, approval, create, resume,
+close and history therefore remain explicitly unsupported. A production
+canonical session authority implementation and native continuation proof remain
+required before broader acceptance.
