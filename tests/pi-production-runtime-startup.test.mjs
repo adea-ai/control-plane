@@ -10,9 +10,9 @@ import {
   PiDurableRuntimeAdapter,
   createNodePiDurableRuntime,
 } from '@control-plane/pi-durable-adapter'
-import { fixture } from '../../../../packages/pi-durable-adapter/src/adapter.fixture.mjs'
-import { SqlitePiLeadPreparations } from '../pi-durable/lead-preparation.ts'
-import { createProductionRuntimeBinding } from './production-runtime-binding.ts'
+import { fixture } from '../packages/pi-durable-adapter/src/adapter.fixture.mjs'
+import { SqlitePiLeadPreparations } from '../apps/control-api/src/pi-durable/lead-preparation.ts'
+import { createProductionRuntimeBinding } from '../apps/control-api/src/models/production-runtime-binding.ts'
 
 function deferred() {
   let resolve, reject

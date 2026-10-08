@@ -33,6 +33,7 @@ const repositoryGroups = {
     'tests/pi-durable-execution-model-composition.test.mjs',
     'tests/pi-durable-governed-child-composition.test.mjs',
     'tests/pi-durable-workspace-scope.test.mjs',
+    'tests/pi-production-runtime-startup.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
   ],
   smoke: [
