@@ -18,6 +18,12 @@ import {
   type CredentialAdministrationService,
 } from './credentials/credential-administration.service.js'
 import { Module, type DynamicModule } from '@nestjs/common'
+import { PiDurableLeadController } from './pi-durable/pi-durable-lead.controller.js'
+import {
+  PI_DURABLE_LEAD_SERVICE,
+  UnavailablePiDurableLeadService,
+  type PiDurableLeadService,
+} from './pi-durable/pi-durable-lead.service.js'
 import {
   createOpenTelemetryMetricAdapter,
   createOpenTelemetryTraceAdapter,
@@ -117,6 +123,7 @@ import {
 } from './queries/context-package-resolution.service.js'
 
 export interface AppModuleOptions extends ApiRuntimeBindings {
+  readonly piDurableLeadService?: PiDurableLeadService
   readonly graphAdministrationService?: GraphAdministrationService
   readonly workspaceCatalogService?: WorkspaceCatalogService
   readonly credentialAdministrationService?: CredentialAdministrationService
@@ -155,6 +162,7 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
   return {
     module: AppModule,
     controllers: [
+      PiDurableLeadController,
       AuthenticationController,
       GraphAdministrationController,
       WorkspaceSkillCatalogController,
@@ -175,6 +183,10 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       SystemController,
     ],
     providers: [
+      {
+        provide: PI_DURABLE_LEAD_SERVICE,
+        useValue: options.piDurableLeadService ?? new UnavailablePiDurableLeadService(),
+      },
       {
         provide: GRAPH_ADMINISTRATION_SERVICE,
         useValue: options.graphAdministrationService ?? new UnavailableGraphAdministrationService(),

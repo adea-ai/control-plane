@@ -1,4 +1,5 @@
 import type { GraphAdministrationService } from './graphs/graph-administration.service.js'
+import type { PiDurableLeadService } from './pi-durable/pi-durable-lead.service.js'
 import type { WorkspaceCatalogService } from './catalog/workspace-catalog.service.js'
 import type { CredentialAdministrationService } from './credentials/credential-administration.service.js'
 import {
@@ -39,6 +40,7 @@ import type {
 export const serviceName = 'control-api'
 
 export interface ControlApiStartOptions {
+  readonly piDurableLeadService?: PiDurableLeadService
   readonly graphAdministrationService?: GraphAdministrationService
   readonly workspaceCatalogService?: WorkspaceCatalogService
   readonly credentialAdministrationService?: CredentialAdministrationService
@@ -142,6 +144,9 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
       const marketplaceInstallationService =
         options.marketplaceInstallationService ?? cloudComposition?.marketplaceInstallationService
       application = await createControlApiApplication({
+        ...(options.piDurableLeadService === undefined
+          ? {}
+          : { piDurableLeadService: options.piDurableLeadService }),
         ...(graphAdministrationService === undefined ? {} : { graphAdministrationService }),
         ...(workspaceCatalogService === undefined ? {} : { workspaceCatalogService }),
         ...(credentialAdministrationService === undefined
@@ -230,3 +235,6 @@ export {
 
 export * from './graphs/graph-administration.service.js'
 export * from './catalog/workspace-catalog.service.js'
+export * from './pi-durable/pi-durable-lead.service.js'
+export * from './pi-durable/node-admission.js'
+export * from './pi-durable/node-composition.js'

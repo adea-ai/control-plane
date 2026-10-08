@@ -1,4 +1,14 @@
 import {
+  PiDurableLeadDispatchRequestSchema,
+  PiDurableLeadDispatchResponseSchema,
+  PiDurableLeadStatusRequestSchema,
+  PiDurableLeadStatusResponseSchema,
+  PiDurableLeadProgressRequestSchema,
+  PiDurableLeadProgressResponseSchema,
+  PiDurableLeadCancelRequestSchema,
+  PiDurableLeadCancelResponseSchema,
+} from '@control-plane/runtime-sdk'
+import {
   CredentialCreateRequestSchema,
   CredentialGetRequestSchema,
   CredentialListRequestSchema,
@@ -337,6 +347,36 @@ export const ControlApiOperations = Object.freeze({
     path: '/v1/marketplace/installations/uninstall',
     requestSchema: MarketplaceInstallationUninstallRequestSchema,
     responseSchema: MarketplaceInstallationUninstallResponseSchema,
+  },
+  dispatchPiDurableLead: {
+    operation: 'pi-durable.lead.dispatch',
+    method: 'POST',
+    path: '/v3/pi-durable/lead-dispatches/dispatch',
+    requestSchema: PiDurableLeadDispatchRequestSchema,
+    responseSchema: PiDurableLeadDispatchResponseSchema,
+    responseStatus: 202,
+  },
+  getPiDurableLeadStatus: {
+    operation: 'pi-durable.lead.status',
+    method: 'POST',
+    path: '/v3/pi-durable/lead-dispatches/status',
+    requestSchema: PiDurableLeadStatusRequestSchema,
+    responseSchema: PiDurableLeadStatusResponseSchema,
+  },
+  getPiDurableLeadProgress: {
+    operation: 'pi-durable.lead.progress',
+    method: 'POST',
+    path: '/v3/pi-durable/lead-dispatches/progress',
+    requestSchema: PiDurableLeadProgressRequestSchema,
+    responseSchema: PiDurableLeadProgressResponseSchema,
+  },
+  cancelPiDurableLead: {
+    operation: 'pi-durable.lead.cancel',
+    method: 'POST',
+    path: '/v3/pi-durable/lead-dispatches/cancel',
+    requestSchema: PiDurableLeadCancelRequestSchema,
+    responseSchema: PiDurableLeadCancelResponseSchema,
+    responseStatus: 202,
   },
 } as const)
 

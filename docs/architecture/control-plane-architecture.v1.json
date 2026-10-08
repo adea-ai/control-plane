@@ -75,7 +75,7 @@
       "name": "@control-plane/contracts",
       "path": "packages/contracts",
       "version": "1.14.0",
-      "lockVersion": "1.13.0",
+      "lockVersion": "1.14.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -90,7 +90,7 @@
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
       "version": "1.19.0",
-      "lockVersion": "1.18.0",
+      "lockVersion": "1.19.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -107,6 +107,8 @@
         "@control-plane/execution-plan",
         "@control-plane/memory-writeback",
         "@control-plane/orchestration",
+        "@control-plane/pi-durable-adapter",
+        "@control-plane/runtime-sdk",
         "@control-plane/telemetry",
         "@control-plane/usage-ledger"
       ],
@@ -122,13 +124,16 @@
         "drizzle-orm",
         "fastify",
         "reflect-metadata",
-        "rxjs"
+        "rxjs",
+        "zod"
       ],
       "developmentWorkspaceDependencies": [
+        "@control-plane/sdk",
         "@control-plane/sqlite-persistence",
-        "@control-plane/testing"
+        "@control-plane/testing",
+        "@control-plane/workflow-worker"
       ],
-      "developmentExternalDependencies": [],
+      "developmentExternalDependencies": ["@earendil-works/pi-ai"],
       "layer": "composition-root"
     },
     {
@@ -154,7 +159,7 @@
       "name": "@control-plane/credential-vault",
       "path": "packages/credential-vault",
       "version": "1.3.0",
-      "lockVersion": "1.2.1",
+      "lockVersion": "1.3.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -169,7 +174,7 @@
       "name": "@control-plane/database",
       "path": "packages/database",
       "version": "1.41.2",
-      "lockVersion": "1.40.0",
+      "lockVersion": "1.41.2",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -215,7 +220,7 @@
       "name": "@control-plane/domain",
       "path": "packages/domain",
       "version": "1.27.0",
-      "lockVersion": "1.26.2",
+      "lockVersion": "1.27.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -277,7 +282,7 @@
       "name": "@control-plane/hosted-control-plane",
       "path": "apps/hosted-control-plane",
       "version": "1.18.0",
-      "lockVersion": "1.17.0",
+      "lockVersion": "1.18.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -315,7 +320,7 @@
       "name": "@control-plane/langgraph-adapter",
       "path": "packages/langgraph-adapter",
       "version": "1.8.1",
-      "lockVersion": "1.8.0",
+      "lockVersion": "1.8.1",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -345,8 +350,8 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.27.0",
-      "lockVersion": "1.25.1",
+      "version": "1.27.1",
+      "lockVersion": "1.27.1",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -393,8 +398,8 @@
     {
       "name": "@control-plane/managed-pi-adapter",
       "path": "packages/managed-pi-adapter",
-      "version": "1.8.0",
-      "lockVersion": "1.7.1",
+      "version": "1.8.1",
+      "lockVersion": "1.8.1",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -414,7 +419,7 @@
       "name": "@control-plane/memory-writeback",
       "path": "packages/memory-writeback",
       "version": "1.3.2",
-      "lockVersion": "1.3.1",
+      "lockVersion": "1.3.2",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -428,8 +433,8 @@
     {
       "name": "@control-plane/model-gateway",
       "path": "packages/model-gateway",
-      "version": "1.2.3",
-      "lockVersion": "1.2.3",
+      "version": "1.2.4",
+      "lockVersion": "1.2.4",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -449,7 +454,7 @@
       "name": "@control-plane/object-store",
       "path": "packages/object-store",
       "version": "1.6.1",
-      "lockVersion": "1.6.0",
+      "lockVersion": "1.6.1",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -485,6 +490,36 @@
       "layer": "core-port"
     },
     {
+      "name": "@control-plane/pi-durable-adapter",
+      "path": "packages/pi-durable-adapter",
+      "version": "0.1.0",
+      "lockVersion": "0.1.0",
+      "kind": "package",
+      "private": true,
+      "browser": false,
+      "exports": ["."],
+      "workspaceDependencies": [
+        "@control-plane/contracts",
+        "@control-plane/domain",
+        "@control-plane/execution-plan",
+        "@control-plane/model-gateway",
+        "@control-plane/orchestration",
+        "@control-plane/runtime-sdk",
+        "@control-plane/tool-execution",
+        "@control-plane/tool-sdk",
+        "@control-plane/usage-ledger"
+      ],
+      "externalDependencies": [
+        "@earendil-works/chord",
+        "@earendil-works/pi-ai",
+        "@earendil-works/pi-durable",
+        "zod"
+      ],
+      "developmentWorkspaceDependencies": ["@control-plane/sqlite-persistence"],
+      "developmentExternalDependencies": [],
+      "layer": "adapter-infrastructure"
+    },
+    {
       "name": "@control-plane/policy",
       "path": "packages/policy",
       "version": "1.4.1",
@@ -518,7 +553,7 @@
       "name": "@control-plane/profile-portability",
       "path": "packages/profile-portability",
       "version": "1.5.0",
-      "lockVersion": "1.4.2",
+      "lockVersion": "1.5.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -616,7 +651,7 @@
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
       "version": "1.12.0",
-      "lockVersion": "1.11.1",
+      "lockVersion": "1.12.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -672,12 +707,12 @@
       "name": "@control-plane/sdk",
       "path": "packages/control-sdk",
       "version": "1.11.0",
-      "lockVersion": "1.10.0",
+      "lockVersion": "1.11.0",
       "kind": "package",
       "private": false,
       "browser": false,
       "exports": [".", "./testing"],
-      "workspaceDependencies": ["@control-plane/contracts"],
+      "workspaceDependencies": ["@control-plane/contracts", "@control-plane/runtime-sdk"],
       "externalDependencies": [],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": ["zod"],
@@ -702,7 +737,7 @@
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
       "version": "1.33.2",
-      "lockVersion": "1.32.0",
+      "lockVersion": "1.33.2",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -762,7 +797,7 @@
       "name": "@control-plane/tool-execution",
       "path": "packages/tool-execution",
       "version": "1.4.0",
-      "lockVersion": "1.3.0",
+      "lockVersion": "1.4.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -783,7 +818,7 @@
       "name": "@control-plane/tool-gateway",
       "path": "apps/tool-gateway",
       "version": "1.5.0",
-      "lockVersion": "1.4.0",
+      "lockVersion": "1.5.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -812,8 +847,8 @@
     {
       "name": "@control-plane/usage-ledger",
       "path": "packages/usage-ledger",
-      "version": "1.3.4",
-      "lockVersion": "1.3.1",
+      "version": "1.3.5",
+      "lockVersion": "1.3.5",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -850,7 +885,7 @@
       "name": "@control-plane/workflow-worker",
       "path": "apps/workflow-worker",
       "version": "1.14.0",
-      "lockVersion": "1.13.2",
+      "lockVersion": "1.14.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -2230,6 +2265,194 @@
       "openApiResponseStatuses": ["200", "default"],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
+    },
+    {
+      "id": "OP-PI-DURABLE-LEAD-CANCEL",
+      "name": "cancelPiDurableLead",
+      "operation": "pi-durable.lead.cancel",
+      "method": "POST",
+      "path": "/v3/pi-durable/lead-dispatches/cancel",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing service bearer execution:cancel scope, immutable original principal, current product audience and canonical attempt",
+        "service": "PiDurableLeadController -> DurablePiDurableLeadService -> explicit Node lead composition",
+        "persistence": "Canonical command/execution/plan/budget repositories, lead-admission.sqlite and versioned runtime authority/native SQLite journals",
+        "execution": "Pinned Pi Durable 1.1.0 Node engine; separately recorded spending authority and one physical-send usage hold",
+        "delivery": "Bounded committed progress cursors and canonical opaque execution/attempt/session receipt, live audience reread",
+        "cleanup": "Logical terminal session close retains replay evidence; explicit composition shutdown owns native/journal connections"
+      },
+      "assessment": "Public strict SDK/OpenAPI/controller routes compose an opt-in Node remote-host runtime. Controlled provider HTTP and real Node/store crash fixtures verify persistence and authority. Live provider/account spending and deployed qualification, project-free canonical admission and Adea signer/client integration remain prerequisites. Native effecting/model-driven child tools remain disabled.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/pi-durable.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/pi-durable-lead.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/node-composition.test.mjs"
+        },
+        {
+          "kind": "documentation",
+          "path": "docs/pi-durable-runtime.md"
+        }
+      ],
+      "gap": {
+        "issue": 187,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Qualify the exact deployed Node account/provider profile with recorded paid-send/revocation/restart evidence, integrate compatible public artifacts and product project authority, then qualify the governed child tool and parent receipt path."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "pi-durable.lead.cancel",
+      "openApiResponseStatuses": ["202", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-PI-DURABLE-LEAD-DISPATCH",
+      "name": "dispatchPiDurableLead",
+      "operation": "pi-durable.lead.dispatch",
+      "method": "POST",
+      "path": "/v3/pi-durable/lead-dispatches/dispatch",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing service bearer execution:accept scope, immutable original principal, current product audience and canonical attempt",
+        "service": "PiDurableLeadController -> DurablePiDurableLeadService -> explicit Node lead composition",
+        "persistence": "Canonical command/execution/plan/budget repositories, lead-admission.sqlite and versioned runtime authority/native SQLite journals",
+        "execution": "Pinned Pi Durable 1.1.0 Node engine; separately recorded spending authority and one physical-send usage hold",
+        "delivery": "Bounded committed progress cursors and canonical opaque execution/attempt/session receipt, live audience reread",
+        "cleanup": "Logical terminal session close retains replay evidence; explicit composition shutdown owns native/journal connections"
+      },
+      "assessment": "Public strict SDK/OpenAPI/controller routes compose an opt-in Node remote-host runtime. Controlled provider HTTP and real Node/store crash fixtures verify persistence and authority. Live provider/account spending and deployed qualification, project-free canonical admission and Adea signer/client integration remain prerequisites. Native effecting/model-driven child tools remain disabled.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/pi-durable.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/pi-durable-lead.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/node-composition.test.mjs"
+        },
+        {
+          "kind": "documentation",
+          "path": "docs/pi-durable-runtime.md"
+        }
+      ],
+      "gap": {
+        "issue": 187,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Qualify the exact deployed Node account/provider profile with recorded paid-send/revocation/restart evidence, integrate compatible public artifacts and product project authority, then qualify the governed child tool and parent receipt path."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "pi-durable.lead.dispatch",
+      "openApiResponseStatuses": ["202", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-PI-DURABLE-LEAD-PROGRESS",
+      "name": "getPiDurableLeadProgress",
+      "operation": "pi-durable.lead.progress",
+      "method": "POST",
+      "path": "/v3/pi-durable/lead-dispatches/progress",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing service bearer execution:read scope, immutable original principal, current product audience and canonical attempt",
+        "service": "PiDurableLeadController -> DurablePiDurableLeadService -> explicit Node lead composition",
+        "persistence": "Canonical command/execution/plan/budget repositories, lead-admission.sqlite and versioned runtime authority/native SQLite journals",
+        "execution": "Pinned Pi Durable 1.1.0 Node engine; separately recorded spending authority and one physical-send usage hold",
+        "delivery": "Bounded committed progress cursors and canonical opaque execution/attempt/session receipt, live audience reread",
+        "cleanup": "Logical terminal session close retains replay evidence; explicit composition shutdown owns native/journal connections"
+      },
+      "assessment": "Public strict SDK/OpenAPI/controller routes compose an opt-in Node remote-host runtime. Controlled provider HTTP and real Node/store crash fixtures verify persistence and authority. Live provider/account spending and deployed qualification, project-free canonical admission and Adea signer/client integration remain prerequisites. Native effecting/model-driven child tools remain disabled.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/pi-durable.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/pi-durable-lead.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/node-composition.test.mjs"
+        },
+        {
+          "kind": "documentation",
+          "path": "docs/pi-durable-runtime.md"
+        }
+      ],
+      "gap": {
+        "issue": 187,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Qualify the exact deployed Node account/provider profile with recorded paid-send/revocation/restart evidence, integrate compatible public artifacts and product project authority, then qualify the governed child tool and parent receipt path."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "pi-durable.lead.progress",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-PI-DURABLE-LEAD-STATUS",
+      "name": "getPiDurableLeadStatus",
+      "operation": "pi-durable.lead.status",
+      "method": "POST",
+      "path": "/v3/pi-durable/lead-dispatches/status",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing service bearer execution:read scope, immutable original principal, current product audience and canonical attempt",
+        "service": "PiDurableLeadController -> DurablePiDurableLeadService -> explicit Node lead composition",
+        "persistence": "Canonical command/execution/plan/budget repositories, lead-admission.sqlite and versioned runtime authority/native SQLite journals",
+        "execution": "Pinned Pi Durable 1.1.0 Node engine; separately recorded spending authority and one physical-send usage hold",
+        "delivery": "Bounded committed progress cursors and canonical opaque execution/attempt/session receipt, live audience reread",
+        "cleanup": "Logical terminal session close retains replay evidence; explicit composition shutdown owns native/journal connections"
+      },
+      "assessment": "Public strict SDK/OpenAPI/controller routes compose an opt-in Node remote-host runtime. Controlled provider HTTP and real Node/store crash fixtures verify persistence and authority. Live provider/account spending and deployed qualification, project-free canonical admission and Adea signer/client integration remain prerequisites. Native effecting/model-driven child tools remain disabled.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/pi-durable.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/pi-durable-lead.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/node-composition.test.mjs"
+        },
+        {
+          "kind": "documentation",
+          "path": "docs/pi-durable-runtime.md"
+        }
+      ],
+      "gap": {
+        "issue": 187,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Qualify the exact deployed Node account/provider profile with recorded paid-send/revocation/restart evidence, integrate compatible public artifacts and product project authority, then qualify the governed child tool and parent receipt path."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "pi-durable.lead.status",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
     },
     {
       "id": "OP-PROFILE-RESOLVE",

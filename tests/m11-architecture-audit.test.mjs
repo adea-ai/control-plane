@@ -59,6 +59,10 @@ const publicOperations = [
   'marketplace.install.request',
   'marketplace.installation.get',
   'marketplace.installation.uninstall',
+  'pi-durable.lead.cancel',
+  'pi-durable.lead.dispatch',
+  'pi-durable.lead.progress',
+  'pi-durable.lead.status',
   'profile.resolve',
   'project-state.initialize',
   'project-state.resolve',
@@ -95,7 +99,7 @@ describe('M11.2 architecture audit', () => {
     const result = await validateArchitectureAudit(audit, { repositoryRoot, discovered })
 
     expect(result.errors).toEqual([])
-    expect(audit.packages).toHaveLength(42)
+    expect(audit.packages).toHaveLength(43)
     // Snapshot versions are informational: Release Please owns version bumps,
     // so the live invariant is workspace-to-manifest consistency, not
     // snapshot-to-manifest equality (which is false on every release PR).

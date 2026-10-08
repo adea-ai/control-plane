@@ -22,6 +22,7 @@ export const RuntimeCapabilityNameSchema = z.enum([
   'session.load',
   'model.select',
   'execution.child',
+  'execution.scope.workspace.v1',
 ])
 
 export type RuntimeCapabilityName = z.infer<typeof RuntimeCapabilityNameSchema>

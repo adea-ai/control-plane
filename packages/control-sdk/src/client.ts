@@ -1,3 +1,13 @@
+import type {
+  PiDurableLeadDispatchRequest,
+  PiDurableLeadDispatchResponse,
+  PiDurableLeadStatusRequest,
+  PiDurableLeadStatusResponse,
+  PiDurableLeadProgressRequest,
+  PiDurableLeadProgressResponse,
+  PiDurableLeadCancelRequest,
+  PiDurableLeadCancelResponse,
+} from '@control-plane/runtime-sdk'
 import {
   type CredentialCreateRequest,
   type CredentialGetRequest,
@@ -341,6 +351,26 @@ export class ControlPlaneClient {
     input: MarketplaceInstallationUninstallRequest
   ): Promise<MarketplaceInstallationUninstallResponse> {
     return this.#request(ControlApiOperations.marketplaceInstallationUninstall, input)
+  }
+
+  dispatchPiDurableLead(
+    input: PiDurableLeadDispatchRequest
+  ): Promise<PiDurableLeadDispatchResponse> {
+    return this.#request(ControlApiOperations.dispatchPiDurableLead, input)
+  }
+
+  getPiDurableLeadStatus(input: PiDurableLeadStatusRequest): Promise<PiDurableLeadStatusResponse> {
+    return this.#request(ControlApiOperations.getPiDurableLeadStatus, input)
+  }
+
+  getPiDurableLeadProgress(
+    input: PiDurableLeadProgressRequest
+  ): Promise<PiDurableLeadProgressResponse> {
+    return this.#request(ControlApiOperations.getPiDurableLeadProgress, input)
+  }
+
+  cancelPiDurableLead(input: PiDurableLeadCancelRequest): Promise<PiDurableLeadCancelResponse> {
+    return this.#request(ControlApiOperations.cancelPiDurableLead, input)
   }
 
   async #request<RequestInput, RequestOutput, ResponseOutput>(

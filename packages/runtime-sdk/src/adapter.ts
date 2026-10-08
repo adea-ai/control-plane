@@ -76,7 +76,7 @@ export const RuntimeUsageAccountingSchema = z
   .object({
     schemaVersion: z.literal(1),
     sourceId: z.string().min(1).max(256),
-    fundingSource: z.enum(['hq_managed', 'external_subscription']),
+    fundingSource: z.enum(['hq_managed', 'byo_api', 'external_subscription']),
     currency: z.literal('USD'),
     chargedMicrounits: z
       .number()
@@ -134,7 +134,11 @@ export const RuntimeUsageSchema = z
       })
     }
 
-    if (usage.accounting?.fundingSource === 'hq_managed' && usage.cost !== undefined) {
+    if (
+      usage.accounting !== undefined &&
+      usage.accounting.fundingSource !== 'external_subscription' &&
+      usage.cost !== undefined
+    ) {
       if (
         usage.cost.currency !== 'USD' ||
         exactCostMicrounits(usage.cost.amount) !== BigInt(usage.accounting.chargedMicrounits)
@@ -142,7 +146,7 @@ export const RuntimeUsageSchema = z
         context.addIssue({
           code: 'custom',
           path: ['cost'],
-          message: 'HQ-reported cost must exactly match charged USD microunits',
+          message: 'Paid API cost must exactly match charged USD microunits',
         })
       }
     }
