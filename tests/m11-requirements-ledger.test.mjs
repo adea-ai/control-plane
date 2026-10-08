@@ -507,6 +507,105 @@ describe('M11.1 requirements ledger', () => {
     })
   })
 
+  test('follows next pages beyond 1000 mixed issues and pull requests', async () => {
+    const requests = []
+    const issues = await listGitHubIssues({
+      fetch: async (url) => {
+        const page = Number(new URL(url).searchParams.get('page'))
+        requests.push(page)
+        return {
+          ok: true,
+          headers: new Headers(
+            page < 11
+              ? {
+                  link: `<https://api.github.com/repositories/1300192/issues?state=all&per_page=100&page=${page + 1}>; rel="next"`,
+                }
+              : {}
+          ),
+          json: async () =>
+            page === 11
+              ? [4, 3, 2, 1].map((number) => ({ number, title: `Issue ${number}`, state: 'open' }))
+              : Array.from({ length: 100 }, (_, index) => ({
+                  number: page * 100 + index,
+                  title: 'Mixed inventory',
+                  state: 'open',
+                  ...(index % 2 === 0 ? { pull_request: {} } : {}),
+                })),
+        }
+      },
+    })
+    expect(requests).toEqual(Array.from({ length: 11 }, (_, index) => index + 1))
+    expect(issues).toHaveLength(504)
+    expect(issues.slice(-4).map(({ number }) => number)).toEqual([4, 3, 2, 1])
+  })
+
+  test('fails rather than returning a truncated inventory at the defensive bound', async () => {
+    await expect(
+      listGitHubIssues({
+        maxPages: 2,
+        fetch: async (url) => {
+          const page = Number(new URL(url).searchParams.get('page'))
+          return {
+            ok: true,
+            headers: new Headers({
+              link: `<https://api.github.com/repos/adea-ai/control-plane/issues?state=all&per_page=100&page=${page + 1}>; rel="next"`,
+            }),
+            json: async () => [],
+          }
+        },
+      })
+    ).rejects.toThrow('pagination exceeded')
+  })
+
+  test('fails on a later request error instead of returning earlier issues', async () => {
+    await expect(
+      listGitHubIssues({
+        fetch: async (url) => {
+          const page = Number(new URL(url).searchParams.get('page'))
+          return page === 1
+            ? {
+                ok: true,
+                headers: new Headers({
+                  link: '<https://api.github.com/repos/adea-ai/control-plane/issues?state=all&per_page=100&page=2>; rel="next"',
+                }),
+                json: async () => [{ number: 1, title: 'Issue', state: 'open' }],
+              }
+            : { ok: false, status: 403 }
+        },
+      })
+    ).rejects.toThrow('Unable to query GitHub issues (403)')
+  })
+
+  test('rejects redirected or cyclic next-page links', async () => {
+    for (const next of [
+      'https://other.example/issues?page=2',
+      'https://api.github.com/repos/adea-ai/control-plane/issues?state=all&per_page=100&page=1',
+    ]) {
+      await expect(
+        listGitHubIssues({
+          fetch: async () => ({
+            ok: true,
+            headers: new Headers({ link: `<${next}>; rel="next"` }),
+            json: async () => [],
+          }),
+        })
+      ).rejects.toThrow('Invalid GitHub issues next-page link')
+    }
+  })
+
+  test('propagates fetch failures and rejects malformed inventories', async () => {
+    await expect(
+      listGitHubIssues({
+        fetch: async () => {
+          throw new Error('network failed')
+        },
+      })
+    ).rejects.toThrow('network failed')
+    await expect(
+      listGitHubIssues({ fetch: async () => ({ ok: true, json: async () => ({}) }) })
+    ).rejects.toThrow('GitHub issues response was not an array')
+  })
+
   test('reports every gap whose live issue is not open in M11', () => {
     const issueStateFixture = {
       sources: [],

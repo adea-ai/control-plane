@@ -359,7 +359,11 @@ export async function listGitHubIssues(options = {}) {
   const repository = options.repository ?? 'adea-ai/control-plane'
   const token = options.token ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
   const issues = []
-  for (let page = 1; page <= 10; page += 1) {
+  const maxPages = options.maxPages ?? 1000
+  if (!Number.isSafeInteger(maxPages) || maxPages < 1) {
+    throw new Error('GitHub issues pagination bound must be a positive integer')
+  }
+  for (let page = 1; page <= maxPages; page += 1) {
     const response = await fetchImplementation(
       `https://api.github.com/repos/${repository}/issues?state=all&per_page=100&page=${page}`,
       {
@@ -390,9 +394,40 @@ export async function listGitHubIssues(options = {}) {
           closedAt: issue.closed_at,
         }))
     )
-    if (pageItems.length < 100) break
+    // GitHub may canonicalize links to /repositories/<numeric-id>/issues.
+    // Requests still use the trusted repository above, never the supplied link target.
+    const link = response.headers?.get('link')
+    const nextLinks = link?.split(',').filter((entry) => /;\s*rel="next"/.test(entry)) ?? []
+    if (nextLinks.length > 1) throw new Error('Invalid GitHub issues next-page link')
+    let hasNext
+    if (response.headers) {
+      hasNext = nextLinks.length === 1
+      if (hasNext) {
+        const target = nextLinks[0].match(/^\s*<([^>]+)>/)
+        if (!target) throw new Error('Invalid GitHub issues next-page link')
+        const next = new URL(target[1])
+        if (
+          next.origin !== 'https://api.github.com' ||
+          (next.pathname !== `/repos/${repository}/issues` &&
+            !/^\/repositories\/[1-9][0-9]*\/issues$/.test(next.pathname)) ||
+          next.username ||
+          next.password ||
+          next.hash ||
+          next.searchParams.get('state') !== 'all' ||
+          next.searchParams.get('per_page') !== '100' ||
+          next.searchParams.get('page') !== String(page + 1) ||
+          [...next.searchParams.keys()].length !== 3
+        )
+          throw new Error('Invalid GitHub issues next-page link')
+      }
+    } else {
+      // Fetch seams without HTTP headers retain the REST page-size convention.
+      hasNext = pageItems.length === 100
+    }
+    if (!hasNext) return issues
+    if (page === maxPages) throw new Error('GitHub issues pagination exceeded defensive bound')
   }
-  return issues
+  throw new Error('GitHub issues pagination exceeded defensive bound')
 }
 
 export function refreshPriorMilestoneAudits(ledger, issues, additionalGapIssues = []) {
