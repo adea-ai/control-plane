@@ -539,6 +539,30 @@ describe('M11.1 requirements ledger', () => {
     expect(issues.slice(-4).map(({ number }) => number)).toEqual([4, 3, 2, 1])
   })
 
+  test('preserves GitHub next-page cursors on the trusted repository endpoint', async () => {
+    const requests = []
+    await listGitHubIssues({
+      fetch: async (url) => {
+        requests.push(url)
+        return {
+          ok: true,
+          headers: new Headers(
+            requests.length === 1
+              ? {
+                  link: '<https://api.github.com/repositories/1343240225/issues?state=all&per_page=100&page=2&after=opaque%3D>; rel="next"',
+                }
+              : {}
+          ),
+          json: async () => [],
+        }
+      },
+    })
+    expect(requests).toEqual([
+      'https://api.github.com/repos/adea-ai/control-plane/issues?state=all&per_page=100&page=1',
+      'https://api.github.com/repos/adea-ai/control-plane/issues?state=all&per_page=100&page=2&after=opaque%3D',
+    ])
+  })
+
   test('fails rather than returning a truncated inventory at the defensive bound', async () => {
     await expect(
       listGitHubIssues({

@@ -363,17 +363,16 @@ export async function listGitHubIssues(options = {}) {
   if (!Number.isSafeInteger(maxPages) || maxPages < 1) {
     throw new Error('GitHub issues pagination bound must be a positive integer')
   }
+  const endpoint = `https://api.github.com/repos/${repository}/issues`
+  let requestUrl = `${endpoint}?state=all&per_page=100&page=1`
   for (let page = 1; page <= maxPages; page += 1) {
-    const response = await fetchImplementation(
-      `https://api.github.com/repos/${repository}/issues?state=all&per_page=100&page=${page}`,
-      {
-        headers: {
-          accept: 'application/vnd.github+json',
-          'user-agent': 'control-plane-requirements-ledger',
-          ...(token ? { authorization: `Bearer ${token}` } : {}),
-        },
-      }
-    )
+    const response = await fetchImplementation(requestUrl, {
+      headers: {
+        accept: 'application/vnd.github+json',
+        'user-agent': 'control-plane-requirements-ledger',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+    })
     if (!response.ok) {
       throw new Error(`Unable to query GitHub issues (${response.status})`)
     }
@@ -416,13 +415,19 @@ export async function listGitHubIssues(options = {}) {
           next.searchParams.get('state') !== 'all' ||
           next.searchParams.get('per_page') !== '100' ||
           next.searchParams.get('page') !== String(page + 1) ||
-          [...next.searchParams.keys()].length !== 3
+          [...next.searchParams.keys()].some(
+            (key) =>
+              !['state', 'per_page', 'page', 'after'].includes(key) ||
+              next.searchParams.getAll(key).length !== 1
+          )
         )
           throw new Error('Invalid GitHub issues next-page link')
+        requestUrl = `${endpoint}${next.search}`
       }
     } else {
       // Fetch seams without HTTP headers retain the REST page-size convention.
       hasNext = pageItems.length === 100
+      requestUrl = `${endpoint}?state=all&per_page=100&page=${page + 1}`
     }
     if (!hasNext) return issues
     if (page === maxPages) throw new Error('GitHub issues pagination exceeded defensive bound')
