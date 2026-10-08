@@ -273,10 +273,13 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       }
     }
     if (this.#closed) throw new Error('PI_CLIENT_CLOSED')
-    const invocation = await this.#inputResolver.resolve(configuration, {
-      ...context,
-      signal: this.#shutdown.signal,
-    })
+    const invocation = await this.#inputResolver.resolve(
+      configuration,
+      Object.freeze({
+        ...context,
+        signal: this.#shutdown.signal,
+      })
+    )
     let modelConnectionClosing: Promise<void> | undefined
     const closeModelConnection = () => {
       modelConnectionClosing ??= invocation.modelConnection?.close() ?? Promise.resolve()

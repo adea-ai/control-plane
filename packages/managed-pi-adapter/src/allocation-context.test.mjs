@@ -89,13 +89,18 @@ test('native resolver receives immutable allocation context and admission binds 
   }
   try {
     await expect(client.start(command)).rejects.toThrow('OBSERVED_NATIVE_CONTEXT')
-    expect(captured).toEqual([{ attemptId, executionId, attemptBudget }])
+    const signal = captured[0].signal
+    expect(signal).toBeInstanceOf(AbortSignal)
+    expect(signal.aborted).toBe(false)
+    expect(captured).toEqual([{ attemptId, executionId, attemptBudget, signal }])
     expect(Object.isFrozen(captured[0])).toBe(true)
     expect(Object.isFrozen(captured[0].attemptBudget)).toBe(true)
     command.attemptBudget.maximumTokens = 2
     expect(captured[0].attemptBudget.maximumTokens).toBe(1)
     await expect(client.start(command)).rejects.toThrow('PI_START_IDEMPOTENCY_CONFLICT')
     expect(captured).toHaveLength(1)
+    await client.close()
+    expect(signal.aborted).toBe(true)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -213,8 +218,14 @@ test('native start snapshots allocation and replay identity before asynchronous 
     mutable.attemptBudget.maximumTokens = 2
     release.resolve()
     await expect(start).rejects.toThrow('OBSERVED_NATIVE_CONTEXT')
-    expect(received).toEqual({ attemptId, executionId, attemptBudget })
+    const signal = received.signal
+    expect(signal).toBeInstanceOf(AbortSignal)
+    expect(signal.aborted).toBe(false)
+    expect(received).toEqual({ attemptId, executionId, attemptBudget, signal })
+    expect(Object.isFrozen(received)).toBe(true)
     await expect(client.start(original)).rejects.toThrow('OBSERVED_NATIVE_CONTEXT')
+    await client.close()
+    expect(signal.aborted).toBe(true)
   } finally {
     release.resolve()
     await rm(directory, { recursive: true, force: true })
