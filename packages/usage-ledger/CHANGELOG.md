@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.4](https://github.com/adea-ai/control-plane/compare/usage-ledger-v1.3.3...usage-ledger-v1.3.4) (2026-10-08)
+
+
+### Bug Fixes
+
+* **usage:** pin model quotes and reject dispatch replay ([#927](https://github.com/adea-ai/control-plane/issues/927)) ([7a66d2e](https://github.com/adea-ai/control-plane/commit/7a66d2ec97102f0a391b58581eaa2eef53be6c93))
+
 ## [1.3.3](https://github.com/adea-ai/control-plane/compare/usage-ledger-v1.3.2...usage-ledger-v1.3.3) (2026-10-07)
 
 

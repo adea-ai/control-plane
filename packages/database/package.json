@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/database",
-  "version": "1.41.1",
+  "version": "1.41.2",
   "private": true,
   "files": [
     "dist"
