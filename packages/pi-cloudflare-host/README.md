@@ -64,8 +64,7 @@ its wake intent. A send interrupted while running becomes
 `reconciliation_required`, and automatic wake never retries that ambiguous send.
 Only accepted work can cancel immediately. Cancellation after possible effects
 retains `cancelling` and any returned result/usage until trusted broker
-reconciliation establishes settlement. This increment exposes no privileged
-reconciliation shortcut.
+reconciliation establishes settlement. The optional server-only reconciliation reader below settles recorded outcomes without dispatching a retry; no public payload can provide a settlement receipt.
 
 ## Versions and recovery
 
@@ -119,3 +118,54 @@ constructor/epoch reentry, fresh-process restart, supported task/code upgrade,
 future-runtime rejection without changing retained outcomes, and isolated runtime
 contexts. A skipped emulator test is unverified. See the PR's exact-head evidence
 for actual results; fixture success cannot substitute for that evidence.
+
+## Interrupted effect settlement
+
+`CloudflarePiHost.reconcile(attemptId)` (also exposed by the owning Durable Object)
+checks current authority on reads and at the new `reconcile` boundary, both before
+and after the trusted ledger read. It never opens an engine or dispatches a send.
+An absent reader fails with `CLOUDFLARE_RECONCILIATION_UNAVAILABLE`; an undefined
+receipt retains the unresolved state. Revocation or owner replacement while the
+reader awaits prevents any settlement commit.
+
+`CloudflareReconciliationAuthority.readSettlement(task, owner, recoveryEpoch)` is
+injected by server composition, not exposed as an HTTP argument. Its implementation
+must reread the existing broker/dispatch/usage ledger and establish settlement of
+all prior effects for this exact attempt. It cannot authorize spending, retry a
+request, infer authority from persisted history, or convert an unknown ACK into
+permission to resend. The deterministic qualification reader substitutes only a
+local controlled effect recorder, not a provider or production broker.
+
+A version-1 receipt binds the complete canonical accepted task (original actor,
+plan and attempt budget), exact owner/configuration/binding pins, current recovery
+epoch and bounded receipt reference. A completed disposition requires a validated
+runtime result; a cancelled disposition requires validated terminal usage and no
+result. Already observed results/usage cannot be replaced or erased. Future receipt
+versions, extra authority fields, changed identities and cross-owner receipt reuse
+fail closed. `cp_pi_settlements` atomically retains one immutable receipt per attempt
+and unique receipt reference with its final state/event. Repeated reconciliation
+and start replay preserve that outcome and progress cursor across owner reentry.
+No interrupted task transitions back to `running` through reconciliation.
+
+The opt-in abrupt fixture records a single local effect outside workerd, holds its
+ACK inside an actual native Pi task phase before its terminal commit, and sends SIGKILL only to the uniquely verified direct workerd child of its
+own test runner. It then reopens the same persisted SQLite context, verifies no
+engine close ran before interruption, requires reconciliation, and counts physical
+fixture invocations without receiver-side deduplication. Pending settlement cannot
+resend; trusted settlement retains the host result once while leaving the exact native running-phase checkpoint quarantined. This does not prove native task resumption or settlement; production engine composition must bind each native task to its original attempt and reconcile its interrupted checkpoint before future activation. This proof covers interruption and quarantine, not native task resumption; the earlier graceful restart test cannot substitute for it.
+
+## Remaining full adapter integration
+
+| Seam                            | Current boundary and remaining work                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Public `RuntimeAdapter`         | Internal host methods only; no registered remote transport or full adapter facade.                                                               |
+| Start/status/progress           | Accepted-task and ordered journal seams exist; stable public handles, timestamps/cursors and transport binding still need composition.           |
+| Input/approval                  | Native interaction/effect approval identity and replay storage are not yet wired to this host.                                                   |
+| Cancel/reconcile                | Internal cancellation and trusted recorded settlement exist; public status/terminal usage mapping and real broker reader still need composition. |
+| Session/cleanup                 | Context isolation exists; authorized public session operations, retention and cleanup gates are not yet implemented.                             |
+| Capabilities/driver             | Actual pinned Cloudflare SQLite driver is used; no capability or deployment profile advertised before full qualification.                        |
+| Physical provider/child effects | Existing per-send broker, credential/usage and policy approval ports remain required; no paid provider or native child checkpoint proof here.    |
+
+This independently testable slice advances #930 restart/recovery evidence and
+retained settlement. Full adapter acceptance, live activation and the external
+ACP/evidence/inventory/read-only/Adea lanes remain separate. No issue closure.

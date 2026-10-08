@@ -1,3 +1,5 @@
+import { assertSettlementReceipt } from './reconciliation.js'
+import type { CloudflareSettlementReceipt } from './reconciliation.js'
 import type { RuntimeExecutionResult, RuntimeStartRequest } from '@control-plane/runtime-sdk'
 
 /** Structural subset of a SQLite Durable Object; no Node/process dependencies. */
@@ -43,6 +45,7 @@ export interface CloudflareTaskRecord {
   readonly state: TaskState
   readonly result?: RuntimeExecutionResult
   readonly observedResult?: RuntimeExecutionResult
+  readonly settlement?: CloudflareSettlementReceipt
 }
 
 /** Deterministic JSON comparison only. Never rewrites or rehashes the canonical plan. */
@@ -95,6 +98,9 @@ export class CloudflareOwnerJournal {
       )
       storage.sql.exec(
         'CREATE TABLE IF NOT EXISTS cp_pi_wake (id INTEGER PRIMARY KEY CHECK (id = 1), due_at INTEGER NOT NULL)'
+      )
+      storage.sql.exec(
+        'CREATE TABLE IF NOT EXISTS cp_pi_settlements (attempt_id TEXT PRIMARY KEY, receipt_ref TEXT NOT NULL UNIQUE, body TEXT NOT NULL)'
       )
       const current = storage.sql
         .exec('SELECT pins, epoch FROM cp_pi_owner WHERE id = 1')
@@ -239,6 +245,48 @@ export class CloudflareOwnerJournal {
     })
   }
 
+  /** Atomic receipt/outcome/event commit; never transitions interrupted work back to running. */
+  settle(attemptId: string, receipt: CloudflareSettlementReceipt): CloudflareTaskRecord {
+    return this.storage.transactionSync(() => {
+      this.assertOwner()
+      // The authorized request selects the target; ledger output cannot redirect settlement.
+      const current = this.get(attemptId)
+      assertSettlementReceipt(
+        receipt,
+        current,
+        JSON.parse(this.pinsJson) as CloudflareOwnerPins,
+        this.epoch
+      )
+      const body = stableJson(receipt)
+      if (current.settlement) {
+        if (stableJson(current.settlement) !== body)
+          throw new Error('CLOUDFLARE_SETTLEMENT_REPLAY_CONFLICT')
+        return current
+      }
+      if (!['reconciliation_required', 'cancelling'].includes(current.state))
+        throw new Error('CLOUDFLARE_SETTLEMENT_STATE_DENIED')
+      this.storage.sql.exec(
+        'INSERT INTO cp_pi_settlements (attempt_id, receipt_ref, body) VALUES (?, ?, ?)',
+        attemptId,
+        receipt.receiptRef,
+        body
+      )
+      this.storage.sql.exec(
+        'UPDATE cp_pi_tasks SET state = ?, epoch = ?, result = ? WHERE attempt_id = ?',
+        receipt.disposition,
+        this.epoch,
+        receipt.result === undefined ? null : stableJson(receipt.result),
+        attemptId
+      )
+      this.storage.sql.exec(
+        'INSERT INTO cp_pi_events (attempt_id, state) VALUES (?, ?)',
+        attemptId,
+        receipt.disposition
+      )
+      return this.get(attemptId)
+    })
+  }
+
   events(attemptId: string, afterSequence = 0): readonly { sequence: number; state: string }[] {
     this.get(attemptId)
     if (!Number.isSafeInteger(afterSequence) || afterSequence < 0)
@@ -291,7 +339,13 @@ export class CloudflareOwnerJournal {
   }
 
   private decode(row: Record<string, unknown>): CloudflareTaskRecord {
+    const settlement = this.storage.sql
+      .exec('SELECT body FROM cp_pi_settlements WHERE attempt_id = ?', String(row['attempt_id']))
+      .toArray()[0]
     return {
+      ...(settlement
+        ? { settlement: JSON.parse(String(settlement['body'])) as CloudflareSettlementReceipt }
+        : {}),
       task: JSON.parse(String(row['body'])) as CloudflareAcceptedTask,
       epoch: Number(row['epoch']),
       state: row['state'] as TaskState,

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.81.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.80.0...workspace-v1.81.0) (2026-10-08)
+
+
+### Features
+
+* **runtime:** reconcile interrupted Cloudflare Pi effects ([#971](https://github.com/adea-ai/control-plane/issues/971)) ([b0d6b8a](https://github.com/adea-ai/control-plane/commit/b0d6b8aa921bddeef5366ead44efbb0cd92b4b39))
+
 ## [1.80.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.79.0...workspace-v1.80.0) (2026-10-08)
 
 

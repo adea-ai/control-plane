@@ -1,9 +1,10 @@
 import { RuntimeExecutionResultSchema, RuntimeStartRequestSchema } from '@control-plane/runtime-sdk'
 import type { RuntimeExecutionResult, RuntimeStartRequest } from '@control-plane/runtime-sdk'
+import type { CloudflareReconciliationAuthority } from './reconciliation.js'
 import { CloudflareOwnerJournal, stableJson } from './owner.js'
 import type { CloudflareAcceptedTask, CloudflareOwnerPins, CloudflareTaskRecord } from './owner.js'
 
-export type CloudflareBoundary = 'admit' | 'wake' | 'read' | 'cancel' | 'effect'
+export type CloudflareBoundary = 'admit' | 'wake' | 'read' | 'cancel' | 'effect' | 'reconcile'
 /** Trusted host implementations reread canonical current actor/audience/grant and exact plan/budget pins. */
 export interface CloudflareCurrentAuthority {
   readAccepted(request: RuntimeStartRequest): Promise<CloudflareAcceptedTask>
@@ -29,7 +30,8 @@ export class CloudflarePiHost {
     private readonly journal: CloudflareOwnerJournal,
     pins: CloudflareOwnerPins,
     private readonly authority: CloudflareCurrentAuthority,
-    private readonly openEngine: () => Promise<CloudflarePiEngine>
+    private readonly openEngine: () => Promise<CloudflarePiEngine>,
+    private readonly reconciliation?: CloudflareReconciliationAuthority
   ) {
     this.journal.assertPins(pins)
     this.pins = Object.freeze(JSON.parse(stableJson(pins)) as CloudflareOwnerPins)
@@ -73,6 +75,23 @@ export class CloudflarePiHost {
       current.state,
       current.state === 'accepted' ? 'cancelled' : 'cancelling'
     )
+  }
+
+  async reconcile(attemptId: string): Promise<CloudflareTaskRecord> {
+    const record = await this.read(attemptId)
+    await this.assertCurrent(record.task, 'reconcile')
+    if (!['reconciliation_required', 'cancelling'].includes(record.state))
+      return this.journal.get(attemptId)
+    if (!this.reconciliation) throw new Error('CLOUDFLARE_RECONCILIATION_UNAVAILABLE')
+    const receipt = await this.reconciliation.readSettlement(
+      record.task,
+      this.pins,
+      this.journal.epoch
+    )
+    // Fence revocation/owner replacement while the trusted reader awaited its ledger.
+    await this.assertCurrent(record.task, 'reconcile')
+    if (receipt === undefined) return this.journal.get(attemptId)
+    return this.journal.settle(attemptId, JSON.parse(stableJson(receipt)))
   }
 
   wake(attemptId: string): Promise<CloudflareTaskRecord> {
