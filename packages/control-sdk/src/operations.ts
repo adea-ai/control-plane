@@ -1,4 +1,6 @@
 import {
+  ModelSelectionFundingRequestSchema,
+  ModelSelectionFundingResponseSchema,
   ModelConnectionCreateRequestSchema,
   ModelConnectionListRequestSchema,
   ModelConnectionListResponseSchema,
@@ -82,6 +84,13 @@ import {
 } from '@control-plane/contracts'
 
 export const ControlApiOperations = Object.freeze({
+  getModelSelectionFunding: {
+    operation: 'model-selection.funding.get',
+    method: 'POST',
+    path: '/v1/model-connections/selection/funding/get',
+    requestSchema: ModelSelectionFundingRequestSchema,
+    responseSchema: ModelSelectionFundingResponseSchema,
+  },
   createModelConnection: {
     operation: 'model-connections.create',
     method: 'POST',

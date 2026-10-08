@@ -1,3 +1,8 @@
+export { createCurrentModelConnectionComposition } from './models/current-model-composition.js'
+export {
+  createPiLeadModelAdmissionReadiness,
+  type PiLeadModelAdmissionInput,
+} from './models/pi-lead-model-readiness.js'
 import type { GraphAdministrationService } from './graphs/graph-administration.service.js'
 import type { WorkspaceCatalogService } from './catalog/workspace-catalog.service.js'
 import type { CredentialAdministrationService } from './credentials/credential-administration.service.js'
@@ -232,3 +237,5 @@ export * from './graphs/graph-administration.service.js'
 export * from './catalog/workspace-catalog.service.js'
 
 export * from './models/model-connections.service.js'
+
+export * from './models/recorded-model-funding.js'

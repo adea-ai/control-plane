@@ -49,9 +49,7 @@
     "test": "bun test src/*.test.mjs"
   },
   "dependencies": {
-    "@control-plane/contracts": "workspace:^"
-  },
-  "devDependencies": {
+    "@control-plane/contracts": "workspace:^",
     "zod": "4.6.5"
   },
   "engines": {
