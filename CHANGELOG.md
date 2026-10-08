@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.77.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.77.0...workspace-v1.77.1) (2026-10-08)
+
+
+### Documentation
+
+* record Pi Durable source amendment obligations ([#958](https://github.com/adea-ai/control-plane/issues/958)) ([2d935c7](https://github.com/adea-ai/control-plane/commit/2d935c7c33cf56904568aa14057430ebc53d9b79))
+
+## [1.77.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.76.0...workspace-v1.77.0) (2026-10-08)
+
+
+### Features
+
+* **models:** bind current execution authority and recorded payer reads ([#957](https://github.com/adea-ai/control-plane/issues/957)) ([85449ba](https://github.com/adea-ai/control-plane/commit/85449baf3ea9c57997954246bf40a7e4d5589312))
+
 ## [1.76.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.75.1...workspace-v1.76.0) (2026-10-08)
 
 

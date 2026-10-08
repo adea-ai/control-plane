@@ -15,7 +15,7 @@ reference, not a Worker/DO deployment implemented here.
 The implementation has real Harness, Node process and physical SQLite restart
 evidence. Provider HTTP responses, product evidence and recorded spending records
 in the fixtures are controlled test inputs. This does not qualify a live account,
-Cloudflare hibernation, a production deployment, or a model-driven child tool.
+Cloudflare hibernation, a production deployment, or a live-provider child tool.
 
 ## Ownership and retained paths
 
