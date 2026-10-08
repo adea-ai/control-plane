@@ -102,7 +102,7 @@ describe('M11.2 architecture audit', () => {
     const result = await validateArchitectureAudit(audit, { repositoryRoot, discovered })
 
     expect(result.errors).toEqual([])
-    expect(audit.packages).toHaveLength(42)
+    expect(audit.packages).toHaveLength(43)
     // Snapshot versions are informational: Release Please owns version bumps,
     // so the live invariant is workspace-to-manifest consistency, not
     // snapshot-to-manifest equality (which is false on every release PR).

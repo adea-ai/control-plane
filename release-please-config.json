@@ -154,6 +154,10 @@
       "release-type": "node",
       "package-name": "@control-plane/orchestration"
     },
+    "packages/pi-cloudflare-host": {
+      "release-type": "node",
+      "package-name": "@control-plane/pi-cloudflare-host"
+    },
     "packages/policy": {
       "release-type": "node",
       "package-name": "@control-plane/policy"
