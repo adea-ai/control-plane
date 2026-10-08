@@ -144,7 +144,23 @@ describe('workflow worker telemetry', () => {
     if (!skillPin) throw new Error('TEST_PLAN_REQUIRES_A_SKILL')
     const fixtureDate = new Date(executionPlan.compiledAt)
     const rowsByTable = new Map([
-      ['execution_plans', [{ plan: executionPlan }]],
+      [
+        'execution_plans',
+        [
+          {
+            executionPlanId: executionPlan.executionPlanId,
+            contentDigest: executionPlan.contentDigest,
+            schemaVersion: executionPlan.schemaVersion,
+            workspaceId: executionPlan.correlation.workspaceId,
+            projectId: executionPlan.correlation.projectId,
+            executionScope: null,
+            taskId: executionPlan.correlation.taskId,
+            agentId: executionPlan.correlation.agentId,
+            compiledAt: fixtureDate,
+            plan: executionPlan,
+          },
+        ],
+      ],
       [
         'agent_profile_versions',
         [

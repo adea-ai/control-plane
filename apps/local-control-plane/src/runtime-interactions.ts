@@ -40,6 +40,7 @@ export class LocalRuntimeInteractions {
     if (
       !command ||
       !execution ||
+      execution.correlation.projectId === undefined ||
       !interactionStates.has(execution.state) ||
       command.executionId !== executionId ||
       execution.latestAttemptId !== attemptId ||

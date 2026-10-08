@@ -72,6 +72,9 @@ export interface ContextAuthoringArtifactStore {
  * authority never trusts an unparsed caller payload, without importing package internals.
  */
 const AuthorityRequestSchema = ContextAuthoringInputsSchema.extend({
+  // This authority is backed by provider project grants. Workspace execution
+  // must use a composition with a current workspace authority port instead.
+  executionScope: z.never().optional(),
   workspaceId: IdentifierSchemas.workspaceId,
   projectId: IdentifierSchemas.projectId,
   projectStateRevision: z.number().int().nonnegative(),
@@ -209,6 +212,7 @@ export class GrantsBackedContextAuthoringAuthority implements ContextAuthoringAu
     const principal = PrincipalSchema.safeParse(input.principalRef)
     const scope = z
       .object({
+        executionScope: z.never().optional(),
         workspaceId: IdentifierSchemas.workspaceId,
         projectId: IdentifierSchemas.projectId,
         artifactId: IdentifierSchemas.artifactId,

@@ -60,6 +60,7 @@ export const INTEGRATION_SHARDS = [
           'src/usage-store.integration.test.mjs',
           'src/memory-provenance-retention.integration.test.mjs',
           'src/retention-hold-owner-activation.integration.test.mjs',
+          'src/workspace-execution-scope.integration.test.mjs',
         ],
       },
     ],

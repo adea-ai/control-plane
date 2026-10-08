@@ -157,6 +157,7 @@ export class DurableGraphEventPublisher implements GraphEventPublisher {
     const acceptedCommand = command.data
     const acceptedExecution = execution.data
     if (
+      acceptedExecution.correlation.projectId === undefined ||
       acceptedCommand.operation !== 'execution.accept' ||
       acceptedCommand.executionId !== acceptedExecution.executionId ||
       acceptedExecution.parentExecutionId !== undefined ||
@@ -231,14 +232,14 @@ export class GraphEventPublicationError extends Error {
 function sameCorrelation(
   left: {
     workspaceId: string
-    projectId: string
+    projectId?: string | undefined
     taskId: string
     agentId: string
     requestId: string
   },
   right: {
     workspaceId: string
-    projectId: string
+    projectId?: string | undefined
     taskId: string
     agentId: string
     requestId: string

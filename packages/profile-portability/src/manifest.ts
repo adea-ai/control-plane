@@ -150,6 +150,14 @@ export function assertPortableManifest(input: unknown): PortableExportManifest {
     if (digestJson(recordUnsigned) !== recordDigest) {
       throw new Error('PORTABLE_RECORD_DIGEST_INVALID')
     }
+    if (record.category === 'context-package' || record.category === 'execution-plan') {
+      // Preserve the historical import-time integrity checks for v1 payloads.
+      const version = z
+        .object({ schemaVersion: z.number().int().positive() })
+        .safeParse(record.value)
+      if (version.success && version.data.schemaVersion !== 1)
+        throw new Error('PORTABLE_WORKSPACE_SCOPE_UNSUPPORTED')
+    }
     if (record.category === 'credential-metadata') {
       // Strict parsing rejects any secret value, secret reference or status in the manifest.
       const credential = PortableCredentialMetadataSchema.parse(record.value)

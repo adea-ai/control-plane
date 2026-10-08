@@ -14,6 +14,10 @@ import type {
 } from '@control-plane/deployment'
 import {
   CommandInboxRecordSchema,
+  commandInboxScopeKey,
+  executionRetentionScope,
+  executionScopesEqual,
+  executionScopeCanNarrow,
   CommandInboxScopeSchema,
   CommandInboxError,
   ExecutionCancellationReceiptSchema,
@@ -51,6 +55,7 @@ import {
   type ExecutionValidationCommandRecord,
   type ExecutionValidationCommandRepository,
   assertExecutionPlanIntegrity,
+  assertExecutionPlanDerivedFrom,
   ExecutionPlanError,
   type ExecutionPlan,
   type ExecutionPlanReference,
@@ -210,9 +215,18 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
           transaction,
           execution.executionPlan
         )
-        const allowance = this.#budgetAdmission
-          ? await this.#admissionAllowance(transaction, command, execution, storedPlan)
-          : undefined
+        if (
+          (command.executionScope !== undefined ||
+            execution.correlation.executionScope !== undefined ||
+            storedPlan.correlation.executionScope !== undefined) &&
+          (!executionScopesEqual(command, execution.correlation) ||
+            !executionScopesEqual(execution.correlation, storedPlan.correlation))
+        )
+          throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+        const allowance =
+          this.#budgetAdmission || execution.correlation.executionScope !== undefined
+            ? await this.#admissionAllowance(transaction, command, execution, storedPlan)
+            : undefined
         await transaction.put({
           namespace: namespaces.commands,
           id: commandId,
@@ -228,7 +242,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
           id: recordId(execution.executionId),
           value: commandId,
         })
-        if (allowance !== undefined) {
+        if (this.#budgetAdmission && allowance !== undefined) {
           await SqliteDurableUsageStore.withTransaction(
             transaction,
             allowance.workspaceId,
@@ -404,11 +418,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
             transaction,
             {
               classId: 'command-inbox',
-              scope: {
-                kind: 'project',
-                workspaceId: command.workspaceId,
-                projectId: command.projectId,
-              },
+              scope: executionRetentionScope(command),
             },
             options.retentionHoldPolicy
           )
@@ -502,11 +512,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
             transaction,
             {
               classId: 'command-inbox',
-              scope: {
-                kind: 'project',
-                workspaceId: command.workspaceId,
-                projectId: command.projectId,
-              },
+              scope: executionRetentionScope(command),
             },
             options.retentionHoldPolicy
           )
@@ -781,13 +787,37 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
       const parent = ExecutionSchema.parse(parentRecord.value)
       if (
         parent.executionId !== execution.parentExecutionId ||
-        parent.correlation.workspaceId !== execution.correlation.workspaceId ||
-        parent.correlation.projectId !== execution.correlation.projectId ||
+        !executionScopeCanNarrow(parent.correlation, execution.correlation) ||
         parentPlan === undefined ||
         parent.executionPlan.executionPlanId !== parentPlan.executionPlanId ||
         parent.executionPlan.contentDigest !== parentPlan.contentDigest
       ) {
         throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+      }
+      if (
+        parent.correlation.executionScope !== undefined ||
+        storedPlan.correlation.executionScope !== undefined
+      ) {
+        const storedParentPlan = await assertSqliteStoredParentPlanReference(
+          transaction,
+          parent.executionPlan
+        )
+        const parentContext = await transaction.get(
+          namespaces.contextPackages,
+          recordId(storedParentPlan.contextPackage.contextPackageId)
+        )
+        const childContext = await transaction.get(
+          namespaces.contextPackages,
+          recordId(storedPlan.contextPackage.contextPackageId)
+        )
+        if (parentContext === undefined || childContext === undefined)
+          throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+        assertExecutionPlanDerivedFrom(
+          storedParentPlan,
+          storedPlan,
+          parentContext.value,
+          childContext.value
+        )
       }
     }
     return executionPlanBudgetAllowance(command, execution, storedPlan)
@@ -1187,11 +1217,7 @@ export class SqliteExecutionRepository implements ExecutionRepository {
             transaction,
             {
               classId: 'executions',
-              scope: {
-                kind: 'project',
-                workspaceId: execution.correlation.workspaceId,
-                projectId: execution.correlation.projectId,
-              },
+              scope: executionRetentionScope(execution.correlation),
             },
             options.retentionHoldPolicy
           )
@@ -1284,7 +1310,13 @@ export class SqliteExecutionRepository implements ExecutionRepository {
     return this.provider.transaction(async (transaction) => {
       const id = recordId(execution.executionId)
       if ((await transaction.get(namespaces.executions, id)) !== undefined) return false
-      await assertSqliteStoredPlanReference(transaction, execution.executionPlan)
+      const plan = await assertSqliteStoredPlanReference(transaction, execution.executionPlan)
+      if (
+        (execution.correlation.executionScope !== undefined ||
+          plan.correlation.executionScope !== undefined) &&
+        !executionScopesEqual(execution.correlation, plan.correlation)
+      )
+        throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
       await transaction.put({ namespace: namespaces.executions, id, value: json(execution) })
       return true
     })
@@ -1557,11 +1589,7 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
             transaction,
             {
               classId: 'execution-plans',
-              scope: {
-                kind: 'project',
-                workspaceId: plan.correlation.workspaceId,
-                projectId: plan.correlation.projectId,
-              },
+              scope: executionRetentionScope(plan.correlation),
             },
             options.retentionHoldPolicy
           )
@@ -1806,13 +1834,7 @@ export class SqliteExecutionValidationCommandRepository implements ExecutionVali
 }
 
 function scopeKey(scope: CommandInboxScope): string {
-  return [
-    scope.callerPrincipalId,
-    scope.operation,
-    scope.workspaceId,
-    scope.projectId,
-    scope.idempotencyKey,
-  ].join('\u001f')
+  return commandInboxScopeKey(scope)
 }
 
 function invalidPersistedAdmission(): DurableUsageError {

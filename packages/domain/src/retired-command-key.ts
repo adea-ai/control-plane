@@ -1,7 +1,12 @@
 import { createHash } from 'node:crypto'
 import { canonicalJsonStringify } from '@control-plane/contracts'
+import { executionScopeOf } from '@control-plane/contracts'
 import { z } from 'zod'
-import { CommandInboxScopeSchema, type CommandInboxScope } from './command-inbox.js'
+import {
+  CommandInboxScopeSchema,
+  commandInboxScopeKey,
+  type CommandInboxScope,
+} from './command-inbox.js'
 
 export const RETIRED_COMMAND_KEY_METADATA_VERSION = 2 as const
 
@@ -24,13 +29,7 @@ export interface RetiredCommandKeyMetadata {
 /** Exact v1 representation retained for replay compatibility during migration. */
 export function retiredCommandScopeV1(scopeInput: CommandInboxScope): string {
   const scope = CommandInboxScopeSchema.parse(scopeInput)
-  return [
-    scope.callerPrincipalId,
-    scope.operation,
-    scope.workspaceId,
-    scope.projectId,
-    scope.idempotencyKey,
-  ].join('\u001f')
+  return commandInboxScopeKey(scope)
 }
 
 /** Exact v1 PostgreSQL key, retained for pre-migration tombstone lookup. */
@@ -47,7 +46,10 @@ export function retiredCommandKeyMetadataV2(
   scopeInput: CommandInboxScope
 ): RetiredCommandKeyMetadata {
   const scope = CommandInboxScopeSchema.parse(scopeInput)
-  const canonicalIdentity = canonicalJsonStringify({ version: 2, scope })
+  // Explicit project spelling must still find pre-scope tombstones.
+  const { executionScope: _executionScope, ...legacyProjectScope } = scope
+  const identityScope = executionScopeOf(scope).kind === 'project' ? legacyProjectScope : scope
+  const canonicalIdentity = canonicalJsonStringify({ version: 2, scope: identityScope })
   if (canonicalIdentity === undefined) throw new Error('RETIRED_COMMAND_KEY_IDENTITY_INVALID')
   const identityDigest = sha256(
     `control-plane.retired-command-identity:v2\u0000${canonicalIdentity}`

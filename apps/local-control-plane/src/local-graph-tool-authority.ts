@@ -35,6 +35,7 @@ export async function authorizeLocalGraphTool(
     !execution ||
     !attempt ||
     !command ||
+    execution.correlation.projectId === undefined ||
     execution.correlation.workspaceId !== operation.workspaceId ||
     execution.correlation.projectId !== command.projectId ||
     command.workspaceId !== operation.workspaceId ||
@@ -121,6 +122,7 @@ export async function authorizeLocalGraphTool(
   if (requiresApproval && plan.constraints.interaction.approvals === 'disabled')
     throw new Error('GRAPH_TOOL_APPROVAL_DISABLED')
   return {
+    projectId: execution.correlation.projectId,
     execution,
     attempt,
     command,

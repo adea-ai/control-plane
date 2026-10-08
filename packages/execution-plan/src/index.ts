@@ -31,6 +31,13 @@ import {
   CommandInboxError,
   CommandInboxRecordSchema,
   ExecutionSchema,
+  executionScopeFields,
+  validateExecutionScopeFields,
+  executionScopeOf,
+  executionScopesEqual,
+  executionScopeCanNarrow,
+  type ExecutionScopeFields,
+  type ExecutionScope,
   type CommandInboxRecord,
   type ExecutionPlanReplayAuthorization,
   type Execution,
@@ -53,13 +60,13 @@ const uniqueBy = <Value>(values: Value[], key: (value: Value) => string) =>
 
 const CorrelationSchema = z
   .object({
-    workspaceId: IdentifierSchemas.workspaceId,
-    projectId: IdentifierSchemas.projectId,
+    ...executionScopeFields,
     taskId: IdentifierSchemas.taskId,
     agentId: IdentifierSchemas.agentId,
     requestId: IdentifierSchemas.requestId,
   })
   .strict()
+  .superRefine(validateExecutionScopeFields)
 
 const ProfilePinSchema = z.object({
   profileId: IdentifierSchemas.profileId,
@@ -93,7 +100,7 @@ export const ExecutionPlanReferenceSchema = z.object({
 
 export const ExecutionPlanSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.union([z.literal(1), z.literal(2)]),
     executionPlanId: IdentifierSchemas.executionPlanId,
     contentDigest: DigestSchema,
     compiler: z.object({
@@ -114,6 +121,24 @@ export const ExecutionPlanSchema = z
     outputContract: OutputContractSchema,
     graph: GraphSelectionSchema.optional(),
     parentExecutionPlan: ExecutionPlanReferenceSchema.optional(),
+  })
+  .strict()
+  .superRefine((plan, context) => {
+    if ((plan.schemaVersion === 1) !== (plan.correlation.executionScope === undefined))
+      context.addIssue({ code: 'custom', message: 'Historical plan scope cannot be rewritten' })
+    if (
+      executionScopeOf(plan.correlation).kind === 'workspace' &&
+      !plan.runtimeRequirements.some(
+        (requirement) =>
+          requirement.capability === 'execution.scope.workspace.v1' &&
+          requirement.necessity === 'required' &&
+          requirement.minimumSupport === 'supported'
+      )
+    )
+      context.addIssue({
+        code: 'custom',
+        message: 'Workspace plans require explicit runtime support',
+      })
   })
   .refine((plan) => canonical(plan.policySnapshot) === canonical(plan.constraints.policySnapshot), {
     message: 'ExecutionPlan policy snapshot must match its resolved constraints',
@@ -200,14 +225,19 @@ export class ExecutionPlanCompiler {
     assertSkillCompatibility(profile, skills, constraints)
     assertOutputContract(profile.definition.outputContractRefs, parsed.outputContract.contractRef)
     assertContext(contextPackage, constraints)
+    if (!executionScopesEqual(parsed.correlation, contextPackage.projectState))
+      fail('CONTRADICTORY_REFERENCE', 'context-scope')
     const runtimeRequirements = compileRuntimeRequirements(
       parsed.runtimeRequirements,
       profile.definition.capabilityRequirements,
       skills.flatMap((skill) => skill.manifest.requiredCapabilities),
-      constraints.runtime.requiredCapabilities
+      constraints.runtime.requiredCapabilities,
+      executionScopeOf(parsed.correlation).kind === 'workspace'
+        ? ['execution.scope.workspace.v1']
+        : []
     )
     return finalizePlan({
-      schemaVersion: 1,
+      schemaVersion: parsed.correlation.executionScope === undefined ? 1 : 2,
       compiler: { name: 'control-plane-execution-plan', version: this.version },
       compiledAt: parsed.compiledAt,
       correlation: parsed.correlation,
@@ -242,11 +272,24 @@ export class ExecutionPlanCompiler {
 }
 
 export function deriveExecutionPlan(parentInput: unknown, input: unknown): ExecutionPlan {
+  return deriveExecutionPlanInternal(parentInput, input, false)
+}
+
+function deriveExecutionPlanInternal(
+  parentInput: unknown,
+  input: unknown,
+  allowScopeNarrowing: boolean
+): ExecutionPlan {
   const parent = parsePlan(parentInput)
   const child = parseChildInput(input)
+  if (!executionScopesEqual(child.correlation, child.contextPackage.projectState)) {
+    fail('CHILD_AUTHORITY_EXPANSION', 'context-scope')
+  }
   if (
     child.correlation.workspaceId !== parent.correlation.workspaceId ||
-    child.correlation.projectId !== parent.correlation.projectId ||
+    !(allowScopeNarrowing
+      ? executionScopeCanNarrow(parent.correlation, child.correlation)
+      : executionScopesEqual(parent.correlation, child.correlation)) ||
     child.correlation.agentId !== parent.correlation.agentId
   ) {
     fail('CHILD_AUTHORITY_EXPANSION', 'correlation')
@@ -264,9 +307,17 @@ export function deriveExecutionPlan(parentInput: unknown, input: unknown): Execu
     child.contextPackage.parentContextPackage.contentDigest === parent.contextPackage.contentDigest
   if (!sameContext && !derivedContext) fail('CHILD_CONTEXT_EXPANSION')
   assertChildConstraints(parent.constraints, child.constraints)
-  assertChildRuntimeRequirements(parent.runtimeRequirements, child.runtimeRequirements)
+  const inheritedRequirements = parent.runtimeRequirements.filter(
+    (requirement) =>
+      !(
+        requirement.capability === 'execution.scope.workspace.v1' &&
+        executionScopeOf(child.correlation).kind === 'project'
+      )
+  )
+  assertChildRuntimeRequirements(inheritedRequirements, child.runtimeRequirements)
   return finalizePlan({
     ...parent,
+    schemaVersion: child.correlation.executionScope === undefined ? 1 : 2,
     executionPlanId: undefined,
     contentDigest: undefined,
     compiledAt: child.compiledAt,
@@ -320,15 +371,19 @@ export function assertExecutionPlanDerivedFrom(
   const derivationParent = sameContext
     ? { ...parent, contextPackage: contextPin(derivationParentContext) }
     : parent
-  const derived = deriveExecutionPlan(derivationParent, {
-    correlation: child.correlation,
-    contextPackage: derivationChildContext,
-    constraints: child.constraints,
-    runtimeRequirements: child.runtimeRequirements,
-    outputContract: child.outputContract,
-    compiledAt: child.compiledAt,
-    ...(child.graph === undefined ? {} : { graph: child.graph }),
-  })
+  const derived = deriveExecutionPlanInternal(
+    derivationParent,
+    {
+      correlation: child.correlation,
+      contextPackage: derivationChildContext,
+      constraints: child.constraints,
+      runtimeRequirements: child.runtimeRequirements,
+      outputContract: child.outputContract,
+      compiledAt: child.compiledAt,
+      ...(child.graph === undefined ? {} : { graph: child.graph }),
+    },
+    true
+  )
   if (
     canonical(withoutExecutionPlanIdentity(derived)) !==
     canonical(withoutExecutionPlanIdentity(child))
@@ -346,8 +401,7 @@ export interface ExecutionPlanRepository {
 export const ExecutionValidationCommandScopeSchema = z
   .object({
     callerPrincipalId: ServiceCallerAssertionSchema.shape.servicePrincipalId,
-    workspaceId: IdentifierSchemas.workspaceId,
-    projectId: IdentifierSchemas.projectId,
+    ...executionScopeFields,
     operation: z.literal('execution.validate'),
     idempotencyKey: z
       .string()
@@ -356,6 +410,7 @@ export const ExecutionValidationCommandScopeSchema = z
       .regex(/^[A-Za-z0-9._:-]+$/),
   })
   .strict()
+  .superRefine(validateExecutionScopeFields)
 
 export const ExecutionValidationCommandRecordSchema = z
   .object({
@@ -384,6 +439,15 @@ export interface ExecutionValidationCommandRepository {
 
 export function executionValidationCommandKey(input: ExecutionValidationCommandScope): string {
   const scope = ExecutionValidationCommandScopeSchema.parse(input)
+  if (executionScopeOf(scope).kind === 'workspace')
+    return sha256([
+      'execution-scope/v1',
+      'workspace',
+      scope.callerPrincipalId,
+      scope.workspaceId,
+      scope.operation,
+      scope.idempotencyKey,
+    ]).slice(7)
   return sha256([
     scope.callerPrincipalId,
     scope.workspaceId,
@@ -406,8 +470,7 @@ export function assertExecutionValidationCommandPlan(
   const record = ExecutionValidationCommandRecordSchema.parse(input)
   const plan = assertExecutionPlanIntegrity(planInput)
   if (
-    record.scope.workspaceId !== plan.correlation.workspaceId ||
-    record.scope.projectId !== plan.correlation.projectId ||
+    !executionScopesEqual(record.scope, plan.correlation) ||
     record.requestId !== plan.correlation.requestId ||
     record.executionPlan.executionPlanId !== plan.executionPlanId ||
     record.executionPlan.contentDigest !== plan.contentDigest
@@ -454,7 +517,94 @@ export interface ExecutionPlanAcceptanceValidatorOptions {
     readonly approvals: Pick<CatalogApprovalRepository, 'list'>
     readonly policy: CatalogApprovalPolicy
   }
+  readonly scopeAuthority?: CurrentExecutionScopeAuthority
+  readonly now?: () => string
   readonly graphs?: ExecutionGraphAuthority
+}
+
+export interface ExecutionScopeAdmissionInput extends ExecutionScopeFields {
+  readonly callerPrincipalId: string
+  readonly executionPlan: ExecutionPlanReference & { readonly schemaVersion: number }
+}
+
+/** Server composition owns this read. Request/model scope is only a target. */
+export interface CurrentExecutionScopeAuthority {
+  readCurrent(input: ExecutionScopeAdmissionInput): Promise<
+    | {
+        readonly workspaceId: string
+        readonly executionScope: ExecutionScope
+        readonly callerPrincipalId: string
+        readonly executionPlan: ExecutionPlanReference & { readonly schemaVersion: number }
+        readonly principalActive: boolean
+        readonly grantActive: boolean
+        readonly allowedPrincipalIds: readonly string[]
+        readonly expiresAt: string
+        /** Required for project scope: read from the real project repository. */
+        readonly projectWorkspaceId?: string
+      }
+    | undefined
+  >
+}
+
+export async function currentExecutionScopeAllows(
+  authority: CurrentExecutionScopeAuthority,
+  input: ExecutionScopeAdmissionInput,
+  now: string
+): Promise<boolean> {
+  const snapshot = await authority.readCurrent(input)
+  const scope = executionScopeOf(input)
+  return (
+    snapshot !== undefined &&
+    snapshot.workspaceId === input.workspaceId &&
+    snapshot.callerPrincipalId === input.callerPrincipalId &&
+    snapshot.executionPlan.executionPlanId === input.executionPlan.executionPlanId &&
+    snapshot.executionPlan.contentDigest === input.executionPlan.contentDigest &&
+    snapshot.executionPlan.schemaVersion === input.executionPlan.schemaVersion &&
+    canonical(snapshot.executionScope) === canonical(scope) &&
+    snapshot.principalActive === true &&
+    snapshot.grantActive === true &&
+    snapshot.allowedPrincipalIds.includes(input.callerPrincipalId) &&
+    Number.isFinite(Date.parse(now)) &&
+    Date.parse(snapshot.expiresAt) > Date.parse(now) &&
+    (scope.kind === 'workspace' || snapshot.projectWorkspaceId === input.workspaceId)
+  )
+}
+
+/** Re-read current grants for both the workspace parent and narrowed real project child. */
+export async function deriveExecutionPlanWithAuthority(
+  parentInput: unknown,
+  input: unknown,
+  options: {
+    readonly callerPrincipalId: string
+    readonly authority: CurrentExecutionScopeAuthority
+    readonly now: string
+  }
+): Promise<ExecutionPlan> {
+  const parent = assertExecutionPlanIntegrity(parentInput)
+  const child = deriveExecutionPlanInternal(parent, input, true)
+  if (
+    child.correlation.executionScope === undefined &&
+    !executionScopesEqual(parent.correlation, child.correlation)
+  ) {
+    fail('CHILD_AUTHORITY_EXPANSION', 'explicit-child-scope-required')
+  }
+  for (const plan of [parent, child]) {
+    const allowed = await currentExecutionScopeAllows(
+      options.authority,
+      {
+        ...plan.correlation,
+        callerPrincipalId: options.callerPrincipalId,
+        executionPlan: {
+          executionPlanId: plan.executionPlanId,
+          contentDigest: plan.contentDigest,
+          schemaVersion: plan.schemaVersion,
+        },
+      },
+      options.now
+    )
+    if (!allowed) fail('CHILD_AUTHORITY_EXPANSION', 'current-scope-authority')
+  }
+  return child
 }
 
 /** Workspace-scoped catalog and trusted compiler checks supplied by composition. */
@@ -469,21 +619,37 @@ export class ExecutionPlanAcceptanceValidator {
     readonly options?: ExecutionPlanAcceptanceValidatorOptions
   ) {}
 
+  async authorizeScope(input: ExecutionScopeAdmissionInput): Promise<boolean> {
+    if (input.executionScope === undefined) return true
+    const authority = this.options?.scopeAuthority
+    return (
+      authority !== undefined &&
+      currentExecutionScopeAllows(
+        authority,
+        input,
+        this.options?.now?.() ?? new Date().toISOString()
+      )
+    )
+  }
+
   /** Rechecks current ownership on exact replay when the historical plan is still retained. */
   async authorize(input: {
     readonly executionPlan: ExecutionPlanReference & { readonly schemaVersion: number }
     readonly workspaceId: string
-    readonly projectId: string
+    readonly projectId?: string | undefined
+    readonly executionScope?: ExecutionScope | undefined
     readonly taskId: string
     readonly agentId: string
     readonly callerPrincipalId: string
   }): Promise<ExecutionPlanReplayAuthorization> {
+    if (!(await this.authorizeScope(input))) return false
     const plan = await this.repository.get(input.executionPlan)
     // CommandInboxService may acknowledge a retired plan only once the command
     // has already left its dispatch-pending states; otherwise the API could
     // resubmit work without the authorization context used at initial acceptance.
     if (plan === undefined) return 'historical_plan_missing'
     if (!executionPlanCorrelates(plan, input)) return false
+    if (!(await this.#scopeAllows(plan, input))) return false
     if (
       plan.graph !== undefined &&
       !(await this.options?.graphs?.authorize(input.workspaceId, plan.graph.reference))
@@ -517,13 +683,15 @@ export class ExecutionPlanAcceptanceValidator {
   async validate(input: {
     readonly executionPlan: ExecutionPlanReference & { readonly schemaVersion: number }
     readonly workspaceId: string
-    readonly projectId: string
+    readonly projectId?: string | undefined
+    readonly executionScope?: ExecutionScope | undefined
     readonly taskId: string
     readonly agentId: string
     readonly callerPrincipalId: string
   }): Promise<boolean> {
     const plan = await this.repository.get(input.executionPlan)
     if (!executionPlanCorrelates(plan, input)) return false
+    if (!(await this.#scopeAllows(plan, input))) return false
 
     if (
       plan.graph !== undefined &&
@@ -581,6 +749,17 @@ export class ExecutionPlanAcceptanceValidator {
     )
   }
 
+  async #scopeAllows(plan: ExecutionPlan, input: ExecutionScopeAdmissionInput): Promise<boolean> {
+    if (plan.correlation.executionScope === undefined) return true
+    const authority = this.options?.scopeAuthority
+    if (authority === undefined) return false
+    return currentExecutionScopeAllows(
+      authority,
+      input,
+      this.options?.now?.() ?? new Date().toISOString()
+    )
+  }
+
   async #catalogOwnershipAllows(
     input: {
       readonly workspaceId: string
@@ -620,7 +799,8 @@ function executionPlanCorrelates(
   input: {
     readonly executionPlan: ExecutionPlanReference & { readonly schemaVersion: number }
     readonly workspaceId: string
-    readonly projectId: string
+    readonly projectId?: string | undefined
+    readonly executionScope?: ExecutionScope | undefined
     readonly taskId: string
     readonly agentId: string
   }
@@ -628,8 +808,7 @@ function executionPlanCorrelates(
   return (
     plan !== undefined &&
     plan.schemaVersion === input.executionPlan.schemaVersion &&
-    plan.correlation.workspaceId === input.workspaceId &&
-    plan.correlation.projectId === input.projectId &&
+    executionScopesEqual(plan.correlation, input) &&
     plan.correlation.taskId === input.taskId &&
     plan.correlation.agentId === input.agentId
   )
@@ -1076,8 +1255,7 @@ export function executionBudgetAdmissionSource(
     command.operation !== 'execution.accept' ||
     command.executionId !== execution.executionId ||
     command.requestId !== execution.correlation.requestId ||
-    command.workspaceId !== execution.correlation.workspaceId ||
-    command.projectId !== execution.correlation.projectId ||
+    !executionScopesEqual(command, execution.correlation) ||
     command.taskId !== execution.correlation.taskId ||
     command.agentId !== execution.correlation.agentId ||
     command.executionPlan.executionPlanId !== execution.executionPlan.executionPlanId ||
@@ -1123,8 +1301,7 @@ export function executionPlanBudgetAllowance(
     plan.executionPlanId !== execution.executionPlan.executionPlanId ||
     plan.contentDigest !== execution.executionPlan.contentDigest ||
     plan.schemaVersion !== execution.executionPlan.schemaVersion ||
-    plan.correlation.workspaceId !== command.workspaceId ||
-    plan.correlation.projectId !== command.projectId ||
+    !executionScopesEqual(plan.correlation, command) ||
     plan.correlation.taskId !== command.taskId ||
     plan.correlation.agentId !== command.agentId
   ) {

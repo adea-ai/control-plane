@@ -1,3 +1,4 @@
+import { executionScopeColumn, executionScopeCheck } from './execution-scope.js'
 import {
   bigint,
   foreignKey,
@@ -75,7 +76,8 @@ export const executions = pgTable(
     state: executionState('state').notNull(),
     version: bigint('version', { mode: 'number' }).notNull(),
     workspaceId: identifier('workspace_id').notNull(),
-    projectId: identifier('project_id').notNull(),
+    projectId: identifier('project_id'),
+    executionScope: executionScopeColumn(),
     taskId: identifier('task_id').notNull(),
     agentId: identifier('agent_id').notNull(),
     requestId: identifier('request_id').notNull(),
@@ -94,6 +96,7 @@ export const executions = pgTable(
     ...lifecycleTimestamps(),
   },
   (table) => [
+    executionScopeCheck('executions_scope_check', table),
     foreignKey({
       columns: [table.parentExecutionId],
       foreignColumns: [table.executionId],

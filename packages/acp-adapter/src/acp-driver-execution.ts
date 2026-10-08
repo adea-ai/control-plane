@@ -24,6 +24,18 @@ export async function startExecution(
   requestInput: Parameters<RuntimeAdapter['start']>[0]
 ): Promise<RuntimeExecutionHandle> {
   const request = RuntimeStartRequestSchema.parse(requestInput)
+  if (
+    !z
+      .object({
+        schemaVersion: z.literal(1),
+        correlation: z
+          .object({ executionScope: z.object({ kind: z.literal('project') }).optional() })
+          .optional(),
+      })
+      .safeParse(request.executionPlan).success
+  ) {
+    fail('ACP_EXECUTION_SCOPE_UNSUPPORTED', 'unsupported', false)
+  }
   const fingerprint = stable(request)
   const replay = state.starts.get(request.idempotencyKey)
   if (replay) {

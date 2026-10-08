@@ -6,6 +6,7 @@ import {
   GraphReferenceSchema,
 } from './graphs.js'
 import { ServiceCallerAssertionSchema, ServiceScopeSchema } from './authentication.js'
+import { executionScopeFields, validateExecutionScopeFields } from './execution-scope.js'
 import { CorrelationMetadataSchema } from './envelopes.js'
 import { IdentifierSchemas } from './identifiers.js'
 import { CursorSchema } from './pagination.js'
@@ -673,11 +674,13 @@ export const ExecutionAcceptanceResponseSchema = successResponse(
 
 /** Requests execution-level cancellation; runtime routing and leases remain server-owned. */
 export const ExecutionCancellationCommandSchema = CommandContextSchema.extend({
-  projectId: IdentifierSchemas.projectId,
+  ...executionScopeFields,
   operation: z.literal('execution.cancel'),
   issuedAt: TimestampSchema,
   payload: z.strictObject({ executionId: IdentifierSchemas.executionId }),
-}).strict()
+})
+  .strict()
+  .superRefine(validateExecutionScopeFields)
 
 /** Confirms signal acceptance only, never that native work has stopped. */
 export const ExecutionCancellationCommandResultSchema = successResponse(

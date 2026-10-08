@@ -190,6 +190,46 @@ function authoringRequest(overrides = {}) {
 }
 
 describe('grants-backed context authoring authority', () => {
+  test('project provider grants reject explicit workspace execution before reading grants or artifacts', async () => {
+    let reads = 0
+    const instance = new GrantsBackedContextAuthoringAuthority({
+      grants: {
+        async get() {
+          reads++
+          return grantFixture()
+        },
+      },
+      registrations: {
+        async list() {
+          reads++
+          return [registrationFixture()]
+        },
+      },
+      artifacts: {
+        async head() {
+          reads++
+          throw new Error('must not read')
+        },
+      },
+      policy: policyFixture(),
+      now: clock,
+    })
+    const executionScope = { schemaVersion: 1, kind: 'workspace' }
+    expect(
+      await instance.authorize(principalRef, authoringRequest({ executionScope }))
+    ).toBeUndefined()
+    expect(
+      await instance.resolveArtifact({
+        principalRef,
+        workspaceId,
+        projectId,
+        artifactId,
+        executionScope,
+      })
+    ).toBeUndefined()
+    expect(reads).toBe(0)
+  })
+
   test('denies when no current grant matches the principal and workspace', async () => {
     const unregistered = authority({ registrations: [] })
     expect(await unregistered.authorize(principalRef, authoringRequest())).toBeUndefined()

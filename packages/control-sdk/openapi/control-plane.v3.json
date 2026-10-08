@@ -6201,6 +6201,32 @@
                     "required": ["traceId"],
                     "type": "object"
                   },
+                  "executionScope": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "kind": { "const": "workspace", "type": "string" },
+                          "schemaVersion": { "const": 1, "type": "number" }
+                        },
+                        "required": ["schemaVersion", "kind"],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "kind": { "const": "project", "type": "string" },
+                          "projectId": {
+                            "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$",
+                            "type": "string"
+                          },
+                          "schemaVersion": { "const": 1, "type": "number" }
+                        },
+                        "required": ["schemaVersion", "kind", "projectId"],
+                        "type": "object"
+                      }
+                    ]
+                  },
                   "idempotencyKey": {
                     "maxLength": 128,
                     "minLength": 16,
@@ -6231,7 +6257,6 @@
                   "contractVersion",
                   "requestId",
                   "workspaceId",
-                  "projectId",
                   "correlation",
                   "commandId",
                   "idempotencyKey",

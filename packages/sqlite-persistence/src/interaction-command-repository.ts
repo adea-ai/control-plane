@@ -6,6 +6,7 @@ import type {
 } from '@control-plane/deployment'
 import {
   ExecutionSchema,
+  executionScopesEqual,
   InteractionCommandReceiptSchema,
   interactionCommandScopeKey,
   type InteractionCommandRepository,
@@ -30,10 +31,7 @@ async function requireExecutionOwner(
   const parsed = ExecutionSchema.safeParse(row.value)
   if (!parsed.success || parsed.data.executionId !== executionId)
     throw new Error('SQLITE_INTERACTION_COMMAND_EXECUTION_MALFORMED')
-  if (
-    parsed.data.correlation.workspaceId !== receipt.request.workspaceId ||
-    parsed.data.correlation.projectId !== receipt.request.projectId
-  )
+  if (!executionScopesEqual(parsed.data.correlation, receipt.request))
     throw new Error('SQLITE_INTERACTION_COMMAND_SCOPE_MISMATCH')
 }
 

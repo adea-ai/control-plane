@@ -1,4 +1,8 @@
-import { IdentifierSchemas } from '@control-plane/contracts'
+import {
+  executionScopeFields,
+  validateExecutionScopeFields,
+  IdentifierSchemas,
+} from '@control-plane/contracts'
 import { z } from 'zod'
 
 const TimestampSchema = z.iso.datetime()
@@ -56,13 +60,13 @@ export const MarketplacePluginReferenceSchema = z
 
 export const ExecutionCorrelationSchema = z
   .object({
-    workspaceId: IdentifierSchemas.workspaceId,
-    projectId: IdentifierSchemas.projectId,
+    ...executionScopeFields,
     taskId: IdentifierSchemas.taskId,
     agentId: IdentifierSchemas.agentId,
     requestId: IdentifierSchemas.requestId,
   })
   .strict()
+  .superRefine(validateExecutionScopeFields)
 
 export const AttemptRoutingDecisionSchema = z
   .object({
@@ -136,6 +140,15 @@ export const ExecutionSchema = z
   })
   .strict()
   .superRefine((execution, context) => {
+    if (
+      (execution.executionPlan.schemaVersion === 1) !==
+      (execution.correlation.executionScope === undefined)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Execution scope and pinned plan version must agree',
+      })
+    }
     if (execution.parentExecutionId === execution.executionId) {
       context.addIssue({ code: 'custom', message: 'Execution cannot be its own parent' })
     }

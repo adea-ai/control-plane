@@ -5,6 +5,7 @@ import {
   type AcpDriverOptions,
   type AcpProcessTransportOptions,
 } from '@control-plane/acp-adapter'
+import { executionScopeOf } from '@control-plane/contracts'
 import { DirectLocalRuntimeTransport } from '@control-plane/runtime-sdk'
 import {
   assertContextPackageIntegrity,
@@ -61,6 +62,8 @@ export function createRepositoryAcpTaskPromptResolver(
   return async (request, signal) => {
     signal.throwIfAborted()
     const plan = assertExecutionPlanIntegrity(request.executionPlan)
+    if (executionScopeOf(plan.correlation).kind !== 'project')
+      throw new Error('ACP_WORKSPACE_SCOPE_UNSUPPORTED')
     modelRoute?.assertEligible(plan.constraints.models)
     const value = await repository.get(plan.contextPackage)
     signal.throwIfAborted()

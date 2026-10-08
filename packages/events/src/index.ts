@@ -1,4 +1,8 @@
-import { IdentifierSchemas } from '@control-plane/contracts'
+import {
+  executionScopeFields,
+  validateExecutionScopeFields,
+  IdentifierSchemas,
+} from '@control-plane/contracts'
 import { compareCodePointOrder } from '@control-plane/contracts'
 import { redactTelemetryValue } from '@control-plane/telemetry'
 import { createHash } from 'node:crypto'
@@ -47,15 +51,16 @@ export const ExecutionEventSchema = z.object({
   sequence: z.number().int().positive(),
   type: EventTypeSchema,
   schemaVersion: z.number().int().positive(),
-  correlation: z.object({
-    workspaceId: IdentifierSchemas.workspaceId,
-    projectId: IdentifierSchemas.projectId,
-    taskId: IdentifierSchemas.taskId,
-    agentId: IdentifierSchemas.agentId,
-    requestId: IdentifierSchemas.requestId,
-    commandId: IdentifierSchemas.commandId.optional(),
-    traceId: IdentifierSchemas.traceId,
-  }),
+  correlation: z
+    .object({
+      ...executionScopeFields,
+      taskId: IdentifierSchemas.taskId,
+      agentId: IdentifierSchemas.agentId,
+      requestId: IdentifierSchemas.requestId,
+      commandId: IdentifierSchemas.commandId.optional(),
+      traceId: IdentifierSchemas.traceId,
+    })
+    .superRefine(validateExecutionScopeFields),
   /**
    * Classification metadata only — describes the payload's sensitivity and whether
    * redaction was applied before persistence. It never carries payload content and is

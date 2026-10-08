@@ -1,3 +1,4 @@
+import { executionScopeFieldsFromRow } from './execution-scope.js'
 import { and, asc, eq, gt, or, sql, type SQL } from 'drizzle-orm'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import {
@@ -586,7 +587,7 @@ function commandFromRow(row: typeof commandInbox.$inferSelect): CommandInboxReco
     callerPrincipalId: row.callerPrincipalId,
     operation: row.operation,
     workspaceId: row.workspaceId,
-    projectId: row.projectId,
+    ...executionScopeFieldsFromRow(row),
     taskId: row.taskId,
     agentId: row.agentId,
     requestId: row.requestId,

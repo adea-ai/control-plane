@@ -23,6 +23,7 @@ import { clearReferenceRetentionWindows } from './retention-reference-metadata.j
 import {
   applyMigrations,
   EXPIRY_INDEX_STATEMENTS,
+  EXECUTION_SCOPE_STATEMENTS,
   SCHEMA_STATEMENTS,
   SCHEMA_VERSION,
   SqliteMigrationError,
@@ -153,7 +154,9 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
 
   async restore(snapshot: PersistenceBackup): Promise<void> {
     if (
-      (snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== SCHEMA_VERSION) ||
+      !Number.isSafeInteger(snapshot.schemaVersion) ||
+      snapshot.schemaVersion < 1 ||
+      snapshot.schemaVersion > SCHEMA_VERSION ||
       snapshot.bytes.byteLength === 0 ||
       digest(snapshot.bytes) !== snapshot.digest
     ) {
@@ -271,13 +274,16 @@ function validateRestoreDatabase(path: string, expectedSnapshotVersion: number):
       .all()
     // Validate history (or adopt legacy v1) on the disposable copy, never after replacement.
     applyMigrations(database)
-    for (const [name, expected] of Object.entries(EXPIRY_INDEX_STATEMENTS)) {
+    for (const [name, expected] of Object.entries({
+      ...EXPIRY_INDEX_STATEMENTS,
+      ...EXECUTION_SCOPE_STATEMENTS,
+    })) {
       const actual = database.prepare('SELECT sql FROM sqlite_master WHERE name = ?').get(name)
       if (
         typeof actual?.['sql'] !== 'string' ||
         normalizeSchema(actual['sql']) !== normalizeSchema(expected)
       ) {
-        throw new Error('Incompatible SQLite expiry index')
+        throw new Error('Incompatible SQLite index or scope constraint')
       }
     }
     // A backup can predate a reference cycle that reset these clocks in the

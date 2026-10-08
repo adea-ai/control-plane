@@ -64,6 +64,29 @@ function fixture(options = {}) {
 }
 
 describe('ACP RuntimeAdapter', () => {
+  test.each([
+    { schemaVersion: 2 },
+    {
+      correlation: {
+        workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
+        executionScope: { schemaVersion: 1, kind: 'workspace' },
+      },
+    },
+  ])('rejects unsupported execution scope before native creation: %j', async (scope) => {
+    const { adapter, transport } = fixture()
+    await expect(
+      adapter.start({
+        attemptId,
+        idempotencyKey: 'workspace-denial',
+        executionPlan: { ...plan(), ...scope },
+      })
+    ).rejects.toMatchObject({
+      code: 'ACP_EXECUTION_SCOPE_UNSUPPORTED',
+      classification: 'unsupported',
+    })
+    expect(transport.calls()).toEqual([])
+  })
+
   test('replayed native permission updates retain one generated interaction identity', async () => {
     const transport = new ReferenceAcpTransport({ now: () => now, scenario: 'running' })
     let generated = 0

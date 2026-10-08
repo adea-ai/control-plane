@@ -1,3 +1,5 @@
+import { sql } from 'drizzle-orm'
+import { executionScopeColumn, executionScopeCheck } from './execution-scope.js'
 import {
   index,
   integer,
@@ -25,7 +27,8 @@ export const commandInbox = pgTable(
     callerPrincipalId: varchar('caller_principal_id', { length: 64 }).notNull(),
     operation: varchar('operation', { length: 128 }).notNull(),
     workspaceId: identifier('workspace_id').notNull(),
-    projectId: identifier('project_id').notNull(),
+    projectId: identifier('project_id'),
+    executionScope: executionScopeColumn(),
     taskId: identifier('task_id').notNull(),
     agentId: identifier('agent_id').notNull(),
     requestId: identifier('request_id').notNull(),
@@ -55,6 +58,7 @@ export const commandInbox = pgTable(
     errorReference: varchar('error_reference', { length: 512 }),
   },
   (table) => [
+    executionScopeCheck('command_inbox_scope_check', table),
     uniqueIndex('command_inbox_scope_idempotency_unique').on(
       table.callerPrincipalId,
       table.operation,
@@ -62,6 +66,9 @@ export const commandInbox = pgTable(
       table.projectId,
       table.idempotencyKey
     ),
+    uniqueIndex('command_inbox_workspace_idempotency_unique')
+      .on(table.callerPrincipalId, table.operation, table.workspaceId, table.idempotencyKey)
+      .where(sql`${table.projectId} is null`),
     index('command_inbox_status_retention_index').on(table.status, table.retentionExpiresAt),
     index('command_inbox_execution_index').on(table.executionId),
     index('command_inbox_request_index').on(table.requestId),
