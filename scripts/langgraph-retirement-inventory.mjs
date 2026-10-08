@@ -1656,7 +1656,12 @@ const isMain =
 
 if (isMain) {
   try {
-    const outcome = await runInventoryCli({ argv: process.argv.slice(2), now: () => new Date() })
+    const outcome = await runInventoryCli({
+      argv: process.argv.slice(2),
+      // normalizeObservedAt requires an ISO string: convert here at the
+      // process entrypoint, where the default clock is produced.
+      now: () => new Date().toISOString(),
+    })
     if (outcome.action === 'validation') process.exitCode = outcome.exitCode
   } catch (error) {
     const code = error instanceof RetirementInventoryError ? error.code : 'OPERATION_FAILED'

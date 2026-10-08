@@ -11,6 +11,7 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   DISPOSITION_KINDS,
@@ -746,6 +747,25 @@ describe('langgraph retirement inventory', () => {
       expect(manifest.sections.consumers.status).toBe(OBSERVATION_STATUS.UNKNOWN)
       expect(manifest.sections.definitions.status).toBe(OBSERVATION_STATUS.UNKNOWN)
       expect(manifest.epistemics.retainedWorkClassification).toBe('unknown')
+    })
+
+    test('the process entrypoint succeeds with the default clock', async () => {
+      // Exercises the actual CLI process — not runInventoryCli — without
+      // --now, exactly as an operator invokes it.
+      const entrypoint = fileURLToPath(
+        new URL('../scripts/langgraph-retirement-inventory.mjs', import.meta.url)
+      )
+      const run = Bun.spawnSync([
+        process.execPath,
+        entrypoint,
+        '--observation-scope',
+        'repository-scan',
+      ])
+      expect(String(run.stderr)).toBe('')
+      expect(run.exitCode).toBe(0)
+      const manifest = JSON.parse(String(run.stdout))
+      expect(manifest.manifest).toBe('langgraph-retirement-inventory')
+      expect(Number.isNaN(Date.parse(manifest.observedAt))).toBe(false)
     })
   })
 })
