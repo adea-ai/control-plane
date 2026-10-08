@@ -506,6 +506,23 @@ export class DurableUsageLedger {
    * Unknown outcomes remain open until explicit, authoritative reconciliation.
    */
   async reserveModelRequest(input: ReserveDurableModelRequestInput): Promise<UsageLedgerEntry> {
+    return this.#reserveModelRequest(input, false)
+  }
+
+  /** One durable admission per physical send identity. A replay may have sent
+   * already, so it must reconcile instead of invoking the provider again.
+   * This fence still requires trusted funding/quote authority at the send boundary.
+   */
+  async reserveModelRequestForDispatch(
+    input: ReserveDurableModelRequestInput
+  ): Promise<UsageLedgerEntry> {
+    return this.#reserveModelRequest(input, true)
+  }
+
+  async #reserveModelRequest(
+    input: ReserveDurableModelRequestInput,
+    rejectReplay: boolean
+  ): Promise<UsageLedgerEntry> {
     const parsed = ModelRequestInputSchema.safeParse(input)
     if (!parsed.success) throw usageError('INVALID_ENTRY')
     const data = parsed.data
@@ -567,7 +584,8 @@ export class DurableUsageLedger {
         )
         await this.#writeMutation(transaction, [budget], [entry])
         return entry
-      }
+      },
+      rejectReplay
     )
   }
 
@@ -871,7 +889,8 @@ export class DurableUsageLedger {
     input: Input,
     method: string,
     resultSchema: z.ZodType<Result>,
-    operation: (transaction: DurableUsageTransaction) => Promise<Result>
+    operation: (transaction: DurableUsageTransaction) => Promise<Result>,
+    rejectReplay = false
   ): Promise<Result> {
     const fingerprint = fingerprintFor(method, input)
     return this.#store.transaction(input.workspaceId, async (transaction) => {
@@ -920,6 +939,7 @@ export class DurableUsageLedger {
           executionId: input.executionId,
           operation: method,
         })
+        if (rejectReplay) throw usageError('MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED')
         return deepFreeze(replay.data)
       }
 

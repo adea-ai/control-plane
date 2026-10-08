@@ -159,7 +159,7 @@ describe('SQLite durable usage transactions', () => {
         maximumTokens: 100,
         source: source('model-attempt'),
       })
-      await ledger.reserveModelRequest({
+      const request = {
         workspaceId,
         executionId,
         attemptId,
@@ -171,12 +171,17 @@ describe('SQLite durable usage transactions', () => {
         priceSnapshotDigest: `sha256:${'c'.repeat(64)}`,
         requestDigest: `sha256:${'d'.repeat(64)}`,
         source: source('model-request'),
-      })
+      }
+      const held = await ledger.reserveModelRequestForDispatch(request)
       provider.close()
       const reopened = new SqlitePersistenceProvider({ path })
       try {
         await reopened.migrate()
         ledger = new DurableUsageLedger({ store: new SqliteDurableUsageStore(reopened) })
+        await expect(ledger.reserveModelRequestForDispatch(request)).rejects.toMatchObject({
+          code: 'MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED',
+        })
+        expect(await ledger.reserveModelRequest(request)).toEqual(held)
         await expect(
           ledger.settle({
             workspaceId,
@@ -208,6 +213,9 @@ describe('SQLite durable usage transactions', () => {
           source: source('known-settle'),
         })
         expect(settled.releasedMicrounits).toBe(70)
+        await expect(ledger.reserveModelRequestForDispatch(request)).rejects.toMatchObject({
+          code: 'MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED',
+        })
         expect(await ledger.summary(workspaceId, executionId)).toMatchObject({
           spentMicrounits: 30,
           spentTokens: 20,
