@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.85.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.85.0...workspace-v1.85.1) (2026-10-08)
+
+
+### Tests
+
+* **pi:** expose child bootstrap boundary failures ([#987](https://github.com/adea-ai/control-plane/issues/987)) ([6950a1d](https://github.com/adea-ai/control-plane/commit/6950a1d38759c3b8ed03c679f70995883d44055a))
+
+
+### Maintenance
+
+* **config:** build before the local commit gate ([ecd93b6](https://github.com/adea-ai/control-plane/commit/ecd93b6b6742f05fc05084b870c3f2312633f543))
+* pre-commit-build ([#982](https://github.com/adea-ai/control-plane/issues/982)) ([ecd93b6](https://github.com/adea-ai/control-plane/commit/ecd93b6b6742f05fc05084b870c3f2312633f543))
+
 ## [1.85.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.84.1...workspace-v1.85.0) (2026-10-08)
 
 
