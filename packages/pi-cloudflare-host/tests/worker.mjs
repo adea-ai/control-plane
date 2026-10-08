@@ -206,6 +206,20 @@ export class RecoveryOwner {
       pair[1].serializeAttachment(this.pins)
       return new Response(null, { status: 101, webSocket: pair[0] })
     }
+    // Qualification-only public facade routes; not a production Worker transport.
+    if (action === 'public-start')
+      return Response.json(await this.owner.runtimeAdapter().start(request))
+    if (action === 'public-status' || action === 'public-progress') {
+      const input = await httpRequest.json()
+      const adapter = this.owner.runtimeAdapter()
+      if (action === 'public-status') return Response.json(await adapter.status(input.handle))
+      const events = []
+      for await (const event of adapter.progress(input.handle, {
+        afterSequence: input.afterSequence,
+      }))
+        events.push(event)
+      return Response.json(events)
+    }
     if (action === 'accept') return Response.json(await this.owner.accept(request))
     if (action === 'wake') {
       await this.owner.alarm()

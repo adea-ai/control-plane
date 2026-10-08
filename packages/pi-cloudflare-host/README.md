@@ -169,3 +169,34 @@ resend; trusted settlement retains the host result once while leaving the exact 
 This independently testable slice advances #930 restart/recovery evidence and
 retained settlement. Full adapter acceptance, live activation and the external
 ACP/evidence/inventory/read-only/Adea lanes remain separate. No issue closure.
+
+## Partial public adapter composition
+
+`CloudflarePiDurableOwner.runtimeAdapter()` explicitly returns an in-process
+`RuntimeAdapter` facade over this owner. It schedules `start` through retained
+alarm intent, maps accepted work to `starting` and interrupted work to `unknown`,
+and implements current-authorized status, cancellation, reconciliation and a
+finite snapshot of retained progress events. Progress reconnects use the exact
+persisted sequence and timestamp; no polling or automatic native resume occurs.
+
+First admission atomically persists a random opaque handle and original admission
+timestamp. Full supplied handle tuples are compared with retained identity at
+every operation; no session ID is fabricated. Additive nullable SQLite columns
+preserve historical task JSON/digests/replay keys. Historical rows without handle
+or event timing fail unavailable rather than receive invented replay timestamps.
+Cancellation keys retain their exact request; changed retry bodies conflict.
+
+This partial adapter advertises **no capabilities**, rejects unsupported required
+plan capabilities before admission, and reports degraded inspection. Input,
+approval, session and cleanup operations throw explicit non-retryable unsupported
+errors. There is no Worker transport, profile registration, production authority
+composition, live activation or native checkpoint resumption. Production current
+actor/audience/grant and physical-send spending/credential authority remain
+mandatory independent ports; a local scripted engine does not qualify them.
+
+Acceptance map for #930: pinned native driver/versioned owner, exact accepted
+runtime/configuration pins, isolated context, hibernation/restart/upgrade and
+interrupted-no-resend evidence are merged in #964/#971. This facade closes the
+local public start/status/progress/cancel/reconcile composition seam. Full
+RuntimeAdapter interaction/session/cleanup, production provider authority and
+safe native checkpoint continuation remain open; no full acceptance is claimed.
