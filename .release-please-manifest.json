@@ -1,5 +1,5 @@
 {
-  ".": "1.80.0",
+  ".": "1.81.0",
   "apps/control-api": "1.23.0",
   "apps/hosted-control-plane": "1.19.0",
   "apps/local-control-plane": "1.29.0",
@@ -26,7 +26,7 @@
   "packages/model-gateway": "1.5.0",
   "packages/object-store": "1.6.1",
   "packages/orchestration": "1.7.0",
-  "packages/pi-cloudflare-host": "0.2.0",
+  "packages/pi-cloudflare-host": "0.3.0",
   "packages/policy": "1.4.1",
   "packages/production-readiness": "1.4.2",
   "packages/profile-portability": "1.6.0",
