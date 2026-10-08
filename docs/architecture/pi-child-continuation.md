@@ -32,6 +32,21 @@ synthetic current-account and spending readers with real lifecycle and SQLite
 stores. The reusable process worker is a test fixture; initial governed execution
 uses Bun and child-only recovery targets Node 24.21.0 with Pi 1.1.0. Its scripted
 loopback provider is not live-provider or device-authorization qualification.
+Node recovery with `PI_CHILD_PROCESS_EMITTED=true` uses explicit compiled
+production modules and ordinary package exports without resolution hooks.
+Snapshots record successful direct production imports; this is not a transitive
+loader trace. Initial Bun admission remains a separate source-based fixture.
+Safe phase markers distinguish child engine creation, Models callback entry and
+return, authorization and retention without recording model or credential data.
+
+The `fast_child_terminal_before_grant` worker mode drains the actual child and
+captures native metadata before its existing engine closes, then calls the real
+repository. It reports either retention or denial and the canonical grant row;
+it does not force a denial or pre-transition the canonical child to terminal.
+The separate J1 harness owns the corresponding acceptance assertion.
+
+Physical cross-package SQLite cases live in
+`tests/pi-child-continuation-sqlite.test.mjs`, registered in the normal E2E lane.
 Actual unfinished-child process, concurrent recovery and ambiguous-send evidence
 belong to the separate J1 proof harness. No deployment or production activation
 is implied by this package.

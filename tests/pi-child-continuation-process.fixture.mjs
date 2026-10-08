@@ -375,6 +375,10 @@ export async function initialWorker(directory, mode, baseUrl) {
     childEngine,
     ports,
     f,
+    fastTerminalSnapshot,
+    fastNativeInspection,
+    physicalSendCount = 0,
+    childModelCallbacks = 0,
     metadata = { publicationAudience: actor }
   const heartbeat = setInterval(() => {}, 1000)
   try {
@@ -397,13 +401,73 @@ export async function initialWorker(directory, mode, baseUrl) {
             const { withModels: _unused, ...binding } = await options.resolveProvider(...args)
             metadata = { ...metadata, binding, baseUrl }
             writeProcessDescriptor(directory, metadata)
+            appendProcessEvidence(directory, { stage: 'child_binding_retained', pid: process.pid })
             return { ...binding, withModels: (use) => withChildProcessModels(baseUrl, use) }
           },
           engineFactory: async (engineOptions) => {
-            childEngine = createPiDurableEngine(engineOptions)
-            return childEngine
+            appendProcessEvidence(directory, { stage: 'child_engine_create', pid: process.pid })
+            const observedOptions = {
+              ...engineOptions,
+              withModels: async (use) => {
+                const sequence = ++childModelCallbacks
+                appendProcessEvidence(directory, { stage: 'child_models_enter', sequence })
+                try {
+                  const result = await engineOptions.withModels(async (models) => {
+                    appendProcessEvidence(directory, { stage: 'child_models_use_enter', sequence })
+                    const value = await use(models)
+                    appendProcessEvidence(directory, { stage: 'child_models_use_return', sequence })
+                    return value
+                  })
+                  appendProcessEvidence(directory, { stage: 'child_models_return', sequence })
+                  return result
+                } catch (error) {
+                  appendProcessEvidence(directory, {
+                    stage: 'child_models_rejected',
+                    sequence,
+                    errorType: error instanceof Error ? error.name : 'NonError',
+                  })
+                  throw error
+                }
+              },
+            }
+            if (mode !== 'fast_child_terminal_before_grant') {
+              childEngine = createPiDurableEngine(observedOptions)
+              return childEngine
+            }
+            // This synchronous fixture scope supplies the engine's captured transport.
+            const originalFetch = globalThis.fetch
+            globalThis.fetch = async (...args) => {
+              const response = await originalFetch(...args)
+              physicalSendCount++
+              return response
+            }
+            try {
+              childEngine = createPiDurableEngine(observedOptions)
+              const close = childEngine.close.bind(childEngine)
+              childEngine.close = async () => {
+                try {
+                  if (!fastNativeInspection) {
+                    const row = childRuntime.adapter.journal.list()[0]
+                    if (row) {
+                      fastNativeInspection = await childEngine.inspect(
+                        row.admission.handle.externalSessionId
+                      )
+                    }
+                  }
+                } finally {
+                  await close()
+                }
+              }
+              return childEngine
+            } finally {
+              globalThis.fetch = originalFetch
+            }
           },
           authorizeInference: async (authority, key) => {
+            appendProcessEvidence(directory, {
+              stage: 'child_authorization_enter',
+              pid: process.pid,
+            })
             await ports.authority.assertAuthority(authority)
             const row = childRuntime.adapter.journal.list()[0]
             const native = await childEngine.inspect(row.admission.handle.externalSessionId)
@@ -425,15 +489,25 @@ export async function initialWorker(directory, mode, baseUrl) {
         return childRuntime
       },
       retainContinuation: async (input) => {
+        appendProcessEvidence(directory, {
+          stage: 'continuation_retention_enter',
+          pid: process.pid,
+        })
         const deadline = Date.now() + 5000
         let childRow
+        let childReady = false
         do {
           childRow = childRuntime.adapter.journal.list()[0]
-          if (childRow?.state === 'running' && metadata.binding) break
+          childReady = Boolean(
+            childRow &&
+            metadata.binding &&
+            (childRow.state === 'running' || mode === 'fast_child_terminal_before_grant')
+          )
+          if (childReady) break
           assert.ok(Date.now() < deadline, 'actual child running journal deadline')
           await new Promise((resolve) => setTimeout(resolve, 10))
-        } while (childRow?.state !== 'running' || !metadata.binding)
-        assert.equal(childRow.state, 'running')
+        } while (!childReady)
+        if (mode !== 'fast_child_terminal_before_grant') assert.equal(childRow.state, 'running')
         const request = input.request
         const interactions = new InteractionService(
           new ports.sqlite.SqliteInteractionRepository(ports.provider)
@@ -524,15 +598,51 @@ export async function initialWorker(directory, mode, baseUrl) {
           process.stdout.write(`${JSON.stringify({ stage: 'before_grant_retention' })}\n`)
           await new Promise(() => {})
         }
+        if (mode === 'fast_child_terminal_before_grant') {
+          await childRuntime.adapter.drain()
+          const terminalRow = childRuntime.adapter.journal.list()[0]
+          assert.ok(fastNativeInspection, 'native terminal metadata was not captured before close')
+          const generation = fastNativeInspection.tasks.find(
+            (item) => item.record.kind === 'pi.generation'
+          )
+          let grantDenied = false
+          let grantDenialCode
+          try {
+            await ports.repository.retain(grant)
+          } catch (error) {
+            grantDenied = true
+            grantDenialCode = error instanceof Error ? error.message : 'NON_ERROR_RETENTION_FAILURE'
+          }
+          fastTerminalSnapshot = {
+            ...(await inspectProcessSnapshot(directory, childRuntime.adapter.journal, ports)),
+            stage: 'fast_terminal_snapshot',
+            childNativeState: terminalRow.state,
+            childNativeTask: generation?.record ?? null,
+            grantDenied,
+            ...(grantDenialCode ? { grantDenialCode } : {}),
+            physicalSendCount,
+            source: input.source,
+            sourceRequestDigest: piChildContinuationRequestDigest(request),
+          }
+          appendProcessEvidence(directory, fastTerminalSnapshot)
+          process.stdout.write(`${JSON.stringify(fastTerminalSnapshot)}\n`)
+          return
+        }
         await ports.repository.retain(grant)
         metadata = { ...metadata, grant }
         writeProcessDescriptor(directory, metadata)
         appendProcessEvidence(directory, { stage: 'grant_retained', grant })
       },
     })
+    appendProcessEvidence(directory, { stage: 'lead_start_enter', pid: process.pid })
     const leadHandle = await f.leadRuntime.adapter.start(f.leadRequest)
+    appendProcessEvidence(directory, { stage: 'lead_start_return', pid: process.pid })
     await f.leadRuntime.adapter.drain()
     assert.equal((await f.leadRuntime.adapter.status(leadHandle)).state, 'completed')
+    if (mode === 'fast_child_terminal_before_grant') {
+      assert.ok(fastTerminalSnapshot, 'fast child retention observation missing')
+      return fastTerminalSnapshot
+    }
     assert.ok(metadata.grant)
     for (const item of ['attempt', 'execution']) {
       const row =
@@ -965,7 +1075,14 @@ export async function recoveryWorker(directory, mode, baseUrl) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [directory, mode, baseUrl] = process.argv.slice(2)
   if (!globalThis.Bun && !emittedProcessProduction) await registerProcessSourceHooks()
-  if (['before_reservation', 'ambiguous_send', 'before_grant_retention'].includes(mode))
+  if (
+    [
+      'before_reservation',
+      'ambiguous_send',
+      'before_grant_retention',
+      'fast_child_terminal_before_grant',
+    ].includes(mode)
+  )
     await initialWorker(directory, mode, baseUrl)
   else await recoveryWorker(directory, mode, baseUrl)
 }
