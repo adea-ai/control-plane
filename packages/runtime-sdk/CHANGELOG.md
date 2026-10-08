@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.13.1...runtime-sdk-v1.14.0) (2026-10-08)
+
+
+### Features
+
+* **pi-durable:** add persistent governed Node runtime and funded lead admission ([#949](https://github.com/adea-ai/control-plane/issues/949)) ([2ad205f](https://github.com/adea-ai/control-plane/commit/2ad205f783c09a0cc7e208d5c799d6c18636500a))
+
 ## [1.13.1](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.13.0...runtime-sdk-v1.13.1) (2026-10-08)
 
 
