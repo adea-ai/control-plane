@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.2.0...pi-durable-adapter-v0.2.1) (2026-10-08)
+
+
+### Tests
+
+* keep Pi interruption worker alive until signalled ([#984](https://github.com/adea-ai/control-plane/issues/984)) ([e5a224a](https://github.com/adea-ai/control-plane/commit/e5a224ab60fa98dfad629186bcc23727c9fcc612))
+
 ## [0.2.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.1.0...pi-durable-adapter-v0.2.0) (2026-10-08)
 
 
