@@ -216,6 +216,53 @@ function main() {
     return
   }
 
+  // A push whose own commit only touches release metadata cannot alter the
+  // migration-relevant tree, and the anchor race makes the verified-baseline
+  // diff unreliable for exactly these pushes: the release merge lands minutes
+  // after its feature, while that feature's verification is still running, so
+  // the newest successful baseline predates the feature and the baseline diff
+  // re-reports the feature's changes as relevant. Judge the pushed commit
+  // against its own parent instead; any git failure falls through to the
+  // baseline comparison.
+  let parentSha
+  try {
+    parentSha = execFileSync('git', ['rev-parse', `${headSha}^`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+  } catch {
+    parentSha = undefined
+  }
+  if (parentSha && isCommitSha(parentSha)) {
+    try {
+      const pushedDiff = execFileSync(
+        'git',
+        ['diff', '--no-renames', '--name-only', '-z', parentSha, headSha],
+        { encoding: 'buffer', stdio: ['ignore', 'pipe', 'ignore'] }
+      )
+      const pushedPaths = pushedDiff
+        .toString('utf8')
+        .split('\0')
+        .filter((path) => path.length > 0)
+      const pushedReleaseMetadata = pushedPaths.filter((path) =>
+        isReleaseMetadata(path, parentSha, headSha)
+      )
+      const pushedRelevant = pushedPaths.find(
+        (path) => isMigrationRelevantPath(path) && !isReleaseMetadata(path, parentSha, headSha)
+      )
+      if (pushedReleaseMetadata.length > 0 && !pushedRelevant) {
+        publishVerification(
+          outputPath,
+          'false',
+          'The pushed commit only changes version metadata and changelogs; the migration-relevant tree is unchanged from its parent.'
+        )
+        return
+      }
+    } catch {
+      // Fall through to the baseline comparison if the parent diff fails.
+    }
+  }
+
   let response
   try {
     const body = execFileSync(

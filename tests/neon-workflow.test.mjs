@@ -88,6 +88,7 @@ function runMigrationGate({
   renamePaths = [],
   baseFiles = {},
   changedFiles = {},
+  intermediateCommits = [],
   baselineMode = 'ancestor',
   response = undefined,
   jobsResponses = undefined,
@@ -147,6 +148,13 @@ function runMigrationGate({
       runGateGit(repository, ['checkout', '--quiet', 'main'])
     }
 
+    for (const commit of intermediateCommits) {
+      for (const relativePath of commit.changedPaths ?? []) {
+        writeGateFile(repository, relativePath, commit.changedFiles?.[relativePath] ?? 'changed\n')
+      }
+      runGateGit(repository, ['add', '--all'])
+      runGateGit(repository, ['commit', '--quiet', '-m', commit.message ?? 'intermediate'])
+    }
     for (const relativePath of changedPaths) {
       writeGateFile(repository, relativePath, changedFiles[relativePath] ?? 'changed\n')
     }
@@ -978,6 +986,51 @@ describe('Neon trusted-main migration gating', () => {
       'repos/adea-ai/control-plane/actions/workflows/neon_workflow.yml/runs?branch=main&event=push&status=success&per_page=25'
     )
     expect(result.ghCall).toContain('/actions/runs/42/jobs?filter=latest&per_page=100')
+  }, 30_000)
+
+  test('a version-only push skips on its own parent diff even with a stale anchor', () => {
+    const result = runMigrationGate({
+      // The anchor race fixture: the verified baseline predates the feature
+      // commit, and the head commit only bumps release metadata on top of it.
+      baseFiles: {
+        'package.json': '{"name":"pkg","version":"1.0.0"}\n',
+        '.release-please-manifest.json': '{"pkg":"1.0.0"}\n',
+        'packages/database/CHANGELOG.md': 'changelog\n',
+      },
+      intermediateCommits: [
+        {
+          changedPaths: ['apps/api/migrations/0002-feature.sql'],
+          message: 'feat: add migration',
+        },
+      ],
+      changedPaths: ['.release-please-manifest.json', 'CHANGELOG.md', 'package.json'],
+      changedFiles: {
+        'package.json': '{"name":"pkg","version":"1.0.1"}\n',
+        '.release-please-manifest.json': '{"pkg":"1.0.1"}\n',
+      },
+      response: ({ baseline }) => ({ workflow_runs: [successfulRun(baseline)] }),
+    })
+    expect(result.status).toBe(0)
+    expect(result.output).toBe('verify=false\n')
+    expect(result.stdout).toContain('pushed commit only changes version metadata and changelogs')
+    // The stale anchor must never be consulted for a version-only push.
+    expect(result.ghCall).not.toContain('neon_workflow.yml/runs')
+  }, 30_000)
+
+  test('a version-only push that also carries a migration still verifies', () => {
+    const result = runMigrationGate({
+      baseFiles: {
+        'package.json': '{"name":"pkg","version":"1.0.0"}\n',
+        '.release-please-manifest.json': '{"pkg":"1.0.0"}\n',
+      },
+      changedPaths: ['packages/database/migrations/0003-mixed.sql', 'package.json', 'CHANGELOG.md'],
+      changedFiles: {
+        'package.json': '{"name":"pkg","version":"1.0.1"}\n',
+      },
+      response: ({ baseline }) => ({ workflow_runs: [successfulRun(baseline)] }),
+    })
+    expect(result.status).toBe(0)
+    expect(result.output).toBe('verify=true\n')
   }, 30_000)
 
   test('requires a recent completed successful main push as the baseline candidate', () => {

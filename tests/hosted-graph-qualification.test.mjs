@@ -102,6 +102,17 @@ test.skipIf(!timeoutExecutable)(
   }
 )
 
+test('Hosted graph qualifier keeps ownership readable during a slow state write', async () => {
+  await fixture(async (context) => {
+    const result = await context.run('signal-active', { FAKE_SLOW_LEDGER: 'true' })
+    if (result.exitCode !== 143) console.error(result.stdout, result.stderr)
+    expect(result.exitCode).toBe(143)
+    expect(await readdir(context.runner)).toEqual(['caller-data'])
+    expect((await context.lifecycle()).some((entry) => entry.state === 'terminated')).toBe(true)
+    expect(await readFile(context.caller, 'utf8')).toBe('caller-owned')
+  })
+})
+
 for (const failure of ['remove', 'wrong-owner', 'lookup', 'lingering']) {
   test(`Hosted graph qualifier preserves reconciliation data after ${failure}`, async () => {
     await fixture(async (context) => {
@@ -159,6 +170,16 @@ async function fixture(operation) {
     for (const command of ['docker', 'bun', 'node', 'timeout', 'curl', 'sleep']) {
       await writeFile(join(bin, command), `#!${process.execPath}\n${fakeCommands}`, { mode: 0o700 })
     }
+    const ledgerDelay = join(directory, 'ledger-delay.sh')
+    await writeFile(
+      ledgerDelay,
+      `printf() {
+  if [[ "\${FAKE_SLOW_LEDGER:-}" == true && "$1" == *'"test":'* && "\${@: -2:1}" == running ]]; then
+    /bin/sleep 0.2
+  fi
+  builtin printf "$@"
+}\n`
+    )
     await operation({
       runner,
       caller,
@@ -208,6 +229,7 @@ async function fixture(operation) {
             FAKE_CALLS: calls,
             FAKE_STATE: state,
             FAKE_PROCESSES: join(directory, 'children.jsonl'),
+            BASH_ENV: ledgerDelay,
             ...overrides,
           },
           stdout: 'pipe',
