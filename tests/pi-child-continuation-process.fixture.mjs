@@ -417,6 +417,55 @@ function safeProcessFailure(error) {
   }
 }
 
+export function safeProcessRecoveryFailure(error) {
+  try {
+    const errcode =
+      error && typeof error === 'object' && Number.isSafeInteger(error.errcode)
+        ? error.errcode
+        : undefined
+    const policyCode =
+      error instanceof Error &&
+      ['PI_CHILD_CONTINUATION_DENIED', 'PI_CHILD_CONTINUATION_REJECTED'].includes(error.message)
+        ? error.message
+        : undefined
+    return {
+      ...safeProcessFailure(error),
+      ...(errcode !== undefined ? { errcode } : {}),
+      ...(policyCode ? { policyCode } : {}),
+    }
+  } catch {
+    return { errorType: 'UnclassifiedError' }
+  }
+}
+
+export async function observeProcessRecoveryBoundary({ directory, ports, phase }, operation) {
+  assert.ok(['assertAuthority', 'reconcileInference'].includes(phase))
+  // Diagnostic-only capture: stale transaction failures are never attributed
+  // to a later callback. The actual callback result/error is unchanged.
+  const emit = (stage, details = {}) => {
+    try {
+      appendProcessEvidence(directory, { stage, pid: process.pid, phase, ...details })
+    } catch {
+      // A diagnostic write cannot replace a callback result or failure.
+      // This never creates a permitted recovery outcome.
+    }
+  }
+  ports.resetPersistenceFailure()
+  emit('recovery_boundary_enter')
+  try {
+    const result = await operation()
+    emit('recovery_boundary_return')
+    return result
+  } catch (error) {
+    const original = ports.persistenceFailure()
+    emit('recovery_boundary_rejected', {
+      ...safeProcessRecoveryFailure(error),
+      transactionFailure: original === undefined ? null : safeProcessRecoveryFailure(original),
+    })
+    throw error
+  }
+}
+
 async function observeProcessBoundary(directory, stage, operation) {
   appendProcessEvidence(directory, { stage: `${stage}_enter`, pid: process.pid })
   try {
@@ -1301,7 +1350,10 @@ export async function recoveryWorker(directory, mode, baseUrl) {
       store: usageStore,
       now: () => '2026-08-25T18:01:00.000Z',
     })
-    const assertAuthority = (input) => ports.authority.assertAuthority(input)
+    const assertAuthority = (input) =>
+      observeProcessRecoveryBoundary({ directory, ports, phase: 'assertAuthority' }, () =>
+        ports.authority.assertAuthority(input)
+      )
     const price = new PinnedModelPrice(
       {
         schemaVersion: 1,
@@ -1385,18 +1437,22 @@ export async function recoveryWorker(directory, mode, baseUrl) {
       },
       authorizeInference: usage.authorizeInference,
       settleUsage: usage.settleUsage,
-      reconcileInference: async (input) => {
-        try {
-          await ports.authority.assertResume(input, row.admission.handle)
-          await assertProcessNoSend(directory, input, probe, ledger, usageStore)
-          reconciled = true
-          return 'safe_to_resume'
-        } catch (error) {
-          if (!(error instanceof ProcessPhysicalSendPendingError)) throw error
-          pendingPhysicalSend = true
-          return 'unresolved'
-        }
-      },
+      reconcileInference: (input) =>
+        observeProcessRecoveryBoundary(
+          { directory, ports, phase: 'reconcileInference' },
+          async () => {
+            try {
+              await ports.authority.assertResume(input, row.admission.handle)
+              await assertProcessNoSend(directory, input, probe, ledger, usageStore)
+              reconciled = true
+              return 'safe_to_resume'
+            } catch (error) {
+              if (!(error instanceof ProcessPhysicalSendPendingError)) throw error
+              pendingPhysicalSend = true
+              return 'unresolved'
+            }
+          }
+        ),
     })
     appendProcessEvidence(directory, {
       stage: 'recovery_runtime_constructed',
