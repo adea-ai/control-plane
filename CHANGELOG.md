@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.75.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.74.0...workspace-v1.75.0) (2026-10-08)
+
+
+### Features
+
+* **runtime:** add workspace scope capability vocabulary ([#952](https://github.com/adea-ai/control-plane/issues/952)) ([c76e25c](https://github.com/adea-ai/control-plane/commit/c76e25c376cb19b92875f2cf3a93f19180a0067e))
+
+
+### Documentation
+
+* reconcile Pi target diagrams and delivery sequence ([05a5e24](https://github.com/adea-ai/control-plane/commit/05a5e2495bdb4adec05ba37840fa4a42b2d5472c))
+* reconcile planned Pi diagrams and milestone sequence ([#953](https://github.com/adea-ai/control-plane/issues/953)) ([05a5e24](https://github.com/adea-ai/control-plane/commit/05a5e2495bdb4adec05ba37840fa4a42b2d5472c))
+
 ## [1.74.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.73.5...workspace-v1.74.0) (2026-10-08)
 
 
