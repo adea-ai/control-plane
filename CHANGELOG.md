@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.76.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.75.1...workspace-v1.76.0) (2026-10-08)
+
+
+### Features
+
+* **execution:** add canonical workspace execution scope ([#951](https://github.com/adea-ai/control-plane/issues/951)) ([4ccc0de](https://github.com/adea-ai/control-plane/commit/4ccc0deb04cfb9cd47672b36e4a37b16e8b1e024))
+
 ## [1.75.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.75.0...workspace-v1.75.1) (2026-10-08)
 
 
