@@ -70,6 +70,15 @@ export const DelegationRecordSchema = z
     updatedAt: TimestampSchema,
     terminalResultRef: IdentifierSchemas.artifactId.optional(),
     failureCode: ReferenceSchema.optional(),
+    terminalPublication: z
+      .object({
+        status: z.enum(['pending', 'published']),
+        idempotencyKey: ReferenceSchema,
+        resolution: z.enum(['continue_parent', 'manual_intervention', 'fail_parent']).optional(),
+        reason: z.literal('parent_cancelled').optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((record, context) => {
@@ -77,6 +86,18 @@ export const DelegationRecordSchema = z
       context.addIssue({ code: 'custom', message: 'Delegation cannot target its parent execution' })
     }
     const terminal = ['completed', 'failed', 'cancelled'].includes(record.state)
+    if (
+      record.terminalPublication &&
+      (!terminal ||
+        record.terminalPublication.idempotencyKey !== terminalPublicationKey(record) ||
+        (record.terminalPublication.resolution && record.state !== 'failed') ||
+        (record.terminalPublication.reason && record.state !== 'cancelled'))
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Publication must bind the retained terminal outcome',
+      })
+    }
     if (record.terminalResultRef && record.state !== 'completed') {
       context.addIssue({ code: 'custom', message: 'Only completed delegation may have a result' })
     }
@@ -164,8 +185,40 @@ export interface DelegationEvent {
 }
 
 export interface DelegationEventPublisher {
-  publish(event: DelegationEvent): Promise<void>
+  /** Atomically retain/deduplicate terminal events by this key before acknowledging them. */
+  publish(event: DelegationEvent, idempotencyKey: string): Promise<void>
 }
+
+/** Public delegation evidence contains identifiers and bounded state, never prompt/auth payloads. */
+export const DelegationEventSchema = z
+  .object({
+    type: z.enum([
+      'delegation.requested',
+      'delegation.dispatched',
+      'delegation.progress',
+      'delegation.completed',
+      'delegation.failed',
+      'delegation.cancelled',
+    ]),
+    delegationId: IdentifierSchemas.delegationId,
+    parentExecutionId: IdentifierSchemas.executionId,
+    childExecutionId: IdentifierSchemas.executionId,
+    occurredAt: TimestampSchema,
+    details: z
+      .object({
+        state: DelegationRecordSchema.shape.state.optional(),
+        runtimeConnectionId: IdentifierSchemas.runtimeConnectionId.optional(),
+        childAttemptId: IdentifierSchemas.attemptId.optional(),
+        terminalResultRef: IdentifierSchemas.artifactId.optional(),
+        failureCode: ReferenceSchema.optional(),
+        reason: z.literal('parent_cancelled').optional(),
+        resolution: z
+          .enum(['retry', 'fallback', 'continue_parent', 'manual_intervention', 'fail_parent'])
+          .optional(),
+      })
+      .strict(),
+  })
+  .strict()
 
 export type DelegationErrorCode =
   | 'DELEGATION_NOT_FOUND'
@@ -440,7 +493,8 @@ export class DelegationService {
         record.terminalResultRef === parsed.terminalResultRef &&
         record.failureCode === parsed.failure?.code
       ) {
-        return { record }
+        const published = await this.#publishTerminal(record)
+        return { record: published }
       }
       throw new DelegationError('DELEGATION_STATE_CONFLICT')
     }
@@ -506,6 +560,15 @@ export class DelegationService {
         : {}),
       ...(parsed.terminalResultRef ? { terminalResultRef: parsed.terminalResultRef } : {}),
       ...(parsed.failure && !retrying ? { failureCode: parsed.failure.code } : {}),
+      ...(['completed', 'failed', 'cancelled'].includes(state)
+        ? {
+            terminalPublication: {
+              status: 'pending',
+              idempotencyKey: terminalPublicationKey(record),
+              ...(resolution ? { resolution } : {}),
+            },
+          }
+        : {}),
     })
     if (!(await this.#delegations.compareAndSet(record.revision, next))) {
       const replay = await this.#required(parsed.delegationId)
@@ -515,9 +578,14 @@ export class DelegationService {
         replay.terminalResultRef === parsed.terminalResultRef &&
         replay.failureCode === (parsed.failure && !retrying ? parsed.failure.code : undefined)
       ) {
-        return { record: replay, ...(resolution ? { resolution } : {}) }
+        const published = await this.#publishTerminal(replay)
+        return { record: published, ...(resolution ? { resolution } : {}) }
       }
       throw new DelegationError('DELEGATION_STATE_CONFLICT')
+    }
+    if (next.terminalPublication) {
+      const published = await this.#publishTerminal(next)
+      return { record: published, ...(resolution ? { resolution } : {}) }
     }
     const eventType = parsed.failure
       ? 'delegation.failed'
@@ -539,6 +607,16 @@ export class DelegationService {
 
   listChildren(parentExecutionId: string): Promise<readonly DelegationRecord[]> {
     return this.#delegations.listByParent(IdentifierSchemas.executionId.parse(parentExecutionId))
+  }
+
+  /** Recovery can drain retained outcomes without invoking a parent model turn. */
+  async reconcileChildPublications(
+    parentExecutionId: string
+  ): Promise<readonly DelegationRecord[]> {
+    const records = await this.listChildren(parentExecutionId)
+    const reconciled: DelegationRecord[] = []
+    for (const record of records) reconciled.push(await this.#publishTerminal(record))
+    return reconciled
   }
 
   async cancelChildren(input: {
@@ -577,13 +655,16 @@ export class DelegationService {
         state: 'cancelled',
         revision: record.revision + 1,
         updatedAt: cancelledAt,
+        terminalPublication: {
+          status: 'pending',
+          idempotencyKey: terminalPublicationKey(record),
+          reason: 'parent_cancelled',
+        },
       })
       if (!(await this.#delegations.compareAndSet(record.revision, next))) {
         throw new DelegationError('DELEGATION_STATE_CONFLICT')
       }
-      await this.#publish(next, 'delegation.cancelled', cancelledAt, {
-        reason: 'parent_cancelled',
-      })
+      await this.#publishTerminal(next)
       cancelled.push(child)
     }
     return cancelled
@@ -638,21 +719,71 @@ export class DelegationService {
     return record
   }
 
+  async #publishTerminal(record: DelegationRecord): Promise<DelegationRecord> {
+    const publication = record.terminalPublication
+    // Legacy terminal records have no reliable publication receipt. Do not invent one.
+    if (!publication || publication.status === 'published') return record
+    const type =
+      record.state === 'completed'
+        ? 'delegation.completed'
+        : record.state === 'cancelled'
+          ? 'delegation.cancelled'
+          : 'delegation.failed'
+    await this.#events.publish(
+      {
+        type,
+        delegationId: record.delegationId,
+        parentExecutionId: record.parentExecutionId,
+        childExecutionId: record.childExecutionId,
+        occurredAt: record.updatedAt,
+        details: {
+          state: record.state,
+          ...(publication.resolution ? { resolution: publication.resolution } : {}),
+          ...(record.terminalResultRef ? { terminalResultRef: record.terminalResultRef } : {}),
+          ...(record.failureCode ? { failureCode: record.failureCode } : {}),
+          ...(publication.reason ? { reason: publication.reason } : {}),
+        },
+      },
+      publication.idempotencyKey
+    )
+    const acknowledged = DelegationRecordSchema.parse({
+      ...record,
+      revision: record.revision + 1,
+      terminalPublication: { ...publication, status: 'published' },
+    })
+    if (await this.#delegations.compareAndSet(record.revision, acknowledged)) return acknowledged
+    const current = await this.#required(record.delegationId)
+    if (
+      current.terminalPublication?.idempotencyKey !== publication.idempotencyKey ||
+      current.terminalPublication.status !== 'published'
+    ) {
+      throw new DelegationError('DELEGATION_STATE_CONFLICT')
+    }
+    return current
+  }
+
   #publish(
     record: DelegationRecord,
     type: DelegationEvent['type'],
     occurredAt: string,
     details: Readonly<Record<string, unknown>> = {}
   ): Promise<void> {
-    return this.#events.publish({
-      type,
-      delegationId: record.delegationId,
-      parentExecutionId: record.parentExecutionId,
-      childExecutionId: record.childExecutionId,
-      occurredAt,
-      details,
-    })
+    return this.#events.publish(
+      {
+        type,
+        delegationId: record.delegationId,
+        parentExecutionId: record.parentExecutionId,
+        childExecutionId: record.childExecutionId,
+        occurredAt,
+        details,
+      },
+      `delegation:${record.delegationId}:${record.revision}:${type}`
+    )
   }
+}
+
+function terminalPublicationKey(record: Pick<DelegationRecord, 'delegationId'>): string {
+  return `delegation:${record.delegationId}:terminal`
 }
 
 export function decideDelegationFailure(input: {

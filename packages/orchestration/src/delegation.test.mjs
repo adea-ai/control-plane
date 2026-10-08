@@ -185,6 +185,107 @@ describe('durable parent and child delegation', () => {
     ])
   })
 
+  test('replays a retained terminal outcome after publication fails', async () => {
+    const fixture = await createFixture()
+    await fixture.service.delegate(delegationInput(fixture))
+    await fixture.service.dispatchChild({
+      delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
+      runtime: { runtimeConnectionId: 'rtc_01JBBCDEF0123456789ABCDEFG' },
+      dispatchedAt: '2026-08-25T18:02:00.000Z',
+    })
+    await fixture.service.recordChildProgress({
+      delegationId: ids.delegationId,
+      state: 'running',
+      observedAt: '2026-08-25T18:02:10.000Z',
+    })
+    const completion = {
+      delegationId: ids.delegationId,
+      state: 'completed',
+      observedAt: '2026-08-25T18:03:00.000Z',
+      terminalResultRef: 'art_01JBBCDEF0123456789ABCDEFG',
+    }
+    const interrupted = new DelegationService({
+      ...fixture,
+      events: {
+        async publish() {
+          throw new Error('publication unavailable')
+        },
+      },
+    })
+    await expect(interrupted.recordChildProgress(completion)).rejects.toThrow(
+      'publication unavailable'
+    )
+    expect((await fixture.delegations.get(ids.delegationId)).state).toBe('completed')
+    await fixture.service.recordChildProgress(completion)
+    expect(fixture.events.filter((event) => event.type === 'delegation.completed')).toHaveLength(1)
+  })
+
+  test('recovers publication acknowledged by the inbox before the sender loses its receipt', async () => {
+    const fixture = await createFixture()
+    await fixture.service.delegate(delegationInput(fixture))
+    await fixture.service.dispatchChild({
+      delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
+      runtime: { runtimeConnectionId: 'rtc_01JBBCDEF0123456789ABCDEFG' },
+      dispatchedAt: '2026-08-25T18:02:00.000Z',
+    })
+    await fixture.service.recordChildProgress({
+      delegationId: ids.delegationId,
+      state: 'running',
+      observedAt: '2026-08-25T18:02:10.000Z',
+    })
+    const inbox = new Map()
+    const deliveredKeys = []
+    const events = {
+      async publish(event, key) {
+        deliveredKeys.push(key)
+        inbox.set(key, event)
+      },
+    }
+    const interrupted = new DelegationService({
+      ...fixture,
+      delegations: {
+        get: (id) => fixture.delegations.get(id),
+        compareAndSet: (revision, record) =>
+          record.terminalPublication?.status === 'published'
+            ? Promise.reject(new Error('crashed before acknowledgement'))
+            : fixture.delegations.compareAndSet(revision, record),
+      },
+      events,
+    })
+    const completion = {
+      delegationId: ids.delegationId,
+      state: 'completed',
+      observedAt: '2026-08-25T18:03:00.000Z',
+      terminalResultRef: 'art_01JBBCDEF0123456789ABCDEFG',
+    }
+    await expect(interrupted.recordChildProgress(completion)).rejects.toThrow(
+      'crashed before acknowledgement'
+    )
+    const pending = await fixture.delegations.get(ids.delegationId)
+    expect(pending.terminalPublication.status).toBe('pending')
+    const restarted = new DelegationService({ ...fixture, events })
+    await restarted.reconcileChildPublications(ids.parentExecutionId)
+    expect((await fixture.delegations.get(ids.delegationId)).terminalPublication.status).toBe(
+      'published'
+    )
+    expect(new Set(deliveredKeys).size).toBe(1)
+    expect(deliveredKeys).toHaveLength(2)
+    expect(inbox.size).toBe(1)
+    await restarted.recordChildProgress({ ...completion, observedAt: '2026-08-25T18:04:00.000Z' })
+    await expect(
+      restarted.recordChildProgress({
+        ...completion,
+        terminalResultRef: 'art_01JBBCDEF0123456789ABCDEFH',
+      })
+    ).rejects.toMatchObject({ code: 'DELEGATION_STATE_CONFLICT' })
+    expect(deliveredKeys).toHaveLength(2)
+    expect(JSON.stringify(pending.terminalPublication)).not.toContain(
+      'Research the bounded question'
+    )
+  })
+
   test('retries a failed attempt without terminating the stable child execution', async () => {
     const fixture = await createFixture()
     await fixture.service.delegate(delegationInput(fixture))
