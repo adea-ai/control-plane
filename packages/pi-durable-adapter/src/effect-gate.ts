@@ -27,6 +27,8 @@ export interface DurableEffectGateRecord {
   readonly toolCallId: string
   readonly revision: number
   readonly state: 'invoking' | 'awaiting_approval' | 'settled'
+  /** Durable barrier crossed immediately before invoking the protected executor. */
+  readonly effectAdmittedAt?: string
   readonly outcome?: DurableEffectGateOutcome
 }
 
@@ -138,6 +140,7 @@ export class PiDurableEffectGate {
     if (!claimed) throw new PiDurableEffectGateError('PI_EFFECT_STORE_CONFLICT')
     let authorityRejected = false
     let effectStarted = false
+    let effectRecord = invoking
     const guard = async (boundary: 'approval' | 'effect') => {
       try {
         await this.#assertAuthority(request, boundary)
@@ -195,7 +198,7 @@ export class PiDurableEffectGate {
       }
       return result
     }
-    const beforeEffect = async (approvalRequired: boolean) => {
+    const beforeEffect = async (approvalRequired: boolean, signal: AbortSignal) => {
       const call = await this.options.service.calls.get(request.toolCallId)
       if ((approvalRequired || call?.policyDecision?.requiresApproval) && !request.approval) {
         authorityRejected = true
@@ -215,6 +218,25 @@ export class PiDurableEffectGate {
         authorityRejected = true
         throw new PiDurableEffectGateError('PI_EFFECT_AUTHORITY_REJECTED')
       }
+      // Abort remains effective through every authority/approval await. The effect barrier
+      // is committed only after this final synchronous signal check.
+      signal.throwIfAborted()
+      const current = await this.#store(() => this.options.store.get(key))
+      if (
+        !current ||
+        current.state !== 'invoking' ||
+        current.requestDigest !== requestDigest ||
+        current.revision !== effectRecord.revision
+      )
+        throw new PiDurableEffectGateError('PI_EFFECT_STORE_CONFLICT')
+      const admitted: DurableEffectGateRecord = {
+        ...current,
+        revision: current.revision + 1,
+        effectAdmittedAt: this.#now(),
+      }
+      if (!(await this.#store(() => this.options.store.compareAndSet(current.revision, admitted))))
+        throw new PiDurableEffectGateError('PI_EFFECT_STORE_CONFLICT')
+      effectRecord = admitted
       effectStarted = true
     }
     const base = this.options.service
@@ -241,12 +263,12 @@ export class PiDurableEffectGate {
       }
     }
     const next: DurableEffectGateRecord = {
-      ...invoking,
-      revision: invoking.revision + 1,
+      ...effectRecord,
+      revision: effectRecord.revision + 1,
       state: outcome.state === 'awaiting_approval' ? 'awaiting_approval' : 'settled',
       outcome,
     }
-    if (!(await this.#store(() => this.options.store.compareAndSet(invoking.revision, next))))
+    if (!(await this.#store(() => this.options.store.compareAndSet(effectRecord.revision, next))))
       throw new PiDurableEffectGateError('PI_EFFECT_STORE_CONFLICT')
     // Keep the receipt even when authority changes while the effect awaits; publication
     // can be denied without losing evidence or admitting the effect again.
@@ -277,7 +299,7 @@ export class PiDurableEffectGate {
 class AuthorityCheckedGateway extends ToolGateway {
   constructor(
     readonly delegate: ToolGateway,
-    readonly beforeEffect: (approvalRequired: boolean) => Promise<void>
+    readonly beforeEffect: (approvalRequired: boolean, signal: AbortSignal) => Promise<void>
   ) {
     super(delegate.registry)
   }
@@ -289,10 +311,16 @@ class AuthorityCheckedGateway extends ToolGateway {
       ...prepared,
       executor: {
         execute: async (request, version, signal) => {
-          await this.beforeEffect(prepared.operation.approvalMode === 'always')
-          // The gateway may abort while the final authority guard awaits.
           signal.throwIfAborted()
-          return executor.execute(request, version, signal)
+          await this.beforeEffect(prepared.operation.approvalMode === 'always', signal)
+          // Once the durable barrier commits, parent cancellation cannot cancel the child.
+          // Preserve the tool gateway timeout, but do not forward the parent's abort signal.
+          const detached = detachParentCancellation(signal)
+          try {
+            return await executor.execute(request, version, detached.signal)
+          } finally {
+            detached.dispose()
+          }
         },
       },
     }
@@ -303,6 +331,29 @@ class AuthorityCheckedGateway extends ToolGateway {
     options: { readonly signal?: AbortSignal } = {}
   ) {
     return this.delegate.invoke(prepared, options)
+  }
+}
+
+function detachParentCancellation(signal: AbortSignal): {
+  signal: AbortSignal
+  dispose: () => void
+} {
+  const controller = new AbortController()
+  const forwardTimeout = () => {
+    const reason = signal.reason
+    if (
+      reason &&
+      typeof reason === 'object' &&
+      Reflect.get(reason, 'code') === 'TIMEOUT' &&
+      !controller.signal.aborted
+    )
+      controller.abort(reason)
+  }
+  signal.addEventListener('abort', forwardTimeout)
+  if (signal.aborted) forwardTimeout()
+  return {
+    signal: controller.signal,
+    dispose: () => signal.removeEventListener('abort', forwardTimeout),
   }
 }
 

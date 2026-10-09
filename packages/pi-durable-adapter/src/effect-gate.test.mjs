@@ -145,9 +145,9 @@ async function fixture(run) {
     })
     const gateway = new ToolGateway(registry)
     gateway.registerExecutor('connector', 'records-v1', {
-      async execute() {
+      async execute(_request, _version, signal) {
         state.effects++
-        await changes.afterEffect?.()
+        await changes.afterEffect?.(signal)
         return { output: { saved: true } }
       },
     })
@@ -259,6 +259,103 @@ async function delayedGuardAbortRegression(mode) {
 }
 
 describe('persistent Pi governed effect gate', () => {
+  test('caller cancellation after durable effect admission does not cancel the admitted child command', async () => {
+    await fixture(async ({ open, close, state }) => {
+      state.approved = true
+      let enterEffect, finishEffect, finishExecution
+      const executing = new Promise((resolve) => {
+        enterEffect = resolve
+      })
+      const paused = new Promise((resolve) => {
+        finishEffect = resolve
+      })
+      const executed = new Promise((resolve) => {
+        finishExecution = resolve
+      })
+      const controller = new AbortController()
+      let executorSignal
+      let admittedRecord
+      const key = JSON.stringify([request().workspaceId, request().idempotencyKey])
+      const { gate, store } = await open({
+        afterEffect: async (signal) => {
+          executorSignal = signal
+          admittedRecord = await store.get(key)
+          enterEffect()
+          await paused
+          finishExecution()
+        },
+      })
+      const pending = gate.execute(request(), { signal: controller.signal })
+      await executing
+      controller.abort(new Error('parent-cancelled'))
+      const admittedSignalAborted = executorSignal.aborted
+      finishEffect()
+      const outcome = await pending
+      await executed
+      expect(admittedRecord.effectAdmittedAt).toBeString()
+      expect(admittedSignalAborted).toBe(false)
+      expect(outcome.state).toBe('reconciliation_required')
+      expect(outcome.call.errorCode).toBe('ABORTED')
+      expect(executorSignal.aborted).toBe(false)
+      expect(state.effects).toBe(1)
+      const receipt = await store.get(key)
+      expect(receipt).toMatchObject({
+        state: 'settled',
+        outcome: { state: 'reconciliation_required', call: { errorCode: 'ABORTED' } },
+      })
+      expect(await gate.execute(request())).toEqual(receipt.outcome)
+      expect(state.effects).toBe(1)
+      close()
+    })
+  })
+
+  test('gateway timeout still aborts an executor after durable effect admission', async () => {
+    await fixture(async ({ open, close, state }) => {
+      state.approved = true
+      let enterEffect, finishEffect
+      const executing = new Promise((resolve) => {
+        enterEffect = resolve
+      })
+      const paused = new Promise((resolve) => {
+        finishEffect = resolve
+      })
+      let executorSignal
+      const { gate } = await open({
+        timeoutMs: 250,
+        afterEffect: async (signal) => {
+          executorSignal = signal
+          enterEffect()
+          await paused
+        },
+      })
+      const pending = gate.execute(request())
+      await executing
+      const timedOut = new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('gateway timeout was not forwarded')),
+          2_000
+        )
+        executorSignal.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer)
+            resolve()
+          },
+          { once: true }
+        )
+      })
+      await timedOut
+      expect(executorSignal.aborted).toBe(true)
+      finishEffect()
+      const outcome = await pending
+      expect(outcome.state).toBe('reconciliation_required')
+      expect(state.effects).toBe(1)
+      expect(await gate.execute(request())).toEqual(outcome)
+      expect(state.effects).toBe(1)
+      close()
+    })
+  })
+
   test('caller abort during the delayed final guard cannot invoke a non-abort-aware executor', () =>
     delayedGuardAbortRegression('caller'))
 
@@ -288,13 +385,18 @@ describe('persistent Pi governed effect gate', () => {
         const first = await open(
           interrupted
             ? {
-                store: (store) => ({
-                  get: store.get.bind(store),
-                  insert: store.insert.bind(store),
-                  compareAndSet: async () => {
-                    throw new Error('credential-secret-never-persist')
-                  },
-                }),
+                store: (store) => {
+                  let compareAndSetCount = 0
+                  return {
+                    get: store.get.bind(store),
+                    insert: store.insert.bind(store),
+                    compareAndSet: async (expectedRevision, record) => {
+                      if (compareAndSetCount++ === 0)
+                        return store.compareAndSet(expectedRevision, record)
+                      throw new Error('credential-secret-never-persist')
+                    },
+                  }
+                },
               }
             : {}
         )
@@ -382,9 +484,13 @@ describe('persistent Pi governed effect gate', () => {
         store: (store) => ({
           get: store.get.bind(store),
           insert: store.insert.bind(store),
-          compareAndSet: async () => {
-            throw new Error('credential-secret-never-persist')
-          },
+          compareAndSet: (() => {
+            let compareAndSetCount = 0
+            return async (expectedRevision, record) => {
+              if (compareAndSetCount++ === 0) return store.compareAndSet(expectedRevision, record)
+              throw new Error('credential-secret-never-persist')
+            }
+          })(),
         }),
       })
       await expect(gate.execute(request())).rejects.toThrow('PI_EFFECT_STORE_CONFLICT')
