@@ -111,6 +111,7 @@
         "@control-plane/pi-durable-adapter",
         "@control-plane/runtime-sdk",
         "@control-plane/telemetry",
+        "@control-plane/tool-execution",
         "@control-plane/usage-ledger"
       ],
       "externalDependencies": [

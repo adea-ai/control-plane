@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.86.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.86.1...workspace-v1.86.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* use authenticated gh for local requirements-ledger checks ([#1035](https://github.com/adea-ai/control-plane/issues/1035)) ([2a0785f](https://github.com/adea-ai/control-plane/commit/2a0785ff1c07890e306332b05d6e5ed7a368e699))
+
 ## [1.86.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.86.0...workspace-v1.86.1) (2026-10-09)
 
 
