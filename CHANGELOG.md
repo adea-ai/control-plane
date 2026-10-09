@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.90.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.89.1...workspace-v1.90.0) (2026-10-09)
+
+
+### Features
+
+* **pi:** 935 cancel-intent persistence, attempt fencing, and target-bound observation ([#1045](https://github.com/adea-ai/control-plane/issues/1045)) ([1208729](https://github.com/adea-ai/control-plane/commit/12087297deac41190f52f629d70e40bdb8d50d01))
+
 ## [1.89.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.89.0...workspace-v1.89.1) (2026-10-09)
 
 
