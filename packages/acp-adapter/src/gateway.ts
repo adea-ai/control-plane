@@ -31,13 +31,16 @@ export {
 } from './acp-remote-transport.js'
 export type {
   AcpRemoteDeviceClaim,
+  AcpRemoteDeviceClaimResult,
   AcpRemoteDeviceDenialOutcome,
   AcpRemoteDeviceExchangeOutcome,
   AcpRemoteDeviceFenceRecord,
   AcpRemoteDeviceLedgerRecord,
   AcpRemoteDeviceOutcome,
+  AcpRemoteDeviceStateScope,
   AcpRemoteDeviceStateStore,
 } from './acp-remote-device-state.js'
+export { acpRemoteDeviceStateScope } from './acp-remote-device-state.js'
 export {
   InMemoryAcpRemoteDeviceStateStore,
   PersistenceProviderAcpRemoteDeviceStateStore,

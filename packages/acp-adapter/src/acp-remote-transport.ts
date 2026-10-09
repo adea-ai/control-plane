@@ -49,6 +49,7 @@ import {
 } from './acp-remote-fence.ts'
 import {
   InMemoryAcpRemoteDeviceStateStore,
+  type AcpRemoteDeviceClaimResult,
   type AcpRemoteDeviceLedgerRecord,
   type AcpRemoteDeviceOutcome,
   type AcpRemoteDeviceStateStore,
@@ -378,6 +379,19 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
       // the device replay ledger returns the recorded outcome instead of repeating the effect.
       throw remoteDenialError(denyRemote('response_unknown'))
     }
+    // Current-authority recheck after the send await: revocation, an expired window, or an abort
+    // that landed while the command was on the wire must stop the reply from being opened and
+    // published to the caller.
+    this.#assertFenced()
+    const receivedWindow = evaluateCommandWindow({
+      issuedAt: command.issuedAt,
+      expiresAt: command.expiresAt,
+      now: this.#now(),
+      clockSkewMs: ACP_REMOTE_CLOCK_SKEW_MS,
+      maxLifetimeMs: ACP_REMOTE_MAX_COMMAND_LIFETIME_MS,
+    })
+    if (receivedWindow.outcome === 'denied') throw remoteDenialError(receivedWindow)
+    if (signalAborted(signal)) throw timeoutError()
     return this.#openReply(reply, header, returnKey)
   }
 
@@ -422,6 +436,17 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
     } catch {
       throw untrusted()
     }
+    // Current-authority recheck after the decrypt await: authority that changed while the sealed
+    // reply was opening must stop the exchange from reaching the caller.
+    this.#assertFenced()
+    const openedWindow = evaluateCommandWindow({
+      issuedAt: command.issuedAt,
+      expiresAt: command.expiresAt,
+      now: this.#now(),
+      clockSkewMs: ACP_REMOTE_CLOCK_SKEW_MS,
+      maxLifetimeMs: ACP_REMOTE_MAX_COMMAND_LIFETIME_MS,
+    })
+    if (openedWindow.outcome === 'denied') throw remoteDenialError(openedWindow)
     const decoded = ExchangeSchema.safeParse(exchange)
     if (!decoded.success) throw untrusted()
     return {
@@ -445,9 +470,13 @@ export interface SecureAcpDeviceEndpointOptions {
   readonly executor: Pick<AcpGatewayTransport, 'dispatch' | 'inventory'>
   /**
    * Durable fence state: revocation, highest accepted channel generation, and the replay ledger.
-   * Defaults to the in-memory seam, which is explicitly not durable across restart; production
-   * composition injects the PersistenceProvider-backed store so a restart cannot revive revoked
-   * authority, accept an older channel generation, or re-run an already-recorded effect.
+   * Defaults to the in-memory seam, which is explicitly not durable across restart and never a
+   * production claim. Production wiring is an OPEN INTEGRATION GAP: no production composition
+   * constructs `SecureAcpDeviceEndpoint` or `SecureAcpRemoteTransport` today — only fixtures and
+   * tests do — so nothing injects the PersistenceProvider-backed store yet. Any real Local
+   * construction must inject
+   * `new PersistenceProviderAcpRemoteDeviceStateStore(provider, acpRemoteDeviceStateScope(route))`
+   * (one scoped store per authenticated route) before this route may carry production traffic.
    */
   readonly stateStore?: AcpRemoteDeviceStateStore
   readonly now?: () => Date
@@ -462,8 +491,10 @@ interface AcpRemoteInflight {
 
 /**
  * Device side of one route. Every command passes the revocation, trust-freshness, authentication,
- * decryption, binding, window, generation, and ledger fences before the executor is reached, and the
- * fences are re-checked after each await so authority changes mid-flight cannot slip past them.
+ * decryption, binding, window, generation, and ledger fences before the executor is reached; the
+ * command-scoped fence (route authority + window + generation) is re-checked after EVERY await on
+ * the effect and publication paths, the persisted fence is enforced atomically inside the durable
+ * claim transaction, and every reply — fresh, sealed, or cached — passes a publication fence.
  */
 export class SecureAcpDeviceEndpoint {
   readonly #route: AcpRemoteDeviceRoute
@@ -547,6 +578,28 @@ export class SecureAcpDeviceEndpoint {
   }
 
   /**
+   * Command-scoped current-authority fence: the route fence, this delivery's window, and this
+   * delivery's channel generation against the highest accepted generation. It is re-evaluated after
+   * EVERY await on effect and publication paths — storage reads, ledger claim, execution, reply
+   * sealing, and cached-response service — so a command whose window expires or whose generation
+   * is superseded while parked is denied exactly like one that arrived expired or superseded.
+   */
+  #commandFenceReason(header: AcpRemoteCommandHeader): AcpRemoteDenialReason | undefined {
+    const routeFence = this.#fenceReason()
+    if (routeFence !== undefined) return routeFence
+    const window = evaluateCommandWindow({
+      issuedAt: header.issuedAt,
+      expiresAt: header.expiresAt,
+      now: this.#now(),
+      clockSkewMs: ACP_REMOTE_CLOCK_SKEW_MS,
+      maxLifetimeMs: ACP_REMOTE_MAX_COMMAND_LIFETIME_MS,
+    })
+    if (window.outcome === 'denied') return window.reason
+    if (header.channelGeneration < this.#highestGeneration) return 'stale_channel_generation'
+    return undefined
+  }
+
+  /**
    * Applies a controller-signed revocation: the local mirror flips synchronously so a command parked
    * in flight is fenced immediately, and the durable record is written before this resolves so the
    * revocation survives a restart. Notices from any other key are rejected, never applied.
@@ -607,8 +660,10 @@ export class SecureAcpDeviceEndpoint {
   /**
    * Authenticates, decrypts, and fences one sealed command. Authenticated refusals return signed denials;
    * unauthenticated input is rejected without any reply that could be read as a device outcome.
-   * Revocation, staleness, window, and generation fences run before decryption and again after each
-   * await, so authority that changes mid-flight never reaches the executor.
+   * Revocation, staleness, window, and generation fences run before decryption, again after each
+   * await — storage reads, ledger claim, execution, sealing — and inside the durable claim
+   * transaction, so authority that changes mid-flight never reaches the executor and a parked
+   * expired or superseded command can never execute.
    */
   async handleCommand(input: unknown): Promise<AcpRemoteSealedResponse> {
     const parsed = SealedCommandSchema.safeParse(input)
@@ -645,7 +700,7 @@ export class SecureAcpDeviceEndpoint {
         return this.#refuse(header, 'state_unavailable')
       }
     }
-    const preDecrypt = this.#fenceReason()
+    const preDecrypt = this.#commandFenceReason(header)
     if (preDecrypt !== undefined) return this.#refuse(header, preDecrypt)
     let plaintext: Uint8Array
     try {
@@ -663,23 +718,12 @@ export class SecureAcpDeviceEndpoint {
     if (command === undefined || !plaintextMatchesHeader(command, header)) {
       return this.#refuse(header, 'binding_mismatch')
     }
-    // Current-authority recheck after the decrypt await: a revocation, staleness, or broken clock
-    // that landed while this command was parked must prevent the executor below.
-    const postDecrypt = this.#fenceReason()
+    // Current-authority recheck after the decrypt await: revocation, staleness, a broken clock, an
+    // expired window, or a superseded generation that landed while this command was parked must
+    // prevent the executor below. The command-scoped fence also gates every replay of a recorded
+    // outcome, so cached output is never re-sealed under stale delivery context.
+    const postDecrypt = this.#commandFenceReason(header)
     if (postDecrypt !== undefined) return this.#refuse(header, postDecrypt)
-    // The delivery context gates every delivery, including replays of recorded outcomes: a stale
-    // generation or expired window is never answered by re-sealing cached output.
-    const commandWindow = evaluateCommandWindow({
-      issuedAt: header.issuedAt,
-      expiresAt: header.expiresAt,
-      now: this.#now(),
-      clockSkewMs: ACP_REMOTE_CLOCK_SKEW_MS,
-      maxLifetimeMs: ACP_REMOTE_MAX_COMMAND_LIFETIME_MS,
-    })
-    if (commandWindow.outcome === 'denied') return this.#refuse(header, commandWindow.reason)
-    if (header.channelGeneration < this.#highestGeneration) {
-      return this.#refuse(header, 'stale_channel_generation')
-    }
     const outcome = await this.#outcomeFor(header, command)
     return this.#reply(outcome, header)
   }
@@ -698,7 +742,7 @@ export class SecureAcpDeviceEndpoint {
     if (inflight !== undefined) {
       if (inflight.identity !== identity) return { kind: 'denial', reason: 'command_conflict' }
       const outcome = await inflight.outcome
-      const fenced = this.#fenceReason()
+      const fenced = this.#commandFenceReason(header)
       if (fenced !== undefined) return { kind: 'denial', reason: fenced }
       return outcome
     }
@@ -721,18 +765,18 @@ export class SecureAcpDeviceEndpoint {
   ): Promise<AcpRemoteDeviceOutcome> {
     try {
       const stored = await this.#stateStore.readLedger(header.commandId)
-      const fencedAfterRead = this.#fenceReason()
+      const fencedAfterRead = this.#commandFenceReason(header)
       if (fencedAfterRead !== undefined) return { kind: 'denial', reason: fencedAfterRead }
       const replayed = replayOutcome(stored, identity)
       if (replayed !== undefined) return replayed
       if ((await this.#stateStore.countLedger()) >= this.#ledgerCapacity) {
         return { kind: 'denial', reason: 'replay_ledger_full' }
       }
-      const fencedBeforeClaim = this.#fenceReason()
+      const fencedBeforeClaim = this.#commandFenceReason(header)
       if (fencedBeforeClaim !== undefined) return { kind: 'denial', reason: fencedBeforeClaim }
-      let claimed: boolean
+      let claimResult: AcpRemoteDeviceClaimResult
       try {
-        claimed = await this.#stateStore.claim({
+        claimResult = await this.#stateStore.claim({
           commandId: header.commandId,
           identity,
           channelGeneration: header.channelGeneration,
@@ -740,17 +784,24 @@ export class SecureAcpDeviceEndpoint {
       } catch {
         return { kind: 'denial', reason: 'state_unavailable' }
       }
-      if (!claimed) {
+      // Atomic durable fence results: the persisted fence rejected the claim inside the same
+      // transaction that would have created the ledger entry, so nothing was written and nothing
+      // may execute — including for an endpoint that loaded its in-process mirror once.
+      if (claimResult === 'device_revoked' || claimResult === 'stale_channel_generation') {
+        return { kind: 'denial', reason: claimResult }
+      }
+      if (claimResult === 'already_claimed') {
         // Another delivery recorded this command first; replay its record instead of executing.
         const winner = await this.#stateStore.readLedger(header.commandId)
-        const fencedAfterRace = this.#fenceReason()
+        const fencedAfterRace = this.#commandFenceReason(header)
         if (fencedAfterRace !== undefined) return { kind: 'denial', reason: fencedAfterRace }
         const raced = replayOutcome(winner, identity)
         return raced ?? { kind: 'denial', reason: 'state_unavailable' }
       }
       this.#highestGeneration = Math.max(this.#highestGeneration, header.channelGeneration)
-      // Final current-authority fence immediately before the effect, after every await above.
-      const fencedBeforeEffect = this.#fenceReason()
+      // Final current-authority fence immediately before the effect, after every await above: route
+      // fence, window, and generation are all re-read at this boundary.
+      const fencedBeforeEffect = this.#commandFenceReason(header)
       if (fencedBeforeEffect !== undefined) {
         const recorded: AcpRemoteDeviceOutcome = { kind: 'denial', reason: fencedBeforeEffect }
         await this.#recordOutcome(header.commandId, recorded)
@@ -788,11 +839,21 @@ export class SecureAcpDeviceEndpoint {
     outcome: AcpRemoteDeviceOutcome,
     header: AcpRemoteCommandHeader
   ): Promise<AcpRemoteSealedResponse> {
+    // Publication fence before any output leaves: a cached response and a freshly sealed exchange
+    // are both device publications, so current authority, window, and generation must hold at
+    // serve time — not only when the effect first ran.
+    const beforePublish = this.#commandFenceReason(header)
+    if (beforePublish !== undefined) return this.#refuse(header, beforePublish)
     const cached = this.#delivered.get(header.commandId)
     if (cached !== undefined && cached.returnKeyId === header.returnKeyId) {
       return cached.response
     }
     const response = await this.#sealOutcome(outcome, header)
+    // Post-await publication fence: revocation, expiry, or supersession landing while the reply was
+    // being sealed discards the sealed exchange. The recorded outcome stays durable for replay, so
+    // the effect is never repeated to produce another response.
+    const afterSeal = this.#commandFenceReason(header)
+    if (afterSeal !== undefined) return this.#refuse(header, afterSeal)
     if (!this.#delivered.has(header.commandId) && this.#delivered.size >= this.#ledgerCapacity) {
       const oldest = this.#delivered.keys().next().value
       if (oldest !== undefined) this.#delivered.delete(oldest)

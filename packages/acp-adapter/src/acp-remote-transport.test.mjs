@@ -750,3 +750,206 @@ describe('edge fences: binding, executor failure, payload ceiling, state store',
     expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(0)
   })
 })
+
+/** Parks the next call of one state-store method so authority can change while the device awaits. */
+function parkNextStoreCall(inner, method) {
+  let release
+  const barrier = new Promise((resolve) => {
+    release = resolve
+  })
+  let announce
+  const reached = new Promise((resolve) => {
+    announce = resolve
+  })
+  let armed = true
+  const store = {
+    loadFence: (...args) => inner.loadFence(...args),
+    applyRevocation: (...args) => inner.applyRevocation(...args),
+    countLedger: (...args) => inner.countLedger(...args),
+    readLedger: (...args) => inner.readLedger(...args),
+    claim: (...args) => inner.claim(...args),
+    recordOutcome: (...args) => inner.recordOutcome(...args),
+  }
+  store[method] = async (...args) => {
+    if (armed) {
+      armed = false
+      announce()
+      await barrier
+    }
+    return store[method] === undefined ? undefined : inner[method](...args)
+  }
+  return { store, reached, release }
+}
+
+describe('parked storage awaits re-check window and generation before every effect', () => {
+  test('a command whose window expires while parked in the storage await never executes', async () => {
+    const parking = parkNextStoreCall(new InMemoryAcpRemoteDeviceStateStore(), 'readLedger')
+    const fixture = await createSecureFixture({ stateStore: parking.store })
+    const pending = captured(
+      fixture.controller.dispatch(runtimeCommand({ commandId: commandIds.first }))
+    )
+    await parking.reached
+    // The delivery window elapses while the device is parked inside its storage await.
+    fixture.clock.current = new Date(Date.parse(NOW) + 61_000)
+    parking.release()
+
+    expect(await pending).toMatchObject({
+      error: { code: 'RUNTIME_GATEWAY_COMMAND_EXPIRED', retryable: false },
+    })
+    expect(signedRefusals(fixture).at(-1).message.reason).toBe('command_expired')
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(0)
+  })
+
+  test('a command superseded by a higher generation while parked in storage never executes', async () => {
+    const inner = new InMemoryAcpRemoteDeviceStateStore()
+    const parking = parkNextStoreCall(inner, 'readLedger')
+    const fixture = await createSecureFixture({ stateStore: parking.store })
+    const pending = captured(
+      fixture.controller.dispatch(runtimeCommand({ commandId: commandIds.first }))
+    )
+    await parking.reached
+    // A newer channel generation is accepted through the durable fence while this delivery waits.
+    expect(
+      await inner.claim({
+        commandId: commandIds.second,
+        identity: 'concurrent-higher-generation',
+        channelGeneration: 2,
+      })
+    ).toBe('claimed')
+    parking.release()
+
+    expect(await pending).toMatchObject({
+      error: { code: 'RUNTIME_GATEWAY_STALE_CHANNEL', retryable: false },
+    })
+    expect(signedRefusals(fixture).at(-1).message.reason).toBe('stale_channel_generation')
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(0)
+  })
+})
+
+describe('revocation at execution, sealing, and response-opening boundaries', () => {
+  test('revocation during execution records the effect once and publishes a denial', async () => {
+    const fixture = await createSecureFixture()
+    let releaseEffect
+    const effectGate = new Promise((resolve) => {
+      releaseEffect = resolve
+    })
+    let announceEffect
+    const effectReached = new Promise((resolve) => {
+      announceEffect = resolve
+    })
+    const originalDispatch = fixture.executor.dispatch.bind(fixture.executor)
+    fixture.executor.dispatch = async (command) => {
+      announceEffect()
+      await effectGate
+      return originalDispatch(command)
+    }
+
+    const pending = captured(
+      fixture.controller.dispatch(runtimeCommand({ commandId: commandIds.first }))
+    )
+    await effectReached
+    await fixture.device.applyRevocation(fixture.controller.revoke('2026-08-25T12:00:10.000Z'))
+    releaseEffect()
+
+    expect(await pending).toMatchObject({
+      error: { code: 'RUNTIME_NODE_REVOKED', retryable: false },
+    })
+    // The effect completed exactly once and its outcome stayed recorded as an exchange;
+    // publication was fenced, and a redelivery replays without repeating the effect.
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+    expect(signedRefusals(fixture).at(-1).message.reason).toBe('device_revoked')
+    const sealed = await captureSealedCommand({ commandId: commandIds.first })
+    const replay = await fixture.device.handleCommand(sealed)
+    expect(replay).toMatchObject({ kind: 'denial', reason: 'device_revoked' })
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+  })
+
+  test('revocation while the outcome is being recorded keeps the effect and refuses publication', async () => {
+    const inner = new InMemoryAcpRemoteDeviceStateStore()
+    const parking = parkNextStoreCall(inner, 'recordOutcome')
+    const fixture = await createSecureFixture({ stateStore: parking.store })
+    const pending = captured(
+      fixture.controller.dispatch(runtimeCommand({ commandId: commandIds.second }))
+    )
+    // The effect finished and the device is parked before its durable record lands.
+    await parking.reached
+    await fixture.device.applyRevocation(fixture.controller.revoke('2026-08-25T12:00:10.000Z'))
+    parking.release()
+
+    expect(await pending).toMatchObject({
+      error: { code: 'RUNTIME_NODE_REVOKED', retryable: false },
+    })
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+    // The durable record keeps the real exchange outcome — revocation never rewrites it into a
+    // denial, so a restart still knows the effect happened; the reply was fenced instead.
+    const recorded = await inner.readLedger(commandIds.second)
+    expect(recorded?.outcome).toMatchObject({ kind: 'exchange' })
+    expect(signedRefusals(fixture).at(-1).message.reason).toBe('device_revoked')
+    const sealed = await captureSealedCommand({ commandId: commandIds.second })
+    const replay = await fixture.device.handleCommand(sealed)
+    expect(replay).toMatchObject({ kind: 'denial', reason: 'device_revoked' })
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+  })
+
+  test('a recorded response is never re-sealed after revocation', async () => {
+    const fixture = await createSecureFixture()
+    const first = await fixture.controller.dispatch(runtimeCommand({ commandId: commandIds.third }))
+    expect(first.ack).toBeDefined()
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+    const sealed = structuredClone(
+      fixture.wire.log.find(({ direction }) => direction === 'command').message
+    )
+
+    await fixture.device.applyRevocation(fixture.controller.revoke('2026-08-25T12:00:10.000Z'))
+    const replay = await fixture.device.handleCommand(sealed)
+    expect(replay).toMatchObject({ kind: 'denial', reason: 'device_revoked' })
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+  })
+
+  test('revocation while the reply is on the wire stops publication after the send await', async () => {
+    const fixture = await createSecureFixture()
+    fixture.wire.holdCommands()
+    const pending = captured(
+      fixture.controller.dispatch(runtimeCommand({ commandId: commandIds.first }))
+    )
+    await fixture.wire.whenHeld(1)
+    // Controller-local revocation only: the command already left before the revocation.
+    fixture.controller.revoke('2026-08-25T12:00:10.000Z')
+    await fixture.wire.releaseHeld()
+
+    expect(await pending).toMatchObject({
+      error: { code: 'RUNTIME_NODE_REVOKED', retryable: false },
+    })
+    expect(fixture.wire.commandAttempts()).toBe(1)
+    // The device executed a command that was authorized when it was sent; the controller
+    // re-fenced after the send await and never opened the reply for the caller.
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+  })
+
+  test('revocation while the sealed reply is being opened stops the exchange at the controller', async () => {
+    const fixture = await createSecureFixture()
+    let revokeNow = () => {
+      fixture.controller.revoke('2026-08-25T12:00:10.000Z')
+    }
+    // The reply parse reads the proxy properties synchronously after the post-send fence has
+    // already passed, so revocation lands strictly between send and decrypt completion.
+    fixture.wire.tamperNextResponse(
+      (response) =>
+        new Proxy(response, {
+          get(target, property, receiver) {
+            revokeNow()
+            revokeNow = () => {}
+            return Reflect.get(target, property, receiver)
+          },
+        })
+    )
+    const pending = captured(
+      fixture.controller.dispatch(runtimeCommand({ commandId: commandIds.first }))
+    )
+
+    expect(await pending).toMatchObject({
+      error: { code: 'RUNTIME_NODE_REVOKED', retryable: false },
+    })
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+  })
+})

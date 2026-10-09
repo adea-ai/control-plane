@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { expect, test } from 'bun:test'
 import {
   AcpRemoteDeviceRouteSchema,
+  acpRemoteDeviceStateScope,
   PersistenceProviderAcpRemoteDeviceStateStore,
   ReferenceAcpDriver,
   ReferenceAcpGatewayTransport,
@@ -153,7 +154,10 @@ test('restart preserves recorded replay outcomes and the channel-generation fenc
   let provider = new SqlitePersistenceProvider({ path })
   try {
     await provider.migrate()
-    let store = new PersistenceProviderAcpRemoteDeviceStateStore(provider)
+    let store = new PersistenceProviderAcpRemoteDeviceStateStore(
+      provider,
+      acpRemoteDeviceStateScope(route)
+    )
     const first = await openDevice(store, clock)
     const channel = openController(first.device, clock)
     await channel.controller.dispatch(buildCommand({ commandId: COMMAND_A, channelGeneration: 2 }))
@@ -165,7 +169,10 @@ test('restart preserves recorded replay outcomes and the channel-generation fenc
     // Restart: fresh provider, store, driver, and endpoint over the same durable state.
     provider = new SqlitePersistenceProvider({ path })
     await provider.migrate()
-    store = new PersistenceProviderAcpRemoteDeviceStateStore(provider)
+    store = new PersistenceProviderAcpRemoteDeviceStateStore(
+      provider,
+      acpRemoteDeviceStateScope(route)
+    )
     const second = await openDevice(store, clock)
 
     const replay = await second.device.handleCommand(structuredClone(sealed))
@@ -192,7 +199,10 @@ test('a revocation applied before a restart still fences the device after it', a
   let provider = new SqlitePersistenceProvider({ path })
   try {
     await provider.migrate()
-    const store = new PersistenceProviderAcpRemoteDeviceStateStore(provider)
+    const store = new PersistenceProviderAcpRemoteDeviceStateStore(
+      provider,
+      acpRemoteDeviceStateScope(route)
+    )
     const first = await openDevice(store, clock)
     const channel = openController(first.device, clock)
     await first.device.applyRevocation(channel.controller.revoke('2026-08-25T12:00:10.000Z'))
@@ -200,7 +210,10 @@ test('a revocation applied before a restart still fences the device after it', a
 
     provider = new SqlitePersistenceProvider({ path })
     await provider.migrate()
-    const reopenedStore = new PersistenceProviderAcpRemoteDeviceStateStore(provider)
+    const reopenedStore = new PersistenceProviderAcpRemoteDeviceStateStore(
+      provider,
+      acpRemoteDeviceStateScope(route)
+    )
     expect(await reopenedStore.loadFence()).toMatchObject({
       revokedAt: '2026-08-25T12:00:10.000Z',
     })
@@ -227,7 +240,10 @@ test('a crash after the durable claim never re-executes the effect', async () =>
   let sealed
   try {
     await provider.migrate()
-    const store = new PersistenceProviderAcpRemoteDeviceStateStore(provider)
+    const store = new PersistenceProviderAcpRemoteDeviceStateStore(
+      provider,
+      acpRemoteDeviceStateScope(route)
+    )
     const crashed = await openDevice(store, clock, (reference) => ({
       inventory: (signal) => reference.inventory(signal),
       // The effect starts and never completes: the crash window between claim and outcome.
@@ -246,7 +262,10 @@ test('a crash after the durable claim never re-executes the effect', async () =>
 
     provider = new SqlitePersistenceProvider({ path })
     await provider.migrate()
-    const reopenedStore = new PersistenceProviderAcpRemoteDeviceStateStore(provider)
+    const reopenedStore = new PersistenceProviderAcpRemoteDeviceStateStore(
+      provider,
+      acpRemoteDeviceStateScope(route)
+    )
     const second = await openDevice(reopenedStore, clock)
     const response = await second.device.handleCommand(structuredClone(sealed))
     expect(response).toMatchObject({ kind: 'denial', reason: 'outcome_uncertain' })
