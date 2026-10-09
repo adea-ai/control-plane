@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { createHash, generateKeyPairSync, sign, verify } from 'node:crypto'
 import {
   createPiDurableManagementDecisionIssuer,
+  managementCanonicalRequest,
   managementCanonicalRequestDigest,
   managementDecisionAudience,
   managementDecisionClaimKeys,
@@ -207,10 +208,20 @@ test('bounds depth and cycles before materializing recursive structures', () => 
 })
 
 test('rejects huge scalar values and keys before allocating their encodings', () => {
-  // Exact boundary: max canonical bytes 131072; a top-level string costs
-  // length + 2 (quotes).
+  // Exact scalar boundary: the canonical JSON byte limit is 131072 and a
+  // top-level string costs length + 2 (quotes).
+  const exactScalar = managementCanonicalRequest('a'.repeat(131_070))
+  expect(exactScalar).not.toBeNull()
+  expect(Buffer.byteLength(exactScalar)).toBe(131_072)
   expect(managementCanonicalRequestDigest('a'.repeat(131_070))).not.toBeNull()
   expect(managementCanonicalRequestDigest('a'.repeat(131_071))).toBeNull()
+  // Exact key boundary: `{"<key>":null}` costs key length + 9 bytes.
+  const exactKey = managementCanonicalRequest({ ['k'.repeat(131_063)]: null })
+  expect(exactKey).not.toBeNull()
+  expect(Buffer.byteLength(exactKey)).toBe(131_072)
+  expect(managementCanonicalRequestDigest({ ['k'.repeat(131_063)]: null })).not.toBeNull()
+  expect(managementCanonicalRequestDigest({ ['k'.repeat(131_064)]: null })).toBeNull()
+  // Oversized scalar and key never reach JSON.stringify allocation.
   expect(managementCanonicalRequestDigest({ value: 'x'.repeat(200_000) })).toBeNull()
   expect(managementCanonicalRequestDigest({ ['k'.repeat(200_000)]: 1 })).toBeNull()
 })
