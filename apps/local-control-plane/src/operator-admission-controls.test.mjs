@@ -19,7 +19,7 @@ import {
   WorkflowJobStore,
 } from '@control-plane/workflow-runtime'
 import {
-  WORKFLOW_ADMISSION_OUTCOMES_NAMESPACE,
+  admissionOutcomeNamespace,
   WORKFLOW_ADMISSION_STOPS_NAMESPACE,
   WORKFLOW_EXECUTIONS_NAMESPACE,
   admissionControlledBeforeEnqueue,
@@ -43,6 +43,7 @@ const EXE2 = 'exe_01HABCDEF0123456789ABCDEFG'
 const CMD1 = 'cmd_01JABCDEF0123456789ABCDEFG'
 const CMD2 = 'cmd_01HABCDEF0123456789ABCDEFG'
 const CMD3 = 'cmd_01GABCDEF0123456789ABCDEFG'
+const INTERACTION = 'int_01JABCDEF0123456789ABCDEFG'
 const CANARY = 'admission-canary-secret-9411'
 
 const recordId = (value) => `r-${createHash('sha256').update(value).digest('hex')}`
@@ -279,7 +280,7 @@ test('mutations without a valid current actor fail closed with no state change a
     })
     expect(
       await control.provider.transaction((transaction) =>
-        transaction.list(WORKFLOW_ADMISSION_OUTCOMES_NAMESPACE)
+        transaction.list(admissionOutcomeNamespace(PLAN_WORKSPACE))
       )
     ).toEqual([])
     // The gate still passes: nothing was stopped by the denied attempts.
@@ -379,7 +380,7 @@ test('replayed commands return the original receipt; conflicting reuse of a comm
     expect(replay.audit.at).toBe(AT)
     expect(
       await control.provider.transaction((transaction) =>
-        transaction.list(WORKFLOW_ADMISSION_OUTCOMES_NAMESPACE)
+        transaction.list(admissionOutcomeNamespace(PLAN_WORKSPACE))
       )
     ).toHaveLength(1)
     // Same command id with different intent is a conflict, never a silent rewrite.
@@ -400,7 +401,7 @@ test('replayed commands return the original receipt; conflicting reuse of a comm
     ).rejects.toThrow('ADMISSION_CONTROL_COMMAND_CONFLICT')
     expect(
       await control.provider.transaction((transaction) =>
-        transaction.list(WORKFLOW_ADMISSION_OUTCOMES_NAMESPACE)
+        transaction.list(admissionOutcomeNamespace(PLAN_WORKSPACE))
       )
     ).toHaveLength(2)
   })
@@ -421,7 +422,7 @@ test('an interrupted mutation rolls back the stop and its outcome together', asy
     })
     expect(
       await control.provider.transaction((transaction) =>
-        transaction.list(WORKFLOW_ADMISSION_OUTCOMES_NAMESPACE)
+        transaction.list(admissionOutcomeNamespace(PLAN_WORKSPACE))
       )
     ).toEqual([])
     await control.provider.transaction(async (transaction) => {
@@ -491,7 +492,7 @@ test('an unsupported global scope returns the typed unavailable state with no si
     ).toEqual([])
     expect(
       await control.provider.transaction((transaction) =>
-        transaction.list(WORKFLOW_ADMISSION_OUTCOMES_NAMESPACE)
+        transaction.list(admissionOutcomeNamespace(PLAN_WORKSPACE))
       )
     ).toEqual([])
     // Workspace scoping keeps working beside the unavailable global scope.
@@ -767,3 +768,163 @@ for (const failure of ['input-symlink', 'malformed-input', 'public-data', 'bad-a
     }
   })
 }
+
+test('unrelated corrupt workspace records never break a target workspace gate or audit trail', async () => {
+  await withProvider(async (control) => {
+    await seedExecution(control.provider, EXE1, PLAN_WORKSPACE)
+    await seedExecution(control.provider, EXE2, OTHER_WORKSPACE)
+    await setWorkflowAdmissionStop(control.provider, stopCommand())
+    await clearWorkflowAdmissionStop(control.provider, resumeCommand({ at: LATER }))
+    // Corrupt rows that belong only to OTHER_WORKSPACE: a stop state and an outcome.
+    await control.provider.transaction(async (transaction) => {
+      await transaction.put({
+        namespace: WORKFLOW_ADMISSION_STOPS_NAMESPACE,
+        id: recordId(`stop:workspace:${OTHER_WORKSPACE}`),
+        value: { corrupt: true },
+      })
+      await transaction.put({
+        namespace: admissionOutcomeNamespace(OTHER_WORKSPACE),
+        id: 'r-0000000000000000000000000000000000000000000000000000000000000000',
+        value: { corrupt: true },
+      })
+    })
+    // The target workspace still admits, reads its state and lists its full trail.
+    await control.provider.transaction(async (transaction) => {
+      await expect(
+        assertWorkflowJobAdmissionOpen(transaction, {
+          workflowKey: EXE1,
+          input: { executionId: EXE1 },
+        })
+      ).resolves.toBeUndefined()
+    })
+    expect(await getWorkflowAdmissionStop(control.provider, stopCommand().scope)).toEqual({
+      status: 'open',
+      scope: { kind: 'workspace', workspaceId: PLAN_WORKSPACE },
+    })
+    expect(
+      (await listWorkflowAdmissionOutcomes(control.provider, stopCommand().scope, 100)).map(
+        (outcome) => outcome.action
+      )
+    ).toEqual(['stop', 'resume'])
+    // The corrupt workspace itself still fails closed on both reads.
+    await control.provider.transaction(async (transaction) => {
+      await expect(
+        assertWorkflowJobAdmissionOpen(transaction, {
+          workflowKey: EXE2,
+          input: { executionId: EXE2 },
+        })
+      ).rejects.toThrow('ADMISSION_CONTROL_STATE_CORRUPT')
+    })
+    await expect(
+      listWorkflowAdmissionOutcomes(
+        control.provider,
+        { kind: 'workspace', workspaceId: OTHER_WORKSPACE },
+        100
+      )
+    ).rejects.toThrow('ADMISSION_CONTROL_OUTCOME_CORRUPT')
+  })
+})
+
+test('workspace-scoped outcome trail pages across the store limit and returns the newest records in order', async () => {
+  await withProvider(async (control) => {
+    const total = 130
+    for (let index = 0; index < total; index += 1) {
+      const commandId = `cmd_${String(index).padStart(26, '0')}`
+      const at = new Date(Date.parse(AT) + index * 1000).toISOString()
+      const command =
+        index % 2 === 0 ? stopCommand({ commandId, at }) : resumeCommand({ commandId, at })
+      const outcome =
+        index % 2 === 0
+          ? await setWorkflowAdmissionStop(control.provider, command)
+          : await clearWorkflowAdmissionStop(control.provider, command)
+      expect(outcome.outcome).toBe('applied')
+    }
+    const newest = await listWorkflowAdmissionOutcomes(control.provider, stopCommand().scope, 5)
+    expect(newest.map((outcome) => outcome.commandId)).toEqual(
+      [125, 126, 127, 128, 129].map((index) => `cmd_${String(index).padStart(26, '0')}`)
+    )
+    const everything = await listWorkflowAdmissionOutcomes(
+      control.provider,
+      stopCommand().scope,
+      500
+    )
+    expect(everything).toHaveLength(total)
+    expect(everything.map((outcome) => outcome.commandId)).toEqual(
+      Array.from({ length: total }, (_, index) => `cmd_${String(index).padStart(26, '0')}`)
+    )
+  })
+})
+
+/** Execution-scoped cancellation command, shaped like the accepted control-API envelope. */
+function cancelCommand(executionId, commandId, workspaceId = PLAN_WORKSPACE) {
+  return {
+    workspaceId,
+    projectId: PROJECT,
+    caller: { servicePrincipalId: 'svc_admission-controls-test' },
+    contractVersion: { major: 1, minor: 0 },
+    requestId: `req_${commandId.slice(4)}`,
+    correlation: { traceId: 'trc_01JABCDEF0123456789ABCDEFG' },
+    commandId,
+    idempotencyKey: `cancel:${commandId}`,
+    payloadHash: 'd'.repeat(64),
+    operation: 'execution.cancel',
+    issuedAt: AT,
+    payload: { executionId },
+  }
+}
+
+function interactionRequest(executionId) {
+  return {
+    interactionId: INTERACTION,
+    executionId,
+    attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+    kind: 'input',
+    prompt: { title: 'Approval requested before the stop' },
+    allowedActions: ['input'],
+    allowedPrincipalIds: ['svc_owner'],
+    state: 'responded',
+    version: 2,
+    requestedAt: AT,
+    expiresAt: '2026-10-09T13:00:00.000Z',
+    response: {
+      responseId: CMD3,
+      action: 'input',
+      value: { text: 'approved' },
+      respondingPrincipalId: 'svc_owner',
+      respondedAt: LATER,
+    },
+  }
+}
+
+test('stop gates new admission but leaves cancellation and approval of admitted work deliverable', async () => {
+  await withProvider(async (control) => {
+    const world = await seedLifecycleWorld(control.provider, [EXE1, EXE2])
+    const store = controlledJobStore(control.provider)
+    const dispatcher = new EmbeddedExecutionWorkflowDispatcher({ store, now: () => AT })
+    // Admitted before the stop: this job is already queued.
+    await dispatcher.submit(world.inputFor(EXE1))
+
+    const stop = await setWorkflowAdmissionStop(control.provider, stopCommand())
+    expect(stop.outcome).toBe('applied')
+
+    // New admission, including the entrypoint the reconciliation remediation uses, is refused.
+    await expect(dispatcher.submit(world.inputFor(EXE2))).rejects.toThrow(
+      'WORKFLOW_ADMISSION_STOPPED'
+    )
+    // Recovery (submitRecovery) needs a verified graph checkpoint and is covered by the
+    // graph-recovery harness; this test does not claim it.
+
+    // Cancellation of admitted work is a separate path that never enqueues: it stays deliverable.
+    await dispatcher.cancel(cancelCommand(EXE1, CMD3))
+    expect(await store.getCancellation(EXE1)).toEqual(expect.objectContaining({ commandId: CMD3 }))
+
+    // Approval of admitted work is likewise stored without starting a new job.
+    await dispatcher.deliver(interactionRequest(EXE1))
+    expect(await store.getInteractionResponse(EXE1, INTERACTION)).toBeDefined()
+
+    // Resume restores new admission for the workspace.
+    const resume = await clearWorkflowAdmissionStop(control.provider, resumeCommand({ at: LATER }))
+    expect(resume.outcome).toBe('applied')
+    await dispatcher.submit(world.inputFor(EXE2))
+  })
+})

@@ -21,6 +21,14 @@ import { z } from 'zod'
  * for audit. Every evaluation is a deterministic function of its input: the
  * clock is a required argument, so repeated calls with the same input return
  * byte-identical decisions.
+ *
+ * Structure is never authority. A handle's declared reference, digest, profile,
+ * revision and attestor are only claims until the trusted artifact verifier
+ * (retirement-evidence-verifier.ts) has read the artifact bytes, matched the
+ * declared digest, checked the signed content against the actual layer,
+ * dimension, profile and source revision, and verified the attester's Ed25519
+ * signature. That verifier registers a verified fact here; a structurally
+ * identical object literal is not a verified fact and is never accepted.
  */
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/
@@ -51,6 +59,8 @@ export const retirementEvidenceStatusSchema = z.enum([
   'unsupported_profile',
   /** Attested for a source revision that has been superseded. */
   'superseded_source',
+  /** Structurally complete, but not bound to its artifact by the trusted verifier. */
+  'unverified',
 ])
 export type RetirementEvidenceStatus = z.output<typeof retirementEvidenceStatusSchema>
 
@@ -66,6 +76,10 @@ export const RetirementGateInputSchema = z
     parityEvidence: z.unknown().optional(),
     /** Explicit failure-evidence handle (test-run result or artifact reference). */
     failureEvidence: z.unknown().optional(),
+    /** Verified fact for the parity handle; only the trusted artifact verifier produces one. */
+    parityVerification: z.unknown().optional(),
+    /** Verified fact for the failure handle; only the trusted artifact verifier produces one. */
+    failureVerification: z.unknown().optional(),
     /** Attestation age beyond which evidence counts as stale. */
     maxEvidenceAgeSeconds: z
       .number()
@@ -145,8 +159,41 @@ const STATUS_PRECEDENCE: readonly RetirementEvidenceStatus[] = [
   'stale',
   'unsupported_profile',
   'superseded_source',
+  'unverified',
   'valid',
 ]
+
+/** The facts a trusted verifier binds to one evidence artifact. */
+export interface VerifiedRetirementEvidence {
+  readonly layerId: string
+  readonly dimension: RetirementEvidenceDimension
+  readonly profileId: string
+  readonly sourceRevision: string
+  readonly reference: string
+  readonly digest: string
+  readonly attestedBy: string
+  readonly attestedAt: string
+}
+
+const verifiedFacts = new WeakSet<object>()
+
+/**
+ * Registers a fact produced by the trusted artifact verifier. Membership, not
+ * shape, is the proof: a literal with the same fields is rejected.
+ */
+export function registerVerifiedRetirementEvidence(
+  fact: VerifiedRetirementEvidence
+): Readonly<VerifiedRetirementEvidence> {
+  const frozen = Object.freeze({ ...fact })
+  verifiedFacts.add(frozen)
+  return frozen
+}
+
+export function isVerifiedRetirementEvidence(
+  value: unknown
+): value is Readonly<VerifiedRetirementEvidence> {
+  return typeof value === 'object' && value !== null && verifiedFacts.has(value)
+}
 
 const prefix = (dimension: RetirementEvidenceDimension, code: string): string =>
   `${dimension.toUpperCase()}_EVIDENCE_${code}`
@@ -158,6 +205,7 @@ const optionalString = (value: unknown): string | null =>
   typeof value === 'string' && value.length > 0 ? value : null
 
 interface EvidenceExpectations {
+  readonly layerId: string
   readonly targetProfileId: string | undefined
   readonly targetSourceRevision: string | undefined
 }
@@ -169,6 +217,7 @@ interface EvidenceExpectations {
 function assessEvidence(
   dimension: RetirementEvidenceDimension,
   raw: unknown,
+  verification: unknown,
   expectations: EvidenceExpectations,
   maxAgeMs: number,
   nowMs: number
@@ -275,6 +324,24 @@ function assessEvidence(
     reasons.push(prefix(dimension, 'SOURCE_SUPERSEDED'))
   }
 
+  // Structure alone never authorizes: without a fact bound to this exact
+  // layer, dimension, profile, source revision, reference and digest, the
+  // handle is unverified however complete it looks.
+  if (!isVerifiedRetirementEvidence(verification)) {
+    addStatus('unverified')
+    reasons.push(prefix(dimension, 'NOT_VERIFIED'))
+  } else if (
+    verification.layerId !== expectations.layerId ||
+    verification.dimension !== dimension ||
+    verification.profileId !== expectations.targetProfileId ||
+    verification.sourceRevision !== expectations.targetSourceRevision ||
+    verification.reference !== reference ||
+    verification.digest !== declaredDigest
+  ) {
+    addStatus('unverified')
+    reasons.push(prefix(dimension, 'VERIFICATION_MISMATCH'))
+  }
+
   const status = STATUS_PRECEDENCE.find((candidate) => statuses.has(candidate)) ?? 'valid'
   const valid = status === 'valid'
   if (valid) reasons.push(prefix(dimension, 'ATTESTED_COMPLETE_AND_CURRENT'))
@@ -300,11 +367,26 @@ export function evaluateRetirementGate(input: RetirementGateInput): RetirementGa
   const nowMs = Date.parse(parsed.now)
   const maxAgeMs = parsed.maxEvidenceAgeSeconds * 1000
   const expectations: EvidenceExpectations = {
+    layerId: parsed.layerId,
     targetProfileId: parsed.targetProfileId,
     targetSourceRevision: parsed.targetSourceRevision,
   }
-  const parity = assessEvidence('parity', parsed.parityEvidence, expectations, maxAgeMs, nowMs)
-  const failure = assessEvidence('failure', parsed.failureEvidence, expectations, maxAgeMs, nowMs)
+  const parity = assessEvidence(
+    'parity',
+    parsed.parityEvidence,
+    parsed.parityVerification,
+    expectations,
+    maxAgeMs,
+    nowMs
+  )
+  const failure = assessEvidence(
+    'failure',
+    parsed.failureEvidence,
+    parsed.failureVerification,
+    expectations,
+    maxAgeMs,
+    nowMs
+  )
   const allowed = parity.validDigest !== null && failure.validDigest !== null
   const decision: RetirementGateDecision = {
     schemaVersion: RETIREMENT_GATE_SCHEMA_VERSION,

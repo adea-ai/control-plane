@@ -66,6 +66,18 @@ import { z } from 'zod'
 
 export const WORKFLOW_ADMISSION_STOPS_NAMESPACE = 'workflow-admission-stops'
 export const WORKFLOW_ADMISSION_OUTCOMES_NAMESPACE = 'workflow-admission-outcomes'
+
+/**
+ * Per-workspace outcome namespace. Bounded workspace-scoped scans read only this
+ * namespace, so one workspace's trail (or a corrupt record in it) never affects
+ * another workspace's admission or audit reads.
+ */
+export function admissionOutcomeNamespace(workspaceId: string): string {
+  return `${WORKFLOW_ADMISSION_OUTCOMES_NAMESPACE}.${createHash('sha256').update(workspaceId).digest('hex')}`
+}
+
+/** Bounded page size for workspace-scoped outcome scans (store limit is 128). */
+const OUTCOME_SCAN_PAGE = 128
 /** The stored executions namespace; a job's scope is resolved through its execution reference. */
 export const WORKFLOW_EXECUTIONS_NAMESPACE = 'executions'
 
@@ -221,7 +233,8 @@ export async function applyAdmissionControlInTransaction(
   assertActorMayControlScope(command.actor, command.scope)
   const stateId = stopRecordId(command.scope.workspaceId)
   const auditId = outcomeRecordId(action, command.scope.workspaceId, command.commandId)
-  const replayedRow = await transaction.get(WORKFLOW_ADMISSION_OUTCOMES_NAMESPACE, auditId)
+  const outcomeNamespace = admissionOutcomeNamespace(command.scope.workspaceId)
+  const replayedRow = await transaction.get(outcomeNamespace, auditId)
   if (replayedRow !== undefined) {
     const prior = decodeOutcomeRecord(replayedRow)
     assertReplayIdentity(prior, action, command)
@@ -271,7 +284,7 @@ export async function applyAdmissionControlInTransaction(
     }
   }
   await transaction.put({
-    namespace: WORKFLOW_ADMISSION_OUTCOMES_NAMESPACE,
+    namespace: outcomeNamespace,
     id: auditId,
     value: json(audit),
   })
@@ -318,17 +331,33 @@ export async function listWorkflowAdmissionOutcomes(
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
     throw new Error('ADMISSION_CONTROL_LIMIT_INVALID')
   }
+  const namespace = admissionOutcomeNamespace(parsed.workspaceId)
+  const order = (left: AdmissionControlOutcomeRecord, right: AdmissionControlOutcomeRecord) =>
+    compareCodePointOrder(left.at, right.at) ||
+    compareCodePointOrder(left.commandId, right.commandId)
   return provider.transaction(async (transaction) => {
-    const rows = await transaction.list(WORKFLOW_ADMISSION_OUTCOMES_NAMESPACE)
-    return rows
-      .map((row) => decodeOutcomeRecord(row))
-      .filter((outcome) => outcome.scope.workspaceId === parsed.workspaceId)
-      .toSorted(
-        (left, right) =>
-          compareCodePointOrder(left.at, right.at) ||
-          compareCodePointOrder(left.commandId, right.commandId)
-      )
-      .slice(-limit)
+    // Page through this workspace's namespace only, keeping just the newest
+    // `limit` records in memory. A corrupt record in this trail fails closed here;
+    // corrupt records of other workspaces are never read.
+    let window: AdmissionControlOutcomeRecord[] = []
+    let afterId: string | undefined
+    for (;;) {
+      const page = await transaction.scan(namespace, {
+        ...(afterId === undefined ? {} : { afterId }),
+        limit: OUTCOME_SCAN_PAGE,
+      })
+      const decoded = page.map((row) => {
+        const outcome = decodeOutcomeRecord(row)
+        if (outcome.scope.workspaceId !== parsed.workspaceId) {
+          throw new Error('ADMISSION_CONTROL_OUTCOME_CORRUPT')
+        }
+        return outcome
+      })
+      window = [...window, ...decoded].toSorted(order).slice(-limit)
+      if (page.length < OUTCOME_SCAN_PAGE) break
+      afterId = page[page.length - 1]?.id
+    }
+    return window
   })
 }
 
@@ -348,8 +377,8 @@ export async function assertWorkflowJobAdmissionOpen(
     readonly input: unknown
   }
 ): Promise<void> {
-  const stops = await transaction.list(WORKFLOW_ADMISSION_STOPS_NAMESPACE)
-  if (stops.length === 0) return
+  // A point read of this job's workspace stop: other workspaces' stop records are
+  // never scanned, so an unrelated corrupt record cannot block this admission.
   const workspaceId = await resolveJobWorkspaceId(transaction, record.input)
   if (workspaceId === undefined) return
   const row = await transaction.get(WORKFLOW_ADMISSION_STOPS_NAMESPACE, stopRecordId(workspaceId))
