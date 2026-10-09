@@ -25,8 +25,14 @@
 // graph selection whose execution pins match; everything else is
 // attribution-incomplete evidence. Only a fully-read attested deployed-dsn
 // observation may conclude zero-in-scope; any pagination bound or skipped
-// section downgrades to incomplete and blocks the claim. The shared
-// retainedWorkEpistemics encoding from the reviewed script decides.
+// section downgrades to incomplete and blocks the claim. A bound hit by a
+// supporting attribution index (the plan-integrity/pin index over
+// execution_plans, the catalog-command receipt index over
+// graph_definition_commands) downgrades every section that consumes it. Counts
+// taken over a bounded scan are bounded counts — the per-section
+// `countsBounded` flag marks them lower bounds over what was actually read;
+// counts are exact only when every contributing scan ran to exhaustion. The
+// shared retainedWorkEpistemics encoding from the reviewed script decides.
 //
 // Safety: the collector opens one connection whose entire observation runs
 // inside a single READ ONLY transaction, issues parameterized SELECTs only,
@@ -201,9 +207,10 @@ export async function readStoreProfile(transaction) {
  * Bounded keyset pagination over one table in primary-key order. The callback
  * receives every row; bounding of emitted entries is the caller's decision, so
  * counts stay exact even when entries are truncated. Iteration stops at
- * exhaustion or at `maximumPages` pages — a bound hit is reported so the
- * section can downgrade to incomplete instead of silently passing a partial
- * read off as exhaustive.
+ * exhaustion or at the pagination bound (`spec.maximumPages`, default 4096) —
+ * the caller MUST consume the returned `boundReached` flag: a bound hit means
+ * the scan is partial, so the section and every index built from it downgrade
+ * to incomplete and their counts become bounded counts.
  */
 export async function scanTable(transaction, spec, onRow) {
   const pageSize = boundedPageSize(spec.pageSize)
@@ -396,6 +403,7 @@ async function collectDefinitions(transaction, context) {
     executionsByGraph,
     checkpointRowsByExecution,
     catalogCommandsByGraph,
+    catalogCommandsIndexBoundReached = false,
   } = context
   let rowCount = 0
   let malformedCount = 0
@@ -406,7 +414,7 @@ async function collectDefinitions(transaction, context) {
   const graphs = new Set()
   const entries = []
   try {
-    await scanTable(
+    const definitionsScan = await scanTable(
       transaction,
       {
         table: OBSERVED_TABLES.definitions,
@@ -459,22 +467,30 @@ async function collectDefinitions(transaction, context) {
         })
       }
     )
+    boundReached = definitionsScan.boundReached
   } catch {
     return failedDefinitionsSection(identity, observedAt, limits)
   }
+  // A bound on either scan makes the section's evidence partial: the primary
+  // scan bounds every count in this section, and the catalog-command
+  // attribution index bounds the per-entry consumersObserved numbers.
+  const sectionBoundReached = boundReached || catalogCommandsIndexBoundReached
   return {
     ...sectionHeader([OBSERVED_TABLES.definitions], identity, observedAt),
-    ...sectionOutcome({
-      attempted: true,
-      readError: undefined,
-      rowCount,
-      malformedCount,
-      truncated,
-      boundReached,
-      newestUpdatedAtValue: null,
-      maxAgeDays: limits.maxAgeDays,
-      observedAt,
-    }),
+    ...outcomeWithExtraReasons(
+      sectionOutcome({
+        attempted: true,
+        readError: undefined,
+        rowCount,
+        malformedCount,
+        truncated,
+        boundReached,
+        newestUpdatedAtValue: null,
+        maxAgeDays: limits.maxAgeDays,
+        observedAt,
+      }),
+      catalogCommandsIndexBoundReached ? ['CATALOG_COMMAND_INDEX_PAGINATION_BOUND_REACHED'] : []
+    ),
     counts: {
       total: rowCount,
       workspaces: workspaces.size,
@@ -488,7 +504,8 @@ async function collectDefinitions(transaction, context) {
         compareCodePoint(left.graphVersion, right.graphVersion)
     ),
     truncated,
-    boundReached,
+    boundReached: sectionBoundReached,
+    countsBounded: sectionBoundReached,
     malformedRecords: malformedCount,
   }
 }
@@ -511,6 +528,7 @@ function failedDefinitionsSection(identity, observedAt, limits) {
     entries: [],
     truncated: false,
     boundReached: false,
+    countsBounded: false,
     malformedRecords: 0,
   }
 }
@@ -595,7 +613,7 @@ async function collectCatalogCallers(transaction, context) {
   let newestCreatedAtValue = null
   const callers = new Map()
   try {
-    await scanTable(
+    const catalogScan = await scanTable(
       transaction,
       {
         table: OBSERVED_TABLES.catalogCommands,
@@ -630,6 +648,7 @@ async function collectCatalogCallers(transaction, context) {
         callers.set(callerId, caller)
       }
     )
+    boundReached = catalogScan.boundReached
   } catch {
     return {
       rowCount: 0,
@@ -667,8 +686,9 @@ async function collectCatalogCallers(transaction, context) {
     truncated,
     boundReached,
     readError: undefined,
-    // Distinct callers are counted over the full scan; the entry list is the
-    // only bounded surface.
+    // Distinct callers are counted over the full scan — exact whenever the
+    // scan was unbounded, a bounded count otherwise (boundReached says which);
+    // the entry list is the only bounded surface in the unbounded case.
     distinctCallers: callers.size,
     newestCreatedAtValue,
     entries: entries.toSorted((left, right) => compareCodePoint(left.consumerId, right.consumerId)),
@@ -697,9 +717,10 @@ async function collectPlanGraphReferences(transaction, context) {
   const planDigestsById = new Map()
   let planCount = 0
   let malformedPlans = 0
+  let boundReached = false
   let readError
   try {
-    await scanTable(
+    const plansScan = await scanTable(
       transaction,
       {
         table: OBSERVED_TABLES.executionPlans,
@@ -742,6 +763,7 @@ async function collectPlanGraphReferences(transaction, context) {
         planGraphs.set(planId, parsed.data)
       }
     )
+    boundReached = plansScan.boundReached
   } catch {
     readError = 'TABLE_SCAN_FAILED'
   }
@@ -752,6 +774,9 @@ async function collectPlanGraphReferences(transaction, context) {
     planDigestsById,
     planCount,
     malformedPlans,
+    // A bounded plan scan leaves every attribution index partial: the
+    // executions section must downgrade to incomplete.
+    boundReached,
     readError,
   }
 }
@@ -780,7 +805,7 @@ async function collectExecutions(transaction, context) {
   let inFlightNonGraph = 0
   let inFlightAttributed = 0
   try {
-    await scanTable(
+    const executionsScan = await scanTable(
       transaction,
       {
         table: OBSERVED_TABLES.executions,
@@ -882,6 +907,7 @@ async function collectExecutions(transaction, context) {
       'created_at'
     )
     newestPlanCreatedAtValue = plansNewest
+    boundReached = executionsScan.boundReached
   } catch {
     return failedExecutionsSection(identity, observedAt, limits)
   }
@@ -890,11 +916,15 @@ async function collectExecutions(transaction, context) {
     .reduce((summand, [, count]) => summand + count, 0)
   const extraReasons = []
   if (planIndex.readError !== undefined) extraReasons.push('PLAN_TABLE_SCAN_FAILED')
+  if (planIndex.boundReached === true) extraReasons.push('PLAN_INDEX_PAGINATION_BOUND_REACHED')
   if (
     planIndex.plansWithMalformedGraphIdentity.size > 0 ||
     inFlightPlansWithMalformedGraphIdentity > 0
   )
     extraReasons.push('PLAN_GRAPH_IDENTITY_MALFORMED')
+  // Either bound makes the attribution totals partial: the executions scan
+  // bounds the state counts, the plan index bounds the attribution buckets.
+  const sectionBoundReached = boundReached || planIndex.boundReached === true
   const newestEvidence = [newestUpdatedAtValue, newestPlanCreatedAtValue]
     .filter((value) => value !== null)
     .toSorted()
@@ -933,7 +963,8 @@ async function collectExecutions(transaction, context) {
       compareCodePoint(left.executionId, right.executionId)
     ),
     truncated,
-    boundReached,
+    boundReached: sectionBoundReached,
+    countsBounded: sectionBoundReached,
     malformedRecords: malformedCount,
     internal: { executionsByGraph, executionGraphKeys, executionStatesById },
   }
@@ -969,6 +1000,7 @@ function failedExecutionsSection(identity, observedAt, limits) {
     entries: [],
     truncated: false,
     boundReached: false,
+    countsBounded: false,
     malformedRecords: 0,
     internal: {
       executionsByGraph: new Map(),
@@ -1009,7 +1041,7 @@ async function collectCheckpoints(transaction, context) {
     return thread
   }
   try {
-    await scanTable(
+    const checkpointsScan = await scanTable(
       transaction,
       {
         table: OBSERVED_TABLES.langgraphCheckpoints,
@@ -1030,7 +1062,8 @@ async function collectCheckpoints(transaction, context) {
         threadFor(parsed.thread, parsed.scope).checkpointRows += 1
       }
     )
-    await scanTable(
+    boundReached = checkpointsScan.boundReached
+    const writesScan = await scanTable(
       transaction,
       {
         table: OBSERVED_TABLES.langgraphCheckpointWrites,
@@ -1051,7 +1084,8 @@ async function collectCheckpoints(transaction, context) {
         threadFor(parsed.thread, parsed.scope).writeRows += 1
       }
     )
-    await scanTable(
+    boundReached = writesScan.boundReached || boundReached
+    const blobsScan = await scanTable(
       transaction,
       {
         table: OBSERVED_TABLES.langgraphCheckpointBlobs,
@@ -1070,6 +1104,7 @@ async function collectCheckpoints(transaction, context) {
         blobRows += 1
       }
     )
+    boundReached = blobsScan.boundReached || boundReached
   } catch {
     return failedCheckpointsSection(identity, observedAt, limits)
   }
@@ -1156,6 +1191,7 @@ async function collectCheckpoints(transaction, context) {
     ),
     truncated,
     boundReached,
+    countsBounded: boundReached,
     malformedRecords: malformedCount,
     internal: { checkpointRowsByExecution },
   }
@@ -1187,6 +1223,7 @@ function failedCheckpointsSection(identity, observedAt, limits) {
     entries: [],
     truncated: false,
     boundReached: false,
+    countsBounded: false,
     malformedRecords: 0,
   }
 }
@@ -1220,8 +1257,9 @@ function parseCheckpointThread(thread) {
 /** Receipt counts per graph reference, joined through the command result. */
 async function catalogCommandsByGraphIndex(transaction, context) {
   const index = new Map()
+  let boundReached = false
   try {
-    await scanTable(
+    const commandsScan = await scanTable(
       transaction,
       {
         table: OBSERVED_TABLES.catalogCommands,
@@ -1244,10 +1282,13 @@ async function catalogCommandsByGraphIndex(transaction, context) {
         index.set(key, (index.get(key) ?? 0) + 1)
       }
     )
+    boundReached = commandsScan.boundReached
   } catch {
-    return new Map()
+    return { index: new Map(), boundReached: false }
   }
-  return index
+  // A bounded index scan makes every consumersObserved.catalogCommands number
+  // a lower bound; the definitions section must downgrade to incomplete.
+  return { index, boundReached }
 }
 
 async function collectCancellationReceiptCount(transaction) {
@@ -1281,7 +1322,7 @@ async function newestInstant(transaction, table, column) {
  * epistemics) so the reviewed disposition validator consumes this output
  * unchanged; the physical differences (source.backend 'postgres-dsn', source
  * tables instead of record-store namespaces, the extra blobRows checkpoint
- * count and boundReached flag) are additive.
+ * count, and the boundReached/countsBounded flags) are additive.
  */
 export function buildInventoryManifestFromSections({
   observationScope,
@@ -1464,13 +1505,15 @@ export async function collectInventoryManifest({
       const { internal: checkpointInternals, ...checkpointsPublic } = checkpoints
       const checkpointRowsByGraph = checkpointInternals?.checkpointRowsByExecution ?? new Map()
 
+      const catalogCommandsIndex = await catalogCommandsByGraphIndex(transaction, scanContext)
       const definitions = await collectDefinitions(transaction, {
         identity,
         observedAt,
         limits: normalizedLimits,
         executionsByGraph: executionInternals?.executionsByGraph ?? new Map(),
         checkpointRowsByExecution: checkpointRowsByGraph,
-        catalogCommandsByGraph: await catalogCommandsByGraphIndex(transaction, scanContext),
+        catalogCommandsByGraph: catalogCommandsIndex.index,
+        catalogCommandsIndexBoundReached: catalogCommandsIndex.boundReached,
         ...scanContext,
       })
 
@@ -1514,6 +1557,8 @@ export async function collectInventoryManifest({
         status: consumersStatus,
         reasons: consumersOutcomeBase.reasons,
         truncated: consumersTotal > normalizedLimits.entriesPerSection,
+        boundReached: catalogCallers.boundReached,
+        countsBounded: catalogCallers.boundReached,
         malformedRecords: catalogCallers.malformedCount,
         counts: {
           registered: KNOWN_CONSUMERS.length,
@@ -1590,6 +1635,8 @@ function emptyConsumersSection(observedAt) {
     status: OBSERVATION_STATUS.UNKNOWN,
     reasons: ['SOURCE_NOT_IN_OBSERVATION_SCOPE', 'CURATED_REGISTRY_ONLY'],
     truncated: false,
+    boundReached: false,
+    countsBounded: false,
     malformedRecords: 0,
     counts: {
       registered: KNOWN_CONSUMERS.length,
