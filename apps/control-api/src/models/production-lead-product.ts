@@ -98,7 +98,9 @@ export function createProductionLeadProductAuthority(options: {
       .get(workspaceId, intentId)
     return row ? Pin.parse(JSON.parse(String(row['record']))) : undefined
   }
-  const readCurrent: PiLeadProductAuthorityPort['readCurrent'] = async (input) => {
+  const readCanonicalProduct = async (
+    input: Parameters<PiLeadProductAuthorityPort['readCurrent']>[0]
+  ) => {
     const raw = await options.product.readCurrent(structuredClone(input))
     if (raw === undefined) return undefined
     const evidence = ProductionLeadProductEvidenceSchema.parse(raw)
@@ -123,6 +125,12 @@ export function createProductionLeadProductAuthority(options: {
     )
       throw new Error('PI_PRODUCTION_PROFILE_UNAVAILABLE')
     const evidenceDigest = `sha256:${createHash('sha256').update(canonicalJsonStringify(evidence)).digest('hex')}`
+    return { evidence, profile, evidenceDigest }
+  }
+  const readCurrent: PiLeadProductAuthorityPort['readCurrent'] = async (input) => {
+    const current = await readCanonicalProduct(input)
+    if (current === undefined) return undefined
+    const { evidence, profile, evidenceDigest } = current
     let pin = read(evidence.workspaceId, evidence.intentId)
     if (!pin) {
       const selection = evidence.requestedModelSelections?.lead
@@ -222,14 +230,22 @@ export function createProductionLeadProductAuthority(options: {
           requestedSelection: ModelSelectionReferenceSchema.optional(),
         })
         .parse(child)
-      const accepted = await readCurrent(input)
+      // Recheck canonical product actor, audience, message and immutable profile without
+      // coupling a child's independent model to lead-model readiness.
+      const current = await readCanonicalProduct(input)
       if (
-        !accepted ||
-        accepted.canonicalActorPrincipalId !== currentChild.canonicalActorPrincipalId
+        !current ||
+        current.evidence.canonicalActorPrincipalId !== currentChild.canonicalActorPrincipalId
       )
         throw new Error('PI_CHILD_MODEL_AUTHORITY_DENIED')
       const pin = read(input.workspaceId, input.intentId)
-      if (!pin) throw new Error('PI_CHILD_MODEL_AUTHORITY_DENIED')
+      if (
+        !pin ||
+        pin.evidenceDigest !== current.evidenceDigest ||
+        pin.profileVersionId !== current.profile.profileVersionId ||
+        pin.profileContentDigest !== current.profile.profileContentDigest
+      )
+        throw new Error('PI_CHILD_MODEL_AUTHORITY_DENIED')
       return roles.resolve({
         workspaceId: input.workspaceId,
         admissionRef: `child:${input.intentId}:${currentChild.childRequestId}`,

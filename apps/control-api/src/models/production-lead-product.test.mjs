@@ -164,6 +164,13 @@ test('explicit lead and child refs stay distinct, survive reopen, and never sele
       child: { selectionRef: childRef, selectionRevision: 1 },
     }
     fixture.ports.selections.resolveSelection = async (pin) => fullSelection(pin.selectionRef)
+    fixture.ports.selections.assertReady = async (resolved) => {
+      if (
+        fixture.state.revoked ||
+        (fixture.state.leadUnavailable && resolved.selectionRef === selection.selectionRef)
+      )
+        throw new Error('CREDENTIAL_REVOKED')
+    }
     return { ...fixture, authority: createProductionLeadProductAuthority(fixture.ports) }
   }
   const child = {
@@ -178,6 +185,14 @@ test('explicit lead and child refs stay distinct, survive reopen, and never sele
     expect(accepted.requestedModelSelections).toBeUndefined()
     expect((await first.authority.resolveChildSelection(input, child)).selectionRef).toBe(childRef)
     expect(first.state.selects).toBe(0)
+    first.state.leadUnavailable = true
+    await expect(first.authority.readCurrent(input)).rejects.toThrow('CREDENTIAL_REVOKED')
+    expect((await first.authority.resolveChildSelection(input, child)).selectionRef).toBe(childRef)
+    first.state.product.allowedPrincipalIds = [`svc_${'x'.repeat(12)}`]
+    await expect(first.authority.resolveChildSelection(input, child)).rejects.toThrow(
+      'PI_PRODUCTION_PRODUCT_DENIED'
+    )
+    first.state.product.allowedPrincipalIds = [input.principalId]
     database.close()
     database = new DatabaseSync(join(directory, 'roles.sqlite'))
     const reopened = setup()
