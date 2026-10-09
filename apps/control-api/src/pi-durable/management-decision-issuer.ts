@@ -176,7 +176,12 @@ function canonicalValue(
 ): string | undefined {
   if (depth > 32 || budget.bytes > maximumCanonicalRequestBytes) return undefined
   if (value === null) return charge(budget, 'null')
-  if (typeof value === 'string') return charge(budget, JSON.stringify(value))
+  if (typeof value === 'string') {
+    // Cheap conservative precheck before allocating the encoded string: every
+    // UTF-16 code unit costs at least one UTF-8 byte in JSON, plus two quotes.
+    if (budget.bytes + value.length + 2 > maximumCanonicalRequestBytes) return undefined
+    return charge(budget, JSON.stringify(value))
+  }
   if (typeof value === 'boolean') return charge(budget, value ? 'true' : 'false')
   if (typeof value === 'number')
     return Number.isFinite(value) ? charge(budget, JSON.stringify(value)) : undefined
@@ -196,6 +201,9 @@ function canonicalValue(
     const entries: string[] = []
     for (const key of Object.keys(value).toSorted()) {
       if (entries.length > 0 && !charge(budget, ',')) return undefined
+      // Same conservative precheck for a key: its code-unit length plus two
+      // quotes and the separating colon is a lower bound on the encoded cost.
+      if (budget.bytes + key.length + 3 > maximumCanonicalRequestBytes) return undefined
       const encodedKey = JSON.stringify(key)
       if (!charge(budget, `${encodedKey}:`)) return undefined
       const encoded = canonicalValue(value[key], depth + 1, budget)

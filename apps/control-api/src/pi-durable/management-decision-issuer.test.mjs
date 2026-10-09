@@ -206,6 +206,15 @@ test('bounds depth and cycles before materializing recursive structures', () => 
   expect(managementCanonicalRequestDigest(cyclic)).toBeNull()
 })
 
+test('rejects huge scalar values and keys before allocating their encodings', () => {
+  // Exact boundary: max canonical bytes 131072; a top-level string costs
+  // length + 2 (quotes).
+  expect(managementCanonicalRequestDigest('a'.repeat(131_070))).not.toBeNull()
+  expect(managementCanonicalRequestDigest('a'.repeat(131_071))).toBeNull()
+  expect(managementCanonicalRequestDigest({ value: 'x'.repeat(200_000) })).toBeNull()
+  expect(managementCanonicalRequestDigest({ ['k'.repeat(200_000)]: 1 })).toBeNull()
+})
+
 test('bounds the canonical request size', async () => {
   const { instance } = fixture()
   const oversized = { value: 'x'.repeat(200_000) }

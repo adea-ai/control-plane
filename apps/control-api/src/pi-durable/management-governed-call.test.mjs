@@ -274,11 +274,12 @@ test('maps a typed Adea refusal without masking the reason', async () => {
 test('bounds oversize, deep and cyclic requests before any clone or callback', async () => {
   const run = harness()
   const oversizeInput = { blob: 'x'.repeat(200_000) }
+  const hugeKeyInput = { ['k'.repeat(200_000)]: 1 }
   let deepInput = { leaf: 'x' }
   for (let i = 0; i < 40; i += 1) deepInput = { next: deepInput }
   const cyclicInput = { name: 'Renamed' }
   cyclicInput.self = cyclicInput
-  for (const input of [oversizeInput, deepInput, cyclicInput]) {
+  for (const input of [oversizeInput, hugeKeyInput, deepInput, cyclicInput]) {
     await expect(run.caller.execute({ ...baseRequest, input })).rejects.toThrow(
       'PI_MANAGEMENT_CALL_INVALID'
     )
