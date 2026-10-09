@@ -1,0 +1,582 @@
+{
+  "schemaVersion": 1,
+  "tool": "scripts/m17-runtime-baseline.mjs",
+  "issue": 941,
+  "status": "candidate-baseline-unaccepted",
+  "baselineStatement": "This run is a candidate measurement of this repository state only; it asserts nothing about baselines elsewhere in the repository or history and is not an accepted or published #941 baseline.",
+  "candidate": {
+    "commit": "dc260cdfabd84b164216c3620f82af5a06e250d2",
+    "branch": "feat/m17-runtime-ownership-baseline-941",
+    "dirty": false
+  },
+  "environment": {
+    "runtime": "v26.3.0",
+    "bun": "1.4.2",
+    "sqlite": "3.51.0",
+    "platform": "darwin",
+    "release": "25.6.0",
+    "architecture": "arm64",
+    "cpu": "Apple M2 Max",
+    "cpuCount": 12,
+    "memoryBytes": 68719476736
+  },
+  "configuration": {
+    "queueIterations": 50,
+    "objectIterations": 50,
+    "ledgerIterations": 50,
+    "policyIterations": 200,
+    "importProbes": true,
+    "writePolicy": "probe state: disposable os.tmpdir() directories only; report: stdout or the explicit --out path"
+  },
+  "startedAt": "2026-10-09T03:08:21.952Z",
+  "completedAt": "2026-10-09T03:08:26.205Z",
+  "layers": [
+    {
+      "id": "custom-runtime",
+      "title": "Custom lifecycle/hosted runtime (embedded workflow engine, runtime workers)",
+      "sourceRoots": [
+        "packages/workflow-runtime/src",
+        "packages/runtime-sdk/src",
+        "apps/workflow-worker/src",
+        "apps/runtime-worker/src"
+      ],
+      "excluded": [
+        "packages/workflow-runtime/src/restate-endpoint.ts",
+        "packages/runtime-sdk/src/transport.ts",
+        "apps/workflow-worker/src/restate-worker.ts",
+        "apps/runtime-worker/src/hosted-managed-pi-artifact-stores.ts"
+      ],
+      "fileCount": 88,
+      "complexity": {
+        "files": 88,
+        "sourceFiles": 49,
+        "testFiles": 39,
+        "otherFiles": 0,
+        "sourceLines": 10536,
+        "testLines": 10782,
+        "exportStatements": 396,
+        "todoMarkers": 0
+      },
+      "importProbe": {
+        "status": "measured",
+        "importMs": 403.849,
+        "rssBeforeBytes": 10403840,
+        "rssAfterBytes": 76496896,
+        "rssDeltaBytes": 66093056
+      }
+    },
+    {
+      "id": "restate",
+      "title": "Restate durable execution layer (hosted/local-restate profiles only)",
+      "sourceRoots": [
+        "packages/restate-runtime/src",
+        "packages/workflow-runtime/src/restate-endpoint.ts",
+        "apps/workflow-worker/src/restate-worker.ts"
+      ],
+      "excluded": [],
+      "fileCount": 4,
+      "complexity": {
+        "files": 4,
+        "sourceFiles": 3,
+        "testFiles": 1,
+        "otherFiles": 0,
+        "sourceLines": 527,
+        "testLines": 254,
+        "exportStatements": 15,
+        "todoMarkers": 0
+      },
+      "importProbe": {
+        "status": "measured",
+        "importMs": 22.585,
+        "rssBeforeBytes": 10403840,
+        "rssAfterBytes": 16678912,
+        "rssDeltaBytes": 6275072
+      }
+    },
+    {
+      "id": "transports",
+      "title": "Runtime transports (direct-local / remote-gateway, wire protocol, relay)",
+      "sourceRoots": [
+        "packages/runtime-sdk/src/transport.ts",
+        "packages/runtime-gateway-protocol/src",
+        "packages/remote-control-relay/src"
+      ],
+      "excluded": [],
+      "fileCount": 17,
+      "complexity": {
+        "files": 17,
+        "sourceFiles": 15,
+        "testFiles": 2,
+        "otherFiles": 0,
+        "sourceLines": 2760,
+        "testLines": 1299,
+        "exportStatements": 137,
+        "todoMarkers": 0
+      },
+      "importProbe": {
+        "status": "measured",
+        "importMs": 228.168,
+        "rssBeforeBytes": 10420224,
+        "rssAfterBytes": 59588608,
+        "rssDeltaBytes": 49168384
+      }
+    },
+    {
+      "id": "auth",
+      "title": "Authentication and credential ownership (service/device principals, vault, secrets)",
+      "sourceRoots": [
+        "packages/contracts/src/authentication.ts",
+        "packages/credential-vault/src",
+        "packages/secrets/src",
+        "apps/control-api/src/auth",
+        "apps/local-control-plane/src/authentication.ts",
+        "apps/runtime-gateway/src/authentication.ts"
+      ],
+      "excluded": [],
+      "fileCount": 17,
+      "complexity": {
+        "files": 17,
+        "sourceFiles": 14,
+        "testFiles": 3,
+        "otherFiles": 0,
+        "sourceLines": 2745,
+        "testLines": 893,
+        "exportStatements": 103,
+        "todoMarkers": 0
+      },
+      "importProbe": {
+        "status": "measured",
+        "importMs": 193.823,
+        "rssBeforeBytes": 10403840,
+        "rssAfterBytes": 54493184,
+        "rssDeltaBytes": 44089344
+      }
+    },
+    {
+      "id": "policy",
+      "title": "Policy decision point (Cedar PDP, decision resolution)",
+      "sourceRoots": ["packages/policy/src"],
+      "excluded": [],
+      "fileCount": 4,
+      "complexity": {
+        "files": 4,
+        "sourceFiles": 2,
+        "testFiles": 2,
+        "otherFiles": 0,
+        "sourceLines": 685,
+        "testLines": 457,
+        "exportStatements": 25,
+        "todoMarkers": 0
+      },
+      "importProbe": {
+        "status": "measured",
+        "importMs": 154.526,
+        "rssBeforeBytes": 10403840,
+        "rssAfterBytes": 53182464,
+        "rssDeltaBytes": 42778624
+      }
+    },
+    {
+      "id": "billing",
+      "title": "Billing/accounting (durable usage ledger, budgets)",
+      "sourceRoots": [
+        "packages/usage-ledger/src",
+        "packages/database/src/usage-store.ts",
+        "budgets.json",
+        "scripts/check-budgets.mjs"
+      ],
+      "excluded": [],
+      "fileCount": 10,
+      "complexity": {
+        "files": 10,
+        "sourceFiles": 6,
+        "testFiles": 3,
+        "otherFiles": 1,
+        "sourceLines": 3637,
+        "testLines": 1802,
+        "exportStatements": 46,
+        "todoMarkers": 0
+      },
+      "importProbe": {
+        "status": "measured",
+        "importMs": 156.171,
+        "rssBeforeBytes": 10387456,
+        "rssAfterBytes": 53510144,
+        "rssDeltaBytes": 43122688
+      }
+    },
+    {
+      "id": "artifacts",
+      "title": "Artifacts (filesystem/S3-compatible object stores, artifact verification)",
+      "sourceRoots": [
+        "packages/object-store/src",
+        "apps/runtime-worker/src/hosted-managed-pi-artifact-stores.ts",
+        "apps/runtime-gateway/src/runtime-artifact-verifier.ts"
+      ],
+      "excluded": [],
+      "fileCount": 10,
+      "complexity": {
+        "files": 10,
+        "sourceFiles": 5,
+        "testFiles": 5,
+        "otherFiles": 0,
+        "sourceLines": 1683,
+        "testLines": 1482,
+        "exportStatements": 19,
+        "todoMarkers": 0
+      },
+      "importProbe": {
+        "status": "measured",
+        "importMs": 417.886,
+        "rssBeforeBytes": 10387456,
+        "rssAfterBytes": 67829760,
+        "rssDeltaBytes": 57442304
+      }
+    },
+    {
+      "id": "device-supervision",
+      "title": "Device/RuntimeNode supervision (gateway identity, channels, process supervision)",
+      "sourceRoots": [
+        "apps/runtime-gateway/src",
+        "packages/database/src/schema/runtime-connections.ts",
+        "packages/deployment/src/process-runtime.ts",
+        "packages/deployment/src/local-adapters.ts",
+        "scripts/runtime-node-identity-admin.mjs",
+        "scripts/runtime-node-identity-admin-cli.mjs"
+      ],
+      "excluded": [
+        "apps/runtime-gateway/src/authentication.ts",
+        "apps/runtime-gateway/src/runtime-artifact-verifier.ts"
+      ],
+      "fileCount": 45,
+      "complexity": {
+        "files": 45,
+        "sourceFiles": 28,
+        "testFiles": 17,
+        "otherFiles": 0,
+        "sourceLines": 7229,
+        "testLines": 6397,
+        "exportStatements": 149,
+        "todoMarkers": 0
+      },
+      "importProbe": {
+        "status": "measured",
+        "importMs": 14.797,
+        "rssBeforeBytes": 10436608,
+        "rssAfterBytes": 16105472,
+        "rssDeltaBytes": 5668864
+      }
+    },
+    {
+      "id": "pi-durable-node-adapter",
+      "title": "Node Pi Durable adapter (candidate successor runtime, Node 24 + SQLite)",
+      "sourceRoots": ["packages/pi-durable-adapter/src"],
+      "excluded": [],
+      "fileCount": 42,
+      "complexity": {
+        "files": 42,
+        "sourceFiles": 26,
+        "testFiles": 16,
+        "otherFiles": 0,
+        "sourceLines": 6400,
+        "testLines": 5155,
+        "exportStatements": 109,
+        "todoMarkers": 0
+      },
+      "importProbe": {
+        "status": "measured",
+        "importMs": 487.003,
+        "rssBeforeBytes": 10387456,
+        "rssAfterBytes": 98959360,
+        "rssDeltaBytes": 88571904
+      }
+    },
+    {
+      "id": "pi-cloudflare-host",
+      "title": "Cloudflare Pi Durable host (Durable Object, unregistered/no capabilities)",
+      "sourceRoots": ["packages/pi-cloudflare-host/src"],
+      "excluded": [],
+      "fileCount": 21,
+      "complexity": {
+        "files": 21,
+        "sourceFiles": 10,
+        "testFiles": 11,
+        "otherFiles": 0,
+        "sourceLines": 1636,
+        "testLines": 2460,
+        "exportStatements": 43,
+        "todoMarkers": 0
+      },
+      "importProbe": {
+        "status": "measured",
+        "importMs": 187.438,
+        "rssBeforeBytes": 10387456,
+        "rssAfterBytes": 60424192,
+        "rssDeltaBytes": 50036736
+      }
+    }
+  ],
+  "couplingMethod": "static import heuristic (string match, no type resolution): @control-plane scope only, external @other-scope packages never match by basename, package directory mapped to its first-owning layer when one package spans multiple layers, relative .js/.ts spelling resolved, test files and self-edges excluded; not a compiler-resolved dependency graph",
+  "coupling": {
+    "custom-runtime": {
+      "targets": {
+        "billing": 3,
+        "transports": 7,
+        "artifacts": 3,
+        "auth": 26,
+        "restate": 1,
+        "policy": 1,
+        "device-supervision": 2
+      },
+      "total": 43
+    },
+    "restate": {
+      "targets": {
+        "device-supervision": 1,
+        "custom-runtime": 1
+      },
+      "total": 2
+    },
+    "transports": {
+      "targets": {
+        "auth": 1,
+        "device-supervision": 1,
+        "custom-runtime": 3
+      },
+      "total": 5
+    },
+    "auth": {
+      "targets": {
+        "transports": 1,
+        "device-supervision": 2,
+        "policy": 4
+      },
+      "total": 7
+    },
+    "policy": {
+      "targets": {
+        "auth": 3
+      },
+      "total": 3
+    },
+    "billing": {
+      "targets": {
+        "auth": 6
+      },
+      "total": 6
+    },
+    "artifacts": {
+      "targets": {
+        "device-supervision": 4,
+        "transports": 1,
+        "custom-runtime": 3,
+        "auth": 1
+      },
+      "total": 9
+    },
+    "device-supervision": {
+      "targets": {
+        "billing": 2,
+        "custom-runtime": 6,
+        "transports": 17,
+        "auth": 11,
+        "artifacts": 1
+      },
+      "total": 37
+    },
+    "pi-durable-node-adapter": {
+      "targets": {
+        "auth": 12,
+        "custom-runtime": 8,
+        "billing": 3
+      },
+      "total": 23
+    },
+    "pi-cloudflare-host": {
+      "targets": {
+        "custom-runtime": 12
+      },
+      "total": 12
+    }
+  },
+  "probes": [
+    {
+      "id": "local-embedded-sqlite-queue-round-trip",
+      "layer": "custom-runtime",
+      "status": "measured",
+      "workload": "WorkflowJobStore enqueue -> claimDue -> complete on disposable SQLite (Local path)",
+      "iterations": 50,
+      "latencyMs": {
+        "enqueue": {
+          "samples": 50,
+          "p50Ms": 1.047,
+          "p95Ms": 1.533,
+          "p99Ms": 8.669,
+          "maxMs": 8.669,
+          "meanMs": 1.261
+        },
+        "claim": {
+          "samples": 50,
+          "p50Ms": 1.329,
+          "p95Ms": 3.431,
+          "p99Ms": 5.7,
+          "maxMs": 5.7,
+          "meanMs": 1.582
+        },
+        "complete": {
+          "samples": 50,
+          "p50Ms": 0.992,
+          "p95Ms": 1.598,
+          "p99Ms": 2.58,
+          "maxMs": 2.58,
+          "meanMs": 1.101
+        },
+        "roundTrip": {
+          "samples": 50,
+          "p50Ms": 3.389,
+          "p95Ms": 7.693,
+          "p99Ms": 14.686,
+          "maxMs": 14.686,
+          "meanMs": 3.945
+        }
+      },
+      "notes": [
+        "single-process developer host",
+        "disposable temp database; not the Local profile state directory",
+        "durable WAL/FULL SQLite through SqlitePersistenceProvider"
+      ]
+    },
+    {
+      "id": "local-filesystem-object-put-get",
+      "layer": "artifacts",
+      "status": "measured",
+      "workload": "FilesystemObjectStore put -> get of a 1 KiB object on a disposable temp root",
+      "iterations": 50,
+      "latencyMs": {
+        "put": {
+          "samples": 50,
+          "p50Ms": 3.703,
+          "p95Ms": 9.421,
+          "p99Ms": 11.299,
+          "maxMs": 11.299,
+          "meanMs": 4.66
+        },
+        "get": {
+          "samples": 50,
+          "p50Ms": 0.555,
+          "p95Ms": 1.171,
+          "p99Ms": 3.54,
+          "maxMs": 3.54,
+          "meanMs": 0.693
+        },
+        "roundTrip": {
+          "samples": 50,
+          "p50Ms": 4.272,
+          "p95Ms": 11.178,
+          "p99Ms": 12.339,
+          "maxMs": 12.339,
+          "meanMs": 5.356
+        }
+      },
+      "notes": [
+        "single-process developer host",
+        "disposable temp root; no repository or profile writes"
+      ]
+    },
+    {
+      "id": "local-durable-usage-ledger-reserve",
+      "layer": "billing",
+      "status": "measured",
+      "workload": "DurableUsageLedger openBudget + reserve loop on disposable SQLite (SqliteDurableUsageStore)",
+      "iterations": 50,
+      "latencyMs": {
+        "openBudget": {
+          "samples": 1,
+          "p50Ms": 21.502,
+          "p95Ms": 21.502,
+          "p99Ms": 21.502,
+          "maxMs": 21.502,
+          "meanMs": 21.502
+        },
+        "reserve": {
+          "samples": 50,
+          "p50Ms": 16.448,
+          "p95Ms": 24.347,
+          "p99Ms": 29.525,
+          "maxMs": 29.525,
+          "meanMs": 17.166
+        }
+      },
+      "notes": [
+        "single-process developer host",
+        "disposable temp database; no workspace billing state is read or written",
+        "execution owner record seeded in the disposable database (test-fixture shape)"
+      ]
+    },
+    {
+      "id": "in-process-policy-authorize",
+      "layer": "policy",
+      "status": "measured",
+      "workload": "CedarPolicyDecisionPoint.authorize with published document and FakeCedarEvaluator",
+      "iterations": 200,
+      "latencyMs": {
+        "authorize": {
+          "samples": 200,
+          "p50Ms": 0.064,
+          "p95Ms": 0.445,
+          "p99Ms": 1.911,
+          "maxMs": 5.529,
+          "meanMs": 0.169
+        }
+      },
+      "notes": [
+        "in-process fake Cedar evaluator; not a real Cedar engine measurement",
+        "single-process developer host"
+      ]
+    }
+  ],
+  "unavailableCosts": [
+    {
+      "cost": "Restate server invocation latency and state growth (hosted profiles)",
+      "status": "unavailable",
+      "reason": "Requires a running Restate server; no server is started by this read-only run. The Local profile uses embedded SQLite and has no Restate layer to measure."
+    },
+    {
+      "cost": "Managed-cloud operational cost (Railway, Neon, R2, Restate)",
+      "status": "unavailable",
+      "reason": "Requires live cloud accounts and billing data; no credentials are used or requested."
+    },
+    {
+      "cost": "Cloudflare Worker/Durable Object latency and cost",
+      "status": "unavailable",
+      "reason": "No Worker deployment, account, or credentials; pi-cloudflare-host advertises no production capability on current main."
+    },
+    {
+      "cost": "Live model-provider latency and spend",
+      "status": "unavailable",
+      "reason": "No provider credentials are used; live-provider qualification is out of scope for #941 tooling."
+    },
+    {
+      "cost": "Physical RuntimeNode device supervision health",
+      "status": "unavailable",
+      "reason": "No physical device or Agent HQ enrollment is attached to this developer host."
+    },
+    {
+      "cost": "PostgreSQL hosted-server profile latency",
+      "status": "unavailable",
+      "reason": "Local PostgreSQL fixture (bun run db:up) was not started for this run; hosted-store behavior is not claimed."
+    },
+    {
+      "cost": "Review and acceptance handling time",
+      "status": "unavailable",
+      "reason": "Not machine-measurable; recorded as an explicit non-measured cost item, not an acceptance gate."
+    }
+  ],
+  "rssAfterProbesBytes": 188137472,
+  "limitations": [
+    "single-process developer host; timings are not capacity numbers",
+    "no cloud, Restate server, PostgreSQL, provider, or device was contacted",
+    "RSS deltas from cold imports are not peak memory",
+    "cost figures are labeled unavailable rather than estimated"
+  ]
+}
