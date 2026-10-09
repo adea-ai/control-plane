@@ -131,10 +131,13 @@ export async function createUnfinishedChildProcessHarness(options = {}) {
   }
   async function evidence() {
     try {
-      return (await readFile(join(directory, 'process-evidence.jsonl'), 'utf8'))
-        .split('\n')
-        .filter(Boolean)
-        .map(JSON.parse)
+      const raw = await readFile(join(directory, 'process-evidence.jsonl'), 'utf8')
+      // A SIGKILL mid-write leaves a truncated final record with no trailing
+      // newline. Records are line-terminated, so drop only that incomplete
+      // tail; any malformed COMPLETE record still surfaces as corruption.
+      const lines = raw.split('\n')
+      const complete = raw.endsWith('\n') ? lines : lines.slice(0, -1)
+      return complete.filter(Boolean).map(JSON.parse)
     } catch (error) {
       if (error.code === 'ENOENT') return []
       throw error
