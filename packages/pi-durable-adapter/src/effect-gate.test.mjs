@@ -708,6 +708,85 @@ describe('persistent Pi governed effect gate', () => {
       })
   })
 
+  test('authority revocation and approval or grant expiry during a parked store read or CAS deny before invocation', async () => {
+    for (const parkOn of ['get', 'compareAndSet'])
+      for (const stale of ['authority', 'approval-expiry', 'grant-expiry'])
+        await fixture(async ({ open, close, state }) => {
+          state.approved = true
+          let enteredStore
+          const storeEntered = new Promise((resolve) => {
+            enteredStore = resolve
+          })
+          let resumeStore
+          const parkedStore = new Promise((resolve) => {
+            resumeStore = resolve
+          })
+          let getCount = 0
+          let compareAndSetCount = 0
+          const { gate, store } = await open({
+            store: (baseStore) => ({
+              get: async (key) => {
+                const shouldPark = parkOn === 'get' && getCount++ === 1
+                if (shouldPark) {
+                  enteredStore()
+                  await parkedStore
+                }
+                return baseStore.get(key)
+              },
+              insert: baseStore.insert.bind(baseStore),
+              compareAndSet: async (expectedRevision, record) => {
+                const shouldPark = parkOn === 'compareAndSet' && compareAndSetCount++ === 0
+                if (shouldPark) {
+                  enteredStore()
+                  await parkedStore
+                }
+                return baseStore.compareAndSet(expectedRevision, record)
+              },
+            }),
+          })
+          const original = request()
+          const toolRequest =
+            stale === 'approval-expiry'
+              ? request({ grant: { ...original.grant, expiresAt: changedExpiry } })
+              : stale === 'grant-expiry'
+                ? request({ approval: { ...original.approval, expiresAt: changedExpiry } })
+                : original
+          const pending = gate.execute(toolRequest)
+          try {
+            await storeEntered
+            if (stale === 'authority') state.boundary = 'effect'
+            else state.clock = expiry
+            resumeStore()
+
+            const outcome = await pending
+            expect(outcome).toMatchObject({
+              state: 'denied',
+              reasonCode: 'PI_EFFECT_AUTHORITY_REJECTED',
+            })
+            expect(state.effects).toBe(0)
+            const key = JSON.stringify([toolRequest.workspaceId, toolRequest.idempotencyKey])
+            const retained = await store.get(key)
+            expect(retained).toMatchObject({
+              state: 'settled',
+              effectAdmittedAt: expect.any(String),
+              outcome: { state: 'denied', reasonCode: 'PI_EFFECT_AUTHORITY_REJECTED' },
+            })
+
+            close()
+            state.boundary = undefined
+            state.clock = at
+            const reopened = await open()
+            expect(await reopened.gate.execute(toolRequest)).toEqual(outcome)
+            expect(await reopened.store.get(key)).toEqual(retained)
+            expect(state.effects).toBe(0)
+            close()
+          } finally {
+            resumeStore()
+            await pending.catch(() => undefined)
+          }
+        })
+  })
+
   test('publication authority is rechecked after the outcome is retained and replay never repeats the effect', () =>
     fixture(async ({ open, close, state }) => {
       state.approved = true

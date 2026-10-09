@@ -246,8 +246,19 @@ export class PiDurableEffectGate {
       if (!(await this.#store(() => this.options.store.compareAndSet(current.revision, admitted))))
         throw new PiDurableEffectGateError('PI_EFFECT_STORE_CONFLICT')
       effectRecord = admitted
-      // The storage write can itself await. If cancellation won before the admission
-      // continuation resumed, keep the durable invocation fence but do not call the executor.
+      // The current-authority, approval and expiry checks above can go stale while either
+      // storage operation awaits. Re-resolve them after the fence is retained and make no
+      // further async call before the executor; a denial leaves the fence for safe replay.
+      signal.throwIfAborted()
+      await guard('effect')
+      const finalCheckAt = Date.parse(this.#now())
+      if (
+        (request.approval && Date.parse(request.approval.expiresAt) <= finalCheckAt) ||
+        (request.grant.expiresAt && Date.parse(request.grant.expiresAt) <= finalCheckAt)
+      ) {
+        authorityRejected = true
+        throw new PiDurableEffectGateError('PI_EFFECT_AUTHORITY_REJECTED')
+      }
       signal.throwIfAborted()
       effectStarted = true
     }
