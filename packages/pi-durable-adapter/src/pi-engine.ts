@@ -34,6 +34,7 @@ import {
   type PiDurableGovernedManagementCallEnginePort,
 } from './contracts.js'
 import {
+  ManagementCallArgumentsSchema,
   verifyPiDurableManagementToolSource,
   verifyPiDurableToolSource,
   piDurableToolSourceKey,
@@ -95,6 +96,14 @@ export interface PiDurableEngineResult {
   }[]
 }
 
+/** Raised when an unknown physical management effect must pause the turn. */
+export class PiDurableManagementReconciliationRequiredError extends Error {
+  constructor() {
+    super('PI_MANAGEMENT_RECONCILIATION_REQUIRED')
+    this.name = 'PiDurableManagementReconciliationRequiredError'
+  }
+}
+
 export class PiDurableEngineToolBlockedError extends Error {
   readonly outcome: PiDurableDelegateChildOutcome
   readonly source: PiDurableToolSource
@@ -124,7 +133,8 @@ const DelegateParameters = Type.Object(
 const ManagementParameters = Type.Object(
   {
     operation: Type.String({ minLength: 1, maxLength: 128 }),
-    input: Type.Record(Type.String(), Type.Unknown()),
+    // Operation-specific payload; the host compiler validates it strictly.
+    input: Type.Object({}, { additionalProperties: true }),
   },
   { additionalProperties: false }
 )
@@ -249,10 +259,7 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
     throw new Error('PI_OUTPUT_BUDGET_REQUIRED')
   }
   const opened = new Map<string, Promise<Harness>>()
-  const blocked = new Map<
-    string,
-    { error: PiDurableEngineToolBlockedError; closing: Promise<void> }
-  >()
+  const blocked = new Map<string, { error: Error; closing: Promise<void> }>()
   const physicalFetch = globalThis.fetch
   const turns = new Map<string, string>()
   let closed = false
@@ -496,12 +503,32 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
                   )
                   await reader.assertCurrent(verified.source)
                   context.abortSignal?.throwIfAborted()
+                  if (outcome.state === 'reconciliation_required') {
+                    // Close without a terminal tool outcome so the same
+                    // execute/safe task resumes after an engine restart; the
+                    // retained canonical identity prevents a resend or a
+                    // fresh decision on that resume.
+                    const closing = harness.close(BACKGROUND_CONTEXT)
+                    blocked.set(sessionId, {
+                      closing,
+                      error: new PiDurableManagementReconciliationRequiredError(),
+                    })
+                    context.abortSignal?.throwIfAborted()
+                    await new Promise<never>((_resolve, reject) =>
+                      context.abortSignal?.addEventListener(
+                        'abort',
+                        () => reject(new Error('PI_GOVERNED_TOOL_BLOCKED')),
+                        { once: true }
+                      )
+                    )
+                  }
                   return { content: [{ type: 'text' as const, text: JSON.stringify(outcome) }] }
-                } catch {
+                } catch (error) {
+                  if (error instanceof PiDurableManagementReconciliationRequiredError) throw error
                   // Never serialize host compiler/gate/source diagnostics into the native transcript.
                   if (!context.abortSignal?.aborted)
                     void harness.close(BACKGROUND_CONTEXT).catch(() => {})
-                  throw new Error('PI_GOVERNED_TOOL_BLOCKED')
+                  throw new Error('PI_GOVERNED_TOOL_BLOCKED', { cause: error })
                 }
               },
             }),
@@ -604,9 +631,14 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
                     event.message.content.some(
                       (part) =>
                         part.type === 'toolCall' &&
-                        (!delegate ||
-                          part.name !== 'delegate_child' ||
-                          !DelegateObjective.safeParse(part.arguments).success ||
+                        (!(
+                          (delegate !== undefined &&
+                            part.name === 'delegate_child' &&
+                            DelegateObjective.safeParse(part.arguments).success) ||
+                          (management !== undefined &&
+                            part.name === 'management_call' &&
+                            ManagementCallArgumentsSchema.safeParse(part.arguments).success)
+                        ) ||
                           !/^[A-Za-z0-9][A-Za-z0-9._:/|-]{0,255}$/.test(part.id) ||
                           event.message.stopReason !== 'toolUse')
                     ) ||
