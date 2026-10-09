@@ -1,6 +1,10 @@
+import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
+import { createProductionChildModelAuthority } from './production-child-model-authority.js'
 import { mkdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { createProductionChildModelRetention } from './production-child-model-retention.js'
+import type { DurableExecutionAuthority } from '@control-plane/pi-durable-adapter'
 import { RecordedModelFundingDecisionSchema } from '@control-plane/model-gateway'
 import { createPiExecutionBoundModelComposition } from '@control-plane/pi-durable-adapter'
 import { createCurrentModelConnectionComposition } from './current-model-composition.js'
@@ -41,8 +45,26 @@ export interface ProductionPiLeadCompositionOptions {
   >['releaseExpired']
   /** Separate lock-safe CP authority. Never calls product/PG while Adea holds publication locks. */
   readonly publicationAuthority: PiLeadPublicationPorts['assertCurrent']
+  /** Publication freshness clock is independent from admission's retained-plan clock. */
+  readonly publicationNow?: () => string
   readonly leasePrincipalRef: string
   readonly modelAlias: string
+  /** Separate canonical child admission and confirmed provider/spending authority. Never lead fallback. */
+  readonly children?: {
+    readonly authority: Omit<Parameters<typeof createProductionChildModelAuthority>[0], 'product'>
+    readonly forgetCanonicalModels: (authority: DurableExecutionAuthority) => void
+    readonly modelAuthority: Omit<
+      Parameters<typeof createPiExecutionBoundModelComposition>[0],
+      'ledger'
+    >
+    readonly runtime: Required<
+      Pick<
+        NodePiDurableLeadCompositionOptions,
+        'governedDelegateChild' | 'childProgress' | 'parentInbox' | 'consumeParentInbox'
+      >
+    > &
+      Pick<NodePiDurableLeadCompositionOptions, 'onParentInboxWake' | 'tools'>
+  }
 }
 
 /** Actual opt-in production composition. No fixture, secret discovery, environment provider,
@@ -64,6 +86,26 @@ export async function createProductionPiLeadComposition(
     typeof options.modelConnections?.currentAccountAuthority?.readCurrent !== 'function'
   )
     throw new Error('PI_PRODUCTION_BINDING_REQUIRED')
+  const children = options.children
+  if (
+    children !== undefined &&
+    (!children ||
+      typeof children.authority?.readCurrent !== 'function' ||
+      typeof children.authority?.admit !== 'function' ||
+      typeof children.authority?.assertCurrent !== 'function' ||
+      typeof children.forgetCanonicalModels !== 'function' ||
+      typeof children.modelAuthority?.forExecution !== 'function' ||
+      typeof children.modelAuthority?.readRecordedDecision !== 'function' ||
+      !children.modelAuthority?.leasePrincipalRef ||
+      !children.modelAuthority?.modelAlias ||
+      typeof children.runtime?.governedDelegateChild?.prepare !== 'function' ||
+      typeof children.runtime?.childProgress?.scan !== 'function' ||
+      typeof children.runtime?.parentInbox?.list !== 'function' ||
+      typeof children.runtime?.consumeParentInbox !== 'function' ||
+      typeof children.runtime?.tools?.service?.execute !== 'function' ||
+      typeof children.runtime?.tools?.assertAuthority !== 'function')
+  )
+    throw new Error('PI_PRODUCTION_CHILD_BINDING_REQUIRED')
   mkdirSync(options.directory, { recursive: true, mode: 0o700 })
   let fundingDatabase: DatabaseSync | undefined
   let intentDatabase: DatabaseSync | undefined
@@ -155,7 +197,40 @@ export async function createProductionPiLeadComposition(
       ...options.readiness,
       selections: metadata.selections,
     })
+    const childAuthority = options.children
+      ? createProductionChildModelAuthority({ ...options.children.authority, product })
+      : undefined
+    const childModels = options.children
+      ? createPiExecutionBoundModelComposition({
+          ...options.children.modelAuthority,
+          ledger: options.ledger,
+        })
+      : undefined
+    const childRetention =
+      options.children && childModels
+        ? createProductionChildModelRetention({
+            executions: options.admission.executions,
+            ledger: options.ledger,
+            maximum: options.children.modelAuthority.maximumRetainedFacades ?? 256,
+            forgetNative: childModels.forgetTerminalExecution,
+            forgetCanonical: options.children.forgetCanonicalModels,
+          })
+        : undefined
+    const collectModels = async () => {
+      await retention!.collect()
+      await childRetention?.collect()
+    }
+    const modelsFor = (authority: Parameters<typeof native.resolvePrice>[0]) => {
+      if (!assertExecutionPlanIntegrity(authority.request.executionPlan).parentExecutionPlan)
+        return native
+      if (!options.children || !childAuthority) throw new Error('PI_CHILD_MODEL_AUTHORITY_REQUIRED')
+      if (!childModels) throw new Error('PI_CHILD_MODEL_AUTHORITY_REQUIRED')
+      return childModels
+    }
     runtime = await createNodePiDurableLeadComposition({
+      ...(options.children && childAuthority
+        ? { ...options.children.runtime, childAuthority }
+        : {}),
       onAdapterReady: runtimeBinding.onAdapterReady,
       directory: options.directory,
       admission: {
@@ -164,12 +239,37 @@ export async function createProductionPiLeadComposition(
         assertProviderReady: createProductionLeadReadiness(assertProviderReady),
       },
       provider: async (reference, authority) => {
+        if (assertExecutionPlanIntegrity(authority.request.executionPlan).parentExecutionPlan) {
+          if (!childAuthority) throw new Error('PI_CHILD_MODEL_AUTHORITY_REQUIRED')
+          await childAuthority.assertAuthority(authority)
+          await childRetention?.collect()
+          childRetention!.remember(authority)
+          return modelsFor(authority).resolveProvider(reference, authority)
+        }
         await retention!.collect()
         return retention!.resolveProvider(authority, () =>
           native.resolveProvider(reference, authority)
         )
       },
-      usage: { ledger: options.ledger, ...native },
+      usage: {
+        ledger: options.ledger,
+        resolvePrice: async (authority) => {
+          if (assertExecutionPlanIntegrity(authority.request.executionPlan).parentExecutionPlan) {
+            if (!childAuthority) throw new Error('PI_CHILD_MODEL_AUTHORITY_REQUIRED')
+            await childAuthority.assertAuthority(authority)
+            childRetention!.remember(authority)
+          }
+          return modelsFor(authority).resolvePrice(authority)
+        },
+        assertSpendingAuthorized: async (authority, request) => {
+          if (assertExecutionPlanIntegrity(authority.request.executionPlan).parentExecutionPlan) {
+            if (!childAuthority) throw new Error('PI_CHILD_MODEL_AUTHORITY_REQUIRED')
+            await childAuthority.assertAuthority(authority)
+            childRetention!.remember(authority)
+          }
+          return modelsFor(authority).assertSpendingAuthorized(authority, request)
+        },
+      },
       reconcileInference: options.reconcileInference,
       preparationAuthority: {
         readFunding: async (admission, principal) => {
@@ -194,7 +294,7 @@ export async function createProductionPiLeadComposition(
     })
     const installed = runtime
     retentionTimer = setInterval(() => {
-      void retention!.collect().catch(() => {
+      void collectModels().catch(() => {
         /* Retry metadata cleanup; never release authority or holds. */
       })
     }, 30_000)
@@ -205,7 +305,7 @@ export async function createProductionPiLeadComposition(
         adapter: installed.adapter,
       }),
       assertCurrent: options.publicationAuthority,
-      ...(options.admission.now ? { now: options.admission.now } : {}),
+      ...(options.publicationNow ? { now: options.publicationNow } : {}),
     })
     let closing: Promise<void> | undefined
     return {
@@ -217,14 +317,15 @@ export async function createProductionPiLeadComposition(
         canonical.fundingView
       ),
       product,
+      resolveChildSelection: product.resolveChildSelection,
       adapter: installed.adapter,
-      collectTerminalModels: retention.collect,
+      collectTerminalModels: collectModels,
       close: () => {
         closing ??= (async () => {
           if (retentionTimer) clearInterval(retentionTimer)
           try {
             await installed.close()
-            await retention!.collect()
+            await collectModels()
           } finally {
             closeDatabases()
           }

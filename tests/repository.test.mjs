@@ -272,6 +272,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/j1-unfinished-child-process-restart.test.mjs',
     'tests/pi-durable-workspace-scope.test.mjs',
     'tests/pi-production-runtime-startup.test.mjs',
+    'tests/pi-production-factory.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
   ])
   const manifest = await readJson('package.json')
