@@ -52,6 +52,46 @@ reconciles as unknown until connectivity returns.
 The in-repository reference driver runs only a disposable ACP transport fixture. It does not launch
 Adea or take ownership of native authentication, configuration, MCP setup, or session files.
 
+## Secure remote device route
+
+`SecureAcpRemoteTransport` (controller) and `SecureAcpDeviceEndpoint` (device) implement the
+authenticated, encrypted ACP route between the Control Plane and a device-side executor. Commands
+are HPKE-sealed (X25519/HKDF-SHA256/AES-128-GCM) to the registered device recipient key with the
+cleartext header bound as associated data and signed by the controller's Ed25519 key; replies are
+sealed to a per-command ephemeral return key and signed by the device identity key. The shared route
+record is a public-key-only strict schema, so credential or private-key fields cannot enter it, and
+inventory replies are bound to a per-request nonce with a freshness bound.
+
+Authority checks are current-authority: the route fence (revocation, trust-record staleness, finite
+clock) and the command's window/channel-generation gates are evaluated before decryption and
+re-evaluated after every await — immediately before send at the controller and immediately before the
+executor at the device — so revocation, cancellation, or a broken clock landing while work is parked
+can never reach an effect. A non-finite clock or malformed window fails closed. Unauthenticated
+input receives no signed reply, so an intermediary cannot harvest a device signature over copyable
+header fields. Every denial carries an explicit `fallback: 'none'`.
+
+Device fence state is durable through `AcpRemoteDeviceStateStore`:
+`PersistenceProviderAcpRemoteDeviceStateStore` persists the highest accepted channel generation, the
+first applied revocation, and the replay ledger (create-if-absent claim, then recorded outcome) over
+the Local/Hosted `PersistenceProvider`, while the in-memory store is a test/default seam that is not
+durable across restart. After a restart a recorded command replays its recorded outcome without
+re-executing, an older channel generation stays denied, a revocation stays terminal, and a claim
+whose effect never completed denies as `outcome_uncertain` instead of being blindly retried. A stale
+generation or an expired delivery window is denied even when a recorded outcome exists; only a
+current window under current authority may recover it.
+
+Neither layer can produce an implicit cloud reroute: an offline or revoked route denies with
+`fallback: 'none'` and the transport has no alternate route, and at attempt selection
+`RuntimeDiscoveryAttemptRouter` refuses to replace an offline or revoked local runtime that the plan
+could have used with a remote one (`WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK`).
+
+Evidence: `packages/acp-adapter/src/acp-remote-fence.test.mjs` (route schema, fence decisions,
+finite-clock guards, HPKE/signature binding), `packages/acp-adapter/src/acp-remote-transport.test.mjs`
+(parked-async revocation/abort regressions, authenticated and encrypted runs, replay/conflict/
+generation proofs, edge fences), and
+`apps/local-control-plane/src/acp-remote-device-restart.test.mjs` (restart proofs through the real
+SQLite persistence composition using disposable per-test databases).
+
 ## External session references
 
 When configured with an `ExternalSessionRegistry`, native list/create/resume/close observations create

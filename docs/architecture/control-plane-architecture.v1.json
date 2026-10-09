@@ -21,7 +21,7 @@
         "@control-plane/runtime-gateway-protocol",
         "@control-plane/runtime-sdk"
       ],
-      "externalDependencies": ["zod"],
+      "externalDependencies": ["@hpke/core", "@hpke/dhkem-x25519", "zod"],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
