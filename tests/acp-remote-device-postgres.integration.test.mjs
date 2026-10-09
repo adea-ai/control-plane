@@ -220,4 +220,169 @@ describe.skipIf(!enabled)('hosted PostgreSQL durable state qualification', () =>
       ).toBe('device_revoked')
     })
   })
+
+  function parkingGate() {
+    let announce
+    const reached = new Promise((resolve) => {
+      announce = resolve
+    })
+    let release
+    const barrier = new Promise((resolve) => {
+      release = resolve
+    })
+    return { reached, announce, release: () => release(), barrier }
+  }
+
+  /**
+   * Wraps the REAL database so the first awaited `.limit(...)` SELECT — the claim's persisted
+   * fence read, or the delete's observed read — pauses before its rows are handed back. The
+   * competing writer commits on a DIFFERENT pool connection while the parked transaction holds no
+   * row locks; provider, SQL, and isolation are the real ones, only the pause point is injected.
+   */
+  function parkingDatabase(database, gate) {
+    let armed = true
+    const proxiedSelect = (builder) =>
+      new Proxy(builder, {
+        get(target, property) {
+          const value = target[property]
+          if (typeof value !== 'function') return value
+          if (property === 'then') return value.bind(target)
+          return (...args) => {
+            const result = value.apply(target, args)
+            if (property === 'limit') {
+              return (async () => {
+                const rows = await result
+                if (armed) {
+                  armed = false
+                  gate.announce()
+                  await gate.barrier
+                }
+                return rows
+              })()
+            }
+            if (result && typeof result === 'object' && typeof result.then === 'function') {
+              return proxiedSelect(result)
+            }
+            return result
+          }
+        },
+      })
+    const wrapContext = (context) =>
+      new Proxy(context, {
+        get(target, property) {
+          const value = target[property]
+          if (property === 'select' && typeof value === 'function') {
+            return (...args) => proxiedSelect(value.apply(target, args))
+          }
+          return typeof value === 'function' ? value.bind(target) : value
+        },
+      })
+    return new Proxy(database, {
+      get(target, property) {
+        const value = target[property]
+        if (property === 'select' && typeof value === 'function') {
+          return (...args) => proxiedSelect(value.apply(target, args))
+        }
+        if (property === 'transaction' && typeof value === 'function') {
+          return async (callback) =>
+            target.transaction(async (context) => callback(wrapContext(context)))
+        }
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+  }
+
+  test('a revocation committing after the claim fence read wins and leaves no ledger reservation', async () => {
+    await withPostgresProvider(async (provider, database) => {
+      const gate = parkingGate()
+      const claimant = new PersistenceProviderAcpRemoteDeviceStateStore(
+        new PostgresPersistenceProvider({ database: parkingDatabase(database.application, gate) }),
+        acpRemoteDeviceStateScope(route)
+      )
+      const other = new PersistenceProviderAcpRemoteDeviceStateStore(
+        provider,
+        acpRemoteDeviceStateScope(route)
+      )
+      // Seed the fence at generation 1 so the raced claim (also generation 1) reads an
+      // UNCHANGED generation — exactly the path that used to skip fence participation.
+      expect(
+        await other.claim({ commandId: COMMAND_B, identity: 'seed', channelGeneration: 1 })
+      ).toBe('claimed')
+
+      const pending = captured(
+        claimant.claim({ commandId: COMMAND_A, identity: 'race-a', channelGeneration: 1 })
+      )
+      // The claim is parked immediately after reading the persisted fence, on this connection.
+      await gate.reached
+      // The revocation commits on a DIFFERENT pool connection while the claim is parked.
+      await other.applyRevocation('2026-08-25T12:00:10.000Z')
+      gate.release()
+
+      expect(await pending).toEqual({ value: 'device_revoked' })
+      expect(await other.readLedger(COMMAND_A)).toBeUndefined()
+      expect(await other.countLedger()).toBe(1)
+      expect(await other.loadFence()).toMatchObject({
+        highestGeneration: 1,
+        revokedAt: '2026-08-25T12:00:10.000Z',
+      })
+    })
+  })
+
+  test('a higher-generation claim committing after the fence read supersedes the parked claim', async () => {
+    await withPostgresProvider(async (provider, database) => {
+      const gate = parkingGate()
+      const claimant = new PersistenceProviderAcpRemoteDeviceStateStore(
+        new PostgresPersistenceProvider({ database: parkingDatabase(database.application, gate) }),
+        acpRemoteDeviceStateScope(route)
+      )
+      const other = new PersistenceProviderAcpRemoteDeviceStateStore(
+        provider,
+        acpRemoteDeviceStateScope(route)
+      )
+      // Fence seeded at generation 1 (COMMAND_C) so the raced generation-1 claim skips the fence
+      // write it would otherwise perform against generation 0.
+      expect(
+        await other.claim({ commandId: COMMAND_C, identity: 'seed', channelGeneration: 1 })
+      ).toBe('claimed')
+
+      const pending = captured(
+        claimant.claim({ commandId: COMMAND_A, identity: 'race-a', channelGeneration: 1 })
+      )
+      await gate.reached
+      // A superseding generation commits on a DIFFERENT pool connection mid-claim.
+      expect(
+        await other.claim({ commandId: COMMAND_B, identity: 'race-b', channelGeneration: 2 })
+      ).toBe('claimed')
+      gate.release()
+
+      expect(await pending).toEqual({ value: 'stale_channel_generation' })
+      expect(await other.readLedger(COMMAND_A)).toBeUndefined()
+      expect(await other.countLedger()).toBe(2)
+      expect(await other.loadFence()).toMatchObject({ highestGeneration: 2 })
+    })
+  })
+
+  test('a delete whose observed revision is replaced by a concurrent update reports revision-conflict', async () => {
+    await withPostgresProvider(async (provider, database) => {
+      await provider.transaction((transaction) =>
+        transaction.put({ namespace: 'delete-race', id: 'r', value: { v: 1 } })
+      )
+      const gate = parkingGate()
+      const parkedProvider = new PostgresPersistenceProvider({
+        database: parkingDatabase(database.application, gate),
+      })
+      // Parks between the delete's observed read and its DELETE statement: the canonical contract
+      // requires revision-conflict when that observed revision loses to a concurrent update.
+      const parkedDelete = parkedProvider.transaction((transaction) =>
+        transaction.delete('delete-race', 'r', 1)
+      )
+      await gate.reached
+      await provider.transaction((transaction) =>
+        transaction.put({ namespace: 'delete-race', id: 'r', expectedRevision: 1, value: { v: 2 } })
+      )
+      gate.release()
+
+      await expect(parkedDelete).rejects.toThrow('REVISION_CONFLICT')
+    })
+  })
 })

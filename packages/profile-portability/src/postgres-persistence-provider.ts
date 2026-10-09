@@ -118,7 +118,11 @@ class PostgresPersistenceTransaction implements PersistenceTransaction {
         )
       )
       .returning({ id: persistenceRecords.id })
-    return removed.length > 0
+    // Canonical contract: the observed revision was checked above, so a row that no longer matches
+    // it lost to a concurrent update between the read and the DELETE — that is a revision conflict,
+    // never a silent "deleted nothing".
+    if (removed.length === 0) throw new Error(CONFLICT)
+    return true
   }
 
   async list(namespace: string): Promise<readonly PersistenceRecord[]> {
