@@ -27,6 +27,19 @@ export const PiDurableLeadReadEnvelopeSchema = ReadRequestEnvelopeSchema.extend(
   caller: Caller,
   correlation: Correlation,
 }).strict()
+/** Target-bound execution observation: the session, task, and generation a
+ *  caller binds to an intent, echoed back on every receipt so the owner can
+ *  verify claimed, retained, and observed bindings together. The shape alone
+ *  proves nothing — verification happens where receipts meet admissions. */
+export const PiDurableLeadTargetSchema = z
+  .strictObject({
+    sessionId: z.string().trim().min(1).max(256),
+    taskId: z.uuid(),
+    generation: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  })
+  .readonly()
+export type PiDurableLeadTarget = z.output<typeof PiDurableLeadTargetSchema>
+
 export const PiDurableLeadPrepareRequestSchema = PiDurableLeadCommandEnvelopeSchema.extend({
   operation: z.literal('pi-durable.lead.prepare'),
   payload: z.object({ intentId: IntentId }).strict(),
@@ -34,7 +47,11 @@ export const PiDurableLeadPrepareRequestSchema = PiDurableLeadCommandEnvelopeSch
 export const PiDurableLeadDispatchRequestSchema = PiDurableLeadCommandEnvelopeSchema.extend({
   operation: z.literal('pi-durable.lead.dispatch'),
   payload: z
-    .object({ intentId: IntentId, preparationRef: PiDurableLeadPreparationRefSchema.optional() })
+    .object({
+      intentId: IntentId,
+      preparationRef: PiDurableLeadPreparationRefSchema.optional(),
+      target: PiDurableLeadTargetSchema.optional(),
+    })
     .strict(),
 })
 export const PiDurableLeadStatusRequestSchema = PiDurableLeadReadEnvelopeSchema.extend({
@@ -67,6 +84,7 @@ export const PiDurableLeadReceiptResponseSchema = z
     executionId: IdentifierSchemas.executionId,
     attemptId: IdentifierSchemas.attemptId,
     runtimeSessionId: RuntimeExecutionHandleSchema.shape.externalSessionId.unwrap(),
+    target: PiDurableLeadTargetSchema.optional(),
   })
   .strict()
 const response = SuccessResponseEnvelopeSchema.extend({ correlation: Correlation }).strict()
@@ -120,6 +138,7 @@ export const PiDurableLeadLookupResponseSchema = response.extend({
           runtimeSessionId: RuntimeExecutionHandleSchema.shape.externalSessionId
             .unwrap()
             .optional(),
+          target: PiDurableLeadTargetSchema.optional(),
         })
         .strict()
         .nullable(),

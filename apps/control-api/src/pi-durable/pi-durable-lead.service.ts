@@ -23,6 +23,7 @@ import {
 export const PI_DURABLE_LEAD_SERVICE = Symbol('PI_DURABLE_LEAD_SERVICE')
 import {
   PiDurableLeadDispatchRequestSchema,
+  PiDurableLeadTargetSchema,
   PiDurableLeadPrepareRequestSchema,
   PiDurableLeadPrepareResponseSchema,
   PiDurableLeadLookupRequestSchema,
@@ -45,6 +46,7 @@ export {
   PiDurableLeadLookupRequestSchema,
   PiDurableLeadLookupResponseSchema,
   PiDurableLeadDispatchRequestSchema,
+  PiDurableLeadTargetSchema,
   PiDurableLeadStatusRequestSchema,
   PiDurableLeadProgressRequestSchema,
   PiDurableLeadCancelRequestSchema,
@@ -103,6 +105,7 @@ const ReceiptSchema = z
     executionId: IdentifierSchemas.executionId,
     attemptId: IdentifierSchemas.attemptId,
     allowedPrincipalIds: z.array(z.string().min(1).max(256)).min(1).max(256),
+    target: PiDurableLeadTargetSchema.optional(),
     revision: z.number().int().positive(),
     state: z.enum(['dispatching', 'dispatched', 'reconciliation_required']),
     handle: RuntimeExecutionHandleSchema.optional(),
@@ -313,6 +316,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
               ...(receipt.handle?.externalSessionId
                 ? { runtimeSessionId: receipt.handle.externalSessionId }
                 : {}),
+              ...(receipt.target !== undefined ? { target: receipt.target } : {}),
             }
           : null,
       })
@@ -350,6 +354,10 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
           principal
         )
       )
+    // The target binds once, at dispatch where effects begin: retained
+    // verbatim from the dispatch request onto the immutable receipt.
+    // Redelivery names it again or conflicts at the command digest;
+    // a retained target never changes under the same dispatch.
     const immutable = {
       schemaVersion: 'pi-lead-receipt/v1' as const,
       dispatchId,
@@ -361,6 +369,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       executionId: admission.admittedAttempt.executionId,
       attemptId: admission.admittedAttempt.attemptId,
       allowedPrincipalIds: [...admission.allowedPrincipalIds],
+      ...(request.payload.target !== undefined ? { target: request.payload.target } : {}),
     }
     let receipt = await this.options.receipts.get(dispatchId)
     let replayed = receipt !== undefined
@@ -690,6 +699,7 @@ function publicReceipt(receipt: PiDurableLeadReceipt) {
     executionId: receipt.executionId,
     attemptId: receipt.attemptId,
     runtimeSessionId: requireHandle(receipt).externalSessionId,
+    ...(receipt.target !== undefined ? { target: receipt.target } : {}),
   }
 }
 function success(request: z.output<typeof command> | z.output<typeof read>, data: unknown) {
