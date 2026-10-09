@@ -317,10 +317,9 @@ export function resolveDecisionLayer(
  * alias is substituted. An empty result is a typed denial, never a fallback.
  * Without a pin the input passes through unchanged.
  */
-export function selectRuntimesExposingHarness<Runtime extends AvailableRuntime>(
-  runtimes: readonly Runtime[],
-  acceptedHarnessId?: string
-): Runtime[] {
+export function selectRuntimesExposingHarness<
+  Runtime extends { readonly harnessIds: readonly string[] },
+>(runtimes: readonly Runtime[], acceptedHarnessId?: string): Runtime[] {
   if (acceptedHarnessId === undefined) return [...runtimes]
   const eligible = runtimes.filter((runtime) => runtime.harnessIds.includes(acceptedHarnessId))
   if (eligible.length === 0) throw new DecisionResolutionDeniedError('NO_COMPATIBLE_RUNTIME')
