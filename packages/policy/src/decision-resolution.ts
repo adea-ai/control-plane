@@ -97,10 +97,25 @@ function resolveRuntime(
   const capable = request.availableRuntimes.filter((candidate) =>
     request.requiredCapabilities.every((capability) => candidate.capabilities.includes(capability))
   )
+  const harnessPin = pickPin('harness', request, policyDefaults).pin?.harnessId
+  if (capable.length === 0) {
+    throw new DecisionResolutionDeniedError(
+      harnessPin === undefined ? 'UNSUPPORTED_RUNTIME_PIN' : 'NO_COMPATIBLE_RUNTIME'
+    )
+  }
+  // An accepted harness pin is a hard candidate filter applied before runtime
+  // selection: only runtimes that expose that exact harness id qualify. No
+  // other harness, runtime, or model is substituted; if none qualifies the
+  // request is denied with NO_COMPATIBLE_RUNTIME.
+  const eligible =
+    harnessPin === undefined
+      ? capable
+      : capable.filter((candidate) => candidate.harnessIds.includes(harnessPin))
+  if (eligible.length === 0) throw new DecisionResolutionDeniedError('NO_COMPATIBLE_RUNTIME')
   const preferred =
-    capable.find((candidate) => candidate.kind === 'local') ??
-    capable.find((candidate) => candidate.kind === 'self-hosted') ??
-    capable.find((candidate) => candidate.kind === 'cloud')
+    eligible.find((candidate) => candidate.kind === 'local') ??
+    eligible.find((candidate) => candidate.kind === 'self-hosted') ??
+    eligible.find((candidate) => candidate.kind === 'cloud')
   if (preferred === undefined) throw new DecisionResolutionDeniedError('UNSUPPORTED_RUNTIME_PIN')
   return { runtime: preferred, source: 'policy-default' }
 }

@@ -33,6 +33,34 @@ composition packages keep those implementations behind the runtime contracts.
    policy default).
 4. Point the relevant composition root at the new adapter.
 
+## Model and harness selection are independent
+
+Model selection and harness selection are separate decisions with no implicit
+coupling, and neither ever substitutes for the other:
+
+- A model pin, policy default, or entitlement change never alters the selected
+  harness, and a harness pin or default never alters the selected model
+  (`packages/policy` `resolveDecisionLayer`, precedence per output).
+- A harness pin, at any precedence layer, is a hard candidate filter applied
+  before runtime selection: only runtimes whose discovered `harnessIds` contain
+  that exact id qualify. If no candidate satisfies the required capabilities and
+  exposes the pinned harness, resolution denies with `NO_COMPATIBLE_RUNTIME`. An
+  explicitly pinned runtime that does not expose the pinned harness denies with
+  `HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME`. Neither case falls back to another
+  harness, runtime, or model.
+- Harness identity is exact. There is no global alias: `managed-pi` is not
+  treated as `pi`. An alias is allowed only where code proves equivalence. No
+  such proof exists today, so none is defined.
+- Model admission (`packages/model-gateway` `ModelSelectionService`) checks the
+  requested target exactly: harness id, harness version, provider binding, and
+  location must match the qualification evidence. A mismatch denies with
+  `INCOMPATIBLE_HARNESS` or `INCOMPATIBLE_LOCATION`; it never selects another
+  target.
+- Pending (Pi-owned, not yet changed): `apps/workflow-worker/src/runtime-attempt-router.ts`
+  still applies the pin after selection and still contains the `managed-pi` → `pi`
+  family alias (`runtimeFamilyAllowed`). Until that router change is approved, the
+  production attempt path does not yet meet this policy.
+
 ## Known limits
 
 - The decision-layer harness selection is substrate: runtime discovery does
