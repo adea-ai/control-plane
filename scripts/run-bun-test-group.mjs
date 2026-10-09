@@ -39,6 +39,7 @@ const repositoryGroups = {
     'tests/pi-durable-workspace-scope.test.mjs',
     'tests/pi-production-runtime-startup.test.mjs',
     'tests/pi-production-factory.test.mjs',
+    'tests/pi-production-management-authority.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
   ],
   smoke: [
