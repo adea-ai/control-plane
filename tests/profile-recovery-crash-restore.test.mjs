@@ -254,13 +254,17 @@ describe('M17.02.2 local composition graceful drain', () => {
     const closing = composition.close().then(() => {
       closed = true
     })
-    // The pass is held open, so the drain cannot complete however long we wait.
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(closed).toBe(false)
-    expect(passFinished).toBe(false)
-
-    releasePass()
-    await closing
+    try {
+      // The pass is held open, so the drain cannot complete however long we wait.
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(closed).toBe(false)
+      expect(passFinished).toBe(false)
+    } finally {
+      // Release the gate even when an assertion fails, so the drain settles and
+      // storage is not left closing under a pending pass.
+      releasePass()
+      await closing
+    }
     expect(passFinished).toBe(true)
     expect(closed).toBe(true)
   })
