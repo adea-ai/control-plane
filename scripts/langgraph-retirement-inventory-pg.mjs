@@ -45,8 +45,10 @@
 // beyond what SELECT needs, and never adopts, cancels, drains or transplants
 // anything. Output carries the store identity as a SHA-256 digest of the
 // credential-free DSN origin only; no DSNs, hosts, database names,
-// credentials, paths, message bodies or record payloads are ever printed or
-// embedded. Failures print one sanitized
+// credentials, paths, message bodies, record payloads or lifecycle-reason
+// free text (an operator-provided field that may carry a credential) are ever
+// printed or embedded — reasons surface only as a presence indicator.
+// Failures print one sanitized
 // LANGGRAPH_RETIREMENT_INVENTORY_PG_FAILED:<CODE> line on stderr.
 
 import { createHash } from 'node:crypto'
@@ -55,7 +57,10 @@ import { parseArgs } from 'node:util'
 import { createPostgresConnection } from '@control-plane/database'
 import { GraphReferenceSchema } from '@control-plane/contracts'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
-import { GraphDefinitionCommandReceiptSchema } from '@control-plane/orchestration'
+import {
+  GraphDefinitionCommandReceiptSchema,
+  PublishedGraphDefinitionSchema,
+} from '@control-plane/orchestration'
 // Shared vocabulary and encodings from the reviewed inventory script: the
 // typed statuses, the curated consumer registry, the zero-vs-unknown rule and
 // the deterministic serializer are imported (never duplicated) so both tools
@@ -420,14 +425,15 @@ function compareCodePoint(left, right) {
 // Section collectors
 // ---------------------------------------------------------------------------
 
-const DEFINITION_LIFECYCLES = new Set(['published', 'deprecated', 'revoked'])
-
 /**
  * Inventory of deployed graph-catalog definition versions. The definition
  * jsonb is the PublishedGraphDefinition the catalog command path persisted
- * (see PostgresGraphDefinitionRepository.insert); parsing is defensive and
- * structural — a record that does not carry the expected shape is counted as
- * malformed evidence, never guessed into a bucket.
+ * (see PostgresGraphDefinitionRepository.insert); parsing is canonical — a
+ * record is evidence only when it satisfies the deployed catalog's own schema
+ * (PublishedGraphDefinitionSchema) and its canonical reference/revision bind
+ * to the physical row identity (the same identity rule the command repository
+ * enforces on replay). Anything else is malformed or mismatched typed
+ * evidence, never guessed into a bucket or read back as observed metadata.
  */
 async function collectDefinitions(transaction, context) {
   const {
@@ -447,6 +453,7 @@ async function collectDefinitions(transaction, context) {
   } = context
   let rowCount = 0
   let malformedCount = 0
+  let identityMismatchCount = 0
   let truncated = false
   let boundReached = false
   // Which feeds behind consumersObserved were read in full. A feed that was
@@ -480,11 +487,18 @@ async function collectDefinitions(transaction, context) {
       },
       (row) => {
         rowCount += 1
-        const definition = parseDefinitionRow(row)
-        if (definition === undefined) {
+        const parsedRow = parseDefinitionRow(row)
+        if (parsedRow === undefined) {
           malformedCount += 1
           return
         }
+        // A canonically valid record stored under another row's identity is
+        // rejected explicitly: never an entry, never observed metadata.
+        if (parsedRow.identityMismatch) {
+          identityMismatchCount += 1
+          return
+        }
+        const definition = parsedRow.definition
         workspaces.add(definition.workspaceId)
         graphs.add(`${definition.workspaceId}\u0000${definition.graphDefinitionId}`)
         lifecycles.set(definition.lifecycle, (lifecycles.get(definition.lifecycle) ?? 0) + 1)
@@ -509,7 +523,7 @@ async function collectDefinitions(transaction, context) {
           lifecycle: definition.lifecycle,
           observedAt,
           publishedAt: definition.publishedAt,
-          ...(definition.reason === undefined ? {} : { reason: definition.reason }),
+          reasonPresent: definition.reasonPresent,
           runtimeProfile: definition.runtimeProfile,
           consumersObserved: {
             catalogCommands: catalogCommandsByGraph.get(graphKey) ?? 0,
@@ -555,6 +569,7 @@ async function collectDefinitions(transaction, context) {
           ? ['CATALOG_COMMAND_INDEX_SCAN_FAILED']
           : []),
         ...(catalogCommandsIndexMalformedRecords > 0 ? ['CATALOG_COMMAND_RECEIPTS_MALFORMED'] : []),
+        ...(identityMismatchCount > 0 ? ['DEFINITION_IDENTITY_MISMATCH'] : []),
         ...(executionsUsageComplete ? [] : ['EXECUTIONS_USAGE_INCOMPLETE']),
         ...(checkpointsUsageComplete ? [] : ['CHECKPOINTS_USAGE_INCOMPLETE']),
       ]
@@ -564,6 +579,7 @@ async function collectDefinitions(transaction, context) {
       workspaces: workspaces.size,
       distinctGraphs: graphs.size,
       byLifecycle: mapCountsToObject(lifecycles),
+      identityMismatches: identityMismatchCount,
     },
     entries: entries.toSorted(
       (left, right) =>
@@ -592,7 +608,7 @@ function failedDefinitionsSection(identity, observedAt, limits) {
       maxAgeDays: limits.maxAgeDays,
       observedAt,
     }),
-    counts: { total: 0 },
+    counts: { total: 0, identityMismatches: 0 },
     entries: [],
     truncated: false,
     boundReached: false,
@@ -601,10 +617,31 @@ function failedDefinitionsSection(identity, observedAt, limits) {
   }
 }
 
+/**
+ * Canonical definition parsing with explicit row-identity binding.
+ *
+ * 1. The deployed jsonb must satisfy the exact PublishedGraphDefinitionSchema
+ *    the catalog command path persists and validates on replay
+ *    (packages/orchestration/src/graph-catalog.ts): strict shape, canonical
+ *    reference, and the reference/content digest binding. A record that fails
+ *    the schema is malformed evidence (undefined).
+ * 2. A canonically valid record is then bound to the physical row: the
+ *    canonical reference IDs and revision must equal the row's key columns —
+ *    the same receipt/row identity rule
+ *    PostgresGraphDefinitionCommandRepository enforces on replay. A mismatch
+ *    (a canonical record stored under another row's identity) is rejected
+ *    explicitly as typed mismatch evidence, never emitted as observed
+ *    metadata.
+ * 3. The lifecycle reason is operator free text (the canonical schema permits
+ *    up to 1,024 characters) and may carry a DSN or other credential. It is
+ *    reduced to a non-sensitive presence indicator and its text never reaches
+ *    the manifest.
+ */
 function parseDefinitionRow(row) {
   const workspaceId = row.workspace_id
   const graphDefinitionId = row.graph_definition_id
   const graphVersion = row.graph_version
+  const revision = toCount(row.revision)
   const definition = row.definition
   if (
     typeof workspaceId !== 'string' ||
@@ -615,57 +652,41 @@ function parseDefinitionRow(row) {
     Array.isArray(definition)
   )
     return undefined
-  const reference = definition.reference
-  const content = definition.content
-  if (reference === null || typeof reference !== 'object' || Array.isArray(reference))
-    return undefined
-  if (content === null || typeof content !== 'object' || Array.isArray(content)) return undefined
-  const lifecycle = definition.lifecycle
-  if (!DEFINITION_LIFECYCLES.has(lifecycle)) return undefined
-  const compatibility = content.compatibility ?? {}
-  const operations = new Set()
-  for (const node of Array.isArray(content.nodes) ? content.nodes : []) {
-    const kind = node?.operation?.kind
-    if (typeof kind === 'string') operations.add(kind)
-  }
+  const parsed = PublishedGraphDefinitionSchema.safeParse(definition)
+  if (!parsed.success) return undefined
+  const canonical = parsed.data
+  if (
+    canonical.reference.graphDefinitionId !== graphDefinitionId ||
+    canonical.reference.graphVersion !== graphVersion ||
+    canonical.revision !== revision
+  )
+    return { identityMismatch: true }
   return {
-    workspaceId,
-    graphDefinitionId,
-    graphVersion,
-    contentDigest:
-      typeof reference.contentDigest === 'string' ? reference.contentDigest : 'unknown',
-    lifecycle,
-    definitionRevision: typeof definition.revision === 'number' ? definition.revision : 0,
-    publishedAt: typeof definition.publishedAt === 'string' ? definition.publishedAt : 'unknown',
-    changedAt: typeof definition.changedAt === 'string' ? definition.changedAt : 'unknown',
-    ...(typeof definition.reason === 'string' ? { reason: definition.reason } : {}),
-    runtimeProfile: {
-      schemaVersion: typeof content.schemaVersion === 'number' ? content.schemaVersion : null,
-      nodeCount: Array.isArray(content.nodes) ? content.nodes.length : 0,
-      operationKinds: [...operations].toSorted(),
-      requiredCapabilities: (Array.isArray(content.requiredCapabilities)
-        ? content.requiredCapabilities
-        : []
-      )
-        .filter((capability) => typeof capability === 'string')
-        .toSorted(),
-      compatibility: {
-        contractMajorVersions: (Array.isArray(compatibility.contractMajorVersions)
-          ? compatibility.contractMajorVersions
-          : []
-        ).filter((entry) => typeof entry === 'number'),
-        compilerVersions: (Array.isArray(compatibility.compilerVersions)
-          ? compatibility.compilerVersions
-          : []
-        )
-          .filter((entry) => typeof entry === 'string')
-          .toSorted(),
-        adapterVersions: (Array.isArray(compatibility.adapterVersions)
-          ? compatibility.adapterVersions
-          : []
-        )
-          .filter((entry) => typeof entry === 'string')
-          .toSorted(),
+    identityMismatch: false,
+    definition: {
+      workspaceId,
+      graphDefinitionId,
+      graphVersion,
+      contentDigest: canonical.reference.contentDigest,
+      lifecycle: canonical.lifecycle,
+      definitionRevision: canonical.revision,
+      publishedAt: canonical.publishedAt,
+      changedAt: canonical.changedAt,
+      reasonPresent: canonical.reason !== undefined,
+      runtimeProfile: {
+        schemaVersion: canonical.content.schemaVersion,
+        nodeCount: canonical.content.nodes.length,
+        operationKinds: [
+          ...new Set(canonical.content.nodes.map((node) => node.operation.kind)),
+        ].toSorted(),
+        requiredCapabilities: [...canonical.content.requiredCapabilities].toSorted(),
+        compatibility: {
+          contractMajorVersions: [
+            ...canonical.content.compatibility.contractMajorVersions,
+          ].toSorted((left, right) => left - right),
+          compilerVersions: [...canonical.content.compatibility.compilerVersions].toSorted(),
+          adapterVersions: [...canonical.content.compatibility.adapterVersions].toSorted(),
+        },
       },
     },
   }
@@ -1767,7 +1788,7 @@ function emptyDefinitionsSection(observedAt, limits) {
       maxAgeDays: limits.maxAgeDays,
       observedAt,
     }),
-    counts: { total: 0 },
+    counts: { total: 0, identityMismatches: 0 },
     entries: [],
     truncated: false,
     boundReached: false,
@@ -1896,8 +1917,9 @@ Output: a single deterministic JSON manifest on stdout, shaped like the
 reviewed scripts/langgraph-retirement-inventory.mjs manifest so its
 disposition validator consumes this output unchanged. Failures print one
 sanitized LANGGRAPH_RETIREMENT_INVENTORY_PG_FAILED:<CODE> line on stderr.
-The tool never prints DSNs, hosts, database names, credentials, paths, or
-record payloads; the store identity is a SHA-256 digest of the
+The tool never prints DSNs, hosts, database names, credentials, paths,
+record payloads, or lifecycle-reason free text (reasons surface only as a
+presence indicator); the store identity is a SHA-256 digest of the
 credential-free DSN origin.
 `
 

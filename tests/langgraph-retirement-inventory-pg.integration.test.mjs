@@ -14,7 +14,6 @@
 // prove section-shape alignment.
 
 import { describe, expect, test } from 'bun:test'
-import { createHash } from 'node:crypto'
 import process from 'node:process'
 import { integrationTestTimeout } from '@control-plane/database/testing'
 import {
@@ -26,6 +25,10 @@ import {
   stableJsonStringify,
   validateDispositions,
 } from '../scripts/langgraph-retirement-inventory.mjs'
+import {
+  GraphDefinitionCatalog,
+  InMemoryGraphDefinitionRepository,
+} from '@control-plane/orchestration'
 import { createInventoryPgFixture } from './fixtures/langgraph-retirement-pg-fixture.mjs'
 
 const OBSERVED_AT = '2026-10-08T00:00:00.000Z'
@@ -86,9 +89,15 @@ async function stateOfExecution(transaction, executionId) {
   return rows[0]?.state
 }
 
-/** Minimal shape-valid definition content for a test-seeded definition row. */
-function graphDefinitionRow() {
+/**
+ * Canonical content for a test-seeded published definition; the concurrent
+ * writer publishes it through the real catalog so the reference digest binds
+ * the content exactly the way the deployed persistence path does.
+ */
+function graphDefinitionRow(graphDefinitionId, graphVersion) {
   return {
+    graphDefinitionId,
+    graphVersion,
     schemaVersion: 1,
     nodes: [{ node: 'prepare', operation: { kind: 'runtime', name: 'prepare' } }],
     edges: [
@@ -126,6 +135,7 @@ describe.skipIf(!enabled)('LangGraph retirement inventory PG collector', () => {
           workspaces: 2,
           distinctGraphs: 3,
           byLifecycle: { deprecated: 1, published: 3 },
+          identityMismatches: 0,
         })
         expect(definitions.truncated).toBe(false)
         expect(definitions.malformedRecords).toBe(0)
@@ -148,7 +158,11 @@ describe.skipIf(!enabled)('LangGraph retirement inventory PG collector', () => {
             entry.workspaceId === fixture.ids.workspaceOne && entry.graphVersion === '1.1.0'
         )
         expect(alphaNext.lifecycle).toBe('deprecated')
-        expect(typeof alphaNext.reason).toBe('string')
+        // Lifecycle reasons are operator free text: only the presence
+        // indicator is emitted, never the text itself.
+        expect(alphaNext.reasonPresent).toBe(true)
+        expect(alphaNext).not.toHaveProperty('reason')
+        expect(alpha.reasonPresent).toBe(false)
 
         const consumers = manifest.sections.consumers
         expect(consumers.status).toBe('observed')
@@ -672,6 +686,106 @@ describe.skipIf(!enabled)('LangGraph retirement inventory PG collector', () => {
   )
 
   test(
+    'malformed definition jsonb is typed incomplete evidence, never observed metadata',
+    async () => {
+      await withFixture({ injectMalformedDefinition: true }, async (fixture) => {
+        const { manifest } = await collectFromFixture(fixture)
+        const definitions = manifest.sections.definitions
+        expect(definitions.status).toBe('incomplete')
+        expect(definitions.reasons).toContain('MALFORMED_RECORDS_PRESENT')
+        // Six rows read: the four intact definitions plus the two injections.
+        expect(definitions.counts.total).toBe(6)
+        expect(definitions.malformedRecords).toBe(2)
+        expect(definitions.counts.identityMismatches).toBe(0)
+        // Neither malformed record surfaces as an entry with guessed or
+        // fallback metadata: the lifecycle-outside-enum row and the
+        // digest-unbound row are both rejected by the canonical schema.
+        for (const graphDefinitionId of ['graph:malformed-lifecycle', 'graph:malformed-digest']) {
+          expect(
+            definitions.entries.find((entry) => entry.graphDefinitionId === graphDefinitionId)
+          ).toBeUndefined()
+        }
+        // The intact definitions are unaffected.
+        expect(
+          definitions.entries.find(
+            (entry) =>
+              entry.workspaceId === fixture.ids.workspaceOne &&
+              entry.graphDefinitionId === 'graph:inventory-alpha' &&
+              entry.graphVersion === '1.0.0'
+          )
+        ).toBeDefined()
+      })
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'a canonical definition stored under a foreign row identity is rejected explicitly',
+    async () => {
+      await withFixture({ injectMismatchedDefinitionIdentity: true }, async (fixture) => {
+        const { manifest } = await collectFromFixture(fixture)
+        const definitions = manifest.sections.definitions
+        // The jsonb itself is canonically valid, so this is not malformed
+        // evidence — it is an explicit identity/revision binding failure.
+        expect(definitions.malformedRecords).toBe(0)
+        expect(definitions.counts.identityMismatches).toBe(1)
+        expect(definitions.status).toBe('incomplete')
+        expect(definitions.reasons).toEqual(['DEFINITION_IDENTITY_MISMATCH'])
+        // Neither the row's identity nor the canonical record's identity
+        // surfaces as an inventory entry.
+        for (const graphDefinitionId of ['graph:mismatched-row', 'graph:mismatched-content']) {
+          expect(
+            definitions.entries.find((entry) => entry.graphDefinitionId === graphDefinitionId)
+          ).toBeUndefined()
+        }
+        // Canonical records that do bind their rows keep their evidence.
+        expect(
+          definitions.entries.find(
+            (entry) =>
+              entry.workspaceId === fixture.ids.workspaceOne &&
+              entry.graphDefinitionId === 'graph:inventory-alpha' &&
+              entry.graphVersion === '1.0.0'
+          )
+        ).toBeDefined()
+      })
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'lifecycle reason free text never reaches the manifest, only its presence indicator',
+    async () => {
+      const canaryReason =
+        'revoke after credential rotation postgresql://ops:canary-password@inventory-db.internal:5432/control_plane?token=canary-token-123'
+      await withFixture({ canaryLifecycleReason: canaryReason }, async (fixture) => {
+        const { manifest, text } = await collectFromFixture(fixture)
+        // The canary DSN/credential fragments seeded as the revocation reason
+        // are absent from the byte-exact output…
+        for (const secret of ['canary-password', 'inventory-db.internal', 'canary-token-123']) {
+          expect(text.includes(secret)).toBe(false)
+        }
+        // …as is the reviewed fixture's deprecation reason, which every
+        // seeded store carries on the deprecated alphaNext row.
+        expect(text.includes('superseded by the workflow migration candidate')).toBe(false)
+
+        const definitions = manifest.sections.definitions
+        const revoked = definitions.entries.find(
+          (entry) =>
+            entry.workspaceId === fixture.ids.workspaceOne &&
+            entry.graphDefinitionId === 'graph:inventory-beta' &&
+            entry.graphVersion === '1.0.0'
+        )
+        expect(revoked.lifecycle).toBe('revoked')
+        // Only the bounded, non-sensitive presence indicator is emitted.
+        expect(revoked.reasonPresent).toBe(true)
+        expect(revoked).not.toHaveProperty('reason')
+        expect(definitions.counts.byLifecycle).toEqual({ deprecated: 1, published: 2, revoked: 1 })
+      })
+    },
+    integrationTestTimeout()
+  )
+
+  test(
     'a failed catalog-command index scan is typed, never read back as an empty exact index',
     async () => {
       await withFixture({ revokeCatalogCommandsRead: true }, async (fixture) => {
@@ -733,18 +847,15 @@ describe.skipIf(!enabled)('LangGraph retirement inventory PG collector', () => {
         // The fixture's own application pool is a second database connection,
         // independent of the collector's single-connection observation.
         const secondConnection = fixture.database.application.$client
-        const concurrentDefinition = {
-          reference: {
-            graphDefinitionId: 'graph:concurrent',
-            graphVersion: '9.9.9',
-            contentDigest: `sha256:${createHash('sha256').update('concurrent').digest('hex')}`,
-          },
-          revision: 1,
-          lifecycle: 'published',
-          content: graphDefinitionRow(),
+        // Published through the real catalog so the retained jsonb is
+        // canonical — a concurrent writer must surface as one observed
+        // definition, not as malformed evidence.
+        const concurrentDefinition = await new GraphDefinitionCatalog(
+          new InMemoryGraphDefinitionRepository()
+        ).publish({
+          definition: graphDefinitionRow('graph:concurrent', '9.9.9'),
           publishedAt: OBSERVED_AT,
-          changedAt: OBSERVED_AT,
-        }
+        })
         const reads = []
         await observeReadOnly(fixture.dsn, async (transaction) => {
           const firstDefinitions = await countOf(
@@ -919,6 +1030,9 @@ describe.skipIf(!enabled)('LangGraph retirement inventory PG collector', () => {
           'roleInstructions',
           'fixture-write-ck',
           'store-json',
+          // Operator lifecycle-reason free text never leaks either: every
+          // seeded store carries this deprecation reason on alphaNext.
+          'superseded by the workflow migration candidate',
         ]) {
           expect(first.text.includes(secret)).toBe(false)
         }

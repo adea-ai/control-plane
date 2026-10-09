@@ -109,8 +109,21 @@ function alphaNodes() {
  * - settleRunningExecution: marks the running execution completed in place, so
  *   the store carries retained work with zero in-flight evidence — the exact
  *   precondition a pagination bound must respect when it blocks the zero claim.
+ * - injectMalformedDefinition: definition rows whose jsonb fails the canonical
+ *   PublishedGraphDefinitionSchema (a lifecycle outside the enum, and a
+ *   reference digest that does not bind the retained content) — malformed
+ *   evidence the collector must never emit as observed metadata.
+ * - injectMismatchedDefinitionIdentity: a canonically valid published
+ *   definition stored under a foreign row identity (different
+ *   graph_definition_id / graph_version key columns and a revision the
+ *   canonical record never carried) — the identity/revision-binding
+ *   regression.
+ * - canaryLifecycleReason: revokes the beta definition through the real
+ *   catalog transition path with this operator reason — secret-canary free
+ *   text that must never reach the manifest.
  * - volume: { definitionRows, checkpointThreads } — pagination volume seeded
- *   directly (shape-valid rows) so exactness can be checked across page sizes.
+ *   directly (canonical published rows) so exactness can be checked across
+ *   page sizes.
  */
 export async function createInventoryPgFixture({
   seedRunningExecution = true,
@@ -124,6 +137,9 @@ export async function createInventoryPgFixture({
   mutateRunningExecutionPin = false,
   backdateExecutions = false,
   settleRunningExecution = false,
+  injectMalformedDefinition = false,
+  injectMismatchedDefinitionIdentity = false,
+  canaryLifecycleReason = undefined,
   volume = undefined,
   injectMalformedCatalogReceipt = false,
   revokeCatalogCommandsRead = false,
@@ -329,7 +345,67 @@ export async function createInventoryPgFixture({
       })
     }
 
-    if (volume !== undefined) await seedVolume(client, ids, volume)
+    if (volume !== undefined) await seedVolume(client, ids, volume, stagingCatalog)
+
+    // Canonical-definition regressions (#1028): evidence-shaping raw writes
+    // through the raw application client (the collector under test never
+    // writes). The malformed rows fail PublishedGraphDefinitionSchema itself;
+    // the mismatched row is fully canonical but stored under another row's
+    // identity, which only the explicit reference/revision binding catches.
+    if (injectMalformedDefinition) {
+      const [alphaRow] = await client.unsafe(
+        'select definition from graph_definition_versions where graph_definition_id = $1 limit 1',
+        ['graph:inventory-alpha']
+      )
+      if (alphaRow?.definition === undefined || alphaRow.definition === null)
+        throw new Error('fixture alpha definition row missing')
+      // 1. A lifecycle outside the canonical enum.
+      await client.unsafe(
+        `insert into graph_definition_versions (workspace_id, graph_definition_id, graph_version, revision, definition)
+         values ($1, 'graph:malformed-lifecycle', '1.0.0', 1, $2::jsonb)`,
+        [ids.workspaceTwo, JSON.stringify({ ...alphaRow.definition, lifecycle: 'archived' })]
+      )
+      // 2. A reference digest that does not bind the retained content.
+      await client.unsafe(
+        `insert into graph_definition_versions (workspace_id, graph_definition_id, graph_version, revision, definition)
+         values ($1, 'graph:malformed-digest', '1.0.0', 1, $2::jsonb)`,
+        [
+          ids.workspaceTwo,
+          JSON.stringify({
+            ...alphaRow.definition,
+            reference: {
+              ...alphaRow.definition.reference,
+              contentDigest: `sha256:${createHash('sha256').update('fixture-tampered-digest').digest('hex')}`,
+            },
+          }),
+        ]
+      )
+    }
+    if (injectMismatchedDefinitionIdentity) {
+      const mismatched = await stagingCatalog.publish({
+        definition: graphDefinition({
+          graphDefinitionId: 'graph:mismatched-content',
+          graphVersion: '1.0.0',
+          nodes: [{ node: 'prepare', operation: { kind: 'runtime', name: 'prepare' } }],
+          requiredCapabilities: [],
+        }),
+        publishedAt: FIXTURE_AT,
+      })
+      await client.unsafe(
+        `insert into graph_definition_versions (workspace_id, graph_definition_id, graph_version, revision, definition)
+         values ($1, 'graph:mismatched-row', '2.0.0', 4, $2::jsonb)`,
+        [ids.workspaceTwo, JSON.stringify(mismatched)]
+      )
+    }
+    if (canaryLifecycleReason !== undefined) {
+      const liveCatalog = new GraphDefinitionCatalog(catalogRepositoryOne)
+      await liveCatalog.revoke({
+        reference: beta.reference,
+        expectedRevision: 1,
+        changedAt: FIXTURE_AT,
+        reason: canaryLifecycleReason,
+      })
+    }
 
     // Catalog-receipt regressions (#1028): evidence-shaping raw writes through
     // the raw application client (the collector under test never writes), and
@@ -558,34 +634,33 @@ async function putCheckpointBlobRow(client, { thread, channel = 'values', versio
 }
 
 /**
- * Pagination volume: shape-valid definition rows and checkpoint evidence
- * seeded directly so the collector's exactness can be checked independently
- * of the page size. Content stays minimal and synthetic.
+ * Pagination volume: canonical published definition rows and checkpoint
+ * evidence seeded directly so the collector's exactness can be checked
+ * independently of the page size. Content stays minimal and synthetic; the
+ * rows go through the real publish path so every reference digest binds its
+ * retained content.
  */
-async function seedVolume(client, ids, { definitionRows = 0, checkpointThreads = 0 } = {}) {
+async function seedVolume(
+  client,
+  ids,
+  { definitionRows = 0, checkpointThreads = 0 } = {},
+  stagingCatalog
+) {
   for (let index = 0; index < definitionRows; index += 1) {
     const graphDefinitionId = `graph:volume-${String(index).padStart(4, '0')}`
-    const definition = {
-      reference: {
-        graphDefinitionId,
-        graphVersion: '1.0.0',
-        contentDigest: `sha256:${createHash('sha256').update(`volume-${index}`).digest('hex')}`,
-      },
-      revision: 1,
-      lifecycle: 'published',
-      content: graphDefinition({
+    const published = await stagingCatalog.publish({
+      definition: graphDefinition({
         graphDefinitionId,
         graphVersion: '1.0.0',
         nodes: [{ node: 'prepare', operation: { kind: 'runtime', name: 'prepare' } }],
         requiredCapabilities: [],
       }),
       publishedAt: FIXTURE_AT,
-      changedAt: FIXTURE_AT,
-    }
+    })
     await client.unsafe(
       `insert into graph_definition_versions (workspace_id, graph_definition_id, graph_version, revision, definition)
        values ($1, $2, '1.0.0', 1, $3::jsonb)`,
-      [ids.workspaceTwo, graphDefinitionId, JSON.stringify(definition)]
+      [ids.workspaceTwo, graphDefinitionId, JSON.stringify(published)]
     )
   }
   for (let index = 0; index < checkpointThreads; index += 1) {
