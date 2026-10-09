@@ -1,5 +1,6 @@
 export { createCurrentModelConnectionComposition } from './models/current-model-composition.js'
 export {
+  createProductionGovernedManagementCall,
   createProductionPiLeadComposition,
   type ProductionPiLeadCompositionOptions,
 } from './models/production-model-composition.js'

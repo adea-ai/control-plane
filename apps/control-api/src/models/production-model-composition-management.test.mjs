@@ -4,10 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { piDurableManagementRequestDigest } from '../pi-durable/management-governed-call.js'
+// Real built artifact (dist), not the source path: the assembled host and
+// compiler must work through the shipped entrypoint other consumers load
+// (same convention as tests importing packages/tool-sdk/dist).
 import {
   createProductionGovernedManagementCall,
   createProductionPiLeadComposition,
-} from './production-model-composition.ts'
+} from '../../dist/index.js'
+import { createPiDurableEngine } from '@control-plane/pi-durable-adapter'
 
 const TARGET = 'prj_01JABCDEF0123456789ABCDEFG'
 
@@ -69,6 +73,14 @@ function ingredients(counts) {
     resolveTargetId: () => TARGET,
   }
 }
+
+test('shipped package exports expose the assembled host and engine artifacts', () => {
+  // The built artifacts — not just checked-out sources — must be reachable
+  // through the real package entrypoints.
+  expect(typeof createProductionPiLeadComposition).toBe('function')
+  expect(typeof createProductionGovernedManagementCall).toBe('function')
+  expect(typeof createPiDurableEngine).toBe('function')
+})
 
 /** Composition gates: fail closed before any directory/SQLite allocation. */
 test('management call options fail closed before directory or SQLite creation', async () => {
