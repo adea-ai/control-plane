@@ -125,6 +125,29 @@ test('passes the exact canonical request and boundary through and asserts withou
   expect(calls).toEqual([{ boundary: 'effect', candidate: request }])
 })
 
+test('every canonical boundary passes through unchanged and repeatable', async () => {
+  const calls = []
+  const authority = {
+    async assertCurrent(candidate, boundary) {
+      calls.push({ boundary, candidate })
+    },
+  }
+  for (const boundary of ['admission', 'approval', 'effect', 'publication']) {
+    const result = await controller(authority).assert(
+      { ...envelope, parameters: { boundary, request } },
+      fastifyRequest()
+    )
+    expect(result).toEqual({ asserted: true })
+  }
+  expect(calls.map((call) => call.boundary)).toEqual([
+    'admission',
+    'approval',
+    'effect',
+    'publication',
+  ])
+  for (const call of calls) expect(call.candidate).toEqual(request)
+})
+
 test('the assertion is repeatable and never consumes an approval', async () => {
   let calls = 0
   const authority = {
