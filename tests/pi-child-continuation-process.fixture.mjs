@@ -524,6 +524,11 @@ export async function initialWorker(directory, mode, baseUrl) {
   const heartbeat = setInterval(() => {}, 1000)
   try {
     f = await createGovernedChildCompositionFixture(directory, {
+      // Canonical transactional child admission (CP1041): the default
+      // non-transactional path has no admission ports, so the lead's
+      // delegate_child turn dies before completion ('unknown' status) and the
+      // worker exits before any evidence can be retained.
+      transactionalChildAdmission: true,
       childRuntimeFactory: async (options, { canonicalProvider }) => {
         ports = await continuationPorts(
           directory,
