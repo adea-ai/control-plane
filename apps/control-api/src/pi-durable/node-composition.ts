@@ -34,11 +34,22 @@ import type { DelegationService } from '@control-plane/orchestration'
  * the port and performs no validation itself.
  */
 export interface PiDurableGovernedManagementCallPort {
-  readonly source: string
-  /** Repeatable boundary check; never consumes approval or mints a decision. */
-  assertCurrent(request: unknown, boundary?: 'admission' | 'approval' | 'effect'): Promise<void>
-  prepare(authority: unknown, verified: unknown): Promise<unknown>
-  execute(request: unknown, signal?: AbortSignal): Promise<unknown>
+  /**
+   * Always present: one execute per retained identity (the caller built by
+   * createProductionGovernedManagementCall supplies exactly this today).
+   */
+  execute(request: Readonly<Record<string, unknown>>): Promise<unknown>
+  /**
+   * Required by the canonical engine port when DeepSeek1215's adapter hook
+   * publishes it; optional while a composition threads the caller itself.
+   * Repeatable boundary check; never consumes approval or mints a decision.
+   */
+  assertCurrent?(
+    request: Readonly<Record<string, unknown>>,
+    boundary?: 'admission' | 'approval' | 'effect'
+  ): Promise<void>
+  prepare?(authority: unknown, verified: unknown): Promise<unknown>
+  readonly source?: string
 }
 
 export interface NodePiDurableLeadCompositionOptions {
