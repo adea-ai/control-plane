@@ -25,6 +25,24 @@ import {
 type TransactionContext = Parameters<Parameters<ControlPlaneDatabase['transaction']>[0]>[0]
 
 const CONFLICT = 'POSTGRES_PERSISTENCE_REVISION_CONFLICT'
+const INVALID = 'POSTGRES_PERSISTENCE_INVALID_RECORD'
+const NAME_PATTERN = /^[a-z][a-z0-9._-]{0,127}$/
+
+/** Mirrors the SQLite provider's input contract (provider.ts validName/validIdentity). */
+function validName(namespace: string): void {
+  if (!NAME_PATTERN.test(namespace)) throw new Error(INVALID)
+}
+
+function validIdentity(namespace: string, id: string): void {
+  validName(namespace)
+  if (
+    id.length === 0 ||
+    id.length > 512 ||
+    Array.from(id).some((character) => character.charCodeAt(0) < 32)
+  ) {
+    throw new Error(INVALID)
+  }
+}
 
 function recordOf(row: {
   namespace: string
@@ -52,6 +70,7 @@ class PostgresPersistenceTransaction implements PersistenceTransaction {
   }
 
   async get(namespace: string, id: string): Promise<PersistenceRecord | undefined> {
+    validIdentity(namespace, id)
     const rows = await this.#transaction
       .select()
       .from(persistenceRecords)
@@ -62,6 +81,7 @@ class PostgresPersistenceTransaction implements PersistenceTransaction {
   }
 
   async put(write: PersistenceWrite): Promise<PersistenceRecord> {
+    validIdentity(write.namespace, write.id)
     const updatedAt = this.#now()
     if (write.expectedRevision === undefined) {
       // Create-only, matching the SQLite provider: an unconditional put over an existing record is
@@ -98,6 +118,7 @@ class PostgresPersistenceTransaction implements PersistenceTransaction {
   }
 
   async delete(namespace: string, id: string, expectedRevision?: number): Promise<boolean> {
+    validIdentity(namespace, id)
     const rows = await this.#transaction
       .select()
       .from(persistenceRecords)
@@ -126,6 +147,7 @@ class PostgresPersistenceTransaction implements PersistenceTransaction {
   }
 
   async list(namespace: string): Promise<readonly PersistenceRecord[]> {
+    validName(namespace)
     const rows = await this.#transaction
       .select()
       .from(persistenceRecords)
@@ -135,8 +157,10 @@ class PostgresPersistenceTransaction implements PersistenceTransaction {
   }
 
   async scan(namespace: string, options: PersistenceScan): Promise<readonly PersistenceRecord[]> {
+    validName(namespace)
+    if (options.afterId !== undefined) validIdentity(namespace, options.afterId)
     if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 128) {
-      throw new Error('POSTGRES_PERSISTENCE_INVALID_RECORD')
+      throw new Error(INVALID)
     }
     const rows = await this.#transaction
       .select()
