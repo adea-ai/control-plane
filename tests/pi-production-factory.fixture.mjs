@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { createFileRecordedModelFundingAuthority } from '@control-plane/model-gateway'
 import {
   canonicalJsonStringify,
+  RequestedRoleModelSelectionsSchema,
   StateChangingCommandEnvelopeSchema,
 } from '@control-plane/contracts'
 import { ContextPackageCompiler } from '@control-plane/context'
@@ -51,8 +52,9 @@ function scriptedPhysicalFetch(state) {
     )
       throw new Error('TEST_UNEXPECTED_EGRESS')
     const body = await request.json()
-    if (body.model !== 'gpt-5') throw new Error('TEST_UNEXPECTED_MODEL')
+    if (body.model !== state.expectedProviderModel) throw new Error('TEST_UNEXPECTED_MODEL')
     state.physicalSends++
+    state.providerModels.push(body.model)
     const item = {
       type: 'message',
       id: 'msg_fixture',
@@ -91,6 +93,9 @@ export async function createProductionFactoryFixture(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'pi-real-production-factory-'))
   const at = new Date().toISOString()
   const expiresAt = new Date(Date.parse(at) + 240_000).toISOString()
+  const providerModels = options.providerModels ?? [
+    ...new Set([options.providerModel ?? 'gpt-5', 'gpt-5-mini']),
+  ]
   const workspaceId = options.workspaceId ?? id('wsp')
   const actorPrincipalId = options.actorPrincipalId ?? `user:${randomUUID()}`
   if (!/^user:[0-9a-f-]{36}$/.test(actorPrincipalId))
@@ -106,6 +111,8 @@ export async function createProductionFactoryFixture(options = {}) {
   }
   const state = {
     physicalSends: 0,
+    expectedProviderModel: options.providerModel ?? 'gpt-5',
+    providerModels: [],
     productReads: 0,
     publicationChecks: 0,
     revoked: false,
@@ -184,10 +191,12 @@ export async function createProductionFactoryFixture(options = {}) {
       workspaceId,
       actorPrincipalId,
       transportPrincipalId,
+      administratorPrincipalRef: transportPrincipalId,
       leasePrincipalRef,
       policySnapshot: base.constraints.policySnapshot,
       now: () => at,
       expiresAt,
+      providerModels,
     })
     await models.setupDefault()
     let selection
@@ -230,6 +239,7 @@ export async function createProductionFactoryFixture(options = {}) {
       selection = await models.repository.getSelection(workspaceId, evidence.selectionRef)
       if (!selection || selection.selectionRevision !== evidence.selectionRevision)
         throw new Error('TEST_SELECTION_REQUIRED')
+      state.expectedProviderModel = selection.providerModel
       const prior = plansByIntent.get(evidence.intentId)
       if (prior) return prior
       if (
@@ -580,7 +590,11 @@ export async function createProductionFactoryFixture(options = {}) {
       read,
       close,
       rawProductEvidence: (intentId) => structuredClone(source.get(intentId)),
-      setIntent: (intentId = randomUUID()) => {
+      setIntent: (intentId = randomUUID(), intentOptions = {}) => {
+        const requestedModelSelections =
+          intentOptions.requestedModelSelections === undefined
+            ? undefined
+            : RequestedRoleModelSelectionsSchema.parse(intentOptions.requestedModelSelections)
         source.set(intentId, {
           schemaVersion: 'pi-lead-intent/v1',
           intentId,
@@ -594,6 +608,7 @@ export async function createProductionFactoryFixture(options = {}) {
           allowedPrincipalIds: [transportPrincipalId],
           prompt: 'Synthetic actual factory question',
           ...productProfilePin,
+          ...(requestedModelSelections ? { requestedModelSelections } : {}),
         })
         return intentId
       },

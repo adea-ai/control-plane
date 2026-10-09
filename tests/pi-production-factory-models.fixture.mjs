@@ -61,6 +61,14 @@ export function createProductionFactoryModels(options) {
   const createdAt = now()
   const expiresAt = options.expiresAt ?? new Date(Date.parse(createdAt) + 3_600_000).toISOString()
   const providerModel = options.providerModel ?? 'gpt-5'
+  const providerModels = options.providerModels ?? [providerModel]
+  if (
+    !Array.isArray(providerModels) ||
+    providerModels.length === 0 ||
+    !providerModels.includes(providerModel) ||
+    new Set(providerModels).size !== providerModels.length
+  )
+    throw new Error('FACTORY_PROVIDER_MODELS_INVALID')
   const connectionRef = options.connectionRef ?? `mconn_${'6'.repeat(32)}`
   const repository = new PersistentModelSelectionRepository(options.persistence)
   const secretProvider = options.secretProvider ?? new InMemorySecretProvider()
@@ -83,7 +91,7 @@ export function createProductionFactoryModels(options) {
     accountRef: options.accountRef ?? 'account:production-factory',
     authKind: 'api_key',
     fundingSource: 'byo_api',
-    models: [providerModel],
+    models: providerModels,
     workspaceGrant: {
       grantRef: options.grantRef ?? 'grant:production-factory-model',
       revision: 1,
@@ -179,6 +187,7 @@ export function createProductionFactoryModels(options) {
       credentialRevision: 1,
       connectionRef,
       providerModel,
+      providerModels: [...providerModels],
       actorPrincipalId,
       transportPrincipalId,
       leasePrincipalRef,

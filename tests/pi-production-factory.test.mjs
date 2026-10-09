@@ -1,11 +1,13 @@
 import { test, expect } from 'bun:test'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createProductionFactoryFixture } from './pi-production-factory.fixture.mjs'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createControlApiApplication } from '../apps/control-api/src/application.ts'
+import { PolicyServiceAuthenticator } from '../apps/control-api/src/auth/service-authentication.ts'
 import {
   countProductionProductReads,
   productionFactorySourceIdentity,
@@ -55,6 +57,178 @@ test('actual selected HTTP product reader reports every request without provider
     expect(host.models.secretProvider.resolveCount).toBe(0)
     expect(host.composition.adapter.journal.list()).toHaveLength(0)
   } finally {
+    await host.close()
+  }
+}, 30000)
+
+test('authenticated model metadata selections bind distinct lead and child choices from fresh product evidence', async () => {
+  const leadModel = 'gpt-5-mini'
+  const childModel = 'gpt-5'
+  const host = await createProductionFactoryFixture()
+  const metadata = {
+    serviceName: 'control-api',
+    version: 'test-candidate',
+    commitSha: 'test-candidate',
+    environment: 'test',
+  }
+  const principalId = host.models.refs.administratorPrincipalRef
+  expect(principalId).toBe(host.principal.principalId)
+  expect(principalId).not.toBe(host.actorPrincipalId)
+  const claims = {
+    audience: 'control-plane',
+    credentialId: 'synthetic-model-metadata-auth',
+    credentialKind: 'service',
+    expiresAt: host.expiresAt,
+    issuedAt: host.at,
+    issuer: 'https://factory.test.invalid',
+    keyId: 'synthetic-test-verifier',
+    principalId,
+    projectIds: [],
+    scopes: ['credential:read', 'credential:write'],
+    workspaceIds: [host.workspaceId],
+  }
+  let app
+  try {
+    app = await createControlApiApplication({
+      metadata,
+      health: () => ({ status: 'ok', metadata }),
+      readiness: () => ({ status: 'ready', metadata }),
+      logger: { write: () => {} },
+      serviceAuthenticator: new PolicyServiceAuthenticator({
+        audience: claims.audience,
+        issuer: claims.issuer,
+        logger: { write: () => {} },
+        now: () => new Date(host.at),
+        revocationChecker: { isRevoked: async () => false },
+        verifier: { verify: async () => claims },
+      }),
+      modelConnectionService: host.composition.modelConnectionService,
+    })
+    const post = (path, body) =>
+      app
+        .getHttpAdapter()
+        .getInstance()
+        .inject({
+          method: 'POST',
+          url: `/v1/model-connections/${path}`,
+          headers: { authorization: 'Bearer synthetic-test-assertion' },
+          payload: body,
+        })
+    const requestId = () => 'req_01JABCDEF0123456789ABCDEFG'
+    const traceId = () => 'trc_01JABCDEF0123456789ABCDEFG'
+    const read = (operation, parameters) => ({
+      contractVersion: { major: 1, minor: 0 },
+      caller: { servicePrincipalId: principalId },
+      requestId: requestId(),
+      workspaceId: host.workspaceId,
+      correlation: { traceId: traceId() },
+      operation,
+      requestedAt: host.at,
+      parameters,
+    })
+    await host.models.setupDefault()
+    const listed = await post(
+      'list',
+      read('model-connections.list', { target: host.models.target })
+    )
+    expect(listed.statusCode).toBe(200)
+    expect(listed.json().data.connections[0].models.map((model) => model.providerModel)).toEqual(
+      expect.arrayContaining([leadModel, childModel])
+    )
+    const connectionRef = host.models.refs.connectionRef
+    const resolveRole = async (role, providerModel) => {
+      const response = await post(
+        'selection/resolve',
+        read('model-selection.resolve', {
+          role,
+          target: host.models.target,
+          override: { connectionRef, providerModel },
+        })
+      )
+      expect(response.statusCode).toBe(200)
+      expect(response.json().data.selection.providerModel).toBe(providerModel)
+      return response.json().data.selection
+    }
+    const lead = await resolveRole('lead', leadModel)
+    const child = await resolveRole('child', childModel)
+    expect(lead.selectionRef).not.toBe(child.selectionRef)
+    expect(lead.workspaceId).toBe(host.workspaceId)
+    expect(child.workspaceId).toBe(host.workspaceId)
+    const intentId = host.setIntent(randomUUID(), {
+      requestedModelSelections: {
+        lead: { selectionRef: lead.selectionRef, selectionRevision: lead.selectionRevision },
+        child: { selectionRef: child.selectionRef, selectionRevision: child.selectionRevision },
+      },
+    })
+    const prepared = (
+      await host.composition.piDurableLeadService.prepare(
+        host.command('pi-durable.lead.prepare', { intentId }),
+        host.principal
+      )
+    ).data
+    expect(prepared.funding).toMatchObject({
+      state: 'ready',
+      selectionRef: lead.selectionRef,
+      selectionRevision: lead.selectionRevision,
+      providerModel: leadModel,
+    })
+    const admitted = await host.composition.product.readCurrent({
+      schemaVersion: 'pi-lead-intent/v1',
+      workspaceId: host.workspaceId,
+      intentId,
+      principalId: host.principal.principalId,
+    })
+    expect(admitted.selectionRef).toBe(lead.selectionRef)
+    expect(admitted.selectionRevision).toBe(lead.selectionRevision)
+    expect(host.rawProductEvidence(intentId).requestedModelSelections).toEqual({
+      lead: { selectionRef: lead.selectionRef, selectionRevision: lead.selectionRevision },
+      child: { selectionRef: child.selectionRef, selectionRevision: child.selectionRevision },
+    })
+    const childSelection = await host.composition.resolveChildSelection(
+      {
+        schemaVersion: 'pi-lead-intent/v1',
+        workspaceId: host.workspaceId,
+        intentId,
+        principalId: host.principal.principalId,
+      },
+      {
+        childRequestId: requestId(),
+        childRequestDigest: `sha256:${'a'.repeat(64)}`,
+        canonicalActorPrincipalId: host.actorPrincipalId,
+      }
+    )
+    expect(childSelection.selectionRef).toBe(child.selectionRef)
+    expect(childSelection.selectionRevision).toBe(child.selectionRevision)
+    expect(childSelection.providerModel).toBe(childModel)
+    expect(host.state.physicalSends).toBe(0)
+    expect(host.models.secretProvider.resolveCount).toBe(0)
+    expect(host.canonicalCounts()).toMatchObject({ commands: 1, executions: 1, attempts: 1 })
+    const dispatched = (
+      await host.composition.piDurableLeadService.dispatch(
+        host.command('pi-durable.lead.dispatch', {
+          intentId,
+          preparationRef: prepared.preparationRef,
+        }),
+        host.principal
+      )
+    ).data
+    await host.composition.adapter.drain()
+    const status = (
+      await host.composition.piDurableLeadService.status(
+        host.read('pi-durable.lead.status', { dispatchId: dispatched.dispatchId }),
+        host.principal
+      )
+    ).data.status
+    expect(status.state).toBe('completed')
+    expect(host.state.providerModels).toEqual([leadModel])
+    expect(host.state.physicalSends).toBe(1)
+    expect(
+      (await host.ledger.entries(host.workspaceId, dispatched.executionId)).filter(
+        (entry) => entry.kind === 'model_usage'
+      )
+    ).toHaveLength(1)
+  } finally {
+    await app?.close()
     await host.close()
   }
 }, 30000)
