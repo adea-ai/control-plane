@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.3.0...pi-durable-adapter-v0.4.0) (2026-10-09)
+
+
+### Features
+
+* compose production Pi lead model and publication authority ([#996](https://github.com/adea-ai/control-plane/issues/996)) ([1332100](https://github.com/adea-ai/control-plane/commit/13321009f6e9d7984a8774df8818e1b775c582ea))
+
+
+### Bug Fixes
+
+* **pi:** fence continuation retention on current child journal ([#1007](https://github.com/adea-ai/control-plane/issues/1007)) ([b237e7a](https://github.com/adea-ai/control-plane/commit/b237e7a034a0687bd5f1ed7489c7225085e8b17d))
+
+
+### Tests
+
+* specify unfinished Pi child process recovery proofs ([#979](https://github.com/adea-ai/control-plane/issues/979)) ([6b82ccd](https://github.com/adea-ai/control-plane/commit/6b82ccd677e69eca14d765ac77d9d273df228d42))
+
 ## [0.3.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.2.1...pi-durable-adapter-v0.3.0) (2026-10-08)
 
 

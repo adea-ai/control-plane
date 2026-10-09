@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.0](https://github.com/adea-ai/control-plane/compare/domain-v1.29.0...domain-v1.30.0) (2026-10-09)
+
+
+### Features
+
+* add report-only replacement compatibility validator ([#990](https://github.com/adea-ai/control-plane/issues/990)) ([f8d26e0](https://github.com/adea-ai/control-plane/commit/f8d26e0904e181d458435142cba23c01ee47bd2b))
+
 ## [1.29.0](https://github.com/adea-ai/control-plane/compare/domain-v1.28.0...domain-v1.29.0) (2026-10-08)
 
 
