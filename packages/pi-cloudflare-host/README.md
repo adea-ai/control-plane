@@ -100,8 +100,8 @@ The alpha API is required for its explicit Durable Object hibernating eviction
 control; it is not a production dependency.
 
 The pinned Miniflare release requires vulnerable `sharp` and `undici` versions.
-Repository overrides select the published patch versions `sharp` **0.35.5** and
-`undici` **7.29.1**, preserving Miniflare/workerd and Pi/Chord pins. This addresses
+Repository overrides select the published versions `sharp` **0.35.5** and
+`undici` **8.11.2**, preserving Miniflare/workerd and Pi/Chord pins. This addresses
 [sharp's upstream librsvg advisory](https://github.com/advisories/GHSA-wq5f-xc86-pv6w)
 and undici's [WebSocket handshake](https://github.com/advisories/GHSA-rfgv-xxqx-mfg5)
 and [BalancedPool TLS-options](https://github.com/advisories/GHSA-w293-vg96-wgc3)

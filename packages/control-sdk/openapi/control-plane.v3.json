@@ -17166,6 +17166,31 @@
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                           "type": "string"
                         },
+                        "observedTarget": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
+                            "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
+                          },
+                          "readOnly": true,
+                          "required": ["sessionId", "taskId"],
+                          "type": "object"
+                        },
+                        "requestedTarget": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "generation": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
+                            "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
+                          },
+                          "readOnly": true,
+                          "required": ["sessionId", "taskId", "generation"],
+                          "type": "object"
+                        },
                         "runtimeSessionId": {},
                         "schemaVersion": { "const": "pi-lead-dispatch/v1", "type": "string" },
                         "state": {
@@ -17625,7 +17650,22 @@
                         "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                         "type": "string"
                       },
-                      "preparationRef": { "pattern": "^prep_[a-f0-9]{32}$", "type": "string" }
+                      "preparationRef": { "pattern": "^prep_[a-f0-9]{32}$", "type": "string" },
+                      "requestedTarget": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "generation": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
+                          "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
+                        },
+                        "readOnly": true,
+                        "required": ["sessionId", "taskId", "generation"],
+                        "type": "object"
+                      }
                     },
                     "required": ["intentId"],
                     "type": "object"
@@ -17695,7 +17735,32 @@
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                           "type": "string"
                         },
+                        "observedTarget": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
+                            "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
+                          },
+                          "readOnly": true,
+                          "required": ["sessionId", "taskId"],
+                          "type": "object"
+                        },
                         "replayed": { "type": "boolean" },
+                        "requestedTarget": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "generation": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
+                            "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
+                          },
+                          "readOnly": true,
+                          "required": ["sessionId", "taskId", "generation"],
+                          "type": "object"
+                        },
                         "runtimeSessionId": {},
                         "schemaVersion": { "const": "pi-lead-dispatch/v1", "type": "string" },
                         "state": {
@@ -17961,6 +18026,39 @@
                                   "type": "string"
                                 },
                                 "executionId": {},
+                                "observedTarget": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "sessionId": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
+                                  },
+                                  "readOnly": true,
+                                  "required": ["sessionId", "taskId"],
+                                  "type": "object"
+                                },
+                                "requestedTarget": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "generation": {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    "sessionId": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
+                                  },
+                                  "readOnly": true,
+                                  "required": ["sessionId", "taskId", "generation"],
+                                  "type": "object"
+                                },
                                 "runtimeSessionId": {},
                                 "state": {
                                   "enum": ["dispatching", "dispatched", "reconciliation_required"],
@@ -18641,6 +18739,31 @@
                           "minimum": 0,
                           "type": "integer"
                         },
+                        "observedTarget": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
+                            "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
+                          },
+                          "readOnly": true,
+                          "required": ["sessionId", "taskId"],
+                          "type": "object"
+                        },
+                        "requestedTarget": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "generation": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
+                            "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
+                          },
+                          "readOnly": true,
+                          "required": ["sessionId", "taskId", "generation"],
+                          "type": "object"
+                        },
                         "runtimeSessionId": {},
                         "schemaVersion": { "const": "pi-lead-dispatch/v1", "type": "string" }
                       },
@@ -18909,6 +19032,31 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                           "type": "string"
+                        },
+                        "observedTarget": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
+                            "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
+                          },
+                          "readOnly": true,
+                          "required": ["sessionId", "taskId"],
+                          "type": "object"
+                        },
+                        "requestedTarget": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "generation": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
+                            "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
+                          },
+                          "readOnly": true,
+                          "required": ["sessionId", "taskId", "generation"],
+                          "type": "object"
                         },
                         "runtimeSessionId": {},
                         "schemaVersion": { "const": "pi-lead-dispatch/v1", "type": "string" },
