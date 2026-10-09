@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.88.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.87.0...workspace-v1.88.0) (2026-10-09)
+
+
+### Features
+
+* **profile-adapters:** add profile composition boundaries ([#1033](https://github.com/adea-ai/control-plane/issues/1033)) ([bc41666](https://github.com/adea-ai/control-plane/commit/bc41666a60c7d3b5cf23556fcc609b6e01c0aaab))
+
+
+### Bug Fixes
+
+* **pi:** fence cancellation by inference generation ([#1031](https://github.com/adea-ai/control-plane/issues/1031)) ([f735d7e](https://github.com/adea-ai/control-plane/commit/f735d7eae4f6b909c53a7bb4b6b4f8ef1769c9b7))
+
 ## [1.87.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.86.2...workspace-v1.87.0) (2026-10-09)
 
 
