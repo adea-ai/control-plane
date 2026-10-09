@@ -109,7 +109,12 @@ test('an authorized issuer → governed caller → HTTP current-authority route 
     },
   }
   const host = await createProductionFactoryFixture({ managementAuthority })
-  const databasePath = join(host.directory, 'management-calls.sqlite')
+  const databases = []
+  const openDatabase = (name) => {
+    const database = new DatabaseSync(join(host.directory, name))
+    databases.push(database)
+    return database
+  }
   let application
   try {
     const intentId = host.setIntent()
@@ -275,7 +280,7 @@ test('an authorized issuer → governed caller → HTTP current-authority route 
         planRevision: 1,
       })
     const dispatches = []
-    const database = new DatabaseSync(databasePath)
+    const callerDatabase = openDatabase('management-calls.sqlite')
     const caller = createPiDurableGovernedManagementCall({
       authority: {
         assertCurrent: (candidate, boundary) => authority.assertCurrent(candidate, boundary),
@@ -288,7 +293,7 @@ test('an authorized issuer → governed caller → HTTP current-authority route 
       },
       issue: async () => decision(request),
       resolveTargetId: () => targetId,
-      store: new SqlitePiDurableManagementCallStore(database),
+      store: new SqlitePiDurableManagementCallStore(callerDatabase),
     })
     expect(await caller.execute(request)).toEqual({
       state: 'succeeded',
@@ -296,46 +301,70 @@ test('an authorized issuer → governed caller → HTTP current-authority route 
     })
     expect(dispatches).toHaveLength(1)
     const identityKey = JSON.stringify([host.workspaceId, request.idempotencyKey])
-    const readDatabase = new DatabaseSync(databasePath)
-    const retained = await new SqlitePiDurableManagementCallStore(readDatabase).get(identityKey)
-    readDatabase.close()
+    const retained = await new SqlitePiDurableManagementCallStore(
+      openDatabase('management-calls.sqlite')
+    ).get(identityKey)
     expect(retained?.state).toBe('settled')
 
-    // Current-authority revocation: the service and the product revoke, the
-    // authority refuses, the route is unavailable and no fresh dispatch occurs.
+    // Revocation control on the exact same request (valid retained call kept):
+    // it succeeds immediately before, then one authority dimension is revoked
+    // at a time and the same request must be rejected with no extra dispatch.
+    // Each fresh caller opens its own retained store so the earlier settled
+    // record cannot answer for it.
+    await authority.assertCurrent(request, 'admission')
+    await authority.assertCurrent(request, 'effect')
+    const freshCaller = (database) =>
+      createPiDurableGovernedManagementCall({
+        authority: {
+          assertCurrent: (candidate, boundary) => authority.assertCurrent(candidate, boundary),
+        },
+        callAdea: async () => {
+          dispatches.push('revoked')
+          return { ok: true, value: null }
+        },
+        issue: async () => decision(request),
+        resolveTargetId: () => targetId,
+        store: new SqlitePiDurableManagementCallStore(database),
+      })
+
+    // Dimension 1: the governed service is revoked, so admission cannot
+    // re-derive the prepared call. The retained call stays valid.
     serviceRevoked = true
-    host.state.revoked = true
-    const revokedRequest = {
-      ...request,
-      idempotencyKey: 'management:fixture:2',
-      toolCallId: id('tlc2'),
-    }
-    await expect(authority.assertCurrent(revokedRequest, 'admission')).rejects.toThrow(
+    await expect(authority.assertCurrent(request, 'admission')).rejects.toThrow(
       'PI_TOOL_AUTHORITY_REJECTED'
     )
-    const revokedRoute = await assertViaHttp(revokedRequest, 'admission')
-    expect(revokedRoute.status).toBe(503)
-    expect(JSON.stringify(revokedRoute.body)).toContain('PI_MANAGEMENT_CURRENT_UNAVAILABLE')
-    expect(JSON.stringify(revokedRoute.body)).not.toContain('PI_TOOL_AUTHORITY_REJECTED')
-    const revokedCaller = createPiDurableGovernedManagementCall({
-      authority: {
-        assertCurrent: (candidate, boundary) => authority.assertCurrent(candidate, boundary),
-      },
-      callAdea: async () => {
-        dispatches.push('revoked')
-        return { ok: true, value: null }
-      },
-      issue: async () => decision(revokedRequest),
-      resolveTargetId: () => targetId,
-      store: new SqlitePiDurableManagementCallStore(new DatabaseSync(databasePath)),
+    const serviceRevokedRoute = await assertViaHttp(request, 'admission')
+    expect(serviceRevokedRoute.status).toBe(503)
+    expect(JSON.stringify(serviceRevokedRoute.body)).toContain('PI_MANAGEMENT_CURRENT_UNAVAILABLE')
+    expect(JSON.stringify(serviceRevokedRoute.body)).not.toContain('PI_TOOL_AUTHORITY_REJECTED')
+    expect(
+      await freshCaller(openDatabase('management-calls-service-revoked.sqlite')).execute(request)
+    ).toEqual({
+      code: 'authority_unavailable',
+      state: 'refused',
     })
-    expect(await revokedCaller.execute(revokedRequest)).toEqual({
+    expect(dispatches).toHaveLength(1)
+
+    // Dimension 2: the service recovers while the retained call state is
+    // revoked; admission still passes and the effect boundary refuses.
+    serviceRevoked = false
+    call = { ...call, status: 'failed' }
+    await expect(authority.assertCurrent(request, 'admission')).resolves.toBeUndefined()
+    await expect(authority.assertCurrent(request, 'effect')).rejects.toThrow(
+      'PI_TOOL_AUTHORITY_REJECTED'
+    )
+    const callRevokedRoute = await assertViaHttp(request, 'effect')
+    expect(callRevokedRoute.status).toBe(503)
+    expect(
+      await freshCaller(openDatabase('management-calls-call-revoked.sqlite')).execute(request)
+    ).toEqual({
       code: 'authority_unavailable',
       state: 'refused',
     })
     expect(dispatches).toHaveLength(1)
   } finally {
     await application?.close()
+    for (const database of databases) database.close()
     await host.close()
   }
 })
