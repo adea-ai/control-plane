@@ -22,6 +22,7 @@ import { SqlitePiLeadRunningLifecycle } from './lead-running-lifecycle.js'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 
 export interface NodePiDurableLeadCompositionOptions {
+  readonly onAdapterReady?: NodePiDurableCompositionOptions['onAdapterReady']
   readonly directory: string
   readonly admission: Omit<NodePiDurableLeadAdmissionOptions, 'database'>
   readonly usage: PiDurableUsageAuthorityOptions
@@ -80,6 +81,7 @@ export async function createNodePiDurableLeadComposition(
       assertAuthority: (authority) => admission.canonicalAuthority.assertAuthority(authority),
     })
     runtime = await createNodePiDurableRuntime({
+      ...(options.onAdapterReady ? { onAdapterReady: options.onAdapterReady } : {}),
       directory: options.directory,
       ...(options.admission.now ? { now: options.admission.now } : {}),
       ...createPiLeadRuntimeAuthorityRouter(
