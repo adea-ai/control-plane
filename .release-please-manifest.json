@@ -30,6 +30,7 @@
   "packages/pi-durable-adapter": "0.4.0",
   "packages/policy": "1.4.1",
   "packages/production-readiness": "1.5.0",
+  "packages/profile-adapters": "1.0.0",
   "packages/profile-portability": "1.6.0",
   "packages/remote-control-relay": "1.3.0",
   "packages/restate-runtime": "1.2.3",

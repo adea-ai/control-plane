@@ -74,8 +74,8 @@
     {
       "name": "@control-plane/contracts",
       "path": "packages/contracts",
-      "version": "1.17.0",
-      "lockVersion": "1.17.0",
+      "version": "1.19.0",
+      "lockVersion": "1.19.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -89,8 +89,8 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.23.0",
-      "lockVersion": "1.23.0",
+      "version": "1.27.0",
+      "lockVersion": "1.27.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -222,8 +222,8 @@
     {
       "name": "@control-plane/domain",
       "path": "packages/domain",
-      "version": "1.28.0",
-      "lockVersion": "1.28.0",
+      "version": "1.30.0",
+      "lockVersion": "1.30.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -353,8 +353,8 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.29.0",
-      "lockVersion": "1.29.0",
+      "version": "1.30.0",
+      "lockVersion": "1.30.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -478,8 +478,8 @@
     {
       "name": "@control-plane/orchestration",
       "path": "packages/orchestration",
-      "version": "1.6.0",
-      "lockVersion": "1.6.0",
+      "version": "1.7.0",
+      "lockVersion": "1.7.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -500,8 +500,8 @@
     {
       "name": "@control-plane/pi-cloudflare-host",
       "path": "packages/pi-cloudflare-host",
-      "version": "0.2.0",
-      "lockVersion": "0.2.0",
+      "version": "0.6.0",
+      "lockVersion": "0.6.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -519,8 +519,8 @@
     {
       "name": "@control-plane/pi-durable-adapter",
       "path": "packages/pi-durable-adapter",
-      "version": "0.1.0",
-      "lockVersion": "0.1.0",
+      "version": "0.4.0",
+      "lockVersion": "0.4.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -564,8 +564,8 @@
     {
       "name": "@control-plane/production-readiness",
       "path": "packages/production-readiness",
-      "version": "1.4.2",
-      "lockVersion": "1.4.2",
+      "version": "1.5.0",
+      "lockVersion": "1.5.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -573,6 +573,29 @@
       "workspaceDependencies": ["@control-plane/contracts"],
       "externalDependencies": ["zod"],
       "developmentWorkspaceDependencies": [],
+      "developmentExternalDependencies": [],
+      "layer": "adapter-infrastructure"
+    },
+    {
+      "name": "@control-plane/profile-adapters",
+      "path": "packages/profile-adapters",
+      "version": "1.0.0",
+      "lockVersion": "1.0.0",
+      "kind": "package",
+      "private": true,
+      "browser": false,
+      "exports": ["."],
+      "workspaceDependencies": [
+        "@control-plane/deployment",
+        "@control-plane/orchestration",
+        "@control-plane/runtime-sdk"
+      ],
+      "externalDependencies": ["zod"],
+      "developmentWorkspaceDependencies": [
+        "@control-plane/domain",
+        "@control-plane/managed-pi-adapter",
+        "@control-plane/pi-durable-adapter"
+      ],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
     },
@@ -662,8 +685,8 @@
     {
       "name": "@control-plane/runtime-gateway-protocol",
       "path": "packages/runtime-gateway-protocol",
-      "version": "1.6.2",
-      "lockVersion": "1.6.2",
+      "version": "1.7.0",
+      "lockVersion": "1.7.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -677,8 +700,8 @@
     {
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
-      "version": "1.13.1",
-      "lockVersion": "1.13.1",
+      "version": "1.14.0",
+      "lockVersion": "1.14.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -733,8 +756,8 @@
     {
       "name": "@control-plane/sdk",
       "path": "packages/control-sdk",
-      "version": "1.14.0",
-      "lockVersion": "1.14.0",
+      "version": "1.16.0",
+      "lockVersion": "1.16.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -763,8 +786,8 @@
     {
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
-      "version": "1.34.0",
-      "lockVersion": "1.34.0",
+      "version": "1.35.0",
+      "lockVersion": "1.35.0",
       "kind": "package",
       "private": true,
       "browser": false,
