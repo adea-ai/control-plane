@@ -28,6 +28,53 @@ const taskId = 'task:one'
 const assistantEntryId = 'entry:one'
 const callId = 'call:one'
 
+/**
+ * Releases the owned run gate, then attempts the start/run settlement and the
+ * adapter close independently. Both failures are preserved; the caller removes
+ * resources afterwards and reports the result.
+ */
+async function settleAdapter({ adapter, releaseRun, startPromise }) {
+  releaseRun?.()
+  let failure
+  try {
+    await startPromise
+  } catch (error) {
+    failure = error
+  }
+  try {
+    await adapter?.close()
+  } catch (error) {
+    failure =
+      failure === undefined
+        ? error
+        : new AggregateError([failure, error], 'management adapter seam cleanup failed')
+  }
+  return failure
+}
+
+test('cleanup attempts adapter close even when the start promise rejects and preserves both failures', async () => {
+  const startError = new Error('start failed')
+  const closeError = new Error('close failed')
+  let released = false
+  let closed = false
+  const failure = await settleAdapter({
+    adapter: {
+      async close() {
+        closed = true
+        throw closeError
+      },
+    },
+    releaseRun: () => {
+      released = true
+    },
+    startPromise: Promise.reject(startError),
+  })
+  expect(released).toBe(true)
+  expect(closed).toBe(true)
+  expect(failure).toBeInstanceOf(AggregateError)
+  expect(failure.errors).toEqual([startError, closeError])
+})
+
 test('the adapter management port reuses one retained decision without resend', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-management-adapter-'))
   const database = new DatabaseSync(join(directory, 'calls.sqlite'))
@@ -202,20 +249,13 @@ test('the adapter management port reuses one retained decision without resend', 
   } catch (error) {
     failure = error
   }
-  // Release the owned run gate, await the owned start/run settlement and the
-  // actual adapter close, then remove resources. Any body or cleanup failure
-  // is reported after resources are released; nothing is swallowed.
-  releaseRun?.()
-  try {
-    await startPromise
-    await adapter?.close()
-  } catch (error) {
-    failure =
-      failure === undefined
-        ? error
-        : new AggregateError([failure, error], 'management adapter seam cleanup failed')
-  }
+  // Release the owned run gate, then attempt the start settlement and the
+  // adapter close independently; both failures are preserved.
+  const cleanupFailure = await settleAdapter({ adapter, releaseRun, startPromise })
   database.close()
   rmSync(directory, { force: true, recursive: true })
-  if (failure) throw failure
+  const failures = [failure, cleanupFailure].filter(Boolean)
+  if (failures.length > 1)
+    throw new AggregateError(failures, 'management adapter seam failed and cleanup failed')
+  if (failures.length === 1) throw failures[0]
 })

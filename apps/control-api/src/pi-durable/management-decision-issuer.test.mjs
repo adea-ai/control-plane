@@ -191,6 +191,21 @@ test('rejects a signature that is not 64 bytes', async () => {
   await expect(instance.issue(request)).rejects.toThrow('PI_MANAGEMENT_DECISION_INVALID')
 })
 
+test('bounds depth and cycles before materializing recursive structures', () => {
+  // The depth budget counts values, not just containers: the leaf string sits
+  // one level below its object, so 31 wrappers reach depth 32 (accepted) and
+  // 32 wrappers reach depth 33 (rejected).
+  let accepted = { leaf: 'x' }
+  for (let i = 0; i < 31; i += 1) accepted = { next: accepted }
+  expect(managementCanonicalRequestDigest(accepted)).not.toBeNull()
+  let tooDeep = { leaf: 'x' }
+  for (let i = 0; i < 32; i += 1) tooDeep = { next: tooDeep }
+  expect(managementCanonicalRequestDigest(tooDeep)).toBeNull()
+  const cyclic = { name: 'loop' }
+  cyclic.self = cyclic
+  expect(managementCanonicalRequestDigest(cyclic)).toBeNull()
+})
+
 test('bounds the canonical request size', async () => {
   const { instance } = fixture()
   const oversized = { value: 'x'.repeat(200_000) }

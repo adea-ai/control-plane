@@ -271,6 +271,23 @@ test('maps a typed Adea refusal without masking the reason', async () => {
   })
 })
 
+test('bounds oversize, deep and cyclic requests before any clone or callback', async () => {
+  const run = harness()
+  const oversizeInput = { blob: 'x'.repeat(200_000) }
+  let deepInput = { leaf: 'x' }
+  for (let i = 0; i < 40; i += 1) deepInput = { next: deepInput }
+  const cyclicInput = { name: 'Renamed' }
+  cyclicInput.self = cyclicInput
+  for (const input of [oversizeInput, deepInput, cyclicInput]) {
+    await expect(run.caller.execute({ ...baseRequest, input })).rejects.toThrow(
+      'PI_MANAGEMENT_CALL_INVALID'
+    )
+  }
+  expect(run.boundaries).toEqual([])
+  expect(run.counts).toEqual({ calls: 0, issued: 0 })
+  expect(run.store.records.size).toBe(0)
+})
+
 test('rejects a malformed retained request before any store or callback', async () => {
   const run = harness()
   await expect(run.caller.execute({ operation: 'project.update' })).rejects.toThrow(

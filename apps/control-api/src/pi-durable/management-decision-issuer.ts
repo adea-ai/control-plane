@@ -155,29 +155,61 @@ const requestSchema = z.strictObject({
  * any value that cannot be hashed without a guess.
  */
 export function managementCanonicalRequest(input: unknown): string | null {
-  return canonicalValue(input, 0) ?? null
+  try {
+    return canonicalValue(input, 0, { bytes: 0 }) ?? null
+  } catch {
+    // Hostile getters, cycles and any other traversal failure fail closed.
+    return null
+  }
 }
 
-function canonicalValue(value: unknown, depth: number): string | undefined {
-  if (depth > 32) return undefined
-  if (value === null) return 'null'
-  if (typeof value === 'string') return JSON.stringify(value)
-  if (typeof value === 'boolean') return value ? 'true' : 'false'
-  if (typeof value === 'number') return Number.isFinite(value) ? JSON.stringify(value) : undefined
+/**
+ * Materializes at most `maximumCanonicalRequestBytes` while preserving the
+ * exact canonical output for accepted inputs: the depth and byte budgets are
+ * charged before a value is appended, so no oversized or too-deep structure is
+ * ever fully materialized.
+ */
+function canonicalValue(
+  value: unknown,
+  depth: number,
+  budget: { bytes: number }
+): string | undefined {
+  if (depth > 32 || budget.bytes > maximumCanonicalRequestBytes) return undefined
+  if (value === null) return charge(budget, 'null')
+  if (typeof value === 'string') return charge(budget, JSON.stringify(value))
+  if (typeof value === 'boolean') return charge(budget, value ? 'true' : 'false')
+  if (typeof value === 'number')
+    return Number.isFinite(value) ? charge(budget, JSON.stringify(value)) : undefined
   if (Array.isArray(value)) {
-    const items = value.map((item) => canonicalValue(item, depth + 1))
-    return items.some((item) => item === undefined) ? undefined : `[${items.join(',')}]`
+    if (!charge(budget, '[')) return undefined
+    const items: string[] = []
+    for (const item of value) {
+      if (items.length > 0 && !charge(budget, ',')) return undefined
+      const encoded = canonicalValue(item, depth + 1, budget)
+      if (encoded === undefined) return undefined
+      items.push(encoded)
+    }
+    return charge(budget, ']') ? `[${items.join(',')}]` : undefined
   }
   if (isPlainRecord(value)) {
+    if (!charge(budget, '{')) return undefined
     const entries: string[] = []
     for (const key of Object.keys(value).toSorted()) {
-      const encoded = canonicalValue(value[key], depth + 1)
+      if (entries.length > 0 && !charge(budget, ',')) return undefined
+      const encodedKey = JSON.stringify(key)
+      if (!charge(budget, `${encodedKey}:`)) return undefined
+      const encoded = canonicalValue(value[key], depth + 1, budget)
       if (encoded === undefined) return undefined
-      entries.push(`${JSON.stringify(key)}:${encoded}`)
+      entries.push(`${encodedKey}:${encoded}`)
     }
-    return `{${entries.join(',')}}`
+    return charge(budget, '}') ? `{${entries.join(',')}}` : undefined
   }
   return undefined
+}
+
+function charge(budget: { bytes: number }, piece: string): string | undefined {
+  budget.bytes += Buffer.byteLength(piece)
+  return budget.bytes > maximumCanonicalRequestBytes ? undefined : piece
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
