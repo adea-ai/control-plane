@@ -145,9 +145,9 @@ async function fixture(run) {
     })
     const gateway = new ToolGateway(registry)
     gateway.registerExecutor('connector', 'records-v1', {
-      async execute() {
+      async execute(_request, _version, signal) {
         state.effects++
-        await changes.afterEffect?.()
+        await changes.afterEffect?.(signal)
         return { output: { saved: true } }
       },
     })
@@ -259,6 +259,217 @@ async function delayedGuardAbortRegression(mode) {
 }
 
 describe('persistent Pi governed effect gate', () => {
+  test('caller cancellation after durable effect admission does not cancel the admitted child command', async () => {
+    await fixture(async ({ open, close, state }) => {
+      state.approved = true
+      let enterEffect, finishEffect, finishExecution
+      const executing = new Promise((resolve) => {
+        enterEffect = resolve
+      })
+      const paused = new Promise((resolve) => {
+        finishEffect = resolve
+      })
+      const executed = new Promise((resolve) => {
+        finishExecution = resolve
+      })
+      const controller = new AbortController()
+      let executorSignal
+      let admittedRecord
+      const key = JSON.stringify([request().workspaceId, request().idempotencyKey])
+      const { gate, store } = await open({
+        afterEffect: async (signal) => {
+          executorSignal = signal
+          admittedRecord = await store.get(key)
+          enterEffect()
+          await paused
+          finishExecution()
+        },
+      })
+      const pending = gate.execute(request(), { signal: controller.signal })
+      await executing
+      controller.abort(new Error('parent-cancelled'))
+      const admittedSignalAborted = executorSignal.aborted
+      finishEffect()
+      const outcome = await pending
+      await executed
+      expect(admittedRecord.effectAdmittedAt).toBeString()
+      expect(admittedSignalAborted).toBe(false)
+      expect(outcome.state).toBe('reconciliation_required')
+      expect(outcome.call.errorCode).toBe('ABORTED')
+      expect(executorSignal.aborted).toBe(false)
+      expect(state.effects).toBe(1)
+      const receipt = await store.get(key)
+      expect(receipt).toMatchObject({
+        state: 'settled',
+        outcome: { state: 'reconciliation_required', call: { errorCode: 'ABORTED' } },
+      })
+      expect(await gate.execute(request())).toEqual(receipt.outcome)
+      expect(state.effects).toBe(1)
+      close()
+    })
+  })
+
+  test('caller cancellation during the awaited admission read prevents executor invocation', async () => {
+    await fixture(async ({ open, close, state }) => {
+      state.approved = true
+      let enteredRead, releaseRead
+      const admissionRead = new Promise((resolve) => {
+        enteredRead = resolve
+      })
+      const readPaused = new Promise((resolve) => {
+        releaseRead = resolve
+      })
+      const controller = new AbortController()
+      let reads = 0
+      const { gate, store } = await open({
+        store: (baseStore) => ({
+          async get(key) {
+            reads++
+            if (reads === 2) {
+              enteredRead()
+              await readPaused
+            }
+            return baseStore.get(key)
+          },
+          insert: baseStore.insert.bind(baseStore),
+          compareAndSet: baseStore.compareAndSet.bind(baseStore),
+        }),
+      })
+      try {
+        const pending = gate.execute(request(), { signal: controller.signal })
+        await admissionRead
+        controller.abort(new Error('caller-cancelled-before-admission'))
+        const outcome = await pending
+        expect(outcome).toMatchObject({
+          state: 'reconciliation_required',
+          call: { errorCode: 'ABORTED' },
+        })
+        const key = JSON.stringify([request().workspaceId, request().idempotencyKey])
+        const receipt = await store.get(key)
+        expect(receipt).toMatchObject({ state: 'settled' })
+        expect(receipt.effectAdmittedAt).toBeUndefined()
+        expect(state.effects).toBe(0)
+
+        releaseRead()
+        await nextTurn()
+        expect(await store.get(key)).toEqual(receipt)
+        expect(state.effects).toBe(0)
+      } finally {
+        releaseRead()
+        close()
+      }
+    })
+  })
+
+  test('caller abort after admission preserves the child deadline until gateway timeout', async () => {
+    await fixture(async ({ open, close, state }) => {
+      state.approved = true
+      let enteredEffect, releaseEffect
+      const effectEntered = new Promise((resolve) => {
+        enteredEffect = resolve
+      })
+      const releaseExecution = new Promise((resolve) => {
+        releaseEffect = resolve
+      })
+      let resolveTimeout
+      const timeoutObserved = new Promise((resolve) => {
+        resolveTimeout = resolve
+      })
+      const controller = new AbortController()
+      let executorSignal
+      const { gate } = await open({
+        timeoutMs: 250,
+        afterEffect: async (signal) => {
+          executorSignal = signal
+          enteredEffect()
+          const timeout = await Promise.race([
+            new Promise((resolve) => {
+              signal.addEventListener('abort', () => resolve(signal.reason), { once: true })
+            }),
+            releaseExecution,
+          ])
+          if (timeout) resolveTimeout(timeout)
+        },
+      })
+      try {
+        const pending = gate.execute(request(), { signal: controller.signal })
+        await effectEntered
+        controller.abort(new Error('parent-cancelled-after-admission'))
+        const outcome = await pending
+        expect(outcome).toMatchObject({
+          state: 'reconciliation_required',
+          call: { errorCode: 'ABORTED' },
+        })
+        expect(executorSignal.aborted).toBe(false)
+
+        let watchdog
+        const reason = await Promise.race([
+          timeoutObserved,
+          new Promise((_, reject) => {
+            watchdog = setTimeout(() => reject(new Error('admitted child timeout was lost')), 2_000)
+          }),
+        ])
+        clearTimeout(watchdog)
+        expect(reason).toMatchObject({ code: 'TIMEOUT' })
+        expect(executorSignal.reason).toMatchObject({ code: 'TIMEOUT' })
+        expect(state.effects).toBe(1)
+        expect(await gate.execute(request())).toEqual(outcome)
+        expect(state.effects).toBe(1)
+        close()
+      } finally {
+        releaseEffect()
+        close()
+      }
+    })
+  })
+
+  test('gateway timeout still aborts an executor after durable effect admission', async () => {
+    await fixture(async ({ open, close, state }) => {
+      state.approved = true
+      let enterEffect, finishEffect
+      const executing = new Promise((resolve) => {
+        enterEffect = resolve
+      })
+      const paused = new Promise((resolve) => {
+        finishEffect = resolve
+      })
+      let executorSignal
+      const { gate } = await open({
+        timeoutMs: 250,
+        afterEffect: async (signal) => {
+          executorSignal = signal
+          enterEffect()
+          await paused
+        },
+      })
+      const pending = gate.execute(request())
+      await executing
+      const timedOut = new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('gateway timeout was not forwarded')),
+          2_000
+        )
+        executorSignal.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer)
+            resolve()
+          },
+          { once: true }
+        )
+      })
+      await timedOut
+      expect(executorSignal.aborted).toBe(true)
+      finishEffect()
+      const outcome = await pending
+      expect(outcome.state).toBe('reconciliation_required')
+      expect(state.effects).toBe(1)
+      expect(await gate.execute(request())).toEqual(outcome)
+      expect(state.effects).toBe(1)
+      close()
+    })
+  })
+
   test('caller abort during the delayed final guard cannot invoke a non-abort-aware executor', () =>
     delayedGuardAbortRegression('caller'))
 
@@ -288,13 +499,18 @@ describe('persistent Pi governed effect gate', () => {
         const first = await open(
           interrupted
             ? {
-                store: (store) => ({
-                  get: store.get.bind(store),
-                  insert: store.insert.bind(store),
-                  compareAndSet: async () => {
-                    throw new Error('credential-secret-never-persist')
-                  },
-                }),
+                store: (store) => {
+                  let compareAndSetCount = 0
+                  return {
+                    get: store.get.bind(store),
+                    insert: store.insert.bind(store),
+                    compareAndSet: async (expectedRevision, record) => {
+                      if (compareAndSetCount++ === 0)
+                        return store.compareAndSet(expectedRevision, record)
+                      throw new Error('credential-secret-never-persist')
+                    },
+                  }
+                },
               }
             : {}
         )
@@ -352,7 +568,7 @@ describe('persistent Pi governed effect gate', () => {
       const pending = first.gate.execute(request())
       await executing
       // Current audience/attempt authority is revoked after the effect guard, before receipt publication.
-      state.boundary = 'admission'
+      state.boundary = 'publication'
       resume()
       await expect(pending).rejects.toThrow('PI_EFFECT_AUTHORITY_REJECTED')
       expect(state.effects).toBe(1)
@@ -382,9 +598,13 @@ describe('persistent Pi governed effect gate', () => {
         store: (store) => ({
           get: store.get.bind(store),
           insert: store.insert.bind(store),
-          compareAndSet: async () => {
-            throw new Error('credential-secret-never-persist')
-          },
+          compareAndSet: (() => {
+            let compareAndSetCount = 0
+            return async (expectedRevision, record) => {
+              if (compareAndSetCount++ === 0) return store.compareAndSet(expectedRevision, record)
+              throw new Error('credential-secret-never-persist')
+            }
+          })(),
         }),
       })
       await expect(gate.execute(request())).rejects.toThrow('PI_EFFECT_STORE_CONFLICT')
@@ -487,6 +707,113 @@ describe('persistent Pi governed effect gate', () => {
         expect((await readFile(path)).toString()).not.toContain('credential-secret-never-persist')
       })
   })
+
+  test('authority revocation and approval or grant expiry during a parked store read or CAS deny before invocation', async () => {
+    for (const parkOn of ['get', 'compareAndSet'])
+      for (const stale of ['authority', 'approval-expiry', 'grant-expiry'])
+        await fixture(async ({ open, close, state }) => {
+          state.approved = true
+          let enteredStore
+          const storeEntered = new Promise((resolve) => {
+            enteredStore = resolve
+          })
+          let resumeStore
+          const parkedStore = new Promise((resolve) => {
+            resumeStore = resolve
+          })
+          let getCount = 0
+          let compareAndSetCount = 0
+          const { gate, store } = await open({
+            store: (baseStore) => ({
+              get: async (key) => {
+                const shouldPark = parkOn === 'get' && getCount++ === 1
+                if (shouldPark) {
+                  enteredStore()
+                  await parkedStore
+                }
+                return baseStore.get(key)
+              },
+              insert: baseStore.insert.bind(baseStore),
+              compareAndSet: async (expectedRevision, record) => {
+                const shouldPark = parkOn === 'compareAndSet' && compareAndSetCount++ === 0
+                if (shouldPark) {
+                  enteredStore()
+                  await parkedStore
+                }
+                return baseStore.compareAndSet(expectedRevision, record)
+              },
+            }),
+          })
+          const original = request()
+          const toolRequest =
+            stale === 'approval-expiry'
+              ? request({ grant: { ...original.grant, expiresAt: changedExpiry } })
+              : stale === 'grant-expiry'
+                ? request({ approval: { ...original.approval, expiresAt: changedExpiry } })
+                : original
+          const pending = gate.execute(toolRequest)
+          try {
+            await storeEntered
+            if (stale === 'authority') state.boundary = 'effect'
+            else state.clock = expiry
+            resumeStore()
+
+            const outcome = await pending
+            expect(outcome).toMatchObject({
+              state: 'denied',
+              reasonCode: 'PI_EFFECT_AUTHORITY_REJECTED',
+            })
+            expect(state.effects).toBe(0)
+            const key = JSON.stringify([toolRequest.workspaceId, toolRequest.idempotencyKey])
+            const retained = await store.get(key)
+            expect(retained).toMatchObject({
+              state: 'settled',
+              effectAdmittedAt: expect.any(String),
+              outcome: { state: 'denied', reasonCode: 'PI_EFFECT_AUTHORITY_REJECTED' },
+            })
+
+            close()
+            state.boundary = undefined
+            state.clock = at
+            const reopened = await open()
+            expect(await reopened.gate.execute(toolRequest)).toEqual(outcome)
+            expect(await reopened.store.get(key)).toEqual(retained)
+            expect(state.effects).toBe(0)
+            close()
+          } finally {
+            resumeStore()
+            await pending.catch(() => undefined)
+          }
+        })
+  })
+
+  test('publication authority is rechecked after the outcome is retained and replay never repeats the effect', () =>
+    fixture(async ({ open, close, state }) => {
+      state.approved = true
+      const { gate, store } = await open({
+        assertAuthority: async (boundary) => {
+          if (boundary !== 'publication') return
+          const key = JSON.stringify([request().workspaceId, request().idempotencyKey])
+          const retained = await store.get(key)
+          expect(retained?.state).toBe('settled')
+          expect(retained?.outcome.state).toBe('succeeded')
+          throw new Error('authority-revoked-before-publication')
+        },
+      })
+      await expect(gate.execute(request())).rejects.toThrow('PI_EFFECT_AUTHORITY_REJECTED')
+      expect(state.effects).toBe(1)
+      const key = JSON.stringify([request().workspaceId, request().idempotencyKey])
+      const receipt = await store.get(key)
+      expect(receipt).toMatchObject({ state: 'settled', outcome: { state: 'succeeded' } })
+      close()
+
+      state.boundary = undefined
+      const restored = await open()
+      expect(await restored.gate.execute(request())).toEqual(receipt.outcome)
+      expect(state.effects).toBe(1)
+      expect(await restored.store.get(key)).toEqual(receipt)
+      close()
+    }))
 
   test('revocation between approval and execution denies the authorized tool call', () =>
     fixture(async ({ open, state }) => {

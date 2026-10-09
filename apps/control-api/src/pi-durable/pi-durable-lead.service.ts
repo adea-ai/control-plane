@@ -8,6 +8,7 @@ import {
   type ServicePrincipal,
 } from '@control-plane/contracts'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
+import type { DelegationService } from '@control-plane/orchestration'
 import { PiLeadPreparationError, type SqlitePiLeadPreparations } from './lead-preparation.js'
 import {
   RuntimeExecutionHandleSchema,
@@ -195,6 +196,8 @@ export interface DurablePiDurableLeadServiceOptions {
   readonly adapter: Pick<RuntimeAdapter, 'start' | 'status' | 'progress' | 'cancel'>
   readonly now?: () => string
   readonly preparations?: SqlitePiLeadPreparations
+  /** Canonical cascade-only child stop. The supplied service must use the admitted parent stores. */
+  readonly delegationService?: Pick<DelegationService, 'cancelChildren'>
   /** Metadata-only journal read. Must never start, reconcile or invoke a provider. */
   readonly findRuntimeHandle?: (
     request: RuntimeStartRequest
@@ -519,6 +522,23 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       })
     )
     verifyRuntimeHandle(receipt, status.handle)
+    // Cancellation can cross a revocation await. Do not stop governed children
+    // until the same original actor/audience still authorizes the parent stop.
+    await this.options.authority.assertCurrent(admission, principal, 'cancel')
+    if (this.options.delegationService) {
+      try {
+        // Adapter.cancel retains its intent before returning. Bind the cascade to the
+        // canonical parent admission, never to an ID from the cancellation payload.
+        await this.options.delegationService.cancelChildren({
+          parentExecutionId: admission.admittedAttempt.executionId,
+          cancelledAt: request.issuedAt,
+        })
+      } catch {
+        // The parent stop remains durable. An exact command replay retries the
+        // canonical idempotent child stop after a lost acknowledgement or crash.
+        fail('PI_LEAD_UNAVAILABLE')
+      }
+    }
     await this.options.authority.assertCurrent(admission, principal, 'cancel')
     return PiDurableLeadCancelResponseSchema.parse(
       success(request, { ...publicReceipt(receipt), state: status.state, status })
