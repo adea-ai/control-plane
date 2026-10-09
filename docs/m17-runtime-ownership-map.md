@@ -227,9 +227,9 @@ with a future live metered profile capture.
 
 Root captured read-only Railway metrics on **2026-10-09 03:36 UTC (2026-10-08 23:36 AST)** for
 production as observed then: one control-api replica, no production worker/Restate, no
-volumes/buckets. The requested window was 168 hours at 60-second resolution and returned **10,081
-samples**; the exact returned endpoints are unavailable, and the window ends at capture time (the
-means describe that window only). Observed means: CPU **0.0003852318057 vCPU**, RAM
+volumes/buckets. The requested trailing window was 168 hours at 60-second resolution and returned
+**10,081 samples** — requested trailing window; exact returned endpoints unavailable. The means
+describe that requested trailing window only. Observed means: CPU **0.0003852318057 vCPU**, RAM
 **0.164811181807 GB**. At the official rates — CPU $0.000463/vCPU-minute, RAM $0.000231/GB-minute
 ([pricing](https://docs.railway.com/pricing/plans),
 [right-size](https://docs.railway.com/guides/right-size-cpu-memory),
