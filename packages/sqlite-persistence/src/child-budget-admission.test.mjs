@@ -480,3 +480,184 @@ test('child budget exhaustion rolls back the child execution and delegation in t
     await f.close()
   }
 })
+
+const retryAttemptId = 'att_01EABCDEF0123456789ABCDEFG'
+
+/** Canonical retry shape: a failed child returns to `requested` with retryCount+1. */
+async function simulateRetry(allocator, delegationId) {
+  const stored = await allocator.get(delegationId)
+  const retried = {
+    ...stored,
+    state: 'requested',
+    retryCount: stored.retryCount + 1,
+    revision: stored.revision + 1,
+    updatedAt: '2026-10-09T12:00:05.000Z',
+  }
+  expect(await allocator.compareAndSet(stored.revision, retried)).toBe(true)
+  return retried
+}
+
+test('a retried child cannot mint a second allocation, budget, or parent reservation', async () => {
+  const f = await fixture({ maximumTotal: 2, maximumParallel: 2 })
+  try {
+    const admitted = await f.childAdmission()
+    await admitted.allocator.allocate({
+      request: admitted.request,
+      receipt: admitted.receipt,
+      execution: admitted.childExecution,
+      attempt: admitted.childAttempt,
+      delegation: admitted.delegation,
+      assertCurrent: async () => undefined,
+    })
+    const childBudgetBefore = await admitted.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(admitted.childIds.childExecutionId)
+    )
+    const parentBefore = await admitted.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(ids.parentExecutionId)
+    )
+
+    const retried = await simulateRetry(admitted.allocator, admitted.childIds.delegationId)
+
+    // Re-admitting the SAME identity is an identity conflict, never a second
+    // allocation: no new execution, attempt, delegation revision, child
+    // budget, or parent reservation can appear on the retry path.
+    expect(
+      await admitted.allocator.allocate({
+        request: admitted.request,
+        receipt: admitted.receipt,
+        execution: admitted.childExecution,
+        attempt: admitted.childAttempt,
+        delegation: admitted.delegation,
+        assertCurrent: async () => undefined,
+      })
+    ).toBe(false)
+    const afterRecord = await admitted.allocator.get(admitted.childIds.delegationId)
+    expect(afterRecord.revision).toBe(retried.revision)
+    expect(afterRecord.retryCount).toBe(1)
+    expect(
+      await admitted.executionRepository.getAttempt(admitted.request.childAttemptId)
+    ).toBeDefined()
+    const childBudgetAfter = await admitted.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(admitted.childIds.childExecutionId)
+    )
+    expect(childBudgetAfter).toStrictEqual(childBudgetBefore)
+    const parentAfter = await admitted.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(ids.parentExecutionId)
+    )
+    expect(parentAfter).toStrictEqual(parentBefore)
+    expect(parentAfter.reservations).toHaveLength(1)
+  } finally {
+    await f.close()
+  }
+})
+
+test('retry keeps the identical sibling cap and budget ceiling for the next admission', async () => {
+  const f = await fixture({ maximumTotal: 1, maximumParallel: 2 })
+  try {
+    const admitted = await f.childAdmission()
+    await admitted.allocator.allocate({
+      request: admitted.request,
+      receipt: admitted.receipt,
+      execution: admitted.childExecution,
+      attempt: admitted.childAttempt,
+      delegation: admitted.delegation,
+      assertCurrent: async () => undefined,
+    })
+    await simulateRetry(admitted.allocator, admitted.childIds.delegationId)
+
+    // The same total-child limit applies during the retry state: a NEW sibling
+    // is denied with the identical code, and the retried child does not free
+    // or double-count its slot.
+    const denied = await f.childAdmission()
+    await expect(
+      denied.allocator.allocate({
+        request: denied.request,
+        receipt: denied.receipt,
+        execution: denied.childExecution,
+        attempt: denied.childAttempt,
+        delegation: denied.delegation,
+        assertCurrent: async () => undefined,
+      })
+    ).rejects.toMatchObject({ code: 'DELEGATION_LIMIT_EXCEEDED' })
+    expect(await denied.allocator.get(denied.childIds.delegationId)).toBeUndefined()
+
+    // The same child-budget ceiling binds the retry attempt as it binds the
+    // first dispatch: the first reservation may take the full ceiling, and one
+    // more unit for the retry attempt is exhausted — not silently granted.
+    const lifecycle = new ExecutionLifecycleService(admitted.executionRepository)
+    const childBudget = await admitted.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(admitted.childIds.childExecutionId)
+    )
+    const ledger = new DurableUsageLedger({ store: admitted.usageStore, now: () => acceptedAt })
+    // First dispatch reserves the full child ceiling while it is the latest
+    // canonical attempt.
+    await ledger.reserve({
+      workspaceId: ids.workspaceId,
+      executionId: admitted.childIds.childExecutionId,
+      attemptId: admitted.request.childAttemptId,
+      reservationKey: `runtime-attempt:${admitted.request.childAttemptId}`,
+      maximumMicrounits: childBudget.maximumMicrounits,
+      maximumTokens: childBudget.maximumTokens,
+      source: { sourceId: 'first-dispatch', idempotencyKey: 'first-dispatch-reserve' },
+    })
+    const childExecution = await admitted.executionRepository.getExecution(
+      admitted.childIds.childExecutionId
+    )
+    // Canonical retry order: the new attempt cannot be created while the
+    // prior attempt still holds its runtime-attempt reservation — the retry
+    // waits for settlement, it never bypasses it.
+    await expect(
+      lifecycle.createAttempt({
+        executionId: admitted.childIds.childExecutionId,
+        attemptId: retryAttemptId,
+        expectedExecutionVersion: childExecution.version,
+        queuedAt: '2026-10-09T12:00:05.000Z',
+      })
+    ).rejects.toThrow('SETTLEMENT_INCOMPLETE')
+    await ledger.settle({
+      workspaceId: ids.workspaceId,
+      executionId: admitted.childIds.childExecutionId,
+      reservationKey: `runtime-attempt:${admitted.request.childAttemptId}`,
+      source: { sourceId: 'first-dispatch-settle', idempotencyKey: 'first-dispatch-settle' },
+    })
+    const childAfterSettle = await admitted.executionRepository.getExecution(
+      admitted.childIds.childExecutionId
+    )
+    await lifecycle.createAttempt({
+      executionId: admitted.childIds.childExecutionId,
+      attemptId: retryAttemptId,
+      expectedExecutionVersion: childAfterSettle.version,
+      queuedAt: '2026-10-09T12:00:05.000Z',
+    })
+    // The retry attempt receives the identical ceiling, and one reservation
+    // cannot exceed it — no fresh or doubled budget on the retry path.
+    await ledger.reserve({
+      workspaceId: ids.workspaceId,
+      executionId: admitted.childIds.childExecutionId,
+      attemptId: retryAttemptId,
+      reservationKey: `runtime-attempt:${retryAttemptId}`,
+      maximumMicrounits: childBudget.maximumMicrounits,
+      maximumTokens: childBudget.maximumTokens,
+      source: { sourceId: 'retry-dispatch', idempotencyKey: 'retry-dispatch-reserve' },
+    })
+    await expect(
+      ledger.reserve({
+        workspaceId: ids.workspaceId,
+        executionId: admitted.childIds.childExecutionId,
+        attemptId: retryAttemptId,
+        reservationKey: `runtime-attempt:${retryAttemptId}:extra`,
+        maximumMicrounits: 1,
+        maximumTokens: 0,
+        source: { sourceId: 'retry-dispatch-extra', idempotencyKey: 'retry-dispatch-extra' },
+      })
+    ).rejects.toThrow('BUDGET_EXHAUSTED')
+
+    // The retry never doubles the parent-side reservation either.
+    const parentBudget = await admitted.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(ids.parentExecutionId)
+    )
+    expect(parentBudget.reservations).toHaveLength(1)
+  } finally {
+    await f.close()
+  }
+})
