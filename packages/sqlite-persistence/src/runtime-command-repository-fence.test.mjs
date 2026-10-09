@@ -150,19 +150,47 @@ describe('SqliteRuntimeCommandRepository', () => {
     await withRepository(async (provider) => {
       const scopes = []
       let observedInTransaction
+      let announce
+      const reached = new Promise((resolve) => {
+        announce = resolve
+      })
+      let release
+      const barrier = new Promise((resolve) => {
+        release = resolve
+      })
       const repository = new SqliteRuntimeCommandRepository(
         provider,
         async (transaction, fence, scope) => {
           scopes.push({ fence, scope })
-          // The verifier runs on the SAME transaction/locking authority as the
-          // fenced write: it can read the fenced record in-transaction.
+          // The verifier reads through the SAME transaction handle as the CAS
+          // write, and while it is parked no other writer on this provider can
+          // interleave (single-writer serialization = the ordering authority).
           observedInTransaction = await transaction.get('runtime-commands', recordIdFor(COMMAND_A))
+          announce()
+          await barrier
         }
       )
       await repository.create(queuedRecord(COMMAND_A))
-      expect(
-        await repository.compareAndSet(1, acknowledgedFrom(queuedRecord(COMMAND_A)), FENCE)
-      ).toBe(true)
+      const pending = repository.compareAndSet(1, acknowledgedFrom(queuedRecord(COMMAND_A)), FENCE)
+      await reached
+      // Narrow revocation/order proof: a concurrent writer through the SAME
+      // provider authority queues behind the parked fenced transaction and
+      // completes only after it commits.
+      let concurrentSettled = false
+      const concurrent = repository.create(queuedRecord(COMMAND_B)).then((result) => {
+        concurrentSettled = true
+        return result
+      })
+      const raced = await Promise.race([
+        concurrent.then(() => 'settled'),
+        new Promise((resolve) => setTimeout(() => resolve('parked'), 50)),
+      ])
+      expect(raced).toBe('parked')
+      expect(concurrentSettled).toBe(false)
+      release()
+      expect(await pending).toBe(true)
+      expect((await concurrent).outcome).toBe('created')
+      expect(await repository.get(COMMAND_B)).toBeDefined()
       expect(await repository.get(COMMAND_A)).toMatchObject({ status: 'acknowledged', version: 2 })
       expect(scopes).toEqual([{ fence: FENCE, scope: { nodeId: NODE, workspaceId: WORKSPACE } }])
       expect(RuntimeCommandRecordSchema.parse(observedInTransaction.value)).toMatchObject({
