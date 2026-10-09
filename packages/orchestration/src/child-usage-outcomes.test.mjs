@@ -328,6 +328,116 @@ describe('correlated child usage outcomes', () => {
     expect(ledger.listByDelegation(ids.delegationIdB)).toStrictEqual([])
   })
 
+  test('a redelivered old report can never overwrite a newer one after dedup eviction', () => {
+    const ledger = new ChildUsageLedger({ maximumTrackedReportIds: 16 })
+    const identity = identityA()
+    // Fill the bounded dedup horizon so the first report's id is evicted.
+    for (let index = 1; index <= 17; index += 1) {
+      const receipt = ledger.recordReportedUsage(identity, reportedUsage(index * 1_000), {
+        reportId: `usage:report:${index}`,
+      })
+      expect(receipt.outcome).toBe('recorded')
+    }
+    // Redelivery of the ORIGINAL report after its id was evicted: its content
+    // was already superseded, so it answers stale_report and the newest
+    // report stays retained — an old report can never overwrite a newer one.
+    const stale = ledger.recordReportedUsage(identity, reportedUsage(1_000), {
+      reportId: 'usage:report:1',
+    })
+    expect(stale.outcome).toBe('stale_report')
+    const current = ledger.status(identity)
+    expect(current.reported.accounting.chargedMicrounits).toBe(17_000)
+    expect(current.usageReportCount).toBe(17)
+    // A redelivery identical to the retained report is still a duplicate and
+    // must not fold or inflate the retained-report count.
+    const duplicate = ledger.recordReportedUsage(identity, reportedUsage(17_000), {
+      reportId: 'usage:report:17-redelivered',
+    })
+    expect(duplicate.outcome).toBe('duplicate_report')
+    expect(ledger.status(identity).usageReportCount).toBe(17)
+  })
+
+  test('a newer report supersedes the settlement recorded against its predecessor', () => {
+    const ledger = new ChildUsageLedger()
+    const identity = identityA()
+    ledger.recordReservation(identity, reservationFor(identity))
+    ledger.recordReportedUsage(identity, reportedUsage(42_000), { reportId: 'r:1' })
+    ledger.reconcile(identity, { reconciledAt: at(1_000) })
+    const settled = ledger.settle(identity, {
+      currency: 'USD',
+      settledMicrounits: 42_000,
+      settledAt: at(2_000),
+      settlementRef: 'settle:1',
+    })
+    expect(settled.costState).toBe('settled')
+
+    const newer = ledger.recordReportedUsage(identity, reportedUsage(43_000), {
+      reportId: 'r:2',
+    })
+    expect(newer.outcome).toBe('recorded')
+    // Both stages belonged to the superseded report: neither its flag nor its
+    // amount may survive into the outcome for the newer report.
+    expect(newer.settled).toBeUndefined()
+    expect(newer.reconciled).toBeUndefined()
+    expect(newer.costState).toBe('reported')
+    expect(newer.reported.accounting.chargedMicrounits).toBe(43_000)
+  })
+
+  test('a new reservation supersedes the reconciliation made against the old bound', () => {
+    const ledger = new ChildUsageLedger()
+    const identity = identityA()
+    ledger.recordReservation(identity, reservationFor(identity))
+    ledger.recordReportedUsage(identity, reportedUsage(90_000), { reportId: 'r:1' })
+    const reconciled = ledger.reconcile(identity, { reconciledAt: at(1_000) })
+    expect(reconciled.reconciled.result).toBe('within_reservation')
+
+    const renewed = ledger.recordReservation(
+      identity,
+      reservationFor(identity, { maximumMicrounits: 80_000 })
+    )
+    // The frozen comparison was made against the previous bound and must not
+    // survive into an outcome for the new reservation.
+    expect(renewed.reconciled).toBeUndefined()
+    expect(renewed.reserved.maximumMicrounits).toBe(80_000)
+    expect(renewed.reported.accounting.chargedMicrounits).toBe(90_000)
+    expect(renewed.costState).toBe('reported')
+    // Reconciling again compares against the NEW bound.
+    const again = ledger.reconcile(identity, { reconciledAt: at(2_000) })
+    expect(again.reconciled).toMatchObject({
+      result: 'exceeded_reservation',
+      reservedMaximumMicrounits: 80_000,
+    })
+  })
+
+  test('status verifies parent and child execution identity, never delegation/attempt alone', () => {
+    const ledger = new ChildUsageLedger()
+    const identity = identityA()
+    ledger.recordEstimate(identity, {
+      currency: 'USD',
+      maximumMicrounits: 5_000,
+      source: 'plan-compiler:v1',
+    })
+    expect(() => ledger.status({ ...identity, parentExecutionId: ids.foreignExecutionId })).toThrow(
+      ChildUsageLedgerError
+    )
+    expect(() => ledger.status({ ...identity, childExecutionId: ids.childExecutionIdB })).toThrow(
+      ChildUsageLedgerError
+    )
+    try {
+      ledger.status({ ...identity, parentExecutionId: ids.foreignExecutionId })
+      expect.unreachable()
+    } catch (error) {
+      expect(error).toBeInstanceOf(ChildUsageLedgerError)
+      expect(error.code).toBe('IDENTITY_CONFLICT')
+    }
+    // The true identity still resolves, and a foreign read never created or
+    // retargeted a record.
+    expect(ledger.status(identity).costState).toBe('estimated')
+    const absent = { ...identity, childAttemptId: ids.attemptIdB }
+    expect(ledger.status(absent).costState).toBe('unknown')
+    expect(ledger.listByDelegation(ids.delegationIdA)).toHaveLength(1)
+  })
+
   test('validates ledger configuration', () => {
     expect(() => new ChildUsageLedger({ maximumTrackedReportIds: 8 })).toThrow(
       ChildUsageLedgerError

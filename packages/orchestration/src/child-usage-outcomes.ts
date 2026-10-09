@@ -139,6 +139,11 @@ export type ChildUsageReportReceipt =
   | ({ readonly outcome: 'recorded' } & ChildUsageOutcome)
   | { readonly outcome: 'duplicate_report'; readonly reportId: string }
   | { readonly outcome: 'conflicting_report'; readonly reportId: string }
+  /**
+   * The report's content was already superseded by a newer retained report:
+   * a redelivery from beyond the dedup horizon may never overwrite it.
+   */
+  | { readonly outcome: 'stale_report'; readonly reportId: string }
 
 export type ChildUsageLedgerErrorCode = 'CONFIGURATION' | 'IDENTITY_CONFLICT' | 'EVIDENCE_MISSING'
 
@@ -165,6 +170,12 @@ interface ChildUsageEntry {
   settled: ChildUsageSettlement | undefined
   /** Content fingerprint per report id; committed only for retained reports. */
   reportFingerprints: Map<string, string>
+  /**
+   * Fingerprints of reports this entry has already superseded, bounded like
+   * the report-id horizon. Without it, a redelivered OLD report whose id was
+   * evicted would look brand new and overwrite the newer retained report.
+   */
+  supersededFingerprints: Set<string>
 }
 
 function costStateOf(
@@ -183,9 +194,12 @@ function usageFingerprint(usage: ReportedUsage): string {
 
 export interface ChildUsageLedgerOptions {
   /**
-   * Bounded memory for report deduplication per attempt. Default 8192; the
-   * oldest fingerprint is evicted, mirroring the evidence buffer's duplicate
-   * tracking (a redelivery of an evicted report id re-folds as a new report).
+   * Bounded memory for report deduplication and superseded-content tracking
+   * per attempt. Default 8192; the oldest entries are evicted, mirroring the
+   * evidence buffer's duplicate tracking. Beyond that horizon a redelivered
+   * report id is re-folded by content: an identical redelivery still answers
+   * `duplicate_report`, and content already superseded by a newer report
+   * answers `stale_report` instead of overwriting it.
    */
   readonly maximumTrackedReportIds?: number
 }
@@ -223,7 +237,9 @@ export class ChildUsageLedger {
    * `RuntimeAttemptBudgetAuthority` produced by the delegation runtime
    * bridge's `reserveBudget` seam). A reservation binding a different
    * execution or attempt than the record's identity is a conflict, not a
-   * silent retarget.
+   * silent retarget. A new reservation supersedes any reconciliation: the
+   * frozen comparison was made against the previous reserved bound and must
+   * not be presented as if it covered this one.
    */
   recordReservation(identity: unknown, reservation: unknown): ChildUsageOutcome {
     const parsedIdentity = ChildUsageIdentitySchema.parse(identity)
@@ -239,6 +255,7 @@ export class ChildUsageLedger {
       )
     }
     entry.reserved = parsed
+    entry.reconciled = undefined
     return this.#outcome(entry)
   }
 
@@ -247,9 +264,15 @@ export class ChildUsageLedger {
    * `RuntimeUsage` contract). The latest report is retained as `reported`
    * with a retained-report count; a redelivered `reportId` is answered as a
    * duplicate without folding, and a reused `reportId` with different content
-   * conflicts instead of silently overwriting. Recording a new report after a
-   * reconciliation explicitly clears the reconciliation — it reconciled the
-   * previous report, and presenting it against a newer one would be stale.
+   * conflicts instead of silently overwriting. Beyond the bounded dedup
+   * horizon the report id alone cannot order reports, so content decides: a
+   * redelivery identical to the retained report is still a duplicate, and
+   * content this entry has already superseded answers `stale_report` — an old
+   * report can never overwrite a newer one. Recording a newer report
+   * explicitly clears the reconciliation AND the settlement recorded against
+   * its predecessor: both belonged to the superseded report, and presenting
+   * either against the newer one would be stale. The caller reconciles and
+   * settles the new report explicitly.
    */
   recordReportedUsage(
     identity: unknown,
@@ -267,11 +290,24 @@ export class ChildUsageLedger {
       }
       return { outcome: 'duplicate_report', reportId }
     }
+    if (entry.reported !== undefined) {
+      // The id left the dedup horizon (or never existed): content, not the
+      // id, orders the report against what is retained.
+      if (usageFingerprint(entry.reported) === fingerprint) {
+        return { outcome: 'duplicate_report', reportId }
+      }
+      if (entry.supersededFingerprints.has(fingerprint)) {
+        return { outcome: 'stale_report', reportId }
+      }
+    }
+    const previous = entry.reported
     entry.reported = parsed
     entry.usageReportCount = (entry.usageReportCount ?? 0) + 1
-    // A reconciliation belongs to the report it compared; a newer report
-    // supersedes it explicitly (the caller reconciles again for the new one).
+    // Reconciliation and settlement are evidence about the report they were
+    // recorded against; a newer report supersedes both explicitly.
     entry.reconciled = undefined
+    entry.settled = undefined
+    if (previous !== undefined) this.#trackSuperseded(entry, usageFingerprint(previous))
     this.#trackReportId(entry, reportId, fingerprint)
     return { outcome: 'recorded', ...this.#outcome(entry) }
   }
@@ -323,12 +359,24 @@ export class ChildUsageLedger {
   /**
    * The attempt's retained outcome. An attempt with no recorded evidence
    * surfaces as `costState: 'unknown'` — explicitly unknown, never a blank
-   * record or an inferred zero.
+   * record or an inferred zero. The caller must present the SAME parent and
+   * child executions the record is correlated to: delegation and attempt
+   * identity alone never unlock an outcome bound to different executions.
    */
   status(identity: unknown): ChildUsageOutcome {
     const parsed = ChildUsageIdentitySchema.parse(identity)
     const entry = this.#entries.get(this.#key(parsed))
-    return entry ? this.#outcome(entry) : { identity: parsed, costState: 'unknown' }
+    if (entry === undefined) return { identity: parsed, costState: 'unknown' }
+    if (
+      entry.identity.parentExecutionId !== parsed.parentExecutionId ||
+      entry.identity.childExecutionId !== parsed.childExecutionId
+    ) {
+      throw new ChildUsageLedgerError(
+        'IDENTITY_CONFLICT',
+        'Attempt identity already correlated to a different parent/child execution'
+      )
+    }
+    return this.#outcome(entry)
   }
 
   /** Every retained attempt for the delegation, sorted by attempt identity. */
@@ -377,6 +425,7 @@ export class ChildUsageLedger {
       reconciled: undefined,
       settled: undefined,
       reportFingerprints: new Map(),
+      supersededFingerprints: new Set(),
     }
     this.#entries.set(key, entry)
     return entry
@@ -388,6 +437,15 @@ export class ChildUsageLedger {
       const oldest = entry.reportFingerprints.keys().next()
       if (oldest.done) break
       entry.reportFingerprints.delete(oldest.value)
+    }
+  }
+
+  #trackSuperseded(entry: ChildUsageEntry, fingerprint: string): void {
+    entry.supersededFingerprints.add(fingerprint)
+    while (entry.supersededFingerprints.size > this.#maximumTrackedReportIds) {
+      const oldest = entry.supersededFingerprints.values().next()
+      if (oldest.done) break
+      entry.supersededFingerprints.delete(oldest.value)
     }
   }
 
