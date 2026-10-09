@@ -105,7 +105,13 @@ const inject = (
   application,
   payload = envelope,
   headers = { authorization: 'Bearer management-current-token' }
-) => application.inject({ method: 'POST', url: '/v1/pi-durable/management-current/assert', headers, payload })
+) =>
+  application.inject({
+    method: 'POST',
+    url: '/v1/pi-durable/management-current/assert',
+    headers,
+    payload,
+  })
 
 test('passes the exact canonical request and boundary through and asserts without a grant', async () => {
   const calls = []
