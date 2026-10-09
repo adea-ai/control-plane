@@ -568,7 +568,7 @@ describe('persistent Pi governed effect gate', () => {
       const pending = first.gate.execute(request())
       await executing
       // Current audience/attempt authority is revoked after the effect guard, before receipt publication.
-      state.boundary = 'admission'
+      state.boundary = 'publication'
       resume()
       await expect(pending).rejects.toThrow('PI_EFFECT_AUTHORITY_REJECTED')
       expect(state.effects).toBe(1)
@@ -707,6 +707,34 @@ describe('persistent Pi governed effect gate', () => {
         expect((await readFile(path)).toString()).not.toContain('credential-secret-never-persist')
       })
   })
+
+  test('publication authority is rechecked after the outcome is retained and replay never repeats the effect', () =>
+    fixture(async ({ open, close, state }) => {
+      state.approved = true
+      const { gate, store } = await open({
+        assertAuthority: async (boundary) => {
+          if (boundary !== 'publication') return
+          const key = JSON.stringify([request().workspaceId, request().idempotencyKey])
+          const retained = await store.get(key)
+          expect(retained?.state).toBe('settled')
+          expect(retained?.outcome.state).toBe('succeeded')
+          throw new Error('authority-revoked-before-publication')
+        },
+      })
+      await expect(gate.execute(request())).rejects.toThrow('PI_EFFECT_AUTHORITY_REJECTED')
+      expect(state.effects).toBe(1)
+      const key = JSON.stringify([request().workspaceId, request().idempotencyKey])
+      const receipt = await store.get(key)
+      expect(receipt).toMatchObject({ state: 'settled', outcome: { state: 'succeeded' } })
+      close()
+
+      state.boundary = undefined
+      const restored = await open()
+      expect(await restored.gate.execute(request())).toEqual(receipt.outcome)
+      expect(state.effects).toBe(1)
+      expect(await restored.store.get(key)).toEqual(receipt)
+      close()
+    }))
 
   test('revocation between approval and execution denies the authorized tool call', () =>
     fixture(async ({ open, state }) => {

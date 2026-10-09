@@ -98,7 +98,7 @@ export class PiDurableEffectGate {
       /** Resolves current canonical attempt, immutable plan and budget authority. */
       readonly assertAuthority: (
         request: DurableToolCallRequest,
-        boundary: 'admission' | 'approval' | 'effect'
+        boundary: 'admission' | 'approval' | 'effect' | 'publication'
       ) => Promise<void>
       readonly now?: () => string
     }
@@ -124,9 +124,12 @@ export class PiDurableEffectGate {
     ) {
       throw new PiDurableEffectGateError('PI_EFFECT_IDENTITY_CONFLICT')
     }
-    // Retained outcomes remain evidence, but publication requires current canonical authority.
+    // Retained outcomes remain evidence, but admission requires current canonical authority.
     await this.#assertAuthority(request, 'admission')
-    if (record?.state === 'settled' && record.outcome) return record.outcome
+    if (record?.state === 'settled' && record.outcome) {
+      await this.#assertAuthority(request, 'publication')
+      return record.outcome
+    }
     if (record?.state === 'invoking') return unknownOutcome(request)
     const invoking: DurableEffectGateRecord = {
       schemaVersion: 'pi-effect-gate/v1',
@@ -223,8 +226,8 @@ export class PiDurableEffectGate {
         authorityRejected = true
         throw new PiDurableEffectGateError('PI_EFFECT_AUTHORITY_REJECTED')
       }
-      // Abort remains effective through every authority/approval await and the first
-      // asynchronous storage read. The barrier's CAS below is the admission point.
+      // Observe abort on both sides of each awaited admission-store operation. The
+      // invocation-fence CAS remains durable if cancellation wins before executor start.
       signal.throwIfAborted()
       const current = await this.#store(() => this.options.store.get(key))
       signal.throwIfAborted()
@@ -281,13 +284,15 @@ export class PiDurableEffectGate {
       throw new PiDurableEffectGateError('PI_EFFECT_STORE_CONFLICT')
     // Keep the receipt even when authority changes while the effect awaits; publication
     // can be denied without losing evidence or admitting the effect again.
-    await this.#assertAuthority(request, 'admission')
+    // The effect may already have happened. Retain its outcome, then recheck current
+    // authority as a distinct publication boundary before exposing that outcome.
+    await this.#assertAuthority(request, 'publication')
     return outcome
   }
 
   async #assertAuthority(
     request: DurableToolCallRequest,
-    boundary: 'admission' | 'approval' | 'effect'
+    boundary: 'admission' | 'approval' | 'effect' | 'publication'
   ): Promise<void> {
     try {
       await this.options.assertAuthority(structuredClone(request), boundary)
