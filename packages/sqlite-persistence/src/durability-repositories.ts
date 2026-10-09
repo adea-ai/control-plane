@@ -14,6 +14,7 @@ import {
   type RetentionDeletionResult,
   type RetentionJournalSink,
   type RetentionHoldPolicy,
+  type CredentialRevocationFence,
   RetentionJournalOperationSchema,
   evaluateRetentionEligibility,
   type RetentionAssessment,
@@ -672,8 +673,58 @@ export class SqliteReconciliationCheckpointRepository implements ReconciliationC
   }
 }
 
+/** Mirrors the PG port's InventoryCredentialFenceInvalidError (same wire code). */
+export class SqliteRuntimeCommandCredentialFenceInvalidError extends Error {
+  readonly code = 'INVENTORY_CREDENTIAL_FENCE_INVALID' as const
+
+  constructor() {
+    super('INVENTORY_CREDENTIAL_FENCE_INVALID')
+    this.name = 'SqliteRuntimeCommandCredentialFenceInvalidError'
+  }
+}
+
+/** Mirrors the PG repository's trigger: inbound ACK/result transitions require the fence. */
+function requiresRuntimeCommandCredentialFence(
+  current: RuntimeCommandRecord,
+  next: RuntimeCommandRecord
+): boolean {
+  return (
+    next.status === 'acknowledged' ||
+    next.status === 'succeeded' ||
+    next.status === 'failed' ||
+    next.status === 'cancelled' ||
+    next.acknowledgementReference !== current.acknowledgementReference ||
+    next.resultRecordedAt !== current.resultRecordedAt ||
+    next.resultStatus !== current.resultStatus ||
+    next.resultReference !== current.resultReference
+  )
+}
+
+function validCredentialFenceShape(
+  fence: CredentialRevocationFence | undefined
+): fence is CredentialRevocationFence {
+  return (
+    typeof fence === 'object' &&
+    fence !== null &&
+    typeof fence.credentialId === 'string' &&
+    fence.credentialId.length > 0 &&
+    Number.isSafeInteger(fence.revocationVersion) &&
+    fence.revocationVersion >= 1 &&
+    Object.keys(fence).length === 2 &&
+    Object.hasOwn(fence, 'credentialId') &&
+    Object.hasOwn(fence, 'revocationVersion')
+  )
+}
+
 export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository {
-  constructor(readonly provider: PersistenceProvider) {}
+  constructor(
+    readonly provider: PersistenceProvider,
+    /** Host identity/revocation verification (the PG port locks through its SECURITY DEFINER function). */
+    private readonly validateCredentialFence?: (
+      fence: CredentialRevocationFence,
+      scope: { readonly nodeId: string; readonly workspaceId: string }
+    ) => Promise<void>
+  ) {}
 
   /**
    * Deletes settled runtime commands and their event receipts (#194). A command
@@ -837,7 +888,11 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
     })
   }
 
-  compareAndSet(expectedVersion: number, input: RuntimeCommandRecord): Promise<boolean> {
+  compareAndSet(
+    expectedVersion: number,
+    input: RuntimeCommandRecord,
+    credentialFence?: CredentialRevocationFence
+  ): Promise<boolean> {
     const command = RuntimeCommandRecordSchema.parse(input)
     return this.provider.transaction(async (transaction) => {
       const id = recordId(command.commandId)
@@ -849,6 +904,22 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
         !runtimeCommandRecordsShareIdentity(current, command)
       ) {
         return false
+      }
+      // Atomic credential-revocation fence, mirroring the PG port: inbound
+      // ACK/result transitions (or any explicitly fenced update) fail closed
+      // unless the fence is present, well-formed, and host-verified — all
+      // inside the same provider transaction.
+      if (
+        requiresRuntimeCommandCredentialFence(current, command) ||
+        credentialFence !== undefined
+      ) {
+        if (!validCredentialFenceShape(credentialFence)) {
+          throw new SqliteRuntimeCommandCredentialFenceInvalidError()
+        }
+        await this.validateCredentialFence?.(credentialFence, {
+          nodeId: current.nodeId,
+          workspaceId: current.workspaceId,
+        })
       }
       await transaction.put({
         namespace: namespaces.runtimeCommands,
