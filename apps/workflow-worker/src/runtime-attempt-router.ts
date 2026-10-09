@@ -67,6 +67,13 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
       .toSorted(compareCandidates)
     const selected = candidates[0]
     if (selected === undefined) throw new Error('WORKFLOW_RUNTIME_UNAVAILABLE')
+    // TDD-A377: an offline or revoked local location is never silently replaced by a remote runtime.
+    if (
+      isRemoteLocation(selected.connection) &&
+      discovered.some((connection) => fencedLocalRuntime(connection, input.executionPlan))
+    ) {
+      throw new Error('WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK')
+    }
     if (this.#pinnedHarnessId !== undefined) {
       // Decision-layer validation (#670 path 1): the chosen runtime must
       // expose the pinned harness; denial fails the attempt closed.
@@ -159,13 +166,7 @@ function candidate(
   ) {
     return undefined
   }
-  const capabilityDecision = evaluateCapabilities(
-    connection.capabilityDetails.flatMap((capability) => {
-      const parsed = RuntimeCapabilitySchema.safeParse(capability)
-      return parsed.success ? [parsed.data] : []
-    }),
-    plan.runtimeRequirements
-  )
+  const capabilityDecision = capabilityDecisionOf(connection, plan)
   if (!capabilityDecision.eligible) return undefined
   return {
     connection,
@@ -185,15 +186,58 @@ function runtimeFamilyAllowed(family: string, allowed: readonly string[]): boole
   return allowed.includes(family) || (family === 'managed-pi' && allowed.includes('pi'))
 }
 
+function isRemoteLocation(connection: RuntimeConnectionDiscoveryReadModel): boolean {
+  return connection.node?.location === 'remote_host' || connection.location === 'agent_hq_cloud'
+}
+
 function locationAllowed(
   connection: RuntimeConnectionDiscoveryReadModel,
   allowed: readonly ('local' | 'remote' | 'hybrid')[]
 ): boolean {
-  const location =
-    connection.node?.location === 'remote_host' || connection.location === 'agent_hq_cloud'
-      ? 'remote'
-      : 'local'
+  const location = isRemoteLocation(connection) ? 'remote' : 'local'
   return allowed.includes(location) || allowed.includes('hybrid')
+}
+
+/**
+ * A local-location runtime the plan could have used, but which is offline or revoked. While one exists,
+ * a remote runtime must not be chosen in its place: that would be an implicit cloud reroute.
+ */
+function fencedLocalRuntime(
+  connection: RuntimeConnectionDiscoveryReadModel,
+  plan: ExecutionPlan
+): boolean {
+  return (
+    !isRemoteLocation(connection) &&
+    locationAllowed(connection, plan.constraints.runtime.allowedLocations) &&
+    runtimeFamilyAllowed(connection.family, plan.constraints.runtime.allowedFamilies) &&
+    isOfflineOrRevoked(connection) &&
+    capabilityDecisionOf(connection, plan).eligible
+  )
+}
+
+function isOfflineOrRevoked(connection: RuntimeConnectionDiscoveryReadModel): boolean {
+  return (
+    connection.status === 'revoked' ||
+    connection.node?.status === 'offline' ||
+    connection.node?.status === 'revoked' ||
+    connection.node?.health === 'offline' ||
+    connection.node?.health === 'revoked' ||
+    ['disconnected', 'expired', 'revoked'].includes(connection.connection.status) ||
+    ['offline', 'revoked'].includes(connection.connection.availability)
+  )
+}
+
+function capabilityDecisionOf(
+  connection: RuntimeConnectionDiscoveryReadModel,
+  plan: ExecutionPlan
+) {
+  return evaluateCapabilities(
+    connection.capabilityDetails.flatMap((capability) => {
+      const parsed = RuntimeCapabilitySchema.safeParse(capability)
+      return parsed.success ? [parsed.data] : []
+    }),
+    plan.runtimeRequirements
+  )
 }
 
 function compareCandidates(left: Candidate, right: Candidate): number {
