@@ -85,6 +85,35 @@ export class RecoveryOwner {
       conversationId: ctx.id.toString(),
       agentId: id('agt'),
     }
+    let activeTask, activeBeforeEffect
+    const definitions = taskDefinitions(
+      1,
+      env.EFFECTS
+        ? async (input) => {
+            if (
+              !activeTask ||
+              !activeBeforeEffect ||
+              input.attemptId !== activeTask.request.attemptId ||
+              input.planDigest !== activeTask.request.executionPlan.contentDigest
+            )
+              throw new Error('QUALIFICATION_PENDING_TASK_NOT_AUTHORIZED')
+            await activeBeforeEffect()
+            // The real native Pi task phase stays running while its controlled effect ACK is held.
+            await env.EFFECTS.fetch('http://fixture/effect', {
+              method: 'POST',
+              body: JSON.stringify({
+                task: activeTask,
+                result: {
+                  outcome: 'completed',
+                  output: input,
+                  usage: { inputTokens: 0, outputTokens: 0, durationMs: 0 },
+                  artifacts: [],
+                },
+              }),
+            })
+          }
+        : undefined
+    )
     this.owner = new CloudflarePiDurableOwner(ctx, {
       context: BACKGROUND_CONTEXT,
       pins: this.pins,
@@ -145,39 +174,16 @@ export class RecoveryOwner {
             },
           }
         : undefined,
-      openEngine: async (storage) => {
-        let activeTask, activeBeforeEffect
-        const definitions = taskDefinitions(
-          1,
-          env.EFFECTS
-            ? async (input) => {
-                if (
-                  !activeTask ||
-                  !activeBeforeEffect ||
-                  input.attemptId !== activeTask.request.attemptId ||
-                  input.planDigest !== activeTask.request.executionPlan.contentDigest
-                )
-                  throw new Error('QUALIFICATION_PENDING_TASK_NOT_AUTHORIZED')
-                await activeBeforeEffect()
-                // The real native Pi task phase stays running while its controlled effect ACK is held.
-                await env.EFFECTS.fetch('http://fixture/effect', {
-                  method: 'POST',
-                  body: JSON.stringify({
-                    task: activeTask,
-                    result: {
-                      outcome: 'completed',
-                      output: input,
-                      usage: { inputTokens: 0, outputTokens: 0, durationMs: 0 },
-                      artifacts: [],
-                    },
-                  }),
-                })
-              }
-            : undefined
-        )
+      nativeTaskCatalog: {
+        schemaVersion: 1,
+        configurationDigest: digest,
+        registry: definitions.registry.snapshot(),
+        migrations: [],
+      },
+      openEngine: async (storage, pinnedRegistry) => {
         const harness = await Harness.open(
           storage,
-          { models: createModels(), registry: definitions.registry },
+          { models: createModels(), registry: pinnedRegistry },
           BACKGROUND_CONTEXT
         )
         return {

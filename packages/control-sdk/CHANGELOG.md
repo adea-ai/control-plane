@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.15.0...sdk-v1.16.0) (2026-10-09)
+
+
+### Features
+
+* compose production Pi lead model and publication authority ([#996](https://github.com/adea-ai/control-plane/issues/996)) ([1332100](https://github.com/adea-ai/control-plane/commit/13321009f6e9d7984a8774df8818e1b775c582ea))
+
 ## [1.15.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.14.0...sdk-v1.15.0) (2026-10-08)
 
 

@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.86.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.85.1...workspace-v1.86.0) (2026-10-09)
+
+
+### Features
+
+* add report-only replacement compatibility validator ([#990](https://github.com/adea-ai/control-plane/issues/990)) ([f8d26e0](https://github.com/adea-ai/control-plane/commit/f8d26e0904e181d458435142cba23c01ee47bd2b))
+* compose production Pi lead model and publication authority ([#996](https://github.com/adea-ai/control-plane/issues/996)) ([1332100](https://github.com/adea-ai/control-plane/commit/13321009f6e9d7984a8774df8818e1b775c582ea))
+* **local:** read-only stuck-job inspection operator command and telemetry view ([#974](https://github.com/adea-ai/control-plane/issues/974)) ([337f2d6](https://github.com/adea-ai/control-plane/commit/337f2d632e7f450be560d30809a3d1773dfeaa25))
+* **pi-cloudflare:** preflight pinned native task definitions ([#1000](https://github.com/adea-ai/control-plane/issues/1000)) ([ff72007](https://github.com/adea-ai/control-plane/commit/ff72007e6e013a4dcf1a42f0dbb02f0c86ea92ed))
+* **scripts:** add read-only langgraph retirement inventory ([#975](https://github.com/adea-ai/control-plane/issues/975)) ([81b42e7](https://github.com/adea-ai/control-plane/commit/81b42e79a23d4adc9dcb5dd6cf380bcf3b7472d0))
+
+
+### Bug Fixes
+
+* **ci:** quiet shellcheck in the release token diagnostic ([#999](https://github.com/adea-ai/control-plane/issues/999)) ([db66999](https://github.com/adea-ai/control-plane/commit/db66999237dbe7abb3e3da860a247be8f5b01937))
+* **pi:** fence continuation retention on current child journal ([#1007](https://github.com/adea-ai/control-plane/issues/1007)) ([b237e7a](https://github.com/adea-ai/control-plane/commit/b237e7a034a0687bd5f1ed7489c7225085e8b17d))
+* **requirements:** fetch complete GitHub issue inventory ([#1005](https://github.com/adea-ai/control-plane/issues/1005)) ([ecf65d2](https://github.com/adea-ai/control-plane/commit/ecf65d26adb093f1c30b0c9068939bc46ad6c308))
+
+
+### Tests
+
+* **pi:** distinguish recovery denial and ownership evidence ([#993](https://github.com/adea-ai/control-plane/issues/993)) ([1fad0ca](https://github.com/adea-ai/control-plane/commit/1fad0ca4cfcc39b40a2a24012141653a800c8fa7))
+* specify unfinished Pi child process recovery proofs ([#979](https://github.com/adea-ai/control-plane/issues/979)) ([6b82ccd](https://github.com/adea-ai/control-plane/commit/6b82ccd677e69eca14d765ac77d9d273df228d42))
+
 ## [1.85.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.85.0...workspace-v1.85.1) (2026-10-08)
 
 

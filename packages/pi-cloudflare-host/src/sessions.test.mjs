@@ -1,3 +1,4 @@
+import { createRegistry } from '@earendil-works/pi-durable'
 import { test, expect } from 'bun:test'
 import { CloudflareSessionJournal, parseBinding } from './sessions.ts'
 import { CloudflareOwnerJournal, stableJson } from './owner.ts'
@@ -271,6 +272,12 @@ test('real durable owner exposes only explicitly authorized load/list and defaul
           authority: f.authority,
           ...(enabled ? { sessionAuthority: f.sessionAuthority } : {}),
           now: () => 42,
+          nativeTaskCatalog: {
+            schemaVersion: 1,
+            configurationDigest: pins.configurationDigest,
+            registry: createRegistry().snapshot(),
+            migrations: [],
+          },
           openEngine: f.openEngine,
         }
       )
@@ -384,6 +391,12 @@ test('owner snapshots binding and direct session operation before initialization
         authority: f.authority,
         sessionAuthority: f.sessionAuthority,
         now: () => 42,
+        nativeTaskCatalog: {
+          schemaVersion: 1,
+          configurationDigest: pins.configurationDigest,
+          registry: createRegistry().snapshot(),
+          migrations: [],
+        },
         openEngine: f.openEngine,
       }
     )

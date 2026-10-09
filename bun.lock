@@ -131,6 +131,7 @@
         "@control-plane/control-api": "workspace:*",
         "@control-plane/deployment": "workspace:*",
         "@control-plane/domain": "workspace:*",
+        "@control-plane/events": "workspace:*",
         "@control-plane/execution-plan": "workspace:*",
         "@control-plane/langgraph-adapter": "workspace:*",
         "@control-plane/managed-pi-adapter": "workspace:*",
@@ -448,7 +449,7 @@
     },
     "packages/pi-cloudflare-host": {
       "name": "@control-plane/pi-cloudflare-host",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@control-plane/runtime-sdk": "workspace:*",
         "@earendil-works/chord": "1.1.0",

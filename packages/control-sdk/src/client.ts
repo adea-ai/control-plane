@@ -13,6 +13,8 @@ import type {
   PiDurableLeadCancelResponse,
 } from '@control-plane/runtime-sdk'
 import type {
+  PiLeadPublicationRequest,
+  PiLeadPublicationResponse,
   ModelSelectionFundingRequest,
   ModelSelectionFundingResponse,
   ModelConnectionCreateRequest,
@@ -205,6 +207,9 @@ export class ControlPlaneClient {
     input: ModelSelectionFundingRequest
   ): Promise<ModelSelectionFundingResponse> {
     return this.#request(ControlApiOperations.getModelSelectionFunding, input)
+  }
+  getPiDurableLeadPublication(input: PiLeadPublicationRequest): Promise<PiLeadPublicationResponse> {
+    return this.#request(ControlApiOperations.getPiDurableLeadPublication, input)
   }
 
   /** Sends the secret once; the response carries metadata only. */

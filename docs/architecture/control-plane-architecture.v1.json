@@ -89,8 +89,8 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.22.0",
-      "lockVersion": "1.22.0",
+      "version": "1.23.0",
+      "lockVersion": "1.23.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -367,6 +367,7 @@
         "@control-plane/control-api",
         "@control-plane/deployment",
         "@control-plane/domain",
+        "@control-plane/events",
         "@control-plane/execution-plan",
         "@control-plane/langgraph-adapter",
         "@control-plane/managed-pi-adapter",
@@ -435,8 +436,8 @@
     {
       "name": "@control-plane/model-gateway",
       "path": "packages/model-gateway",
-      "version": "1.4.0",
-      "lockVersion": "1.4.0",
+      "version": "1.5.0",
+      "lockVersion": "1.5.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -498,8 +499,8 @@
     {
       "name": "@control-plane/pi-cloudflare-host",
       "path": "packages/pi-cloudflare-host",
-      "version": "0.1.0",
-      "lockVersion": "0.1.0",
+      "version": "0.2.0",
+      "lockVersion": "0.2.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -2854,6 +2855,49 @@
       },
       "inOpenApi": true,
       "openApiOperationId": "pi-durable.lead.progress",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-PI-DURABLE-LEAD-PUBLICATION-CURRENT",
+      "name": "getPiDurableLeadPublication",
+      "operation": "pi-durable.lead.publication.current",
+      "method": "POST",
+      "path": "/v1/pi-durable/lead-publication/current",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing execution:read service authentication and exact workspace/caller binding",
+        "service": "PiLeadPublicationController -> PiLeadPublicationService -> retained canonical metadata and mandatory independent current CP authority",
+        "persistence": "Reads exact SQLite receipt/preparation/marker and native committed result journal; no writes",
+        "execution": "No runtime start, product callback, lease, provider call or spending reservation",
+        "delivery": "Exact original actor/execution/attempt/session/selection pins and SHA256 UTF8 output digest with bounded current authority expiry",
+        "cleanup": "Stateless publication read; production facade cleanup requires canonical terminal and released/reconciled allocation"
+      },
+      "assessment": "Focused fault tests cover reference correlation, exact newline digest, missing authority and revocation during the final metadata read. Real startup composition requires current product/profile/account and independent lock-safe CP publication ports; connected production, live provider, device and full restart/cancellation qualification remain open.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/publication-current.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/pi-lead-publication.test.mjs"
+        },
+        {
+          "kind": "documentation",
+          "path": "docs/architecture/pi-production-model-binding.md"
+        }
+      ],
+      "gap": {
+        "issue": 931,
+        "severity": "high",
+        "owner": "Control Plane R2 implementation owner",
+        "disposition": "Qualify deployed current grant/payer/original actor/latest-attempt authority and connected Adea publication under current audience locks; preserve missing-configuration fail-closed behavior."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "pi-durable.lead.publication.current",
       "openApiResponseStatuses": ["200", "default"],
       "openApiSecured": true,
       "openApiHasRequestSchema": true,
