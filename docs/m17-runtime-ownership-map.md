@@ -17,10 +17,11 @@ dated root review act, and the tool's export deliberately makes no repository-wi
 
 ## Scope, method, and safety
 
-- Candidate: base `747a7cf7aec3b7d800d03deb447cd46a2d6eba9c` (= `origin/main` at capture),
-  tooling `52c256ba0a70d5a7916775ee68ebff63a14e474c` plus review repairs `0104d31e`/`2fc3c5d1`/
-  `dc260cdfabd84b164216c3620f82af5a06e250d2` (evidence captured at
-  `dc260cdfabd84b164216c3620f82af5a06e250d2`), branch
+- Candidate: base `747a7cf7aec3b7d800d03deb447cd46a2d6eba9c` (= `origin/main` at capture time —
+  current `main` has since advanced, e.g. release 1.86.2, so these numbers describe `747a7cf7` +
+  this branch and **not** current `main`), tooling `52c256ba0a70d5a7916775ee68ebff63a14e474c` plus
+  review repairs `0104d31e`/`2fc3c5d1`/`dc260cdfabd84b164216c3620f82af5a06e250d2` (evidence
+  captured at `dc260cdfabd84b164216c3620f82af5a06e250d2`), branch
   `feat/m17-runtime-ownership-baseline-941`, `report.candidate.dirty = false`.
 - Environment (from the evidence report): bun 1.4.2 on macOS 25.6.0 `darwin/arm64`, Apple M2 Max
   ×12, 64 GiB, SQLite 3.51.0. `environment.runtime` is bun's Node-compatible `process.version`
@@ -77,7 +78,7 @@ Restate removal is planned (Local never had Restate).
 | Artifacts                                     | **KEEP**                                                                                        | Local filesystem object store; S3/R2-compatible hosted stores; runtime artifact verification                                                           | `packages/object-store/src/filesystem.ts:39`; `packages/object-store/src/index.ts:86`, `:93`; `apps/runtime-gateway/src/runtime-artifact-verifier.ts:16`; `apps/runtime-worker/src/hosted-managed-pi-artifact-stores.ts:12`, `:49`; `docs/object-store.md`                                                                                                                                               | Profile packaging (#1026) owns storage adapter packaging; removal requires residency/rollback evidence                                                          |
 | Device supervision                            | **KEEP**                                                                                        | Adea-owned `RuntimeNodeRef` identity (`authority: agent_hq`) — Control Plane supervises connections, channels, and host processes, not device identity | `packages/runtime-sdk/src/models.ts:54-56`; `docs/runtime-capabilities.md:11-12`; `apps/runtime-gateway/src/runtime-node-identity-port.ts:8`; `packages/database/src/schema/runtime-connections.ts:69`, `:121`; `packages/deployment/src/process-runtime.ts:37`, `:114`; `packages/deployment/src/local-adapters.ts:13`, `:40`; desktop supervision contract `docs/local-deployment.md:21-22`            | Host credential/filesystem/device/E2E authority must be preserved per profile (#1026); no retirement proposed                                                   |
 | Node Pi Durable adapter (successor candidate) | **REPLACE-CANDIDATE — opt-in, not yet the owner**                                               | `authority.sqlite` journal + host-supplied current authority (see surfaces section)                                                                    | `packages/pi-durable-adapter/README.md:1-14`; `packages/pi-durable-adapter/src/composition.ts:31`; `docs/pi-durable-runtime.md:42-47` (disposition: Restate/LangGraph/managed Pi retained)                                                                                                                                                                                                               | Becomes the owner only with #941 behavior/profile/rollback evidence; until then current owners stay                                                             |
-| Cloudflare Pi host                            | **KEEP (unregistered — do not activate)**                                                       | Durable Object tables; no production route or advertised capability                                                                                    | `packages/pi-cloudflare-host/README.md:9-11`; `packages/pi-cloudflare-host/src/adapter.ts:70`, `:72`; `packages/pi-cloudflare-host/src/durable-object.ts:50`                                                                                                                                                                                                                                             | Activation is a separate, explicitly gated act (#930/#187 open); this PR activates nothing                                                                      |
+| Cloudflare Pi host                            | **KEEP (unregistered — do not activate)**                                                       | Durable Object tables; no production route or advertised capability                                                                                    | `packages/pi-cloudflare-host/README.md:9-11`; `packages/pi-cloudflare-host/src/adapter.ts:70`, `:72`; `packages/pi-cloudflare-host/src/durable-object.ts:50`                                                                                                                                                                                                                                             | Activation is a separate, explicitly gated act (#930 closed 2026-10-09; #187 open); this PR activates nothing                                                   |
 
 Cross-layer coupling recorded by the tool as `report.coupling` with its label in
 `report.couplingMethod`: a **static import heuristic** (string match, no type resolution) —
@@ -221,6 +222,29 @@ and **not claimed passed**:
 The M9/M10 records in [`docs/performance.md`](performance.md) are profile-specific history, not a
 #941 cost baseline. The gap above stays labeled `unavailable` — never estimated — and closes only
 with a future live metered profile capture.
+
+### Bounded managed-cloud cost addendum (root read-only research)
+
+Root captured read-only Railway metrics on **2026-10-09 03:36 UTC (2026-10-08 23:36 AST)** for
+production as observed then: one control-api replica, no production worker/Restate, no
+volumes/buckets. The requested window was 168 hours at 60-second resolution and returned **10,081
+samples**; the exact returned endpoints are unavailable, and the window ends at capture time (the
+means describe that window only). Observed means: CPU **0.0003852318057 vCPU**, RAM
+**0.164811181807 GB**. At the official rates — CPU $0.000463/vCPU-minute, RAM $0.000231/GB-minute
+([pricing](https://docs.railway.com/pricing/plans),
+[right-size](https://docs.railway.com/guides/right-size-cpu-memory),
+[metrics](https://docs.railway.com/observability/metrics)) — the baseline formulas are:
+
+- seven-day compute-only projection = (CPUmean × 0.000463 + RAMmean × 0.000231) × 10 080 minutes
+  = **$0.38556** for the requested seven days;
+- nominal monthly historical-means projection = CPUmean × $20 + RAMmean × $10 = **$1.65582**.
+
+Limits: these are resource averages plus **derived projections** — not invoices, not postmigration
+measurement, and not total spend. They exclude plan fees/minimums, credits, tax, and other
+resources; network usage units are unclear and are deliberately not priced; no verified Neon
+project ID or Neon data is included. The hosted cost gap above therefore remains `unavailable`:
+this addendum is a bounded reference point only. Root reviews this exact addendum and the current
+CI before any closure or merge; no automatic acceptance.
 
 ## What this candidate does not claim
 
