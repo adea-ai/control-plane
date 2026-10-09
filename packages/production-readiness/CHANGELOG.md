@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/adea-ai/control-plane/compare/production-readiness-v1.4.2...production-readiness-v1.5.0) (2026-10-09)
+
+
+### Features
+
+* CP [#941](https://github.com/adea-ai/control-plane/issues/941) runtime ownership/layer replacement map and baseline tooling ([#1032](https://github.com/adea-ai/control-plane/issues/1032)) ([f1a696f](https://github.com/adea-ai/control-plane/commit/f1a696fb953aacfd53a03e59adfd4c04f350a9a4))
+
 ## [1.4.2](https://github.com/adea-ai/control-plane/compare/production-readiness-v1.4.1...production-readiness-v1.4.2) (2026-10-01)
 
 
