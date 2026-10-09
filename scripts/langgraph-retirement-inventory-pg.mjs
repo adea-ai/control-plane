@@ -35,12 +35,16 @@
 // shared retainedWorkEpistemics encoding from the reviewed script decides.
 //
 // Safety: the collector opens one connection whose entire observation runs
-// inside a single READ ONLY transaction, issues parameterized SELECTs only,
-// never migrates, never writes, never locks beyond what SELECT needs, and
-// never adopts, cancels, drains or transplants anything. Output carries the
-// store identity as a SHA-256 digest of the credential-free DSN origin only;
-// no DSNs, hosts, database names, credentials, paths, message bodies or
-// record payloads are ever printed or embedded. Failures print one sanitized
+// inside a single REPEATABLE READ, READ ONLY transaction — one connection is
+// one snapshot, so every page of every table observes one database state even
+// while other sessions commit (a plain READ ONLY transaction would default to
+// READ COMMITTED and let pages and tables mix states). It issues
+// parameterized SELECTs only, never migrates, never writes, never locks
+// beyond what SELECT needs, and never adopts, cancels, drains or transplants
+// anything. Output carries the store identity as a SHA-256 digest of the
+// credential-free DSN origin only; no DSNs, hosts, database names,
+// credentials, paths, message bodies or record payloads are ever printed or
+// embedded. Failures print one sanitized
 // LANGGRAPH_RETIREMENT_INVENTORY_PG_FAILED:<CODE> line on stderr.
 
 import { createHash } from 'node:crypto'
@@ -147,12 +151,20 @@ export function resolveDsn({ dsnArgument, environment = process.env } = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * Opens the connection and runs the whole observation inside one READ ONLY
- * transaction. The connection profile is the repository's canonical
- * application-role connection (pooled-safe `prepare: false`, one connection so
- * the transaction scope is unambiguous); `$client` is the underlying
- * postgres.js pool and every statement below is a parameterized SELECT
- * executed through it. No statement in this module writes, locks or migrates.
+ * Opens the connection and runs the whole observation inside one REPEATABLE
+ * READ, READ ONLY transaction. The connection profile is the repository's
+ * canonical application-role connection (pooled-safe `prepare: false`, one
+ * connection so the transaction scope is unambiguous); `$client` is the
+ * underlying postgres.js pool and every statement below is a parameterized
+ * SELECT executed through it. No statement in this module writes, locks or
+ * migrates.
+ *
+ * One connection is one snapshot: REPEATABLE READ pins the transaction's
+ * snapshot at its first read, so every page of every table observes one
+ * database state for the whole observation even while other sessions commit.
+ * (postgres.js sanitizes the mode string to letters and spaces, and Postgres's
+ * transaction-mode list does not require commas, so the mode below issues
+ * `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`.)
  *
  * `observe` receives the transaction-scoped sql tag and must return the
  * manifest body; any error it throws aborts the read-only transaction (a
@@ -168,7 +180,10 @@ export async function observeReadOnly(dsn, observe, options = {}) {
   // query builder is never used.
   const client = connection.database.$client
   try {
-    return await client.begin('read only', (transaction) => observe(transaction))
+    return await client.begin(
+      'transaction isolation level repeatable read read only',
+      (transaction) => observe(transaction)
+    )
   } finally {
     await connection.close()
   }
@@ -1346,7 +1361,7 @@ export function buildInventoryManifestFromSections({
     tool: {
       script: 'scripts/langgraph-retirement-inventory-pg.mjs',
       readMode: 'read-only',
-      transactionMode: 'read only',
+      transactionMode: 'repeatable read, read only (one snapshot for the whole observation)',
       migration: 'never',
       mutations: 'none',
       adoption: 'never',
@@ -1729,8 +1744,10 @@ Read-only store access:
                             scope is repository-scan (where it must be
                             absent). Falls back to LANGGRAPH_RETIREMENT_PG_DSN,
                             then DATABASE_URL, in that order; there is no
-                            default target. Opened read-only (one READ ONLY
-                            transaction), never migrated, never written.
+                            default target. Opened read-only (one REPEATABLE
+                            READ, READ ONLY snapshot transaction — one
+                            connection is one snapshot for the whole
+                            observation), never migrated, never written.
 
 Options:
   --now <iso-instant>       Observation time (injectable for deterministic runs).

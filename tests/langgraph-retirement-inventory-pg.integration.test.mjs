@@ -478,13 +478,14 @@ describe.skipIf(!enabled)('LangGraph retirement inventory PG collector', () => {
         expect(checkpoints.countsBounded).toBe(true)
 
         // No in-flight work anywhere — but the bounded reads make the
-        // zero-claim unavailable with the section-level typed reasons.
+        // zero-claim unavailable with the section-level typed reasons. The
+        // reviewed epistemics encoding lists the reasons in section order.
         expect(manifest.epistemics.retainedWorkClassification).toBe('unknown')
         expect(manifest.epistemics.zeroLiveWorkClaim.claimAllowed).toBe(false)
         expect(manifest.epistemics.zeroLiveWorkClaim.claim).toBe('not-claimable')
         expect(manifest.epistemics.zeroLiveWorkClaim.reasons).toEqual([
-          'CHECKPOINTS_SECTION_NOT_FULLY_READ',
           'EXECUTIONS_SECTION_NOT_FULLY_READ',
+          'CHECKPOINTS_SECTION_NOT_FULLY_READ',
         ])
       })
     },
