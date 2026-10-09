@@ -7,6 +7,7 @@ import {
   ChildProgressLeadDispatcher,
   ChildProgressLeadFeed,
   ChildUsageLedger,
+  resolveEvidenceReferences,
 } from '@control-plane/orchestration'
 import { SqliteDelegationEventPublisher } from './delegation-event-publisher.js'
 import { SqlitePersistenceProvider } from './provider.js'
@@ -206,6 +207,63 @@ test('restart replays from the durable outlet exactly once and restores usage co
   const again = await feed.replay()
   expect(again.duplicateEventCount).toBe(4)
   expect(feed.takeDeliveries()).toEqual([])
+
+  // The resolver's live caller: packet references resolve lazily against the
+  // CURRENT durable publications at read time — never a capture-time snapshot.
+  const liveAuthority = (outlet) => ({
+    async authorize(reference) {
+      if (reference.kind !== 'terminal_result') return { status: 'unavailable', reason: 'missing' }
+      const events = await outlet.list()
+      const recognitions = events.filter(
+        (candidate) => candidate.details['terminalResultRef'] === reference.artifactId
+      )
+      if (recognitions.length === 0) return { status: 'unavailable', reason: 'missing' }
+      const revoked = recognitions.some((candidate) =>
+        events.some(
+          (later) =>
+            later.delegationId === candidate.delegationId &&
+            later.type === 'delegation.cancelled' &&
+            Date.parse(later.occurredAt) >= Date.parse(candidate.occurredAt)
+        )
+      )
+      return revoked ? { status: 'forbidden', reason: 'revoked' } : { status: 'authorized' }
+    },
+  })
+  const evidencePacket = rebuilt.find((delivery) => delivery.kind === 'evidence').packet
+  expect(await resolveEvidenceReferences(evidencePacket, liveAuthority(feed))).toContainEqual({
+    kind: 'terminal_result',
+    artifactId: ART_A,
+    status: 'authorized',
+  })
+  // Same packet, empty durable state: the read-time verdict flips — proof the
+  // authority answers from current state, not from what the packet captured.
+  const emptyOutlet = { list: async () => [] }
+  expect(
+    await resolveEvidenceReferences(evidencePacket, liveAuthority(emptyOutlet))
+  ).toContainEqual({
+    kind: 'terminal_result',
+    artifactId: ART_A,
+    status: 'unavailable',
+    reason: 'missing',
+  })
+  // A later durable cancellation revokes the same reference at read time.
+  await feed.publish(
+    {
+      type: 'delegation.cancelled',
+      delegationId: DLG_A,
+      parentExecutionId: PARENT,
+      childExecutionId: CHILD_A,
+      occurredAt: '2026-08-25T18:07:00.000Z',
+      details: { reason: 'parent_cancelled' },
+    },
+    `delegation:${DLG_A}:cancelled:1`
+  )
+  expect(await resolveEvidenceReferences(evidencePacket, liveAuthority(feed))).toContainEqual({
+    kind: 'terminal_result',
+    artifactId: ART_A,
+    status: 'forbidden',
+    reason: 'revoked',
+  })
 
   // Cost states restore from the durable bytes with their dedup horizons.
   const restored = await provider.transaction(async (transaction) => {
