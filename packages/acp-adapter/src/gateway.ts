@@ -46,6 +46,10 @@ export {
   PersistenceProviderAcpRemoteDeviceStateStore,
 } from './acp-remote-device-state.js'
 export {
+  createPersistentSecureAcpDeviceEndpoint,
+  type PersistentSecureAcpDeviceEndpointOptions,
+} from './acp-remote-composition.js'
+export {
   generateRecipientKeyPair,
   generateSigningKeyPair,
   signingPublicKeyOf,

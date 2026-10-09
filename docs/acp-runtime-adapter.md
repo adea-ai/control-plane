@@ -87,11 +87,24 @@ never observe each other's revocation, generation, or recorded effects, and `cla
 persisted fence inside the same transaction that would create the ledger entry — an endpoint that
 loaded its mirror once still fails closed on a revocation or supersession applied elsewhere.
 
-**Retained integration gap (explicitly not claimed as wired):** no production composition
-constructs `SecureAcpRemoteTransport` or `SecureAcpDeviceEndpoint` today — only fixtures and tests
-do — so the in-memory default remains test-only. A real Local construction must inject
-`new PersistenceProviderAcpRemoteDeviceStateStore(provider, acpRemoteDeviceStateScope(route))` —
-one scoped store per authenticated route — before this route may carry production traffic.
+**Production construction is wired (no documented-gap substitute):**
+`createPersistentSecureAcpDeviceEndpoint` always builds the scoped
+`PersistenceProviderAcpRemoteDeviceStateStore(provider, acpRemoteDeviceStateScope(route))`, and the
+Local composition's `secureAcpRemoteRoute` option constructs the endpoint over the composition's
+own `SqlitePersistenceProvider` (`LocalControlPlaneComposition.secureAcpDevice`), with passthrough
+from `start()` via `compositionOptions`. The route record (public keys, ids, validity) stays an
+explicit host-supplied composition input — no ambient credential or key material — and the
+in-memory default remains test-only.
+
+**Hosted PostgreSQL durable state:** the Hosted `hosted-server` profile qualifies the same
+`PersistenceProvider` contract through `PostgresPersistenceProvider`
+(`packages/profile-portability/src/postgres-persistence-provider.ts`) over the new
+`persistence_records` table (drizzle migration `0069_persistence_records`; the canonical migration
+chain, applied by the migration role, owns DDL — the provider verifies presence and never creates
+tables). The device fence/ledger store is proven on real PostgreSQL — atomic claims, revoked and
+superseded rejection without writes, restart persistence, concurrent same-key races, and per-route
+namespacing — in `tests/acp-remote-device-postgres.integration.test.mjs` against a disposable
+isolated database.
 
 Neither layer can produce an implicit cloud reroute: an offline or revoked route denies with
 `fallback: 'none'` and the transport has no alternate route, and at attempt selection
@@ -106,7 +119,12 @@ replay/conflict/generation proofs, edge fences),
 `apps/local-control-plane/src/acp-remote-device-restart.test.mjs` (restart proofs through the real
 SQLite persistence composition using disposable per-test databases), and
 `apps/local-control-plane/src/acp-remote-device-fence.test.mjs` (two endpoints over one shared
-store, atomic claim rejection without writes, and per-route fence/ledger namespacing).
+store, atomic claim rejection without writes, and per-route fence/ledger namespacing),
+`packages/acp-adapter/src/acp-remote-composition.test.mjs` and
+`apps/local-control-plane/src/acp-remote-secure-route.test.mjs` (persistent factory and production
+Local composition construction, including a revocation that survives composition restart), and
+`tests/acp-remote-device-postgres.integration.test.mjs` (Hosted PostgreSQL durable-state
+qualification over an isolated disposable database).
 
 ## External session references
 
