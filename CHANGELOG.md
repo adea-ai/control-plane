@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.90.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.90.0...workspace-v1.90.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **ci:** back off Docker Hub rate-limited integration pulls ([#1054](https://github.com/adea-ai/control-plane/issues/1054)) ([6b6bfba](https://github.com/adea-ai/control-plane/commit/6b6bfba28293fd8f140767ca4dd96d8908e4b2e8))
+
 ## [1.90.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.89.1...workspace-v1.90.0) (2026-10-09)
 
 
