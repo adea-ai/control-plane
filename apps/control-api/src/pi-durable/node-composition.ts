@@ -22,6 +22,25 @@ import { SqlitePiLeadRunningLifecycle } from './lead-running-lifecycle.js'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import type { DelegationService } from '@control-plane/orchestration'
 
+/**
+ * Interface receipt (Root relay): DeepSeek1215 module commit fc42c7dd,
+ * CP PR1043 comment 6076412118. The canonical
+ * `PiDurableGovernedManagementCallEnginePort` lands in
+ * @control-plane/pi-durable-adapter (DeepSeek-owned adapter hook, reported
+ * upcoming and not yet qualified); this structural mirror keeps the narrow
+ * composition pass-through type-checked in the meantime without importing
+ * the not-yet-present module. The caller retains the FULL immutable request
+ * (`management-governed-call.ts`, fc42c7dd) — this composition only forwards
+ * the port and performs no validation itself.
+ */
+export interface PiDurableGovernedManagementCallPort {
+  readonly source: string
+  /** Repeatable boundary check; never consumes approval or mints a decision. */
+  assertCurrent(request: unknown, boundary?: 'admission' | 'approval' | 'effect'): Promise<void>
+  prepare(authority: unknown, verified: unknown): Promise<unknown>
+  execute(request: unknown, signal?: AbortSignal): Promise<unknown>
+}
+
 export interface NodePiDurableLeadCompositionOptions {
   readonly onAdapterReady?: NodePiDurableCompositionOptions['onAdapterReady']
   readonly directory: string
@@ -35,6 +54,8 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly onParentInboxWake?: NodePiDurableCompositionOptions['onParentInboxWake']
   readonly tools?: NodePiDurableCompositionOptions['tools']
   readonly governedDelegateChild?: NodePiDurableCompositionOptions['governedDelegateChild']
+  /** Durable governed management caller; retains the full immutable request. */
+  readonly governedManagementCall?: PiDurableGovernedManagementCallPort
   /** The same canonical service used by child admission/progress. */
   readonly delegationService?: Pick<DelegationService, 'cancelChildren'>
   /** A child must independently reload its canonical lineage, selection and authority. */
@@ -84,7 +105,9 @@ export async function createNodePiDurableLeadComposition(
       executions: options.admission.executions,
       assertAuthority: (authority) => admission.canonicalAuthority.assertAuthority(authority),
     })
-    runtime = await createNodePiDurableRuntime({
+    const runtimeOptions: NodePiDurableCompositionOptions & {
+      readonly governedManagementCall?: PiDurableGovernedManagementCallPort
+    } = {
       ...(options.onAdapterReady ? { onAdapterReady: options.onAdapterReady } : {}),
       directory: options.directory,
       ...(options.admission.now ? { now: options.admission.now } : {}),
@@ -114,7 +137,11 @@ export async function createNodePiDurableLeadComposition(
       ...(options.governedDelegateChild
         ? { governedDelegateChild: options.governedDelegateChild }
         : {}),
-    })
+      ...(options.governedManagementCall
+        ? { governedManagementCall: options.governedManagementCall }
+        : {}),
+    }
+    runtime = await createNodePiDurableRuntime(runtimeOptions)
     const preparations = options.preparationAuthority
       ? new SqlitePiLeadPreparations(
           database,

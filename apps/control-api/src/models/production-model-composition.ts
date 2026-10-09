@@ -59,6 +59,8 @@ export interface ProductionPiLeadCompositionOptions {
   readonly leasePrincipalRef: string
   readonly modelAlias: string
   /** Separate canonical child admission and confirmed provider/spending authority. Never lead fallback. */
+  /** Host-built issuer + Adea transport; the launcher supplies the exact tool-call compiler. */
+  readonly governedManagementCall?: NodePiDurableLeadCompositionOptions['governedManagementCall']
   readonly children?: {
     readonly authority: Omit<Parameters<typeof createProductionChildModelAuthority>[0], 'product'>
     readonly forgetCanonicalModels: (authority: DurableExecutionAuthority) => void
@@ -281,6 +283,9 @@ export async function createProductionPiLeadComposition(
       return childModels
     }
     runtime = await createNodePiDurableLeadComposition({
+      ...(options.governedManagementCall
+        ? { governedManagementCall: options.governedManagementCall }
+        : {}),
       ...(options.children &&
       childAuthority &&
       currentToolAuthority &&
