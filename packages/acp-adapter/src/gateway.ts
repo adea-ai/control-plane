@@ -42,6 +42,12 @@ export type {
 } from './acp-remote-device-state.js'
 export { acpRemoteDeviceStateScope } from './acp-remote-device-state.js'
 export {
+  deriveSecureAcpRemoteRoute,
+  type DeriveSecureAcpRemoteRouteInput,
+  type ServerOwnedRuntimeConnectionView,
+  type ServerOwnedSecureAcpRouteConfiguration,
+} from './acp-remote-registry-route.js'
+export {
   InMemoryAcpRemoteDeviceStateStore,
   PersistenceProviderAcpRemoteDeviceStateStore,
 } from './acp-remote-device-state.js'
