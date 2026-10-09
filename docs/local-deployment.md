@@ -15,7 +15,10 @@ For initial immutable profile/skill publication and ProjectState setup without t
 seeding, use the [offline operator setup command](local-operator-bootstrap.md). Context authoring,
 catalog approval, credentials and runtime bindings retain their separate authority checks. For
 read-only inspection of stuck executions, jobs and reconciliation age in a stopped data directory,
-use the [offline operator inspection command](local-operator-inspection.md).
+use the [offline operator inspection command](local-operator-inspection.md). For queue and human
+latency, retry and reconciliation age, usage, storage growth, active objects and operating cost
+over the same directory, use the
+[offline operator measurement command](local-operator-measurements.md).
 
 The desktop host supplies a private data directory and starts `@control-plane/local-control-plane`.
 It must supervise the parent process and send a graceful termination signal before desktop exit or

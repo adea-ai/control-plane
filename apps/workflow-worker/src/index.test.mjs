@@ -26,6 +26,9 @@ class RecordingMetricAdapter {
   record(name, value, attributes) {
     this.emissions.push({ name, value, attributes })
   }
+  recordGauge(name, value, attributes) {
+    this.emissions.push({ name, value, attributes })
+  }
 }
 
 describe('workflow worker telemetry', () => {
