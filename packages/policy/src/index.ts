@@ -383,6 +383,7 @@ export {
   DecisionResolutionDeniedError,
   resolveDecisionLayer,
   resolveRuntimeHarness,
+  selectRuntimesExposingHarness,
 } from './decision-resolution.js'
 export type { DecisionLayerPolicyDefaults, DecisionOutputKey } from './decision-resolution.js'
 

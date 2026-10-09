@@ -4,6 +4,7 @@ import {
   DecisionResolutionDeniedError,
   resolveDecisionLayer,
   resolveRuntimeHarness,
+  selectRuntimesExposingHarness,
 } from './index.ts'
 
 const ids = {
@@ -474,5 +475,43 @@ describe('narrow runtime harness resolution', () => {
     expect(() => resolveRuntimeHarness({ ...piRuntime, harnessIds: [] })).toThrow(
       DecisionResolutionDeniedError
     )
+  })
+})
+
+describe('selectRuntimesExposingHarness (production router hard filter, #678)', () => {
+  const runtime = (id, harnessIds) => ({
+    runtimeDefinitionId: id,
+    kind: 'local',
+    transport: 'remote-gateway',
+    harnessIds,
+    capabilities: ['shell.exec'],
+  })
+  const first = runtime(ids.runtimeLocal, ['managed-pi'])
+  const second = runtime(ids.runtimeRemote, ['acp'])
+  const third = runtime('rtd_01JABCDEF0123456789CCCDEFG', ['acp', 'managed-pi'])
+
+  test('first candidate has the wrong harness; the later eligible candidate is the only one kept', () => {
+    const eligible = selectRuntimesExposingHarness([first, second], 'acp')
+    expect(eligible).toEqual([second])
+    // Ranking then runs on the filtered list only, so the wrong-harness first candidate cannot win.
+    expect(eligible[0].runtimeDefinitionId).toBe(ids.runtimeRemote)
+  })
+
+  test('keeps every exposing candidate in original order before ranking', () => {
+    expect(selectRuntimesExposingHarness([first, second, third], 'acp')).toEqual([second, third])
+  })
+
+  test('no candidate exposes the accepted harness: typed denial, never another runtime', () => {
+    expectDenied('NO_COMPATIBLE_RUNTIME', () =>
+      selectRuntimesExposingHarness([first, second], 'claude-code')
+    )
+  })
+
+  test('exact identity: a pin for pi does not select a managed-pi runtime', () => {
+    expectDenied('NO_COMPATIBLE_RUNTIME', () => selectRuntimesExposingHarness([first], 'pi'))
+  })
+
+  test('without a pin the candidate list passes through unchanged', () => {
+    expect(selectRuntimesExposingHarness([first, second])).toEqual([first, second])
   })
 })
