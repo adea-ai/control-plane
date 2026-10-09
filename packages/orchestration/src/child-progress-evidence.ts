@@ -358,6 +358,7 @@ const DEFAULTS = {
   maximumChildren: 64,
   maximumBytes: 16_384,
   maximumTrackedEventIds: 8_192,
+  maximumCoalescedEventsPerDelivery: 128,
 } as const
 
 const encoder = new TextEncoder()
@@ -1029,6 +1030,294 @@ export function parseChildProgressEvidencePacket(packet: unknown): ChildProgress
     )
   }
   return parsed
+}
+
+/**
+ * Human input addressed to the workspace lead while children run (a new
+ * instruction, an approval resolution, a grant decision). The input carries
+ * only opaque identity: the interaction it belongs to, its kind, and when the
+ * lead received it. Payloads stay behind the interaction's own authorized
+ * channel, exactly like packet references.
+ */
+export const LeadHumanInputSchema = z
+  .object({
+    interactionId: IdentifierSchemas.interactionId,
+    kind: InteractionKindSchema,
+    receivedAt: TimestampSchema,
+  })
+  .strict()
+
+export type LeadHumanInput = z.output<typeof LeadHumanInputSchema>
+
+/**
+ * One ordered item the lead's turn loop consumes. Delivery order is the
+ * outbox order; `sequence` is a per-dispatcher monotonic delivery identity.
+ * Human input and critical child evidence are placed on the outbox in the
+ * same scheduling step that accepted them — never behind routine progress
+ * batching. Routine progress rides packets sealed at bounded coalescing
+ * pressure or an explicit deadline (`trigger` records which).
+ */
+export type ChildProgressLeadDelivery =
+  | {
+      readonly kind: 'human_input'
+      readonly sequence: number
+      readonly input: LeadHumanInput
+    }
+  | {
+      readonly kind: 'evidence'
+      readonly sequence: number
+      readonly packet: ChildProgressEvidencePacket
+      readonly trigger: 'critical' | 'packet_pressure' | 'coalescing_pressure' | 'deadline'
+    }
+
+export interface ChildProgressLeadDispatcherOptions {
+  readonly buffer: ChildProgressEvidenceBuffer
+  /**
+   * Routine events coalesced before the open packet is sealed for the lead.
+   * Default 128; every value keeps delivery latency bounded because a child's
+   * burst cannot postpone the next snapshot delivery past this many events.
+   */
+  readonly maximumCoalescedEventsPerDelivery?: number
+}
+
+/**
+ * Delivery policy that keeps the lead responsive while at least two children
+ * stream (M13.04.2, refs adea-ai/control-plane#1019). Composes the evidence
+ * buffer with an explicit scheduling policy instead of timer callbacks, so
+ * behavior is deterministic under test:
+ *
+ * - Human input addressed to the lead and critical child observations
+ *   (`awaiting_input`, terminal outcomes) are appended to the outbox in the
+ *   same step that accepts them — zero routine events, coalescing pressure or
+ *   packet pressure may delay their delivery.
+ * - Routine progress coalesces in the buffer and is delivered when the
+ *   configured event pressure is reached, on an explicit owner deadline, or
+ *   when the buffer seals under packet pressure. A burst from one child
+ *   cannot starve another: every routine delivery carries the latest
+ *   coalesced snapshot of every child observed in its window, and the
+ *   pressure threshold bounds how many routine events can pass between
+ *   deliveries.
+ * - Delivery order is the outbox order (arrival order), with a per-dispatcher
+ *   monotonic `sequence` so consumers can detect reordering.
+ */
+export class ChildProgressLeadDispatcher {
+  readonly #buffer: ChildProgressEvidenceBuffer
+  readonly #maximumCoalescedEventsPerDelivery: number
+  readonly #outbox: ChildProgressLeadDelivery[] = []
+  #routineEventsSinceDelivery = 0
+  #sequence = 0
+  #deliveredPackets = 0
+  #deliveredHumanInputs = 0
+
+  constructor(options: ChildProgressLeadDispatcherOptions) {
+    this.#buffer = options.buffer
+    this.#maximumCoalescedEventsPerDelivery =
+      options.maximumCoalescedEventsPerDelivery ?? DEFAULTS.maximumCoalescedEventsPerDelivery
+    if (this.#maximumCoalescedEventsPerDelivery < 1) {
+      throw new ChildProgressEvidenceError(
+        'CONFIGURATION',
+        'maximumCoalescedEventsPerDelivery must be at least 1'
+      )
+    }
+  }
+
+  /**
+   * Folds one child observation through the buffer and applies the delivery
+   * policy. The receipt is the buffer's own; deliveries land on the outbox.
+   * A critical observation is flushed for the lead immediately — the number
+   * of routine events accepted after it but before its delivery is always 0.
+   */
+  acceptProgress(event: unknown): ChildProgressEvidenceReceipt {
+    const receipt = this.#buffer.accept(event)
+    // Packets the buffer sealed under packet pressure during this accept are
+    // deliverable now; they precede anything sealed after them.
+    for (const packet of this.#buffer.readyPackets()) {
+      this.#enqueueEvidence(packet, 'packet_pressure')
+    }
+    if (receipt.outcome === 'retained') {
+      const packet = this.#buffer.flush()
+      if (packet) this.#enqueueEvidence(packet, 'critical')
+      this.#routineEventsSinceDelivery = 0
+      return receipt
+    }
+    if (receipt.outcome === 'coalesced') {
+      this.#routineEventsSinceDelivery += 1
+      if (this.#routineEventsSinceDelivery >= this.#maximumCoalescedEventsPerDelivery) {
+        const packet = this.#buffer.flush()
+        if (packet) this.#enqueueEvidence(packet, 'coalescing_pressure')
+        this.#routineEventsSinceDelivery = 0
+      }
+    }
+    return receipt
+  }
+
+  /**
+   * Places human input addressed to the lead on the outbox immediately and
+   * returns the delivery. No progress batching sits between the call and the
+   * delivery being available to `takeDeliveries()`.
+   */
+  acceptHumanInput(input: unknown): ChildProgressLeadDelivery {
+    const parsed = LeadHumanInputSchema.parse(input)
+    this.#sequence += 1
+    this.#deliveredHumanInputs += 1
+    const delivery: ChildProgressLeadDelivery = {
+      kind: 'human_input',
+      sequence: this.#sequence,
+      input: parsed,
+    }
+    this.#outbox.push(delivery)
+    return delivery
+  }
+
+  /** Owner-driven batch deadline: seals the open packet for the lead now. */
+  flushDeadline(): ChildProgressEvidencePacket | undefined {
+    const packet = this.#buffer.flush()
+    if (packet) this.#enqueueEvidence(packet, 'deadline')
+    return packet
+  }
+
+  /**
+   * Takes every delivery waiting for the lead, in arrival order. Mirrors the
+   * buffer's `readyPackets()` drain semantics: each delivery is returned
+   * exactly once.
+   */
+  takeDeliveries(): ChildProgressLeadDelivery[] {
+    const deliveries = [...this.#outbox]
+    this.#outbox.length = 0
+    return deliveries
+  }
+
+  /** Delivery-side counters for telemetry and tests. */
+  stats(): {
+    readonly pendingDeliveries: number
+    readonly routineEventsSinceDelivery: number
+    readonly deliveredPacketCount: number
+    readonly deliveredHumanInputCount: number
+  } {
+    return {
+      pendingDeliveries: this.#outbox.length,
+      routineEventsSinceDelivery: this.#routineEventsSinceDelivery,
+      deliveredPacketCount: this.#deliveredPackets,
+      deliveredHumanInputCount: this.#deliveredHumanInputs,
+    }
+  }
+
+  #enqueueEvidence(
+    packet: ChildProgressEvidencePacket,
+    trigger: Extract<ChildProgressLeadDelivery, { kind: 'evidence' }>['trigger']
+  ): void {
+    this.#sequence += 1
+    this.#deliveredPackets += 1
+    this.#outbox.push({ kind: 'evidence', sequence: this.#sequence, packet, trigger })
+  }
+}
+
+/**
+ * A reference carried inside a packet, kept opaque in transit: the artifact
+ * that would satisfy a completed child's `terminalResultRef`, or the
+ * interaction behind an `awaiting_input` entry. The packet never carries the
+ * referenced payload.
+ */
+export type ChildProgressEvidenceReference =
+  | { readonly kind: 'terminal_result'; readonly artifactId: string }
+  | { readonly kind: 'interaction'; readonly interactionId: string }
+
+/**
+ * The verdict an authority answers with at read time — for the CURRENT
+ * authorization, never a capture-time snapshot. `forbidden` distinguishes an
+ * explicitly revoked reference from one the caller was never authorized for;
+ * `unavailable` means the reference cannot be resolved at all (missing or no
+ * longer retained). Verdicts carry no payload, so a revoked reference cannot
+ * leak the private content it once pointed at.
+ */
+export const ChildProgressReferenceVerdictSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('authorized') }).strict(),
+  z.object({ status: z.literal('unavailable'), reason: z.literal('missing') }).strict(),
+  z
+    .object({
+      status: z.literal('forbidden'),
+      reason: z.enum(['revoked', 'not_authorized']),
+    })
+    .strict(),
+])
+
+export type ChildProgressReferenceVerdict = z.output<typeof ChildProgressReferenceVerdictSchema>
+
+/**
+ * The lazy, current-authorization reference authority. Implementations must
+ * answer from live authorization state at call time; caching a verdict would
+ * turn it into a capture-time snapshot and is expressly not done by callers
+ * in this module.
+ */
+export interface ChildProgressReferenceAuthority {
+  authorize(reference: ChildProgressEvidenceReference): Promise<ChildProgressReferenceVerdict>
+}
+
+export type ChildProgressReferenceResolution = ChildProgressEvidenceReference &
+  ChildProgressReferenceVerdict
+
+/**
+ * Collects the distinct references a packet carries, in packet order
+ * (entry order, deduplicated by kind and identifier).
+ */
+export function evidencePacketReferences(
+  packet: ChildProgressEvidencePacket
+): ChildProgressEvidenceReference[] {
+  const references: ChildProgressEvidenceReference[] = []
+  const seen = new Set<string>()
+  const push = (reference: ChildProgressEvidenceReference): void => {
+    const key =
+      reference.kind === 'terminal_result'
+        ? `terminal_result:${reference.artifactId}`
+        : `interaction:${reference.interactionId}`
+    if (seen.has(key)) return
+    seen.add(key)
+    references.push(reference)
+  }
+  for (const entry of packet.entries) {
+    if (entry.terminalResultRef !== undefined) {
+      push({ kind: 'terminal_result', artifactId: entry.terminalResultRef })
+    }
+    if (entry.interaction !== undefined) {
+      push({ kind: 'interaction', interactionId: entry.interaction.interactionId })
+    }
+  }
+  return references
+}
+
+/**
+ * Resolves a packet's references at read time against the authority's
+ * CURRENT authorization. The packet is re-validated first, every reference is
+ * authorized by a fresh call (no caching between calls or across packets),
+ * and the resolution carries only the reference identity and an explicit
+ * verdict — `authorized`, `unavailable` (with `missing`), or `forbidden`
+ * (with `revoked` or `not_authorized`). The referenced private payload is
+ * never returned here; a caller that needs it fetches it behind its own
+ * separately authorized channel, and a reference that has been revoked since
+ * capture resolves to `forbidden` instead of ever surfacing its content.
+ */
+export async function resolveEvidenceReferences(
+  packet: unknown,
+  authority: ChildProgressReferenceAuthority
+): Promise<readonly ChildProgressReferenceResolution[]> {
+  const parsed = parseChildProgressEvidencePacket(packet)
+  const resolutions: ChildProgressReferenceResolution[] = []
+  for (const reference of evidencePacketReferences(parsed)) {
+    const verdict = ChildProgressReferenceVerdictSchema.parse(await authority.authorize(reference))
+    resolutions.push(referenceResolution(reference, verdict))
+  }
+  return resolutions
+}
+
+function referenceResolution(
+  reference: ChildProgressEvidenceReference,
+  verdict: ChildProgressReferenceVerdict
+): ChildProgressReferenceResolution {
+  if (verdict.status === 'authorized') return { ...reference, status: 'authorized' }
+  if (verdict.status === 'unavailable') {
+    return { ...reference, status: 'unavailable', reason: 'missing' }
+  }
+  return { ...reference, status: 'forbidden', reason: verdict.reason }
 }
 
 /**

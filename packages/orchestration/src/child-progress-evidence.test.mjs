@@ -13,8 +13,11 @@ import {
 import {
   ChildProgressEvidenceBuffer,
   ChildProgressEvidenceError,
+  ChildProgressLeadDispatcher,
   delegationEventToEvidenceEvent,
+  evidencePacketReferences,
   parseChildProgressEvidencePacket,
+  resolveEvidenceReferences,
 } from './child-progress-evidence.ts'
 import { DelegationService, InMemoryDelegationRepository } from './delegation.ts'
 
@@ -1328,6 +1331,432 @@ describe('delegation event adapter', () => {
       )
     ).toMatchObject({ outcome: 'duplicate' })
     expect(buffer.stats().lifetimeDuplicateCount).toBe(1)
+  })
+})
+
+describe('responsive lead delivery with two running children', () => {
+  const childA = { delegationId: ids.delegationIdA, childExecutionId: ids.childExecutionIdA }
+  const childB = {
+    delegationId: ids.delegationIdB,
+    childExecutionId: ids.childExecutionIdB,
+    childAttemptId: ids.attemptIdB,
+  }
+  const childEvent = (child, overrides = {}) =>
+    runningEvent({
+      delegationId: child.delegationId,
+      childExecutionId: child.childExecutionId,
+      ...(child.childAttemptId ? { childAttemptId: child.childAttemptId } : {}),
+      ...overrides,
+    })
+  const evidenceDeliveries = (deliveries) => deliveries.filter(({ kind }) => kind === 'evidence')
+
+  test('places human input and critical child evidence on the outbox in the accepting step', () => {
+    const dispatcher = new ChildProgressLeadDispatcher({
+      buffer: trackedBuffer({ parentExecutionId: ids.parentExecutionId }),
+      maximumCoalescedEventsPerDelivery: 128,
+    })
+    // Both children stream below the coalescing pressure threshold.
+    for (let index = 0; index < 40; index += 1) {
+      expect(dispatcher.acceptProgress(childEvent(childA, { observedAt: at(index) })).outcome).toBe(
+        'coalesced'
+      )
+      expect(dispatcher.acceptProgress(childEvent(childB, { observedAt: at(index) })).outcome).toBe(
+        'coalesced'
+      )
+    }
+    expect(dispatcher.takeDeliveries()).toStrictEqual([])
+
+    // Human input addressed to the lead is delivered in the same scheduling
+    // step — zero further events are accepted before it is available.
+    const input = dispatcher.acceptHumanInput({
+      interactionId: ids.interactionId,
+      kind: 'input',
+      receivedAt: at(1_000),
+    })
+    const afterInput = dispatcher.takeDeliveries()
+    expect(afterInput).toStrictEqual([
+      {
+        kind: 'human_input',
+        sequence: input.sequence,
+        input: { interactionId: ids.interactionId, kind: 'input', receivedAt: at(1_000) },
+      },
+    ])
+
+    // Child B's approval request arrives amid child A's routine burst: it is
+    // delivered immediately, never queued behind progress batching.
+    for (let index = 40; index < 60; index += 1) {
+      dispatcher.acceptProgress(childEvent(childA, { observedAt: at(index) }))
+    }
+    const approval = dispatcher.acceptProgress(
+      childEvent(childB, {
+        phase: 'awaiting_input',
+        observedAt: at(2_000),
+        interaction: { interactionId: ids.interactionId, kind: 'approval' },
+      })
+    )
+    expect(approval).toMatchObject({ outcome: 'retained', entryKind: 'awaiting_input' })
+    const afterApproval = dispatcher.takeDeliveries()
+    expect(afterApproval).toHaveLength(1)
+    expect(afterApproval[0].kind).toBe('evidence')
+    expect(afterApproval[0].trigger).toBe('critical')
+    expect(afterApproval[0].packet.entries.map((entry) => entry.phase)).toStrictEqual([
+      'awaiting_input',
+    ])
+    expect(afterApproval[0].packet.entries[0].delegationId).toBe(ids.delegationIdB)
+    // The flushed packet also carries the coalesced snapshots of both
+    // children, so the lead wakes up with fresh state for each of them.
+    expect(
+      afterApproval[0].packet.childSnapshots.map((snapshot) => snapshot.delegationId)
+    ).toStrictEqual([ids.delegationIdA, ids.delegationIdB])
+    // Delivery identities are strictly monotonic across the session.
+    expect(input.sequence).toBeLessThan(afterApproval[0].sequence)
+    expect(dispatcher.stats().deliveredHumanInputCount).toBe(1)
+    expect(dispatcher.stats().deliveredPacketCount).toBe(1)
+  })
+
+  test('a burst from one child never starves the other child through the delivery stream', () => {
+    const dispatcher = new ChildProgressLeadDispatcher({
+      buffer: trackedBuffer({ parentExecutionId: ids.parentExecutionId }),
+      maximumCoalescedEventsPerDelivery: 50,
+    })
+    // Child A bursts 240 routine events; child B interleaves one event every
+    // 60 A-events and then goes quiet.
+    for (let index = 0; index < 240; index += 1) {
+      dispatcher.acceptProgress(childEvent(childA, { observedAt: at(index) }))
+      if (index % 60 === 0) {
+        dispatcher.acceptProgress(childEvent(childB, { observedAt: at(index) }))
+      }
+    }
+    const deliveries = evidenceDeliveries(dispatcher.takeDeliveries())
+    // 244 routine events at pressure 50 seal exactly four routine packets.
+    expect(deliveries).toHaveLength(4)
+    for (const delivery of deliveries) {
+      expect(delivery.trigger).toBe('coalescing_pressure')
+      // Every routine delivery carries BOTH children's latest snapshots:
+      // A's burst cannot push B out of the delivery stream.
+      expect(delivery.packet.childSnapshots.map((snapshot) => snapshot.delegationId)).toStrictEqual(
+        [ids.delegationIdA, ids.delegationIdB]
+      )
+    }
+    // B's interleaved events advanced its snapshot in each successive packet;
+    // counts are cumulative per generation.
+    expect(
+      deliveries.map(
+        (delivery) =>
+          delivery.packet.childSnapshots.find(
+            (snapshot) => snapshot.delegationId === ids.delegationIdB
+          ).observedEventCount
+      )
+    ).toStrictEqual([1, 2, 3, 4])
+    expect(
+      deliveries.map(
+        (delivery) =>
+          delivery.packet.childSnapshots.find(
+            (snapshot) => snapshot.delegationId === ids.delegationIdA
+          ).observedEventCount
+      )
+    ).toStrictEqual([49, 98, 147, 196])
+    // The owner-driven deadline delivers the remaining open window.
+    const deadlinePacket = dispatcher.flushDeadline()
+    expect(deadlinePacket.childSnapshots.map((snapshot) => snapshot.delegationId)).toStrictEqual([
+      ids.delegationIdA,
+    ])
+    expect(deadlinePacket.childSnapshots[0].observedEventCount).toBe(240)
+    // Delivery sequences are strictly increasing across the whole session.
+    const deadlineDeliveries = dispatcher.takeDeliveries()
+    expect(deadlineDeliveries).toHaveLength(1)
+    expect(deadlineDeliveries[0].trigger).toBe('deadline')
+    expect(deadlineDeliveries[0].sequence).toBeGreaterThan(deliveries.at(-1).sequence)
+  })
+
+  test('duplicate deliveries neither trigger nor postpone coalescing pressure', () => {
+    const dispatcher = new ChildProgressLeadDispatcher({
+      buffer: trackedBuffer({ parentExecutionId: ids.parentExecutionId }),
+      maximumCoalescedEventsPerDelivery: 10,
+    })
+    const first = childEvent(childA, { observedAt: at(0) })
+    for (let index = 0; index < 9; index += 1) {
+      dispatcher.acceptProgress(index === 0 ? first : childEvent(childA, { observedAt: at(index) }))
+    }
+    // A redelivered event is not fresh progress: it must not consume the
+    // pressure budget nor trigger a delivery.
+    expect(dispatcher.acceptProgress(first).outcome).toBe('duplicate')
+    expect(dispatcher.takeDeliveries()).toStrictEqual([])
+    expect(dispatcher.stats().routineEventsSinceDelivery).toBe(9)
+    // The tenth distinct event crosses the threshold and delivers.
+    dispatcher.acceptProgress(childEvent(childA, { observedAt: at(10_000) }))
+    const deliveries = dispatcher.takeDeliveries()
+    expect(deliveries).toHaveLength(1)
+    expect(deliveries[0].trigger).toBe('coalescing_pressure')
+    expect(deliveries[0].packet.childSnapshots[0].observedEventCount).toBe(10)
+  })
+
+  test('terminates cleanly when a terminal transition arrives for each running child', () => {
+    const dispatcher = new ChildProgressLeadDispatcher({
+      buffer: trackedBuffer({ parentExecutionId: ids.parentExecutionId }),
+      maximumCoalescedEventsPerDelivery: 128,
+    })
+    for (let index = 0; index < 5; index += 1) {
+      dispatcher.acceptProgress(childEvent(childA, { observedAt: at(index) }))
+      dispatcher.acceptProgress(childEvent(childB, { observedAt: at(index) }))
+    }
+    const completedA = dispatcher.acceptProgress(
+      childEvent(childA, {
+        phase: 'completed',
+        observedAt: at(1_000),
+        terminalResultRef: ids.resultRefA,
+      })
+    )
+    const completedB = dispatcher.acceptProgress(
+      childEvent(childB, {
+        phase: 'completed',
+        observedAt: at(1_100),
+        terminalResultRef: ids.resultRefB,
+      })
+    )
+    expect(completedA).toMatchObject({ outcome: 'retained', entryKind: 'terminal' })
+    expect(completedB).toMatchObject({ outcome: 'retained', entryKind: 'terminal' })
+    const deliveries = dispatcher.takeDeliveries()
+    expect(deliveries).toHaveLength(2)
+    expect(deliveries.map((delivery) => delivery.trigger)).toStrictEqual(['critical', 'critical'])
+    expect(deliveries[0].packet.entries[0].terminalResultRef).toBe(ids.resultRefA)
+    expect(deliveries[1].packet.entries[0].terminalResultRef).toBe(ids.resultRefB)
+    // A's critical delivery carries the open window's snapshots for both
+    // children; B's follows after the seal with its own snapshot (A's state
+    // was already delivered and stays terminal).
+    expect(
+      deliveries[0].packet.childSnapshots.map((snapshot) => snapshot.delegationId)
+    ).toStrictEqual([ids.delegationIdA, ids.delegationIdB])
+    expect(
+      deliveries[1].packet.childSnapshots.map((snapshot) => snapshot.delegationId)
+    ).toStrictEqual([ids.delegationIdB])
+    expect(dispatcher.flushDeadline()).toBeUndefined()
+  })
+
+  test('validates dispatcher configuration and human input', () => {
+    expect(
+      () =>
+        new ChildProgressLeadDispatcher({
+          buffer: new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId }),
+          maximumCoalescedEventsPerDelivery: 0,
+        })
+    ).toThrow(ChildProgressEvidenceError)
+    const dispatcher = new ChildProgressLeadDispatcher({
+      buffer: new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId }),
+    })
+    expect(() => dispatcher.acceptHumanInput({ kind: 'input', receivedAt: at(0) })).toThrow()
+    expect(dispatcher.takeDeliveries()).toStrictEqual([])
+  })
+})
+
+describe('lazy reference resolution under current authorization', () => {
+  const authorizationAuthority = ({ revoked, notAuthorized, missing, calls }) => ({
+    async authorize(reference) {
+      calls.push(reference)
+      const id =
+        reference.kind === 'terminal_result' ? reference.artifactId : reference.interactionId
+      if (revoked.has(id)) return { status: 'forbidden', reason: 'revoked' }
+      if (notAuthorized.has(id)) return { status: 'forbidden', reason: 'not_authorized' }
+      if (missing.has(id)) return { status: 'unavailable', reason: 'missing' }
+      return { status: 'authorized' }
+    },
+  })
+
+  test('resolves references at read time against current authorization without caching', async () => {
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+    buffer.accept(
+      runningEvent({ phase: 'completed', observedAt: at(0), terminalResultRef: ids.resultRefA })
+    )
+    buffer.accept(
+      runningEvent({
+        delegationId: ids.delegationIdB,
+        childExecutionId: ids.childExecutionIdB,
+        childAttemptId: ids.attemptIdB,
+        phase: 'awaiting_input',
+        observedAt: at(1_000),
+        interaction: { interactionId: ids.interactionId, kind: 'approval' },
+      })
+    )
+    const packet = buffer.flush()
+    const revoked = new Set()
+    const calls = []
+    const authority = authorizationAuthority({
+      revoked,
+      notAuthorized: new Set(),
+      missing: new Set(),
+      calls,
+    })
+
+    const first = await resolveEvidenceReferences(packet, authority)
+    expect(first).toStrictEqual([
+      { kind: 'terminal_result', artifactId: ids.resultRefA, status: 'authorized' },
+      { kind: 'interaction', interactionId: ids.interactionId, status: 'authorized' },
+    ])
+
+    // Revocation after an authorized resolution changes the next read: the
+    // authority is consulted fresh on every resolution — verdicts are never
+    // snapshotted at capture time.
+    revoked.add(ids.resultRefA)
+    const second = await resolveEvidenceReferences(packet, authority)
+    expect(second[0]).toStrictEqual({
+      kind: 'terminal_result',
+      artifactId: ids.resultRefA,
+      status: 'forbidden',
+      reason: 'revoked',
+    })
+    expect(second[1]).toMatchObject({ status: 'authorized' })
+    // Four fresh authorize calls for two references resolved twice.
+    expect(calls).toHaveLength(4)
+  })
+
+  test('distinguishes authorized, revoked, not-authorized, and unavailable states', async () => {
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+    buffer.accept(
+      runningEvent({
+        phase: 'completed',
+        observedAt: at(0),
+        terminalResultRef: ids.resultRefA,
+      })
+    )
+    buffer.accept(
+      runningEvent({
+        delegationId: ids.delegationIdB,
+        childExecutionId: ids.childExecutionIdB,
+        childAttemptId: ids.attemptIdB,
+        phase: 'completed',
+        observedAt: at(1_000),
+        terminalResultRef: ids.resultRefB,
+      })
+    )
+    const packet = buffer.flush()
+    const resolutions = await resolveEvidenceReferences(
+      packet,
+      authorizationAuthority({
+        revoked: new Set([ids.resultRefA]),
+        notAuthorized: new Set([ids.resultRefB]),
+        missing: new Set([ids.interactionId]),
+        calls: [],
+      })
+    )
+    // resultRefA was explicitly revoked for the reader and resultRefB was
+    // never authorized; both resolve to forbidden with distinct reasons.
+    expect(resolutions).toStrictEqual([
+      {
+        kind: 'terminal_result',
+        artifactId: ids.resultRefA,
+        status: 'forbidden',
+        reason: 'revoked',
+      },
+      {
+        kind: 'terminal_result',
+        artifactId: ids.resultRefB,
+        status: 'forbidden',
+        reason: 'not_authorized',
+      },
+    ])
+    // The resolution carries only identity and explicit state — never any
+    // referenced payload.
+    for (const resolution of resolutions) {
+      expect(Object.keys(resolution).toSorted()).toStrictEqual([
+        'artifactId',
+        'kind',
+        'reason',
+        'status',
+      ])
+    }
+  })
+
+  test('resolves an unavailable interaction as missing, not forbidden', async () => {
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+    buffer.accept(
+      runningEvent({
+        phase: 'awaiting_input',
+        observedAt: at(0),
+        interaction: { interactionId: ids.interactionId, kind: 'input' },
+      })
+    )
+    const packet = buffer.flush()
+    const resolutions = await resolveEvidenceReferences(
+      packet,
+      authorizationAuthority({
+        revoked: new Set(),
+        notAuthorized: new Set(),
+        missing: new Set([ids.interactionId]),
+        calls: [],
+      })
+    )
+    expect(resolutions).toStrictEqual([
+      {
+        kind: 'interaction',
+        interactionId: ids.interactionId,
+        status: 'unavailable',
+        reason: 'missing',
+      },
+    ])
+  })
+
+  test('deduplicates the same reference repeated across entries', async () => {
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+    buffer.accept(
+      runningEvent({
+        phase: 'completed',
+        observedAt: at(0),
+        terminalResultRef: ids.resultRefA,
+      })
+    )
+    buffer.accept(
+      runningEvent({
+        delegationId: ids.delegationIdB,
+        childExecutionId: ids.childExecutionIdB,
+        childAttemptId: ids.attemptIdB,
+        phase: 'completed',
+        observedAt: at(1_000),
+        terminalResultRef: ids.resultRefA,
+      })
+    )
+    const packet = buffer.flush()
+    expect(evidencePacketReferences(packet)).toStrictEqual([
+      { kind: 'terminal_result', artifactId: ids.resultRefA },
+    ])
+    const resolutions = await resolveEvidenceReferences(
+      packet,
+      authorizationAuthority({
+        revoked: new Set(),
+        notAuthorized: new Set(),
+        missing: new Set(),
+        calls: [],
+      })
+    )
+    expect(resolutions).toStrictEqual([
+      { kind: 'terminal_result', artifactId: ids.resultRefA, status: 'authorized' },
+    ])
+    expect(evidencePacketReferences({ ...packet, entries: [] })).toStrictEqual([])
+  })
+
+  test('fails loudly on a tampered packet or a misbehaving authority', async () => {
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+    buffer.accept(
+      runningEvent({ phase: 'completed', observedAt: at(0), terminalResultRef: ids.resultRefA })
+    )
+    const packet = buffer.flush()
+    await expect(
+      resolveEvidenceReferences(
+        { ...packet, sequence: packet.sequence + 1 },
+        authorizationAuthority({
+          revoked: new Set(),
+          notAuthorized: new Set(),
+          missing: new Set(),
+          calls: [],
+        })
+      )
+    ).rejects.toThrow(ChildProgressEvidenceError)
+    await expect(
+      resolveEvidenceReferences(packet, {
+        async authorize() {
+          return { status: 'granted' }
+        },
+      })
+    ).rejects.toThrow()
   })
 })
 
