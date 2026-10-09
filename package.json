@@ -87,6 +87,7 @@
     "@control-plane/orchestration": "workspace:*",
     "@control-plane/pi-durable-adapter": "workspace:*",
     "@control-plane/production-readiness": "workspace:*",
+    "@control-plane/profile-adapters": "workspace:*",
     "@control-plane/profile-portability": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
     "@control-plane/sandbox": "workspace:*",

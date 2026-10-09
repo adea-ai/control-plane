@@ -576,6 +576,25 @@
       "layer": "adapter-infrastructure"
     },
     {
+      "name": "@control-plane/profile-adapters",
+      "path": "packages/profile-adapters",
+      "version": "1.0.0",
+      "lockVersion": "1.0.0",
+      "kind": "package",
+      "private": true,
+      "browser": false,
+      "exports": ["."],
+      "workspaceDependencies": [
+        "@control-plane/deployment",
+        "@control-plane/orchestration",
+        "@control-plane/runtime-sdk"
+      ],
+      "externalDependencies": ["zod"],
+      "developmentWorkspaceDependencies": [],
+      "developmentExternalDependencies": [],
+      "layer": "adapter-infrastructure"
+    },
+    {
       "name": "@control-plane/profile-portability",
       "path": "packages/profile-portability",
       "version": "1.6.0",

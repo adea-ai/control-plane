@@ -23,6 +23,7 @@
         "@control-plane/orchestration": "workspace:*",
         "@control-plane/pi-durable-adapter": "workspace:*",
         "@control-plane/production-readiness": "workspace:*",
+        "@control-plane/profile-adapters": "workspace:*",
         "@control-plane/profile-portability": "workspace:*",
         "@control-plane/runtime-sdk": "workspace:*",
         "@control-plane/sandbox": "workspace:*",
@@ -495,6 +496,16 @@
       "version": "1.4.2",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
+        "zod": "4.6.5",
+      },
+    },
+    "packages/profile-adapters": {
+      "name": "@control-plane/profile-adapters",
+      "version": "1.0.0",
+      "dependencies": {
+        "@control-plane/deployment": "workspace:*",
+        "@control-plane/orchestration": "workspace:*",
+        "@control-plane/runtime-sdk": "workspace:*",
         "zod": "4.6.5",
       },
     },

@@ -4,7 +4,7 @@ Generated from [control-plane-architecture.v1.json](./control-plane-architecture
 
 ## Audit summary
 
-- 44 workspace packages and applications.
+- 45 workspace packages and applications.
 - 52 public SDK operations.
 - 4 deployment profiles.
 - 12 persistence parity boundaries.
@@ -39,33 +39,34 @@ flowchart LR
   P22["pi-durable-adapter"]
   P23["policy"]
   P24["production-readiness"]
-  P25["profile-portability"]
-  P26["remote-control-relay"]
-  P27["restate-runtime"]
-  P28["runtime-gateway"]
-  P29["runtime-gateway-protocol"]
-  P30["runtime-sdk"]
-  P31["runtime-worker"]
-  P32["sandbox"]
-  P33["sdk"]
-  P34["secrets"]
-  P35["sqlite-persistence"]
-  P36["telemetry"]
-  P37["testing"]
-  P38["tool-execution"]
-  P39["tool-gateway"]
-  P40["tool-sdk"]
-  P41["usage-ledger"]
-  P42["workflow-runtime"]
-  P43["workflow-worker"]
+  P25["profile-adapters"]
+  P26["profile-portability"]
+  P27["remote-control-relay"]
+  P28["restate-runtime"]
+  P29["runtime-gateway"]
+  P30["runtime-gateway-protocol"]
+  P31["runtime-sdk"]
+  P32["runtime-worker"]
+  P33["sandbox"]
+  P34["sdk"]
+  P35["secrets"]
+  P36["sqlite-persistence"]
+  P37["telemetry"]
+  P38["testing"]
+  P39["tool-execution"]
+  P40["tool-gateway"]
+  P41["tool-sdk"]
+  P42["usage-ledger"]
+  P43["workflow-runtime"]
+  P44["workflow-worker"]
   P0 --> P9
   P0 --> P10
-  P0 --> P29
   P0 --> P30
+  P0 --> P31
   P1 --> P2
-  P1 --> P36
+  P1 --> P37
   P2 --> P4
-  P2 --> P36
+  P2 --> P37
   P3 --> P4
   P3 --> P10
   P5 --> P1
@@ -81,12 +82,12 @@ flowchart LR
   P5 --> P18
   P5 --> P20
   P5 --> P22
-  P5 --> P30
-  P5 --> P36
-  P5 --> P41
+  P5 --> P31
+  P5 --> P37
+  P5 --> P42
   P6 --> P3
   P6 --> P4
-  P6 --> P29
+  P6 --> P30
   P7 --> P4
   P7 --> P23
   P8 --> P2
@@ -100,19 +101,19 @@ flowchart LR
   P8 --> P18
   P8 --> P20
   P8 --> P24
-  P8 --> P29
   P8 --> P30
-  P8 --> P38
-  P8 --> P40
+  P8 --> P31
+  P8 --> P39
   P8 --> P41
+  P8 --> P42
   P10 --> P4
   P11 --> P4
   P11 --> P10
-  P11 --> P36
+  P11 --> P37
   P12 --> P3
   P12 --> P4
   P12 --> P10
-  P12 --> P30
+  P12 --> P31
   P13 --> P1
   P13 --> P2
   P13 --> P3
@@ -126,22 +127,22 @@ flowchart LR
   P13 --> P17
   P13 --> P19
   P13 --> P20
-  P13 --> P26
   P13 --> P27
-  P13 --> P34
-  P13 --> P36
-  P13 --> P38
-  P13 --> P40
+  P13 --> P28
+  P13 --> P35
+  P13 --> P37
+  P13 --> P39
   P13 --> P41
   P13 --> P42
   P13 --> P43
+  P13 --> P44
   P14 --> P4
   P14 --> P9
   P14 --> P10
   P14 --> P11
   P14 --> P12
   P14 --> P20
-  P14 --> P36
+  P14 --> P37
   P15 --> P0
   P15 --> P1
   P15 --> P2
@@ -158,21 +159,21 @@ flowchart LR
   P15 --> P18
   P15 --> P19
   P15 --> P20
-  P15 --> P26
   P15 --> P27
-  P15 --> P30
-  P15 --> P34
+  P15 --> P28
+  P15 --> P31
   P15 --> P35
   P15 --> P36
-  P15 --> P38
-  P15 --> P40
+  P15 --> P37
+  P15 --> P39
   P15 --> P41
   P15 --> P42
   P15 --> P43
+  P15 --> P44
   P16 --> P9
   P16 --> P10
-  P16 --> P29
   P16 --> P30
+  P16 --> P31
   P17 --> P4
   P17 --> P10
   P18 --> P4
@@ -180,116 +181,119 @@ flowchart LR
   P18 --> P9
   P18 --> P10
   P18 --> P23
-  P18 --> P41
+  P18 --> P42
   P19 --> P4
   P19 --> P9
-  P19 --> P40
+  P19 --> P41
   P20 --> P3
   P20 --> P4
   P20 --> P10
   P20 --> P12
-  P20 --> P30
-  P20 --> P40
-  P21 --> P30
+  P20 --> P31
+  P20 --> P41
+  P21 --> P31
   P22 --> P4
   P22 --> P10
   P22 --> P12
   P22 --> P18
   P22 --> P20
-  P22 --> P30
-  P22 --> P38
-  P22 --> P40
+  P22 --> P31
+  P22 --> P39
   P22 --> P41
+  P22 --> P42
   P23 --> P4
   P24 --> P4
-  P25 --> P3
-  P25 --> P7
-  P25 --> P8
   P25 --> P9
-  P25 --> P10
-  P25 --> P12
-  P25 --> P24
-  P25 --> P35
-  P26 --> P4
+  P25 --> P20
+  P25 --> P31
+  P26 --> P3
+  P26 --> P7
+  P26 --> P8
   P26 --> P9
+  P26 --> P10
+  P26 --> P12
+  P26 --> P24
+  P26 --> P36
+  P27 --> P4
   P27 --> P9
-  P28 --> P1
-  P28 --> P2
-  P28 --> P3
-  P28 --> P4
-  P28 --> P6
-  P28 --> P8
   P28 --> P9
-  P28 --> P10
-  P28 --> P11
-  P28 --> P29
-  P28 --> P30
-  P28 --> P35
-  P28 --> P36
+  P29 --> P1
+  P29 --> P2
+  P29 --> P3
+  P29 --> P4
+  P29 --> P6
+  P29 --> P8
+  P29 --> P9
+  P29 --> P10
+  P29 --> P11
   P29 --> P30
-  P30 --> P4
-  P31 --> P1
-  P31 --> P2
-  P31 --> P6
-  P31 --> P8
-  P31 --> P10
-  P31 --> P16
-  P31 --> P19
-  P31 --> P29
-  P31 --> P30
-  P31 --> P35
-  P32 --> P4
+  P29 --> P31
+  P29 --> P36
+  P29 --> P37
+  P30 --> P31
+  P31 --> P4
+  P32 --> P1
+  P32 --> P2
+  P32 --> P6
+  P32 --> P8
+  P32 --> P10
+  P32 --> P16
+  P32 --> P19
+  P32 --> P30
+  P32 --> P31
+  P32 --> P36
   P33 --> P4
-  P33 --> P30
-  P34 --> P9
-  P35 --> P3
-  P35 --> P4
-  P35 --> P7
+  P34 --> P4
+  P34 --> P31
   P35 --> P9
-  P35 --> P10
-  P35 --> P11
-  P35 --> P12
-  P35 --> P17
-  P35 --> P20
-  P35 --> P24
-  P35 --> P30
-  P35 --> P38
-  P35 --> P40
-  P35 --> P41
-  P37 --> P2
-  P37 --> P8
+  P36 --> P3
+  P36 --> P4
+  P36 --> P7
+  P36 --> P9
+  P36 --> P10
+  P36 --> P11
+  P36 --> P12
+  P36 --> P17
+  P36 --> P20
+  P36 --> P24
+  P36 --> P31
+  P36 --> P39
+  P36 --> P41
+  P36 --> P42
   P38 --> P2
-  P38 --> P4
-  P38 --> P10
-  P38 --> P23
-  P38 --> P40
-  P39 --> P1
-  P39 --> P38
-  P40 --> P4
+  P38 --> P8
+  P39 --> P2
+  P39 --> P4
+  P39 --> P10
+  P39 --> P23
+  P39 --> P41
+  P40 --> P1
+  P40 --> P39
   P41 --> P4
-  P42 --> P2
   P42 --> P4
-  P42 --> P9
-  P42 --> P10
-  P42 --> P20
-  P42 --> P30
-  P43 --> P1
   P43 --> P2
-  P43 --> P3
   P43 --> P4
-  P43 --> P8
+  P43 --> P9
   P43 --> P10
-  P43 --> P11
-  P43 --> P12
-  P43 --> P16
-  P43 --> P19
   P43 --> P20
-  P43 --> P23
-  P43 --> P29
-  P43 --> P30
-  P43 --> P36
-  P43 --> P41
-  P43 --> P42
+  P43 --> P31
+  P44 --> P1
+  P44 --> P2
+  P44 --> P3
+  P44 --> P4
+  P44 --> P8
+  P44 --> P10
+  P44 --> P11
+  P44 --> P12
+  P44 --> P16
+  P44 --> P19
+  P44 --> P20
+  P44 --> P23
+  P44 --> P30
+  P44 --> P31
+  P44 --> P37
+  P44 --> P42
+  P44 --> P43
 ```
 
 ## Deployment composition diagram
@@ -337,6 +341,7 @@ flowchart LR
 | `@control-plane/pi-durable-adapter`<br>`packages/pi-durable-adapter`             | 0.1.0 / 0.1.0           | adapter-infrastructure | package     | `@control-plane/contracts`<br>`@control-plane/domain`<br>`@control-plane/execution-plan`<br>`@control-plane/model-gateway`<br>`@control-plane/orchestration`<br>`@control-plane/runtime-sdk`<br>`@control-plane/tool-execution`<br>`@control-plane/tool-sdk`<br>`@control-plane/usage-ledger`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `@earendil-works/chord`<br>`@earendil-works/pi-ai`<br>`@earendil-works/pi-durable`<br>`zod`                                                                                                                                                           | `.`                                                                                                                                                                                 |
 | `@control-plane/policy`<br>`packages/policy`                                     | 1.4.1 / 1.4.1           | core-port              | package     | `@control-plane/contracts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `zod`                                                                                                                                                                                                                                                 | `.`                                                                                                                                                                                 |
 | `@control-plane/production-readiness`<br>`packages/production-readiness`         | 1.4.2 / 1.4.2           | adapter-infrastructure | package     | `@control-plane/contracts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `zod`                                                                                                                                                                                                                                                 | `.`                                                                                                                                                                                 |
+| `@control-plane/profile-adapters`<br>`packages/profile-adapters`                 | 1.0.0 / 1.0.0           | adapter-infrastructure | package     | `@control-plane/deployment`<br>`@control-plane/orchestration`<br>`@control-plane/runtime-sdk`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `zod`                                                                                                                                                                                                                                                 | `.`                                                                                                                                                                                 |
 | `@control-plane/profile-portability`<br>`packages/profile-portability`           | 1.6.0 / 1.6.0           | adapter-infrastructure | package     | `@control-plane/context`<br>`@control-plane/credential-vault`<br>`@control-plane/database`<br>`@control-plane/deployment`<br>`@control-plane/domain`<br>`@control-plane/execution-plan`<br>`@control-plane/production-readiness`<br>`@control-plane/sqlite-persistence`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `drizzle-orm`<br>`zod`                                                                                                                                                                                                                                | `.`                                                                                                                                                                                 |
 | `@control-plane/remote-control-relay`<br>`packages/remote-control-relay`         | 1.3.0 / 1.3.0           | adapter-infrastructure | package     | `@control-plane/contracts`<br>`@control-plane/deployment`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `@hpke/core`<br>`@hpke/dhkem-x25519`<br>`zod`                                                                                                                                                                                                         | `.`                                                                                                                                                                                 |
 | `@control-plane/restate-runtime`<br>`packages/restate-runtime`                   | 1.2.3 / 1.2.3           | adapter-infrastructure | package     | `@control-plane/deployment`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | —                                                                                                                                                                                                                                                     | `.`                                                                                                                                                                                 |
