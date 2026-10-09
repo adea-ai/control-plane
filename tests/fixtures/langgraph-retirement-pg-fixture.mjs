@@ -98,6 +98,9 @@ function alphaNodes() {
  *   (schema-valid, but no longer the content the retained digest covers).
  * - mutateRunningExecutionPin: rewrites the running execution's plan pin to a
  *   well-formed digest that belongs to no retained plan.
+ * - backdateExecutions: rewrites the executions' lifecycle timestamps to an
+ *   instant far before the observation time, so the freshness threshold
+ *   classifies the section as stale.
  * - volume: { definitionRows, checkpointThreads } — pagination volume seeded
  *   directly (shape-valid rows) so exactness can be checked across page sizes.
  */
@@ -109,6 +112,7 @@ export async function createInventoryPgFixture({
   mutateRunningPlanGraphIdentity = undefined,
   corruptRunningPlanContent = false,
   mutateRunningExecutionPin = false,
+  backdateExecutions = false,
   volume = undefined,
 } = {}) {
   const database = await createIsolatedTestDatabase({
@@ -239,6 +243,17 @@ export async function createInventoryPgFixture({
             `sha256:${createHash('sha256').update('fixture-foreign-plan-digest').digest('hex')}`,
           ]
         )
+      }
+      if (backdateExecutions) {
+        await client.unsafe(
+          'update executions set accepted_at = $1, updated_at = $1, created_at = $1',
+          ['2026-06-01T00:00:00.000Z']
+        )
+        // The executions section's freshness signal is the newest lifecycle
+        // timestamp across executions and retained plans.
+        await client.unsafe('update execution_plans set created_at = $1', [
+          '2026-06-01T00:00:00.000Z',
+        ])
       }
 
       // LangGraph checkpoint rows in the PostgresSaver's exact storage shape.
