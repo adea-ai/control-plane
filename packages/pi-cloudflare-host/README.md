@@ -169,3 +169,102 @@ resend; trusted settlement retains the host result once while leaving the exact 
 This independently testable slice advances #930 restart/recovery evidence and
 retained settlement. Full adapter acceptance, live activation and the external
 ACP/evidence/inventory/read-only/Adea lanes remain separate. No issue closure.
+
+## Partial public adapter composition
+
+`CloudflarePiDurableOwner.runtimeAdapter()` explicitly returns an in-process
+`RuntimeAdapter` facade over this owner. It schedules `start` through retained
+alarm intent, maps accepted work to `starting` and interrupted work to `unknown`,
+and implements current-authorized status, cancellation, reconciliation and a
+finite snapshot of retained progress events. Progress reconnects use the exact
+persisted sequence and timestamp; no polling or automatic native resume occurs.
+
+First admission atomically persists a random opaque handle and original admission
+timestamp. Full supplied handle tuples are compared with retained identity at
+every operation; no session ID is fabricated. Additive nullable SQLite columns
+preserve historical task JSON/digests/replay keys. Historical rows without handle
+or event timing fail unavailable rather than receive invented replay timestamps.
+Cancellation keys retain their exact request; changed retry bodies conflict.
+
+This partial adapter advertises **no capabilities**, rejects unsupported required
+plan capabilities before admission, and reports degraded inspection. Input,
+approval, session mutation/history and cleanup operations throw explicit
+non-retryable unsupported errors. Session load/list also default to unsupported;
+they require an explicitly injected canonical session authority port. There is no Worker transport, profile registration, production authority
+composition, live activation or native checkpoint resumption. Production current
+actor/audience/grant and physical-send spending/credential authority remain
+mandatory independent ports; a local scripted engine does not qualify them.
+
+Acceptance map for #930: pinned native driver/versioned owner, exact accepted
+runtime/configuration pins, isolated context, hibernation/restart/upgrade and
+interrupted-no-resend evidence are merged in #964/#971. This facade closes the
+local public start/status/progress/cancel/reconcile composition seam. Full
+RuntimeAdapter interaction/session mutation/history/cleanup, production provider authority and
+safe native checkpoint continuation remain open; no full acceptance is claimed.
+
+### Canonical read-only session composition
+
+An optional server-only `sessionAuthority` enables binding an existing canonical
+session ID to an existing Pi conversation and exact accepted attempt. Binding is
+immutable and idempotent: changed session/native/attempt mappings conflict, and
+owner replacement fences stale writers. Public operations cannot register aliases.
+The authority port must verify the active canonical mapping, original actor,
+separate caller, current audience/grants/expiry and exact plan/budget pins. Both
+execution and session authority are rechecked after every native-storage await,
+including close; SQLite columns and serialized bindings must agree.
+
+`session({operation:'load', sessionId})` and `session({operation:'list'})` read
+only Pi 1.1.0 `Storage.conversation` records and return canonical metadata.
+Lists fail closed above 64 bound sessions; revoked authority is checked even for
+an empty list or unknown alias. They never construct Harness, enable scheduling,
+change checkpoints, or release unknown-send quarantine. This source slice adds
+no advertised capability, production transport or activation.
+
+Pinned vendor evidence: `harness/types.d.ts` exposes `Conversation.submit` and
+`Harness.resume` as scheduling operations; `types.d.ts` exposes the read-only
+`Storage.conversation` lookup. Pi 1.1.0 provides no public canonical approval or
+exact interaction-scoped resume operation. Input, approval, create, resume,
+close and history therefore remain explicitly unsupported. A production
+canonical session authority implementation and native continuation proof remain
+required before broader acceptance.
+
+## Native task compatibility preflight
+
+Trusted `CloudflarePiDurableOwner` composition must supply `nativeTaskCatalog`
+with schema version 1, the exact admitted owner configuration digest, an actual
+Pi registry snapshot, and explicit `{kind, fromVersion, toVersion}` migration
+pairs. Task names, versions, phase/migration functions and migration permissions
+are captured before awaits. `openEngine(storage, pinnedRegistry)` must use the
+supplied registry reader; later registry publications cannot select new task code.
+Missing catalog composition fails non-retryable unsupported before engine opening.
+
+Before opening Harness, the host scans actual native task storage with current
+accepted-task authority and owner-epoch checks before and after every scan await.
+Live pending/running/waiting records need an installed exact definition or an
+explicitly permitted older version with the captured migration function. Missing,
+newer or unapproved versions fail with typed unsupported reasons. Preflight never
+invokes migration/task code, writes input/checkpoints, or schedules/resends work.
+Completing and terminal records retain their receipt independently of removed
+live definitions; ordinary retained completion reads do not open an engine.
+
+Scans use 64 records per page with a **1,024-record availability limit**, including
+retained terminal records. More records fail `CLOUDFLARE_TASK_SCAN_LIMIT`; no page
+is silently truncated. Repeated/empty continuation cursors fail
+`CLOUDFLARE_TASK_SCAN_INVALID`. A deployment needing a larger context requires a
+reviewed capacity change; this adds no destructive retention cleanup. A refused
+wake retains the host's conservative reconciliation state and does not infer a
+no-send settlement or release unknown-send quarantine.
+
+Pi 1.1.0 already blocks `missing_task`, `task_too_old`, and `migration_failed` in
+its scheduler. This increment adds bounded host-visible refusal before opening
+that scheduler, rather than claiming Pi previously reran arbitrary latest code.
+The actual registry remains an operator-owned implementation contract, not scope
+or spending authority. No capability, production Worker route or activation is
+added.
+
+For #930, merged #964 supplies pinned storage/owner/context/restart/upgrade
+foundation, #971 interruption reconciliation, #977 the public lifecycle facade,
+and #985 authorized read-only sessions. This preflight strengthens the unknown
+native-definition wake boundary. Native child checkpointing is explicitly outside
+#930's claim; no extra checkpoint requirement is introduced. Full issue acceptance
+still requires the coordinator's criterion-by-criterion integrated evidence review.

@@ -263,8 +263,14 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-context-transport-e2e.test.mjs',
     'tests/m11-local-native-terminal-usage.test.mjs',
     'tests/m11-standalone-e2e.test.mjs',
+    'tests/pi-child-continuation-sqlite.test.mjs',
     'tests/pi-durable-child-host.test.mjs',
     'tests/pi-durable-delegation-recovery.test.mjs',
+    'tests/pi-durable-canonical-authority.test.mjs',
+    'tests/pi-durable-execution-model-composition.test.mjs',
+    'tests/pi-durable-governed-child-composition.test.mjs',
+    'tests/pi-durable-workspace-scope.test.mjs',
+    'tests/pi-production-runtime-startup.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
   ])
   const manifest = await readJson('package.json')
@@ -308,6 +314,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-retention-hold-operator.test.mjs',
     'tests/m11-retention-restore-reapply.test.mjs',
     'tests/railway-production-plan.test.mjs',
+    'tests/replacement-compatibility.test.mjs',
     'tests/repository.test.mjs',
     'tests/restate-identity.test.mjs',
   ])

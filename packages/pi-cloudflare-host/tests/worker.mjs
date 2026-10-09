@@ -85,6 +85,35 @@ export class RecoveryOwner {
       conversationId: ctx.id.toString(),
       agentId: id('agt'),
     }
+    let activeTask, activeBeforeEffect
+    const definitions = taskDefinitions(
+      1,
+      env.EFFECTS
+        ? async (input) => {
+            if (
+              !activeTask ||
+              !activeBeforeEffect ||
+              input.attemptId !== activeTask.request.attemptId ||
+              input.planDigest !== activeTask.request.executionPlan.contentDigest
+            )
+              throw new Error('QUALIFICATION_PENDING_TASK_NOT_AUTHORIZED')
+            await activeBeforeEffect()
+            // The real native Pi task phase stays running while its controlled effect ACK is held.
+            await env.EFFECTS.fetch('http://fixture/effect', {
+              method: 'POST',
+              body: JSON.stringify({
+                task: activeTask,
+                result: {
+                  outcome: 'completed',
+                  output: input,
+                  usage: { inputTokens: 0, outputTokens: 0, durationMs: 0 },
+                  artifacts: [],
+                },
+              }),
+            })
+          }
+        : undefined
+    )
     this.owner = new CloudflarePiDurableOwner(ctx, {
       context: BACKGROUND_CONTEXT,
       pins: this.pins,
@@ -103,6 +132,25 @@ export class RecoveryOwner {
             pins.conversationId !== ctx.id.toString()
           )
             throw new Error('QUALIFICATION_AUTHORITY_DENIED')
+        },
+      },
+      sessionAuthority: {
+        assertCurrent: async (sessions, owner) => {
+          if (
+            env.SESSION_REVOKED === 'true' ||
+            owner.conversationId !== env.OWNER.idFromName('context-a').toString()
+          )
+            throw new Error('QUALIFICATION_SESSION_AUTHORITY_DENIED')
+          for (const session of sessions) {
+            if (
+              session.binding.schemaVersion !== 1 ||
+              session.binding.sessionId !== id('ses') ||
+              session.binding.nativeConversationId !== 1 ||
+              session.binding.attemptId !== request.attemptId ||
+              stableJson(session.task) !== stableJson(accepted)
+            )
+              throw new Error('QUALIFICATION_SESSION_BINDING_DENIED')
+          }
         },
       },
       reconciliation: env.EFFECTS
@@ -126,39 +174,16 @@ export class RecoveryOwner {
             },
           }
         : undefined,
-      openEngine: async (storage) => {
-        let activeTask, activeBeforeEffect
-        const definitions = taskDefinitions(
-          1,
-          env.EFFECTS
-            ? async (input) => {
-                if (
-                  !activeTask ||
-                  !activeBeforeEffect ||
-                  input.attemptId !== activeTask.request.attemptId ||
-                  input.planDigest !== activeTask.request.executionPlan.contentDigest
-                )
-                  throw new Error('QUALIFICATION_PENDING_TASK_NOT_AUTHORIZED')
-                await activeBeforeEffect()
-                // The real native Pi task phase stays running while its controlled effect ACK is held.
-                await env.EFFECTS.fetch('http://fixture/effect', {
-                  method: 'POST',
-                  body: JSON.stringify({
-                    task: activeTask,
-                    result: {
-                      outcome: 'completed',
-                      output: input,
-                      usage: { inputTokens: 0, outputTokens: 0, durationMs: 0 },
-                      artifacts: [],
-                    },
-                  }),
-                })
-              }
-            : undefined
-        )
+      nativeTaskCatalog: {
+        schemaVersion: 1,
+        configurationDigest: digest,
+        registry: definitions.registry.snapshot(),
+        migrations: [],
+      },
+      openEngine: async (storage, pinnedRegistry) => {
         const harness = await Harness.open(
           storage,
-          { models: createModels(), registry: definitions.registry },
+          { models: createModels(), registry: pinnedRegistry },
           BACKGROUND_CONTEXT
         )
         return {
@@ -206,6 +231,39 @@ export class RecoveryOwner {
       pair[1].serializeAttachment(this.pins)
       return new Response(null, { status: 101, webSocket: pair[0] })
     }
+    // Qualification-only public facade routes; not a production Worker transport.
+    if (action === 'public-start')
+      return Response.json(await this.owner.runtimeAdapter().start(request))
+    if (action === 'public-status' || action === 'public-progress') {
+      const input = await httpRequest.json()
+      const adapter = this.owner.runtimeAdapter()
+      if (action === 'public-status') return Response.json(await adapter.status(input.handle))
+      const events = []
+      for await (const event of adapter.progress(input.handle, {
+        afterSequence: input.afterSequence,
+      }))
+        events.push(event)
+      return Response.json(events)
+    }
+    if (action === 'session-bind') {
+      await this.owner.bindSession({
+        schemaVersion: 1,
+        sessionId: id('ses'),
+        nativeConversationId: 1,
+        attemptId: request.attemptId,
+      })
+      return Response.json({ bound: true })
+    }
+    if (action === 'session-load' || action === 'session-list')
+      return Response.json(
+        await this.owner
+          .runtimeAdapter()
+          .session(
+            action === 'session-list'
+              ? { operation: 'list' }
+              : { operation: 'load', sessionId: id('ses') }
+          )
+      )
     if (action === 'accept') return Response.json(await this.owner.accept(request))
     if (action === 'wake') {
       await this.owner.alarm()

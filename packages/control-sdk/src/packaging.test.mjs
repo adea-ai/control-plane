@@ -22,14 +22,17 @@ describe('published SDK artifacts', () => {
     temporaryDirectories.push(directory)
     const contractsTarball = join(directory, 'contracts.tgz')
     const sdkTarball = join(directory, 'sdk.tgz')
+    const runtimeSdkTarball = join(directory, 'runtime-sdk.tgz')
 
     pack(join(workspaceRoot, 'packages/contracts'), directory, 'contracts.tgz')
+    pack(join(workspaceRoot, 'packages/runtime-sdk'), directory, 'runtime-sdk.tgz')
     pack(join(workspaceRoot, 'packages/control-sdk'), directory, 'sdk.tgz')
 
     const archiveEntries = execFileSync('tar', ['-tzf', sdkTarball], { encoding: 'utf8' })
     expect(archiveEntries).toContain('package/dist/index.js')
     expect(archiveEntries).toContain('package/dist/testing.js')
     expect(archiveEntries).toContain('package/openapi/control-plane.v2.json')
+    expect(archiveEntries).toContain('package/openapi/control-plane.v3.json')
     expect(archiveEntries).not.toContain('package/src/')
     expect(archiveEntries).not.toContain('compatibility/')
 
@@ -41,10 +44,12 @@ describe('published SDK artifacts', () => {
         type: 'module',
         dependencies: {
           '@control-plane/contracts': `file:${contractsTarball}`,
+          '@control-plane/runtime-sdk': `file:${runtimeSdkTarball}`,
           '@control-plane/sdk': `file:${sdkTarball}`,
         },
         overrides: {
           '@control-plane/contracts': `file:${contractsTarball}`,
+          '@control-plane/runtime-sdk': `file:${runtimeSdkTarball}`,
         },
       })
     )
@@ -66,10 +71,19 @@ describe('published SDK artifacts', () => {
       join(directory, 'consumer.ts'),
       [
         "import { ControlApiFixtures, ControlPlaneClient, type ExecutionRequestValidationRequest } from '@control-plane/sdk'",
+        "import type { PiDurableLeadDispatchRequest, PiDurableLeadStatusRequest, PiDurableLeadProgressRequest, PiDurableLeadCancelRequest } from '@control-plane/runtime-sdk'",
         "import { createControlPlaneStub } from '@control-plane/sdk/testing'",
         'const request: ExecutionRequestValidationRequest = ControlApiFixtures.executionValidation.request',
         "const client = new ControlPlaneClient({ baseUrl: 'https://control-plane.example', credential: 'credential' })",
         'void client.validateExecutionRequest(request)',
+        'declare const dispatch: PiDurableLeadDispatchRequest',
+        'declare const status: PiDurableLeadStatusRequest',
+        'declare const progress: PiDurableLeadProgressRequest',
+        'declare const cancel: PiDurableLeadCancelRequest',
+        'void client.dispatchPiDurableLead(dispatch)',
+        'void client.getPiDurableLeadStatus(status)',
+        'void client.getPiDurableLeadProgress(progress)',
+        'void client.cancelPiDurableLead(cancel)',
         'void createControlPlaneStub',
       ].join('\n')
     )

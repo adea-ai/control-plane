@@ -21,6 +21,7 @@
         "@control-plane/model-gateway": "workspace:*",
         "@control-plane/object-store": "workspace:*",
         "@control-plane/orchestration": "workspace:*",
+        "@control-plane/pi-durable-adapter": "workspace:*",
         "@control-plane/production-readiness": "workspace:*",
         "@control-plane/profile-portability": "workspace:*",
         "@control-plane/runtime-sdk": "workspace:*",
@@ -28,9 +29,11 @@
         "@control-plane/sdk": "workspace:*",
         "@control-plane/secrets": "workspace:*",
         "@control-plane/sqlite-persistence": "workspace:*",
+        "@control-plane/tool-execution": "workspace:*",
         "@control-plane/usage-ledger": "workspace:*",
         "@control-plane/workflow-runtime": "workspace:*",
         "@control-plane/workflow-worker": "workspace:*",
+        "@earendil-works/pi-ai": "1.1.0",
         "@langchain/langgraph": "1.4.20",
         "@types/node": "^26.6.4",
         "acorn": "8.19.0",
@@ -44,7 +47,7 @@
     },
     "apps/control-api": {
       "name": "@control-plane/control-api",
-      "version": "1.22.0",
+      "version": "1.23.0",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -58,6 +61,8 @@
         "@control-plane/memory-writeback": "workspace:*",
         "@control-plane/model-gateway": "workspace:*",
         "@control-plane/orchestration": "workspace:*",
+        "@control-plane/pi-durable-adapter": "workspace:*",
+        "@control-plane/runtime-sdk": "workspace:*",
         "@control-plane/telemetry": "workspace:*",
         "@control-plane/usage-ledger": "workspace:*",
         "@fastify/helmet": "13.1.1",
@@ -72,10 +77,14 @@
         "fastify": "5.12.5",
         "reflect-metadata": "0.2.2",
         "rxjs": "7.8.2",
+        "zod": "4.6.5",
       },
       "devDependencies": {
+        "@control-plane/sdk": "workspace:*",
         "@control-plane/sqlite-persistence": "workspace:*",
         "@control-plane/testing": "workspace:*",
+        "@control-plane/workflow-worker": "workspace:*",
+        "@earendil-works/pi-ai": "1.1.0",
       },
     },
     "apps/hosted-control-plane": {
@@ -122,6 +131,7 @@
         "@control-plane/control-api": "workspace:*",
         "@control-plane/deployment": "workspace:*",
         "@control-plane/domain": "workspace:*",
+        "@control-plane/events": "workspace:*",
         "@control-plane/execution-plan": "workspace:*",
         "@control-plane/langgraph-adapter": "workspace:*",
         "@control-plane/managed-pi-adapter": "workspace:*",
@@ -271,6 +281,7 @@
       "version": "1.14.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:^",
+        "@control-plane/runtime-sdk": "workspace:^",
         "zod": "4.6.5",
       },
     },
@@ -399,7 +410,7 @@
     },
     "packages/model-gateway": {
       "name": "@control-plane/model-gateway",
-      "version": "1.4.0",
+      "version": "1.5.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/credential-vault": "workspace:*",
@@ -438,7 +449,7 @@
     },
     "packages/pi-cloudflare-host": {
       "name": "@control-plane/pi-cloudflare-host",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@control-plane/runtime-sdk": "workspace:*",
         "@earendil-works/chord": "1.1.0",
@@ -447,6 +458,28 @@
       },
       "devDependencies": {
         "miniflare": "5.20260926.0-alpha",
+      },
+    },
+    "packages/pi-durable-adapter": {
+      "name": "@control-plane/pi-durable-adapter",
+      "version": "0.1.0",
+      "dependencies": {
+        "@control-plane/contracts": "workspace:*",
+        "@control-plane/domain": "workspace:*",
+        "@control-plane/execution-plan": "workspace:*",
+        "@control-plane/model-gateway": "workspace:*",
+        "@control-plane/orchestration": "workspace:*",
+        "@control-plane/runtime-sdk": "workspace:*",
+        "@control-plane/tool-execution": "workspace:*",
+        "@control-plane/tool-sdk": "workspace:*",
+        "@control-plane/usage-ledger": "workspace:*",
+        "@earendil-works/chord": "1.1.0",
+        "@earendil-works/pi-ai": "1.1.0",
+        "@earendil-works/pi-durable": "1.1.0",
+        "zod": "4.6.5",
+      },
+      "devDependencies": {
+        "@control-plane/sqlite-persistence": "workspace:*",
       },
     },
     "packages/policy": {
@@ -746,6 +779,8 @@
     "@control-plane/orchestration": ["@control-plane/orchestration@workspace:packages/orchestration"],
 
     "@control-plane/pi-cloudflare-host": ["@control-plane/pi-cloudflare-host@workspace:packages/pi-cloudflare-host"],
+
+    "@control-plane/pi-durable-adapter": ["@control-plane/pi-durable-adapter@workspace:packages/pi-durable-adapter"],
 
     "@control-plane/policy": ["@control-plane/policy@workspace:packages/policy"],
 
@@ -1419,7 +1454,7 @@
 
     "p-queue": ["p-queue@9.3.3", "", { "dependencies": { "eventemitter3": "^5.0.4", "p-timeout": "^7.0.0" } }, "sha512-NXAOdnEe5FsZJfT4oK84lE1Y5cFFdWlRuOo5tww8DyNMxyRXwn39fIkUtNLKppcPC+UYU/bXujNCUGDv01y7CA=="],
 
-    "p-retry": ["p-retry@7.1.1", "", { "dependencies": { "is-network-error": "^1.1.0" } }, "sha512-J5ApzjyRkkf601HpEeykoiCvzHQjWxPAHhyjFcEUP2SWq0+35NKh8TLhpLw+Dkq5TZBFvUM6UigdE9hIVYTl5w=="],
+    "p-retry": ["p-retry@4.6.2", "", { "dependencies": { "@types/retry": "0.12.0", "retry": "^0.13.1" } }, "sha512-312Id396EbJdvRONlngUx0NydfrIQ5lsYu0znKVUzVvArzEIt08V1qhtyESbGVd1FGX7UKtiFp5uwKZdM8wIuQ=="],
 
     "p-timeout": ["p-timeout@7.0.1", "", {}, "sha512-AxTM2wDGORHGEkPCt8yqxOTMgpfbEHqF51f/5fJCmwFC3C/zNcGT63SymH2ttOAaiIws2zVg4+izQCjrakcwHg=="],
 
@@ -1569,11 +1604,11 @@
 
     "@fastify/ajv-compiler/fast-uri": ["fast-uri@4.2.1", "", {}, "sha512-TmHQgewjHtMq1E5QKA0tOE0yeYGQs25KZC/ziJpubRtWI15W92e6vPFydWOeZBVROSHBYw/QhD9d5OefdD6LDg=="],
 
-    "@google/genai/p-retry": ["p-retry@4.6.2", "", { "dependencies": { "@types/retry": "0.12.0", "retry": "^0.13.1" } }, "sha512-312Id396EbJdvRONlngUx0NydfrIQ5lsYu0znKVUzVvArzEIt08V1qhtyESbGVd1FGX7UKtiFp5uwKZdM8wIuQ=="],
-
     "@google/genai/ws": ["ws@8.22.0", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg=="],
 
     "@langchain/core/p-queue": ["p-queue@6.6.2", "", { "dependencies": { "eventemitter3": "^4.0.4", "p-timeout": "^3.2.0" } }, "sha512-RwFpb72c/BhQLEXIZ5K2e+AhgNVmIejGlTgiB9MzZ0e93GRvqZ7uSi0dvRF7/XIXDeNkra2fNHBxTyPDGySpjQ=="],
+
+    "@langchain/langgraph-sdk/p-retry": ["p-retry@7.1.1", "", { "dependencies": { "is-network-error": "^1.1.0" } }, "sha512-J5ApzjyRkkf601HpEeykoiCvzHQjWxPAHhyjFcEUP2SWq0+35NKh8TLhpLw+Dkq5TZBFvUM6UigdE9hIVYTl5w=="],
 
     "@poppinss/dumper/supports-color": ["supports-color@10.2.2", "", {}, "sha512-SS+jx45GF1QjgEXQx4NJZV9ImqmO2NPz5FNsIHrsDjh2YsHnawpan7SNQ1o8NuhrbHZy9AZhIoCUiCeaW/C80g=="],
 
