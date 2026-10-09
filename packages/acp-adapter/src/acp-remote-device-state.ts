@@ -305,15 +305,19 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
           id: this.#ledgerId(input.commandId),
           value: ledgerValue({ identity: input.identity }),
         })
+        // Unconditional revision-checked fence participation: every claim writes the fence row it
+        // read, so a revocation or a higher-generation claim committing after this transaction's
+        // fence read collides on the row, aborts the whole claim (the ledger insert rolls back with
+        // it), and the bounded conflict retry re-reads the fresh fence and denies — leaving no
+        // executable ledger reservation. Skipping this write when the generation is unchanged
+        // opened a lost-update window under default isolation.
         const highestGeneration = Math.max(fence.highestGeneration, input.channelGeneration)
-        if (storedFence === undefined || highestGeneration !== fence.highestGeneration) {
-          await transaction.put({
-            namespace: FENCE_NAMESPACE,
-            id: this.#fenceId,
-            ...(storedFence === undefined ? {} : { expectedRevision: storedFence.revision }),
-            value: fenceValue({ ...fence, highestGeneration }),
-          })
-        }
+        await transaction.put({
+          namespace: FENCE_NAMESPACE,
+          id: this.#fenceId,
+          ...(storedFence === undefined ? {} : { expectedRevision: storedFence.revision }),
+          value: fenceValue({ ...fence, highestGeneration }),
+        })
         return 'claimed' as const
       })
     )
