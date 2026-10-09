@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.86.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.86.0...workspace-v1.86.1) (2026-10-09)
+
+
+### Maintenance
+
+* **code-foundry:** upgrade runtime to v1.47.1 ([9471284](https://github.com/adea-ai/control-plane/commit/947128425f48adf1d949bb150d16fbac9706eaa9))
+* **code-foundry:** upgrade to v1.47.1 ([#1002](https://github.com/adea-ai/control-plane/issues/1002)) ([9471284](https://github.com/adea-ai/control-plane/commit/947128425f48adf1d949bb150d16fbac9706eaa9))
+
 ## [1.86.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.85.1...workspace-v1.86.0) (2026-10-09)
 
 
