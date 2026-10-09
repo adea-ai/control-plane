@@ -5,6 +5,19 @@ export const TEST_FILE_PATTERN = /\.test\.mjs$|\.test\.ts$|\.spec\.mjs$|\.spec\.
 export const SOURCE_FILE_PATTERN = /\.ts$|\.mjs$/
 const IMPORT_PATTERN = /(?:^|\n)\s*import\s+(?:type\s+)?(?:[^'"]*?from\s+)?['"]([^'"]+)['"]/g
 
+/** Workspace npm scope; only `@control-plane/...` specifiers may match a layer. */
+export const WORKSPACE_PACKAGE_SCOPE = '@control-plane/'
+
+/**
+ * Human-readable label for the coupling metric, exported so the report and
+ * documentation can carry the same wording.
+ */
+export const COUPLING_METHOD =
+  'static import heuristic (string match, no type resolution): @control-plane scope only, ' +
+  'external @other-scope packages never match by basename, package directory mapped to its ' +
+  'first-owning layer when one package spans multiple layers, relative .js/.ts spelling ' +
+  'resolved, test files and self-edges excluded; not a compiler-resolved dependency graph'
+
 /**
  * Bounded, safe failure reasons for exported baseline reports. Only an exact
  * existing reason code (A-Z0-9_, 2-64 chars) is preserved; anything else —
@@ -41,9 +54,14 @@ export function classifyImportProbeChild(child: ImportProbeChild): ImportProbeCl
   if (child.error !== undefined && child.error !== null) {
     return { status: 'unavailable', reason: 'IMPORT_CHILD_SPAWN_FAILED' }
   }
-  const stdout = (child.stdout ?? '').trim()
-  if ((child.status ?? 1) !== 0 && stdout.length === 0) {
+  // A successful exit is required; stdout is never trusted on a nonzero or
+  // signal-terminated exit, even when it contains valid-looking JSON.
+  if ((child.status ?? 1) !== 0) {
     return { status: 'unavailable', reason: 'IMPORT_CHILD_EXITED' }
+  }
+  const stdout = (child.stdout ?? '').trim()
+  if (stdout.length === 0) {
+    return { status: 'unavailable', reason: 'IMPORT_OUTPUT_UNPARSEABLE' }
   }
   let parsed: unknown
   try {
@@ -63,14 +81,20 @@ export function classifyImportProbeChild(child: ImportProbeChild): ImportProbeCl
     rssBeforeBytes?: unknown
     rssAfterBytes?: unknown
   }
+  const measurements = [importMs, rssBeforeBytes, rssAfterBytes]
   if (
-    typeof importMs !== 'number' ||
-    typeof rssBeforeBytes !== 'number' ||
-    typeof rssAfterBytes !== 'number'
+    !measurements.every(
+      (value): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0
+    )
   ) {
     return { status: 'unavailable', reason: 'IMPORT_OUTPUT_INVALID' }
   }
-  return { status: 'measured', importMs, rssBeforeBytes, rssAfterBytes }
+  return {
+    status: 'measured',
+    importMs: importMs as number,
+    rssBeforeBytes: rssBeforeBytes as number,
+    rssAfterBytes: rssAfterBytes as number,
+  }
 }
 
 function importSpecifiers(contents: string): string[] {
@@ -92,11 +116,15 @@ export interface CouplingEdges {
 }
 
 /**
- * Counts cross-layer static import edges exactly:
- * - `@scope/name[/subpath]` resolves against the package layer keyed by
- *   `name` (subpaths are stripped before lookup);
+ * Counts cross-layer static import edges with an explicitly labeled heuristic
+ * (see {@link COUPLING_METHOD}):
+ * - `@control-plane/name[/subpath]` resolves against the package layer keyed by
+ *   `name` (subpaths are stripped before lookup); external `@other-scope/...`
+ *   specifiers are never matched by basename;
  * - relative specifiers resolve to the owned source file, including the
  *   TypeScript ESM `./x.js` -> `./x.ts` spelling;
+ * - when one package's files span several layers, package-level edges are
+ *   attributed to the first layer that owns a file of that package;
  * - test files and self-edges are excluded.
  */
 export async function measureCoupling(
@@ -124,10 +152,9 @@ export async function measureCoupling(
       const contents = await readFile(join(base, file), 'utf8')
       for (const specifier of importSpecifiers(contents)) {
         let target: string | undefined
-        if (specifier.startsWith('@')) {
+        if (specifier.startsWith(WORKSPACE_PACKAGE_SCOPE)) {
           const parts = specifier.split('/')
-          const scope = parts[0]
-          const packageName = scope !== undefined && scope.startsWith('@') ? parts[1] : parts[0]
+          const packageName = parts[1]
           target = packageName === undefined ? undefined : packageLayer.get(packageName)
         } else if (specifier.startsWith('.')) {
           const resolved = resolve(base, file, '..', specifier)

@@ -78,10 +78,36 @@ Restate removal is planned (Local never had Restate).
 | Node Pi Durable adapter (successor candidate) | **REPLACE-CANDIDATE — opt-in, not yet the owner**                                               | `authority.sqlite` journal + host-supplied current authority (see surfaces section)                                                                    | `packages/pi-durable-adapter/README.md:1-14`; `packages/pi-durable-adapter/src/composition.ts:31`; `docs/pi-durable-runtime.md:42-47` (disposition: Restate/LangGraph/managed Pi retained)                                                                                                                                                                                                               | Becomes the owner only with #941 behavior/profile/rollback evidence; until then current owners stay                                                             |
 | Cloudflare Pi host                            | **KEEP (unregistered — do not activate)**                                                       | Durable Object tables; no production route or advertised capability                                                                                    | `packages/pi-cloudflare-host/README.md:9-11`; `packages/pi-cloudflare-host/src/adapter.ts:70`, `:72`; `packages/pi-cloudflare-host/src/durable-object.ts:50`                                                                                                                                                                                                                                             | Activation is a separate, explicitly gated act (#930/#187 open); this PR activates nothing                                                                      |
 
-Cross-layer coupling recorded by the tool (import edges, static, exact resolution incl.
-package subpaths and `.js`→`.ts`): device-supervision 37, custom-runtime 43, pi-durable-node-adapter
-23, pi-cloudflare-host 12, artifacts 9, auth 7, billing 6, transports 5, policy 3, restate 2
-(`report.coupling`). Coupling is an observation, not a decision.
+Cross-layer coupling recorded by the tool as `report.coupling` with its label in
+`report.couplingMethod`: a **static import heuristic** (string match, no type resolution) —
+`@control-plane` scope only (external `@other-scope/…` specifiers never match an internal package
+by basename), package directory mapped to its first-owning layer when one package spans multiple
+layers, relative `.js`→`.ts` spelling resolved, test files and self-edges excluded; it is **not a
+compiler-resolved dependency graph**. Totals for this capture: device-supervision 37,
+custom-runtime 43, pi-durable-node-adapter 23, pi-cloudflare-host 12, artifacts 9, auth 7, billing
+6, transports 5, policy 3, restate 2. Coupling is an observation, not a decision.
+
+## Gates for any future removal (definition only — no removal is part of #941)
+
+#941 requires these gates to be **defined** for any removal candidate; this PR performs no removal,
+so no gate is executed here and none is claimed passed. A future removal PR must attach all three
+evidence sets for the exact pinned profile and supported entry points:
+
+1. **Behavior gate** — pinned crash/recovery/restore tests pass from each supported entry point on a
+   disposable fixture; policy and approval decisions, credential ownership, accounting
+   reconciliation, revocation, durable receipts, idempotency, retention, and rollback semantics are
+   each demonstrated to survive the removal (trace: REQ 010/120/155/160, tests A21/A29/A32, gates
+   #187/#194).
+2. **Profile gate** — the capability-matrix row for the selected Local/Self-hosted/Hosted profile is
+   behaviorally unchanged, selection stays independent with no silent failover to managed cloud,
+   end-to-end residency is unchanged, and every bounded parity gap of the removed component is
+   enumerated as satisfied; a feature list alone never qualifies.
+3. **Rollback gate** — an executed upgrade → drain → removal → rollback rehearsal on a disposable
+   fixture showing the prior version restores state and resumes, with retained logs/receipts and
+   pinned versions in the plan.
+
+A removal lacking any gate stays blocked; a component with unresolved parity gaps stays a bounded,
+explicit component (per #941 acceptance).
 
 ## Node and Cloudflare adapter / capability / authority surfaces (exact current `main`)
 
@@ -175,7 +201,25 @@ Recorded verbatim in the evidence report (`unavailableCosts`):
 4. Live model-provider latency and spend — no provider credentials; out of scope for #941 tooling.
 5. Physical RuntimeNode device supervision health — no device attached.
 6. PostgreSQL hosted-server profile latency — local Postgres fixture not started for this run.
-7. Human review and acceptance time — not machine-measurable.
+7. Review and acceptance handling time — not machine-measurable (a cost item, not an acceptance gate).
+
+### Precise cost-baseline gap
+
+Measured: local marginal cost proxies for the four instrumented paths (latency distributions and
+memory) on one developer host — that is the full extent of the retained cost baseline. Not measured
+and **not claimed passed**:
+
+- hosted idle/active operational cost (Railway CPU/RAM/network, Neon compute/storage/egress, R2
+  storage/ops, Restate server state growth) — requires live metered accounts and billing exports;
+  no credentials are used or requested;
+- Cloudflare Worker/Durable Object billing — no deployment or account;
+- live model-provider spend — no provider credentials;
+- physical device supervision cost — no attached hardware;
+- PostgreSQL hosted-store latency — fixture not started for this run.
+
+The M9/M10 records in [`docs/performance.md`](performance.md) are profile-specific history, not a
+#941 cost baseline. The gap above stays labeled `unavailable` — never estimated — and closes only
+with a future live metered profile capture.
 
 ## What this candidate does not claim
 
@@ -199,10 +243,11 @@ Recorded verbatim in the evidence report (`unavailableCosts`):
   the run-scoped candidate statement, the corrected write policy, absence of ambient environment
   values, four measured probes, and unavailable-with-reason labeling for every unmeasured cost.
 - `packages/production-readiness/src/runtime-baseline-analysis.ts` holds the shared analysis with
-  exact-edge fixtures covering package-subpath and `.js`→`.ts` coupling resolution plus test-file
-  exclusion, and the bounded failure-reason / import-probe classifiers; a forced-failure CLI run
-  (unusable TMPDIR) asserts the export carries only bounded reason codes and leaks no raw error or
-  child output.
+  exact-edge fixtures covering package-subpath and `.js`→`.ts` coupling resolution, external-scope
+  basename rejection, and the `couplingMethod` heuristic label, plus the bounded failure-reason /
+  import-probe classifiers (successful-exit and finite-nonnegative measurement validation with
+  exact regressions); a forced-failure CLI run (unusable TMPDIR) asserts the export carries only
+  bounded reason codes and leaks no raw error or child output.
 - Commands: `bun test src/m17-runtime-baseline.test.mjs` (package), `bunx oxfmt --check`,
   `bunx oxlint --deny-warnings`, `bun run check:boundaries`, `bun --cwd=packages/production-readiness run build`.
 

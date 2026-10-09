@@ -132,7 +132,11 @@ describe('M17 runtime ownership baseline tooling (#941)', () => {
     expect(JSON.stringify(report)).not.toContain(CONTROLLER_CANARY)
 
     // Disjointness is enforced inside the tool (overlap throws M17_LAYER_OVERLAP);
-    // coupling records only cross-layer edges.
+    // coupling records only cross-layer edges and carries its heuristic label.
+    expect(report.couplingMethod).toContain('static import heuristic')
+    expect(report.couplingMethod).toContain('@control-plane scope only')
+    expect(report.couplingMethod).toContain('first-owning layer')
+    expect(report.couplingMethod).toContain('not a compiler-resolved dependency graph')
     for (const [id, edge] of Object.entries(report.coupling)) {
       expect(edge.targets[id]).toBeUndefined()
       expect(edge.total).toBe(Object.values(edge.targets).reduce((sum, count) => sum + count, 0))
@@ -174,6 +178,11 @@ describe('M17 runtime ownership baseline tooling (#941)', () => {
     expect(costs.some((cost) => cost.includes('Cloudflare'))).toBe(true)
     expect(costs.some((cost) => cost.includes('model-provider'))).toBe(true)
     expect(costs.some((cost) => cost.includes('Physical RuntimeNode device'))).toBe(true)
+    const reviewCost = report.unavailableCosts.find((entry) =>
+      entry.cost.includes('Review and acceptance handling time')
+    )
+    expect(reviewCost).toBeDefined()
+    expect(reviewCost.reason).toContain('not an acceptance gate')
     for (const entry of report.unavailableCosts) {
       expect(entry.status).toBe('unavailable')
       expect(entry.reason.length).toBeGreaterThan(20)
@@ -191,6 +200,7 @@ describe('M17 runtime ownership baseline tooling (#941)', () => {
           "import '@control-plane/tool-sdk'",
           "import './b.js'",
           "import '../shared/notes.js'",
+          "import '@vendor/tool-sdk'",
           '',
         ].join('\n'),
         'packages/alpha/src/a.test.mjs': "import '@control-plane/tool-sdk'\n",
@@ -211,7 +221,9 @@ describe('M17 runtime ownership baseline tooling (#941)', () => {
         fixtureRoot
       )
       // exact edges: 2 package edges (plain + subpath) and 2 .js->.ts edges;
-      // the .test.mjs import is excluded (sdk would be 3 if it were counted).
+      // the .test.mjs import is excluded (sdk would be 3 if it were counted),
+      // and the external '@vendor/tool-sdk' basename collision must not match
+      // the internal tool-sdk package (sdk stays 2).
       expect(edges.alpha).toEqual({ targets: { sdk: 2, beta: 2 }, total: 4 })
       expect(edges.sdk).toEqual({ targets: {}, total: 0 })
       expect(edges.beta).toEqual({ targets: {}, total: 0 })
@@ -231,6 +243,57 @@ describe('M17 runtime ownership baseline tooling (#941)', () => {
     expect(safeFailureReason('controller token m17-canary-9f3a2b')).toBe('UNCLASSIFIED_ERROR')
     expect(safeFailureReason(undefined)).toBe('UNCLASSIFIED_ERROR')
     expect(safeFailureReason({ message: 'object shaped error' })).toBe('UNCLASSIFIED_ERROR')
+
+    // Successful exit is required: valid measured JSON on a nonzero or
+    // signal-terminated exit is never accepted (exact regressions).
+    const measuredChild = JSON.stringify({
+      status: 'measured',
+      importMs: 1,
+      rssBeforeBytes: 1,
+      rssAfterBytes: 2,
+    })
+    expect(classifyImportProbeChild({ status: 1, stdout: measuredChild })).toEqual({
+      status: 'unavailable',
+      reason: 'IMPORT_CHILD_EXITED',
+    })
+    expect(classifyImportProbeChild({ status: null, stdout: measuredChild })).toEqual({
+      status: 'unavailable',
+      reason: 'IMPORT_CHILD_EXITED',
+    })
+    expect(classifyImportProbeChild({ status: 0, stdout: '' })).toEqual({
+      status: 'unavailable',
+      reason: 'IMPORT_OUTPUT_UNPARSEABLE',
+    })
+    // Measurements must be finite and nonnegative: JSON `1e999` parses as
+    // Infinity and must be rejected, as must negative timings/RSS.
+    expect(
+      classifyImportProbeChild({
+        status: 0,
+        stdout: '{"status":"measured","importMs":1e999,"rssBeforeBytes":1,"rssAfterBytes":2}',
+      })
+    ).toEqual({ status: 'unavailable', reason: 'IMPORT_OUTPUT_INVALID' })
+    expect(
+      classifyImportProbeChild({
+        status: 0,
+        stdout: JSON.stringify({
+          status: 'measured',
+          importMs: -1,
+          rssBeforeBytes: 1,
+          rssAfterBytes: 2,
+        }),
+      })
+    ).toEqual({ status: 'unavailable', reason: 'IMPORT_OUTPUT_INVALID' })
+    expect(
+      classifyImportProbeChild({
+        status: 0,
+        stdout: JSON.stringify({
+          status: 'measured',
+          importMs: 1,
+          rssBeforeBytes: 1,
+          rssAfterBytes: -5,
+        }),
+      })
+    ).toEqual({ status: 'unavailable', reason: 'IMPORT_OUTPUT_INVALID' })
 
     expect(
       classifyImportProbeChild({ error: new Error('spawn ENOENT /Users/someone/secret') })

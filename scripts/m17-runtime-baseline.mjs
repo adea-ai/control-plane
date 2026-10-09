@@ -45,6 +45,7 @@ import {
   InMemoryPolicyStore,
 } from '../packages/policy/src/index.ts'
 import {
+  COUPLING_METHOD,
   SOURCE_FILE_PATTERN,
   TEST_FILE_PATTERN,
   classifyImportProbeChild,
@@ -227,9 +228,10 @@ export const M17_UNAVAILABLE_COSTS = [
       'Local PostgreSQL fixture (bun run db:up) was not started for this run; hosted-store behavior is not claimed.',
   },
   {
-    cost: 'Human review and acceptance time',
+    cost: 'Review and acceptance handling time',
     status: 'unavailable',
-    reason: 'Not machine-measurable; recorded as an explicit non-measured cost.',
+    reason:
+      'Not machine-measurable; recorded as an explicit non-measured cost item, not an acceptance gate.',
   },
 ]
 
@@ -796,6 +798,7 @@ export async function runM17RuntimeBaseline(options = {}) {
     startedAt,
     completedAt: new Date().toISOString(),
     layers,
+    couplingMethod: COUPLING_METHOD,
     coupling,
     probes,
     unavailableCosts: M17_UNAVAILABLE_COSTS,
