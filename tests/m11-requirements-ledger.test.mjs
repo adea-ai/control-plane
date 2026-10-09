@@ -735,65 +735,87 @@ describe('M11.1 requirements ledger', () => {
   })
 
   test('sanitizes GitHub CLI absence and HTTP failures without falling back anonymously', async () => {
-    const launchError = Object.assign(new Error('Bearer never-print-this'), { code: 'ENOENT' })
-    let absenceMessage = ''
+    const priorCi = process.env.CI
+    const priorGitHubActions = process.env.GITHUB_ACTIONS
+    delete process.env.CI
+    delete process.env.GITHUB_ACTIONS
     try {
-      await listGitHubIssues({
-        token: '',
-        spawnSync: () => ({ error: launchError, status: null, stderr: 'Bearer cli-secret' }),
-      })
-    } catch (error) {
-      absenceMessage = error.message
-    }
-    expect(absenceMessage).toContain('(ENOENT)')
-    expect(absenceMessage).not.toContain('never-print-this')
-    expect(absenceMessage).not.toContain('cli-secret')
+      const launchError = Object.assign(new Error('Bearer never-print-this'), { code: 'ENOENT' })
+      let absenceMessage = ''
+      try {
+        await listGitHubIssues({
+          token: '',
+          spawnSync: () => ({ error: launchError, status: null, stderr: 'Bearer cli-secret' }),
+        })
+      } catch (error) {
+        absenceMessage = error.message
+      }
+      expect(absenceMessage).toContain('(ENOENT)')
+      expect(absenceMessage).not.toContain('never-print-this')
+      expect(absenceMessage).not.toContain('cli-secret')
 
-    let failureMessage = ''
-    try {
-      await listGitHubIssues({
-        token: '',
-        spawnSync: () => ({
-          status: 1,
-          stdout: ghCliOutput(403, { message: 'Bearer response-secret' }),
-          stderr: 'Bearer stderr-secret',
-        }),
-      })
-    } catch (error) {
-      failureMessage = error.message
+      let failureMessage = ''
+      try {
+        await listGitHubIssues({
+          token: '',
+          spawnSync: () => ({
+            status: 1,
+            stdout: ghCliOutput(403, { message: 'Bearer response-secret' }),
+            stderr: 'Bearer stderr-secret',
+          }),
+        })
+      } catch (error) {
+        failureMessage = error.message
+      }
+      expect(failureMessage).toBe('Unable to query GitHub issues (403)')
+      expect(failureMessage).not.toContain('response-secret')
+      expect(failureMessage).not.toContain('stderr-secret')
+    } finally {
+      if (priorCi === undefined) delete process.env.CI
+      else process.env.CI = priorCi
+      if (priorGitHubActions === undefined) delete process.env.GITHUB_ACTIONS
+      else process.env.GITHUB_ACTIONS = priorGitHubActions
     }
-    expect(failureMessage).toBe('Unable to query GitHub issues (403)')
-    expect(failureMessage).not.toContain('response-secret')
-    expect(failureMessage).not.toContain('stderr-secret')
   })
 
   test('bounds GitHub CLI requests and sanitizes timeout failures', async () => {
-    const timeoutError = Object.assign(new Error('Bearer timeout-secret'), {
-      code: 'ETIMEDOUT',
-    })
-    let spawnOptions
-    let failureMessage = ''
+    const priorCi = process.env.CI
+    const priorGitHubActions = process.env.GITHUB_ACTIONS
+    delete process.env.CI
+    delete process.env.GITHUB_ACTIONS
     try {
-      await listGitHubIssues({
-        token: '',
-        spawnSync: (_command, _args, options) => {
-          spawnOptions = options
-          return {
-            error: timeoutError,
-            status: null,
-            stderr: 'Bearer stderr-secret',
-          }
-        },
+      const timeoutError = Object.assign(new Error('Bearer timeout-secret'), {
+        code: 'ETIMEDOUT',
       })
-    } catch (error) {
-      failureMessage = error.message
+      let spawnOptions
+      let failureMessage = ''
+      try {
+        await listGitHubIssues({
+          token: '',
+          spawnSync: (_command, _args, options) => {
+            spawnOptions = options
+            return {
+              error: timeoutError,
+              status: null,
+              stderr: 'Bearer stderr-secret',
+            }
+          },
+        })
+      } catch (error) {
+        failureMessage = error.message
+      }
+      expect(spawnOptions.timeout).toBe(30_000)
+      expect(failureMessage).toBe(
+        'Unable to query GitHub issues through authenticated GitHub CLI (ETIMEDOUT)'
+      )
+      expect(failureMessage).not.toContain('timeout-secret')
+      expect(failureMessage).not.toContain('stderr-secret')
+    } finally {
+      if (priorCi === undefined) delete process.env.CI
+      else process.env.CI = priorCi
+      if (priorGitHubActions === undefined) delete process.env.GITHUB_ACTIONS
+      else process.env.GITHUB_ACTIONS = priorGitHubActions
     }
-    expect(spawnOptions.timeout).toBe(30_000)
-    expect(failureMessage).toBe(
-      'Unable to query GitHub issues through authenticated GitHub CLI (ETIMEDOUT)'
-    )
-    expect(failureMessage).not.toContain('timeout-secret')
-    expect(failureMessage).not.toContain('stderr-secret')
   })
 
   test('follows next pages beyond 1000 mixed issues and pull requests', async () => {
