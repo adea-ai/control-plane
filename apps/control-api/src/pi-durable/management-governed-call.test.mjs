@@ -1,11 +1,15 @@
 import { expect, test } from 'bun:test'
+import { DatabaseSync } from 'node:sqlite'
+
 import {
   createPiDurableGovernedManagementCall,
   piDurableManagementRequestDigest,
+  SqlitePiDurableManagementCallStore,
 } from './management-governed-call.ts'
 import { managementCanonicalRequestDigest } from './management-decision-issuer.ts'
 
 const WORKSPACE = 'wsp_01JABCDEF0123456789ABCDEFG'
+const TARGET = 'prj_01JABCDEF0123456789ABCDEFG'
 const PRINCIPAL = 'user:0f3a2e1c-0000-4000-8000-0000000000bb'
 
 const approval = {
@@ -38,11 +42,32 @@ const baseRequest = {
   workspaceId: WORKSPACE,
 }
 
+function memoryStore() {
+  const records = new Map()
+  return {
+    records,
+    async get(key) {
+      return records.get(key)
+    },
+    async insert(record) {
+      if (records.has(record.key)) return false
+      records.set(record.key, record)
+      return true
+    },
+    async compareAndSet(expectedRevision, record) {
+      const current = records.get(record.key)
+      if (!current || current.revision !== expectedRevision) return false
+      records.set(record.key, record)
+      return true
+    },
+  }
+}
+
 function harness(options = {}) {
+  const counts = options.counts ?? { calls: 0, issued: 0 }
   const boundaries = []
-  const issued = []
-  const calls = []
-  let counter = 0
+  const store = options.store ?? memoryStore()
+  const snapshots = []
   const caller = createPiDurableGovernedManagementCall({
     authority: {
       async assertCurrent(request, boundary) {
@@ -50,69 +75,151 @@ function harness(options = {}) {
         if (options.failBoundary === boundary) throw new Error('TEST_AUTHORITY_DENIED')
       },
     },
+    store,
     async issue({ request, targetId }) {
-      counter += 1
-      issued.push({ request, targetId })
+      counts.issued += 1
+      snapshots.push({ frozen: Object.isFrozen(request), request, targetId })
       const digest = options.wrongDigest
         ? `sha256:${'0'.repeat(64)}`
         : piDurableManagementRequestDigest(request)
       return {
         canonicalRequestDigest: digest,
-        decision: `header.${counter}.signature`,
-        decisionId: `decision-${counter}`,
+        decision: `decision-jwt-${counts.issued}`,
+        decisionId: `decision-${counts.issued}`,
         expiresAt: '2026-10-09T12:02:00.000Z',
       }
     },
     async callAdea(input) {
-      calls.push(input)
+      counts.calls += 1
+      if (options.dispatchGate) await options.dispatchGate.promise
       if (options.transportThrows) throw new Error('TEST_TRANSPORT_UNKNOWN')
-      return options.refusal ?? { ok: true, value: { id: 'prj_01JABCDEF0123456789ABCDEFG' } }
+      if (options.inspectRetained) options.inspectRetained(store, input)
+      return options.refusal ?? { ok: true, value: { id: TARGET } }
     },
-    resolveTargetId: () => 'prj_01JABCDEF0123456789ABCDEFG',
+    resolveTargetId: () => TARGET,
   })
-  return { boundaries, caller, calls, issued }
+  return { boundaries, caller, counts, snapshots, store }
 }
 
-test('binds the exact immutable request, validates every boundary, and calls Adea exactly once', async () => {
+test('retains one frozen snapshot and one decision, validates every boundary, dispatches once', async () => {
   const request = { ...baseRequest, approval }
   const run = harness()
-  const outcome = await run.caller.execute(request)
-  expect(outcome).toEqual({ state: 'succeeded', value: { id: 'prj_01JABCDEF0123456789ABCDEFG' } })
+  expect(await run.caller.execute(request)).toEqual({
+    state: 'succeeded',
+    value: { id: TARGET },
+  })
   expect(run.boundaries).toEqual(['admission', 'approval', 'effect'])
-  expect(run.issued).toHaveLength(1)
-  expect(run.issued[0].request).toEqual(request)
-  expect(run.issued[0].request).not.toBe(request)
+  expect(run.snapshots).toHaveLength(1)
+  expect(run.snapshots[0].frozen).toBe(true)
+  expect(run.snapshots[0].request).toEqual(request)
+  expect(run.snapshots[0].request).not.toBe(request)
   expect(piDurableManagementRequestDigest(request)).toBe(managementCanonicalRequestDigest(request))
-  expect(run.issued[0].targetId).toBe('prj_01JABCDEF0123456789ABCDEFG')
-  expect(run.calls).toHaveLength(1)
-  expect(run.calls[0].canonicalRequest).toEqual(request)
-  expect(run.calls[0].decision).toBe('header.1.signature')
-  expect(run.calls[0].operation).toBe('project.update')
-  expect(run.calls[0].workspaceId).toBe(WORKSPACE)
-  expect(run.calls[0].input).toEqual({ name: 'Renamed' })
+  expect(run.counts).toEqual({ calls: 1, issued: 1 })
 })
 
-test('repeated validation across calls never consumes approval or mints a grant', async () => {
+test('retains the exact decision before dispatch', async () => {
   const request = { ...baseRequest, approval }
-  const run = harness()
+  const run = harness({
+    inspectRetained(store, input) {
+      const record = [...store.records.values()][0]
+      expect(record.decision).toBe(input.decision)
+      expect(record.decisionId).toBe('decision-1')
+      expect(record.state).toBe('invoking')
+    },
+  })
   await run.caller.execute(request)
-  await run.caller.execute(request)
-  expect(run.boundaries).toEqual([
-    'admission',
-    'approval',
-    'effect',
-    'admission',
-    'approval',
-    'effect',
-  ])
-  expect(run.calls).toHaveLength(2)
-  expect(run.calls[0].decision).not.toBe(run.calls[1].decision)
 })
 
-test('skips the approval boundary when the retained request has no approval', async () => {
-  const run = harness()
-  await run.caller.execute(baseRequest)
-  expect(run.boundaries).toEqual(['admission', 'effect'])
+test('concurrent identical calls mint one decision and make one physical call', async () => {
+  const request = { ...baseRequest, approval }
+  let release
+  const dispatchGate = { promise: new Promise((resolve) => (release = resolve)) }
+  const run = harness({ dispatchGate })
+  const first = run.caller.execute(request)
+  await Promise.resolve()
+  const duplicates = await Promise.all([run.caller.execute(request), run.caller.execute(request)])
+  expect(duplicates).toEqual([
+    { code: 'PI_MANAGEMENT_EFFECT_UNKNOWN', state: 'reconciliation_required' },
+    { code: 'PI_MANAGEMENT_EFFECT_UNKNOWN', state: 'reconciliation_required' },
+  ])
+  release()
+  expect(await first).toEqual({ state: 'succeeded', value: { id: TARGET } })
+  expect(run.counts).toEqual({ calls: 1, issued: 1 })
+  const repeated = await run.caller.execute(request)
+  expect(repeated).toEqual({ state: 'succeeded', value: { id: TARGET } })
+  expect(run.counts).toEqual({ calls: 1, issued: 1 })
+})
+
+test('reopen after an unknown response yields no fresh decision and no second call', async () => {
+  const request = { ...baseRequest, approval }
+  const store = memoryStore()
+  const counts = { calls: 0, issued: 0 }
+  const first = harness({ store, counts, transportThrows: true })
+  expect(await first.caller.execute(request)).toEqual({
+    code: 'PI_MANAGEMENT_EFFECT_UNKNOWN',
+    state: 'reconciliation_required',
+  })
+  expect(counts).toEqual({ calls: 1, issued: 1 })
+  const reopened = harness({ store, counts })
+  expect(await reopened.caller.execute(request)).toEqual({
+    code: 'PI_MANAGEMENT_EFFECT_UNKNOWN',
+    state: 'reconciliation_required',
+  })
+  expect(counts).toEqual({ calls: 1, issued: 1 })
+})
+
+test('repeat after success reuses the retained outcome with no fresh decision', async () => {
+  const request = { ...baseRequest, approval }
+  const store = memoryStore()
+  const counts = { calls: 0, issued: 0 }
+  const first = harness({ store, counts })
+  expect(await first.caller.execute(request)).toEqual({
+    state: 'succeeded',
+    value: { id: TARGET },
+  })
+  const reopened = harness({ store, counts })
+  expect(await reopened.caller.execute(request)).toEqual({
+    state: 'succeeded',
+    value: { id: TARGET },
+  })
+  expect(counts).toEqual({ calls: 1, issued: 1 })
+})
+
+test('the retained record survives a real SQLite reopen and still yields one effect', async () => {
+  const request = { ...baseRequest, approval }
+  const database = new DatabaseSync(':memory:')
+  const counts = { calls: 0, issued: 0 }
+  const store = new SqlitePiDurableManagementCallStore(database)
+  const first = harness({ store, counts, transportThrows: true })
+  expect(await first.caller.execute(request)).toEqual({
+    code: 'PI_MANAGEMENT_EFFECT_UNKNOWN',
+    state: 'reconciliation_required',
+  })
+  const reopenedStore = new SqlitePiDurableManagementCallStore(database)
+  const reopened = harness({ store: reopenedStore, counts })
+  expect(await reopened.caller.execute(request)).toEqual({
+    code: 'PI_MANAGEMENT_EFFECT_UNKNOWN',
+    state: 'reconciliation_required',
+  })
+  expect(counts).toEqual({ calls: 1, issued: 1 })
+  const retained = await reopenedStore.get(JSON.stringify([WORKSPACE, request.idempotencyKey]))
+  expect(retained?.decision).toBe('decision-jwt-1')
+  database.close()
+})
+
+test('the same identity with a different request digest is refused before dispatch', async () => {
+  const request = { ...baseRequest, approval }
+  const store = memoryStore()
+  const counts = { calls: 0, issued: 0 }
+  const first = harness({ store, counts })
+  await first.caller.execute(request)
+  const changed = { ...request, input: { name: 'Other' } }
+  const second = harness({ store, counts })
+  expect(await second.caller.execute(changed)).toEqual({
+    code: 'authority_binding_mismatch',
+    state: 'refused',
+  })
+  expect(counts).toEqual({ calls: 1, issued: 1 })
 })
 
 test('a decision that does not bind the exact request digest never reaches Adea', async () => {
@@ -121,32 +228,17 @@ test('a decision that does not bind the exact request digest never reaches Adea'
     code: 'authority_binding_mismatch',
     state: 'refused',
   })
-  expect(run.calls).toHaveLength(0)
+  expect(run.counts).toEqual({ calls: 0, issued: 1 })
 })
 
-test('an authority failure refuses before the decision or any Adea call', async () => {
+test('an authority failure refuses before any decision, claim or dispatch', async () => {
   const run = harness({ failBoundary: 'admission' })
   expect(await run.caller.execute(baseRequest)).toEqual({
     code: 'authority_unavailable',
     state: 'refused',
   })
-  expect(run.issued).toHaveLength(0)
-  expect(run.calls).toHaveLength(0)
-})
-
-test('an ambiguous effect is never resent and never mints a fresh decision', async () => {
-  const run = harness({ transportThrows: true })
-  const first = await run.caller.execute(baseRequest)
-  expect(first).toEqual({
-    code: 'PI_MANAGEMENT_EFFECT_UNKNOWN',
-    state: 'reconciliation_required',
-  })
-  expect(run.calls).toHaveLength(1)
-  expect(run.issued).toHaveLength(1)
-  const second = await run.caller.execute(baseRequest)
-  expect(second).toEqual(first)
-  expect(run.calls).toHaveLength(1)
-  expect(run.issued).toHaveLength(1)
+  expect(run.counts).toEqual({ calls: 0, issued: 0 })
+  expect(run.store.records.size).toBe(0)
 })
 
 test('maps a typed Adea refusal without masking the reason', async () => {
@@ -165,11 +257,11 @@ test('maps a typed Adea refusal without masking the reason', async () => {
   })
 })
 
-test('rejects a malformed retained request before any authority or transport call', async () => {
+test('rejects a malformed retained request before any store or callback', async () => {
   const run = harness()
   await expect(run.caller.execute({ operation: 'project.update' })).rejects.toThrow(
     'PI_MANAGEMENT_CALL_INVALID'
   )
   expect(run.boundaries).toEqual([])
-  expect(run.calls).toHaveLength(0)
+  expect(run.counts).toEqual({ calls: 0, issued: 0 })
 })
