@@ -5,6 +5,7 @@ import {
   trace,
   type Attributes,
   type Counter,
+  type Gauge,
   type Histogram,
   type Span,
   type SpanContext,
@@ -49,6 +50,7 @@ export function createOpenTelemetryMetricAdapter(serviceName: string): MetricAda
   const meter = metrics.getMeter(serviceName)
   const counters = new Map<string, Counter>()
   const histograms = new Map<string, Histogram>()
+  const gauges = new Map<string, Gauge>()
   return {
     add(name, value, attributes) {
       let counter = counters.get(name)
@@ -65,6 +67,19 @@ export function createOpenTelemetryMetricAdapter(serviceName: string): MetricAda
         histograms.set(name, histogram)
       }
       histogram.record(value, attributes as Attributes)
+    },
+    // Signed observations go through the synchronous Gauge instrument: a
+    // non-additive, last-value instrument that accepts negative values. The
+    // histogram `record` creates would silently drop them — the OpenTelemetry
+    // SDK warns via `diag` and returns without recording — so shrinkage
+    // observations must never reach it.
+    recordGauge(name, value, attributes) {
+      let gauge = gauges.get(name)
+      if (!gauge) {
+        gauge = meter.createGauge(name)
+        gauges.set(name, gauge)
+      }
+      gauge.record(value, attributes as Attributes)
     },
   }
 }

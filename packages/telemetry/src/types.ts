@@ -56,6 +56,17 @@ export interface MetricAdapter {
     value: number,
     attributes: Readonly<Record<string, TelemetryAttributeValue>>
   ): void
+  /**
+   * One non-additive, signed observation (last-value gauge semantics). The
+   * only correct path for measurements that may legitimately be negative —
+   * snapshot deltas such as storage shrinkage — which histograms and counters
+   * reject or accumulate.
+   */
+  recordGauge(
+    name: string,
+    value: number,
+    attributes: Readonly<Record<string, TelemetryAttributeValue>>
+  ): void
 }
 
 export interface TelemetrySamplingInput {

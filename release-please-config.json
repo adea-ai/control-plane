@@ -170,6 +170,10 @@
       "release-type": "node",
       "package-name": "@control-plane/production-readiness"
     },
+    "packages/profile-adapters": {
+      "release-type": "node",
+      "package-name": "@control-plane/profile-adapters"
+    },
     "packages/profile-portability": {
       "release-type": "node",
       "package-name": "@control-plane/profile-portability"

@@ -238,6 +238,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/langgraph-adapter/src/postgres-checkpointer.integration.test.mjs',
     'packages/profile-portability/src/postgres.integration.test.mjs',
     'packages/testing/src/postgres.integration.test.mjs',
+    'tests/langgraph-retirement-inventory-pg.integration.test.mjs',
     'tests/memory-process-loss.integration.test.mjs',
   ])
   const portabilityManifest = await readJson('packages/profile-portability/package.json')
@@ -286,6 +287,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/atomic-clause-ledger.test.mjs',
     'tests/canonical-source-lineage.test.mjs',
     'tests/container-promotion.test.mjs',
+    'tests/docker-pull-backoff.test.mjs',
     'tests/foundation.test.mjs',
     'tests/infrastructure.test.mjs',
     'tests/integration-shards.test.mjs',

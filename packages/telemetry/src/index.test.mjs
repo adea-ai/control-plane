@@ -219,7 +219,7 @@ describe('telemetry safety and correlation', () => {
     const telemetry = createTelemetry({
       serviceName: 'workflow-worker',
       traceAdapter: { startSpan: unavailable },
-      metricAdapter: { add: unavailable, record: unavailable },
+      metricAdapter: { add: unavailable, record: unavailable, recordGauge: unavailable },
       logger: { write: unavailable },
       errorTracker: { captureException: unavailable },
     })

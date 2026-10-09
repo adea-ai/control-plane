@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.28.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.27.1...control-api-v1.28.0) (2026-10-09)
+
+
+### Features
+
+* **pi:** 935 cancel-intent persistence, attempt fencing, and target-bound observation ([#1045](https://github.com/adea-ai/control-plane/issues/1045)) ([1208729](https://github.com/adea-ai/control-plane/commit/12087297deac41190f52f629d70e40bdb8d50d01))
+
+## [1.27.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.27.0...control-api-v1.27.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **pi:** fence cancellation by inference generation ([#1031](https://github.com/adea-ai/control-plane/issues/1031)) ([f735d7e](https://github.com/adea-ai/control-plane/commit/f735d7eae4f6b909c53a7bb4b6b4f8ef1769c9b7))
+
 ## [1.27.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.26.0...control-api-v1.27.0) (2026-10-09)
 
 

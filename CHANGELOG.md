@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.90.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.90.0...workspace-v1.90.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **ci:** back off Docker Hub rate-limited integration pulls ([#1054](https://github.com/adea-ai/control-plane/issues/1054)) ([6b6bfba](https://github.com/adea-ai/control-plane/commit/6b6bfba28293fd8f140767ca4dd96d8908e4b2e8))
+
+## [1.90.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.89.1...workspace-v1.90.0) (2026-10-09)
+
+
+### Features
+
+* **pi:** 935 cancel-intent persistence, attempt fencing, and target-bound observation ([#1045](https://github.com/adea-ai/control-plane/issues/1045)) ([1208729](https://github.com/adea-ai/control-plane/commit/12087297deac41190f52f629d70e40bdb8d50d01))
+
+## [1.89.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.89.0...workspace-v1.89.1) (2026-10-09)
+
+
+### Maintenance
+
+* **deps:** update dependency undici to v8 ([#986](https://github.com/adea-ai/control-plane/issues/986)) ([b8290b5](https://github.com/adea-ai/control-plane/commit/b8290b533e0ce4cee80cf980d35162a53a5cff55))
+
+## [1.89.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.88.0...workspace-v1.89.0) (2026-10-09)
+
+
+### Features
+
+* **telemetry:** correlate runtime telemetry and measure operations ([#1036](https://github.com/adea-ai/control-plane/issues/1036)) ([f59b114](https://github.com/adea-ai/control-plane/commit/f59b1145966868519fc372b0932e47e48183f454))
+
+## [1.88.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.87.0...workspace-v1.88.0) (2026-10-09)
+
+
+### Features
+
+* **profile-adapters:** add profile composition boundaries ([#1033](https://github.com/adea-ai/control-plane/issues/1033)) ([bc41666](https://github.com/adea-ai/control-plane/commit/bc41666a60c7d3b5cf23556fcc609b6e01c0aaab))
+
+
+### Bug Fixes
+
+* **pi:** fence cancellation by inference generation ([#1031](https://github.com/adea-ai/control-plane/issues/1031)) ([f735d7e](https://github.com/adea-ai/control-plane/commit/f735d7eae4f6b909c53a7bb4b6b4f8ef1769c9b7))
+
 ## [1.87.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.86.2...workspace-v1.87.0) (2026-10-09)
 
 

@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/telemetry",
-  "version": "1.5.6",
+  "version": "1.6.0",
   "description": "Fail-open observability toolkit: structured logging, secret redaction, trace-context propagation, deterministic sampling, and pluggable OpenTelemetry, Sentry, and LangSmith adapters.",
   "keywords": [
     "langsmith",
@@ -54,10 +54,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "oxlint src",
-    "test": "bun test src/index.test.mjs"
+    "test": "bun test src/*.test.mjs"
   },
   "devDependencies": {
     "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/sdk-metrics": "2.12.0",
     "@sentry/node": "11.4.0"
   },
   "peerDependencies": {
