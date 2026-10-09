@@ -263,7 +263,7 @@ export class GovernedDelegateChildExecutor implements ToolExecutor {
       !['running', 'awaiting_input'].includes(currentParent.state)
     )
       deny()
-    await this.options.delegations.delegate(delegation)
+    await this.options.delegations.delegate({ ...delegation, initialDispatch: dispatch })
     assertNotAborted(signal)
     await this.options.delegations.dispatchChild(dispatch)
     assertNotAborted(signal)

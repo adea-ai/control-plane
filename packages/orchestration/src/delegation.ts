@@ -4,6 +4,8 @@ import { compareCodePointOrder } from '@control-plane/contracts'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import {
   ExecutionLifecycleError,
+  ExecutionAttemptSchema,
+  ExecutionSchema,
   previewLifecycleTransition,
   type Execution,
   type ExecutionAttempt,
@@ -20,6 +22,13 @@ import {
   type CurrentExecutionScopeAuthority,
 } from '@control-plane/execution-plan'
 import { z } from 'zod'
+import {
+  assertChildAdmissionReceiptMatches,
+  ChildAdmissionRequestSchema,
+  ChildAdmissionAllocationError,
+  type ChildAdmissionAllocator,
+  type ChildAdmissionAuthority,
+} from './child-admission.js'
 
 const TimestampSchema = z.iso.datetime()
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
@@ -330,6 +339,9 @@ export type DelegationErrorCode =
   | 'DELEGATION_ATTEMPT_MISMATCH'
   | 'GRAPH_ADMISSION_DENIED'
   | 'SCOPE_ADMISSION_DENIED'
+  | 'CHILD_ADMISSION_UNAVAILABLE'
+  | 'CHILD_ADMISSION_DENIED'
+  | 'DELEGATION_CONCURRENCY_LIMIT_EXCEEDED'
 
 export class DelegationError extends Error {
   constructor(readonly code: DelegationErrorCode) {
@@ -342,10 +354,13 @@ export const DelegateInputSchema = z
   .object({
     delegationId: IdentifierSchemas.delegationId,
     delegationGroupId: IdentifierSchemas.delegationGroupId.optional(),
+    parentIntentId: ReferenceSchema.optional(),
     parentExecutionId: IdentifierSchemas.executionId,
     parentAttemptId: IdentifierSchemas.attemptId.optional(),
     admittedToolCallId: IdentifierSchemas.toolCallId.optional(),
     childExecutionId: IdentifierSchemas.executionId,
+    childAttemptId: IdentifierSchemas.attemptId.optional(),
+    initialDispatch: DispatchInputSchema.optional(),
     role: ReferenceSchema,
     profileVersionId: IdentifierSchemas.profileVersionId,
     objective: z.string().min(1).max(8_192),
@@ -361,6 +376,16 @@ export const DelegateInputSchema = z
       context.addIssue({
         code: 'custom',
         message: 'Governed child requires its admitted parent attempt',
+      })
+    if (input.admittedToolCallId && !input.parentIntentId)
+      context.addIssue({
+        code: 'custom',
+        message: 'Governed child requires its server-bound parent product intent',
+      })
+    if (input.admittedToolCallId && !input.childAttemptId)
+      context.addIssue({
+        code: 'custom',
+        message: 'Governed child requires a stable child attempt ID',
       })
   })
 
@@ -386,6 +411,9 @@ export class DelegationService {
   readonly #events: DelegationEventPublisher
   readonly #graphs: ExecutionGraphAuthority | undefined
   readonly #scopeAdmission: DelegationScopeAdmission | undefined
+  readonly #childAdmission: ChildAdmissionAuthority | undefined
+  readonly #childAllocator: ChildAdmissionAllocator | undefined
+  readonly #onEventRetained: ((event: DelegationEvent) => Promise<void>) | undefined
 
   constructor(options: {
     readonly delegations: DelegationRepository
@@ -394,6 +422,10 @@ export class DelegationService {
     readonly events: DelegationEventPublisher
     readonly graphs?: ExecutionGraphAuthority
     readonly scopeAdmission?: DelegationScopeAdmission
+    readonly childAdmission?: ChildAdmissionAuthority
+    readonly childAllocator?: ChildAdmissionAllocator
+    /** Advisory wake after the parent inbox has durably retained the event. */
+    readonly onEventRetained?: (event: DelegationEvent) => Promise<void>
   }) {
     this.#delegations = options.delegations
     this.#lifecycle = options.lifecycle
@@ -401,6 +433,9 @@ export class DelegationService {
     this.#events = options.events
     this.#graphs = options.graphs
     this.#scopeAdmission = options.scopeAdmission
+    this.#childAdmission = options.childAdmission
+    this.#childAllocator = options.childAllocator
+    this.#onEventRetained = options.onEventRetained
   }
 
   deriveChildPlan(parentPlan: unknown, childPlan: unknown): ExecutionPlan {
@@ -472,8 +507,93 @@ export class DelegationService {
       ['completed', 'failed', 'cancelled', 'timed_out'].includes(currentParent.state)
     )
       throw new DelegationError('DELEGATION_STATE_CONFLICT')
+
+    // Governed child calls must pass the product's current actor/audience,
+    // selection, and readiness checks before any durable child allocation.
+    // This is deliberately before plan retention, execution creation, budget
+    // opening, and delegation insertion. The repository transaction performs
+    // its own canonical lineage and limit checks before committing allocation.
+    let childAdmission:
+      | {
+          readonly request: z.output<typeof ChildAdmissionRequestSchema>
+          readonly receipt: import('./child-admission.js').ChildAdmissionReceipt
+        }
+      | undefined
+    if (parsed.admittedToolCallId) {
+      if (
+        !this.#childAdmission ||
+        !this.#childAllocator ||
+        !this.#scopeAdmission ||
+        !parsed.parentAttemptId ||
+        !parsed.parentIntentId ||
+        !parsed.childAttemptId ||
+        !parsed.initialDispatch ||
+        parsed.initialDispatch.delegationId !== parsed.delegationId ||
+        parsed.initialDispatch.childAttemptId !== parsed.childAttemptId
+      ) {
+        throw new DelegationError('CHILD_ADMISSION_UNAVAILABLE')
+      }
+      try {
+        const callerPrincipalId = z
+          .string()
+          .min(1)
+          .max(256)
+          .parse(await this.#scopeAdmission.resolveCallerPrincipalId(structuredClone(parsed)))
+        const request = ChildAdmissionRequestSchema.parse({
+          workspaceId: plan.correlation.workspaceId,
+          parentIntentId: parsed.parentIntentId,
+          parentExecutionId: parsed.parentExecutionId,
+          parentAttemptId: parsed.parentAttemptId,
+          parentExecutionVersion: currentParent.version,
+          parentPlan: {
+            executionPlanId: parsed.parentPlan.executionPlanId,
+            contentDigest: parsed.parentPlan.contentDigest,
+            schemaVersion: parsed.parentPlan.schemaVersion,
+          },
+          admittedToolCallId: parsed.admittedToolCallId,
+          delegationId: parsed.delegationId,
+          childRequestId: plan.correlation.requestId,
+          childExecutionId: parsed.childExecutionId,
+          childAttemptId: parsed.childAttemptId,
+          childDispatch: parsed.initialDispatch,
+          childPlan: {
+            executionPlanId: plan.executionPlanId,
+            contentDigest: plan.contentDigest,
+            schemaVersion: plan.schemaVersion,
+          },
+          role: parsed.role,
+          profileVersionId: parsed.profileVersionId,
+          originalActorPrincipalId: callerPrincipalId,
+          childRequestDigest: inputDigest,
+          acceptedAt: parsed.acceptedAt,
+        })
+        const receipt = assertChildAdmissionReceiptMatches(
+          request,
+          await this.#childAdmission.prepare(structuredClone(request)),
+          this.#scopeAdmission.now()
+        )
+        await this.#childAdmission.assertCurrent(structuredClone(request), receipt)
+        // Close the asynchronous authority window against the canonical parent
+        // attempt/version before the first write. Storage adapters repeat this
+        // fence while holding their allocation transaction.
+        const latestParent = await this.#lifecycle.getExecution(parsed.parentExecutionId)
+        assertParentPlan(latestParent, parsed.parentPlan)
+        if (
+          latestParent.version !== request.parentExecutionVersion ||
+          latestParent.latestAttemptId !== request.parentAttemptId
+        ) {
+          throw new Error('CHILD_ADMISSION_PARENT_CHANGED')
+        }
+        const checkedAt = TimestampSchema.parse(this.#scopeAdmission.now())
+        if (Date.parse(receipt.expiresAt) <= Date.parse(checkedAt)) {
+          throw new Error('CHILD_ADMISSION_RECEIPT_EXPIRED')
+        }
+        childAdmission = { request, receipt }
+      } catch {
+        throw new DelegationError('CHILD_ADMISSION_DENIED')
+      }
+    }
     await this.#plans.put(plan)
-    const execution = await this.#createOrRecoverChild(parsed, plan)
     const record = DelegationRecordSchema.parse({
       delegationId: parsed.delegationId,
       ...(parsed.delegationGroupId ? { delegationGroupId: parsed.delegationGroupId } : {}),
@@ -481,6 +601,10 @@ export class DelegationService {
       ...(parsed.parentAttemptId ? { parentAttemptId: parsed.parentAttemptId } : {}),
       ...(parsed.admittedToolCallId ? { admittedToolCallId: parsed.admittedToolCallId } : {}),
       childExecutionId: parsed.childExecutionId,
+      ...(parsed.childAttemptId && !childAdmission
+        ? { childAttemptId: parsed.childAttemptId }
+        : {}),
+      ...(childAdmission ? { pendingDispatch: childAdmission.request.childDispatch } : {}),
       parentExecutionPlanId: parsed.parentPlan.executionPlanId,
       parentExecutionPlanDigest: parsed.parentPlan.contentDigest,
       childExecutionPlanId: plan.executionPlanId,
@@ -499,6 +623,86 @@ export class DelegationService {
       ...(parsed.deadlineAt ? { deadlineAt: parsed.deadlineAt } : {}),
       updatedAt: parsed.acceptedAt,
     })
+
+    if (childAdmission) {
+      const acceptedExecution = ExecutionSchema.parse({
+        executionId: parsed.childExecutionId,
+        correlation: plan.correlation,
+        executionPlan: {
+          executionPlanId: plan.executionPlanId,
+          contentDigest: plan.contentDigest,
+          schemaVersion: plan.schemaVersion,
+        },
+        parentExecutionId: parsed.parentExecutionId,
+        acceptedAt: parsed.acceptedAt,
+        ...(parsed.deadlineAt ? { deadlineAt: parsed.deadlineAt } : {}),
+        state: 'accepted',
+        version: 1,
+        attemptCount: 0,
+        createdAt: parsed.acceptedAt,
+        updatedAt: parsed.acceptedAt,
+      })
+      const childDispatch = childAdmission.request.childDispatch
+      const attempt = ExecutionAttemptSchema.parse({
+        attemptId: parsed.childAttemptId,
+        executionId: parsed.childExecutionId,
+        sequence: 1,
+        state: 'queued',
+        version: 1,
+        acceptedAt: parsed.acceptedAt,
+        queuedAt: childDispatch.dispatchedAt,
+        runtime: childDispatch.runtime,
+        ...(parsed.deadlineAt ? { deadlineAt: parsed.deadlineAt } : {}),
+        createdAt: parsed.acceptedAt,
+        updatedAt: parsed.acceptedAt,
+      })
+      const queuedExecution = ExecutionSchema.parse({
+        ...previewLifecycleTransition(acceptedExecution, {
+          to: 'queued',
+          transitionedAt: childDispatch.dispatchedAt,
+        }),
+        attemptCount: attempt.sequence,
+        latestAttemptId: attempt.attemptId,
+      })
+      let allocated: boolean
+      try {
+        allocated = await this.#childAllocator!.allocate({
+          request: structuredClone(childAdmission.request),
+          receipt: structuredClone(childAdmission.receipt),
+          execution: queuedExecution,
+          attempt,
+          delegation: record,
+          assertCurrent: () =>
+            this.#childAdmission!.assertCurrent(
+              structuredClone(childAdmission!.request),
+              structuredClone(childAdmission!.receipt)
+            ),
+        })
+      } catch (error) {
+        if (error instanceof ChildAdmissionAllocationError) {
+          throw new DelegationError(error.code)
+        }
+        throw new DelegationError('CHILD_ADMISSION_DENIED')
+      }
+      if (!allocated) {
+        const replay = await this.#delegations.get(parsed.delegationId)
+        if (
+          !replay ||
+          (replay.inputDigest !== inputDigest && replay.inputDigest !== legacyInputDigest) ||
+          replay.childExecutionPlanId !== plan.executionPlanId ||
+          replay.childExecutionPlanDigest !== plan.contentDigest
+        ) {
+          throw new DelegationError('DELEGATION_CONFLICT')
+        }
+        const existingExecution = await this.#lifecycle.getExecution(replay.childExecutionId)
+        await this.#assertCurrentScope(parsed, plan)
+        return { record: replay, execution: existingExecution, plan }
+      }
+      await this.#publish(record, 'delegation.requested', parsed.acceptedAt)
+      return { record, execution: queuedExecution, plan }
+    }
+
+    const execution = await this.#createOrRecoverChild(parsed, plan)
     if (!(await this.#delegations.insert(record))) {
       const replay = await this.#delegations.get(parsed.delegationId)
       if (
@@ -854,10 +1058,12 @@ export class DelegationService {
     const cancelledAt = TimestampSchema.parse(input.cancelledAt)
     const cancelled: Execution[] = []
     for (const record of await this.#delegations.listByParent(parentExecutionId)) {
-      if (
-        record.policy.cancellation !== 'cascade' ||
-        ['completed', 'failed', 'cancelled'].includes(record.state)
-      ) {
+      if (record.policy.cancellation !== 'cascade') continue
+      if (['completed', 'failed', 'cancelled'].includes(record.state)) {
+        // A crash may leave the canonical terminal state committed while its
+        // parent-inbox publication is still pending. A repeated stop repairs
+        // that receipt idempotently without cancelling or restarting the child.
+        await this.#publishTerminal(record)
         continue
       }
       if (record.pendingProgress || record.pendingDispatch) {
@@ -987,7 +1193,7 @@ export class DelegationService {
         : record.state === 'cancelled'
           ? 'delegation.cancelled'
           : 'delegation.failed'
-    await this.#events.publish(
+    await this.#publishRetained(
       {
         type,
         delegationId: record.delegationId,
@@ -1027,17 +1233,27 @@ export class DelegationService {
     occurredAt: string,
     details: Readonly<Record<string, unknown>> = {}
   ): Promise<void> {
-    return this.#events.publish(
-      {
-        type,
-        delegationId: record.delegationId,
-        parentExecutionId: record.parentExecutionId,
-        childExecutionId: record.childExecutionId,
-        occurredAt,
-        details,
-      },
+    const event: DelegationEvent = {
+      type,
+      delegationId: record.delegationId,
+      parentExecutionId: record.parentExecutionId,
+      childExecutionId: record.childExecutionId,
+      occurredAt,
+      details,
+    }
+    return this.#publishRetained(
+      event,
       `delegation:${record.delegationId}:${record.revision}:${type}`
     )
+  }
+
+  async #publishRetained(event: DelegationEvent, idempotencyKey: string): Promise<void> {
+    await this.#events.publish(event, idempotencyKey)
+    try {
+      await this.#onEventRetained?.(structuredClone(event))
+    } catch {
+      // The event is durable; a failed wake is advisory and recovery can read the inbox.
+    }
   }
 }
 
