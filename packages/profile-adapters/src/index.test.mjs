@@ -448,6 +448,29 @@ describe('profile infrastructure bindings', () => {
     expect(failure.code).toBe('PROFILE_WAKE_MISMATCH')
   })
 
+  test('binds both self-hosted variants to their exact restate dispatcher', async () => {
+    for (const deploymentProfile of ['hosted-simple', 'hosted-server']) {
+      const driver = {
+        deploymentProfile,
+        kind: 'restate-ingress',
+        submit: async () => undefined,
+      }
+      const wake = await bindProfileWorkflowWake({
+        profile: 'self-hosted',
+        deployment: composition(deploymentProfile),
+        driver,
+        placement: placement('self-hosted'),
+        guards: allowedGuards(),
+        topology: trustedWakeTopology(driver),
+      })
+      expect(wake).toMatchObject({
+        profile: 'self-hosted',
+        deploymentProfile,
+        kind: 'restate-ingress',
+      })
+    }
+  })
+
   test('validates the actual runtime/transport pair and recomputes capability eligibility', async () => {
     const driver = new MockRuntimeAdapter()
     const transport = new DirectLocalRuntimeTransport(driver)
@@ -844,7 +867,66 @@ describe('profile infrastructure bindings', () => {
         transport
       ),
     }).catch((error) => error)
+
     expect(topologyFailure.code).toBe('PROFILE_RUNTIME_BINDING_MISMATCH')
+  })
+
+  test('binds the local profile to the canonical co-located managed-Pi adapter', async () => {
+    const calls = []
+    const client = new RecordingManagedPiClient()
+    const transport = new DirectLocalRuntimeTransport(
+      new ManagedPiDriver({ client, adapterVersion: '1.0.0' })
+    )
+    const adapter = new ManagedPiAdapter({ transport })
+    const binding = await bindProfileRuntime({
+      profile: 'local',
+      deployment: composition('local'),
+      candidate: { adapter, transport, placement: placement() },
+      guards: allowedGuards(calls),
+      topology: trustedTopology(adapter, transport, calls),
+      requiredCapabilities: [
+        { capability: 'stream.output', necessity: 'required', minimumSupport: 'supported' },
+      ],
+    })
+    expect(binding).toMatchObject({
+      profile: 'local',
+      deploymentProfile: 'local',
+      transportKind: 'direct-local',
+      inspection: { metadata: { adapterName: 'managed-pi', transportKind: 'direct-local' } },
+    })
+    const handle = await binding.adapter.start({
+      attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+      idempotencyKey: 'profile-local:managed-pi',
+      executionPlan: managedExecutionPlan(),
+    })
+    expect(handle.attemptId).toBe('att_01JABCDEF0123456789ABCDEFG')
+    expect(calls.filter(([guard]) => guard === 'authority').length).toBeGreaterThanOrEqual(3)
+  })
+
+  test('binds the remote self-hosted profile to the managed-Pi adapter over the gateway', async () => {
+    const { adapter, transport } = hostedManagedPiFixture(new RecordingManagedPiClient())
+    const binding = await bindProfileRuntime({
+      profile: 'self-hosted',
+      deployment: composition('hosted-server'),
+      candidate: {
+        adapter,
+        transport,
+        placement: {
+          ...placement('self-hosted'),
+          controlPlaneHostId: 'cp-host',
+          runtimeHostId: 'self-hosted-runtime',
+          coLocated: false,
+        },
+      },
+      guards: allowedGuards(),
+      topology: trustedTopology(adapter, transport),
+    })
+    expect(binding).toMatchObject({
+      profile: 'self-hosted',
+      deploymentProfile: 'hosted-server',
+      transportKind: 'remote-gateway',
+      inspection: { metadata: { adapterName: 'managed-pi', transportKind: 'remote-gateway' } },
+    })
   })
 
   test('requires the trusted topology to approve the exact adapter and transport instances', async () => {
