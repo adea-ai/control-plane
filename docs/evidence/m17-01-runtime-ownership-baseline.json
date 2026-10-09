@@ -3,10 +3,9 @@
   "tool": "scripts/m17-runtime-baseline.mjs",
   "issue": 941,
   "status": "candidate-baseline-unaccepted",
-  "acceptedPublishedBaseline": null,
-  "baselineStatement": "No adea-ai/control-plane#941 accepted or published baseline exists yet. This report is a candidate local measurement produced by the new tooling; it becomes an accepted baseline only through an explicit #941 acceptance act.",
+  "baselineStatement": "This run is a candidate measurement of this repository state only; it asserts nothing about baselines elsewhere in the repository or history and is not an accepted or published #941 baseline.",
   "candidate": {
-    "commit": "52c256ba0a70d5a7916775ee68ebff63a14e474c",
+    "commit": "0104d31e0d6e0d7c921cdc8eb018b46277a8ab09",
     "branch": "feat/m17-runtime-ownership-baseline-941",
     "dirty": false
   },
@@ -19,8 +18,7 @@
     "architecture": "arm64",
     "cpu": "Apple M2 Max",
     "cpuCount": 12,
-    "memoryBytes": 68719476736,
-    "controller": null
+    "memoryBytes": 68719476736
   },
   "configuration": {
     "queueIterations": 50,
@@ -28,10 +26,10 @@
     "ledgerIterations": 50,
     "policyIterations": 200,
     "importProbes": true,
-    "writePolicy": "temp-only; repository tree is never written"
+    "writePolicy": "probe state: disposable os.tmpdir() directories only; report: stdout or the explicit --out path"
   },
-  "startedAt": "2026-10-09T01:59:04.186Z",
-  "completedAt": "2026-10-09T01:59:16.245Z",
+  "startedAt": "2026-10-09T02:37:27.038Z",
+  "completedAt": "2026-10-09T02:37:29.145Z",
   "layers": [
     {
       "id": "custom-runtime",
@@ -61,10 +59,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 1167.816,
-        "rssBeforeBytes": 10452992,
-        "rssAfterBytes": 80248832,
-        "rssDeltaBytes": 69795840
+        "importMs": 132.263,
+        "rssBeforeBytes": 10436608,
+        "rssAfterBytes": 76382208,
+        "rssDeltaBytes": 65945600
       }
     },
     {
@@ -89,10 +87,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 54.392,
-        "rssBeforeBytes": 10469376,
-        "rssAfterBytes": 16809984,
-        "rssDeltaBytes": 6340608
+        "importMs": 10.483,
+        "rssBeforeBytes": 10387456,
+        "rssAfterBytes": 17858560,
+        "rssDeltaBytes": 7471104
       }
     },
     {
@@ -117,10 +115,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 455.016,
-        "rssBeforeBytes": 10452992,
-        "rssAfterBytes": 57327616,
-        "rssDeltaBytes": 46874624
+        "importMs": 97.984,
+        "rssBeforeBytes": 10420224,
+        "rssAfterBytes": 59686912,
+        "rssDeltaBytes": 49266688
       }
     },
     {
@@ -148,10 +146,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 1176.381,
-        "rssBeforeBytes": 10436608,
-        "rssAfterBytes": 51773440,
-        "rssDeltaBytes": 41336832
+        "importMs": 80.411,
+        "rssBeforeBytes": 10387456,
+        "rssAfterBytes": 53510144,
+        "rssDeltaBytes": 43122688
       }
     },
     {
@@ -172,10 +170,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 368.556,
-        "rssBeforeBytes": 10436608,
-        "rssAfterBytes": 50413568,
-        "rssDeltaBytes": 39976960
+        "importMs": 76.835,
+        "rssBeforeBytes": 10387456,
+        "rssAfterBytes": 51429376,
+        "rssDeltaBytes": 41041920
       }
     },
     {
@@ -201,10 +199,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 969.32,
-        "rssBeforeBytes": 10420224,
-        "rssAfterBytes": 51314688,
-        "rssDeltaBytes": 40894464
+        "importMs": 72.441,
+        "rssBeforeBytes": 10387456,
+        "rssAfterBytes": 53067776,
+        "rssDeltaBytes": 42680320
       }
     },
     {
@@ -229,10 +227,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 813.959,
-        "rssBeforeBytes": 10436608,
-        "rssAfterBytes": 66043904,
-        "rssDeltaBytes": 55607296
+        "importMs": 136.819,
+        "rssBeforeBytes": 10387456,
+        "rssAfterBytes": 67977216,
+        "rssDeltaBytes": 57589760
       }
     },
     {
@@ -263,10 +261,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 30.608,
-        "rssBeforeBytes": 10469376,
-        "rssAfterBytes": 16154624,
-        "rssDeltaBytes": 5685248
+        "importMs": 7.717,
+        "rssBeforeBytes": 10387456,
+        "rssAfterBytes": 16056320,
+        "rssDeltaBytes": 5668864
       }
     },
     {
@@ -287,10 +285,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 1109.708,
-        "rssBeforeBytes": 10452992,
-        "rssAfterBytes": 94027776,
-        "rssDeltaBytes": 83574784
+        "importMs": 283.415,
+        "rssBeforeBytes": 10403840,
+        "rssAfterBytes": 96681984,
+        "rssDeltaBytes": 86278144
       }
     },
     {
@@ -311,10 +309,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 324.5,
-        "rssBeforeBytes": 10420224,
-        "rssAfterBytes": 60882944,
-        "rssDeltaBytes": 50462720
+        "importMs": 113.09,
+        "rssBeforeBytes": 10403840,
+        "rssAfterBytes": 59916288,
+        "rssDeltaBytes": 49512448
       }
     }
   ],
@@ -325,32 +323,34 @@
         "transports": 7,
         "artifacts": 3,
         "auth": 26,
+        "restate": 1,
         "policy": 1,
         "device-supervision": 2
       },
-      "total": 42
+      "total": 43
     },
     "restate": {
       "targets": {
-        "device-supervision": 1
+        "device-supervision": 1,
+        "custom-runtime": 1
       },
-      "total": 1
+      "total": 2
     },
     "transports": {
       "targets": {
         "auth": 1,
         "device-supervision": 1,
-        "custom-runtime": 1
+        "custom-runtime": 3
       },
-      "total": 3
+      "total": 5
     },
     "auth": {
       "targets": {
         "transports": 1,
-        "policy": 4,
-        "device-supervision": 1
+        "device-supervision": 2,
+        "policy": 4
       },
-      "total": 6
+      "total": 7
     },
     "policy": {
       "targets": {
@@ -368,19 +368,20 @@
       "targets": {
         "device-supervision": 4,
         "transports": 1,
-        "custom-runtime": 1,
+        "custom-runtime": 3,
         "auth": 1
       },
-      "total": 7
+      "total": 9
     },
     "device-supervision": {
       "targets": {
         "billing": 2,
         "custom-runtime": 6,
         "transports": 17,
-        "auth": 2
+        "auth": 11,
+        "artifacts": 1
       },
-      "total": 27
+      "total": 37
     },
     "pi-durable-node-adapter": {
       "targets": {
@@ -407,35 +408,35 @@
       "latencyMs": {
         "enqueue": {
           "samples": 50,
-          "p50Ms": 1.624,
-          "p95Ms": 5.925,
-          "p99Ms": 14.17,
-          "maxMs": 14.17,
-          "meanMs": 2.506
+          "p50Ms": 0.741,
+          "p95Ms": 1.127,
+          "p99Ms": 5.463,
+          "maxMs": 5.463,
+          "meanMs": 0.872
         },
         "claim": {
           "samples": 50,
-          "p50Ms": 2.317,
-          "p95Ms": 4.98,
-          "p99Ms": 7.55,
-          "maxMs": 7.55,
-          "meanMs": 2.73
+          "p50Ms": 0.919,
+          "p95Ms": 1.425,
+          "p99Ms": 3.042,
+          "maxMs": 3.042,
+          "meanMs": 1.003
         },
         "complete": {
           "samples": 50,
-          "p50Ms": 1.726,
-          "p95Ms": 6.995,
-          "p99Ms": 10.587,
-          "maxMs": 10.587,
-          "meanMs": 2.534
+          "p50Ms": 0.688,
+          "p95Ms": 1.269,
+          "p99Ms": 1.764,
+          "maxMs": 1.764,
+          "meanMs": 0.768
         },
         "roundTrip": {
           "samples": 50,
-          "p50Ms": 6.17,
-          "p95Ms": 16.233,
-          "p99Ms": 22.016,
-          "maxMs": 22.016,
-          "meanMs": 7.774
+          "p50Ms": 2.352,
+          "p95Ms": 3.785,
+          "p99Ms": 10.273,
+          "maxMs": 10.273,
+          "meanMs": 2.645
         }
       },
       "notes": [
@@ -453,27 +454,27 @@
       "latencyMs": {
         "put": {
           "samples": 50,
-          "p50Ms": 10.03,
-          "p95Ms": 59.924,
-          "p99Ms": 98.448,
-          "maxMs": 98.448,
-          "meanMs": 16.704
+          "p50Ms": 2.318,
+          "p95Ms": 4.328,
+          "p99Ms": 5.079,
+          "maxMs": 5.079,
+          "meanMs": 2.475
         },
         "get": {
           "samples": 50,
-          "p50Ms": 1.306,
-          "p95Ms": 18.472,
-          "p99Ms": 37.532,
-          "maxMs": 37.532,
-          "meanMs": 4.536
+          "p50Ms": 0.338,
+          "p95Ms": 0.577,
+          "p99Ms": 1.025,
+          "maxMs": 1.025,
+          "meanMs": 0.372
         },
         "roundTrip": {
           "samples": 50,
-          "p50Ms": 12.134,
-          "p95Ms": 71.686,
-          "p99Ms": 135.985,
-          "maxMs": 135.985,
-          "meanMs": 21.244
+          "p50Ms": 2.634,
+          "p95Ms": 4.67,
+          "p99Ms": 6.107,
+          "maxMs": 6.107,
+          "meanMs": 2.849
         }
       },
       "notes": [
@@ -490,19 +491,19 @@
       "latencyMs": {
         "openBudget": {
           "samples": 1,
-          "p50Ms": 27.558,
-          "p95Ms": 27.558,
-          "p99Ms": 27.558,
-          "maxMs": 27.558,
-          "meanMs": 27.558
+          "p50Ms": 13.195,
+          "p95Ms": 13.195,
+          "p99Ms": 13.195,
+          "maxMs": 13.195,
+          "meanMs": 13.195
         },
         "reserve": {
           "samples": 50,
-          "p50Ms": 32.098,
-          "p95Ms": 92.666,
-          "p99Ms": 427.936,
-          "maxMs": 427.936,
-          "meanMs": 46.55
+          "p50Ms": 8.954,
+          "p95Ms": 14.423,
+          "p99Ms": 16.794,
+          "maxMs": 16.794,
+          "meanMs": 9.207
         }
       },
       "notes": [
@@ -520,11 +521,11 @@
       "latencyMs": {
         "authorize": {
           "samples": 200,
-          "p50Ms": 0.109,
-          "p95Ms": 6.868,
-          "p99Ms": 24.795,
-          "maxMs": 64.889,
-          "meanMs": 1.558
+          "p50Ms": 0.036,
+          "p95Ms": 0.067,
+          "p99Ms": 0.116,
+          "maxMs": 1.882,
+          "meanMs": 0.05
         }
       },
       "notes": [
@@ -570,7 +571,7 @@
       "reason": "Not machine-measurable; recorded as an explicit non-measured cost."
     }
   ],
-  "rssAfterProbesBytes": 203489280,
+  "rssAfterProbesBytes": 185614336,
   "limitations": [
     "single-process developer host; timings are not capacity numbers",
     "no cloud, Restate server, PostgreSQL, provider, or device was contacted",

@@ -18,13 +18,15 @@ dated root review act, and the tool's export deliberately makes no repository-wi
 ## Scope, method, and safety
 
 - Candidate: base `747a7cf7aec3b7d800d03deb447cd46a2d6eba9c` (= `origin/main` at capture),
-  tooling commit `52c256ba0a70d5a7916775ee68ebff63a14e474c`, branch
+  tooling `52c256ba0a70d5a7916775ee68ebff63a14e474c` plus review repair
+  `0104d31e0d6e0d7c921cdc8eb018b46277a8ab09` (evidence captured at the repair commit), branch
   `feat/m17-runtime-ownership-baseline-941`, `report.candidate.dirty = false`.
 - Environment (from the evidence report): bun 1.4.2 on macOS 25.6.0 `darwin/arm64`, Apple M2 Max
   ×12, 64 GiB, SQLite 3.51.0. `environment.runtime` is bun's Node-compatible `process.version`
   (`v26.3.0`); the repository engine pin remains Node 24.21.0.
 - Exact command: `bun scripts/m17-runtime-baseline.mjs --out docs/evidence/m17-01-runtime-ownership-baseline.json`
-  (≈12 s wall; defaults: 50 queue/object/ledger rounds, 200 policy rounds, per-layer import probes).
+  (≈2 s report wall warm on this host — a cold-cache first run took ≈19 s; defaults: 50
+  queue/object/ledger rounds, 200 policy rounds, per-layer import probes).
   Reproduce with `M17_QUEUE_ITERATIONS`, `M17_OBJECT_ITERATIONS`, `M17_LEDGER_ITERATIONS`,
   `M17_POLICY_ITERATIONS`, `M17_IMPORT_PROBES=0`.
 - Write policy: probe state is created only inside fresh `os.tmpdir()` directories that are
@@ -76,10 +78,10 @@ Restate removal is planned (Local never had Restate).
 | Node Pi Durable adapter (successor candidate) | **REPLACE-CANDIDATE — opt-in, not yet the owner**                                               | `authority.sqlite` journal + host-supplied current authority (see surfaces section)                                                                    | `packages/pi-durable-adapter/README.md:1-14`; `packages/pi-durable-adapter/src/composition.ts:31`; `docs/pi-durable-runtime.md:42-47` (disposition: Restate/LangGraph/managed Pi retained)                                                                                                                                                                                                               | Becomes the owner only with #941 behavior/profile/rollback evidence; until then current owners stay                                                             |
 | Cloudflare Pi host                            | **KEEP (unregistered — do not activate)**                                                       | Durable Object tables; no production route or advertised capability                                                                                    | `packages/pi-cloudflare-host/README.md:9-11`; `packages/pi-cloudflare-host/src/adapter.ts:70`, `:72`; `packages/pi-cloudflare-host/src/durable-object.ts:50`                                                                                                                                                                                                                                             | Activation is a separate, explicitly gated act (#930/#187 open); this PR activates nothing                                                                      |
 
-Cross-layer coupling recorded by the tool (import edges, static): custom-runtime 42,
-device-supervision 27, pi-durable-node-adapter 23, pi-cloudflare-host 12, artifacts 7, auth 6,
-billing 6, transports 3, policy 3, restate 1 (`report.coupling`). Coupling is an observation, not a
-decision.
+Cross-layer coupling recorded by the tool (import edges, static, exact resolution incl.
+package subpaths and `.js`→`.ts`): device-supervision 37, custom-runtime 43, pi-durable-node-adapter
+23, pi-cloudflare-host 12, artifacts 9, auth 7, billing 6, transports 5, policy 3, restate 2
+(`report.coupling`). Coupling is an observation, not a decision.
 
 ## Node and Cloudflare adapter / capability / authority surfaces (exact current `main`)
 
@@ -126,16 +128,16 @@ command above; values below are copied from it).
 
 | Layer                   | Files | Source files | Source LOC | Test files | Test LOC | Export statements | Cold import (ms) | Import RSS Δ (MiB) |
 | ----------------------- | ----: | -----------: | ---------: | ---------: | -------: | ----------------: | ---------------: | -----------------: |
-| custom-runtime          |    88 |           49 |     10,536 |         39 |   10,782 |               396 |          1,167.8 |               66.6 |
-| restate                 |     4 |            3 |        527 |          1 |      254 |                15 |             54.4 |                6.0 |
-| transports              |    17 |           15 |      2,760 |          2 |    1,299 |               137 |            455.0 |               44.7 |
-| auth                    |    17 |           14 |      2,745 |          3 |      893 |               103 |          1,176.4 |               39.4 |
-| policy                  |     4 |            2 |        685 |          2 |      457 |                25 |            368.6 |               38.1 |
-| billing                 |    10 |            6 |      3,637 |          3 |    1,802 |                46 |            969.3 |               39.0 |
-| artifacts               |    10 |            5 |      1,683 |          5 |    1,482 |                19 |            814.0 |               53.0 |
-| device-supervision      |    45 |           28 |      7,229 |         17 |    6,397 |               149 |             30.6 |                5.4 |
-| pi-durable-node-adapter |    42 |           26 |      6,400 |         16 |    5,155 |               109 |          1,109.7 |               79.7 |
-| pi-cloudflare-host      |    21 |           10 |      1,636 |         11 |    2,460 |                43 |            324.5 |               48.1 |
+| custom-runtime          |    88 |           49 |     10,536 |         39 |   10,782 |               396 |            132.3 |               62.9 |
+| restate                 |     4 |            3 |        527 |          1 |      254 |                15 |             10.5 |                7.1 |
+| transports              |    17 |           15 |      2,760 |          2 |    1,299 |               137 |             98.0 |               47.0 |
+| auth                    |    17 |           14 |      2,745 |          3 |      893 |               103 |             80.4 |               41.1 |
+| policy                  |     4 |            2 |        685 |          2 |      457 |                25 |             76.8 |               39.1 |
+| billing                 |    10 |            6 |      3,637 |          3 |    1,802 |                46 |             72.4 |               40.7 |
+| artifacts               |    10 |            5 |      1,683 |          5 |    1,482 |                19 |            136.8 |               54.9 |
+| device-supervision      |    45 |           28 |      7,229 |         17 |    6,397 |               149 |              7.7 |                5.4 |
+| pi-durable-node-adapter |    42 |           26 |      6,400 |         16 |    5,155 |               109 |            283.4 |               82.3 |
+| pi-cloudflare-host      |    21 |           10 |      1,636 |         11 |    2,460 |                43 |            113.1 |               47.2 |
 
 Import time and RSS delta come from one fresh bun child per layer entry; RSS delta is not peak
 memory. Layer file sets are disjoint (the tool fails with `M17_LAYER_OVERLAP` on any overlap).
@@ -144,14 +146,14 @@ memory. Layer file sets are disjoint (the tool fails with `M17_LAYER_OVERLAP` on
 
 | Probe                                  | Workload                                        | p50 (ms) | p95 (ms) | p99 (ms) | max (ms) |   n |
 | -------------------------------------- | ----------------------------------------------- | -------: | -------: | -------: | -------: | --: |
-| Local embedded-SQLite queue round trip | enqueue → claim → complete (`WorkflowJobStore`) |     6.17 |    16.23 |    22.02 |    22.02 |  50 |
-| — enqueue phase                        |                                                 |     1.62 |     5.93 |    14.17 |    14.17 |  50 |
-| — claim phase                          |                                                 |     2.32 |     4.98 |     7.55 |     7.55 |  50 |
-| — complete phase                       |                                                 |     1.73 |     7.00 |    10.59 |    10.59 |  50 |
-| Local filesystem artifact put/get      | `FilesystemObjectStore` 1 KiB object            |    12.13 |    71.69 |   135.99 |   135.99 |  50 |
-| Durable usage ledger reserve           | `DurableUsageLedger.reserve` on SQLite          |    32.10 |    92.67 |   427.94 |   427.94 |  50 |
-| — budget open (one-off)                |                                                 |    27.56 |        — |        — |    27.56 |   1 |
-| In-process policy authorize            | Cedar PDP + **fake** evaluator                  |     0.11 |     6.87 |    24.80 |    64.89 | 200 |
+| Local embedded-SQLite queue round trip | enqueue → claim → complete (`WorkflowJobStore`) |     2.35 |     3.79 |    10.27 |    10.27 |  50 |
+| — enqueue phase                        |                                                 |     0.74 |     1.13 |     5.46 |     5.46 |  50 |
+| — claim phase                          |                                                 |     0.92 |     1.43 |     3.04 |     3.04 |  50 |
+| — complete phase                       |                                                 |     0.69 |     1.27 |     1.76 |     1.76 |  50 |
+| Local filesystem artifact put/get      | `FilesystemObjectStore` 1 KiB object            |     2.63 |     4.67 |     6.11 |     6.11 |  50 |
+| Durable usage ledger reserve           | `DurableUsageLedger.reserve` on SQLite          |     8.95 |    14.42 |    16.79 |    16.79 |  50 |
+| — budget open (one-off)                |                                                 |    13.20 |        — |        — |    13.20 |   1 |
+| In-process policy authorize            | Cedar PDP + **fake** evaluator                  |     0.04 |     0.07 |     0.12 |     1.88 | 200 |
 
 Honesty labels: single-process developer host; the policy probe uses `FakeCedarEvaluator`, not a
 real Cedar engine; the ledger probe seeds an execution owner record in its own disposable database;
@@ -159,8 +161,8 @@ outliers reflect an unsandboxed shared host. These are regression baselines, not
 
 ### Memory
 
-Per-layer cold-import RSS deltas are in the complexity table (5.4–79.7 MiB); the probe process ended
-at ~194 MiB RSS after all probes (`rssAfterProbesBytes` in the evidence JSON). RSS snapshots are not
+Per-layer cold-import RSS deltas are in the complexity table (5.4–82.3 MiB); the probe process ended
+at ~177 MiB RSS after all probes (`rssAfterProbesBytes` in the evidence JSON). RSS snapshots are not
 peak memory.
 
 ### Unavailable costs (labeled, not estimated)
