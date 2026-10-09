@@ -3,15 +3,17 @@
 Evidence-backed keep/replace/retire map for the custom lifecycle/hosted runtime, Restate,
 transports, auth, policy, billing, artifacts, and device supervision, plus the exact Node and
 Cloudflare Pi adapter surfaces on current `main`. Every claim below links an exact source location.
-Measurements come from the new read-only tooling `scripts/m17-runtime-baseline.mjs`.
+Measurements come from the new tooling `scripts/m17-runtime-baseline.mjs` (temp-only probes;
+report to stdout or an explicit `--out` path).
 
-**Baseline status: no adea-ai/control-plane#941 accepted or published baseline exists yet.** A
-repository search for `M17.01`, `#941`, and `runtime ownership` before this change matched no
-pre-existing baseline artifact under `docs/`, `scripts/`, `packages/`, or `tests/`; `docs/evidence/`
-contained no M17 file. The only prior measurement history is unrelated: the M9/M10 performance
-record in [`docs/performance.md`](performance.md), which is explicitly profile-specific and not a
-#941 baseline. This document and `docs/evidence/m17-01-runtime-ownership-baseline.json` are a
-**candidate** baseline; they become accepted only through an explicit #941 acceptance act.
+**Baseline status as of this capture (2026-10-09): no #941 accepted or published baseline was
+found.** A dated repository search for `M17.01`, `#941`, and `runtime ownership` before this change
+matched no pre-existing baseline artifact under `docs/`, `scripts/`, `packages/`, or `tests/`;
+`docs/evidence/` contained no M17 file. The only prior measurement history is unrelated: the M9/M10
+performance record in [`docs/performance.md`](performance.md), which is explicitly profile-specific
+and not a #941 baseline. This document and `docs/evidence/m17-01-runtime-ownership-baseline.json`
+are a **candidate** baseline for this repository state only; acceptance is a separate, explicitly
+dated root review act, and the tool's export deliberately makes no repository-wide absence claim.
 
 ## Scope, method, and safety
 
@@ -25,10 +27,13 @@ record in [`docs/performance.md`](performance.md), which is explicitly profile-s
   (≈12 s wall; defaults: 50 queue/object/ledger rounds, 200 policy rounds, per-layer import probes).
   Reproduce with `M17_QUEUE_ITERATIONS`, `M17_OBJECT_ITERATIONS`, `M17_LEDGER_ITERATIONS`,
   `M17_POLICY_ITERATIONS`, `M17_IMPORT_PROBES=0`.
-- Read-only guarantees: the tool writes only inside fresh `os.tmpdir()` directories that are
-  removed before the report is emitted (`configuration.writePolicy = "temp-only; repository tree is
-  never written"`). No credentials, no network, no production or Local profile state, no cloud or
-  device contact. The Local embedded-SQLite path is exercised only on disposable temp databases.
+- Write policy: probe state is created only inside fresh `os.tmpdir()` directories that are
+  removed before the report is emitted; the report itself goes to stdout or, with `--out`, to that
+  explicit path (which may be inside the repository), as recorded in `configuration.writePolicy`.
+  Failure reasons in the export are bounded reason codes only — raw exception text, child
+  stdout/stderr, and ambient environment values are never copied in. No credentials, no network,
+  no production or Local profile state, no cloud or device contact. The Local embedded-SQLite path
+  is exercised only on disposable temp databases.
 - Removals performed: **none**. Production components are neither removed nor activated. Local
   embedded-SQLite behavior is untouched.
 - Coordination: no shared contract was changed. Any future shared-contract change (packages/contracts,
@@ -180,18 +185,24 @@ Recorded verbatim in the evidence report (`unavailableCosts`):
 - Local behavior is preserved: Local remains embedded SQLite without Restate
   (`docs/local-deployment.md:3-9`, `apps/local-control-plane/src/composition.ts:319`), and the
   probes touched only disposable temp databases.
-- Accepted sign-off: an automated agent-produced review/test run — recorded as such, never as a
-  human attestation. No human has accepted this baseline; **no #941 accepted/published baseline
-  exists yet**, including this one.
+- Acceptance: this is an automated agent-produced review/test run, recorded as such — never as a
+  human attestation, and with no human-only acceptance gate: acceptance is the root acceptance
+  review, an explicitly dated act that has not yet been performed for this candidate. The search
+  recorded above found no accepted/published #941 baseline as of this capture.
 
 ## Tooling tests and validation
 
 - `packages/production-readiness/src/m17-runtime-baseline.test.mjs` runs the CLI end-to-end with
   bounded iterations and asserts layer coverage for all eight #941 areas plus both adapter surfaces,
-  the explicit “no accepted/published baseline” statement, four measured probes, and
-  unavailable-with-reason labeling for every unmeasured cost.
+  the run-scoped candidate statement, the corrected write policy, absence of ambient environment
+  values, four measured probes, and unavailable-with-reason labeling for every unmeasured cost.
+- `packages/production-readiness/src/runtime-baseline-analysis.ts` holds the shared analysis with
+  exact-edge fixtures covering package-subpath and `.js`→`.ts` coupling resolution plus test-file
+  exclusion, and the bounded failure-reason / import-probe classifiers; a forced-failure CLI run
+  (unusable TMPDIR) asserts the export carries only bounded reason codes and leaks no raw error or
+  child output.
 - Commands: `bun test src/m17-runtime-baseline.test.mjs` (package), `bunx oxfmt --check`,
-  `bunx oxlint --deny-warnings`, `bun run check:boundaries`.
+  `bunx oxlint --deny-warnings`, `bun run check:boundaries`, `bun --cwd=packages/production-readiness run build`.
 
 ## Traceability
 

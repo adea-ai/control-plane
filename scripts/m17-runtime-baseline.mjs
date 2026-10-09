@@ -1,13 +1,20 @@
 /**
  * M17.01 (adea-ai/control-plane#941) runtime ownership baseline measurement.
  *
- * Read-only against the repository tree: every probe writes only inside a
- * fresh `os.tmpdir()` directory that is removed before the report is emitted.
- * No credentials, no network, no production or Local profile state is touched;
- * the Local embedded-SQLite path is exercised only on disposable temp files.
+ * Probe state is temp-only: every probe writes only inside a fresh
+ * `os.tmpdir()` directory that is removed before the report is emitted. The
+ * report itself goes to stdout or, with `--out`, to that explicit path (which
+ * may be inside the repository). Failure reasons are bounded reason codes;
+ * raw exception text, child stdout/stderr, and ambient environment values are
+ * never copied into the report. No credentials and no network: the Local
+ * embedded-SQLite path is exercised only on disposable temp files.
  *
  * Usage:
  *   bun scripts/m17-runtime-baseline.mjs [--out <file>]
+ *
+ * The emitted report is a candidate measurement of THIS RUN only. It asserts
+ * nothing about whether any baseline exists elsewhere in the repository or
+ * history; acceptance is a separate, explicitly dated review act.
  *
  * Tuning (all bounded, validated):
  *   M17_QUEUE_ITERATIONS    enqueue/claim/complete rounds   (default 50, 1..5000)
@@ -15,9 +22,6 @@
  *   M17_LEDGER_ITERATIONS   durable usage reserve rounds    (default 50, 1..5000)
  *   M17_POLICY_ITERATIONS   in-process authorize rounds     (default 200, 1..20000)
  *   M17_IMPORT_PROBES       1/0 per-layer import+RSS probes (default 1)
- *
- * The emitted report is a candidate measurement only. It is not an accepted or
- * published #941 baseline; acceptance is a separate, explicit act.
  */
 import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -40,6 +44,13 @@ import {
   FakeCedarEvaluator,
   InMemoryPolicyStore,
 } from '../packages/policy/src/index.ts'
+import {
+  SOURCE_FILE_PATTERN,
+  TEST_FILE_PATTERN,
+  classifyImportProbeChild,
+  measureCoupling,
+  safeFailureReason,
+} from '../packages/production-readiness/src/runtime-baseline-analysis.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 
@@ -291,11 +302,8 @@ function assertDisjointLayers(assignments) {
   }
 }
 
-const TEST_FILE_PATTERN = /\.test\.mjs$|\.test\.ts$|\.spec\.mjs$|\.spec\.ts$/
-const SOURCE_FILE_PATTERN = /\.ts$|\.mjs$/
 const EXPORT_PATTERN =
   /^export\s+(?:async\s+)?(?:abstract\s+)?(?:class|function|const|let|var|interface|type|enum|\{|\*)/gm
-const IMPORT_PATTERN = /(?:^|\n)\s*import\s+(?:type\s+)?(?:[^'"]*?from\s+)?['"]([^'"]+)['"]/g
 
 async function measureComplexity(files, base) {
   const complexity = {
@@ -330,59 +338,6 @@ async function measureComplexity(files, base) {
     complexity.todoMarkers += (contents.match(/\b(?:TODO|FIXME|XXX)\b/g) ?? []).length
   }
   return complexity
-}
-
-function importSpecifiers(contents) {
-  const specifiers = []
-  for (const match of contents.matchAll(IMPORT_PATTERN)) specifiers.push(match[1])
-  return specifiers
-}
-
-async function measureCoupling(assignments, base) {
-  const fileLayer = new Map()
-  for (const { id, files } of assignments) {
-    for (const file of files) fileLayer.set(join(base, file), id)
-  }
-  const packageLayer = new Map()
-  for (const { id, files } of assignments) {
-    for (const file of files) {
-      const match = file.match(/^(?:packages|apps)\/([^/]+)\//)
-      if (match && !packageLayer.has(match[1])) packageLayer.set(match[1], id)
-    }
-  }
-  const edges = {}
-  for (const { id } of assignments) edges[id] = {}
-  for (const { id, files } of assignments) {
-    for (const file of files) {
-      if (!SOURCE_FILE_PATTERN.test(file) || TEST_FILE_PATTERN.test(file)) continue
-      const contents = await readFile(join(base, file), 'utf8')
-      for (const specifier of importSpecifiers(contents)) {
-        let target = undefined
-        if (specifier.startsWith('@control-plane/')) {
-          const packageName = specifier.split('/').slice(1, 3).join('/')
-          target = packageLayer.get(packageName)
-        } else if (specifier.startsWith('.')) {
-          const resolved = resolve(base, file, '..', specifier)
-          const candidates = [resolved, `${resolved}.ts`, `${resolved}.mjs`]
-          for (const candidate of candidates) {
-            const owner = fileLayer.get(candidate)
-            if (owner !== undefined) {
-              target = owner
-              break
-            }
-          }
-        }
-        if (target !== undefined && target !== id) {
-          edges[id][target] = (edges[id][target] ?? 0) + 1
-        }
-      }
-    }
-  }
-  for (const [id, targets] of Object.entries(edges)) {
-    const total = Object.values(targets).reduce((sum, count) => sum + count, 0)
-    edges[id] = { targets, total }
-  }
-  return edges
 }
 
 function percentile(values, fraction) {
@@ -708,7 +663,7 @@ async function probePolicyAuthorize(iterations) {
 }
 
 /** Cold import time + RSS delta for one layer entry, in a fresh bun child. */
-function probeLayerImport(entry) {
+export function probeLayerImport(entry) {
   const specifier = pathToFileURL(resolve(root, entry)).href
   const childScript = `
 const rssBefore = process.memoryUsage().rss
@@ -723,13 +678,8 @@ try {
       rssAfterBytes: process.memoryUsage().rss,
     })
   )
-} catch (error) {
-  process.stdout.write(
-    JSON.stringify({
-      status: 'unavailable',
-      reason: String((error && error.message) || error).slice(0, 500),
-    })
-  )
+} catch {
+  process.stdout.write(JSON.stringify({ status: 'unavailable', reason: 'IMPORT_FAILED' }))
 }
 `
   const result = spawnSync(process.execPath, ['--eval', childScript], {
@@ -738,27 +688,11 @@ try {
     timeout: 120_000,
     env: { ...process.env, NODE_ENV: 'production' },
   })
-  if (result.error) {
-    return { status: 'unavailable', reason: String(result.error.message ?? result.error) }
-  }
-  const stdout = (result.stdout ?? '').trim()
-  if (result.status !== 0 && stdout.length === 0) {
-    return {
-      status: 'unavailable',
-      reason: `bun import child exited ${result.status}: ${(result.stderr ?? '').trim().slice(0, 500)}`,
-    }
-  }
-  try {
-    const parsed = JSON.parse(stdout.split('\n').at(-1))
-    if (parsed.status === 'measured') {
-      parsed.rssDeltaBytes = parsed.rssAfterBytes - parsed.rssBeforeBytes
-    }
-    return parsed
-  } catch {
-    return {
-      status: 'unavailable',
-      reason: `unparsable import probe output: ${stdout.slice(0, 200)}`,
-    }
+  const classification = classifyImportProbeChild(result)
+  if (classification.status === 'unavailable') return classification
+  return {
+    ...classification,
+    rssDeltaBytes: classification.rssAfterBytes - classification.rssBeforeBytes,
   }
 }
 
@@ -772,8 +706,8 @@ function git(...args) {
 
 /**
  * Runs the full #941 candidate baseline and returns the report object.
- * Read-only against the repository: all probe state lives in temp directories
- * that are removed before this resolves.
+ * Probe state lives only in temp directories that are removed before this
+ * resolves; the caller decides where the report itself is written.
  */
 export async function runM17RuntimeBaseline(options = {}) {
   const queueIterations = options.queueIterations ?? readBound('queue')
@@ -821,7 +755,7 @@ export async function runM17RuntimeBaseline(options = {}) {
       probes.push({
         id,
         status: 'unavailable',
-        reason: String((error && error.message) || error).slice(0, 500),
+        reason: safeFailureReason(error),
       })
     }
   }
@@ -832,9 +766,8 @@ export async function runM17RuntimeBaseline(options = {}) {
     tool: 'scripts/m17-runtime-baseline.mjs',
     issue: 941,
     status: 'candidate-baseline-unaccepted',
-    acceptedPublishedBaseline: null,
     baselineStatement:
-      'No adea-ai/control-plane#941 accepted or published baseline exists yet. This report is a candidate local measurement produced by the new tooling; it becomes an accepted baseline only through an explicit #941 acceptance act.',
+      'This run is a candidate measurement of this repository state only; it asserts nothing about baselines elsewhere in the repository or history and is not an accepted or published #941 baseline.',
     candidate: {
       commit: git('rev-parse', 'HEAD'),
       branch: git('rev-parse', '--abbrev-ref', 'HEAD'),
@@ -850,7 +783,6 @@ export async function runM17RuntimeBaseline(options = {}) {
       cpu: cpus()[0]?.model ?? 'unknown',
       cpuCount: cpus().length,
       memoryBytes: totalmem(),
-      controller: process.env.CONTROLLER ?? null,
     },
     configuration: {
       queueIterations,
@@ -858,7 +790,8 @@ export async function runM17RuntimeBaseline(options = {}) {
       ledgerIterations,
       policyIterations,
       importProbes,
-      writePolicy: 'temp-only; repository tree is never written',
+      writePolicy:
+        'probe state: disposable os.tmpdir() directories only; report: stdout or the explicit --out path',
     },
     startedAt,
     completedAt: new Date().toISOString(),
