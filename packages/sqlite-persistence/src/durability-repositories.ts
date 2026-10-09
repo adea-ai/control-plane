@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto'
 import { compareCodePointOrder } from '@control-plane/contracts'
 import { isDeepStrictEqual } from 'node:util'
-import type { JsonValue, PersistenceProvider } from '@control-plane/deployment'
+import type {
+  JsonValue,
+  PersistenceProvider,
+  PersistenceTransaction,
+} from '@control-plane/deployment'
 import {
   ExecutionAttemptSchema,
   executionRetentionScope,
@@ -719,8 +723,16 @@ function validCredentialFenceShape(
 export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository {
   constructor(
     readonly provider: PersistenceProvider,
-    /** Host identity/revocation verification (the PG port locks through its SECURITY DEFINER function). */
+    /**
+     * Canonical identity/revocation verification (the PG port locks through its SECURITY
+     * DEFINER function inside the same transaction). It receives the LIVE in-transaction
+     * handle so the check is tied to the same transaction/locking authority as the fenced
+     * write — never a disconnected callback. When absent, every required or explicitly
+     * fenced transition REJECTS (fail closed): a well-formed fence without a verifier must
+     * never pass.
+     */
     private readonly validateCredentialFence?: (
+      transaction: PersistenceTransaction,
       fence: CredentialRevocationFence,
       scope: { readonly nodeId: string; readonly workspaceId: string }
     ) => Promise<void>
@@ -913,10 +925,15 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
         requiresRuntimeCommandCredentialFence(current, command) ||
         credentialFence !== undefined
       ) {
-        if (!validCredentialFenceShape(credentialFence)) {
+        if (
+          !validCredentialFenceShape(credentialFence) ||
+          this.validateCredentialFence === undefined
+        ) {
+          // Fail closed: a missing/malformed fence OR an absent verifier can
+          // never authorize a fenced transition.
           throw new SqliteRuntimeCommandCredentialFenceInvalidError()
         }
-        await this.validateCredentialFence?.(credentialFence, {
+        await this.validateCredentialFence(transaction, credentialFence, {
           nodeId: current.nodeId,
           workspaceId: current.workspaceId,
         })

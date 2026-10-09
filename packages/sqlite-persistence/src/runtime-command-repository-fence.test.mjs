@@ -6,7 +6,8 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InMemoryRuntimeCommandRepository } from '@control-plane/domain'
+import { createHash } from 'node:crypto'
+import { InMemoryRuntimeCommandRepository, RuntimeCommandRecordSchema } from '@control-plane/domain'
 import { SqlitePersistenceProvider, SqliteRuntimeCommandRepository } from './index.js'
 
 const issuedAt = '2026-05-01T10:00:00.000Z'
@@ -64,6 +65,7 @@ async function withRepository(run) {
   }
 }
 
+const recordIdFor = (value) => `r-${createHash('sha256').update(value).digest('hex')}`
 const COMMAND_A = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAA'
 const COMMAND_B = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAB'
 const COMMAND_C = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAC'
@@ -131,18 +133,42 @@ describe('SqliteRuntimeCommandRepository', () => {
     })
   })
 
+  test('a well-formed forged fence is rejected when no verifier is installed (fail closed)', async () => {
+    await withRepository(async (provider) => {
+      // Root regression: a repository WITHOUT a verifier must never accept a
+      // well-formed fence on a required or explicitly fenced transition.
+      const repository = new SqliteRuntimeCommandRepository(provider)
+      await repository.create(queuedRecord(COMMAND_A))
+      await expect(
+        repository.compareAndSet(1, acknowledgedFrom(queuedRecord(COMMAND_A)), FENCE)
+      ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
+      expect(await repository.get(COMMAND_A)).toMatchObject({ status: 'queued', version: 1 })
+    })
+  })
+
   test('a well-formed fence is host-validated in-transaction with the record scope', async () => {
     await withRepository(async (provider) => {
       const scopes = []
-      const repository = new SqliteRuntimeCommandRepository(provider, async (fence, scope) => {
-        scopes.push({ fence, scope })
-      })
+      let observedInTransaction
+      const repository = new SqliteRuntimeCommandRepository(
+        provider,
+        async (transaction, fence, scope) => {
+          scopes.push({ fence, scope })
+          // The verifier runs on the SAME transaction/locking authority as the
+          // fenced write: it can read the fenced record in-transaction.
+          observedInTransaction = await transaction.get('runtime-commands', recordIdFor(COMMAND_A))
+        }
+      )
       await repository.create(queuedRecord(COMMAND_A))
       expect(
         await repository.compareAndSet(1, acknowledgedFrom(queuedRecord(COMMAND_A)), FENCE)
       ).toBe(true)
       expect(await repository.get(COMMAND_A)).toMatchObject({ status: 'acknowledged', version: 2 })
       expect(scopes).toEqual([{ fence: FENCE, scope: { nodeId: NODE, workspaceId: WORKSPACE } }])
+      expect(RuntimeCommandRecordSchema.parse(observedInTransaction.value)).toMatchObject({
+        commandId: COMMAND_A,
+        version: 1,
+      })
 
       // A validator failure propagates and leaves the record untouched.
       const rejecting = new SqliteRuntimeCommandRepository(provider, async () => {
