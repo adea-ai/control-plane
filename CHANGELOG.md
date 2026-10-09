@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.89.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.88.0...workspace-v1.89.0) (2026-10-09)
+
+
+### Features
+
+* **telemetry:** correlate runtime telemetry and measure operations ([#1036](https://github.com/adea-ai/control-plane/issues/1036)) ([f59b114](https://github.com/adea-ai/control-plane/commit/f59b1145966868519fc372b0932e47e48183f454))
+
 ## [1.88.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.87.0...workspace-v1.88.0) (2026-10-09)
 
 
