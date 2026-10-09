@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { performance } from 'node:perf_hooks'
 import type { DatabaseSync } from 'node:sqlite'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import {
@@ -9,7 +10,11 @@ import {
   type DurableToolExecutionOutcome,
   type PreparedToolExecution,
 } from '@control-plane/tool-execution'
-import { DurableToolCallRequestSchema, type DurableToolCallRequest } from '@control-plane/tool-sdk'
+import {
+  DurableToolCallRequestSchema,
+  ToolExecutorError,
+  type DurableToolCallRequest,
+} from '@control-plane/tool-sdk'
 
 export type DurableEffectGateOutcome =
   | DurableToolExecutionOutcome
@@ -218,10 +223,11 @@ export class PiDurableEffectGate {
         authorityRejected = true
         throw new PiDurableEffectGateError('PI_EFFECT_AUTHORITY_REJECTED')
       }
-      // Abort remains effective through every authority/approval await. The effect barrier
-      // is committed only after this final synchronous signal check.
+      // Abort remains effective through every authority/approval await and the first
+      // asynchronous storage read. The barrier's CAS below is the admission point.
       signal.throwIfAborted()
       const current = await this.#store(() => this.options.store.get(key))
+      signal.throwIfAborted()
       if (
         !current ||
         current.state !== 'invoking' ||
@@ -237,6 +243,9 @@ export class PiDurableEffectGate {
       if (!(await this.#store(() => this.options.store.compareAndSet(current.revision, admitted))))
         throw new PiDurableEffectGateError('PI_EFFECT_STORE_CONFLICT')
       effectRecord = admitted
+      // The storage write can itself await. If cancellation won before the admission
+      // continuation resumed, keep the durable invocation fence but do not call the executor.
+      signal.throwIfAborted()
       effectStarted = true
     }
     const base = this.options.service
@@ -311,13 +320,21 @@ class AuthorityCheckedGateway extends ToolGateway {
       ...prepared,
       executor: {
         execute: async (request, version, signal) => {
+          const operationStartedAt = performance.now()
           signal.throwIfAborted()
           await this.beforeEffect(prepared.operation.approvalMode === 'always', signal)
-          // Once the durable barrier commits, parent cancellation cannot cancel the child.
-          // Preserve the tool gateway timeout, but do not forward the parent's abort signal.
-          const detached = detachParentCancellation(signal)
+          // Once the durable barrier commits, caller cancellation cannot cancel the child.
+          // Keep the original gateway deadline independently because ToolGateway clears
+          // its timer when its caller-abort race wins.
+          const remainingTimeoutMs = Math.max(
+            0,
+            version.limits.timeoutMs - (performance.now() - operationStartedAt)
+          )
+          const detached = detachParentCancellation(signal, remainingTimeoutMs)
           try {
-            return await executor.execute(request, version, detached.signal)
+            const result = await executor.execute(request, version, detached.signal)
+            if (detached.signal.aborted) throw detached.signal.reason
+            return result
           } finally {
             detached.dispose()
           }
@@ -334,26 +351,35 @@ class AuthorityCheckedGateway extends ToolGateway {
   }
 }
 
-function detachParentCancellation(signal: AbortSignal): {
+function detachParentCancellation(
+  signal: AbortSignal,
+  timeoutMs: number
+): {
   signal: AbortSignal
   dispose: () => void
 } {
   const controller = new AbortController()
+  const timeout = new ToolExecutorError('TIMEOUT', true, 'unknown')
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const dispose = () => {
+    if (timer !== undefined) clearTimeout(timer)
+    signal.removeEventListener('abort', forwardTimeout)
+  }
+  const abortForTimeout = () => {
+    if (!controller.signal.aborted) controller.abort(timeout)
+    dispose()
+  }
   const forwardTimeout = () => {
     const reason = signal.reason
-    if (
-      reason &&
-      typeof reason === 'object' &&
-      Reflect.get(reason, 'code') === 'TIMEOUT' &&
-      !controller.signal.aborted
-    )
-      controller.abort(reason)
+    if (reason && typeof reason === 'object' && Reflect.get(reason, 'code') === 'TIMEOUT')
+      abortForTimeout()
   }
+  timer = setTimeout(abortForTimeout, timeoutMs)
   signal.addEventListener('abort', forwardTimeout)
   if (signal.aborted) forwardTimeout()
   return {
     signal: controller.signal,
-    dispose: () => signal.removeEventListener('abort', forwardTimeout),
+    dispose,
   }
 }
 

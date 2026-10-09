@@ -309,6 +309,120 @@ describe('persistent Pi governed effect gate', () => {
     })
   })
 
+  test('caller cancellation during the awaited admission read prevents executor invocation', async () => {
+    await fixture(async ({ open, close, state }) => {
+      state.approved = true
+      let enteredRead, releaseRead
+      const admissionRead = new Promise((resolve) => {
+        enteredRead = resolve
+      })
+      const readPaused = new Promise((resolve) => {
+        releaseRead = resolve
+      })
+      const controller = new AbortController()
+      let reads = 0
+      const { gate, store } = await open({
+        store: (baseStore) => ({
+          async get(key) {
+            reads++
+            if (reads === 2) {
+              enteredRead()
+              await readPaused
+            }
+            return baseStore.get(key)
+          },
+          insert: baseStore.insert.bind(baseStore),
+          compareAndSet: baseStore.compareAndSet.bind(baseStore),
+        }),
+      })
+      try {
+        const pending = gate.execute(request(), { signal: controller.signal })
+        await admissionRead
+        controller.abort(new Error('caller-cancelled-before-admission'))
+        const outcome = await pending
+        expect(outcome).toMatchObject({
+          state: 'reconciliation_required',
+          call: { errorCode: 'ABORTED' },
+        })
+        const key = JSON.stringify([request().workspaceId, request().idempotencyKey])
+        const receipt = await store.get(key)
+        expect(receipt).toMatchObject({ state: 'settled' })
+        expect(receipt.effectAdmittedAt).toBeUndefined()
+        expect(state.effects).toBe(0)
+
+        releaseRead()
+        await nextTurn()
+        expect(await store.get(key)).toEqual(receipt)
+        expect(state.effects).toBe(0)
+      } finally {
+        releaseRead()
+        close()
+      }
+    })
+  })
+
+  test('caller abort after admission preserves the child deadline until gateway timeout', async () => {
+    await fixture(async ({ open, close, state }) => {
+      state.approved = true
+      let enteredEffect, releaseEffect
+      const effectEntered = new Promise((resolve) => {
+        enteredEffect = resolve
+      })
+      const releaseExecution = new Promise((resolve) => {
+        releaseEffect = resolve
+      })
+      let resolveTimeout
+      const timeoutObserved = new Promise((resolve) => {
+        resolveTimeout = resolve
+      })
+      const controller = new AbortController()
+      let executorSignal
+      const { gate } = await open({
+        timeoutMs: 250,
+        afterEffect: async (signal) => {
+          executorSignal = signal
+          enteredEffect()
+          const timeout = await Promise.race([
+            new Promise((resolve) => {
+              signal.addEventListener('abort', () => resolve(signal.reason), { once: true })
+            }),
+            releaseExecution,
+          ])
+          if (timeout) resolveTimeout(timeout)
+        },
+      })
+      try {
+        const pending = gate.execute(request(), { signal: controller.signal })
+        await effectEntered
+        controller.abort(new Error('parent-cancelled-after-admission'))
+        const outcome = await pending
+        expect(outcome).toMatchObject({
+          state: 'reconciliation_required',
+          call: { errorCode: 'ABORTED' },
+        })
+        expect(executorSignal.aborted).toBe(false)
+
+        let watchdog
+        const reason = await Promise.race([
+          timeoutObserved,
+          new Promise((_, reject) => {
+            watchdog = setTimeout(() => reject(new Error('admitted child timeout was lost')), 2_000)
+          }),
+        ])
+        clearTimeout(watchdog)
+        expect(reason).toMatchObject({ code: 'TIMEOUT' })
+        expect(executorSignal.reason).toMatchObject({ code: 'TIMEOUT' })
+        expect(state.effects).toBe(1)
+        expect(await gate.execute(request())).toEqual(outcome)
+        expect(state.effects).toBe(1)
+        close()
+      } finally {
+        releaseEffect()
+        close()
+      }
+    })
+  })
+
   test('gateway timeout still aborts an executor after durable effect admission', async () => {
     await fixture(async ({ open, close, state }) => {
       state.approved = true
