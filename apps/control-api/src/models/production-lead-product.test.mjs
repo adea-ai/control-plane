@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createProductionLeadProductAuthority } from './production-lead-product.ts'
 import { createProductionLeadReadiness } from './production-lead-readiness.ts'
+import { createProductionChildModelAuthority } from './production-child-model-authority.ts'
+import { ExecutionPlanCompiler, deriveExecutionPlan } from '@control-plane/execution-plan'
+import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
 
 const suffix = '01JABCDEF0123456789ABCDEFG'
 const actor = `user:${randomUUID()}`
@@ -71,7 +74,7 @@ function make(database) {
       },
     },
   }
-  return { state, authority: createProductionLeadProductAuthority(ports) }
+  return { state, ports, authority: createProductionLeadProductAuthority(ports) }
 }
 test('actual SQLite restart retains the same selection winner without resolving changed defaults', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'pi-production-selection-'))
@@ -133,4 +136,234 @@ test('readiness rejects missing, malformed or mismatched original actors before 
   expect(calls).toBe(0)
   await ready({ evidence: { canonicalActorPrincipalId: actor }, actorPrincipalId: actor })
   expect(calls).toBe(1)
+})
+
+const fullSelection = (ref, model = 'gpt-5') => ({
+  schemaVersion: 'model-selection/v1',
+  selectionRef: ref,
+  selectionRevision: 1,
+  workspaceId: input.workspaceId,
+  connectionRef: `mconn_${'1'.repeat(32)}`,
+  connectionRevision: 1,
+  credentialRef: `crd_${suffix}`,
+  credentialRevision: 1,
+  provider: 'openai',
+  providerModel: model,
+  accountRef: 'account:explicit',
+  authKind: 'api_key',
+  fundingSource: 'byo_api',
+  ...target,
+  workspaceGrant: { grantRef: 'grant:explicit', revision: 1 },
+  configurationRevision: 1,
+})
+const childRef = `msel_${'b'.repeat(32)}`
+test('explicit lead and child refs stay distinct, survive reopen, and never select workspace defaults', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pi-explicit-roles-'))
+  let database = new DatabaseSync(join(directory, 'roles.sqlite'))
+  const setup = () => {
+    const fixture = make(database)
+    fixture.state.product.requestedModelSelections = {
+      lead: selection,
+      child: { selectionRef: childRef, selectionRevision: 1 },
+    }
+    fixture.ports.selections.resolveSelection = async (pin) => fullSelection(pin.selectionRef)
+    fixture.ports.selections.assertReady = async (resolved) => {
+      if (
+        fixture.state.revoked ||
+        (fixture.state.leadUnavailable && resolved.selectionRef === selection.selectionRef)
+      )
+        throw new Error('CREDENTIAL_REVOKED')
+    }
+    return { ...fixture, authority: createProductionLeadProductAuthority(fixture.ports) }
+  }
+  const child = {
+    childRequestId: 'child:one',
+    childRequestDigest: `sha256:${'c'.repeat(64)}`,
+    canonicalActorPrincipalId: actor,
+  }
+  try {
+    const first = setup()
+    const accepted = await first.authority.readCurrent(input)
+    expect(accepted.selectionRef).toBe(selection.selectionRef)
+    expect(accepted.requestedModelSelections).toBeUndefined()
+    expect((await first.authority.resolveChildSelection(input, child)).selectionRef).toBe(childRef)
+    expect(first.state.selects).toBe(0)
+    first.state.leadUnavailable = true
+    await expect(first.authority.readCurrent(input)).rejects.toThrow('CREDENTIAL_REVOKED')
+    expect((await first.authority.resolveChildSelection(input, child)).selectionRef).toBe(childRef)
+    first.state.product.allowedPrincipalIds = [`svc_${'x'.repeat(12)}`]
+    await expect(first.authority.resolveChildSelection(input, child)).rejects.toThrow(
+      'PI_PRODUCTION_PRODUCT_DENIED'
+    )
+    first.state.product.allowedPrincipalIds = [input.principalId]
+    database.close()
+    database = new DatabaseSync(join(directory, 'roles.sqlite'))
+    const reopened = setup()
+    expect(await reopened.authority.readCurrent(input)).toEqual(accepted)
+    expect((await reopened.authority.resolveChildSelection(input, child)).selectionRef).toBe(
+      childRef
+    )
+    expect(reopened.state.selects).toBe(0)
+    reopened.state.product.requestedModelSelections.lead = {
+      selectionRef: `msel_${'d'.repeat(32)}`,
+      selectionRevision: 1,
+    }
+    await expect(reopened.authority.readCurrent(input)).rejects.toThrow(
+      'PI_PRODUCTION_PRODUCT_CHANGED'
+    )
+  } finally {
+    database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('admitted child remains authorized when only the parent lead model becomes unavailable', async () => {
+  const database = new DatabaseSync(':memory:')
+  try {
+    const fixture = make(database)
+    const { state, ports } = fixture
+    const parentEvidence = structuredClone(evidence)
+    parentEvidence.requestedModelSelections = {
+      lead: selection,
+      child: { selectionRef: childRef, selectionRevision: 1 },
+    }
+    state.product = parentEvidence
+    ports.selections.resolveSelection = async (pin) => fullSelection(pin.selectionRef)
+    ports.selections.assertReady = async (resolved) => {
+      if (
+        state.revoked ||
+        (state.leadUnavailable && resolved.selectionRef === selection.selectionRef)
+      )
+        throw new Error('CREDENTIAL_REVOKED')
+    }
+    const productAuthority = createProductionLeadProductAuthority({ ...ports, database })
+    expect((await productAuthority.readCurrent(input)).selectionRef).toBe(selection.selectionRef)
+
+    const base = createExecutionPlanTestFixtureInputs()
+    const parentPlan = new ExecutionPlanCompiler('1.0.0').compile(base)
+    const childRequestId = 'req_01JBBCDEF0123456789ABCDEFG'
+    const childPlan = deriveExecutionPlan(parentPlan, {
+      correlation: { ...parentPlan.correlation, requestId: childRequestId },
+      contextPackage: base.contextPackage,
+      constraints: structuredClone(parentPlan.constraints),
+      runtimeRequirements: structuredClone(parentPlan.runtimeRequirements),
+      outputContract: parentPlan.outputContract,
+      compiledAt: '2026-10-08T00:00:00.000Z',
+    })
+    const request = {
+      executionId: 'exe_01JBBCDEF0123456789ABCDEFG',
+      attemptId: 'att_01JBBCDEF0123456789ABCDEFG',
+      idempotencyKey: 'child:lead-readiness-independence',
+      executionPlan: childPlan,
+    }
+    const childRecord = {
+      workspaceId: input.workspaceId,
+      parentIntentId: input.intentId,
+      childRequestId,
+      executionId: request.executionId,
+      attemptId: request.attemptId,
+      executionPlanId: childPlan.executionPlanId,
+      executionPlanDigest: childPlan.contentDigest,
+      parentExecutionPlanId: parentPlan.executionPlanId,
+      parentExecutionPlanDigest: parentPlan.contentDigest,
+      canonicalActorPrincipalId: actor,
+      productReaderPrincipalId: input.principalId,
+      authorityRevision: 1,
+      expiresAt: '2026-10-09T00:00:00.000Z',
+      requestedSelection: { selectionRef: childRef, selectionRevision: 1 },
+    }
+    const childAuthority = createProductionChildModelAuthority({
+      now: () => '2026-10-08T00:00:00.000Z',
+      readCurrent: async () => childRecord,
+      product: { resolveChildSelection: productAuthority.resolveChildSelection },
+      admit: async (_request, chosen) => ({
+        schemaVersion: 'pi-durable-admission/v1',
+        prompt: 'synthetic child prompt',
+        canonicalActorPrincipalId: actor,
+        selection: {
+          selectionRef: chosen.selectionRef,
+          selectionRevision: chosen.selectionRevision,
+        },
+        authority: {
+          revision: 1,
+          principalRef: 'svc_child',
+          scopeRef: 'scope:child',
+          expiresAt: childRecord.expiresAt,
+        },
+      }),
+      assertCurrent: async () => {},
+    })
+    const admission = await childAuthority.resolveAdmission(request)
+    expect(admission.selection).toEqual({ selectionRef: childRef, selectionRevision: 1 })
+
+    state.leadUnavailable = true
+    await expect(productAuthority.readCurrent(input)).rejects.toThrow('CREDENTIAL_REVOKED')
+    await childAuthority.assertAuthority({ request, admission })
+    expect(admission.selection.selectionRef).toBe(childRef)
+
+    state.product.allowedPrincipalIds = ['svc_other']
+    await expect(childAuthority.assertAuthority({ request, admission })).rejects.toThrow(
+      'PI_PRODUCTION_PRODUCT_DENIED'
+    )
+  } finally {
+    database.close()
+  }
+})
+
+test('wrong workspace, target, revision and revoked explicit selections deny without fallback', async () => {
+  for (const fault of ['workspace', 'target', 'revision', 'revoked']) {
+    const database = new DatabaseSync(':memory:')
+    try {
+      const fixture = make(database)
+      fixture.state.product.requestedModelSelections = { lead: selection }
+      fixture.ports.selections.resolveSelection = async (pin) => {
+        const value = fullSelection(pin.selectionRef)
+        if (fault === 'workspace') value.workspaceId = `wsp_01JBBCDEF0123456789ABCDEFG`
+        if (fault === 'target') value.location = 'local_device'
+        if (fault === 'revision') value.selectionRevision = 2
+        return value
+      }
+      fixture.state.revoked = fault === 'revoked'
+      const authority = createProductionLeadProductAuthority(fixture.ports)
+      await expect(authority.readCurrent(input)).rejects.toThrow()
+      expect(fixture.state.selects).toBe(0)
+      expect(
+        database.prepare('SELECT COUNT(*) AS n FROM pi_production_lead_selections').get().n
+      ).toBe(0)
+    } finally {
+      database.close()
+    }
+  }
+})
+test('child override is immutable per canonical request; child default never inherits lead', async () => {
+  const database = new DatabaseSync(':memory:')
+  try {
+    const fixture = make(database)
+    const roles = []
+    fixture.ports.selections.select = async (request) => {
+      roles.push(request.role)
+      return fullSelection(request.role === 'lead' ? selection.selectionRef : childRef)
+    }
+    fixture.ports.selections.resolveSelection = async (pin) => fullSelection(pin.selectionRef)
+    const authority = createProductionLeadProductAuthority(fixture.ports)
+    await authority.readCurrent(input)
+    const child = {
+      childRequestId: 'child:one',
+      childRequestDigest: `sha256:${'c'.repeat(64)}`,
+      canonicalActorPrincipalId: actor,
+    }
+    expect((await authority.resolveChildSelection(input, child)).selectionRef).toBe(childRef)
+    expect(roles).toEqual(['lead', 'child'])
+    await expect(
+      authority.resolveChildSelection(input, { ...child, requestedSelection: selection })
+    ).rejects.toThrow('PI_ROLE_SELECTION_CHANGED')
+    await expect(
+      authority.resolveChildSelection(input, {
+        ...child,
+        canonicalActorPrincipalId: `user:${randomUUID()}`,
+      })
+    ).rejects.toThrow('PI_CHILD_MODEL_AUTHORITY_DENIED')
+  } finally {
+    database.close()
+  }
 })

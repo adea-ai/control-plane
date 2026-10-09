@@ -96,6 +96,22 @@ export const RuntimeProviderSelectionSchema = z
   .refine(fundingMatches, { message: 'Authentication and funding provenance must agree' })
   .refine(bindingMatches, { message: 'Harness requires its supported provider binding' })
 
+/** Non-secret choices retained by the trusted product's canonical admission intent. */
+export const ModelSelectionReferenceSchema = z.strictObject({
+  selectionRef: ModelSelectionRefSchema,
+  selectionRevision: Revision,
+})
+export const RequestedRoleModelSelectionsSchema = z
+  .strictObject({
+    lead: ModelSelectionReferenceSchema.optional(),
+    child: ModelSelectionReferenceSchema.optional(),
+  })
+  .refine((value) => value.lead !== undefined || value.child !== undefined, {
+    message: 'At least one explicit role selection is required',
+  })
+export type ModelSelectionReference = z.output<typeof ModelSelectionReferenceSchema>
+export type RequestedRoleModelSelections = z.output<typeof RequestedRoleModelSelectionsSchema>
+
 export const ModelChoiceSchema = z.strictObject({
   connectionRef: ModelConnectionRefSchema,
   providerModel: Ref,
