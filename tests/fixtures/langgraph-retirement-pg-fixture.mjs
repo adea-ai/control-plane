@@ -88,6 +88,11 @@ function alphaNodes() {
  *   with no record in the executions table.
  * - injectUnclassifiedCheckpoint: checkpoint row whose thread name cannot be
  *   parsed into a workspace/execution pair.
+ * - injectOrphanBlob: checkpoint_blobs row whose thread names an execution
+ *   with no record in the executions table and that has no checkpoint/write
+ *   row — blob-only evidence whose thread must still be classified.
+ * - injectUnclassifiedBlob: checkpoint_blobs row whose thread name cannot be
+ *   parsed, again with no checkpoint/write row behind it.
  * - mutateRunningPlanGraphIdentity: rewrites the running execution's retained
  *   plan row in place — 'missing-graph-id' (reference without
  *   graphDefinitionId), 'invalid-graph-version' (nonempty but canonically
@@ -112,6 +117,8 @@ export async function createInventoryPgFixture({
   compileRunningPlanGraphless = false,
   injectOrphanCheckpoint = false,
   injectUnclassifiedCheckpoint = false,
+  injectOrphanBlob = false,
+  injectUnclassifiedBlob = false,
   mutateRunningPlanGraphIdentity = undefined,
   corruptRunningPlanContent = false,
   mutateRunningExecutionPin = false,
@@ -304,6 +311,21 @@ export async function createInventoryPgFixture({
       }
     }
 
+    // Blob-only evidence sits outside the running-execution block: a store can
+    // hold checkpoint_blobs rows whose threads have no checkpoint/write row at
+    // all, and those threads must still be classified by the collector.
+    if (injectOrphanBlob) {
+      await putCheckpointBlobRow(client, {
+        thread: `${ids.workspaceOne}:${ids.executionOrphan}:graph:${ids.executionOrphan}`,
+      })
+    }
+    if (injectUnclassifiedBlob) {
+      await putCheckpointBlobRow(client, {
+        thread: 'legacy-retained-blob-thread-without-execution-scope',
+        channel: 'patched',
+      })
+    }
+
     if (volume !== undefined) await seedVolume(client, ids, volume)
 
     // The application-role DSN for the isolated database is the deployed-DSN
@@ -448,6 +470,15 @@ async function putCheckpointWriteRow(client, { thread, checkpointId, taskId, ind
     `insert into checkpoint_writes (thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel, type, blob)
      values ($1, '', $2, $3, $4, $5, 'json', $6::bytea)`,
     [thread, checkpointId, taskId, index, channel, Buffer.from(`fixture-write-${checkpointId}`)]
+  )
+}
+
+/** One checkpoint_blobs row in the PostgresSaver's exact storage shape. */
+async function putCheckpointBlobRow(client, { thread, channel = 'values', version = '1' }) {
+  await client.unsafe(
+    `insert into checkpoint_blobs (thread_id, checkpoint_ns, channel, version, type, blob)
+     values ($1, '', $2, $3, 'json', $4::bytea)`,
+    [thread, channel, version, Buffer.from(`fixture-blob-${thread}`)]
   )
 }
 

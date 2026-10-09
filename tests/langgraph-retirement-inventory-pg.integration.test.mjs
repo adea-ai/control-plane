@@ -138,8 +138,10 @@ describe.skipIf(!enabled)('LangGraph retirement inventory PG collector', () => {
         expect(alpha.consumersObserved).toEqual({
           catalogCommands: 1,
           checkpointRows: 3,
+          incompleteUsageSources: [],
           inFlightExecutions: 1,
           retainedExecutions: 1,
+          usageComplete: true,
         })
         const alphaNext = definitions.entries.find(
           (entry) =>
@@ -385,6 +387,77 @@ describe.skipIf(!enabled)('LangGraph retirement inventory PG collector', () => {
   )
 
   test(
+    'orphan checkpoint_blobs threads are classified and block no-live-work conclusions',
+    async () => {
+      // The purest form of the orphan-blob finding: no executions, no
+      // checkpoint or write rows at all — the store's only resume-state
+      // evidence is two checkpoint_blobs rows whose threads nothing else
+      // explains. Counting the rows without classifying their threads would
+      // let this store read as fully-observed zero live work.
+      await withFixture(
+        { seedRunningExecution: false, injectOrphanBlob: true, injectUnclassifiedBlob: true },
+        async (fixture) => {
+          const { manifest } = await collectFromFixture(fixture)
+          expect(manifest.sections.executions.status).toBe('zero')
+
+          const checkpoints = manifest.sections.checkpoints
+          expect(checkpoints.counts).toEqual({
+            total: 2,
+            checkpointRows: 0,
+            blobRows: 2,
+            writeRows: 0,
+            distinctThreads: 2,
+            unclassifiedThreads: 1,
+            threadsOnInFlightExecutions: 0,
+            threadsOnUnknownExecutions: 1,
+          })
+          expect(checkpoints.status).toBe('incomplete')
+          expect(checkpoints.reasons).toEqual([
+            'CHECKPOINT_THREADS_UNCLASSIFIED',
+            'CHECKPOINT_THREADS_WITH_UNKNOWN_EXECUTION_STATE',
+          ])
+          expect(checkpoints.entries).toHaveLength(2)
+          for (const entry of checkpoints.entries) {
+            expect(entry.blobRows).toBe(1)
+            expect(entry.checkpointRows).toBe(0)
+            expect(entry.writeRows).toBe(0)
+            expect(entry.graphWorkflow).toBe(false)
+          }
+
+          expect(manifest.epistemics.retainedWorkClassification).toBe('unknown')
+          expect(manifest.epistemics.zeroLiveWorkClaim.claimAllowed).toBe(false)
+          expect(manifest.epistemics.zeroLiveWorkClaim.claim).toBe('not-claimable')
+          expect(manifest.epistemics.zeroLiveWorkClaim.reasons).toEqual([
+            'CHECKPOINT_THREADS_UNCLASSIFIED',
+            'CHECKPOINT_THREADS_WITH_UNKNOWN_EXECUTION_STATE',
+            'CHECKPOINTS_SECTION_NOT_FULLY_READ',
+          ])
+
+          const report = validateDispositions(
+            {
+              dispositions: [
+                {
+                  workspaceId: fixture.ids.workspaceOne,
+                  graphDefinitionId: 'graph:inventory-beta',
+                  graphVersion: '1.0.0',
+                  disposition: 'retire',
+                  durableOwner: 'control-plane-graph-catalog',
+                  historyReceiptResponsibility: 'receipts retained in the store',
+                  rollbackEvidence: 'catalog restore point recorded',
+                },
+              ],
+            },
+            manifest
+          )
+          expect(report.verdicts[0].verdict).toBe('blocked')
+          expect(report.verdicts[0].reasons).toContain('CHECKPOINT_EVIDENCE_UNKNOWN')
+        }
+      )
+    },
+    integrationTestTimeout()
+  )
+
+  test(
     'exact counts survive pagination and stay independent of the page size',
     async () => {
       await withFixture(
@@ -406,12 +479,17 @@ describe.skipIf(!enabled)('LangGraph retirement inventory PG collector', () => {
             JSON.stringify(large.manifest.sections.definitions.counts)
           )
           // The default entry bound truncates the emitted entries but never
-          // the counts, and the section downgrades to incomplete.
+          // the counts, and the section downgrades to incomplete. The volume
+          // threads name executions no executions row carries, so the
+          // checkpoint feed's usage attribution is incomplete as well.
           const bounded = await collectFromFixture(fixture)
           expect(bounded.manifest.sections.definitions.counts.total).toBe(154)
           expect(bounded.manifest.sections.definitions.truncated).toBe(true)
           expect(bounded.manifest.sections.definitions.status).toBe('incomplete')
-          expect(bounded.manifest.sections.definitions.reasons).toEqual(['ENTRY_LIMIT_REACHED'])
+          expect(bounded.manifest.sections.definitions.reasons).toEqual([
+            'CHECKPOINTS_USAGE_INCOMPLETE',
+            'ENTRY_LIMIT_REACHED',
+          ])
           // Entries stay in a deterministic workspace-scoped order.
           const order = bounded.manifest.sections.definitions.entries.map(
             (entry) =>
@@ -442,6 +520,8 @@ describe.skipIf(!enabled)('LangGraph retirement inventory PG collector', () => {
         expect(definitions.status).toBe('incomplete')
         expect(definitions.reasons).toEqual([
           'CATALOG_COMMAND_INDEX_PAGINATION_BOUND_REACHED',
+          'CHECKPOINTS_USAGE_INCOMPLETE',
+          'EXECUTIONS_USAGE_INCOMPLETE',
           'PAGINATION_BOUND_REACHED',
         ])
         expect(definitions.counts.total).toBe(1)
@@ -487,6 +567,63 @@ describe.skipIf(!enabled)('LangGraph retirement inventory PG collector', () => {
           'EXECUTIONS_SECTION_NOT_FULLY_READ',
           'CHECKPOINTS_SECTION_NOT_FULLY_READ',
         ])
+      })
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'definition-level usage counts carry the incompleteness of their feeding scans',
+    async () => {
+      // 1. Attribution is incomplete without any pagination bound: the running
+      // execution's plan content is corrupted, so its rows never reach the
+      // per-graph usage maps. The definition's usage then reads exact zero
+      // from a partial feed — it must be flagged instead.
+      await withFixture({ corruptRunningPlanContent: true }, async (fixture) => {
+        const { manifest } = await collectFromFixture(fixture)
+        expect(manifest.sections.executions.status).toBe('incomplete')
+        const definitions = manifest.sections.definitions
+        expect(definitions.status).toBe('incomplete')
+        expect(definitions.reasons).toEqual(['EXECUTIONS_USAGE_INCOMPLETE'])
+        expect(definitions.boundReached).toBe(false)
+        expect(definitions.countsBounded).toBe(false)
+        const alpha = definitions.entries.find(
+          (entry) =>
+            entry.workspaceId === fixture.ids.workspaceOne &&
+            entry.graphDefinitionId === 'graph:inventory-alpha' &&
+            entry.graphVersion === '1.0.0'
+        )
+        expect(alpha.consumersObserved.inFlightExecutions).toBe(0)
+        expect(alpha.consumersObserved.usageComplete).toBe(false)
+        expect(alpha.consumersObserved.incompleteUsageSources).toEqual(['executions'])
+      })
+
+      // 2. Every feed bounded by the pagination limit: each emitted entry
+      // names all three incomplete sources rather than presenting its lower
+      // bounds as exact usage.
+      await withFixture({ settleRunningExecution: true }, async (fixture) => {
+        const { manifest } = await collectFromFixture(fixture, {
+          pageSize: 1,
+          maxPages: 1,
+          limit: 1000,
+        })
+        const definitions = manifest.sections.definitions
+        expect(definitions.status).toBe('incomplete')
+        expect(definitions.reasons).toEqual([
+          'CATALOG_COMMAND_INDEX_PAGINATION_BOUND_REACHED',
+          'CHECKPOINTS_USAGE_INCOMPLETE',
+          'EXECUTIONS_USAGE_INCOMPLETE',
+          'PAGINATION_BOUND_REACHED',
+        ])
+        expect(definitions.entries.length).toBeGreaterThan(0)
+        for (const entry of definitions.entries) {
+          expect(entry.consumersObserved.usageComplete).toBe(false)
+          expect(entry.consumersObserved.incompleteUsageSources).toEqual([
+            'catalogCommands',
+            'checkpoints',
+            'executions',
+          ])
+        }
       })
     },
     integrationTestTimeout()
