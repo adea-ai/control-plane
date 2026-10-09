@@ -196,6 +196,13 @@ export interface AcpRemoteWire {
    * instead of waiting on a per-request device signature (no parallel polling protocol).
    */
   readonly inventoryMode?: 'device-signed' | 'channel-authenticated'
+  /**
+   * Required for `channel-authenticated` wires: the channel's CURRENT authenticated
+   * node/connection channel generation. The controller asserts the generation returned with the
+   * pushed inventory equals this value — a mismatch, an absent value, or a non-integer denies
+   * `device_stale` (generation binding, never dropped).
+   */
+  readonly currentChannelGeneration?: () => number
 }
 
 export interface SecureAcpRemoteTransportOptions {
@@ -278,7 +285,24 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
       }
       // Current-authority recheck after the wire await.
       this.#assertFenced()
-      const direct = GatewayInventoryEnvelopeSchema.safeParse(pushed)
+      const bound =
+        typeof pushed === 'object' && pushed !== null && 'inventory' in pushed
+          ? (pushed as { inventory: unknown; channelGeneration?: unknown })
+          : undefined
+      if (bound === undefined) throw remoteDenialError(denyRemote('device_stale'))
+      const generation = bound.channelGeneration
+      const current = this.#wire.currentChannelGeneration?.()
+      // Generation binding: the returned generation must be a safe integer matching the
+      // channel's current authenticated generation; anything else denies stale.
+      if (
+        !Number.isSafeInteger(generation) ||
+        (generation as number) < 0 ||
+        !Number.isSafeInteger(current) ||
+        generation !== current
+      ) {
+        throw remoteDenialError(denyRemote('device_stale'))
+      }
+      const direct = GatewayInventoryEnvelopeSchema.safeParse(bound.inventory)
       if (
         !direct.success ||
         direct.data.nodeId !== this.#route.nodeId ||

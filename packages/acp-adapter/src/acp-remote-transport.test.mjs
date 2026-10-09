@@ -954,13 +954,14 @@ describe('revocation at execution, sealing, and response-opening boundaries', ()
   })
 
   describe('channel-authenticated pushed inventory (decided bounded-wait semantics)', () => {
-    const channelWire = (inventory) => ({
+    const channelWire = (inventory, channelGeneration = 7) => ({
       inventoryMode: 'channel-authenticated',
+      currentChannelGeneration: () => channelGeneration,
       connectionState: () => 'online',
       sendCommand: async () => {
         throw new Error('SEND_NOT_EXPECTED')
       },
-      requestInventory: async () => inventory(),
+      requestInventory: async () => ({ inventory: await inventory(), channelGeneration }),
     })
     const controllerFor = (fixture, wire) =>
       new SecureAcpRemoteTransport({
@@ -1003,6 +1004,26 @@ describe('revocation at execution, sealing, and response-opening boundaries', ()
         channelWire(() => ({ ...envelope, observedAt: '2026-08-25T11:58:00.000Z' }))
       )
       await expect(stale.inventory()).rejects.toMatchObject({
+        code: 'RUNTIME_NODE_STALE',
+        retryable: true,
+      })
+
+      const mismatched = controllerFor(fixture, {
+        ...channelWire(() => envelope), // current generation 7
+        requestInventory: async () => ({ inventory: envelope, channelGeneration: 6 }),
+      })
+      // The pushed inventory carries generation 6 while the authenticated channel's current
+      // generation is 7 → stale.
+      await expect(mismatched.inventory()).rejects.toMatchObject({
+        code: 'RUNTIME_NODE_STALE',
+        retryable: true,
+      })
+      const unbound = controllerFor(fixture, {
+        ...channelWire(() => envelope),
+        currentChannelGeneration: undefined,
+        requestInventory: async () => ({ inventory: envelope }),
+      })
+      await expect(unbound.inventory()).rejects.toMatchObject({
         code: 'RUNTIME_NODE_STALE',
         retryable: true,
       })
