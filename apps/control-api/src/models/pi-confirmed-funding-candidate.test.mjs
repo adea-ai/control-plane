@@ -1,22 +1,29 @@
 import { expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import {
+  assertCleanPinnedRepository,
+  assertSdkArtifactAgainstManifest,
+} from './candidate-provenance.fixture.mjs'
 
 // Explicit candidate qualification: no installed-version inference or ambient host fallback.
 const entry = process.env.PI_FUNDING_CANDIDATE_HOST_ENTRY
 const qualify = entry ? test : test.skip
 let startHost, ControlPlaneClient
 if (entry) {
-  const pin = process.env.PI_FUNDING_CANDIDATE_HEAD
-  if (!/^[a-f0-9]{40}$/.test(pin ?? '')) throw new Error('CANDIDATE_IMMUTABLE_HEAD_REQUIRED')
-  const actual = execFileSync('git', ['-C', dirname(resolve(entry)), 'rev-parse', 'HEAD'], {
-    encoding: 'utf8',
-  }).trim()
-  if (actual !== pin) throw new Error('CANDIDATE_HEAD_CHANGED')
+  const pin = assertCleanPinnedRepository({
+    directory: dirname(resolve(entry)),
+    expectedHead: process.env.PI_FUNDING_CANDIDATE_HEAD,
+    prefix: 'CANDIDATE',
+  })
   const sdk = process.env.PI_CANDIDATE_SDK_ENTRY
   if (!sdk) throw new Error('CANDIDATE_SDK_ENTRY_REQUIRED')
+  assertSdkArtifactAgainstManifest({
+    sdkEntry: sdk,
+    manifestPath: process.env.PI_CANDIDATE_MANIFEST,
+    hostCommit: pin,
+  })
   ;({ startNodePiDurableCandidateHost: startHost } = await import(
     pathToFileURL(resolve(entry)).href
   ))

@@ -1,24 +1,19 @@
 import { expect, test } from 'bun:test'
-import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { assertCleanPinnedRepository } from './candidate-provenance.fixture.mjs'
 
-// Explicit native repair profile. The caller records candidate HEAD/tree or WIP digest.
+// Explicit native repair profile. Requires a clean, pinned source checkout; no dirty override
+// exists, so exploratory WIP runs cannot produce a qualified result.
 const source = process.env.PI_NATIVE_REPAIR_SOURCE
 const qualify = source ? test : test.skip
 let createRuntime, governedFixture, createNativeFixture, withUsageContext
 if (source) {
-  const expected = process.env.PI_NATIVE_REPAIR_HEAD
-  if (!/^[a-f0-9]{40}$/.test(expected ?? '')) throw new Error('NATIVE_REPAIR_HEAD_REQUIRED')
-  const actual = execFileSync('git', ['-C', resolve(source), 'rev-parse', 'HEAD'], {
-    encoding: 'utf8',
-  }).trim()
-  if (actual !== expected) throw new Error('NATIVE_REPAIR_HEAD_CHANGED')
-  const dirty = execFileSync('git', ['-C', resolve(source), 'status', '--porcelain'], {
-    encoding: 'utf8',
-  }).trim()
-  if (dirty && process.env.PI_NATIVE_REPAIR_ALLOW_DIRTY !== 'true')
-    throw new Error('NATIVE_REPAIR_IMMUTABLE_SOURCE_REQUIRED')
+  assertCleanPinnedRepository({
+    directory: resolve(source),
+    expectedHead: process.env.PI_NATIVE_REPAIR_HEAD,
+    prefix: 'NATIVE_REPAIR',
+  })
   const load = (name) => import(pathToFileURL(resolve(source, name)).href)
   ;({ createNodePiDurableRuntime: createRuntime } = await load('composition.ts'))
   ;({ governedFixture } = await load('governed-delegation.fixture.mjs'))
