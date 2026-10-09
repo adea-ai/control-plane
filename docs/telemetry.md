@@ -27,3 +27,21 @@ log, span, or Sentry adapter receives them. Sentry 11 is initialized with explic
 Development uses correlated console span events. Staging and production use the OpenTelemetry API
 adapter, which remains a no-op until a deployment registers an SDK/exporter. Tests can inject a
 recording adapter and must not require a live telemetry vendor or DSN.
+
+## Operations measurements
+
+Runtime operations measurement reuses this boundary. `operationalMetrics` catalogs the measurement
+series — `execution.queue.latency`, `execution.human.latency`, `execution.retry.age`,
+`execution.reconciliation.age`, `usage.cost.usd`, `storage.retained.bytes`,
+`storage.growth.bytes`, `runtime.active_object.count` and `operations.operating_cost.usd` — and
+`createOperationsMetricEmitter` records `OperationsMetricPoint` values through the shared metric
+adapter with the same fail-open, sanitizing behavior as the consistency emitter. Label cardinality
+is bounded by a fixed per-metric contract: unknown label keys are dropped, unknown values degrade
+to `other`, invalid values are skipped, and identifiers (workspace, execution, prompt, payload)
+never become metric labels; workspace scoping lives in the measurement report, not in metric
+series.
+
+The offline [Local/Hosted Simple measurement command](local-operator-measurements.md) computes
+these points together with its correlated, secret-free JSON report; live compositions can record
+the same points through their metric adapter. Non-USD usage cost stays in the JSON report only,
+because `usage.cost.usd` is USD-denominated by name.
