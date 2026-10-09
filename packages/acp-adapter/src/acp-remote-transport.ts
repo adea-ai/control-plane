@@ -189,6 +189,13 @@ export interface AcpRemoteWire {
   connectionState(): 'online' | 'offline'
   sendCommand(command: AcpRemoteSealedCommand): Promise<unknown>
   requestInventory(requestId: string): Promise<unknown>
+  /**
+   * `channel-authenticated` wires surface the EXISTING pushed inventory after the channel has
+   * authenticated the node/connection and validated its generation: the controller then enforces
+   * route binding and freshness only, and a bounded-wait timeout or reconnect denies `device_stale`
+   * instead of waiting on a per-request device signature (no parallel polling protocol).
+   */
+  readonly inventoryMode?: 'device-signed' | 'channel-authenticated'
 }
 
 export interface SecureAcpRemoteTransportOptions {
@@ -260,6 +267,35 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
   async inventory(signal?: AbortSignal): Promise<GatewayInventoryEnvelope> {
     this.#assertFenced()
     if (signalAborted(signal)) throw timeoutError()
+    if (this.#wire.inventoryMode === 'channel-authenticated') {
+      // Bounded wait over the existing pushed inventory: the authenticated channel validated the
+      // node/connection and its generation; timeout or reconnect on the wire denies stale.
+      let pushed: unknown
+      try {
+        pushed = await this.#wire.requestInventory(`inv_${randomBytes(16).toString('hex')}`)
+      } catch {
+        throw remoteDenialError(denyRemote('device_stale'))
+      }
+      // Current-authority recheck after the wire await.
+      this.#assertFenced()
+      const direct = GatewayInventoryEnvelopeSchema.safeParse(pushed)
+      if (
+        !direct.success ||
+        direct.data.nodeId !== this.#route.nodeId ||
+        direct.data.workspaceId !== this.#route.workspaceId
+      ) {
+        throw untrusted()
+      }
+      const channelAgeMs = this.#now().getTime() - Date.parse(direct.data.observedAt)
+      if (!Number.isFinite(channelAgeMs)) throw remoteDenialError(denyRemote('clock_invalid'))
+      if (
+        channelAgeMs > ACP_REMOTE_MAX_INVENTORY_AGE_MS ||
+        channelAgeMs < -ACP_REMOTE_CLOCK_SKEW_MS
+      ) {
+        throw remoteDenialError(denyRemote('device_stale'))
+      }
+      return direct.data
+    }
     // A fresh request identifier binds each inventory reply to this request, so an earlier signed reply cannot answer it.
     const requestId = `inv_${randomBytes(16).toString('hex')}`
     let reply: unknown

@@ -952,4 +952,72 @@ describe('revocation at execution, sealing, and response-opening boundaries', ()
     })
     expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
   })
+
+  describe('channel-authenticated pushed inventory (decided bounded-wait semantics)', () => {
+    const channelWire = (inventory) => ({
+      inventoryMode: 'channel-authenticated',
+      connectionState: () => 'online',
+      sendCommand: async () => {
+        throw new Error('SEND_NOT_EXPECTED')
+      },
+      requestInventory: async () => inventory(),
+    })
+    const controllerFor = (fixture, wire) =>
+      new SecureAcpRemoteTransport({
+        route: fixture.route,
+        wire,
+        controller: {
+          keyId: fixture.route.controllerKeyId,
+          signingKey: fixture.keys.controllerSigning,
+        },
+        grantState: () => 'granted',
+        now: fixture.now,
+      })
+
+    test('accepts a channel-validated pushed inventory without a per-request device signature', async () => {
+      const fixture = await createSecureFixture()
+      const envelope = await fixture.controller.inventory()
+      const controller = controllerFor(
+        fixture,
+        channelWire(() => envelope)
+      )
+      // No signature or request nonce is presented by the channel wire; binding and
+      // freshness still apply and the inventory is returned unchanged.
+      expect(await controller.inventory()).toEqual(envelope)
+    })
+
+    test('binding, freshness, and bounded-wait failures deny typed without polling', async () => {
+      const fixture = await createSecureFixture()
+      const envelope = await fixture.controller.inventory()
+
+      const wrongNode = controllerFor(
+        fixture,
+        channelWire(() => ({ ...envelope, nodeId: 'rnr_01JBBCDEF0123456789ABCDEFG' }))
+      )
+      await expect(wrongNode.inventory()).rejects.toMatchObject({
+        code: 'RUNTIME_NODE_RESPONSE_UNTRUSTED',
+      })
+
+      const stale = controllerFor(
+        fixture,
+        channelWire(() => ({ ...envelope, observedAt: '2026-08-25T11:58:00.000Z' }))
+      )
+      await expect(stale.inventory()).rejects.toMatchObject({
+        code: 'RUNTIME_NODE_STALE',
+        retryable: true,
+      })
+
+      const timedOut = controllerFor(
+        fixture,
+        channelWire(() => {
+          throw new Error('INVENTORY_WAIT_TIMEOUT')
+        })
+      )
+      await expect(timedOut.inventory()).rejects.toMatchObject({
+        code: 'RUNTIME_NODE_STALE',
+        retryable: true,
+      })
+      expect(fixture.wire.inventoryAttempts()).toBe(1) // the signed fixture wire was never polled
+    })
+  })
 })
