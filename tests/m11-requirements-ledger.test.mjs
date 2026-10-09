@@ -31,6 +31,13 @@ const canonicalIssue = (number, milestone = 11, changes = {}) => ({
   milestone: { number: milestone, title: 'Roadmap display title can change' },
   ...changes,
 })
+const ghCliOutput = (status, body, headers = {}) =>
+  [
+    `HTTP/2.0 ${status} ${status === 200 ? 'OK' : 'Failure'}`,
+    ...Object.entries(headers).map(([name, value]) => `${name}: ${value}`),
+    '',
+    JSON.stringify(body),
+  ].join('\r\n')
 
 const normativeSources = [
   'Project Index',
@@ -471,6 +478,9 @@ describe('M11.1 requirements ledger', () => {
     const issues = await listGitHubIssues({
       repository: 'owner/repository',
       token: 'test-token',
+      spawnSync: () => {
+        throw new Error('GitHub CLI must not be used when a token and fetch seam are supplied')
+      },
       fetch: async (url, init) => {
         requests.push({ url, init })
         return {
@@ -505,6 +515,127 @@ describe('M11.1 requirements ledger', () => {
       url: 'https://api.github.com/repos/owner/repository/issues?state=all&per_page=100&page=1',
       init: { headers: { authorization: 'Bearer test-token' } },
     })
+  })
+
+  test('uses the authenticated GitHub CLI when no token or fetch seam is available', async () => {
+    const calls = []
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      number: index + 1,
+      title: `Issue ${index + 1}`,
+      state: 'open',
+      html_url: `https://github.com/owner/repository/issues/${index + 1}`,
+    }))
+    const secondPage = [
+      {
+        number: 101,
+        title: 'Cursor issue',
+        state: 'closed',
+        html_url: 'https://github.com/owner/repository/issues/101',
+        closed_at: '2026-10-09T00:00:00Z',
+      },
+    ]
+    const issues = await listGitHubIssues({
+      repository: 'owner/repository',
+      token: '',
+      spawnSync: (command, args, options) => {
+        calls.push({ command, args, options })
+        const first = calls.length === 1
+        const headers = {}
+        if (first) {
+          headers.Link =
+            '<https://api.github.com/repositories/42/issues?state=all&per_page=100&page=2&after=opaque%3D>; rel="next"'
+        }
+        return {
+          status: 0,
+          stdout: ghCliOutput(200, firstPageOrSecond(first), headers),
+        }
+      },
+    })
+
+    function firstPageOrSecond(first) {
+      return first ? firstPage : secondPage
+    }
+
+    expect(issues).toHaveLength(101)
+    expect(issues.at(-1)).toMatchObject({
+      number: 101,
+      state: 'CLOSED',
+      closedAt: '2026-10-09T00:00:00Z',
+    })
+    expect(calls.map(({ command, args }) => [command, args.at(-1)])).toEqual([
+      ['gh', '/repos/owner/repository/issues?state=all&per_page=100&page=1'],
+      ['gh', '/repos/owner/repository/issues?state=all&per_page=100&page=2&after=opaque%3D'],
+    ])
+    expect(calls[0]).toMatchObject({
+      args: [
+        'api',
+        '--include',
+        '--header',
+        'Accept: application/vnd.github+json',
+        '--header',
+        'User-Agent: control-plane-requirements-ledger',
+        expect.any(String),
+      ],
+      options: { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
+    })
+  })
+
+  test('keeps environment-token requests on the injected fetch path', async () => {
+    const priorToken = process.env.GH_TOKEN
+    const priorLegacyToken = process.env.GITHUB_TOKEN
+    process.env.GH_TOKEN = 'environment-test-token'
+    delete process.env.GITHUB_TOKEN
+    const requests = []
+    try {
+      await listGitHubIssues({
+        fetch: async (_url, init) => {
+          requests.push(init)
+          return { ok: true, headers: new Headers(), json: async () => [] }
+        },
+        spawnSync: () => {
+          throw new Error('GitHub CLI must not be used when an environment token is present')
+        },
+      })
+    } finally {
+      if (priorToken === undefined) delete process.env.GH_TOKEN
+      else process.env.GH_TOKEN = priorToken
+      if (priorLegacyToken === undefined) delete process.env.GITHUB_TOKEN
+      else process.env.GITHUB_TOKEN = priorLegacyToken
+    }
+    expect(requests[0].headers.authorization).toBe('Bearer environment-test-token')
+  })
+
+  test('sanitizes GitHub CLI absence and HTTP failures without falling back anonymously', async () => {
+    const launchError = Object.assign(new Error('Bearer never-print-this'), { code: 'ENOENT' })
+    let absenceMessage = ''
+    try {
+      await listGitHubIssues({
+        token: '',
+        spawnSync: () => ({ error: launchError, status: null, stderr: 'Bearer cli-secret' }),
+      })
+    } catch (error) {
+      absenceMessage = error.message
+    }
+    expect(absenceMessage).toContain('(ENOENT)')
+    expect(absenceMessage).not.toContain('never-print-this')
+    expect(absenceMessage).not.toContain('cli-secret')
+
+    let failureMessage = ''
+    try {
+      await listGitHubIssues({
+        token: '',
+        spawnSync: () => ({
+          status: 1,
+          stdout: ghCliOutput(403, { message: 'Bearer response-secret' }),
+          stderr: 'Bearer stderr-secret',
+        }),
+      })
+    } catch (error) {
+      failureMessage = error.message
+    }
+    expect(failureMessage).toBe('Unable to query GitHub issues (403)')
+    expect(failureMessage).not.toContain('response-secret')
+    expect(failureMessage).not.toContain('stderr-secret')
   })
 
   test('follows next pages beyond 1000 mixed issues and pull requests', async () => {

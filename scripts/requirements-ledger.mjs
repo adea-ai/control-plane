@@ -358,6 +358,8 @@ export async function listGitHubIssues(options = {}) {
   const fetchImplementation = options.fetch ?? globalThis.fetch
   const repository = options.repository ?? 'adea-ai/control-plane'
   const token = options.token ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
+  const useAuthenticatedGhCli = options.fetch === undefined && !token
+  const spawn = options.spawnSync ?? spawnSync
   const issues = []
   const maxPages = options.maxPages ?? 1000
   if (!Number.isSafeInteger(maxPages) || maxPages < 1) {
@@ -366,13 +368,15 @@ export async function listGitHubIssues(options = {}) {
   const endpoint = `https://api.github.com/repos/${repository}/issues`
   let requestUrl = `${endpoint}?state=all&per_page=100&page=1`
   for (let page = 1; page <= maxPages; page += 1) {
-    const response = await fetchImplementation(requestUrl, {
-      headers: {
-        accept: 'application/vnd.github+json',
-        'user-agent': 'control-plane-requirements-ledger',
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
-      },
-    })
+    const response = useAuthenticatedGhCli
+      ? requestGitHubIssuesWithGh(requestUrl, spawn)
+      : await fetchImplementation(requestUrl, {
+          headers: {
+            accept: 'application/vnd.github+json',
+            'user-agent': 'control-plane-requirements-ledger',
+            ...(token ? { authorization: `Bearer ${token}` } : {}),
+          },
+        })
     if (!response.ok) {
       throw new Error(`Unable to query GitHub issues (${response.status})`)
     }
@@ -433,6 +437,88 @@ export async function listGitHubIssues(options = {}) {
     if (page === maxPages) throw new Error('GitHub issues pagination exceeded defensive bound')
   }
   throw new Error('GitHub issues pagination exceeded defensive bound')
+}
+
+function gitHubCliHttpStatus(output) {
+  const match = /^HTTP\/\S+\s+(\d{3})(?:\s|$)/m.exec(output)
+  return match ? Number(match[1]) : undefined
+}
+
+function parseGitHubCliResponse(output) {
+  const separator = /\r?\n\r?\n/.exec(output)
+  if (!separator) throw new Error('Invalid response from authenticated GitHub CLI')
+  const headerBlock = output.slice(0, separator.index)
+  const body = output.slice(separator.index + separator[0].length)
+  const lines = headerBlock.split(/\r?\n/)
+  const status = gitHubCliHttpStatus(lines[0] ?? '')
+  if (!status) throw new Error('Invalid response from authenticated GitHub CLI')
+  const headers = new Headers()
+  try {
+    for (const line of lines.slice(1)) {
+      const separatorIndex = line.indexOf(':')
+      if (separatorIndex <= 0) throw new Error('malformed header')
+      headers.append(line.slice(0, separatorIndex), line.slice(separatorIndex + 1).trim())
+    }
+  } catch {
+    throw new Error('Invalid response from authenticated GitHub CLI')
+  }
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers,
+    json: async () => {
+      try {
+        return JSON.parse(body)
+      } catch {
+        throw new Error('GitHub issues response was not valid JSON')
+      }
+    },
+  }
+}
+
+function requestGitHubIssuesWithGh(requestUrl, spawn) {
+  const url = new URL(requestUrl)
+  if (url.origin !== 'https://api.github.com') {
+    throw new Error('Invalid trusted GitHub issues endpoint')
+  }
+  const endpoint = `${url.pathname}${url.search}`
+  let result
+  try {
+    result = spawn(
+      'gh',
+      [
+        'api',
+        '--include',
+        '--header',
+        'Accept: application/vnd.github+json',
+        '--header',
+        'User-Agent: control-plane-requirements-ledger',
+        endpoint,
+      ],
+      {
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+        windowsHide: true,
+      }
+    )
+  } catch {
+    throw new Error('Unable to query GitHub issues through authenticated GitHub CLI')
+  }
+  if (result.error) {
+    const code =
+      typeof result.error.code === 'string' && /^[A-Z0-9_]+$/.test(result.error.code)
+        ? result.error.code
+        : 'UNKNOWN'
+    throw new Error(`Unable to query GitHub issues through authenticated GitHub CLI (${code})`)
+  }
+  const output = typeof result.stdout === 'string' ? result.stdout : ''
+  if (result.status !== 0) {
+    const status = gitHubCliHttpStatus(output)
+    if (status) throw new Error(`Unable to query GitHub issues (${status})`)
+    const exit = Number.isSafeInteger(result.status) ? result.status : 'unknown'
+    throw new Error(`Unable to query GitHub issues through authenticated GitHub CLI (exit ${exit})`)
+  }
+  return parseGitHubCliResponse(output)
 }
 
 export function refreshPriorMilestoneAudits(ledger, issues, additionalGapIssues = []) {

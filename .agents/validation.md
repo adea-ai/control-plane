@@ -19,7 +19,7 @@ bun run test:acceptance  # Complete M1 foundation, Terraform, and container acce
 
 `bun test` (bare) is scoped to `tests/` via `bunfig.toml`; per-package tests run through `turbo run test` in `bun run test`.
 
-`bun run requirements:check` fails closed against current GitHub issue identities. Non-verified source, profile, requirement, and prior-audit gaps must reference open `adea-ai/control-plane` issues in repository milestone #11 (M11). Additional architecture gaps follow the same rule, with the BYO model-selection successor #931 permitted in milestone #20; that exception cannot move a legacy ledger gap out of M11. Milestone display titles are informational. The check requires GitHub connectivity; private-repository use also requires `GH_TOKEN` or `GITHUB_TOKEN`. Inability to query GitHub is an unverified check, not a pass.
+`bun run requirements:check` fails closed against current GitHub issue identities. Non-verified source, profile, requirement, and prior-audit gaps must reference open `adea-ai/control-plane` issues in repository milestone #11 (M11). Additional architecture gaps follow the same rule, with the BYO model-selection successor #931 permitted in milestone #20; that exception cannot move a legacy ledger gap out of M11. Milestone display titles are informational. The check requires GitHub connectivity. When `GH_TOKEN` or `GITHUB_TOKEN` is set, it uses that token for REST fetches. Otherwise, local runs use the already-authenticated GitHub CLI session through `gh api`, without reading or persisting the CLI token. CI can keep using its explicit token. If neither path is authenticated, or GitHub cannot be queried, the check fails closed and remains unverified.
 
 Database integration tests require a live PostgreSQL instance:
 
