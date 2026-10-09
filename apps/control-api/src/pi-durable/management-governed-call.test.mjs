@@ -1,4 +1,7 @@
 import { expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import {
@@ -185,26 +188,37 @@ test('repeat after success reuses the retained outcome with no fresh decision', 
   expect(counts).toEqual({ calls: 1, issued: 1 })
 })
 
-test('the retained record survives a real SQLite reopen and still yields one effect', async () => {
+test('the retained record survives a real file-backed close/reopen and still yields one effect', async () => {
   const request = { ...baseRequest, approval }
-  const database = new DatabaseSync(':memory:')
+  const directory = mkdtempSync(join(tmpdir(), 'pi-management-retained-'))
+  const path = join(directory, 'journal.sqlite')
   const counts = { calls: 0, issued: 0 }
-  const store = new SqlitePiDurableManagementCallStore(database)
-  const first = harness({ store, counts, transportThrows: true })
-  expect(await first.caller.execute(request)).toEqual({
-    code: 'PI_MANAGEMENT_EFFECT_UNKNOWN',
-    state: 'reconciliation_required',
-  })
-  const reopenedStore = new SqlitePiDurableManagementCallStore(database)
-  const reopened = harness({ store: reopenedStore, counts })
-  expect(await reopened.caller.execute(request)).toEqual({
-    code: 'PI_MANAGEMENT_EFFECT_UNKNOWN',
-    state: 'reconciliation_required',
-  })
-  expect(counts).toEqual({ calls: 1, issued: 1 })
-  const retained = await reopenedStore.get(JSON.stringify([WORKSPACE, request.idempotencyKey]))
-  expect(retained?.decision).toBe('decision-jwt-1')
-  database.close()
+  try {
+    const firstDatabase = new DatabaseSync(path)
+    const firstStore = new SqlitePiDurableManagementCallStore(firstDatabase)
+    const first = harness({ store: firstStore, counts, transportThrows: true })
+    expect(await first.caller.execute(request)).toEqual({
+      code: 'PI_MANAGEMENT_EFFECT_UNKNOWN',
+      state: 'reconciliation_required',
+    })
+    // Close the writer connection before reopening a NEW connection.
+    firstDatabase.close()
+
+    const reopenedDatabase = new DatabaseSync(path)
+    const reopenedStore = new SqlitePiDurableManagementCallStore(reopenedDatabase)
+    const reopened = harness({ store: reopenedStore, counts })
+    expect(await reopened.caller.execute(request)).toEqual({
+      code: 'PI_MANAGEMENT_EFFECT_UNKNOWN',
+      state: 'reconciliation_required',
+    })
+    expect(counts).toEqual({ calls: 1, issued: 1 })
+    const retained = await reopenedStore.get(JSON.stringify([WORKSPACE, request.idempotencyKey]))
+    expect(retained?.decision).toBe('decision-jwt-1')
+    expect(retained?.state).toBe('settled')
+    reopenedDatabase.close()
+  } finally {
+    rmSync(directory, { force: true, recursive: true })
+  }
 })
 
 test('the same identity with a different request digest is refused before dispatch', async () => {

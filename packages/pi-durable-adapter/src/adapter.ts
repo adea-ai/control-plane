@@ -29,6 +29,7 @@ import {
   PiDurableVersion,
   ProviderBindingSchema,
   type DurableExecutionAuthority,
+  type PiDurableGovernedManagementCallEnginePort,
   type DurablePiEngine,
   type PiDurableRuntimeOptions,
 } from './contracts.js'
@@ -40,6 +41,7 @@ import { z } from 'zod'
 import { PiDurableEffectGate, type DurableEffectGateOutcome } from './effect-gate.js'
 import {
   PiDurableToolSourceSchema,
+  verifyPiDurableManagementToolSource,
   verifyPiDurableToolSource,
   piDurableToolSourceKey,
   type PiDurableToolSource,
@@ -128,6 +130,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       'session.history',
       'model.select',
       ...(this.#options.governedDelegateChild ? ['execution.child'] : []),
+      ...(this.#options.governedManagementCall ? ['management.call'] : []),
       ...(this.#options.scopeAuthority ? ['execution.scope.workspace.v1'] : []),
     ].map((name) => ({ name, support: 'supported' as const }))
     const parsed = RuntimeAdapterInspectionSchema.parse({
@@ -908,6 +911,56 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             },
           }
         : undefined
+      const governedManagementCall: PiDurableGovernedManagementCallEnginePort | undefined =
+        this.#options.governedManagementCall
+          ? {
+              source: sourcePrefix,
+              assertCurrent: assertToolCurrent,
+              execute: async (input, reader, signal) => {
+                try {
+                  signal?.throwIfAborted()
+                  const nativeReader = { ...reader, assertCurrent: assertToolCurrent }
+                  const verified = await verifyPiDurableManagementToolSource(
+                    input.source,
+                    { input: input.input, operation: input.operation },
+                    nativeReader
+                  )
+                  if (verified.sourceKey !== input.sourceKey)
+                    fail('PI_TOOL_SOURCE_REJECTED', 'conflict')
+                  signal?.throwIfAborted()
+                  const compiler = this.#options.governedManagementCall!
+                  const request = DurableToolCallRequestSchema.parse(
+                    await compiler.prepare(structuredClone(authority), structuredClone(verified))
+                  )
+                  if (
+                    request.workspaceId !== sourcePrefix.workspaceId ||
+                    request.executionId !== sourcePrefix.parentExecutionId ||
+                    request.attemptId !== sourcePrefix.parentAttemptId ||
+                    request.profileId !== plan.profile.profileId ||
+                    request.operation !== verified.args.operation ||
+                    !authority.admission.canonicalActorPrincipalId ||
+                    request.audit.principalRef !== authority.admission.canonicalActorPrincipalId ||
+                    canonicalJsonStringify(request.input) !==
+                      canonicalJsonStringify(verified.args.input)
+                  )
+                    fail('PI_MANAGEMENT_REQUEST_AUTHORITY_REJECTED', 'conflict')
+                  signal?.throwIfAborted()
+                  const outcome = await compiler.execute(request, signal)
+                  if (
+                    outcome === null ||
+                    typeof outcome !== 'object' ||
+                    !['succeeded', 'refused', 'reconciliation_required'].includes(outcome.state)
+                  )
+                    fail('PI_MANAGEMENT_OUTCOME_INVALID', 'conflict')
+                  await assertToolCurrent(verified.source)
+                  signal?.throwIfAborted()
+                  return outcome
+                } catch {
+                  fail('PI_MANAGEMENT_CALL_REJECTED', 'conflict')
+                }
+              },
+            }
+          : undefined
       const runningAt = this.#now()
       this.journal.update(
         record.handleId,
@@ -1002,6 +1055,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           return current.access.withModels(use)
         },
         ...(governedDelegateChild ? { governedDelegateChild } : {}),
+        ...(governedManagementCall ? { governedManagementCall } : {}),
       })
       this.#engines.set(record.handleId, engine)
       await assertCurrent()
