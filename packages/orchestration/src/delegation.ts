@@ -682,6 +682,16 @@ export class DelegationService {
         if (error instanceof ChildAdmissionAllocationError) {
           throw new DelegationError(error.code)
         }
+        // Canonical admission validation failures raised inside the
+        // allocation transaction (context ancestry, plan references) carry
+        // their own failure code; preserve them so real composition errors
+        // (e.g. CHILD_SCOPE_EXPANSION) keep their identity instead of
+        // collapsing into CHILD_ADMISSION_DENIED. Errors without a code
+        // remain fail-closed as CHILD_ADMISSION_DENIED.
+        const coded = error as { code?: unknown }
+        if (error instanceof Error && typeof coded.code === 'string') {
+          throw error
+        }
         throw new DelegationError('CHILD_ADMISSION_DENIED')
       }
       if (!allocated) {
