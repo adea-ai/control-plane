@@ -387,6 +387,22 @@ function outcomeWithExtraReasons(outcome, extraReasons) {
   return { status, reasons }
 }
 
+/**
+ * Mirrors the reviewed tool's sectionFullyRead rule (not exported there): a
+ * feeding section's numbers may only be read as exact when it was read in
+ * full — observed or zero status, no truncation, no malformed records. Used
+ * to decide whether definition-level usage counts are complete or must carry
+ * their feeding scan's incompleteness.
+ */
+function usageSourceFullyRead(section) {
+  return (
+    (section?.status === OBSERVATION_STATUS.OBSERVED ||
+      section?.status === OBSERVATION_STATUS.ZERO) &&
+    section?.truncated === false &&
+    (section?.malformedRecords ?? 0) === 0
+  )
+}
+
 function mapCountsToObject(counter) {
   return Object.fromEntries(
     [...counter.entries()].toSorted((left, right) => compareCodePoint(left[0], right[0]))
@@ -419,11 +435,24 @@ async function collectDefinitions(transaction, context) {
     checkpointRowsByExecution,
     catalogCommandsByGraph,
     catalogCommandsIndexBoundReached = false,
+    // Fail-closed defaults: a missing feed flag marks the usage incomplete
+    // rather than presenting partial attribution as exact.
+    executionsUsageComplete = false,
+    checkpointsUsageComplete = false,
   } = context
   let rowCount = 0
   let malformedCount = 0
   let truncated = false
   let boundReached = false
+  // Which feeds behind consumersObserved were read in full. A feed that was
+  // bounded, truncated, malformed, stale or failed contributes lower bounds
+  // only, so every emitted entry must say so instead of showing exact zeros.
+  const incompleteUsageSources = []
+  if (!executionsUsageComplete) incompleteUsageSources.push('executions')
+  if (!checkpointsUsageComplete) incompleteUsageSources.push('checkpoints')
+  if (catalogCommandsIndexBoundReached) incompleteUsageSources.push('catalogCommands')
+  incompleteUsageSources.sort()
+  const usageComplete = incompleteUsageSources.length === 0
   const workspaces = new Set()
   const lifecycles = new Map()
   const graphs = new Set()
@@ -475,8 +504,10 @@ async function collectDefinitions(transaction, context) {
           consumersObserved: {
             catalogCommands: catalogCommandsByGraph.get(graphKey) ?? 0,
             checkpointRows: checkpointRowsByExecution.get(graphKey) ?? 0,
+            incompleteUsageSources: [...incompleteUsageSources],
             inFlightExecutions: executionUsage.inFlight,
             retainedExecutions: executionUsage.retained,
+            usageComplete,
           },
           workspaceId: definition.workspaceId,
         })
@@ -486,9 +517,11 @@ async function collectDefinitions(transaction, context) {
   } catch {
     return failedDefinitionsSection(identity, observedAt, limits)
   }
-  // A bound on either scan makes the section's evidence partial: the primary
-  // scan bounds every count in this section, and the catalog-command
-  // attribution index bounds the per-entry consumersObserved numbers.
+  // A bound on the definitions scan or the catalog-command attribution index
+  // bounds this section's own evidence; incomplete executions/checkpoint
+  // feeds downgrade it through their typed reasons instead, because their
+  // rows only shape the per-entry consumersObserved numbers. Either way the
+  // section never reads partial attribution as observed fact.
   const sectionBoundReached = boundReached || catalogCommandsIndexBoundReached
   return {
     ...sectionHeader([OBSERVED_TABLES.definitions], identity, observedAt),
@@ -504,7 +537,13 @@ async function collectDefinitions(transaction, context) {
         maxAgeDays: limits.maxAgeDays,
         observedAt,
       }),
-      catalogCommandsIndexBoundReached ? ['CATALOG_COMMAND_INDEX_PAGINATION_BOUND_REACHED'] : []
+      [
+        ...(catalogCommandsIndexBoundReached
+          ? ['CATALOG_COMMAND_INDEX_PAGINATION_BOUND_REACHED']
+          : []),
+        ...(executionsUsageComplete ? [] : ['EXECUTIONS_USAGE_INCOMPLETE']),
+        ...(checkpointsUsageComplete ? [] : ['CHECKPOINTS_USAGE_INCOMPLETE']),
+      ]
     ),
     counts: {
       total: rowCount,
@@ -1029,7 +1068,11 @@ function failedExecutionsSection(identity, observedAt, limits) {
  * LangGraph checkpoint rows: resume state that retirement must not transplant.
  * The Postgres checkpointer splits evidence across checkpoints / checkpoint_blobs
  * / checkpoint_writes; all three are counted, and thread classification joins
- * through the executions walk exactly as the reviewed tool does.
+ * through the executions walk exactly as the reviewed tool does. Blob rows
+ * register their threads as well: a thread that exists only as
+ * checkpoint_blobs evidence still carries resume state whose in-flight
+ * classification the observation must resolve or declare unknown — never
+ * silently count without classifying.
  */
 async function collectCheckpoints(transaction, context) {
   const { identity, observedAt, limits, executionGraphKeys, executionStates } = context
@@ -1049,6 +1092,7 @@ async function collectCheckpoints(transaction, context) {
     const thread = threads.get(threadKey) ?? {
       scope: checkpointNs,
       thread: threadId,
+      blobRows: 0,
       checkpointRows: 0,
       writeRows: 0,
     }
@@ -1112,11 +1156,16 @@ async function collectCheckpoints(transaction, context) {
       },
       (row) => {
         rowCount += 1
-        if (typeof row.thread_id !== 'string') {
+        if (typeof row.thread_id !== 'string' || typeof row.checkpoint_ns !== 'string') {
           malformedCount += 1
           return
         }
         blobRows += 1
+        // Register the blob's thread so blob-only threads join the same
+        // classification walk as checkpoint and write rows below; an orphan
+        // blob thread must surface as typed unknown state, never as a row
+        // count with no thread behind it.
+        threadFor(row.thread_id, row.checkpoint_ns).blobRows += 1
       }
     )
     boundReached = blobsScan.boundReached || boundReached
@@ -1139,13 +1188,17 @@ async function collectCheckpoints(transaction, context) {
     if (onGraphExecution)
       checkpointRowsByExecution.set(
         graphKey,
-        (checkpointRowsByExecution.get(graphKey) ?? 0) + thread.checkpointRows + thread.writeRows
+        (checkpointRowsByExecution.get(graphKey) ?? 0) +
+          thread.checkpointRows +
+          thread.writeRows +
+          thread.blobRows
       )
     if (entries.length >= limits.entriesPerSection) {
       truncated = true
       continue
     }
     entries.push({
+      blobRows: thread.blobRows,
       checkpointRows: thread.checkpointRows,
       durableOwner: 'langgraph-postgres-checkpointer',
       graphWorkflow: onGraphExecution,
@@ -1529,6 +1582,11 @@ export async function collectInventoryManifest({
         checkpointRowsByExecution: checkpointRowsByGraph,
         catalogCommandsByGraph: catalogCommandsIndex.index,
         catalogCommandsIndexBoundReached: catalogCommandsIndex.boundReached,
+        // Definition-level usage inherits its feeding scans' incompleteness: a
+        // bounded or failed executions/checkpoint scan must never surface as
+        // exact per-definition usage counts.
+        executionsUsageComplete: usageSourceFullyRead(executions),
+        checkpointsUsageComplete: usageSourceFullyRead(checkpoints),
         ...scanContext,
       })
 
