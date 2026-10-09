@@ -178,6 +178,7 @@ try {
         '--timeout',
         remoteDatabase ? '120000' : '30000',
         './tests/memory-process-loss.integration.test.mjs',
+        './tests/acp-remote-device-postgres.integration.test.mjs',
       ],
       {
         environment: integrationEnvironment,

@@ -471,12 +471,11 @@ export interface SecureAcpDeviceEndpointOptions {
   /**
    * Durable fence state: revocation, highest accepted channel generation, and the replay ledger.
    * Defaults to the in-memory seam, which is explicitly not durable across restart and never a
-   * production claim. Production wiring is an OPEN INTEGRATION GAP: no production composition
-   * constructs `SecureAcpDeviceEndpoint` or `SecureAcpRemoteTransport` today — only fixtures and
-   * tests do — so nothing injects the PersistenceProvider-backed store yet. Any real Local
-   * construction must inject
-   * `new PersistenceProviderAcpRemoteDeviceStateStore(provider, acpRemoteDeviceStateScope(route))`
-   * (one scoped store per authenticated route) before this route may carry production traffic.
+   * production claim. Production construction goes through
+   * `createPersistentSecureAcpDeviceEndpoint` (which always builds the scoped
+   * `PersistenceProviderAcpRemoteDeviceStateStore` from the authenticated route) — wired into
+   * `LocalControlPlaneComposition` via its `secureAcpRemoteRoute` option — so a composition that
+   * carries this route can never run with the non-durable default.
    */
   readonly stateStore?: AcpRemoteDeviceStateStore
   readonly now?: () => Date

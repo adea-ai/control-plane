@@ -108,7 +108,10 @@ export const INTEGRATION_SHARDS = [
       },
       {
         package: '.',
-        files: ['./tests/memory-process-loss.integration.test.mjs'],
+        files: [
+          './tests/memory-process-loss.integration.test.mjs',
+          './tests/acp-remote-device-postgres.integration.test.mjs',
+        ],
       },
       {
         package: 'apps/hosted-control-plane',
