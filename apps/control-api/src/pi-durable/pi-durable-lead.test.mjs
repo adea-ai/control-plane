@@ -280,6 +280,7 @@ async function fixture(run, changes = {}) {
         cancel: (...args) => adapter.cancel(...args),
       },
       receipts: overrides.receipts?.(receipts) ?? receipts,
+      ...(changes.delegationService ? { delegationService: changes.delegationService } : {}),
       findRuntimeHandle: (request) => adapter.findExistingHandle(request),
       now: () => at,
       authority: {
@@ -695,27 +696,76 @@ describe('composed Pi Durable lead HTTP endpoints', () => {
       expect(state.requests).toHaveLength(1)
     }))
 
-  test('cancel uses the stored session and command replay survives reopen', () =>
-    fixture(async (context) => {
-      const { inject, envelope, close, open } = context
-      const receipt = (
-        await inject('dispatch', envelope('pi-durable.lead.dispatch', { intentId }))
-      ).json().data
-      await context.adapter.drain()
-      const persisted = await new SqlitePiDurableLeadReceiptStore(
-        context.adapter.journal.database
-      ).get(receipt.dispatchId)
-      await context.adapter.awaitInput(persisted.handle, id('int'))
-      const cancel = envelope(
-        'pi-durable.lead.cancel',
-        { dispatchId: receipt.dispatchId },
-        'cancel-command:one'
-      )
-      expect((await inject('cancel', cancel)).json().data.state).toBe('cancelled')
-      await close()
-      await open()
-      expect((await inject('cancel', cancel)).json().data.state).toBe('cancelled')
-    }))
+  test('cancel rechecks authority before child stop and retries after a lost acknowledgement', () => {
+    let adapterCancellationRetained = false
+    let revokeAfterCancel = true
+    const calls = []
+    let loseFirstAck = true
+    const delegationService = {
+      async cancelChildren(input) {
+        expect(adapterCancellationRetained).toBe(true)
+        calls.push(structuredClone(input))
+        if (loseFirstAck) {
+          loseFirstAck = false
+          throw new Error('simulated lost child-stop acknowledgement')
+        }
+      },
+    }
+    return fixture(
+      async (context) => {
+        const { inject, envelope, close, open } = context
+        const receipt = (
+          await inject('dispatch', envelope('pi-durable.lead.dispatch', { intentId }))
+        ).json().data
+        await context.adapter.drain()
+        const persisted = await new SqlitePiDurableLeadReceiptStore(
+          context.adapter.journal.database
+        ).get(receipt.dispatchId)
+        await context.adapter.awaitInput(persisted.handle, id('int'))
+        const cancel = envelope(
+          'pi-durable.lead.cancel',
+          { dispatchId: receipt.dispatchId },
+          'cancel-command:one'
+        )
+        const originalCancel = context.adapter.cancel.bind(context.adapter)
+        context.adapter.cancel = async (...args) => {
+          const result = await originalCancel(...args)
+          expect(
+            context.adapter.journal.get(args[0].handleId).detail.cancellationIntent
+          ).toBeDefined()
+          adapterCancellationRetained = true
+          if (revokeAfterCancel) {
+            revokeAfterCancel = false
+            context.state.revoked = true
+          }
+          return result
+        }
+        const revoked = await inject('cancel', cancel)
+        expect(revoked.statusCode).toBe(403)
+        expect(calls).toEqual([])
+        context.state.revoked = false
+        const interrupted = await inject('cancel', cancel)
+        expect(interrupted.statusCode).toBe(503)
+        expect(interrupted.body).not.toContain('simulated lost child-stop acknowledgement')
+        await close()
+        await open()
+        const replayedCancel = context.adapter.cancel.bind(context.adapter)
+        context.adapter.cancel = async (...args) => {
+          const result = await replayedCancel(...args)
+          expect(
+            context.adapter.journal.get(args[0].handleId).detail.cancellationIntent
+          ).toBeDefined()
+          return result
+        }
+        expect((await inject('cancel', cancel)).json().data.state).toBe('cancelled')
+        expect(calls).toEqual([
+          { parentExecutionId: id('exe'), cancelledAt: at },
+          { parentExecutionId: id('exe'), cancelledAt: at },
+        ])
+      },
+      { delegationService }
+    )
+  })
 
   test('unconfigured composition stays unavailable without enabling providers', () =>
     fixture(
