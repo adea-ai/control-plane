@@ -86,6 +86,7 @@ function harness() {
     },
   }
   const calls = { starts: 0, cancels: 0, childStops: [] }
+  let confirmed = false
   const handle = {
     handleId: 'hEC01JABCDEF0123456789ABCDEFGH',
     attemptId: id('att'),
@@ -99,13 +100,13 @@ function harness() {
     },
     status: async () => ({
       handle,
-      state: 'running',
+      state: calls.cancels > 0 ? (confirmed ? 'cancelled' : 'cancelling') : 'running',
       observedAt: at,
     }),
     progress: async function* () {},
     cancel: async () => {
       calls.cancels += 1
-      return { handle, state: 'cancelled', observedAt: at }
+      return { handle, state: confirmed ? 'cancelled' : 'cancelling', observedAt: at }
     },
   }
   const service = new DurablePiDurableLeadService({
@@ -147,7 +148,10 @@ function harness() {
     requestedAt: at,
     parameters,
   })
-  return { service, envelope, read, principal, calls }
+  const confirm = () => {
+    confirmed = true
+  }
+  return { service, envelope, read, principal, calls, confirm }
 }
 
 const codeOf = async (work) => {
@@ -201,6 +205,38 @@ test('935: redelivery cannot rebind the retained target', async () => {
     principal
   )
   expect(replayed.data.target).toEqual(target)
+})
+
+test('935: cancellation reports pending until the engine confirms', async () => {
+  const { service, envelope, read, principal, calls, confirm } = harness()
+  const dispatched = await service.dispatch(
+    envelope('pi-durable.lead.dispatch', { intentId, target }),
+    principal
+  )
+  // The fake engine never confirms: the intent stays pending, and every
+  // status read says so — never settled, never lost.
+  await service.cancel(
+    envelope(
+      'pi-durable.lead.cancel',
+      { dispatchId: dispatched.data.dispatchId },
+      'target-cancel:pending'
+    ),
+    principal
+  )
+  expect(calls.cancels).toBe(1)
+  const pending = await service.status(
+    read('pi-durable.lead.status', { dispatchId: dispatched.data.dispatchId }),
+    principal
+  )
+  expect(pending.data.state).toBe('cancelling')
+  expect(pending.data).toMatchObject({ target })
+  confirm()
+  const settled = await service.status(
+    read('pi-durable.lead.status', { dispatchId: dispatched.data.dispatchId }),
+    principal
+  )
+  expect(settled.data.state).toBe('cancelled')
+  expect(settled.data).toMatchObject({ target })
 })
 
 test('935: cancel routes the canonical child stop with the admitted execution', async () => {
