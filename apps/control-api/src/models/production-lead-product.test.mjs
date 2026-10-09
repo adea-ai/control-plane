@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createProductionLeadProductAuthority } from './production-lead-product.ts'
 import { createProductionLeadReadiness } from './production-lead-readiness.ts'
+import { createProductionChildModelAuthority } from './production-child-model-authority.ts'
+import { ExecutionPlanCompiler, deriveExecutionPlan } from '@control-plane/execution-plan'
+import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
 
 const suffix = '01JABCDEF0123456789ABCDEFG'
 const actor = `user:${randomUUID()}`
@@ -213,6 +216,100 @@ test('explicit lead and child refs stay distinct, survive reopen, and never sele
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('admitted child remains authorized when only the parent lead model becomes unavailable', async () => {
+  const database = new DatabaseSync(':memory:')
+  try {
+    const fixture = make(database)
+    const { state, ports } = fixture
+    const parentEvidence = structuredClone(evidence)
+    parentEvidence.requestedModelSelections = {
+      lead: selection,
+      child: { selectionRef: childRef, selectionRevision: 1 },
+    }
+    state.product = parentEvidence
+    ports.selections.resolveSelection = async (pin) => fullSelection(pin.selectionRef)
+    ports.selections.assertReady = async (resolved) => {
+      if (
+        state.revoked ||
+        (state.leadUnavailable && resolved.selectionRef === selection.selectionRef)
+      )
+        throw new Error('CREDENTIAL_REVOKED')
+    }
+    const productAuthority = createProductionLeadProductAuthority({ ...ports, database })
+    expect((await productAuthority.readCurrent(input)).selectionRef).toBe(selection.selectionRef)
+
+    const base = createExecutionPlanTestFixtureInputs()
+    const parentPlan = new ExecutionPlanCompiler('1.0.0').compile(base)
+    const childRequestId = 'req_01JBBCDEF0123456789ABCDEFG'
+    const childPlan = deriveExecutionPlan(parentPlan, {
+      correlation: { ...parentPlan.correlation, requestId: childRequestId },
+      contextPackage: base.contextPackage,
+      constraints: structuredClone(parentPlan.constraints),
+      runtimeRequirements: structuredClone(parentPlan.runtimeRequirements),
+      outputContract: parentPlan.outputContract,
+      compiledAt: '2026-10-08T00:00:00.000Z',
+    })
+    const request = {
+      executionId: 'exe_01JBBCDEF0123456789ABCDEFG',
+      attemptId: 'att_01JBBCDEF0123456789ABCDEFG',
+      idempotencyKey: 'child:lead-readiness-independence',
+      executionPlan: childPlan,
+    }
+    const childRecord = {
+      workspaceId: input.workspaceId,
+      parentIntentId: input.intentId,
+      childRequestId,
+      executionId: request.executionId,
+      attemptId: request.attemptId,
+      executionPlanId: childPlan.executionPlanId,
+      executionPlanDigest: childPlan.contentDigest,
+      parentExecutionPlanId: parentPlan.executionPlanId,
+      parentExecutionPlanDigest: parentPlan.contentDigest,
+      canonicalActorPrincipalId: actor,
+      productReaderPrincipalId: input.principalId,
+      authorityRevision: 1,
+      expiresAt: '2026-10-09T00:00:00.000Z',
+      requestedSelection: { selectionRef: childRef, selectionRevision: 1 },
+    }
+    const childAuthority = createProductionChildModelAuthority({
+      now: () => '2026-10-08T00:00:00.000Z',
+      readCurrent: async () => childRecord,
+      product: { resolveChildSelection: productAuthority.resolveChildSelection },
+      admit: async (_request, chosen) => ({
+        schemaVersion: 'pi-durable-admission/v1',
+        prompt: 'synthetic child prompt',
+        canonicalActorPrincipalId: actor,
+        selection: {
+          selectionRef: chosen.selectionRef,
+          selectionRevision: chosen.selectionRevision,
+        },
+        authority: {
+          revision: 1,
+          principalRef: 'svc_child',
+          scopeRef: 'scope:child',
+          expiresAt: childRecord.expiresAt,
+        },
+      }),
+      assertCurrent: async () => {},
+    })
+    const admission = await childAuthority.resolveAdmission(request)
+    expect(admission.selection).toEqual({ selectionRef: childRef, selectionRevision: 1 })
+
+    state.leadUnavailable = true
+    await expect(productAuthority.readCurrent(input)).rejects.toThrow('CREDENTIAL_REVOKED')
+    await childAuthority.assertAuthority({ request, admission })
+    expect(admission.selection.selectionRef).toBe(childRef)
+
+    state.product.allowedPrincipalIds = ['svc_other']
+    await expect(childAuthority.assertAuthority({ request, admission })).rejects.toThrow(
+      'PI_PRODUCTION_PRODUCT_DENIED'
+    )
+  } finally {
+    database.close()
+  }
+})
+
 test('wrong workspace, target, revision and revoked explicit selections deny without fallback', async () => {
   for (const fault of ['workspace', 'target', 'revision', 'revoked']) {
     const database = new DatabaseSync(':memory:')
