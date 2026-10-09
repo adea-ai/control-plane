@@ -110,6 +110,19 @@ export function assertJ1ConcurrentRecovery(snapshots) {
   assert.ok(snapshots.some((snapshot) => snapshot.state === 'completed'))
 }
 
+// Each evidence record is appended as one `JSON\n` line. Bytes after the last newline are
+// a write still in progress, or a record truncated by a killed writer, so they are not
+// evidence yet and are skipped; the next poll reads them once complete. Every complete
+// line must still parse: a malformed complete record throws and is never skipped.
+function parseProcessEvidenceRecords(text) {
+  const completeLength = text.lastIndexOf('\n') + 1
+  return text
+    .slice(0, completeLength)
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+}
+
 export async function createUnfinishedChildProcessHarness(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'j1-unfinished-child-'))
   const children = new Set()
@@ -131,10 +144,9 @@ export async function createUnfinishedChildProcessHarness(options = {}) {
   }
   async function evidence() {
     try {
-      return (await readFile(join(directory, 'process-evidence.jsonl'), 'utf8'))
-        .split('\n')
-        .filter(Boolean)
-        .map(JSON.parse)
+      return parseProcessEvidenceRecords(
+        await readFile(join(directory, 'process-evidence.jsonl'), 'utf8')
+      )
     } catch (error) {
       if (error.code === 'ENOENT') return []
       throw error
