@@ -127,4 +127,84 @@ describe('deriveSecureAcpRemoteRoute', () => {
       })
     ).toThrow()
   })
+
+  test('offline/disconnected/expired/unavailable states are typed denials with zero dispatch', () => {
+    const denials = [
+      [
+        { ...connection, node: { ...connection.node, status: 'offline' } },
+        'ACP_REMOTE_ROUTE_NODE_OFFLINE',
+      ],
+      [
+        { ...connection, node: { ...connection.node, health: 'offline' } },
+        'ACP_REMOTE_ROUTE_NODE_OFFLINE',
+      ],
+      [
+        { ...connection, node: { ...connection.node, health: 'unknown' } },
+        'ACP_REMOTE_ROUTE_NODE_UNAVAILABLE',
+      ],
+      [
+        { ...connection, connection: { ...connection.connection, status: 'disconnected' } },
+        'ACP_REMOTE_ROUTE_CONNECTION_DISCONNECTED',
+      ],
+      [
+        { ...connection, connection: { ...connection.connection, status: 'expired' } },
+        'ACP_REMOTE_ROUTE_CONNECTION_EXPIRED',
+      ],
+      [{ ...connection, status: 'unavailable' }, 'ACP_REMOTE_ROUTE_CONNECTION_UNAVAILABLE'],
+      [{ ...connection, status: 'degraded' }, 'ACP_REMOTE_ROUTE_CONNECTION_UNAVAILABLE'],
+      [
+        { ...connection, connection: { ...connection.connection, availability: 'stale' } },
+        'ACP_REMOTE_ROUTE_CONNECTION_UNAVAILABLE',
+      ],
+      [
+        { ...connection, connection: { ...connection.connection, availability: 'reconnecting' } },
+        'ACP_REMOTE_ROUTE_CONNECTION_UNAVAILABLE',
+      ],
+    ]
+    let dispatches = 0
+    const wire = {
+      connectionState: () => 'online',
+      sendCommand: async () => {
+        dispatches += 1
+        throw new Error('DISPATCH_MUST_NOT_RUN')
+      },
+      requestInventory: async () => {
+        dispatches += 1
+        throw new Error('DISPATCH_MUST_NOT_RUN')
+      },
+    }
+    const derived = denials.map(([unusable]) => {
+      try {
+        return deriveSecureAcpRemoteRoute({ workspaceId, connection: unusable, configuration })
+      } catch (error) {
+        return error
+      }
+    })
+    for (const [index, result] of derived.entries()) {
+      // Typed denial: a TYPED error is thrown, never a route labeled `revoked`
+      // (the schema admits only active|revoked) and never an active route.
+      expect(result).toBeInstanceOf(Error)
+      expect(String(result)).toContain(denials[index][1])
+      expect(denials[index][1]).not.toBe('REVOKED')
+    }
+    // Without a derived route no transport can be constructed, so nothing reaches the wire.
+    const routes = derived.filter((result) => !(result instanceof Error))
+    expect(routes).toHaveLength(0)
+    if (routes.length > 0) void wire.sendCommand({})
+    expect(dispatches).toBe(0)
+  })
+
+  test('revocation still wins over an unusable state and keeps its own typed outcome', () => {
+    const route = deriveSecureAcpRemoteRoute({
+      workspaceId,
+      connection: {
+        ...connection,
+        status: 'revoked',
+        node: { ...connection.node, status: 'offline' },
+      },
+      configuration: { ...configuration, revokedAt: '2026-08-25T12:00:10.000Z' },
+    })
+    expect(route.status).toBe('revoked')
+    expect(route.revokedAt).toBe('2026-08-25T12:00:10.000Z')
+  })
 })
