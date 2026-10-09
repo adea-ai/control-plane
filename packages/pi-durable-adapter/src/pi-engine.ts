@@ -31,8 +31,10 @@ import {
   PiDurableDelegateChildOutcomeSchema,
   type PiDurableDelegateChildOutcome,
   type PiDurableGovernedDelegateChildEnginePort,
+  type PiDurableGovernedManagementCallEnginePort,
 } from './contracts.js'
 import {
+  verifyPiDurableManagementToolSource,
   verifyPiDurableToolSource,
   piDurableToolSourceKey,
   type PiDurableToolSource,
@@ -60,6 +62,8 @@ export interface PiDurableEngineOptions {
   /** Rebuild Models and hold eligible credential access only for this callback. */
   readonly withModels: <T>(use: (models: Models) => Promise<T>) => Promise<T>
   readonly governedDelegateChild?: PiDurableGovernedDelegateChildEnginePort
+  /** Durable governed management caller; retains the full immutable request. */
+  readonly governedManagementCall?: PiDurableGovernedManagementCallEnginePort
   /** Settle only committed native assistant receipts before admitting another generation or effect. */
   readonly retainInferences?: (inferences: PiDurableEngineResult['inferences']) => Promise<void>
 }
@@ -115,6 +119,13 @@ export class PiDurableEngineToolBlockedError extends Error {
 const DelegateObjective = z.strictObject({ objective: z.string().trim().min(1).max(8192) })
 const DelegateParameters = Type.Object(
   { objective: Type.String({ minLength: 1, maxLength: 8192 }) },
+  { additionalProperties: false }
+)
+const ManagementParameters = Type.Object(
+  {
+    operation: Type.String({ minLength: 1, maxLength: 128 }),
+    input: Type.Record(Type.String(), Type.Unknown()),
+  },
   { additionalProperties: false }
 )
 
@@ -299,7 +310,8 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
         if (committed.length) await options.retainInferences(committed)
       }
       const delegate = options.governedDelegateChild
-      const tools = delegate
+      const management = options.governedManagementCall
+      const delegateTools = delegate
         ? [
             defineTool({
               name: 'delegate_child',
@@ -410,6 +422,92 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
             }),
           ]
         : []
+      const managementTools = management
+        ? [
+            defineTool({
+              name: 'management_call',
+              description:
+                'Execute a governed workspace management operation through the host decision service.',
+              parameters: ManagementParameters,
+              replay: 'safe',
+              executionMode: 'sequential',
+              outputLimits: { maxBytes: 8192, maxLines: 64 },
+              async execute(args, api, context) {
+                try {
+                  context.abortSignal?.throwIfAborted()
+                  await options.assertAuthority()
+                  const task = await api.getTask(api.taskId, context)
+                  const assistant =
+                    task?.input && typeof task.input === 'object' && !Array.isArray(task.input)
+                      ? task.input['assistant']
+                      : undefined
+                  if (
+                    typeof assistant !== 'number' ||
+                    !Number.isSafeInteger(assistant) ||
+                    assistant < 1
+                  )
+                    throw new Error('PI_TOOL_SOURCE_REJECTED')
+                  const candidate = {
+                    schemaVersion: 'pi-tool-source/v1' as const,
+                    ...management.source,
+                    conversationId: String(api.conversationId),
+                    taskId: String(api.taskId),
+                    assistantEntryId: String(assistant),
+                    callId: api.callId,
+                  }
+                  const source = await api.memo(
+                    'adea.management-call.source/v1',
+                    candidate,
+                    context
+                  )
+                  if (piDurableToolSourceKey(source) !== piDurableToolSourceKey(candidate))
+                    throw new Error('PI_TOOL_SOURCE_REJECTED')
+                  const reader = {
+                    assertCurrent: async (retained: PiDurableToolSource) => {
+                      await options.assertAuthority()
+                      await management.assertCurrent(retained)
+                    },
+                    readTask: async (retained: PiDurableToolSource) => {
+                      if (retained.taskId !== String(api.taskId))
+                        throw new Error('PI_TOOL_SOURCE_REJECTED')
+                      return api.getTask(api.taskId, context)
+                    },
+                    readAssistantEntry: async (retained: PiDurableToolSource) => {
+                      if (retained.assistantEntryId !== String(assistant))
+                        throw new Error('PI_TOOL_SOURCE_REJECTED')
+                      return api.commit(
+                        (tx) => tx.entry(AssistantEntry, assistant as EntryId),
+                        context
+                      )
+                    },
+                  }
+                  const verified = await verifyPiDurableManagementToolSource(source, args, reader)
+                  await retainCommitted(assistant as EntryId)
+                  context.abortSignal?.throwIfAborted()
+                  const outcome = await management.execute(
+                    {
+                      input: verified.args.input,
+                      operation: verified.args.operation,
+                      source: verified.source,
+                      sourceKey: verified.sourceKey,
+                    },
+                    { readAssistantEntry: reader.readAssistantEntry, readTask: reader.readTask },
+                    context.abortSignal
+                  )
+                  await reader.assertCurrent(verified.source)
+                  context.abortSignal?.throwIfAborted()
+                  return { content: [{ type: 'text' as const, text: JSON.stringify(outcome) }] }
+                } catch {
+                  // Never serialize host compiler/gate/source diagnostics into the native transcript.
+                  if (!context.abortSignal?.aborted)
+                    void harness.close(BACKGROUND_CONTEXT).catch(() => {})
+                  throw new Error('PI_GOVERNED_TOOL_BLOCKED')
+                }
+              },
+            }),
+          ]
+        : []
+      const tools = [...delegateTools, ...managementTools]
       const guard = defineExtension({
         name: 'adea.inference-authority',
         tools,

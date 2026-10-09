@@ -11,6 +11,11 @@ const NativeRef = z
 // identity fields are normalized; source refs remain bounded opaque strings.
 const NativeIdentity = z.union([NativeRef, z.number().int().positive().safe().transform(String)])
 const Objective = z.strictObject({ objective: z.string().trim().min(1).max(8192) })
+/** Bounded management tool arguments verified against the native transcript. */
+export const ManagementCallArgumentsSchema = z.strictObject({
+  operation: z.string().min(1).max(128),
+  input: z.record(z.string(), z.json()),
+})
 
 /** Host-only identity read from the retained journal and native Pi store.
  * Parsing this identity never authenticates a caller or admits a tool effect.
@@ -58,38 +63,46 @@ export interface PiDurableToolSourceReader {
   readAssistantEntry(source: PiDurableToolSource): Promise<unknown>
 }
 
-const Task = z
-  .object({
-    id: NativeIdentity,
-    conversationId: NativeIdentity,
-    kind: z.literal('pi.tool'),
-    version: z.literal(1),
-    abortRequested: z.literal(false),
-    input: z.strictObject({ assistant: NativeIdentity, callId: NativeRef }),
-    state: z
-      .object({
-        status: z.literal('running'),
-        checkpoint: z.strictObject({
-          phase: z.literal('execute'),
-          arguments: Objective,
-          replay: z.literal('safe'),
-        }),
-      })
-      .passthrough(),
-  })
-  .passthrough()
+const taskSchema = <Arguments>(argumentsSchema: z.ZodType<Arguments>) =>
+  z
+    .object({
+      id: NativeIdentity,
+      conversationId: NativeIdentity,
+      kind: z.literal('pi.tool'),
+      version: z.literal(1),
+      abortRequested: z.literal(false),
+      input: z.strictObject({ assistant: NativeIdentity, callId: NativeRef }),
+      state: z
+        .object({
+          status: z.literal('running'),
+          checkpoint: z.strictObject({
+            phase: z.literal('execute'),
+            arguments: argumentsSchema,
+            replay: z.literal('safe'),
+          }),
+        })
+        .passthrough(),
+    })
+    .passthrough()
 
-/** Verify native durable intent before the host compiler creates J1's full
- * governed request receipt. This does not execute or authorize the tool.
+/**
+ * Shared transcript verification for one governed engine tool. The host gate
+ * independently checks the full request and originating approval before any
+ * effect; this proves the model actually requested the exact arguments.
  */
-export async function verifyPiDurableToolSource(
+async function verifyPiDurableToolSourceFor<Arguments>(
   input: unknown,
-  objectiveInput: unknown,
-  reader: PiDurableToolSourceReader
-): Promise<{ source: PiDurableToolSource; sourceKey: string; objective: string }> {
+  expectedInput: unknown,
+  reader: PiDurableToolSourceReader,
+  config: {
+    readonly toolName: string
+    readonly schema: z.ZodType<Arguments>
+  }
+): Promise<{ source: PiDurableToolSource; sourceKey: string; args: Arguments }> {
   try {
+    const Task = taskSchema(config.schema)
     const source = PiDurableToolSourceSchema.parse(input)
-    const objective = Objective.parse(objectiveInput)
+    const expected = config.schema.parse(expectedInput)
     await reader.assertCurrent(structuredClone(source))
     const task = Task.parse(await reader.readTask(structuredClone(source)))
     if (
@@ -97,7 +110,7 @@ export async function verifyPiDurableToolSource(
       task.conversationId !== source.conversationId ||
       task.input.assistant !== source.assistantEntryId ||
       task.input.callId !== source.callId ||
-      canonicalJsonStringify(task.state.checkpoint.arguments) !== canonicalJsonStringify(objective)
+      canonicalJsonStringify(task.state.checkpoint.arguments) !== canonicalJsonStringify(expected)
     )
       throw new Error('PI_TOOL_SOURCE_REJECTED')
     const entry = z
@@ -125,12 +138,12 @@ export async function verifyPiDurableToolSource(
       .object({
         type: z.literal('toolCall'),
         id: NativeRef,
-        name: z.literal('delegate_child'),
-        arguments: Objective,
+        name: z.literal(config.toolName),
+        arguments: config.schema,
       })
       .passthrough()
       .parse(calls[0])
-    if (canonicalJsonStringify(call.arguments) !== canonicalJsonStringify(objective))
+    if (canonicalJsonStringify(call.arguments) !== canonicalJsonStringify(expected))
       throw new Error('PI_TOOL_SOURCE_REJECTED')
     // Recheck after both asynchronous native reads; the host gate independently
     // checks the full request and originating approval before any effect.
@@ -139,9 +152,44 @@ export async function verifyPiDurableToolSource(
     if (canonicalJsonStringify(current) !== canonicalJsonStringify(task))
       throw new Error('PI_TOOL_SOURCE_REJECTED')
     await reader.assertCurrent(structuredClone(source))
-    return { source, sourceKey: piDurableToolSourceKey(source), objective: objective.objective }
+    return { args: expected, source, sourceKey: piDurableToolSourceKey(source) }
   } catch {
     // Native/authority reader errors may contain private diagnostics.
     throw new Error('PI_TOOL_SOURCE_REJECTED')
   }
+}
+
+/** Verify native durable intent before the host compiler creates J1's full
+ * governed request receipt. This does not execute or authorize the tool.
+ */
+export async function verifyPiDurableToolSource(
+  input: unknown,
+  objectiveInput: unknown,
+  reader: PiDurableToolSourceReader
+): Promise<{ source: PiDurableToolSource; sourceKey: string; objective: string }> {
+  const verified = await verifyPiDurableToolSourceFor(input, objectiveInput, reader, {
+    schema: Objective,
+    toolName: 'delegate_child',
+  })
+  return {
+    objective: verified.args.objective,
+    source: verified.source,
+    sourceKey: verified.sourceKey,
+  }
+}
+
+/** Management tool variant: verifies the exact `{operation, input}` call. */
+export async function verifyPiDurableManagementToolSource(
+  input: unknown,
+  argumentsInput: unknown,
+  reader: PiDurableToolSourceReader
+): Promise<{
+  readonly args: z.output<typeof ManagementCallArgumentsSchema>
+  readonly source: PiDurableToolSource
+  readonly sourceKey: string
+}> {
+  return verifyPiDurableToolSourceFor(input, argumentsInput, reader, {
+    schema: ManagementCallArgumentsSchema,
+    toolName: 'management_call',
+  })
 }
