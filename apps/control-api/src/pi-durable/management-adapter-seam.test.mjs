@@ -41,6 +41,7 @@ test('the adapter management port reuses one retained decision without resend', 
   const runGate = new Promise((resolve) => {
     releaseRun = resolve
   })
+  let failure
   try {
     const { options, request, admission } = fixture(directory, {
       resolveAdmission: async () => ({
@@ -120,7 +121,10 @@ test('the adapter management port reuses one retained decision without resend', 
       execute: async (candidate) => caller.execute(candidate),
     }
     adapter = new PiDurableRuntimeAdapter(options)
-    startPromise = adapter.start(request).catch((error) => error)
+    startPromise = adapter.start(request)
+    // Keep the raw promise for cleanup; attach a handler now so an assertion
+    // failure before cleanup cannot surface as an unhandled rejection.
+    startPromise.catch(() => {})
     let record
     for (let attempt = 0; attempt < 300; attempt += 1) {
       record = adapter.journal.list().find((item) => item.state === 'running')
@@ -195,18 +199,23 @@ test('the adapter management port reuses one retained decision without resend', 
     expect(retained?.decision).toBe('decision-jwt-1')
     expect(retained?.decisionId).toBe('decision-1')
     expect(retained?.state).toBe('settled')
-  } finally {
-    releaseRun?.()
-    try {
-      await Promise.race([
-        adapter?.close() ?? Promise.resolve(),
-        new Promise((resolve) => setTimeout(resolve, 500)),
-      ])
-    } catch {
-      // The pending engine run is abandoned; the record was never a terminal effect.
-    }
-    await Promise.resolve(startPromise).catch(() => {})
-    database.close()
-    rmSync(directory, { force: true, recursive: true })
+  } catch (error) {
+    failure = error
   }
+  // Release the owned run gate, await the owned start/run settlement and the
+  // actual adapter close, then remove resources. Any body or cleanup failure
+  // is reported after resources are released; nothing is swallowed.
+  releaseRun?.()
+  try {
+    await startPromise
+    await adapter?.close()
+  } catch (error) {
+    failure =
+      failure === undefined
+        ? error
+        : new AggregateError([failure, error], 'management adapter seam cleanup failed')
+  }
+  database.close()
+  rmSync(directory, { force: true, recursive: true })
+  if (failure) throw failure
 })
