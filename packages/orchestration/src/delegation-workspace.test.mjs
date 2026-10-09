@@ -125,6 +125,89 @@ test('current scope is rechecked after derivation before any child write', async
   expect(await f.delegations.listByParent(ids.parentExecutionId)).toEqual([])
 })
 
+test('governed child readiness denial occurs before child plan or allocation writes', async () => {
+  const f = await fixture()
+  const parentAttempt = await f.lifecycle.createAttempt({
+    executionId: ids.parentExecutionId,
+    attemptId: ids.childAttemptId,
+    expectedExecutionVersion: 1,
+    queuedAt: '2026-08-25T18:00:30.000Z',
+  })
+  const input = {
+    ...f.command,
+    parentIntentId: 'intent:workspace-parent',
+    parentAttemptId: parentAttempt.attemptId,
+    childAttemptId: 'att_01JBBCDEF0123456789ABCDEFG',
+    admittedToolCallId: 'tlc_01JABCDEF0123456789ABCDEFG',
+    initialDispatch: {
+      delegationId: ids.delegationId,
+      childAttemptId: 'att_01JBBCDEF0123456789ABCDEFG',
+      runtime: { runtimeConnectionId: 'rtc_01JABCDEF0123456789ABCDEFG' },
+      dispatchedAt: '2026-08-25T18:00:40.000Z',
+    },
+  }
+  let allocated = 0
+  const planWrites = []
+  const governed = new DelegationService({
+    ...f.options,
+    plans: {
+      get: (reference) => f.plans.get(reference),
+      async put(plan) {
+        planWrites.push(plan)
+        return f.plans.put(plan)
+      },
+    },
+    scopeAdmission: f.scopeAdmission,
+    childAdmission: {
+      async prepare() {
+        return { malformed: 'receipt' }
+      },
+      async assertCurrent() {
+        throw new Error('must not be reached')
+      },
+    },
+    childAllocator: {
+      async allocate() {
+        allocated += 1
+        return true
+      },
+    },
+  })
+
+  await expect(governed.delegate(input)).rejects.toMatchObject({
+    code: 'CHILD_ADMISSION_DENIED',
+  })
+  expect(planWrites).toEqual([])
+  expect(allocated).toBe(0)
+  expect(await f.executions.getExecution(ids.childExecutionId)).toBeUndefined()
+  expect(await f.executions.listAttempts(ids.childExecutionId)).toEqual([])
+  expect(await f.delegations.listByParent(ids.parentExecutionId)).toEqual([])
+  expect(f.events).toEqual([])
+})
+
+test('governed child fails closed when the product admission/allocator ports are missing', async () => {
+  const f = await fixture()
+  const parentAttempt = await f.lifecycle.createAttempt({
+    executionId: ids.parentExecutionId,
+    attemptId: ids.childAttemptId,
+    expectedExecutionVersion: 1,
+    queuedAt: '2026-08-25T18:00:30.000Z',
+  })
+  await expect(
+    f.scoped.delegate({
+      ...f.command,
+      parentIntentId: 'intent:workspace-parent',
+      parentAttemptId: parentAttempt.attemptId,
+      childAttemptId: 'att_01JBBCDEF0123456789ABCDEFG',
+      admittedToolCallId: 'tlc_01JABCDEF0123456789ABCDEFG',
+    })
+  ).rejects.toMatchObject({ code: 'CHILD_ADMISSION_UNAVAILABLE' })
+  expect(await f.executions.getExecution(ids.childExecutionId)).toBeUndefined()
+  expect(await f.executions.listAttempts(ids.childExecutionId)).toEqual([])
+  expect(await f.delegations.listByParent(ids.parentExecutionId)).toEqual([])
+  expect(f.events).toEqual([])
+})
+
 test('replay does not substitute an HTTP service for the recorded product actor', async () => {
   const f = await fixture()
   await f.scoped.delegate(f.command)

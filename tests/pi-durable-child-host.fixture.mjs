@@ -53,6 +53,9 @@ export async function createGovernedChildHostFixture({
   onCommandAuthority,
   workspace,
   principalRef = 'user:original',
+  childAdmission,
+  childAllocator,
+  delegationService,
 } = {}) {
   const planInput = parentPlanInput()
   planInput.constraints.limits.childExecutions.maximumTotal = 1
@@ -62,7 +65,10 @@ export async function createGovernedChildHostFixture({
     parentPlan,
     parentContext: workspace?.parentContext,
     scopeAdmission: workspace?.scopeAdmission,
+    ...(childAdmission ? { childAdmission } : {}),
+    ...(childAllocator ? { childAllocator } : {}),
   })
+  if (delegationService) f.service = delegationService
   await f.lifecycle.createAttempt({
     executionId: ids.parentExecutionId,
     attemptId: parentAttemptId,
@@ -148,7 +154,9 @@ export async function createGovernedChildHostFixture({
   const command = {
     delegation: {
       ...(workspace?.command ?? delegationInput(f)),
+      parentIntentId: workspace?.parentIntentId ?? '11111111-1111-4111-8111-111111111112',
       parentAttemptId,
+      childAttemptId: ids.childAttemptId,
       admittedToolCallId: 'tlc_01JABCDEF0123456789ABCDEFG',
     },
     dispatch: {

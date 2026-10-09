@@ -1,6 +1,8 @@
 import { test, expect } from 'bun:test'
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { canonicalJsonStringify } from '@control-plane/contracts'
@@ -33,6 +35,46 @@ const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
 const payloadHash = (value) =>
   createHash('sha256').update(canonicalJsonStringify(value)).digest('hex')
 
+async function availableLoopbackPort() {
+  return new Promise((resolve, reject) => {
+    const probe = createServer()
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address()
+      if (!address || typeof address === 'string') {
+        probe.close()
+        reject(new Error('PI_NODE_TEST_PORT_UNAVAILABLE'))
+        return
+      }
+      probe.close((error) => (error ? reject(error) : resolve(address.port)))
+    })
+  })
+}
+
+test('governed child composition requires the canonical delegation service before SQLite setup', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'pi-child-service-required-'))
+  const directory = join(parent, 'child-runtime')
+  try {
+    await expect(
+      createNodePiDurableLeadComposition({
+        directory,
+        admission: {},
+        usage: {},
+        provider: async () => {},
+        reconcileInference: async () => {},
+        governedDelegateChild: { prepare: async () => {} },
+        childAuthority: { resolveAdmission: async () => {}, assertAuthority: async () => {} },
+        childProgress: { scan: async () => {} },
+        parentInbox: { list: async () => [] },
+        consumeParentInbox: async () => {},
+      })
+    ).rejects.toThrow('PI_CHILD_COMPOSITION_REQUIRED')
+    expect(existsSync(directory)).toBe(false)
+  } finally {
+    await rm(parent, { recursive: true, force: true })
+  }
+})
+
 // Local HTTP Models transport and scripted verified product/spending ports.
 // The Pi engine, CP admission, SQLite stores and usage settlement are real.
 // This does not qualify a live provider account or recorded grant integration.
@@ -47,7 +89,7 @@ test('concrete node composition persists real Pi generation, canonical admission
   }
   const providerServer = Bun.serve({
     hostname: '127.0.0.1',
-    port: 0,
+    port: await availableLoopbackPort(),
     async fetch(request) {
       if (new URL(request.url).pathname !== '/v1/chat/completions')
         return new Response('not found', { status: 404 })

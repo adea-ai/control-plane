@@ -43,7 +43,7 @@ const digest = (value) =>
   `sha256:${createHash('sha256').update(canonicalJsonStringify(value)).digest('hex')}`
 const exactText = 'Actual production factory answer\n'
 /** No ambient network fallback. Native Models/credential/ledger checks still wrap this transport. */
-function scriptedPhysicalFetch(state) {
+function scriptedPhysicalFetch(state, responder) {
   return async (url, options) => {
     const request = new Request(url, options)
     if (
@@ -55,6 +55,7 @@ function scriptedPhysicalFetch(state) {
     if (body.model !== state.expectedProviderModel) throw new Error('TEST_UNEXPECTED_MODEL')
     state.physicalSends++
     state.providerModels.push(body.model)
+    if (responder) return responder({ request, body, state })
     const item = {
       type: 'message',
       id: 'msg_fixture',
@@ -117,6 +118,14 @@ export async function createProductionFactoryFixture(options = {}) {
     publicationChecks: 0,
     revoked: false,
     publicationRevoked: false,
+    denyNextScopeAuthorityRead: false,
+    scopeAuthorityDenials: 0,
+    toolAuthorizationCalls: 0,
+    toolExecutorCalls: 0,
+    retainedEvents: [],
+    wakeOrder: [],
+    parentInboxWakeSnapshots: [],
+    cancelChildCalls: [],
   }
   const source = new Map(),
     plansByIntent = new Map(),
@@ -147,6 +156,7 @@ export async function createProductionFactoryFixture(options = {}) {
       commands: new SqliteCommandAcceptanceRepository(persistence, { budgetAdmission: true }),
       catalog: new SqliteVersionedCatalogRepository(persistence),
       usage: new SqliteDurableUsageStore(persistence),
+      contexts: new SqliteContextPackageRepository(persistence),
     }
     const ledger = new DurableUsageLedger({ store: repositories.usage, now: () => at })
     const base = createExecutionPlanTestFixtureInputs({
@@ -159,6 +169,10 @@ export async function createProductionFactoryFixture(options = {}) {
       .getModels()
       .find((model) => model.id === 'gpt-5').contextWindow
     base.constraints.limits.tokens.maximumTotal = nativeContextWindow + 24
+    if (options.childrenFactory) {
+      base.constraints.limits.childExecutions.maximumTotal = 1
+      base.constraints.limits.childExecutions.maximumDepth = 1
+    }
     base.profile.definition.executionConstraints = structuredClone(base.constraints)
     base.profile.definition.skills = []
     base.skills = []
@@ -222,8 +236,14 @@ export async function createProductionFactoryFixture(options = {}) {
       state
     )
     const scopeAuthority = {
-      readCurrent: async (input) =>
-        state.revoked
+      readCurrent: async (input) => {
+        if (state.denyNextScopeAuthorityRead) {
+          state.denyNextScopeAuthorityRead = false
+          state.scopeAuthorityDenials++
+          options.onScopeAuthorityDenial?.()
+          return undefined
+        }
+        return state.revoked
           ? undefined
           : {
               ...input,
@@ -233,8 +253,10 @@ export async function createProductionFactoryFixture(options = {}) {
               grantActive: true,
               allowedPrincipalIds: [actorPrincipalId, 'svc_factory-admission'],
               expiresAt,
-            },
+            }
+      },
     }
+    state.scopeAuthority = scopeAuthority
     const resolvePlan = async (evidence, ids) => {
       selection = await models.repository.getSelection(workspaceId, evidence.selectionRef)
       if (!selection || selection.selectionRevision !== evidence.selectionRevision)
@@ -269,7 +291,7 @@ export async function createProductionFactoryFixture(options = {}) {
         budgets: inputs.contextPackage.budgets,
         compiledAt: at,
       })
-      await new SqliteContextPackageRepository(persistence).put(inputs.contextPackage)
+      await repositories.contexts.put(inputs.contextPackage)
       const plan = new ExecutionPlanCompiler('1.0.0').compile(inputs)
       await repositories.plans.put(plan)
       plansByIntent.set(evidence.intentId, plan)
@@ -426,9 +448,27 @@ export async function createProductionFactoryFixture(options = {}) {
         },
       },
     })
-    globalThis.fetch = scriptedPhysicalFetch(state)
+    const children = options.childrenFactory
+      ? await options.childrenFactory({
+          directory,
+          persistence,
+          repositories,
+          ledger,
+          base,
+          workspaceId,
+          actorPrincipalId,
+          transportPrincipalId,
+          leasePrincipalRef,
+          scopeAuthority,
+          state,
+          at,
+          expiresAt,
+        })
+      : undefined
+    globalThis.fetch = scriptedPhysicalFetch(state, options.physicalResponder)
     fetchInstalled = true
     composition = await createProductionPiLeadComposition({
+      ...(children ? { children } : {}),
       directory,
       fundingDirectory,
       modelConnections: models.modelConnections,
@@ -586,6 +626,7 @@ export async function createProductionFactoryFixture(options = {}) {
       productProfilePin,
       workspaceId,
       actorPrincipalId,
+      parentPlanForIntent: (intentId) => plansByIntent.get(intentId),
       command,
       read,
       close,

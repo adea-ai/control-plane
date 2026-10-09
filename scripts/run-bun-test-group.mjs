@@ -31,6 +31,7 @@ const repositoryGroups = {
     'tests/pi-durable-child-host.test.mjs',
     'tests/pi-durable-delegation-recovery.test.mjs',
     'tests/pi-durable-canonical-authority.test.mjs',
+    'tests/pi-durable-production-child-composition.test.mjs',
     'tests/pi-durable-execution-model-composition.test.mjs',
     'tests/pi-durable-governed-child-composition.test.mjs',
     'tests/j1-unfinished-child-process-restart.test.mjs',

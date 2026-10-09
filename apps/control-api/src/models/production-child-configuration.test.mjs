@@ -10,33 +10,43 @@ test('incomplete child authority or runtime denies before directory or SQLite cr
   const complete = {
     authority: { readCurrent: fn, admit: fn, assertCurrent: fn },
     forgetCanonicalModels: () => {},
+    createGovernedDelegateChild: fn,
+    delegation: {
+      records: {
+        insert: fn,
+        get: fn,
+        findByChild: fn,
+        listByParent: fn,
+        compareAndSet: fn,
+        allocate: fn,
+      },
+      lifecycle: { getExecution: fn },
+      plans: { get: fn },
+      events: { publish: fn, list: fn },
+      scopeAdmission: { resolveCallerPrincipalId: fn },
+      readCurrent: fn,
+    },
     modelAuthority: {
       forExecution: fn,
       readRecordedDecision: fn,
       leasePrincipalRef: 'lease',
       modelAlias: 'child',
     },
+    tools: { service: { execute: fn }, interactions: { get: fn } },
     runtime: {
-      governedDelegateChild: { prepare: fn },
       childProgress: { scan: fn },
-      parentInbox: { list: fn },
       consumeParentInbox: fn,
-      tools: { service: { execute: fn }, assertAuthority: fn },
     },
   }
   const malformed = [null, {}, { ...complete, runtime: {} }]
-  for (const group of ['authority', 'modelAuthority', 'runtime']) {
+  for (const group of ['authority', 'delegation', 'modelAuthority', 'runtime', 'tools']) {
     for (const key of Object.keys(complete[group])) {
       malformed.push({ ...complete, [group]: { ...complete[group], [key]: undefined } })
     }
   }
   malformed.push({ ...complete, forgetCanonicalModels: undefined })
-  for (const [group, key] of [
-    ['governedDelegateChild', 'prepare'],
-    ['childProgress', 'scan'],
-    ['parentInbox', 'list'],
-    ['tools', 'assertAuthority'],
-  ]) {
+  malformed.push({ ...complete, createGovernedDelegateChild: undefined })
+  for (const [group, key] of [['childProgress', 'scan']]) {
     malformed.push({
       ...complete,
       runtime: { ...complete.runtime, [group]: { ...complete.runtime[group], [key]: undefined } },
