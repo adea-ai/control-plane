@@ -144,6 +144,7 @@ export const start = (options: LocalControlPlaneStartOptions = {}) =>
         ...(marketplaceRegistryService ? { marketplaceRegistryService } : {}),
         interactionCommandService: composition.interactionCommandService,
         executionCancellationService: composition.executionCancellationService,
+        admissionControlService: composition.admissionControlService,
         executionAcceptanceService: composition.executionAcceptanceService,
         executionValidationService: composition.executionValidationService,
         graphAdministrationService: composition.graphAdministrationService,

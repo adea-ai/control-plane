@@ -696,6 +696,64 @@ export type ExecutionCancellationCommandResult = z.output<
   typeof ExecutionCancellationCommandResultSchema
 >
 
+/** Bounded operator reason classes for an admission stop or resume; never free text. */
+export const AdmissionStopReasonClassSchema = z.enum([
+  'operator_maintenance',
+  'incident_response',
+  'cost_protection',
+  'policy_hold',
+])
+
+/**
+ * Requests an audited stop of NEW workflow-job admission for the envelope's
+ * workspace. Already-admitted work, cancellations and interaction responses
+ * are never touched; the workspace is the envelope scope the credential was
+ * checked against, never a self-asserted target.
+ */
+export const AdmissionStopCommandSchema = CommandContextSchema.extend({
+  operation: z.literal('execution.admission-stop'),
+  issuedAt: TimestampSchema,
+  payload: z.strictObject({
+    reasonClass: AdmissionStopReasonClassSchema,
+    reason: z
+      .string()
+      .min(1)
+      .max(256)
+      .refine(
+        (value) =>
+          [...value].every((character) => {
+            const code = character.codePointAt(0) ?? 0
+            return code >= 0x20 && code !== 0x7f
+          }),
+        { message: 'Admission reason cannot contain control characters' }
+      )
+      .optional(),
+  }),
+}).strict()
+
+/** Requests an audited resume of NEW workflow-job admission for the envelope's workspace. */
+export const AdmissionResumeCommandSchema = AdmissionStopCommandSchema.extend({
+  operation: z.literal('execution.admission-resume'),
+})
+
+/**
+ * Auditable outcome of an admission control command. `duplicate` and
+ * `replayed` are successful, idempotent results; admission reports the state
+ * the workspace is in after the command committed.
+ */
+export const AdmissionControlCommandResultSchema = successResponse(
+  z.strictObject({
+    commandId: IdentifierSchemas.commandId,
+    workspaceId: IdentifierSchemas.workspaceId,
+    operation: z.enum(['execution.admission-stop', 'execution.admission-resume']),
+    outcome: z.enum(['applied', 'duplicate', 'replayed']),
+    admission: z.enum(['stopped', 'open']),
+  })
+)
+export type AdmissionStopCommand = z.input<typeof AdmissionStopCommandSchema>
+export type AdmissionResumeCommand = z.input<typeof AdmissionResumeCommandSchema>
+export type AdmissionControlCommandResult = z.output<typeof AdmissionControlCommandResultSchema>
+
 export const InteractionResponseCommandSchema = CommandContextSchema.extend({
   projectId: IdentifierSchemas.projectId,
   operation: z.literal('interaction.respond'),

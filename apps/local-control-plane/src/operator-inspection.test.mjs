@@ -25,6 +25,7 @@ import {
 } from '@control-plane/execution-plan/testing'
 import {
   SqliteContextPackageRepository,
+  SqliteExecutionCancellationRepository,
   SqliteExecutionEventRepository,
   SqliteExecutionPlanRepository,
   SqliteExecutionRepository,
@@ -104,6 +105,8 @@ const CMD = {
   generation: id('cmd', 'D'),
   healthy: id('cmd', 'G'),
   currentGeneration: id('cmd', 'F'),
+  cancelAccepted: id('cmd', 'C'),
+  cancelReserved: id('cmd', 'E'),
 }
 const RTC = {
   stuck: id('rtc', 'A'),
@@ -130,6 +133,12 @@ const EVT = { effects: id('evt', 'C') }
 const RTD = id('rtd', 'A')
 const ART = id('art', 'G')
 const PRF_Z = 'prf_01ZRZ3NDEKTSV4RRFFQ69G5FAW'
+const RCP = {
+  stuck: `rcp_${'a'.repeat(32)}`,
+  effects: `rcp_${'c'.repeat(32)}`,
+  otherWorkspace: `rcp_${'f'.repeat(32)}`,
+}
+const CANCELLATION_CANARY_PRINCIPAL = 'svc_canary9153secret'
 
 const EVENT_CANARY = 'sqlinspect-canary-secret-9153'
 const PROMPT_CANARY = 'Private approval context canary-9271'
@@ -390,12 +399,113 @@ async function seed() {
     expiresAt: '2026-08-30T12:30:00.000Z',
   })
 
+  // Control-operation evidence: durable cancellation receipts (one reserved
+  // only, one accepted by the cancellation service) and reconciliation
+  // checkpoints, connected to the stuck and effects executions. The receipt
+  // caller principal carries a canary the report must never surface.
+  const cancellations = new SqliteExecutionCancellationRepository(provider)
+  // commandId[6] is the fixture's distinguishing letter (cmd_01<X>…).
+  const cancellationRequest = (commandId, executionId, issuedAt, workspaceId, projectId) => ({
+    contractVersion: { major: 1, minor: 0 },
+    commandId,
+    requestId: id('req', commandId[6]),
+    workspaceId,
+    projectId,
+    caller: { servicePrincipalId: CANCELLATION_CANARY_PRINCIPAL },
+    correlation: { traceId: id('trc', commandId[6]) },
+    operation: 'execution.cancel',
+    idempotencyKey: `inspection:cancel:${commandId}`,
+    payloadHash: '9'.repeat(64),
+    issuedAt,
+    payload: { executionId },
+  })
+  await cancellations.reserve({
+    request: cancellationRequest(
+      CMD.cancelReserved,
+      EXE.stuck,
+      '2026-08-30T12:00:06.000Z',
+      W1,
+      PRJ1
+    ),
+  })
+  const acceptedRequest = cancellationRequest(
+    CMD.cancelAccepted,
+    EXE.stuck,
+    '2026-08-30T12:00:07.000Z',
+    W1,
+    PRJ1
+  )
+  await cancellations.reserve({ request: acceptedRequest })
+  await cancellations.markAccepted(acceptedRequest, '2026-08-30T12:01:00.000Z')
+
   // Raw records: an execution whose latest attempt and plan do not exist, an
   // execution in another workspace, a large unrelated cross-workspace block
   // that the scan must continue through, deterministic limit fixtures, and
   // malformed records that must be counted but never emitted.
   await provider.transaction(async (transaction) => {
     const put = (namespace, id_, value) => transaction.put({ namespace, id: recordId(id_), value })
+    const checkpoint = (overrides) => ({
+      checkpointId: RCP.stuck,
+      executionId: EXE.stuck,
+      commandId: CMD.stuck,
+      attemptId: ATT.stuck,
+      pendingEventCount: 2,
+      observationHash: 'a'.repeat(64),
+      reason: 'stale_heartbeat',
+      action: 'wait_for_runtime',
+      state: 'waiting',
+      diagnostics: [],
+      version: 1,
+      checkedAt: '2026-08-30T12:05:00.000Z',
+      updatedAt: '2026-08-30T12:05:00.000Z',
+      ...overrides,
+    })
+    await put('reconciliation-checkpoints', 'recon-stuck', checkpoint({}))
+    await put(
+      'reconciliation-checkpoints',
+      'recon-effects',
+      checkpoint({
+        checkpointId: RCP.effects,
+        executionId: EXE.effects,
+        commandId: id('cmd', 'C'),
+        attemptId: ATT.effects,
+        observationHash: 'd'.repeat(64),
+        reason: 'terminal_undelivered',
+        action: 'replay_events',
+        state: 'resolved',
+        resolvedAt: '2026-08-30T12:10:00.000Z',
+        updatedAt: '2026-08-30T12:10:00.000Z',
+      })
+    )
+    // Cross-workspace control evidence that must never attach to the primary
+    // workspace's report.
+    await put(
+      'reconciliation-checkpoints',
+      'recon-other-workspace',
+      checkpoint({
+        checkpointId: RCP.otherWorkspace,
+        executionId: EXE.otherWorkspace,
+        commandId: id('cmd', 'K'),
+        attemptId: undefined,
+        observationHash: 'e'.repeat(64),
+        reason: 'workflow_stalled',
+        action: 'manual_intervention',
+        state: 'manual_intervention',
+      })
+    )
+    await put('execution-cancellation-receipts', 'receipt-other-workspace', {
+      request: cancellationRequest(
+        id('cmd', 'K'),
+        EXE.otherWorkspace,
+        '2026-08-30T12:00:08.000Z',
+        W2,
+        PRJ_Z
+      ),
+      acceptedAt: '2026-08-30T12:02:00.000Z',
+    })
+    await put('execution-cancellation-receipts', 'malformed-receipt', { broken: true })
+    await put('reconciliation-checkpoints', 'malformed-checkpoint', { broken: true })
+
     await put(
       'executions',
       EXE.ghostAttempt,
@@ -423,7 +533,9 @@ async function seed() {
         agentId: id('agt', 'J'),
         requestId: id('req', 'J'),
         acceptedAt: T0,
-        updatedAt: T0,
+        // Oldest in-scope execution for its workspace, so the workspace-scoped
+        // assertions below can address it directly in the bounded listing.
+        updatedAt: '2026-08-30T11:00:00.000Z',
       })
     )
     for (let index = 0; index < LARGE_OTHER_WORKSPACE_EXECUTIONS; index += 1) {
@@ -678,7 +790,18 @@ test('pages namespaces with continuation until exhausted', async () => {
 test('correlates stuck executions with explicit states, ages and availability', async () => {
   const report = await inspect()
   expect(report.readOnly).toBe(true)
+  expect(report.schemaVersion).toBe(2)
   expect(report.scope).toEqual({ workspaceId: W1, projectId: null, profileId: null })
+  expect(report.controlOperations).toEqual({
+    channelGeneration: { status: 'connected', reason: null },
+    channelOwnership: {
+      status: 'unavailable',
+      reason: 'CHANNEL_OWNERSHIP_POSTGRES_INVENTORY_ONLY',
+    },
+    credentialFence: { status: 'unavailable', reason: 'CREDENTIAL_FENCE_WRITE_TIME_LOCK_ONLY' },
+    cancellationReceipts: { status: 'connected', reason: null },
+    reconciliationProjection: { status: 'connected', reason: null },
+  })
   expect(report.thresholds).toEqual({
     staleAfterSeconds: 900,
     limit: 20,
@@ -736,6 +859,65 @@ test('correlates stuck executions with explicit states, ages and availability', 
     profileId: plan.profile.profileId,
     profileVersionId: plan.profile.profileVersionId,
   })
+  // The controls view connects the stuck job to the persisted control
+  // operations and names the typed unavailable state where this store carries
+  // no durable evidence.
+  expect(stuck.controls.credentialFence).toEqual({
+    status: 'unavailable',
+    reason: 'CREDENTIAL_FENCE_WRITE_TIME_LOCK_ONLY',
+  })
+  expect(stuck.controls.channelOwnership).toEqual({
+    status: 'unavailable',
+    reason: 'CHANNEL_OWNERSHIP_POSTGRES_INVENTORY_ONLY',
+  })
+  expect(stuck.controls.channelGeneration).toEqual({
+    status: 'connected',
+    reason: null,
+    scanComplete: true,
+    nodes: [{ nodeId: NODE, currentGeneration: 2 }],
+    unlistedNodeCount: 0,
+    unresolvedNodeCount: 0,
+  })
+  expect(stuck.controls.cancellation).toEqual({
+    status: 'connected',
+    reason: null,
+    scanComplete: true,
+    receiptCount: 2,
+    acceptedCount: 1,
+    listed: [
+      {
+        commandId: CMD.cancelAccepted,
+        requestedAt: '2026-08-30T12:00:07.000Z',
+        acceptedAt: '2026-08-30T12:01:00.000Z',
+      },
+      {
+        commandId: CMD.cancelReserved,
+        requestedAt: '2026-08-30T12:00:06.000Z',
+        acceptedAt: null,
+      },
+    ],
+    unlistedCount: 0,
+  })
+  expect(stuck.controls.reconciliation).toEqual({
+    status: 'connected',
+    reason: null,
+    scanComplete: true,
+    markRequired: { recorded: false, at: null, ageMs: null },
+    checkpointCount: 1,
+    listed: [
+      {
+        checkpointId: RCP.stuck,
+        state: 'waiting',
+        reason: 'stale_heartbeat',
+        action: 'wait_for_runtime',
+        pendingEventCount: 2,
+        checkedAt: '2026-08-30T12:05:00.000Z',
+        updatedAt: '2026-08-30T12:05:00.000Z',
+        resolvedAt: null,
+      },
+    ],
+    unlistedCount: 0,
+  })
 
   // Human wait surfaces the pending approval without its prompt content.
   const human = byId.get(EXE.human)
@@ -760,6 +942,20 @@ test('correlates stuck executions with explicit states, ages and availability', 
     publicationBacklog: true,
   })
   expect(effects.effects.oldestPendingAgeMs).toBeGreaterThan(15 * 60 * 1000)
+  // The resolved reconciliation checkpoint connects the backlog to the
+  // reconciliation projection's own durable state.
+  expect(effects.controls.reconciliation).toMatchObject({
+    status: 'connected',
+    checkpointCount: 1,
+    unlistedCount: 0,
+  })
+  expect(effects.controls.reconciliation.listed[0]).toMatchObject({
+    checkpointId: RCP.effects,
+    state: 'resolved',
+    reason: 'terminal_undelivered',
+    action: 'replay_events',
+    resolvedAt: '2026-08-30T12:10:00.000Z',
+  })
 
   // Stale generation and delivery stall, correlated per node even though every
   // gwc_ gateway channel id differs from every rtc_ runtime connection id.
@@ -1090,11 +1286,55 @@ test('never emits record payload content or secrets', async () => {
   const serialized = JSON.stringify(await inspect())
   expect(serialized).not.toContain(EVENT_CANARY)
   expect(serialized).not.toContain(PROMPT_CANARY)
+  // Cancellation receipts surface only command identity and acceptance state;
+  // the caller principal (canary) and payload hash never leave the store.
+  expect(serialized).not.toContain(CANCELLATION_CANARY_PRINCIPAL)
+  expect(serialized).not.toContain('servicePrincipalId')
   // The seeded plan definition carries this instruction; only its digest may
   // ever appear in report form.
   expect(serialized).not.toContain('Complete the assigned task safely.')
   expect(serialized).not.toContain('apiKey')
   expect(serialized).not.toContain('payload')
+})
+
+test('excludes cross-workspace control evidence from every in-scope report', async () => {
+  const report = await inspect()
+  const serialized = JSON.stringify(report)
+  // The other workspace carries its own cancellation receipt and
+  // reconciliation checkpoint; neither may attach to this workspace's jobs.
+  expect(serialized).not.toContain(RCP.otherWorkspace)
+  expect(serialized).not.toContain(EXE.otherWorkspace)
+  expect(serialized).not.toContain(W2)
+  for (const view of report.executions) {
+    expect(view.controls.reconciliation.listed.map((entry) => entry.checkpointId)).not.toContain(
+      RCP.otherWorkspace
+    )
+  }
+  // The owning workspace still sees its own control evidence; the seeded W2
+  // execution is its oldest stuck candidate, so it heads the bounded listing.
+  const other = await inspect({ workspaceId: W2, limit: 100 })
+  const otherStuck = other.executions[0]
+  expect(otherStuck.executionId).toBe(EXE.otherWorkspace)
+  expect(otherStuck.controls.cancellation.receiptCount).toBe(1)
+  expect(otherStuck.controls.reconciliation.checkpointCount).toBe(1)
+  expect(otherStuck.controls.reconciliation.listed[0]).toMatchObject({
+    checkpointId: RCP.otherWorkspace,
+    state: 'manual_intervention',
+  })
+  // Even the owning report never surfaces the canary principal.
+  expect(JSON.stringify(other)).not.toContain(CANCELLATION_CANARY_PRINCIPAL)
+})
+
+test('repeated inspection is deterministic', async () => {
+  const first = JSON.stringify(await inspect())
+  const second = JSON.stringify(await inspect())
+  expect(second).toBe(first)
+  // A fresh reader over the same store produces the identical report.
+  const fresh = inspectStuckJobs(createSqliteRecordReader(await openReadOnly()), {
+    workspaceId: W1,
+    now: INSPECT_AT,
+  })
+  expect(JSON.stringify(fresh)).toBe(first)
 })
 
 test('filters by profile while reporting unattributed executions explicitly', async () => {
@@ -1145,6 +1385,10 @@ test('counts malformed records without emitting them', async () => {
   const report = await inspect()
   expect(report.summary.malformedRecords['executions']).toBeGreaterThanOrEqual(1)
   expect(report.summary.malformedRecords['runtime-commands']).toBeGreaterThanOrEqual(1)
+  expect(report.summary.malformedRecords['execution-cancellation-receipts']).toBeGreaterThanOrEqual(
+    1
+  )
+  expect(report.summary.malformedRecords['reconciliation-checkpoints']).toBeGreaterThanOrEqual(1)
   expect(JSON.stringify(report)).not.toContain('"broken"')
 })
 
@@ -1218,7 +1462,7 @@ test('packaged operator command inspects a private data directory read-only', as
   expect({ code, stderr }).toEqual({ code: 0, stderr: '' })
   const report = JSON.parse(stdout)
   expect(report).toMatchObject({
-    schemaVersion: 1,
+    schemaVersion: 2,
     command: 'local.operator.inspection.stuck-jobs',
     readOnly: true,
   })
