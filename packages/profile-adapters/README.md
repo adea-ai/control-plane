@@ -88,3 +88,26 @@ and the internal adapters in `packages/pi-cloudflare-host` and
 source boundaries and the tested qualification gate; it does not claim a live
 production certification or that the separate profile-specific adapter map
 requested by issue #941 has been accepted.
+
+## Profile recovery and fenced rollback
+
+`bindProfileRuntime` bindings are restart-safe at the composition boundary: a
+rebound binding revalidates the trusted topology, current authority and
+residency, then resumes the retained upstream attempt through the selected
+adapter's supported idempotent semantics. It never re-issues the physical
+start and never converts checkpoints across harnesses. The server-owned
+authority and residency guards are the rollback fence: once the current owner
+is no longer approved, every operation on the previous binding (`start`,
+`progress`, input, approval, cancel, status, reconcile, session, cleanup)
+fails closed before the upstream runtime is reached, and exactly one new owner
+at the next generation can resume. Restore is proven at the storage
+composition boundary for every supported profile mapping, with no
+cross-profile fallback.
+
+`src/recovery.test.mjs` carries this evidence: crash/rebind resume without a
+physical resend, the full fenced-rollback operation matrix, the exact retained
+handle target the guards receive, and restore bindings for the `local`,
+`hosted-simple`, `hosted-server` and `cloud` composition roots. This is
+synthetic binding evidence at the profile boundary; cross-process durability
+is owned by the pinned upstream adapter (`packages/pi-durable-adapter`) and no
+competing recovery engine lives here.
