@@ -28,7 +28,9 @@
 // section downgrades to incomplete and blocks the claim. A bound hit by a
 // supporting attribution index (the plan-integrity/pin index over
 // execution_plans, the catalog-command receipt index over
-// graph_definition_commands) downgrades every section that consumes it. Counts
+// graph_definition_commands) downgrades every section that consumes it, and a
+// failed or malformed/unattributable catalog-command receipt index does the
+// same through typed reasons — it is never read back as an empty exact index. Counts
 // taken over a bounded scan are bounded counts — the per-section
 // `countsBounded` flag marks them lower bounds over what was actually read;
 // counts are exact only when every contributing scan ran to exhaustion. The
@@ -53,6 +55,7 @@ import { parseArgs } from 'node:util'
 import { createPostgresConnection } from '@control-plane/database'
 import { GraphReferenceSchema } from '@control-plane/contracts'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
+import { GraphDefinitionCommandReceiptSchema } from '@control-plane/orchestration'
 // Shared vocabulary and encodings from the reviewed inventory script: the
 // typed statuses, the curated consumer registry, the zero-vs-unknown rule and
 // the deterministic serializer are imported (never duplicated) so both tools
@@ -435,6 +438,8 @@ async function collectDefinitions(transaction, context) {
     checkpointRowsByExecution,
     catalogCommandsByGraph,
     catalogCommandsIndexBoundReached = false,
+    catalogCommandsIndexReadError = undefined,
+    catalogCommandsIndexMalformedRecords = 0,
     // Fail-closed defaults: a missing feed flag marks the usage incomplete
     // rather than presenting partial attribution as exact.
     executionsUsageComplete = false,
@@ -450,7 +455,12 @@ async function collectDefinitions(transaction, context) {
   const incompleteUsageSources = []
   if (!executionsUsageComplete) incompleteUsageSources.push('executions')
   if (!checkpointsUsageComplete) incompleteUsageSources.push('checkpoints')
-  if (catalogCommandsIndexBoundReached) incompleteUsageSources.push('catalogCommands')
+  if (
+    catalogCommandsIndexBoundReached ||
+    catalogCommandsIndexReadError !== undefined ||
+    catalogCommandsIndexMalformedRecords > 0
+  )
+    incompleteUsageSources.push('catalogCommands')
   incompleteUsageSources.sort()
   const usageComplete = incompleteUsageSources.length === 0
   const workspaces = new Set()
@@ -541,6 +551,10 @@ async function collectDefinitions(transaction, context) {
         ...(catalogCommandsIndexBoundReached
           ? ['CATALOG_COMMAND_INDEX_PAGINATION_BOUND_REACHED']
           : []),
+        ...(catalogCommandsIndexReadError !== undefined
+          ? ['CATALOG_COMMAND_INDEX_SCAN_FAILED']
+          : []),
+        ...(catalogCommandsIndexMalformedRecords > 0 ? ['CATALOG_COMMAND_RECEIPTS_MALFORMED'] : []),
         ...(executionsUsageComplete ? [] : ['EXECUTIONS_USAGE_INCOMPLETE']),
         ...(checkpointsUsageComplete ? [] : ['CHECKPOINTS_USAGE_INCOMPLETE']),
       ]
@@ -1322,41 +1336,98 @@ function parseCheckpointThread(thread) {
   return { workspaceId, executionId }
 }
 
-/** Receipt counts per graph reference, joined through the command result. */
+/**
+ * Receipt counts per graph reference, joined through the command result.
+ *
+ * A row contributes only when its receipt parses as the canonical
+ * GraphDefinitionCommandReceiptSchema (every legitimate receipt carries a
+ * PublishedGraphDefinition result) AND its identity matches the row — the same
+ * rule PostgresGraphDefinitionCommandRepository.parseGraphDefinitionCommand-
+ * Receipt enforces on replay. Missing, malformed or identity-mismatched rows
+ * are counted as malformed evidence, never silently skipped, and a failed scan
+ * is surfaced as a typed read error so the definitions section can propagate
+ * either state into per-definition usage completeness and reasons instead of
+ * reading exact zeros from an empty index.
+ */
 async function catalogCommandsByGraphIndex(transaction, context) {
   const index = new Map()
   let boundReached = false
+  let malformedRecords = 0
+  // Isolate this scan in a savepoint: a failed statement inside the single
+  // repeatable-read snapshot would otherwise abort the whole transaction and
+  // lose the definitions section entirely, so a catalog-index failure could
+  // never reach per-definition usage reasons. Savepoints are transaction
+  // control, not data writes — the observation stays read-only and
+  // repeatable-read. If even the savepoint cannot be taken (the transaction is
+  // already failed), the typed read error still propagates.
+  try {
+    await transaction.unsafe('savepoint catalog_command_index_scan')
+  } catch {
+    return {
+      index: new Map(),
+      boundReached: false,
+      malformedRecords: 0,
+      readError: 'TABLE_SCAN_FAILED',
+    }
+  }
   try {
     const commandsScan = await scanTable(
       transaction,
       {
         table: OBSERVED_TABLES.catalogCommands,
-        columns: ['workspace_id', 'receipt'],
+        columns: [
+          'workspace_id',
+          'caller_id',
+          'operation',
+          'idempotency_key',
+          'payload_hash',
+          'receipt',
+        ],
         keyColumns: ['workspace_id', 'caller_id', 'operation', 'idempotency_key'],
         keyTypes: ['text', 'text', 'text', 'text'],
         pageSize: context.pageSize,
         maximumPages: context.maximumPages,
       },
       (row) => {
-        const reference = row.receipt?.result?.reference
-        const workspaceId = row.workspace_id
+        const receipt = GraphDefinitionCommandReceiptSchema.safeParse(row.receipt)
         if (
-          typeof workspaceId !== 'string' ||
-          typeof reference?.graphDefinitionId !== 'string' ||
-          typeof reference?.graphVersion !== 'string'
-        )
+          !receipt.success ||
+          typeof row.workspace_id !== 'string' ||
+          receipt.data.workspaceId !== row.workspace_id ||
+          receipt.data.command.callerId !== row.caller_id ||
+          receipt.data.command.operation !== row.operation ||
+          receipt.data.command.idempotencyKey !== row.idempotency_key ||
+          receipt.data.command.payloadHash !== row.payload_hash
+        ) {
+          malformedRecords += 1
           return
-        const key = `${workspaceId}\u0000${reference.graphDefinitionId}\u0000${reference.graphVersion}`
+        }
+        const reference = receipt.data.result.reference
+        const key = `${row.workspace_id}\u0000${reference.graphDefinitionId}\u0000${reference.graphVersion}`
         index.set(key, (index.get(key) ?? 0) + 1)
       }
     )
     boundReached = commandsScan.boundReached
+    await transaction.unsafe('release savepoint catalog_command_index_scan')
   } catch {
-    return { index: new Map(), boundReached: false }
+    // Roll back to the savepoint so the rest of the observation keeps its one
+    // usable snapshot; a failure that cannot be rolled back leaves typed
+    // failures for the downstream sections to surface themselves.
+    try {
+      await transaction.unsafe('rollback to savepoint catalog_command_index_scan')
+    } catch {}
+    return {
+      index: new Map(),
+      boundReached: false,
+      malformedRecords: 0,
+      readError: 'TABLE_SCAN_FAILED',
+    }
   }
   // A bounded index scan makes every consumersObserved.catalogCommands number
-  // a lower bound; the definitions section must downgrade to incomplete.
-  return { index, boundReached }
+  // a lower bound, and failed or unattributable receipt rows make the
+  // attribution partial; the definitions section downgrades to incomplete in
+  // either case instead of presenting partial attribution as observed fact.
+  return { index, boundReached, malformedRecords, readError: undefined }
 }
 
 async function collectCancellationReceiptCount(transaction) {
@@ -1582,9 +1653,12 @@ export async function collectInventoryManifest({
         checkpointRowsByExecution: checkpointRowsByGraph,
         catalogCommandsByGraph: catalogCommandsIndex.index,
         catalogCommandsIndexBoundReached: catalogCommandsIndex.boundReached,
+        catalogCommandsIndexReadError: catalogCommandsIndex.readError,
+        catalogCommandsIndexMalformedRecords: catalogCommandsIndex.malformedRecords,
         // Definition-level usage inherits its feeding scans' incompleteness: a
-        // bounded or failed executions/checkpoint scan must never surface as
-        // exact per-definition usage counts.
+        // bounded, failed or malformed catalog-command index and a bounded or
+        // failed executions/checkpoint scan must never surface as exact
+        // per-definition usage counts.
         executionsUsageComplete: usageSourceFullyRead(executions),
         checkpointsUsageComplete: usageSourceFullyRead(checkpoints),
         ...scanContext,

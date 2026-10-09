@@ -125,6 +125,9 @@ export async function createInventoryPgFixture({
   backdateExecutions = false,
   settleRunningExecution = false,
   volume = undefined,
+  injectMalformedCatalogReceipt = false,
+  revokeCatalogCommandsRead = false,
+  restrictCatalogCommandsColumns = false,
 } = {}) {
   const database = await createIsolatedTestDatabase({
     administration: loadDatabaseCredentials(process.env, 'administration'),
@@ -327,6 +330,78 @@ export async function createInventoryPgFixture({
     }
 
     if (volume !== undefined) await seedVolume(client, ids, volume)
+
+    // Catalog-receipt regressions (#1028): evidence-shaping raw writes through
+    // the raw application client (the collector under test never writes), and
+    // an optional read-revoke through the migration role that owns the table,
+    // so the catalog-command index scan itself fails against the deployed DSN.
+    if (injectMalformedCatalogReceipt) {
+      const [alphaReceipt] = await client.unsafe(
+        'select receipt from graph_definition_commands where idempotency_key = $1',
+        ['inventory-pg-fixture-alpha-v1-0001']
+      )
+      if (alphaReceipt?.receipt === undefined || alphaReceipt.receipt === null)
+        throw new Error('fixture alpha command receipt missing')
+      // 1. A claimed-but-never-completed command row: receipt is null.
+      await client.unsafe(
+        `insert into graph_definition_commands
+           (workspace_id, caller_id, operation, idempotency_key, payload_hash, receipt)
+         values ($1, $2, 'publish', $3, $4, null)`,
+        [ids.workspaceOne, ids.callerOne, 'inventory-pg-malformed-null-0001', 'b'.repeat(64)]
+      )
+      // 2. A receipt without the canonical envelope (no workspaceId/command/result).
+      await client.unsafe(
+        `insert into graph_definition_commands
+           (workspace_id, caller_id, operation, idempotency_key, payload_hash, receipt)
+         values ($1, $2, 'publish', $3, $4, $5)`,
+        [
+          ids.workspaceOne,
+          ids.callerOne,
+          'inventory-pg-malformed-shape-0001',
+          'c'.repeat(64),
+          JSON.stringify({
+            result: {
+              reference: { graphDefinitionId: 'graph:inventory-alpha', graphVersion: '1.0.0' },
+            },
+          }),
+        ]
+      )
+      // 3. A canonically shaped receipt whose workspace identity does not match
+      //    its row: valid JSON on disk, but unattributable to this row's workspace.
+      await client.unsafe(
+        `insert into graph_definition_commands
+           (workspace_id, caller_id, operation, idempotency_key, payload_hash, receipt)
+         values ($1, $2, 'publish', $3, $4, $5)`,
+        [
+          ids.workspaceOne,
+          ids.callerOne,
+          'inventory-pg-malformed-identity-0001',
+          'd'.repeat(64),
+          JSON.stringify({ ...alphaReceipt.receipt, workspaceId: ids.workspaceTwo }),
+        ]
+      )
+    }
+    if (revokeCatalogCommandsRead || restrictCatalogCommandsColumns) {
+      // Migration role owns the isolated database's tables. A full revoke
+      // makes every collector read of this one table fail; the column
+      // restriction keeps the consumers scan readable (it never selects
+      // payload_hash) while the catalog-command attribution index — which must
+      // validate receipt/row identity through payload_hash — fails in
+      // isolation.
+      const applicationRole = new URL(loadDatabaseCredentials(process.env, 'application').url)
+        .username
+      await database.withMigrationDatabase(async (migrationDb) => {
+        await migrationDb.$client.unsafe(
+          `revoke select on public.graph_definition_commands from "${applicationRole}"`
+        )
+        if (restrictCatalogCommandsColumns) {
+          await migrationDb.$client.unsafe(
+            `grant select (workspace_id, caller_id, operation, idempotency_key, created_at, receipt)
+             on public.graph_definition_commands to "${applicationRole}"`
+          )
+        }
+      })
+    }
 
     // The application-role DSN for the isolated database is the deployed-DSN
     // analog the collector observes (SELECT/DML only, no DDL authority).

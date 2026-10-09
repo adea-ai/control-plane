@@ -630,6 +630,103 @@ describe.skipIf(!enabled)('LangGraph retirement inventory PG collector', () => {
   )
 
   test(
+    'malformed or unattributable catalog receipts block exact per-definition usage claims',
+    async () => {
+      await withFixture({ injectMalformedCatalogReceipt: true }, async (fixture) => {
+        const { manifest } = await collectFromFixture(fixture)
+        const definitions = manifest.sections.definitions
+        expect(definitions.status).toBe('incomplete')
+        expect(definitions.reasons).toEqual(['CATALOG_COMMAND_RECEIPTS_MALFORMED'])
+        expect(definitions.boundReached).toBe(false)
+        expect(definitions.countsBounded).toBe(false)
+        // The definition rows themselves are intact; the malformed evidence is
+        // in the catalog-command receipt feed.
+        expect(definitions.malformedRecords).toBe(0)
+        // Only canonical, identity-matching receipts attribute: the three
+        // injected rows (null receipt, missing canonical envelope, foreign
+        // workspace identity) are counted as malformed — never silently
+        // skipped, never attributed to a graph.
+        const alpha = definitions.entries.find(
+          (entry) =>
+            entry.workspaceId === fixture.ids.workspaceOne &&
+            entry.graphDefinitionId === 'graph:inventory-alpha' &&
+            entry.graphVersion === '1.0.0'
+        )
+        expect(alpha.consumersObserved.catalogCommands).toBe(1)
+        expect(alpha.consumersObserved.usageComplete).toBe(false)
+        expect(alpha.consumersObserved.incompleteUsageSources).toEqual(['catalogCommands'])
+        for (const entry of definitions.entries) {
+          expect(entry.consumersObserved.usageComplete).toBe(false)
+          expect(entry.consumersObserved.incompleteUsageSources).toEqual(['catalogCommands'])
+        }
+        // The consumers section reads the same rows by caller identity and
+        // stays intact: three injected rows join callerOne, adding counts but
+        // no new caller.
+        const consumers = manifest.sections.consumers
+        expect(consumers.status).toBe('observed')
+        expect(consumers.counts.catalogCommandReceipts).toBe(5)
+        expect(consumers.counts.distinctCatalogCallers).toBe(2)
+      })
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'a failed catalog-command index scan is typed, never read back as an empty exact index',
+    async () => {
+      await withFixture({ revokeCatalogCommandsRead: true }, async (fixture) => {
+        const { manifest } = await collectFromFixture(fixture)
+        // The consumers scan touches the revoked table first and fails, so the
+        // single snapshot is already aborted when the attribution index and
+        // the definitions scan run: every later section reports a typed
+        // TABLE_SCAN_FAILED. The failure never resurrects as an empty exact
+        // index or as usageComplete zeros.
+        const definitions = manifest.sections.definitions
+        expect(definitions.status).toBe('inaccessible')
+        expect(definitions.reasons).toEqual(['TABLE_SCAN_FAILED'])
+        expect(definitions.counts.total).toBe(0)
+        expect(definitions.entries).toEqual([])
+        expect(definitions.boundReached).toBe(false)
+        const consumers = manifest.sections.consumers
+        expect(consumers.status).toBe('inaccessible')
+        expect(consumers.reasons).toEqual(['TABLE_SCAN_FAILED'])
+        // Sections observed before the first failure keep their evidence.
+        expect(manifest.sections.executions.status).toBe('observed')
+      })
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'a failed catalog-command attribution index downgrades per-definition usage with a typed reason',
+    async () => {
+      await withFixture({ restrictCatalogCommandsColumns: true }, async (fixture) => {
+        const { manifest } = await collectFromFixture(fixture)
+        // The column restriction leaves the consumers scan readable (it never
+        // selects payload_hash) but fails the attribution index, which must
+        // validate receipt/row identity through payload_hash. The savepoint
+        // keeps the rest of the snapshot usable, so the definitions section
+        // survives and carries the failure into every entry's usage state.
+        const definitions = manifest.sections.definitions
+        expect(definitions.status).toBe('incomplete')
+        expect(definitions.reasons).toEqual(['CATALOG_COMMAND_INDEX_SCAN_FAILED'])
+        expect(definitions.boundReached).toBe(false)
+        expect(definitions.countsBounded).toBe(false)
+        expect(definitions.counts.total).toBeGreaterThan(0)
+        for (const entry of definitions.entries) {
+          expect(entry.consumersObserved.catalogCommands).toBe(0)
+          expect(entry.consumersObserved.usageComplete).toBe(false)
+          expect(entry.consumersObserved.incompleteUsageSources).toEqual(['catalogCommands'])
+        }
+        const consumers = manifest.sections.consumers
+        expect(consumers.status).toBe('observed')
+        expect(consumers.counts.catalogCommandReceipts).toBe(2)
+      })
+    },
+    integrationTestTimeout()
+  )
+
+  test(
     'the whole observation reads one snapshot: a concurrent mutation mid-capture is invisible',
     async () => {
       await withFixture({}, async (fixture) => {
