@@ -95,6 +95,10 @@ export const INTEGRATION_SHARDS = [
         files: ['src/postgres-checkpointer.integration.test.mjs'],
       },
       {
+        package: '.',
+        files: ['./tests/langgraph-retirement-inventory-pg.integration.test.mjs'],
+      },
+      {
         package: 'apps/workflow-worker',
         files: ['src/runtime-budget-admission.integration.test.mjs'],
       },

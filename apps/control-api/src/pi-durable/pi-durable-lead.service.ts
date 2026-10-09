@@ -8,6 +8,7 @@ import {
   type ServicePrincipal,
 } from '@control-plane/contracts'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
+import type { DelegationService } from '@control-plane/orchestration'
 import { PiLeadPreparationError, type SqlitePiLeadPreparations } from './lead-preparation.js'
 import {
   RuntimeExecutionHandleSchema,
@@ -22,6 +23,7 @@ import {
 export const PI_DURABLE_LEAD_SERVICE = Symbol('PI_DURABLE_LEAD_SERVICE')
 import {
   PiDurableLeadDispatchRequestSchema,
+  PiDurableLeadRequestedTargetSchema,
   PiDurableLeadPrepareRequestSchema,
   PiDurableLeadPrepareResponseSchema,
   PiDurableLeadLookupRequestSchema,
@@ -44,6 +46,7 @@ export {
   PiDurableLeadLookupRequestSchema,
   PiDurableLeadLookupResponseSchema,
   PiDurableLeadDispatchRequestSchema,
+  PiDurableLeadRequestedTargetSchema,
   PiDurableLeadStatusRequestSchema,
   PiDurableLeadProgressRequestSchema,
   PiDurableLeadCancelRequestSchema,
@@ -102,6 +105,7 @@ const ReceiptSchema = z
     executionId: IdentifierSchemas.executionId,
     attemptId: IdentifierSchemas.attemptId,
     allowedPrincipalIds: z.array(z.string().min(1).max(256)).min(1).max(256),
+    requestedTarget: PiDurableLeadRequestedTargetSchema.optional(),
     revision: z.number().int().positive(),
     state: z.enum(['dispatching', 'dispatched', 'reconciliation_required']),
     handle: RuntimeExecutionHandleSchema.optional(),
@@ -195,6 +199,8 @@ export interface DurablePiDurableLeadServiceOptions {
   readonly adapter: Pick<RuntimeAdapter, 'start' | 'status' | 'progress' | 'cancel'>
   readonly now?: () => string
   readonly preparations?: SqlitePiLeadPreparations
+  /** Canonical cascade-only child stop. The supplied service must use the admitted parent stores. */
+  readonly delegationService?: Pick<DelegationService, 'cancelChildren'>
   /** Metadata-only journal read. Must never start, reconcile or invoke a provider. */
   readonly findRuntimeHandle?: (
     request: RuntimeStartRequest
@@ -310,6 +316,10 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
               ...(receipt.handle?.externalSessionId
                 ? { runtimeSessionId: receipt.handle.externalSessionId }
                 : {}),
+              ...(receipt.requestedTarget !== undefined
+                ? { requestedTarget: receipt.requestedTarget }
+                : {}),
+              ...observedTarget(receipt, admission),
             }
           : null,
       })
@@ -347,6 +357,10 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
           principal
         )
       )
+    // The target binds once, at dispatch where effects begin: retained
+    // verbatim from the dispatch request onto the immutable receipt.
+    // Redelivery names it again or conflicts at the command digest;
+    // a retained target never changes under the same dispatch.
     const immutable = {
       schemaVersion: 'pi-lead-receipt/v1' as const,
       dispatchId,
@@ -358,6 +372,9 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       executionId: admission.admittedAttempt.executionId,
       attemptId: admission.admittedAttempt.attemptId,
       allowedPrincipalIds: [...admission.allowedPrincipalIds],
+      ...(request.payload.requestedTarget !== undefined
+        ? { requestedTarget: request.payload.requestedTarget }
+        : {}),
     }
     let receipt = await this.options.receipts.get(dispatchId)
     let replayed = receipt !== undefined
@@ -435,7 +452,12 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     verifyRuntimeHandle(receipt, status.handle)
     await this.options.authority.assertCurrent(admission, principal, 'dispatch')
     return PiDurableLeadDispatchResponseSchema.parse(
-      success(request, { ...publicReceipt(receipt), state: status.state, replayed })
+      success(request, {
+        ...publicReceipt(receipt),
+        ...observedTarget(receipt, admission),
+        state: status.state,
+        replayed,
+      })
     )
   }
 
@@ -455,7 +477,12 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     verifyRuntimeHandle(receipt, status.handle)
     await this.options.authority.assertCurrent(admission, principal, 'status')
     return PiDurableLeadStatusResponseSchema.parse(
-      success(request, { ...publicReceipt(receipt), state: status.state, status })
+      success(request, {
+        ...publicReceipt(receipt),
+        ...observedTarget(receipt, admission),
+        state: status.state,
+        status,
+      })
     )
   }
 
@@ -496,7 +523,12 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     }
     await this.options.authority.assertCurrent(admission, principal, 'progress')
     return PiDurableLeadProgressResponseSchema.parse(
-      success(request, { ...publicReceipt(receipt), events, nextSequence })
+      success(request, {
+        ...publicReceipt(receipt),
+        ...observedTarget(receipt, admission),
+        events,
+        nextSequence,
+      })
     )
   }
 
@@ -519,9 +551,19 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       })
     )
     verifyRuntimeHandle(receipt, status.handle)
+    // Ordinary lead-stop ends here: it never cascades to child jobs.
+    // Child cancellation is a separately explicit authorized operation
+    // (delegationService.cancelChildren, invoked directly with its own
+    // authorization), never a lead-stop side effect — so independent
+    // child work survives a normal parent stop by construction.
     await this.options.authority.assertCurrent(admission, principal, 'cancel')
     return PiDurableLeadCancelResponseSchema.parse(
-      success(request, { ...publicReceipt(receipt), state: status.state, status })
+      success(request, {
+        ...publicReceipt(receipt),
+        ...observedTarget(receipt, admission),
+        state: status.state,
+        status,
+      })
     )
   }
 
@@ -670,7 +712,28 @@ function publicReceipt(receipt: PiDurableLeadReceipt) {
     executionId: receipt.executionId,
     attemptId: receipt.attemptId,
     runtimeSessionId: requireHandle(receipt).externalSessionId,
+    ...(receipt.requestedTarget !== undefined ? { requestedTarget: receipt.requestedTarget } : {}),
   }
+}
+/** Server-owned execution observation for one verified receipt: the
+ *  adapter-observed execution session plus the authority-resolved plan
+ *  task. Both facts come from server-held records already pinned by the
+ *  surrounding verifyReceipt/verifyRuntimeHandle checks — never from
+ *  caller claims. Absent unless a handle with an observed session exists;
+ *  generation is deliberately not emitted (no current read reports it). */
+function observedTarget(
+  receipt: PiDurableLeadReceipt,
+  admission: PiDurableLeadAdmission
+): { observedTarget: { sessionId: string; taskId: string } } | Record<string, never> {
+  const sessionId = receipt.handle?.externalSessionId
+  // The admission type leaves the plan loosely typed; read the correlation
+  // defensively — anything but a string taskId means no observation.
+  const plan = admission.startRequest.executionPlan as
+    | { correlation?: { taskId?: unknown } }
+    | undefined
+  const taskId = plan?.correlation?.taskId
+  if (typeof sessionId !== 'string' || typeof taskId !== 'string') return {}
+  return { observedTarget: { sessionId, taskId } }
 }
 function success(request: z.output<typeof command> | z.output<typeof read>, data: unknown) {
   return {

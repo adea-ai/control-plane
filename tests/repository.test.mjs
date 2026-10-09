@@ -239,6 +239,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/profile-portability/src/postgres.integration.test.mjs',
     'packages/testing/src/postgres.integration.test.mjs',
     'tests/acp-remote-device-postgres.integration.test.mjs',
+    'tests/langgraph-retirement-inventory-pg.integration.test.mjs',
     'tests/memory-process-loss.integration.test.mjs',
   ])
   const portabilityManifest = await readJson('packages/profile-portability/package.json')
@@ -273,6 +274,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/j1-unfinished-child-process-restart.test.mjs',
     'tests/pi-durable-workspace-scope.test.mjs',
     'tests/pi-production-runtime-startup.test.mjs',
+    'tests/pi-production-factory.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
   ])
   const manifest = await readJson('package.json')

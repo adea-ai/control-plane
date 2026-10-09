@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.28.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.27.1...control-api-v1.28.0) (2026-10-09)
+
+
+### Features
+
+* **pi:** 935 cancel-intent persistence, attempt fencing, and target-bound observation ([#1045](https://github.com/adea-ai/control-plane/issues/1045)) ([1208729](https://github.com/adea-ai/control-plane/commit/12087297deac41190f52f629d70e40bdb8d50d01))
+
+## [1.27.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.27.0...control-api-v1.27.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **pi:** fence cancellation by inference generation ([#1031](https://github.com/adea-ai/control-plane/issues/1031)) ([f735d7e](https://github.com/adea-ai/control-plane/commit/f735d7eae4f6b909c53a7bb4b6b4f8ef1769c9b7))
+
+## [1.27.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.26.0...control-api-v1.27.0) (2026-10-09)
+
+
+### Features
+
+* add explicit Pi role model selection and proof ([#1016](https://github.com/adea-ai/control-plane/issues/1016)) ([b61426b](https://github.com/adea-ai/control-plane/commit/b61426bce2d5b29964fe13806a149c330d3d085e))
+* **pi-durable:** add canonical current tool authority ([#932](https://github.com/adea-ai/control-plane/issues/932)) ([#1038](https://github.com/adea-ai/control-plane/issues/1038)) ([398a902](https://github.com/adea-ai/control-plane/commit/398a902071f94627a88f4f16384b909e7f1d224b))
+
 ## [1.26.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.25.0...control-api-v1.26.0) (2026-10-09)
 
 

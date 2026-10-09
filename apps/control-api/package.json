@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/control-api",
-  "version": "1.26.0",
+  "version": "1.28.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -30,6 +30,7 @@
     "@control-plane/pi-durable-adapter": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
     "@control-plane/telemetry": "workspace:*",
+    "@control-plane/tool-execution": "workspace:*",
     "@control-plane/usage-ledger": "workspace:*",
     "@fastify/helmet": "13.1.1",
     "@nestjs/common": "12.1.2",

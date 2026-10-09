@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.14.0...runtime-sdk-v1.15.0) (2026-10-09)
+
+
+### Features
+
+* **pi:** 935 cancel-intent persistence, attempt fencing, and target-bound observation ([#1045](https://github.com/adea-ai/control-plane/issues/1045)) ([1208729](https://github.com/adea-ai/control-plane/commit/12087297deac41190f52f629d70e40bdb8d50d01))
+
 ## [1.14.0](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.13.1...runtime-sdk-v1.14.0) (2026-10-08)
 
 
