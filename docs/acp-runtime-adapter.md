@@ -64,11 +64,14 @@ inventory replies are bound to a per-request nonce with a freshness bound.
 
 Authority checks are current-authority: the route fence (revocation, trust-record staleness, finite
 clock) and the command's window/channel-generation gates are evaluated before decryption and
-re-evaluated after every await — immediately before send at the controller and immediately before the
-executor at the device — so revocation, cancellation, or a broken clock landing while work is parked
-can never reach an effect. A non-finite clock or malformed window fails closed. Unauthenticated
-input receives no signed reply, so an intermediary cannot harvest a device signature over copyable
-header fields. Every denial carries an explicit `fallback: 'none'`.
+re-evaluated after **every** await on the effect and publication paths — after send and after reply
+opening at the controller, and after each storage read, the ledger claim, execution, and reply
+sealing at the device — with every reply publication (fresh, sealed, or cached) fenced and the
+persisted fence enforced atomically inside the durable claim transaction, so revocation,
+cancellation, an expired window, a superseded generation, or a broken clock landing while work is
+parked can never reach an effect or leave one. A non-finite clock or malformed window fails
+closed. Unauthenticated input receives no signed reply, so an intermediary cannot harvest a device
+signature over copyable header fields. Every denial carries an explicit `fallback: 'none'`.
 
 Device fence state is durable through `AcpRemoteDeviceStateStore`:
 `PersistenceProviderAcpRemoteDeviceStateStore` persists the highest accepted channel generation, the
@@ -78,7 +81,17 @@ durable across restart. After a restart a recorded command replays its recorded 
 re-executing, an older channel generation stays denied, a revocation stays terminal, and a claim
 whose effect never completed denies as `outcome_uncertain` instead of being blindly retried. A stale
 generation or an expired delivery window is denied even when a recorded outcome exists; only a
-current window under current authority may recover it.
+current window under current authority may recover it. Fence and ledger keys derive from the
+authenticated route identity through `acpRemoteDeviceStateScope`, so two routes sharing one store
+never observe each other's revocation, generation, or recorded effects, and `claim` re-evaluates the
+persisted fence inside the same transaction that would create the ledger entry — an endpoint that
+loaded its mirror once still fails closed on a revocation or supersession applied elsewhere.
+
+**Retained integration gap (explicitly not claimed as wired):** no production composition
+constructs `SecureAcpRemoteTransport` or `SecureAcpDeviceEndpoint` today — only fixtures and tests
+do — so the in-memory default remains test-only. A real Local construction must inject
+`new PersistenceProviderAcpRemoteDeviceStateStore(provider, acpRemoteDeviceStateScope(route))` —
+one scoped store per authenticated route — before this route may carry production traffic.
 
 Neither layer can produce an implicit cloud reroute: an offline or revoked route denies with
 `fallback: 'none'` and the transport has no alternate route, and at attempt selection
@@ -87,10 +100,13 @@ could have used with a remote one (`WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBA
 
 Evidence: `packages/acp-adapter/src/acp-remote-fence.test.mjs` (route schema, fence decisions,
 finite-clock guards, HPKE/signature binding), `packages/acp-adapter/src/acp-remote-transport.test.mjs`
-(parked-async revocation/abort regressions, authenticated and encrypted runs, replay/conflict/
-generation proofs, edge fences), and
+(parked-async revocation/abort regressions, parked storage window/generation regressions,
+revocation at execution/sealing/response-opening boundaries, authenticated and encrypted runs,
+replay/conflict/generation proofs, edge fences),
 `apps/local-control-plane/src/acp-remote-device-restart.test.mjs` (restart proofs through the real
-SQLite persistence composition using disposable per-test databases).
+SQLite persistence composition using disposable per-test databases), and
+`apps/local-control-plane/src/acp-remote-device-fence.test.mjs` (two endpoints over one shared
+store, atomic claim rejection without writes, and per-route fence/ledger namespacing).
 
 ## External session references
 
