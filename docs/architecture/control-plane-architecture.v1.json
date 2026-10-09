@@ -89,8 +89,8 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.22.0",
-      "lockVersion": "1.22.0",
+      "version": "1.23.0",
+      "lockVersion": "1.23.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -108,6 +108,8 @@
         "@control-plane/memory-writeback",
         "@control-plane/model-gateway",
         "@control-plane/orchestration",
+        "@control-plane/pi-durable-adapter",
+        "@control-plane/runtime-sdk",
         "@control-plane/telemetry",
         "@control-plane/usage-ledger"
       ],
@@ -123,13 +125,16 @@
         "drizzle-orm",
         "fastify",
         "reflect-metadata",
-        "rxjs"
+        "rxjs",
+        "zod"
       ],
       "developmentWorkspaceDependencies": [
+        "@control-plane/sdk",
         "@control-plane/sqlite-persistence",
-        "@control-plane/testing"
+        "@control-plane/testing",
+        "@control-plane/workflow-worker"
       ],
-      "developmentExternalDependencies": [],
+      "developmentExternalDependencies": ["@earendil-works/pi-ai"],
       "layer": "composition-root"
     },
     {
@@ -362,6 +367,7 @@
         "@control-plane/control-api",
         "@control-plane/deployment",
         "@control-plane/domain",
+        "@control-plane/events",
         "@control-plane/execution-plan",
         "@control-plane/langgraph-adapter",
         "@control-plane/managed-pi-adapter",
@@ -430,8 +436,8 @@
     {
       "name": "@control-plane/model-gateway",
       "path": "packages/model-gateway",
-      "version": "1.4.0",
-      "lockVersion": "1.4.0",
+      "version": "1.5.0",
+      "lockVersion": "1.5.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -481,7 +487,9 @@
         "@control-plane/context",
         "@control-plane/contracts",
         "@control-plane/domain",
-        "@control-plane/execution-plan"
+        "@control-plane/execution-plan",
+        "@control-plane/runtime-sdk",
+        "@control-plane/tool-sdk"
       ],
       "externalDependencies": ["zod"],
       "developmentWorkspaceDependencies": [],
@@ -491,8 +499,8 @@
     {
       "name": "@control-plane/pi-cloudflare-host",
       "path": "packages/pi-cloudflare-host",
-      "version": "0.1.0",
-      "lockVersion": "0.1.0",
+      "version": "0.2.0",
+      "lockVersion": "0.2.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -505,6 +513,36 @@
       ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": ["miniflare"],
+      "layer": "adapter-infrastructure"
+    },
+    {
+      "name": "@control-plane/pi-durable-adapter",
+      "path": "packages/pi-durable-adapter",
+      "version": "0.1.0",
+      "lockVersion": "0.1.0",
+      "kind": "package",
+      "private": true,
+      "browser": false,
+      "exports": ["."],
+      "workspaceDependencies": [
+        "@control-plane/contracts",
+        "@control-plane/domain",
+        "@control-plane/execution-plan",
+        "@control-plane/model-gateway",
+        "@control-plane/orchestration",
+        "@control-plane/runtime-sdk",
+        "@control-plane/tool-execution",
+        "@control-plane/tool-sdk",
+        "@control-plane/usage-ledger"
+      ],
+      "externalDependencies": [
+        "@earendil-works/chord",
+        "@earendil-works/pi-ai",
+        "@earendil-works/pi-durable",
+        "zod"
+      ],
+      "developmentWorkspaceDependencies": ["@control-plane/sqlite-persistence"],
+      "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
     },
     {
@@ -700,7 +738,7 @@
       "private": false,
       "browser": false,
       "exports": [".", "./testing"],
-      "workspaceDependencies": ["@control-plane/contracts"],
+      "workspaceDependencies": ["@control-plane/contracts", "@control-plane/runtime-sdk"],
       "externalDependencies": ["zod"],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
@@ -2582,6 +2620,331 @@
       ],
       "inOpenApi": true,
       "openApiOperationId": "model-selection.resolve",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-PI-DURABLE-LEAD-CANCEL",
+      "name": "cancelPiDurableLead",
+      "operation": "pi-durable.lead.cancel",
+      "method": "POST",
+      "path": "/v3/pi-durable/lead-dispatches/cancel",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing service bearer execution:cancel scope, immutable original principal, current product audience and canonical attempt",
+        "service": "PiDurableLeadController -> DurablePiDurableLeadService -> explicit Node lead composition",
+        "persistence": "Canonical command/execution/plan/budget repositories, lead-admission.sqlite and versioned runtime authority/native SQLite journals",
+        "execution": "Pinned Pi Durable 1.1.0 Node engine; separately recorded spending authority and one physical-send usage hold",
+        "delivery": "Bounded committed progress cursors and canonical opaque execution/attempt/session receipt, live audience reread",
+        "cleanup": "Logical terminal session close retains replay evidence; explicit composition shutdown owns native/journal connections"
+      },
+      "assessment": "Strict SDK/OpenAPI/controller routes compose an opt-in Node24.21/SQLite Pi1.1 remote-host runtime. Controlled real Pi/Node/store restart and governed-child fixtures verify immutable identity, original actor/current workspace scope, full policy/approval gates and separate child provider/budget/spending. Provider and spending share one confirmed funding facade; current authority is reread at dispatch and physical send. Deployed/live provider, connected Adea artifact qualification, canonical terminal synchronization and independent child continuation after lead completion remain partial.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/pi-durable.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/pi-durable-lead.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/node-composition.test.mjs"
+        },
+        {
+          "kind": "documentation",
+          "path": "docs/pi-durable-runtime.md"
+        }
+      ],
+      "gap": {
+        "issue": 187,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Qualify exact composed public artifacts and Adea current-product integration, terminal/outliving-child authority and the deployed live-provider profile with recorded paid-send/revocation/restart evidence."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "pi-durable.lead.cancel",
+      "openApiResponseStatuses": ["202", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-PI-DURABLE-LEAD-DISPATCH",
+      "name": "dispatchPiDurableLead",
+      "operation": "pi-durable.lead.dispatch",
+      "method": "POST",
+      "path": "/v3/pi-durable/lead-dispatches/dispatch",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing service bearer execution:accept scope, immutable original principal, current product audience and canonical attempt",
+        "service": "PiDurableLeadController -> DurablePiDurableLeadService -> explicit Node lead composition",
+        "persistence": "Canonical command/execution/plan/budget repositories, lead-admission.sqlite and versioned runtime authority/native SQLite journals",
+        "execution": "Pinned Pi Durable 1.1.0 Node engine; separately recorded spending authority and one physical-send usage hold",
+        "delivery": "Bounded committed progress cursors and canonical opaque execution/attempt/session receipt, live audience reread",
+        "cleanup": "Logical terminal session close retains replay evidence; explicit composition shutdown owns native/journal connections"
+      },
+      "assessment": "Strict SDK/OpenAPI/controller routes compose an opt-in Node24.21/SQLite Pi1.1 remote-host runtime. Controlled real Pi/Node/store restart and governed-child fixtures verify immutable identity, original actor/current workspace scope, full policy/approval gates and separate child provider/budget/spending. Provider and spending share one confirmed funding facade; current authority is reread at dispatch and physical send. Deployed/live provider, connected Adea artifact qualification, canonical terminal synchronization and independent child continuation after lead completion remain partial.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/pi-durable.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/pi-durable-lead.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/node-composition.test.mjs"
+        },
+        {
+          "kind": "documentation",
+          "path": "docs/pi-durable-runtime.md"
+        }
+      ],
+      "gap": {
+        "issue": 187,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Qualify exact composed public artifacts and Adea current-product integration, terminal/outliving-child authority and the deployed live-provider profile with recorded paid-send/revocation/restart evidence."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "pi-durable.lead.dispatch",
+      "openApiResponseStatuses": ["202", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-PI-DURABLE-LEAD-LOOKUP",
+      "name": "lookupPiDurableLead",
+      "operation": "pi-durable.lead.lookup",
+      "method": "POST",
+      "path": "/v3/pi-durable/lead-dispatches/lookup",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing service bearer execution:read scope, immutable original principal, current product audience and canonical attempt",
+        "service": "PiDurableLeadController -> DurablePiDurableLeadService -> explicit Node lead composition",
+        "persistence": "Canonical command/execution/plan/budget repositories, lead-admission.sqlite and versioned runtime authority/native SQLite journals",
+        "execution": "No inference or effect dispatch; canonical immutable receipt and current actor/audience reads only",
+        "delivery": "Bounded committed progress cursors and canonical opaque execution/attempt/session receipt, live audience reread",
+        "cleanup": "Logical terminal session close retains replay evidence; explicit composition shutdown owns native/journal connections"
+      },
+      "assessment": "Authenticated intent-only lookup reads actual retained session/admission metadata and repairs a lost dispatch reply without preparing funding, starting inference or replaying a physical send. Missing or incomplete receipts remain bounded and explicit. Controlled real Node/Pi/SQLite fixtures use synthetic grants and scripted transport; deployed/live provider and connected Adea qualification remain partial.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/node-candidate-funding.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/pi-durable-lead.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/pi-durable.test.mjs"
+        },
+        {
+          "kind": "documentation",
+          "path": "docs/pi-durable-runtime.md"
+        }
+      ],
+      "gap": {
+        "issue": 187,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Qualify the exact deployed Node account/provider profile with recorded paid-send/revocation/restart evidence, integrate compatible public artifacts and product project authority, then qualify the governed child tool and parent receipt path."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "pi-durable.lead.lookup",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-PI-DURABLE-LEAD-PREPARE",
+      "name": "preparePiDurableLead",
+      "operation": "pi-durable.lead.prepare",
+      "method": "POST",
+      "path": "/v3/pi-durable/lead-dispatches/prepare",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing service bearer execution:accept scope, immutable original principal, current product audience and canonical attempt",
+        "service": "PiDurableLeadController -> DurablePiDurableLeadService -> explicit Node lead composition",
+        "persistence": "Canonical command/execution/plan/budget repositories, lead-admission.sqlite and versioned runtime authority/native SQLite journals",
+        "execution": "No inference or effect dispatch; canonical immutable receipt and current actor/audience reads only",
+        "delivery": "Bounded committed progress cursors and canonical opaque execution/attempt/session receipt, live audience reread",
+        "cleanup": "Logical terminal session close retains replay evidence; explicit composition shutdown owns native/journal connections"
+      },
+      "assessment": "Intent-only preparation retains an immutable recorded payer and exact admitted attempt without creating Models, leasing credentials or starting inference. Changed funding/current original actor or audience denies dispatch; expired proven-unused allocations recover idempotently. Controlled real Node/Pi/SQLite fixtures use synthetic grants and scripted transport; deployed/live provider and connected Adea qualification remain partial.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/node-candidate-funding.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/pi-durable-lead.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/pi-durable.test.mjs"
+        },
+        {
+          "kind": "documentation",
+          "path": "docs/pi-durable-runtime.md"
+        }
+      ],
+      "gap": {
+        "issue": 187,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Qualify the exact deployed Node account/provider profile with recorded paid-send/revocation/restart evidence, integrate compatible public artifacts and product project authority, then qualify the governed child tool and parent receipt path."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "pi-durable.lead.prepare",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-PI-DURABLE-LEAD-PROGRESS",
+      "name": "getPiDurableLeadProgress",
+      "operation": "pi-durable.lead.progress",
+      "method": "POST",
+      "path": "/v3/pi-durable/lead-dispatches/progress",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing service bearer execution:read scope, immutable original principal, current product audience and canonical attempt",
+        "service": "PiDurableLeadController -> DurablePiDurableLeadService -> explicit Node lead composition",
+        "persistence": "Canonical command/execution/plan/budget repositories, lead-admission.sqlite and versioned runtime authority/native SQLite journals",
+        "execution": "Pinned Pi Durable 1.1.0 Node engine; separately recorded spending authority and one physical-send usage hold",
+        "delivery": "Bounded committed progress cursors and canonical opaque execution/attempt/session receipt, live audience reread",
+        "cleanup": "Logical terminal session close retains replay evidence; explicit composition shutdown owns native/journal connections"
+      },
+      "assessment": "Strict SDK/OpenAPI/controller routes compose an opt-in Node24.21/SQLite Pi1.1 remote-host runtime. Controlled real Pi/Node/store restart and governed-child fixtures verify immutable identity, original actor/current workspace scope, full policy/approval gates and separate child provider/budget/spending. Provider and spending share one confirmed funding facade; current authority is reread at dispatch and physical send. Deployed/live provider, connected Adea artifact qualification, canonical terminal synchronization and independent child continuation after lead completion remain partial.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/pi-durable.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/pi-durable-lead.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/node-composition.test.mjs"
+        },
+        {
+          "kind": "documentation",
+          "path": "docs/pi-durable-runtime.md"
+        }
+      ],
+      "gap": {
+        "issue": 187,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Qualify exact composed public artifacts and Adea current-product integration, terminal/outliving-child authority and the deployed live-provider profile with recorded paid-send/revocation/restart evidence."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "pi-durable.lead.progress",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-PI-DURABLE-LEAD-PUBLICATION-CURRENT",
+      "name": "getPiDurableLeadPublication",
+      "operation": "pi-durable.lead.publication.current",
+      "method": "POST",
+      "path": "/v1/pi-durable/lead-publication/current",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing execution:read service authentication and exact workspace/caller binding",
+        "service": "PiLeadPublicationController -> PiLeadPublicationService -> retained canonical metadata and mandatory independent current CP authority",
+        "persistence": "Reads exact SQLite receipt/preparation/marker and native committed result journal; no writes",
+        "execution": "No runtime start, product callback, lease, provider call or spending reservation",
+        "delivery": "Exact original actor/execution/attempt/session/selection pins and SHA256 UTF8 output digest with bounded current authority expiry",
+        "cleanup": "Stateless publication read; production facade cleanup requires canonical terminal and released/reconciled allocation"
+      },
+      "assessment": "Focused fault tests cover reference correlation, exact newline digest, missing authority and revocation during the final metadata read. Real startup composition requires current product/profile/account and independent lock-safe CP publication ports; connected production, live provider, device and full restart/cancellation qualification remain open.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/publication-current.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/pi-lead-publication.test.mjs"
+        },
+        {
+          "kind": "documentation",
+          "path": "docs/architecture/pi-production-model-binding.md"
+        }
+      ],
+      "gap": {
+        "issue": 931,
+        "severity": "high",
+        "owner": "Control Plane R2 implementation owner",
+        "disposition": "Qualify deployed current grant/payer/original actor/latest-attempt authority and connected Adea publication under current audience locks; preserve missing-configuration fail-closed behavior."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "pi-durable.lead.publication.current",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-PI-DURABLE-LEAD-STATUS",
+      "name": "getPiDurableLeadStatus",
+      "operation": "pi-durable.lead.status",
+      "method": "POST",
+      "path": "/v3/pi-durable/lead-dispatches/status",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing service bearer execution:read scope, immutable original principal, current product audience and canonical attempt",
+        "service": "PiDurableLeadController -> DurablePiDurableLeadService -> explicit Node lead composition",
+        "persistence": "Canonical command/execution/plan/budget repositories, lead-admission.sqlite and versioned runtime authority/native SQLite journals",
+        "execution": "Pinned Pi Durable 1.1.0 Node engine; separately recorded spending authority and one physical-send usage hold",
+        "delivery": "Bounded committed progress cursors and canonical opaque execution/attempt/session receipt, live audience reread",
+        "cleanup": "Logical terminal session close retains replay evidence; explicit composition shutdown owns native/journal connections"
+      },
+      "assessment": "Strict SDK/OpenAPI/controller routes compose an opt-in Node24.21/SQLite Pi1.1 remote-host runtime. Controlled real Pi/Node/store restart and governed-child fixtures verify immutable identity, original actor/current workspace scope, full policy/approval gates and separate child provider/budget/spending. Provider and spending share one confirmed funding facade; current authority is reread at dispatch and physical send. Deployed/live provider, connected Adea artifact qualification, canonical terminal synchronization and independent child continuation after lead completion remain partial.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/pi-durable.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/pi-durable-lead.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/node-composition.test.mjs"
+        },
+        {
+          "kind": "documentation",
+          "path": "docs/pi-durable-runtime.md"
+        }
+      ],
+      "gap": {
+        "issue": 187,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Qualify exact composed public artifacts and Adea current-product integration, terminal/outliving-child authority and the deployed live-provider profile with recorded paid-send/revocation/restart evidence."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "pi-durable.lead.status",
       "openApiResponseStatuses": ["200", "default"],
       "openApiSecured": true,
       "openApiHasRequestSchema": true,

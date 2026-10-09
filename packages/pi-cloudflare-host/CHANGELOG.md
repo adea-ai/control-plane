@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.6.0](https://github.com/adea-ai/control-plane/compare/pi-cloudflare-host-v0.5.0...pi-cloudflare-host-v0.6.0) (2026-10-09)
+
+
+### Features
+
+* **pi-cloudflare:** preflight pinned native task definitions ([#1000](https://github.com/adea-ai/control-plane/issues/1000)) ([ff72007](https://github.com/adea-ai/control-plane/commit/ff72007e6e013a4dcf1a42f0dbb02f0c86ea92ed))
+
+## [0.5.0](https://github.com/adea-ai/control-plane/compare/pi-cloudflare-host-v0.4.0...pi-cloudflare-host-v0.5.0) (2026-10-08)
+
+
+### Features
+
+* **pi-cloudflare:** add canonical read-only session binding ([#985](https://github.com/adea-ai/control-plane/issues/985)) ([e35b1fc](https://github.com/adea-ai/control-plane/commit/e35b1fcf62ffe5accbe97e49a049365d42267706))
+
+## [0.4.0](https://github.com/adea-ai/control-plane/compare/pi-cloudflare-host-v0.3.0...pi-cloudflare-host-v0.4.0) (2026-10-08)
+
+
+### Features
+
+* compose partial Cloudflare runtime adapter ([#977](https://github.com/adea-ai/control-plane/issues/977)) ([cd26e7f](https://github.com/adea-ai/control-plane/commit/cd26e7f55065e39998b633c78ec518747d777d1c))
+
+## [0.3.0](https://github.com/adea-ai/control-plane/compare/pi-cloudflare-host-v0.2.0...pi-cloudflare-host-v0.3.0) (2026-10-08)
+
+
+### Features
+
+* **runtime:** reconcile interrupted Cloudflare Pi effects ([#971](https://github.com/adea-ai/control-plane/issues/971)) ([b0d6b8a](https://github.com/adea-ai/control-plane/commit/b0d6b8aa921bddeef5366ead44efbb0cd92b4b39))
+
 ## [0.2.0](https://github.com/adea-ai/control-plane/compare/pi-cloudflare-host-v0.1.0...pi-cloudflare-host-v0.2.0) (2026-10-08)
 
 

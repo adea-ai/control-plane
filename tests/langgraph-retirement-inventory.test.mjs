@@ -1,0 +1,1272 @@
+// Tests for the M16.01 (#938) read-only retirement inventory.
+//
+// Families covered: disposable persistence (temp-dir sqlite stores through the
+// real catalog/plan/execution interfaces), bounding and pagination, mixed
+// schema/workflow versions, unavailable sources (typed inaccessible, never a
+// crash), inconsistent stores (typed incomplete/stale), the zero-vs-unknown
+// epistemics rule, byte-stable deterministic output with an injectable
+// observation clock, the pure disposition validator, and the CLI surface.
+// No network, no production DSNs, no writes outside temp directories.
+
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import {
+  DISPOSITION_KINDS,
+  OBSERVATION_SCOPES,
+  OBSERVATION_STATUS,
+  RetirementInventoryError,
+  buildInventoryManifest,
+  openReadOnlyStore,
+  readStoreProfile,
+  retainedWorkEpistemics,
+  runInventoryCli,
+  stableJsonStringify,
+  validateDispositions,
+} from '../scripts/langgraph-retirement-inventory.mjs'
+import { createInventoryFixtureStore } from '../scripts/langgraph-retirement-inventory-fixture.mjs'
+
+const OBSERVED_AT = '2026-10-08T00:00:00.000Z'
+
+let temporaryDirectory
+
+beforeEach(async () => {
+  temporaryDirectory = await mkdtemp(join(tmpdir(), 'langgraph-retirement-inventory-test-'))
+})
+
+afterEach(async () => {
+  await rm(temporaryDirectory, { recursive: true, force: true })
+})
+
+async function withFixtureStore(options, run) {
+  const fixture = await createInventoryFixtureStore(options)
+  try {
+    const store = await openReadOnlyStore(fixture.path)
+    try {
+      return await run({ fixture, store })
+    } finally {
+      store.database.close()
+    }
+  } finally {
+    await fixture.cleanup()
+  }
+}
+
+/**
+ * Copies the fixture store into the test temp directory and deletes every
+ * execution-plan row, simulating vanished plans; the fixture itself stays
+ * untouched and the copy is disposable.
+ */
+async function createPlanlessStoreCopy(fixture) {
+  const copyPath = join(temporaryDirectory, 'planless.sqlite')
+  await rm(copyPath, { force: true })
+  const { Database } = await import('bun:sqlite')
+  const source = new Database(fixture.path, { readonly: true })
+  source.exec(`VACUUM INTO '${copyPath}'`)
+  source.close()
+  const writer = new Database(copyPath)
+  writer.run('begin')
+  writer.run('delete from control_plane_records where namespace = ?1', 'execution-plans')
+  writer.run('commit')
+  writer.close()
+  return copyPath
+}
+
+function buildManifest(store, { observationScope = 'local-disposable-store', ...options } = {}) {
+  return buildInventoryManifest({
+    database: store.database,
+    storeIdentity: store.identity,
+    storeProfile: readStoreProfile(store.database),
+    observationScope,
+    observedAt: OBSERVED_AT,
+    ...options,
+  })
+}
+
+function collectStdout() {
+  const chunks = []
+  return {
+    write(text) {
+      chunks.push(text)
+    },
+    text: () => chunks.join(''),
+  }
+}
+
+describe('langgraph retirement inventory', () => {
+  describe('disposable fixture store inventory', () => {
+    test('inventories definitions, consumers, executions and checkpoints with counts', async () => {
+      await withFixtureStore({}, async ({ store }) => {
+        const manifest = buildManifest(store)
+
+        expect(manifest.manifest).toBe('langgraph-retirement-inventory')
+        expect(manifest.observedAt).toBe(OBSERVED_AT)
+        expect(manifest.observationScope).toBe('local-disposable-store')
+        expect(manifest.tool.readMode).toBe('read-only')
+        expect(manifest.tool.migration).toBe('never')
+        expect(manifest.tool.checkpointTransplant).toBe('never')
+        expect(manifest.store.status).toBe(OBSERVATION_STATUS.OBSERVED)
+
+        const definitions = manifest.sections.definitions
+        expect(definitions.status).toBe(OBSERVATION_STATUS.OBSERVED)
+        expect(definitions.counts).toEqual({
+          total: 4,
+          workspaces: 2,
+          distinctGraphs: 3,
+          byLifecycle: { deprecated: 1, published: 3 },
+        })
+        const alpha = definitions.entries.find(
+          (entry) =>
+            entry.graphDefinitionId === 'graph:inventory-alpha' &&
+            entry.graphVersion === '1.0.0' &&
+            entry.workspaceId === 'wsp_01JABCDEF0123456789ABCDEFG'
+        )
+        expect(alpha.runtimeProfile.nodeCount).toBe(2)
+        expect(alpha.runtimeProfile.operationKinds).toEqual(['runtime', 'tool'])
+        expect(alpha.lifecycle).toBe('published')
+        expect(alpha.durableOwner).toBe('control-plane-graph-catalog')
+        // The running execution, its plans, and its checkpoint rows attribute
+        // back to this definition version.
+        expect(alpha.consumersObserved).toEqual({
+          catalogCommands: 1,
+          checkpointRows: 3,
+          inFlightExecutions: 1,
+          retainedExecutions: 1,
+        })
+
+        const executions = manifest.sections.executions
+        expect(executions.status).toBe(OBSERVATION_STATUS.OBSERVED)
+        expect(executions.counts.total).toBe(2)
+        expect(executions.counts.inFlight).toBe(1)
+        expect(executions.counts.terminal).toBe(1)
+        expect(executions.counts.inFlightAttributed).toBe(1)
+        expect(executions.counts.byState).toEqual({ cancelled: 1, running: 1 })
+        expect(executions.entries.length).toBe(1)
+        const running = executions.entries[0]
+        expect(running.state).toBe('running')
+        expect(running.graphWorkflow).toBe(true)
+        expect(running.graphReference.graphDefinitionId).toBe('graph:inventory-alpha')
+        expect(running.durableOwner).toBe('control-plane-execution-history')
+        const checkpoints = manifest.sections.checkpoints
+        expect(checkpoints.counts.total).toBe(4)
+        expect(checkpoints.counts.checkpointRows).toBe(3)
+        expect(checkpoints.counts.writeRows).toBe(1)
+        expect(checkpoints.counts.distinctThreads).toBe(2)
+        expect(checkpoints.counts.threadsOnInFlightExecutions).toBe(1)
+        const runningThread = checkpoints.entries.find(
+          (entry) => entry.executionId === running.executionId
+        )
+        expect(runningThread.graphWorkflow).toBe(true)
+        expect(runningThread.historyResponsibility).toContain('never transplants')
+
+        const consumers = manifest.sections.consumers
+        expect(consumers.counts.registered).toBe(4)
+        expect(consumers.counts.catalogCommandReceipts).toBe(2)
+        const callerIds = consumers.entries
+          .filter((entry) => entry.kind === 'catalog-command-caller')
+          .map((entry) => entry.profile.callerId)
+          .toSorted()
+        expect(callerIds).toEqual(['svc_inventory-beta-caller', 'svc_inventory-fixture'])
+
+        expect(manifest.epistemics.retainedWorkClassification).toBe('present')
+        expect(manifest.epistemics.zeroLiveWorkClaim.claimAllowed).toBe(false)
+        expect(manifest.historicalDecisionReconciliation.status).toBe(OBSERVATION_STATUS.UNKNOWN)
+        expect(manifest.historyOwnership.cancellationReceipts.count).toBe(0)
+      })
+    })
+
+    test('handles mixed schema and workflow versions side by side', async () => {
+      await withFixtureStore({}, async ({ store }) => {
+        const manifest = buildManifest(store)
+        const versions = manifest.sections.definitions.entries
+          .filter((entry) => entry.graphDefinitionId === 'graph:inventory-alpha')
+          .map((entry) => [entry.workspaceId, entry.graphVersion, entry.lifecycle])
+          .toSorted()
+        expect(versions).toEqual([
+          ['wsp_01JABCDEF0123456789ABCDEFG', '1.0.0', 'published'],
+          ['wsp_01JABCDEF0123456789ABCDEFG', '1.1.0', 'deprecated'],
+          ['wsp_01JBBBBBBBBBBBBBBBBBBBBBB2', '1.0.0', 'published'],
+        ])
+        const deprecated = manifest.sections.definitions.entries.find(
+          (entry) => entry.graphVersion === '1.1.0'
+        )
+        expect(deprecated.reason).toBe('superseded by the workflow migration candidate')
+        // Only the pinned 1.0.0 version carries in-flight work.
+        expect(deprecated.consumersObserved.inFlightExecutions).toBe(0)
+      })
+    })
+
+    test('in-flight executions whose plan vanished are typed incomplete, never silent', async () => {
+      await withFixtureStore({}, async ({ fixture }) => {
+        const copyPath = await createPlanlessStoreCopy(fixture)
+        const copiedStore = await openReadOnlyStore(copyPath)
+        try {
+          const manifest = buildManifest(copiedStore)
+          const executions = manifest.sections.executions
+          expect(executions.counts.inFlightPlansMissing).toBe(1)
+          const unattributed = executions.entries[0]
+          expect(unattributed.graphWorkflow).toBe(false)
+          expect(unattributed.graphReference).toBeUndefined()
+          expect(unattributed.executionPlan).toBeDefined()
+          // The global classification still reflects the in-flight work.
+          expect(manifest.epistemics.retainedWorkClassification).toBe('present')
+        } finally {
+          copiedStore.database.close()
+          await rm(copyPath, { force: true })
+        }
+      })
+    })
+  })
+
+  describe('bounding and pagination', () => {
+    test('truncates entries but keeps counts exact and flags incompleteness', async () => {
+      await withFixtureStore({}, async ({ store }) => {
+        const manifest = buildManifest(store, { limits: { entriesPerSection: 2, pageSize: 1 } })
+        const definitions = manifest.sections.definitions
+        expect(definitions.truncated).toBe(true)
+        expect(definitions.entries.length).toBe(2)
+        expect(definitions.counts.total).toBe(4)
+        expect(definitions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+        expect(definitions.reasons).toContain('ENTRY_LIMIT_REACHED')
+        // Deterministic page walk: page size 1 must still visit every record.
+        expect(definitions.counts.workspaces).toBe(2)
+        expect(manifest.sections.executions.counts.total).toBe(2)
+      })
+    })
+
+    test('rejects out-of-range entry limits with a typed error', async () => {
+      await withFixtureStore({}, async ({ store }) => {
+        expect(() => buildManifest(store, { limits: { entriesPerSection: 1001 } })).toThrow(
+          RetirementInventoryError
+        )
+        expect(() => buildManifest(store, { limits: { entriesPerSection: 0 } })).toThrow(
+          RetirementInventoryError
+        )
+      })
+    })
+
+    test('exact counts and per-entry attribution are independent of the entry limit', async () => {
+      await withFixtureStore({}, async ({ store }) => {
+        const wide = buildManifest(store)
+        const attributionByKey = (manifest) =>
+          new Map(
+            manifest.sections.definitions.entries.map((entry) => [
+              `${entry.workspaceId}\u0000${entry.graphDefinitionId}\u0000${entry.graphVersion}`,
+              entry.consumersObserved,
+            ])
+          )
+        const wideAttribution = attributionByKey(wide)
+        for (const entriesPerSection of [1, 2]) {
+          const bounded = buildManifest(store, {
+            limits: { entriesPerSection, pageSize: 1 },
+          })
+          expect(bounded.sections.definitions.truncated).toBe(true)
+          expect(bounded.sections.consumers.truncated).toBe(true)
+          // The cap bounds the consumers section as a whole, curated
+          // registry entries included.
+          expect(bounded.sections.consumers.entries).toHaveLength(entriesPerSection)
+          // Full aggregates are computed over the whole scan, not the bounded
+          // display entries, so totals never move with --limit.
+          expect(bounded.sections.definitions.counts).toEqual(wide.sections.definitions.counts)
+          expect(bounded.sections.executions.counts).toEqual(wide.sections.executions.counts)
+          expect(bounded.sections.checkpoints.counts).toEqual(wide.sections.checkpoints.counts)
+          expect(bounded.sections.consumers.counts).toEqual(wide.sections.consumers.counts)
+          // Per-definition attribution (including curated consumers) stays
+          // exact for every entry the bounded manifest still emits.
+          for (const [key, observed] of attributionByKey(bounded)) {
+            expect(observed).toEqual(wideAttribution.get(key))
+          }
+        }
+      })
+    })
+  })
+
+  describe('unavailable and inconsistent sources', () => {
+    test('missing store file yields a typed inaccessible manifest, not a crash', async () => {
+      const missingPath = join(temporaryDirectory, 'absent.sqlite')
+      const stdout = collectStdout()
+      const outcome = await runInventoryCli({
+        argv: ['--observation-scope', 'deployed-dsn', '--store', missingPath, '--now', OBSERVED_AT],
+        stdout,
+      })
+      expect(outcome.exitCode).toBe(0)
+      const manifest = JSON.parse(stdout.text())
+      expect(manifest.store.status).toBe(OBSERVATION_STATUS.INACCESSIBLE)
+      expect(manifest.store.reasons).toEqual(['STORE_FILE_MISSING'])
+      expect(manifest.sections.definitions.status).toBe(OBSERVATION_STATUS.UNKNOWN)
+      expect(manifest.sections.executions.status).toBe(OBSERVATION_STATUS.UNKNOWN)
+      expect(manifest.epistemics.retainedWorkClassification).toBe('unknown')
+    })
+
+    test('a non-sqlite store file is typed inaccessible via the profile preflight', async () => {
+      const garbagePath = join(temporaryDirectory, 'garbage.sqlite')
+      await writeFile(garbagePath, 'this is not a sqlite database', { mode: 0o600 })
+      const store = await openReadOnlyStore(garbagePath)
+      try {
+        const profile = readStoreProfile(store.database)
+        expect(profile.status).toBe(OBSERVATION_STATUS.INACCESSIBLE)
+        expect(profile.reasons).toEqual(['NOT_A_SQLITE_STORE'])
+        const manifest = buildManifest(store)
+        expect(manifest.store.status).toBe(OBSERVATION_STATUS.INACCESSIBLE)
+        expect(manifest.sections.definitions.status).toBe(OBSERVATION_STATUS.UNKNOWN)
+      } finally {
+        store.database.close()
+      }
+    })
+
+    test('store target discipline: sloppy targets are rejected, absent stores are reported', async () => {
+      await expect(
+        runInventoryCli({
+          argv: ['--observation-scope', 'deployed-dsn', '--store', 'relative.sqlite'],
+        })
+      ).rejects.toMatchObject({ code: 'STORE_PATH_NOT_ABSOLUTE' })
+      const absentPath = join(temporaryDirectory, 'absent-target.sqlite')
+      await expect(
+        runInventoryCli({ argv: ['--observation-scope', 'deployed-dsn', '--store', absentPath] })
+      ).resolves.toMatchObject({ action: 'manifest' })
+      const directoryPath = join(temporaryDirectory, 'a-directory')
+      await mkdir(directoryPath, { recursive: true })
+      await expect(
+        runInventoryCli({ argv: ['--observation-scope', 'deployed-dsn', '--store', directoryPath] })
+      ).rejects.toMatchObject({ code: 'STORE_NOT_A_FILE' })
+    })
+
+    test('malformed records are typed incomplete while valid entries survive', async () => {
+      await withFixtureStore({ injectMalformedDefinition: true }, async ({ store }) => {
+        const definitions = buildManifest(store).sections.definitions
+        expect(definitions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+        expect(definitions.reasons).toContain('MALFORMED_RECORDS_PRESENT')
+        expect(definitions.malformedRecords).toBe(1)
+        expect(definitions.counts.total).toBe(5)
+        expect(definitions.entries.length).toBe(4)
+      })
+    })
+
+    test('an old provider clock is reported stale against the observation time', async () => {
+      await withFixtureStore(
+        { now: () => new Date('2026-01-01T00:00:00.000Z') },
+        async ({ store }) => {
+          const manifest = buildManifest(store, { limits: { maxAgeDays: 30 } })
+          expect(manifest.sections.definitions.status).toBe(OBSERVATION_STATUS.STALE)
+          expect(manifest.sections.definitions.reasons).toContain('FRESHNESS_THRESHOLD_EXCEEDED')
+          // A generous threshold keeps the same store fresh.
+          const fresh = buildManifest(store, { limits: { maxAgeDays: 3650 } })
+          expect(fresh.sections.definitions.status).toBe(OBSERVATION_STATUS.OBSERVED)
+        }
+      )
+    })
+
+    test('malformed checkpoint rows keep the section incomplete with exact counts', async () => {
+      await withFixtureStore({ injectMalformedCheckpoint: true }, async ({ store }) => {
+        const checkpoints = buildManifest(store).sections.checkpoints
+        expect(checkpoints.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+        expect(checkpoints.malformedRecords).toBe(1)
+        expect(checkpoints.counts.total).toBe(5)
+        expect(checkpoints.counts.checkpointRows).toBe(3)
+      })
+    })
+
+    test('checkpoint threads on unknown executions are typed, never treated as not in flight', async () => {
+      await withFixtureStore({ injectOrphanCheckpoint: true }, async ({ store }) => {
+        const checkpoints = buildManifest(store).sections.checkpoints
+        // The orphan thread references an execution absent from the executions
+        // namespace: its in-flight state is unknown and must be reported as
+        // such instead of silently excluded from in-flight accounting.
+        expect(checkpoints.counts.distinctThreads).toBe(3)
+        expect(checkpoints.counts.threadsOnUnknownExecutions).toBe(1)
+        expect(checkpoints.counts.threadsOnInFlightExecutions).toBe(1)
+        expect(checkpoints.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+        expect(checkpoints.reasons).toContain('CHECKPOINT_THREADS_WITH_UNKNOWN_EXECUTION_STATE')
+      })
+    })
+
+    test('unparseable checkpoint threads are typed unclassified with exact counts', async () => {
+      await withFixtureStore({ injectUnclassifiedCheckpoint: true }, async ({ store }) => {
+        const checkpoints = buildManifest(store).sections.checkpoints
+        expect(checkpoints.counts.total).toBe(5)
+        expect(checkpoints.counts.checkpointRows).toBe(4)
+        expect(checkpoints.counts.distinctThreads).toBe(3)
+        expect(checkpoints.counts.unclassifiedThreads).toBe(1)
+        expect(checkpoints.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+        expect(checkpoints.reasons).toContain('CHECKPOINT_THREADS_UNCLASSIFIED')
+      })
+    })
+  })
+
+  describe('zero-vs-unknown epistemics', () => {
+    test('an empty disposable store reports section zero but never a global zero claim', async () => {
+      const { SqlitePersistenceProvider } = await import('@control-plane/sqlite-persistence')
+      const path = join(temporaryDirectory, 'empty.sqlite')
+      const provider = new SqlitePersistenceProvider({ path })
+      await provider.migrate()
+      const store = await openReadOnlyStore(path)
+      try {
+        for (const scope of ['local-disposable-store', 'repository-scan']) {
+          const manifest = buildManifest(store, { observationScope: scope })
+          expect(manifest.sections.definitions.status).toBe(OBSERVATION_STATUS.ZERO)
+          expect(manifest.sections.executions.status).toBe(OBSERVATION_STATUS.ZERO)
+          expect(manifest.epistemics.retainedWorkClassification).toBe('unknown')
+          expect(manifest.epistemics.zeroLiveWorkClaim.claim).toBe('not-claimable')
+          expect(manifest.epistemics.zeroLiveWorkClaim.reasons).toContain(
+            `OBSERVATION_SCOPE_${scope.toUpperCase()}_CANNOT_ESTABLISH_ZERO_LIVE_WORK`
+          )
+        }
+      } finally {
+        store.database.close()
+        await provider.close()
+        await rm(path, { force: true })
+      }
+    })
+
+    test('only a fully-read deployed-dsn observation may classify none-observed-in-scope', async () => {
+      await withFixtureStore({}, async ({ store }) => {
+        const manifest = buildManifest(store, { observationScope: 'deployed-dsn' })
+        expect(manifest.epistemics.retainedWorkClassification).toBe('present')
+        expect(manifest.epistemics.zeroLiveWorkClaim.claimAllowed).toBe(false)
+        expect(manifest.epistemics.zeroLiveWorkClaim.reasons).toContain('IN_FLIGHT_WORK_OBSERVED')
+      })
+      // Empty store, deployed attestation, full read: the strong claim is allowed.
+      const { SqlitePersistenceProvider } = await import('@control-plane/sqlite-persistence')
+      const path = join(temporaryDirectory, 'empty-deployed.sqlite')
+      const provider = new SqlitePersistenceProvider({ path })
+      await provider.migrate()
+      const store = await openReadOnlyStore(path)
+      try {
+        const manifest = buildManifest(store, { observationScope: 'deployed-dsn' })
+        expect(manifest.epistemics.retainedWorkClassification).toBe('none-observed-in-scope')
+        expect(manifest.epistemics.zeroLiveWorkClaim.claimAllowed).toBe(true)
+        expect(manifest.epistemics.zeroLiveWorkClaim.claim).toBe('none-observed-in-scope')
+        expect(manifest.epistemics.zeroLiveWorkClaim.reasons).toEqual([])
+      } finally {
+        store.database.close()
+        await provider.close()
+        await rm(path, { force: true })
+      }
+    })
+
+    test('a truncated deployed observation cannot carry the strong claim', async () => {
+      await withFixtureStore({}, async ({ store }) => {
+        const manifest = buildManifest(store, {
+          observationScope: 'deployed-dsn',
+          limits: { entriesPerSection: 1 },
+        })
+        // In-flight work is present, and the checkpoint section was truncated
+        // (two threads, one emitted): both reasons block the strong claim.
+        expect(manifest.sections.checkpoints.truncated).toBe(true)
+        expect(manifest.epistemics.retainedWorkClassification).toBe('present')
+        expect(manifest.epistemics.zeroLiveWorkClaim.claimAllowed).toBe(false)
+        expect(manifest.epistemics.zeroLiveWorkClaim.reasons).toContain('IN_FLIGHT_WORK_OBSERVED')
+        expect(manifest.epistemics.zeroLiveWorkClaim.reasons).toContain(
+          'CHECKPOINTS_SECTION_NOT_FULLY_READ'
+        )
+      })
+    })
+
+    test('the epistemics helper is a pure function over section outcomes', () => {
+      const unknown = retainedWorkEpistemics({
+        observationScope: 'repository-scan',
+        executions: {
+          status: 'unknown',
+          truncated: false,
+          malformedRecords: 0,
+          counts: { inFlight: 0 },
+        },
+        checkpoints: { status: 'unknown', truncated: false, malformedRecords: 0, counts: {} },
+      })
+      expect(unknown.retainedWorkClassification).toBe('unknown')
+      expect(Object.keys(OBSERVATION_STATUS).length).toBe(6)
+      expect(OBSERVATION_SCOPES.length).toBe(3)
+      expect(DISPOSITION_KINDS).toEqual(['keep', 'replace', 'drain', 'retire'])
+    })
+
+    test('orphan or unclassified checkpoint threads block the zero-live-work claim', () => {
+      const fullyReadExecutions = {
+        status: 'zero',
+        truncated: false,
+        malformedRecords: 0,
+        counts: { inFlight: 0 },
+      }
+      const unknownState = retainedWorkEpistemics({
+        observationScope: 'deployed-dsn',
+        executions: fullyReadExecutions,
+        checkpoints: {
+          status: 'incomplete',
+          truncated: false,
+          malformedRecords: 0,
+          counts: {
+            inFlight: 0,
+            unclassifiedThreads: 1,
+            threadsOnUnknownExecutions: 1,
+            threadsOnInFlightExecutions: 0,
+          },
+        },
+      })
+      expect(unknownState.retainedWorkClassification).toBe('unknown')
+      expect(unknownState.zeroLiveWorkClaim.claimAllowed).toBe(false)
+      expect(unknownState.zeroLiveWorkClaim.reasons).toContain('CHECKPOINT_THREADS_UNCLASSIFIED')
+      expect(unknownState.zeroLiveWorkClaim.reasons).toContain(
+        'CHECKPOINT_THREADS_WITH_UNKNOWN_EXECUTION_STATE'
+      )
+
+      // Classified threads on terminal executions keep the strong claim available.
+      const clean = retainedWorkEpistemics({
+        observationScope: 'deployed-dsn',
+        executions: fullyReadExecutions,
+        checkpoints: {
+          status: 'zero',
+          truncated: false,
+          malformedRecords: 0,
+          counts: {
+            inFlight: 0,
+            unclassifiedThreads: 0,
+            threadsOnUnknownExecutions: 0,
+            threadsOnInFlightExecutions: 0,
+          },
+        },
+      })
+      expect(clean.retainedWorkClassification).toBe('none-observed-in-scope')
+      expect(clean.zeroLiveWorkClaim.claimAllowed).toBe(true)
+    })
+  })
+
+  describe('deterministic output', () => {
+    test('byte-stable manifests for identical store state and injected clock', async () => {
+      await withFixtureStore({}, async ({ fixture }) => {
+        const render = async () => {
+          const store = await openReadOnlyStore(fixture.path)
+          try {
+            const manifest = buildManifest(store)
+            return `${stableJsonStringify(manifest)}\n`
+          } finally {
+            store.database.close()
+          }
+        }
+        const first = await render()
+        const second = await render()
+        expect(second).toBe(first)
+        const parsed = JSON.parse(first)
+        expect(parsed.manifest).toBe('langgraph-retirement-inventory')
+        // Sorted keys, not insertion order: the first key is alphabetically first.
+        expect(Object.keys(parsed)[0]).toBe('epistemics')
+        expect(first).not.toContain(fixture.directory)
+        expect(first).not.toContain(fixture.path)
+      })
+    })
+
+    test('the injected observation time is reflected everywhere', async () => {
+      await withFixtureStore({}, async ({ fixture }) => {
+        const renderWithClock = async (clock) => {
+          const stdout = collectStdout()
+          const outcome = await runInventoryCli({
+            argv: [
+              '--observation-scope',
+              'local-disposable-store',
+              '--store',
+              fixture.path,
+              '--now',
+              clock,
+            ],
+            stdout,
+          })
+          expect(outcome.exitCode).toBe(0)
+          return stdout.text()
+        }
+        const first = await renderWithClock('2026-03-04T05:06:07.890Z')
+        const second = await renderWithClock('2026-04-05T06:07:08.890Z')
+        expect(first).toContain('"observedAt": "2026-03-04T05:06:07.890Z"')
+        expect(second).toContain('"observedAt": "2026-04-05T06:07:08.890Z"')
+        // Re-running with the same injected clock reproduces the same bytes.
+        expect(await renderWithClock('2026-03-04T05:06:07.890Z')).toBe(first)
+      })
+    })
+  })
+
+  describe('disposition validator', () => {
+    const workspaceOne = 'wsp_01JABCDEF0123456789ABCDEFG'
+    const workspaceTwo = 'wsp_01JBBBBBBBBBBBBBBBBBBBBBB2'
+    const alphaKey = {
+      workspaceId: workspaceOne,
+      graphDefinitionId: 'graph:inventory-alpha',
+      graphVersion: '1.0.0',
+    }
+
+    function fullProposal(disposition, overrides = {}) {
+      return {
+        ...alphaKey,
+        disposition,
+        durableOwner: 'control-plane-graph-catalog',
+        historyReceiptResponsibility: 'graph-definition-commands receipts remain authoritative',
+        requiredBehavior: 'identical segment semantics and receipts',
+        replacementEvidence: 'parity run evidence',
+        rollbackEvidence: 'catalog republish procedure',
+        inFlightAcknowledged: true,
+        ...overrides,
+      }
+    }
+
+    test('approves complete proposals and reports typed missing evidence otherwise', async () => {
+      await withFixtureStore({}, async ({ store }) => {
+        const manifest = buildManifest(store)
+        const report = validateDispositions(
+          {
+            dispositions: [
+              // One disposition per workflow: four distinct workflows.
+              fullProposal('keep', {
+                graphDefinitionId: 'graph:inventory-beta',
+                graphVersion: '1.0.0',
+              }),
+              fullProposal('replace', { workspaceId: workspaceTwo }),
+              fullProposal('drain'),
+              fullProposal('retire', {
+                graphVersion: '1.1.0',
+                requiredBehavior: undefined,
+                replacementEvidence: undefined,
+                inFlightAcknowledged: undefined,
+              }),
+            ],
+          },
+          manifest
+        )
+        expect(report.summary).toEqual({ total: 4, approved: 4, rejected: 0, blocked: 0 })
+        expect(report.verdicts.map((verdict) => verdict.verdict)).toEqual([
+          'approved',
+          'approved',
+          'approved',
+          'approved',
+        ])
+
+        const incomplete = validateDispositions(
+          { dispositions: [{ ...alphaKey, disposition: 'replace', durableOwner: 'owner' }] },
+          manifest
+        )
+        expect(incomplete.summary.rejected).toBe(1)
+        expect(incomplete.verdicts[0].missingEvidence).toEqual([
+          'historyReceiptResponsibility',
+          'replacementEvidence',
+          'requiredBehavior',
+          'rollbackEvidence',
+        ])
+        expect(incomplete.verdicts[0].reasons).toEqual(['MISSING_REQUIRED_EVIDENCE'])
+      })
+    })
+
+    test('drain must acknowledge in-flight work and retire cannot carry it', async () => {
+      await withFixtureStore({}, async ({ store }) => {
+        const manifest = buildManifest(store)
+        const drain = validateDispositions(
+          { dispositions: [fullProposal('drain', { inFlightAcknowledged: false })] },
+          manifest
+        )
+        expect(drain.verdicts[0].verdict).toBe('rejected')
+        expect(drain.verdicts[0].missingEvidence).toEqual(['inFlightAcknowledged'])
+        expect(drain.verdicts[0].inventoryCounts.inFlightExecutions).toBe(1)
+
+        const retire = validateDispositions({ dispositions: [fullProposal('retire')] }, manifest)
+        expect(retire.verdicts[0].verdict).toBe('rejected')
+        expect(retire.verdicts[0].reasons).toEqual(['IN_FLIGHT_WORK_PRESENT'])
+
+        // Workspace scoping: the same graph id in another workspace has no
+        // in-flight work, so its disposition is judged on its own counts.
+        const otherWorkspace = validateDispositions(
+          {
+            dispositions: [
+              fullProposal('drain', {
+                workspaceId: workspaceTwo,
+                inFlightAcknowledged: false,
+              }),
+            ],
+          },
+          manifest
+        )
+        expect(otherWorkspace.verdicts[0].verdict).toBe('approved')
+
+        // The workflow with no in-flight work can retire cleanly.
+        const betaRetire = validateDispositions(
+          {
+            dispositions: [
+              fullProposal('retire', {
+                graphDefinitionId: 'graph:inventory-beta',
+                graphVersion: '1.0.0',
+                requiredBehavior: undefined,
+                replacementEvidence: undefined,
+                inFlightAcknowledged: undefined,
+              }),
+            ],
+          },
+          manifest
+        )
+        expect(betaRetire.verdicts[0].verdict).toBe('approved')
+        expect(betaRetire.verdicts[0].inventoryCounts.inFlightExecutions).toBe(0)
+      })
+    })
+
+    test('unknown workflows, duplicates, invalid kinds, and blockers are typed', async () => {
+      await withFixtureStore({}, async ({ store }) => {
+        const manifest = buildManifest(store)
+        const report = validateDispositions(
+          {
+            dispositions: [
+              fullProposal('keep', { graphDefinitionId: 'graph:does-not-exist' }),
+              fullProposal('keep', { workspaceId: workspaceTwo }),
+              fullProposal('keep', { workspaceId: workspaceTwo }),
+              fullProposal('demolish'),
+              { disposition: 'keep' },
+              fullProposal('keep', { unresolvedBlockers: ['waiting-for-migration-review'] }),
+              'not-an-object',
+            ],
+          },
+          manifest
+        )
+        const byIndex = report.verdicts
+        expect(byIndex[0].reasons).toContain('WORKFLOW_NOT_IN_INVENTORY')
+        expect(byIndex[1].verdict).toBe('approved')
+        expect(byIndex[2].reasons).toContain('DUPLICATE_DISPOSITION')
+        expect(byIndex[3].reasons).toContain('INVALID_DISPOSITION')
+        expect(byIndex[4].reasons).toContain('MALFORMED_PROPOSAL')
+        expect(byIndex[5].verdict).toBe('blocked')
+        expect(byIndex[5].reasons).toContain('UNRESOLVED_BLOCKERS_DECLARED')
+        expect(byIndex[6].reasons).toEqual(['MALFORMED_PROPOSAL'])
+        expect(report.summary).toEqual({ total: 7, approved: 1, rejected: 5, blocked: 1 })
+      })
+    })
+
+    test('a truncated inventory flags validation against possibly-missing workflows', async () => {
+      await withFixtureStore({}, async ({ store }) => {
+        const manifest = buildManifest(store, { limits: { entriesPerSection: 1 } })
+        const report = validateDispositions(
+          {
+            dispositions: [
+              fullProposal('keep', {
+                workspaceId: workspaceTwo,
+                graphDefinitionId: 'graph:inventory-alpha',
+                graphVersion: '1.0.0',
+              }),
+            ],
+          },
+          manifest
+        )
+        expect(manifest.sections.definitions.truncated).toBe(true)
+        expect(report.verdicts[0].reasons).toContain('WORKFLOW_NOT_IN_INVENTORY')
+        expect(report.verdicts[0].reasons).toContain('INVENTORY_ENTRIES_TRUNCATED')
+      })
+    })
+
+    test('a running execution whose plan vanished blocks retirement approval', async () => {
+      await withFixtureStore({}, async ({ fixture }) => {
+        const copyPath = await createPlanlessStoreCopy(fixture)
+        const copiedStore = await openReadOnlyStore(copyPath)
+        try {
+          const manifest = buildManifest(copiedStore)
+          // The running execution is unattributable now, so no definition
+          // entry carries its in-flight count — retirement must still block.
+          expect(manifest.sections.executions.counts.inFlightPlansMissing).toBe(1)
+          const report = validateDispositions({ dispositions: [fullProposal('retire')] }, manifest)
+          expect(report.verdicts[0].verdict).toBe('blocked')
+          expect(report.verdicts[0].reasons).toContain('IN_FLIGHT_EXECUTION_WITHOUT_PLAN')
+          expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+        } finally {
+          copiedStore.database.close()
+          await rm(copyPath, { force: true })
+        }
+      })
+    })
+
+    test('retirement on incomplete or stale execution evidence is blocked, never counted as zero', async () => {
+      const betaRetire = {
+        ...fullProposal('retire', {
+          graphDefinitionId: 'graph:inventory-beta',
+          requiredBehavior: undefined,
+          replacementEvidence: undefined,
+          inFlightAcknowledged: undefined,
+        }),
+      }
+      // Stale evidence: the scan is older than the freshness threshold, so a
+      // zero in-flight count is not trustworthy attribution.
+      await withFixtureStore(
+        { now: () => new Date('2026-01-01T00:00:00.000Z') },
+        async ({ store }) => {
+          const staleManifest = buildManifest(store)
+          expect(staleManifest.sections.executions.status).toBe(OBSERVATION_STATUS.STALE)
+          const staleReport = validateDispositions({ dispositions: [betaRetire] }, staleManifest)
+          expect(staleReport.verdicts[0].verdict).toBe('blocked')
+          expect(staleReport.verdicts[0].reasons).toContain('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+        }
+      )
+      // Incomplete evidence: a malformed execution row means the in-flight
+      // attribution was not fully read; it must never pass as zero.
+      await withFixtureStore({ injectMalformedExecution: true }, async ({ store }) => {
+        const incompleteManifest = buildManifest(store)
+        expect(incompleteManifest.sections.executions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+        expect(incompleteManifest.sections.executions.malformedRecords).toBe(1)
+        const incompleteReport = validateDispositions(
+          { dispositions: [betaRetire] },
+          incompleteManifest
+        )
+        expect(incompleteReport.verdicts[0].verdict).toBe('blocked')
+        expect(incompleteReport.verdicts[0].reasons).toContain('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+        expect(incompleteReport.summary).toEqual({
+          total: 1,
+          approved: 0,
+          rejected: 0,
+          blocked: 1,
+        })
+      })
+    })
+
+    test('orphan checkpoint evidence blocks retirement until checkpoint attribution resolves', async () => {
+      await withFixtureStore({ injectOrphanCheckpoint: true }, async ({ store }) => {
+        const manifest = buildManifest(store)
+        // The orphan thread names an execution that has no record in the
+        // executions namespace: checkpoint attribution is unresolved and the
+        // section is not fully read.
+        expect(manifest.sections.checkpoints.counts.threadsOnUnknownExecutions).toBe(1)
+        expect(manifest.sections.checkpoints.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+        // The beta workflow has no in-flight work and a fully-read executions
+        // section, so checkpoint evidence quality is the only remaining gate:
+        // it must block rather than let the workflow retire while orphaned
+        // resume state that could belong to it is unattributed.
+        const betaRetire = {
+          ...fullProposal('retire', {
+            graphDefinitionId: 'graph:inventory-beta',
+            requiredBehavior: undefined,
+            replacementEvidence: undefined,
+            inFlightAcknowledged: undefined,
+          }),
+        }
+        const report = validateDispositions({ dispositions: [betaRetire] }, manifest)
+        expect(report.verdicts[0].verdict).toBe('blocked')
+        expect(report.verdicts[0].reasons).toContain('CHECKPOINT_EVIDENCE_UNKNOWN')
+        expect(report.verdicts[0].reasons).toContain('CHECKPOINT_EVIDENCE_INCOMPLETE')
+        expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+        // The zero-claim stays blocked on the same orphan evidence.
+        expect(manifest.epistemics.retainedWorkClassification).toBe('present')
+        expect(manifest.epistemics.zeroLiveWorkClaim.claimAllowed).toBe(false)
+        expect(manifest.epistemics.zeroLiveWorkClaim.reasons).toContain(
+          'CHECKPOINT_THREADS_WITH_UNKNOWN_EXECUTION_STATE'
+        )
+      })
+    })
+
+    test('malformed checkpoint rows block retirement as incomplete checkpoint evidence', async () => {
+      await withFixtureStore({ injectMalformedCheckpoint: true }, async ({ store }) => {
+        const manifest = buildManifest(store)
+        expect(manifest.sections.checkpoints.malformedRecords).toBe(1)
+        const betaRetire = {
+          ...fullProposal('retire', {
+            graphDefinitionId: 'graph:inventory-beta',
+            requiredBehavior: undefined,
+            replacementEvidence: undefined,
+            inFlightAcknowledged: undefined,
+          }),
+        }
+        const report = validateDispositions({ dispositions: [betaRetire] }, manifest)
+        expect(report.verdicts[0].verdict).toBe('blocked')
+        expect(report.verdicts[0].reasons).toContain('CHECKPOINT_EVIDENCE_INCOMPLETE')
+        expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+      })
+    })
+
+    test('a running plan with a missing graph id blocks retirement of the real graph', async () => {
+      await withFixtureStore(
+        { mutateRunningPlanGraphIdentity: 'missing-graph-id' },
+        async ({ store }) => {
+          const manifest = buildManifest(store)
+          const executions = manifest.sections.executions
+          // The plan exists but pins no usable graph identity: the running
+          // execution is unattributable — never benignly bucketed as an unknown
+          // graph or a non-graph workflow — so attribution is typed incomplete.
+          expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
+          expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(executions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+          expect(executions.entries[0].graphWorkflow).toBe(false)
+          expect(executions.entries[0].graphReference).toBeUndefined()
+          // The real graph of the running workflow cannot pass the retire check
+          // while its attribution is unresolved (previously it was approved).
+          const report = validateDispositions({ dispositions: [fullProposal('retire')] }, manifest)
+          expect(report.verdicts[0].verdict).toBe('blocked')
+          expect(report.verdicts[0].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(report.verdicts[0].reasons).toContain('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+          expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+        }
+      )
+    })
+
+    test('a running plan with a malformed graph version blocks retirement of the real graph', async () => {
+      await withFixtureStore(
+        { mutateRunningPlanGraphIdentity: 'missing-graph-version' },
+        async ({ store }) => {
+          const manifest = buildManifest(store)
+          const executions = manifest.sections.executions
+          expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
+          expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(executions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+          expect(executions.entries[0].graphReference).toBeUndefined()
+          const report = validateDispositions({ dispositions: [fullProposal('retire')] }, manifest)
+          expect(report.verdicts[0].verdict).toBe('blocked')
+          expect(report.verdicts[0].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(report.verdicts[0].reasons).toContain('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+          expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+        }
+      )
+    })
+
+    test('a graph selection deleted from a retained plan is malformed evidence, not a legal non-graph workflow', async () => {
+      await withFixtureStore(
+        { mutateRunningPlanGraphIdentity: 'missing-graph-reference' },
+        async ({ store }) => {
+          const manifest = buildManifest(store)
+          const executions = manifest.sections.executions
+          // Reviewer-directed semantic change (previously classified as a
+          // legal non-graph workflow): deleting the graph selection from a
+          // plan that was compiled with one leaves the retained digest
+          // covering content that no longer exists. The plan fails canonical
+          // plan integrity, so it is corrupted evidence — counted in the
+          // malformed bucket, never as a legal non-graph workflow.
+          expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
+          expect(executions.counts.inFlightNonGraph).toBe(0)
+          expect(executions.counts.inFlightAttributed).toBe(0)
+          expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(executions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+          expect(executions.entries[0].graphWorkflow).toBe(false)
+          expect(executions.entries[0].graphReference).toBeUndefined()
+          expect(executions.entries[0].executionPlan).toBeDefined()
+          // The running execution stays pinned to its retained plan and keeps
+          // the store's in-flight evidence honest: the zero-live-work claim is
+          // still not available.
+          expect(executions.counts.inFlight).toBe(1)
+          expect(manifest.epistemics.retainedWorkClassification).toBe('present')
+          expect(manifest.epistemics.zeroLiveWorkClaim.claimAllowed).toBe(false)
+          // Graph deletion is malformed evidence: no graph's retirement can
+          // pass while the attribution is unresolved.
+          const report = validateDispositions(
+            {
+              dispositions: [
+                fullProposal('retire', {
+                  requiredBehavior: undefined,
+                  replacementEvidence: undefined,
+                  inFlightAcknowledged: undefined,
+                }),
+                {
+                  ...fullProposal('retire', {
+                    graphDefinitionId: 'graph:inventory-beta',
+                    requiredBehavior: undefined,
+                    replacementEvidence: undefined,
+                    inFlightAcknowledged: undefined,
+                  }),
+                },
+              ],
+            },
+            manifest
+          )
+          expect(report.verdicts.map((verdict) => verdict.verdict)).toEqual(['blocked', 'blocked'])
+          expect(report.verdicts[0].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(report.verdicts[0].reasons).toContain('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+          expect(report.summary).toEqual({ total: 2, approved: 0, rejected: 0, blocked: 2 })
+        }
+      )
+    })
+
+    test('a genuinely compiled graphless plan with a matching pin is a legal non-graph workflow', async () => {
+      await withFixtureStore({ compileRunningPlanGraphless: true }, async ({ store }) => {
+        const manifest = buildManifest(store)
+        const executions = manifest.sections.executions
+        // The compiler wrote this plan with no graph selection from the start:
+        // its canonical digest covers exactly the retained content and the
+        // execution's full pin (id and digest) matches it. This is the legal
+        // non-graph path.
+        expect(executions.counts.inFlightNonGraph).toBe(1)
+        expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(0)
+        expect(executions.counts.inFlightAttributed).toBe(0)
+        expect(executions.reasons).not.toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+        expect(executions.status).toBe(OBSERVATION_STATUS.OBSERVED)
+        expect(executions.counts.inFlight).toBe(1)
+        expect(executions.entries[0].graphWorkflow).toBe(false)
+        expect(executions.entries[0].executionPlan).toBeDefined()
+        // In-flight work remains in evidence: the zero-live-work claim stays
+        // unavailable even though no graph is pinned.
+        expect(manifest.epistemics.retainedWorkClassification).toBe('present')
+        expect(manifest.epistemics.zeroLiveWorkClaim.claimAllowed).toBe(false)
+        // Legal non-graph plans never block graph retire verdicts.
+        const report = validateDispositions(
+          {
+            dispositions: [
+              fullProposal('retire', {
+                requiredBehavior: undefined,
+                replacementEvidence: undefined,
+                inFlightAcknowledged: undefined,
+              }),
+              {
+                ...fullProposal('retire', {
+                  graphDefinitionId: 'graph:inventory-beta',
+                  requiredBehavior: undefined,
+                  replacementEvidence: undefined,
+                  inFlightAcknowledged: undefined,
+                }),
+              },
+            ],
+          },
+          manifest
+        )
+        expect(report.verdicts.map((verdict) => verdict.verdict)).toEqual(['approved', 'approved'])
+        expect(report.summary).toEqual({ total: 2, approved: 2, rejected: 0, blocked: 0 })
+      })
+    })
+
+    test('a corrupted plan whose retained digest does not match canonical content blocks retirement', async () => {
+      await withFixtureStore({ corruptRunningPlanContent: true }, async ({ store }) => {
+        const manifest = buildManifest(store)
+        const executions = manifest.sections.executions
+        // The plan's content was edited after its digest was retained: the
+        // compiler's canonical integrity check fails no matter what the
+        // record's (intact-looking) graph selection claims, so the execution
+        // is unattributable and the evidence is malformed.
+        expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
+        expect(executions.counts.inFlightAttributed).toBe(0)
+        expect(executions.counts.inFlightNonGraph).toBe(0)
+        expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+        expect(executions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+        const report = validateDispositions({ dispositions: [fullProposal('retire')] }, manifest)
+        expect(report.verdicts[0].verdict).toBe('blocked')
+        expect(report.verdicts[0].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+        expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+      })
+    })
+
+    test('a mismatched execution plan pin blocks retirement as malformed evidence', async () => {
+      await withFixtureStore({ mutateRunningExecutionPin: true }, async ({ store }) => {
+        const manifest = buildManifest(store)
+        const executions = manifest.sections.executions
+        // The retained plan is canonically intact, but the execution's pin
+        // names a different plan digest: the execution cannot be attributed
+        // to the plan record that survives, and the mismatch is malformed
+        // evidence — never attributed and never non-graph.
+        expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
+        expect(executions.counts.inFlightAttributed).toBe(0)
+        expect(executions.counts.inFlightNonGraph).toBe(0)
+        expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+        expect(executions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+        expect(executions.entries[0].graphWorkflow).toBe(false)
+        expect(executions.entries[0].executionPlan).toBeDefined()
+        const report = validateDispositions({ dispositions: [fullProposal('retire')] }, manifest)
+        expect(report.verdicts[0].verdict).toBe('blocked')
+        expect(report.verdicts[0].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+        expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+      })
+    })
+
+    test('a nonempty but invalid graph version is malformed identity, not an attribution', async () => {
+      await withFixtureStore(
+        { mutateRunningPlanGraphIdentity: 'invalid-graph-version' },
+        async ({ store }) => {
+          const manifest = buildManifest(store)
+          const executions = manifest.sections.executions
+          // Canonical reference validation decides validity: '?' is a nonempty
+          // string but not a canonical graph version, so the retained plan is
+          // malformed-identity evidence — never attributed to a graph version
+          // that no catalog entry could match (which would silently approve the
+          // real graph's retirement while a running execution still pins it).
+          expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
+          expect(executions.counts.inFlightAttributed).toBe(0)
+          expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(executions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+          expect(executions.entries[0].graphWorkflow).toBe(false)
+          expect(executions.entries[0].graphReference).toBeUndefined()
+          const report = validateDispositions({ dispositions: [fullProposal('retire')] }, manifest)
+          expect(report.verdicts[0].verdict).toBe('blocked')
+          expect(report.verdicts[0].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+        }
+      )
+    })
+
+    test('a blank graph id on a retained plan remains malformed identity evidence', async () => {
+      await withFixtureStore(
+        { mutateRunningPlanGraphIdentity: 'blank-graph-id' },
+        async ({ store }) => {
+          const manifest = buildManifest(store)
+          const executions = manifest.sections.executions
+          // Missing and blank graph ids stay malformed evidence under the
+          // corrected semantics: only a plan with no graph selection at all is
+          // a legal non-graph workflow.
+          expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
+          expect(executions.counts.inFlightNonGraph).toBe(0)
+          expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          const report = validateDispositions({ dispositions: [fullProposal('retire')] }, manifest)
+          expect(report.verdicts[0].verdict).toBe('blocked')
+          expect(report.verdicts[0].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+        }
+      )
+    })
+
+    test('retirement without a read execution source is blocked, not approved', () => {
+      const report = validateDispositions(
+        { dispositions: [fullProposal('retire')] },
+        {
+          observedAt: OBSERVED_AT,
+          observationScope: 'repository-scan',
+          sections: {
+            definitions: {
+              truncated: false,
+              malformedRecords: 0,
+              entries: [
+                {
+                  ...alphaKey,
+                  consumersObserved: {
+                    catalogCommands: 0,
+                    checkpointRows: 0,
+                    inFlightExecutions: 0,
+                    retainedExecutions: 0,
+                  },
+                },
+              ],
+            },
+            executions: {
+              status: OBSERVATION_STATUS.UNKNOWN,
+              truncated: false,
+              malformedRecords: 0,
+              counts: { inFlight: 0, inFlightPlansMissing: 0 },
+            },
+          },
+        }
+      )
+      expect(report.verdicts[0].verdict).toBe('blocked')
+      expect(report.verdicts[0].reasons).toContain('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+      expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+    })
+
+    test('malformed documents throw a typed error', () => {
+      expect(() =>
+        validateDispositions({ nope: true }, { sections: { definitions: { entries: [] } } })
+      ).toThrow(RetirementInventoryError)
+    })
+  })
+
+  describe('cli surface', () => {
+    test('--help exits cleanly and documents the safety contract', async () => {
+      const stdout = collectStdout()
+      const outcome = await runInventoryCli({ argv: ['--help'], stdout })
+      expect(outcome.action).toBe('help')
+      expect(outcome.exitCode).toBe(0)
+      const text = stdout.text()
+      expect(text).toContain('--observation-scope')
+      expect(text).toContain('read-only')
+      expect(text).toContain('--validate-dispositions')
+    })
+
+    test('argument errors are typed and never touch a store', async () => {
+      await expect(runInventoryCli({ argv: [] })).rejects.toMatchObject({
+        code: 'INVALID_OBSERVATION_SCOPE',
+      })
+      await expect(
+        runInventoryCli({ argv: ['--observation-scope', 'local-disposable-store'] })
+      ).rejects.toMatchObject({ code: 'STORE_REQUIRED' })
+      await expect(
+        runInventoryCli({
+          argv: ['--observation-scope', 'repository-scan', '--store', '/tmp/unused.sqlite'],
+        })
+      ).rejects.toMatchObject({ code: 'STORE_NOT_ALLOWED_FOR_REPOSITORY_SCAN' })
+      await expect(
+        runInventoryCli({
+          argv: ['--observation-scope', 'deployed-dsn', '--store', '/tmp/x.sqlite', '--limit', '0'],
+        })
+      ).rejects.toMatchObject({ code: 'INVALID_ENTRY_LIMIT' })
+    })
+
+    test('invalid clocks and unreadable disposition files are typed', async () => {
+      await expect(
+        runInventoryCli({
+          argv: ['--observation-scope', 'repository-scan', '--now', 'not-a-timestamp'],
+        })
+      ).rejects.toMatchObject({ code: 'INVALID_OBSERVED_AT' })
+      await expect(
+        runInventoryCli({
+          argv: [
+            '--observation-scope',
+            'repository-scan',
+            '--validate-dispositions',
+            join(temporaryDirectory, 'absent.json'),
+          ],
+        })
+      ).rejects.toMatchObject({ code: 'DISPOSITIONS_FILE_UNREADABLE' })
+    })
+
+    test('validation mode reports verdicts and exits nonzero on rejections', async () => {
+      await withFixtureStore({}, async ({ fixture }) => {
+        const proposalsPath = join(temporaryDirectory, 'dispositions.json')
+        await writeFile(
+          proposalsPath,
+          JSON.stringify({
+            dispositions: [
+              {
+                workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
+                graphDefinitionId: 'graph:inventory-alpha',
+                graphVersion: '1.0.0',
+                disposition: 'drain',
+                durableOwner: 'control-plane-graph-catalog',
+                historyReceiptResponsibility: 'receipts stay authoritative',
+                requiredBehavior: 'same segment semantics',
+                rollbackEvidence: 'republish procedure',
+              },
+            ],
+          }),
+          { mode: 0o600 }
+        )
+        const stdout = collectStdout()
+        const outcome = await runInventoryCli({
+          argv: [
+            '--observation-scope',
+            'local-disposable-store',
+            '--store',
+            fixture.path,
+            '--now',
+            OBSERVED_AT,
+            '--validate-dispositions',
+            proposalsPath,
+          ],
+          stdout,
+        })
+        expect(outcome.exitCode).toBe(1)
+        const report = JSON.parse(stdout.text())
+        expect(report.validation).toBe('langgraph-retirement-dispositions')
+        expect(report.verdicts[0].missingEvidence).toEqual(['inFlightAcknowledged'])
+        expect(stdout.text()).not.toContain(fixture.path)
+      })
+    })
+
+    test('repository-scan scope emits the curated registry without a store', async () => {
+      const stdout = collectStdout()
+      const outcome = await runInventoryCli({
+        argv: ['--observation-scope', 'repository-scan', '--now', OBSERVED_AT],
+        stdout,
+      })
+      expect(outcome.exitCode).toBe(0)
+      const manifest = JSON.parse(stdout.text())
+      expect(manifest.observationScope).toBe('repository-scan')
+      expect(manifest.sections.consumers.counts.registered).toBe(4)
+      expect(manifest.sections.consumers.status).toBe(OBSERVATION_STATUS.UNKNOWN)
+      expect(manifest.sections.definitions.status).toBe(OBSERVATION_STATUS.UNKNOWN)
+      expect(manifest.epistemics.retainedWorkClassification).toBe('unknown')
+    })
+
+    test('the process entrypoint succeeds with the default clock', async () => {
+      // Exercises the actual CLI process — not runInventoryCli — without
+      // --now, exactly as an operator invokes it.
+      const entrypoint = fileURLToPath(
+        new URL('../scripts/langgraph-retirement-inventory.mjs', import.meta.url)
+      )
+      const run = Bun.spawnSync([
+        process.execPath,
+        entrypoint,
+        '--observation-scope',
+        'repository-scan',
+      ])
+      expect(String(run.stderr)).toBe('')
+      expect(run.exitCode).toBe(0)
+      const manifest = JSON.parse(String(run.stdout))
+      expect(manifest.manifest).toBe('langgraph-retirement-inventory')
+      expect(Number.isNaN(Date.parse(manifest.observedAt))).toBe(false)
+    })
+  })
+})

@@ -455,7 +455,7 @@
                 "sourceId": { "type": "string", "minLength": 1, "maxLength": 256 },
                 "fundingSource": {
                   "type": "string",
-                  "enum": ["hq_managed", "external_subscription"]
+                  "enum": ["hq_managed", "byo_api", "external_subscription"]
                 },
                 "currency": { "type": "string", "const": "USD" },
                 "chargedMicrounits": {

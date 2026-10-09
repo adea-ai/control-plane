@@ -1,15 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { contextPackageSerializationFixtures, deriveContextPackage } from '@control-plane/context'
-import {
-  ExecutionLifecycleService,
-  InMemoryExecutionRepository,
-  executionConstraintFixtures,
-} from '@control-plane/domain'
-import {
-  ExecutionPlanCompiler,
-  ExecutionPlanError,
-  InMemoryExecutionPlanRepository,
-} from '@control-plane/execution-plan'
+import { ExecutionPlanError } from '@control-plane/execution-plan'
 import {
   GraphDefinitionCatalog,
   GraphDefinitionExecutionAuthority,
@@ -22,23 +12,7 @@ import {
   decideDelegationFailure,
 } from './delegation.ts'
 
-const ids = {
-  workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
-  projectId: 'prj_01JABCDEF0123456789ABCDEFG',
-  taskId: 'tsk_01JABCDEF0123456789ABCDEFG',
-  childTaskId: 'tsk_01JBBCDEF0123456789ABCDEFG',
-  agentId: 'agt_01JABCDEF0123456789ABCDEFG',
-  requestId: 'req_01JABCDEF0123456789ABCDEFG',
-  childRequestId: 'req_01JBBCDEF0123456789ABCDEFG',
-  profileId: 'prf_01JABCDEF0123456789ABCDEFG',
-  profileVersionId: 'pfv_01JABCDEF0123456789ABCDEFG',
-  skillId: 'skl_01JABCDEF0123456789ABCDEFG',
-  skillVersionId: 'skv_01JABCDEF0123456789ABCDEFG',
-  parentExecutionId: 'exe_01JABCDEF0123456789ABCDEFG',
-  childExecutionId: 'exe_01JBBCDEF0123456789ABCDEFG',
-  childAttemptId: 'att_01JBBCDEF0123456789ABCDEFG',
-  delegationId: 'dlg_01JABCDEF0123456789ABCDEFG',
-}
+import { createFixture, delegationInput, ids } from './delegation-fixtures.mjs'
 const digest = (character) => `sha256:${character.repeat(64)}`
 
 describe('durable parent and child delegation', () => {
@@ -165,11 +139,13 @@ describe('durable parent and child delegation', () => {
     })
     await fixture.service.recordChildProgress({
       delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
       state: 'running',
       observedAt: '2026-08-25T18:02:10.000Z',
     })
     const completedInput = {
       delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
       state: 'completed',
       observedAt: '2026-08-25T18:03:00.000Z',
       terminalResultRef: 'art_01JBBCDEF0123456789ABCDEFG',
@@ -185,6 +161,111 @@ describe('durable parent and child delegation', () => {
     ])
   })
 
+  test('replays a retained terminal outcome after publication fails', async () => {
+    const fixture = await createFixture()
+    await fixture.service.delegate(delegationInput(fixture))
+    await fixture.service.dispatchChild({
+      delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
+      runtime: { runtimeConnectionId: 'rtc_01JBBCDEF0123456789ABCDEFG' },
+      dispatchedAt: '2026-08-25T18:02:00.000Z',
+    })
+    await fixture.service.recordChildProgress({
+      delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
+      state: 'running',
+      observedAt: '2026-08-25T18:02:10.000Z',
+    })
+    const completion = {
+      delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
+      state: 'completed',
+      observedAt: '2026-08-25T18:03:00.000Z',
+      terminalResultRef: 'art_01JBBCDEF0123456789ABCDEFG',
+    }
+    const interrupted = new DelegationService({
+      ...fixture,
+      events: {
+        async publish() {
+          throw new Error('publication unavailable')
+        },
+      },
+    })
+    await expect(interrupted.recordChildProgress(completion)).rejects.toThrow(
+      'publication unavailable'
+    )
+    expect((await fixture.delegations.get(ids.delegationId)).state).toBe('completed')
+    await fixture.service.recordChildProgress(completion)
+    expect(fixture.events.filter((event) => event.type === 'delegation.completed')).toHaveLength(1)
+  })
+
+  test('recovers publication acknowledged by the inbox before the sender loses its receipt', async () => {
+    const fixture = await createFixture()
+    await fixture.service.delegate(delegationInput(fixture))
+    await fixture.service.dispatchChild({
+      delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
+      runtime: { runtimeConnectionId: 'rtc_01JBBCDEF0123456789ABCDEFG' },
+      dispatchedAt: '2026-08-25T18:02:00.000Z',
+    })
+    await fixture.service.recordChildProgress({
+      delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
+      state: 'running',
+      observedAt: '2026-08-25T18:02:10.000Z',
+    })
+    const inbox = new Map()
+    const deliveredKeys = []
+    const events = {
+      async publish(event, key) {
+        deliveredKeys.push(key)
+        inbox.set(key, event)
+      },
+    }
+    const interrupted = new DelegationService({
+      ...fixture,
+      delegations: {
+        get: (id) => fixture.delegations.get(id),
+        compareAndSet: (revision, record) =>
+          record.terminalPublication?.status === 'published'
+            ? Promise.reject(new Error('crashed before acknowledgement'))
+            : fixture.delegations.compareAndSet(revision, record),
+      },
+      events,
+    })
+    const completion = {
+      delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
+      state: 'completed',
+      observedAt: '2026-08-25T18:03:00.000Z',
+      terminalResultRef: 'art_01JBBCDEF0123456789ABCDEFG',
+    }
+    await expect(interrupted.recordChildProgress(completion)).rejects.toThrow(
+      'crashed before acknowledgement'
+    )
+    const pending = await fixture.delegations.get(ids.delegationId)
+    expect(pending.terminalPublication.status).toBe('pending')
+    const restarted = new DelegationService({ ...fixture, events })
+    await restarted.reconcileChildPublications(ids.parentExecutionId)
+    expect((await fixture.delegations.get(ids.delegationId)).terminalPublication.status).toBe(
+      'published'
+    )
+    expect(new Set(deliveredKeys).size).toBe(1)
+    expect(deliveredKeys).toHaveLength(2)
+    expect(inbox.size).toBe(1)
+    await restarted.recordChildProgress({ ...completion, observedAt: '2026-08-25T18:04:00.000Z' })
+    await expect(
+      restarted.recordChildProgress({
+        ...completion,
+        terminalResultRef: 'art_01JBBCDEF0123456789ABCDEFH',
+      })
+    ).rejects.toMatchObject({ code: 'DELEGATION_STATE_CONFLICT' })
+    expect(deliveredKeys).toHaveLength(2)
+    expect(JSON.stringify(pending.terminalPublication)).not.toContain(
+      'Research the bounded question'
+    )
+  })
+
   test('retries a failed attempt without terminating the stable child execution', async () => {
     const fixture = await createFixture()
     await fixture.service.delegate(delegationInput(fixture))
@@ -196,11 +277,13 @@ describe('durable parent and child delegation', () => {
     })
     await fixture.service.recordChildProgress({
       delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
       state: 'running',
       observedAt: '2026-08-25T18:02:10.000Z',
     })
     const failed = await fixture.service.recordChildProgress({
       delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
       state: 'failed',
       observedAt: '2026-08-25T18:02:20.000Z',
       failure: {
@@ -213,11 +296,118 @@ describe('durable parent and child delegation', () => {
       resolution: 'retry',
       record: { state: 'requested', retryCount: 1 },
     })
+    const retained = await fixture.delegations.get(ids.delegationId)
+    await expect(
+      fixture.service.dispatchChild({
+        delegationId: ids.delegationId,
+        childAttemptId: ids.childAttemptId,
+        runtime: { runtimeConnectionId: 'rtc_01JBBCDEF0123456789ABCDEFG' },
+        dispatchedAt: '2026-08-25T18:02:00.000Z',
+      })
+    ).rejects.toMatchObject({ code: 'DELEGATION_STATE_CONFLICT' })
+    expect(await fixture.delegations.get(ids.delegationId)).toEqual(retained)
     expect((await fixture.lifecycle.getExecution(ids.childExecutionId)).state).toBe('running')
     expect(fixture.events.at(-1)).toMatchObject({
       type: 'delegation.failed',
       details: { resolution: 'retry' },
     })
+  })
+
+  test('fences delayed events from failed attempt A after retry B is running', async () => {
+    const fixture = await createFixture()
+    await fixture.service.delegate(delegationInput(fixture))
+    const dispatch = {
+      delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
+      runtime: { runtimeConnectionId: 'rtc_01JBBCDEF0123456789ABCDEFG' },
+      dispatchedAt: '2026-08-25T18:02:00.000Z',
+    }
+    await fixture.service.dispatchChild(dispatch)
+    const progress = {
+      delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
+      state: 'running',
+      observedAt: '2026-08-25T18:02:10.000Z',
+    }
+    await fixture.service.recordChildProgress(progress)
+    await fixture.service.recordChildProgress({
+      ...progress,
+      state: 'failed',
+      observedAt: '2026-08-25T18:02:20.000Z',
+      failure: { classification: 'runtime_error', code: 'RETRYABLE_EXIT', retryable: true },
+    })
+    const second = 'att_01JBBCDEF0123456789ABCDEFH'
+    await fixture.service.dispatchChild({
+      ...dispatch,
+      childAttemptId: second,
+      dispatchedAt: '2026-08-25T18:02:30.000Z',
+    })
+    await fixture.service.recordChildProgress({
+      ...progress,
+      childAttemptId: second,
+      observedAt: '2026-08-25T18:02:40.000Z',
+    })
+    const before = await fixture.delegations.get(ids.delegationId)
+    for (const event of [
+      { ...progress, state: 'completed', terminalResultRef: 'art_01JBBCDEF0123456789ABCDEFG' },
+      { ...progress, state: 'cancelled' },
+      { ...progress, state: 'running' },
+      {
+        ...progress,
+        state: 'failed',
+        failure: { classification: 'runtime_error', code: 'LATE_EXIT', retryable: false },
+      },
+    ])
+      await expect(
+        fixture.service.recordChildProgress({ ...event, observedAt: '2026-08-25T18:03:00.000Z' })
+      ).rejects.toMatchObject({ code: 'DELEGATION_ATTEMPT_MISMATCH' })
+    expect(await fixture.delegations.get(ids.delegationId)).toEqual(before)
+    await expect(
+      fixture.service.dispatchChild({
+        delegationId: ids.delegationId,
+        childAttemptId: 'att_01JBBCDEF0123456789ABCDEFH',
+        runtime: { runtimeConnectionId: 'rtc_01JBBCDEF0123456789ABCDEFG' },
+        dispatchedAt: '2026-08-25T18:01:00.000Z',
+      })
+    ).rejects.toThrow()
+    expect(await fixture.delegations.get(ids.delegationId)).toEqual(before)
+    expect((await fixture.executions.getAttempt(second)).state).toBe('running')
+    expect(fixture.events.filter((event) => event.type === 'delegation.completed')).toEqual([])
+    const replay = await fixture.service.dispatchChild({
+      ...dispatch,
+      childAttemptId: second,
+      dispatchedAt: '2026-08-25T18:02:30.000Z',
+    })
+    expect(replay.attempt.attemptId).toBe(second)
+  })
+
+  test('rejects missing attempt, secret payload and invalid terminal transition before intent persistence', async () => {
+    const fixture = await createFixture()
+    await fixture.service.delegate(delegationInput(fixture))
+    await fixture.service.dispatchChild({
+      delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
+      runtime: { runtimeConnectionId: 'rtc_01JBBCDEF0123456789ABCDEFG' },
+      dispatchedAt: '2026-08-25T18:02:00.000Z',
+    })
+    const completion = {
+      delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
+      state: 'completed',
+      observedAt: '2026-08-25T18:03:00.000Z',
+      terminalResultRef: 'art_01JBBCDEF0123456789ABCDEFG',
+    }
+    const before = await fixture.delegations.get(ids.delegationId)
+    await expect(
+      fixture.service.recordChildProgress({ ...completion, childAttemptId: undefined })
+    ).rejects.toThrow()
+    await expect(
+      fixture.service.recordChildProgress({ ...completion, apiKey: 'secret-canary' })
+    ).rejects.toThrow()
+    await expect(fixture.service.recordChildProgress(completion)).rejects.toMatchObject({
+      code: 'INVALID_TRANSITION',
+    })
+    expect(await fixture.delegations.get(ids.delegationId)).toEqual(before)
   })
 
   test('applies explicit retry, fallback, partial-failure, and manual policies', () => {
@@ -313,144 +503,6 @@ describe('durable parent and child delegation', () => {
     expect((await fixture.lifecycle.getExecution(ids.childExecutionId)).state).toBe('cancelled')
   })
 })
-
-async function createFixture(graphs) {
-  const parentPlan = new ExecutionPlanCompiler('1.0.0').compile(parentPlanInput())
-  const executions = new InMemoryExecutionRepository()
-  const lifecycle = new ExecutionLifecycleService(executions)
-  const plans = new InMemoryExecutionPlanRepository()
-  await plans.put(parentPlan)
-  await lifecycle.createExecution({
-    executionId: ids.parentExecutionId,
-    correlation: parentPlan.correlation,
-    executionPlan: {
-      executionPlanId: parentPlan.executionPlanId,
-      contentDigest: parentPlan.contentDigest,
-      schemaVersion: parentPlan.schemaVersion,
-    },
-    acceptedAt: '2026-08-25T18:00:00.000Z',
-    deadlineAt: '2026-08-25T19:00:00.000Z',
-  })
-  const events = []
-  const delegations = new InMemoryDelegationRepository()
-  const service = new DelegationService({
-    delegations,
-    lifecycle,
-    plans,
-    graphs,
-    events: {
-      async publish(event) {
-        events.push(event)
-      },
-    },
-  })
-  return { parentPlan, executions, lifecycle, plans, events, service, delegations }
-}
-
-function delegationInput({ parentPlan }) {
-  const constraints = globalThis.structuredClone(parentPlan.constraints)
-  constraints.tools.grants[0].operations = ['read']
-  constraints.limits.budget.maximumMicrounits = 1_000_000
-  constraints.limits.tokens.maximumTotal = 10_000
-  constraints.limits.duration.maximumMs = 600_000
-  const contextPackage = deriveContextPackage(contextPackageSerializationFixtures.futurePi, {
-    objective: 'Complete focused research',
-    allowedStateItemIds: [],
-    allowedArtifactIds: [],
-    budgets: { maximumBytes: 512, maximumTokens: 128 },
-    successCriteria: ['Return evidence'],
-    returnContract: { contractRef: 'contract://adapter-result/v1' },
-    compiledAt: '2026-08-25T18:01:00.000Z',
-  })
-  return {
-    delegationId: ids.delegationId,
-    parentExecutionId: ids.parentExecutionId,
-    childExecutionId: ids.childExecutionId,
-    role: 'researcher',
-    profileVersionId: ids.profileVersionId,
-    objective: 'Research the bounded question',
-    parentPlan,
-    childPlan: {
-      correlation: {
-        ...parentPlan.correlation,
-        taskId: ids.childTaskId,
-        requestId: ids.childRequestId,
-      },
-      contextPackage,
-      constraints,
-      runtimeRequirements: parentPlan.runtimeRequirements,
-      outputContract: parentPlan.outputContract,
-      compiledAt: '2026-08-25T18:01:00.000Z',
-    },
-    policy: {
-      cancellation: 'cascade',
-      deadline: 'bounded_by_parent',
-      failure: 'retry',
-      maximumRetries: 2,
-    },
-    acceptedAt: '2026-08-25T18:01:00.000Z',
-    deadlineAt: '2026-08-25T18:10:00.000Z',
-  }
-}
-
-function parentPlanInput() {
-  const skill = {
-    skillVersionId: ids.skillVersionId,
-    skillId: ids.skillId,
-    revision: 1,
-    lifecycle: 'published',
-    manifest: {
-      schemaVersion: 1,
-      semanticVersion: '1.0.0',
-      contentDigest: digest('b'),
-      requiredCapabilities: ['filesystem.read'],
-      requiredTools: [{ toolId: 'project-files', versionRange: '^1.0.0' }],
-      compatibleProfileSchemaVersions: [1],
-      compatibleContractMajorVersions: [1],
-    },
-    content: { instructions: 'Inspect project files.', artifactRefs: [] },
-    createdAt: '2026-08-25T17:00:00.000Z',
-    lifecycleMetadata: { publishedAt: '2026-08-25T17:00:00.000Z' },
-  }
-  return {
-    correlation: {
-      workspaceId: ids.workspaceId,
-      projectId: ids.projectId,
-      taskId: ids.taskId,
-      agentId: ids.agentId,
-      requestId: ids.requestId,
-    },
-    profile: {
-      profileVersionId: ids.profileVersionId,
-      profileId: ids.profileId,
-      version: 1,
-      revision: 1,
-      lifecycle: 'published',
-      contentDigest: digest('a'),
-      definition: {
-        schemaVersion: 1,
-        roleInstructions: 'Coordinate safely.',
-        skills: [
-          { skillId: ids.skillId, skillVersionId: ids.skillVersionId, contentDigest: digest('b') },
-        ],
-        capabilityRequirements: ['filesystem.read'],
-        executionConstraints: globalThis.structuredClone(executionConstraintFixtures.write),
-        outputContractRefs: ['contract://execution-result/v1'],
-      },
-      createdAt: '2026-08-25T17:00:00.000Z',
-      lifecycleMetadata: { publishedAt: '2026-08-25T17:00:00.000Z' },
-    },
-    skills: [skill],
-    contextPackage: globalThis.structuredClone(contextPackageSerializationFixtures.futurePi),
-    constraints: globalThis.structuredClone(executionConstraintFixtures.write),
-    requestConstraints: [],
-    runtimeRequirements: [
-      { capability: 'stream.output', necessity: 'required', minimumSupport: 'supported' },
-    ],
-    outputContract: { contractRef: 'contract://execution-result/v1' },
-    compiledAt: '2026-08-25T17:00:00.000Z',
-  }
-}
 
 async function graphFixture(scenario) {
   const repository = new InMemoryGraphDefinitionRepository()

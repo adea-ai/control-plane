@@ -1,4 +1,20 @@
 import {
+  PiDurableLeadPrepareRequestSchema,
+  PiDurableLeadPrepareResponseSchema,
+  PiDurableLeadLookupRequestSchema,
+  PiDurableLeadLookupResponseSchema,
+  PiDurableLeadDispatchRequestSchema,
+  PiDurableLeadDispatchResponseSchema,
+  PiDurableLeadStatusRequestSchema,
+  PiDurableLeadStatusResponseSchema,
+  PiDurableLeadProgressRequestSchema,
+  PiDurableLeadProgressResponseSchema,
+  PiDurableLeadCancelRequestSchema,
+  PiDurableLeadCancelResponseSchema,
+} from '@control-plane/runtime-sdk'
+import {
+  PiLeadPublicationRequestSchema,
+  PiLeadPublicationResponseSchema,
   ModelSelectionFundingRequestSchema,
   ModelSelectionFundingResponseSchema,
   ModelConnectionCreateRequestSchema,
@@ -84,6 +100,13 @@ import {
 } from '@control-plane/contracts'
 
 export const ControlApiOperations = Object.freeze({
+  getPiDurableLeadPublication: {
+    operation: 'pi-durable.lead.publication.current',
+    method: 'POST',
+    path: '/v1/pi-durable/lead-publication/current',
+    requestSchema: PiLeadPublicationRequestSchema,
+    responseSchema: PiLeadPublicationResponseSchema,
+  },
   getModelSelectionFunding: {
     operation: 'model-selection.funding.get',
     method: 'POST',
@@ -401,6 +424,50 @@ export const ControlApiOperations = Object.freeze({
     path: '/v1/marketplace/installations/uninstall',
     requestSchema: MarketplaceInstallationUninstallRequestSchema,
     responseSchema: MarketplaceInstallationUninstallResponseSchema,
+  },
+  preparePiDurableLead: {
+    operation: 'pi-durable.lead.prepare',
+    method: 'POST',
+    path: '/v3/pi-durable/lead-dispatches/prepare',
+    requestSchema: PiDurableLeadPrepareRequestSchema,
+    responseSchema: PiDurableLeadPrepareResponseSchema,
+  },
+  dispatchPiDurableLead: {
+    operation: 'pi-durable.lead.dispatch',
+    method: 'POST',
+    path: '/v3/pi-durable/lead-dispatches/dispatch',
+    requestSchema: PiDurableLeadDispatchRequestSchema,
+    responseSchema: PiDurableLeadDispatchResponseSchema,
+    responseStatus: 202,
+  },
+  lookupPiDurableLead: {
+    operation: 'pi-durable.lead.lookup',
+    method: 'POST',
+    path: '/v3/pi-durable/lead-dispatches/lookup',
+    requestSchema: PiDurableLeadLookupRequestSchema,
+    responseSchema: PiDurableLeadLookupResponseSchema,
+  },
+  getPiDurableLeadStatus: {
+    operation: 'pi-durable.lead.status',
+    method: 'POST',
+    path: '/v3/pi-durable/lead-dispatches/status',
+    requestSchema: PiDurableLeadStatusRequestSchema,
+    responseSchema: PiDurableLeadStatusResponseSchema,
+  },
+  getPiDurableLeadProgress: {
+    operation: 'pi-durable.lead.progress',
+    method: 'POST',
+    path: '/v3/pi-durable/lead-dispatches/progress',
+    requestSchema: PiDurableLeadProgressRequestSchema,
+    responseSchema: PiDurableLeadProgressResponseSchema,
+  },
+  cancelPiDurableLead: {
+    operation: 'pi-durable.lead.cancel',
+    method: 'POST',
+    path: '/v3/pi-durable/lead-dispatches/cancel',
+    requestSchema: PiDurableLeadCancelRequestSchema,
+    responseSchema: PiDurableLeadCancelResponseSchema,
+    responseStatus: 202,
   },
 } as const)
 

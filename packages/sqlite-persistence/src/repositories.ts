@@ -1205,6 +1205,37 @@ export class SqliteExecutionRepository implements ExecutionRepository {
               )
             }
           )
+          // Retained delegation/outcome evidence pins both canonical execution owners.
+          const delegationReference =
+            (await transaction.list('delegations')).some((row) => {
+              const value = row.value as {
+                parentExecutionId?: unknown
+                childExecutionId?: unknown
+              } | null
+              return (
+                value?.parentExecutionId === execution.executionId ||
+                value?.childExecutionId === execution.executionId
+              )
+            }) ||
+            (await transaction.list('delegation-publications')).some((row) => {
+              const event = (
+                row.value as {
+                  event?: { parentExecutionId?: unknown; childExecutionId?: unknown }
+                } | null
+              )?.event
+              return (
+                event?.parentExecutionId === execution.executionId ||
+                event?.childExecutionId === execution.executionId
+              )
+            })
+          const admissionReference = (
+            await transaction.list(
+              `delegation-tool-admissions-${execution.correlation.workspaceId.toLowerCase()}`
+            )
+          ).some((row) => {
+            const value = row.value as { request?: { executionId?: unknown } } | null
+            return value?.request?.executionId === execution.executionId
+          })
           const activeAttempts = attempts.filter(
             (attempt) => !terminalExecutionStates.has(attempt.state)
           )
@@ -1244,6 +1275,8 @@ export class SqliteExecutionRepository implements ExecutionRepository {
               interactionReceiptReference ||
               interactionRequestReference ||
               memoryProposalReference ||
+              delegationReference ||
+              admissionReference ||
               activeAttempts.length > 0 ||
               !attemptsComplete
                 ? 1
@@ -1578,6 +1611,25 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
           for (const descendant of await transaction.list(namespaces.plans)) {
             const parentPlanId = executionPlanParentId(descendant.value)
             if (parentPlanId !== undefined) references.add(parentPlanId)
+          }
+          for (const delegation of await transaction.list('delegations')) {
+            const value = delegation.value as {
+              parentExecutionPlanId?: unknown
+              childExecutionPlanId?: unknown
+            } | null
+            if (typeof value?.parentExecutionPlanId === 'string')
+              references.add(value.parentExecutionPlanId)
+            if (typeof value?.childExecutionPlanId === 'string')
+              references.add(value.childExecutionPlanId)
+          }
+          for (const admission of await transaction.list(
+            `delegation-tool-admissions-${plan.correlation.workspaceId.toLowerCase()}`
+          )) {
+            const value = admission.value as {
+              command?: { delegation?: { parentPlan?: { executionPlanId?: unknown } } }
+            } | null
+            const parentPlanId = value?.command?.delegation?.parentPlan?.executionPlanId
+            if (typeof parentPlanId === 'string') references.add(parentPlanId)
           }
           const pendingReferences = references.has(plan.executionPlanId) ? 1 : 0
           const currentWindow = await getReferenceRetentionWindow(

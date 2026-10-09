@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.26.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.25.0...control-api-v1.26.0) (2026-10-09)
+
+
+### Features
+
+* compose production Pi lead model and publication authority ([#996](https://github.com/adea-ai/control-plane/issues/996)) ([1332100](https://github.com/adea-ai/control-plane/commit/13321009f6e9d7984a8774df8818e1b775c582ea))
+
+
+### Bug Fixes
+
+* **pi:** fence continuation retention on current child journal ([#1007](https://github.com/adea-ai/control-plane/issues/1007)) ([b237e7a](https://github.com/adea-ai/control-plane/commit/b237e7a034a0687bd5f1ed7489c7225085e8b17d))
+
+
+### Tests
+
+* specify unfinished Pi child process recovery proofs ([#979](https://github.com/adea-ai/control-plane/issues/979)) ([6b82ccd](https://github.com/adea-ai/control-plane/commit/6b82ccd677e69eca14d765ac77d9d273df228d42))
+
+## [1.25.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.24.1...control-api-v1.25.0) (2026-10-08)
+
+
+### Features
+
+* pi-child-continuation ([#981](https://github.com/adea-ai/control-plane/issues/981)) ([a9d8228](https://github.com/adea-ai/control-plane/commit/a9d8228d70ee6eb6234204c24c9b46dc2fc38d7a))
+
+## [1.24.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.24.0...control-api-v1.24.1) (2026-10-08)
+
+
+### Tests
+
+* compose stored model selections with prepared lead host ([#983](https://github.com/adea-ai/control-plane/issues/983)) ([357f41c](https://github.com/adea-ai/control-plane/commit/357f41c32331788cf5a3d6bf05ef4044e17fb383))
+
+## [1.24.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.23.0...control-api-v1.24.0) (2026-10-08)
+
+
+### Features
+
+* **pi-durable:** add persistent governed Node runtime and funded lead admission ([#949](https://github.com/adea-ai/control-plane/issues/949)) ([2ad205f](https://github.com/adea-ai/control-plane/commit/2ad205f783c09a0cc7e208d5c799d6c18636500a))
+
 ## [1.23.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.22.0...control-api-v1.23.0) (2026-10-08)
 
 

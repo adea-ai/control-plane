@@ -23,6 +23,13 @@ for the service boundary.
 - **Transport** — transport ports with deterministic in-memory doubles
   (`mock.ts`, `fixtures.ts`) for testing adapters without a live gateway.
 
+Runtime usage accounting distinguishes HQ-funded API usage (`hq_managed`),
+user-funded API usage (`byo_api`), and external subscriptions
+(`external_subscription`). Paid API cost, when reported, must match the exact
+USD microunits in accounting. Subscription accounting reports zero charged
+microunits. These fields describe provenance; consumers must verify the source
+authority before charging.
+
 ## Install
 
 ```sh
