@@ -395,6 +395,59 @@ describe('profile infrastructure bindings', () => {
     ).rejects.toMatchObject({ code: 'PROFILE_WAKE_MISMATCH' })
   })
 
+  test('binds the hosted workflow wake path to its exact cloud restate dispatcher', async () => {
+    const submitted = []
+    const calls = []
+    const driver = {
+      deploymentProfile: 'cloud',
+      kind: 'restate-ingress',
+      submit: async (input) => submitted.push(input),
+    }
+    const wake = await bindProfileWorkflowWake({
+      profile: 'hosted',
+      deployment: composition('cloud'),
+      driver,
+      placement: hostedPlacement,
+      guards: allowedGuards(calls),
+      topology: trustedWakeTopology(driver),
+    })
+    const workflow = {
+      executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+      workflowId: 'wfl_01JABCDEF0123456789ABCDEFG',
+      executionPlan: {
+        executionPlanId: 'pln_01JABCDEF0123456789ABCDEFG',
+        contentDigest: `sha256:${'a'.repeat(64)}`,
+        schemaVersion: 1,
+      },
+      deadlineAt: '2026-10-09T12:00:00.000Z',
+    }
+    await wake.submit(workflow)
+    expect(submitted).toEqual([workflow])
+    expect(calls.map(([guard]) => guard)).toEqual([
+      'residency',
+      'authority',
+      'residency',
+      'authority',
+      'residency',
+    ])
+
+    // The embedded queue is never a hosted wake route and there is no fallback.
+    const embedded = {
+      deploymentProfile: 'cloud',
+      kind: 'embedded-sqlite-queue',
+      submit: async () => undefined,
+    }
+    const failure = await bindProfileWorkflowWake({
+      profile: 'hosted',
+      deployment: composition('cloud'),
+      driver: embedded,
+      placement: hostedPlacement,
+      guards: allowedGuards(),
+      topology: trustedWakeTopology(embedded),
+    }).catch((error) => error)
+    expect(failure.code).toBe('PROFILE_WAKE_MISMATCH')
+  })
+
   test('validates the actual runtime/transport pair and recomputes capability eligibility', async () => {
     const driver = new MockRuntimeAdapter()
     const transport = new DirectLocalRuntimeTransport(driver)
