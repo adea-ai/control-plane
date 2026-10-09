@@ -45,6 +45,8 @@ export interface ProductionPiLeadCompositionOptions {
   >['releaseExpired']
   /** Separate lock-safe CP authority. Never calls product/PG while Adea holds publication locks. */
   readonly publicationAuthority: PiLeadPublicationPorts['assertCurrent']
+  /** Publication freshness clock is independent from admission's retained-plan clock. */
+  readonly publicationNow?: () => string
   readonly leasePrincipalRef: string
   readonly modelAlias: string
   /** Separate canonical child admission and confirmed provider/spending authority. Never lead fallback. */
@@ -303,7 +305,7 @@ export async function createProductionPiLeadComposition(
         adapter: installed.adapter,
       }),
       assertCurrent: options.publicationAuthority,
-      ...(options.admission.now ? { now: options.admission.now } : {}),
+      ...(options.publicationNow ? { now: options.publicationNow } : {}),
     })
     let closing: Promise<void> | undefined
     return {

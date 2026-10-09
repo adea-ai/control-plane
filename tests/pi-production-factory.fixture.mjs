@@ -92,6 +92,7 @@ function scriptedPhysicalFetch(state) {
 export async function createProductionFactoryFixture(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'pi-real-production-factory-'))
   const at = new Date().toISOString()
+  const publicationNow = options.publicationNow ?? (() => new Date().toISOString())
   const expiresAt = new Date(Date.parse(at) + 240_000).toISOString()
   const providerModels = options.providerModels ?? [
     ...new Set([options.providerModel ?? 'gpt-5', 'gpt-5-mini']),
@@ -379,6 +380,7 @@ export async function createProductionFactoryFixture(options = {}) {
       records.set(evidence.intentId, {
         binding,
         decision,
+        authorityExpiresAt: evidence.expiresAt,
         recordPath: join(recordDirectory, `${ids.attemptId}.json`),
         payerPath: join(
           payerDirectory,
@@ -408,7 +410,7 @@ export async function createProductionFactoryFixture(options = {}) {
     })
     const publicationFundingAuthority = createFileRecordedModelFundingAuthority({
       directory: fundingDirectory,
-      now: () => at,
+      now: publicationNow,
       currentExecutionAuthority: {
         assertCurrent: async (binding) => {
           const expected = [...records.values()].find(
@@ -495,6 +497,7 @@ export async function createProductionFactoryFixture(options = {}) {
       releaseExpired,
       leasePrincipalRef,
       modelAlias: 'reasoning.standard',
+      publicationNow,
       publicationAuthority: async (binding, reader) => {
         state.publicationChecks++
         const expected = records.get(binding.intentId)
@@ -511,10 +514,28 @@ export async function createProductionFactoryFixture(options = {}) {
           )
         )
           throw new Error('TEST_PUBLICATION_DENIED')
+        const originalAuthorityExpiry = Math.min(
+          Date.parse(expected.authorityExpiresAt),
+          Date.parse(expected.decision.grant.expiresAt),
+          Date.parse(expected.decision.price.validUntil)
+        )
+        const observedAt = Date.parse(publicationNow())
+        if (
+          !Number.isFinite(originalAuthorityExpiry) ||
+          !Number.isFinite(observedAt) ||
+          observedAt >= originalAuthorityExpiry
+        )
+          throw new Error('TEST_PUBLICATION_DENIED')
         const fresh = await publicationFundingAuthority.readCurrent(expected.binding)
         if (canonicalJsonStringify(fresh) !== canonicalJsonStringify(expected.decision))
           throw new Error('TEST_PUBLICATION_DENIED')
-        return { authorityRevision: 1, expiresAt: new Date(Date.parse(at) + 30_000).toISOString() }
+        const finalAt = Date.parse(publicationNow())
+        if (!Number.isFinite(finalAt) || finalAt >= originalAuthorityExpiry)
+          throw new Error('TEST_PUBLICATION_DENIED')
+        return {
+          authorityRevision: 1,
+          expiresAt: new Date(Math.min(finalAt + 30_000, originalAuthorityExpiry)).toISOString(),
+        }
       },
     })
     const command = (operation, payload) =>

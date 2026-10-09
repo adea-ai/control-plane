@@ -234,7 +234,11 @@ test('authenticated model metadata selections bind distinct lead and child choic
 }, 30000)
 
 test('real production factory prepares without inference and publishes exact native committed output through actual retained SQLite records', async () => {
-  const host = await createProductionFactoryFixture()
+  let publicationTime = new Date().toISOString()
+  const host = await createProductionFactoryFixture({
+    publicationNow: () => publicationTime,
+  })
+  publicationTime = host.at
   try {
     const intentId = host.setIntent()
     const prepared = (
@@ -270,6 +274,10 @@ test('real production factory prepares without inference and publishes exact nat
     expect(status.state).toBe('completed')
     expect(status.result.output.text).toBe(host.exactText)
     expect(host.state.physicalSends).toBe(1)
+    const originalGrant = structuredClone(host.records.get(intentId).decision.grant)
+    // Model a long-running connected consumer: publication advances while admission keeps
+    // its deterministic startup clock for the retained execution.
+    publicationTime = new Date(Date.parse(host.at) + 60_000).toISOString()
     const before = {
       product: host.state.productReads,
       sends: host.state.physicalSends,
@@ -294,6 +302,8 @@ test('real production factory prepares without inference and publishes exact nat
       canonicalActorPrincipalId: host.actorPrincipalId,
       resultContentDigest: `sha256:${createHash('sha256').update(host.exactText, 'utf8').digest('hex')}`,
     })
+    expect(publication.expiresAt).toBe(new Date(Date.parse(publicationTime) + 30_000).toISOString())
+    expect(Date.parse(publication.expiresAt)).toBeLessThanOrEqual(Date.parse(host.expiresAt))
     expect(host.actorPrincipalId).not.toBe(host.principal.principalId)
     expect(host.state.productReads).toBe(before.product)
     expect(host.state.physicalSends).toBe(before.sends)
@@ -306,6 +316,21 @@ test('real production factory prepares without inference and publishes exact nat
     expect(
       (await host.composition.publicationService.current(request, host.principal)).data.publication
     ).toEqual(publication)
+    publicationTime = new Date(Date.parse(host.at) + 225_000).toISOString()
+    const cappedPublication = (
+      await host.composition.publicationService.current(request, host.principal)
+    ).data.publication
+    expect(cappedPublication.expiresAt).toBe(host.expiresAt)
+    expect(cappedPublication.selectionRef).toBe(publication.selectionRef)
+    expect(cappedPublication.selectionRevision).toBe(publication.selectionRevision)
+    expect(host.records.get(intentId).decision.grant).toEqual(originalGrant)
+    publicationTime = host.expiresAt
+    await expect(
+      host.composition.publicationService.current(request, host.principal)
+    ).rejects.toThrow('TEST_PUBLICATION_DENIED')
+    expect(host.state.physicalSends).toBe(1)
+    expect(host.state.productReads).toBe(before.product)
+    publicationTime = new Date(Date.parse(host.at) + 60_000).toISOString()
     const recordPath = host.records.get(intentId).recordPath
     const acceptedRecord = await readFile(recordPath, 'utf8')
     for (const mutate of [
