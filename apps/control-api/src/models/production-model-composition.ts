@@ -56,6 +56,11 @@ export interface ProductionPiLeadCompositionOptions {
   readonly publicationAuthority: PiLeadPublicationPorts['assertCurrent']
   /** Publication freshness clock is independent from admission's retained-plan clock. */
   readonly publicationNow?: () => string
+  /** Host-governed tool service/interactions for the canonical current-authority adapter. */
+  readonly managementAuthority?: Pick<
+    CreatePiDurableCurrentToolAuthorityOptions,
+    'service' | 'interactions'
+  >
   readonly leasePrincipalRef: string
   readonly modelAlias: string
   /** Separate canonical child admission and confirmed provider/spending authority. Never lead fallback. */
@@ -101,6 +106,12 @@ export async function createProductionPiLeadComposition(
     typeof options.releaseExpired !== 'function' ||
     typeof options.reconcileInference !== 'function' ||
     typeof options.modelConnections?.currentAccountAuthority?.readCurrent !== 'function'
+  )
+    throw new Error('PI_PRODUCTION_BINDING_REQUIRED')
+  if (
+    options.managementAuthority !== undefined &&
+    (typeof options.managementAuthority.service?.execute !== 'function' ||
+      typeof options.managementAuthority.interactions?.get !== 'function')
   )
     throw new Error('PI_PRODUCTION_BINDING_REQUIRED')
   const children = options.children
@@ -201,6 +212,9 @@ export async function createProductionPiLeadComposition(
       database: fundingDatabase,
       ...(options.admission.now ? { now: options.admission.now } : {}),
     })
+    // Child tool gate (CP1041/1018 wiring): the governed child tool service
+    // asserts through the canonical current-tool authority built from the
+    // server-owned children tool registry.
     const currentToolAuthority = children
       ? createPiDurableCurrentToolAuthority({
           currentExecutionAuthority: canonical.executionAuthority,
@@ -209,6 +223,21 @@ export async function createProductionPiLeadComposition(
           plans: options.admission.plans,
           service: children.tools.service,
           interactions: children.tools.interactions,
+          ...(options.admission.now ? { now: options.admission.now } : {}),
+        })
+      : undefined
+    // Management current authority (DeepSeek1215 receipt fc42c7dd lineage,
+    // integrated under MiMo sole-writer ownership of this file): host-governed
+    // management tool service/interactions, returned for the launcher's
+    // governed management call.
+    const piDurableCurrentToolAuthority = options.managementAuthority
+      ? createPiDurableCurrentToolAuthority({
+          currentExecutionAuthority: canonical.executionAuthority,
+          intents,
+          executions: options.admission.executions,
+          plans: options.admission.plans,
+          service: options.managementAuthority.service,
+          interactions: options.managementAuthority.interactions,
           ...(options.admission.now ? { now: options.admission.now } : {}),
         })
       : undefined
@@ -383,6 +412,7 @@ export async function createProductionPiLeadComposition(
     return {
       piDurableLeadService: installed.service,
       publicationService,
+      ...(piDurableCurrentToolAuthority ? { piDurableCurrentToolAuthority } : {}),
       modelConnectionService: new ConfiguredModelConnectionService(
         metadata.selections,
         metadata.administration,

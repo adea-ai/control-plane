@@ -577,6 +577,9 @@ export async function createProductionFactoryFixture(options = {}) {
           expiresAt: new Date(Math.min(finalAt + 30_000, originalAuthorityExpiry)).toISOString(),
         }
       },
+      ...(options.managementAuthority === undefined
+        ? {}
+        : { managementAuthority: options.managementAuthority }),
     })
     const command = (operation, payload) =>
       StateChangingCommandEnvelopeSchema.parse({
