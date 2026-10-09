@@ -5,13 +5,13 @@ import {
   PiDurableLeadLookupResponseSchema,
   PiDurableLeadPrepareRequestSchema,
   PiDurableLeadReceiptResponseSchema,
-  PiDurableLeadTargetSchema,
+  PiDurableLeadRequestedTargetSchema,
 } from './pi-durable-lead.ts'
 
 const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
 const at = '2026-10-08T09:00:00.000Z'
 const intentId = 'f643a115-617d-4bae-8d52-cfe458c0b8ac'
-const target = {
+const requestedTarget = {
   sessionId: id('ses'),
   taskId: '00000000-0000-4000-8000-0000000000f1',
   generation: 3,
@@ -39,18 +39,21 @@ const envelope = (operation) => ({
  * admissions.
  */
 test('935: target shape validates session, task, and generation', () => {
-  expect(PiDurableLeadTargetSchema.parse(target)).toEqual(target)
+  expect(PiDurableLeadRequestedTargetSchema.parse(requestedTarget)).toEqual(requestedTarget)
   for (const bad of [
-    { ...target, sessionId: '   ' },
-    { ...target, sessionId: 'x'.repeat(257) },
-    { ...target, taskId: 'not-a-uuid' },
-    { ...target, generation: -1 },
-    { ...target, generation: 1.5 },
-    { ...target, extra: 'nope' },
+    { ...requestedTarget, sessionId: '   ' },
+    { ...requestedTarget, sessionId: 'x'.repeat(257) },
+    // taskId is an opaque cross-system reference: any non-empty string
+    // up to 256 chars passes; only shape violations fail.
+    { ...requestedTarget, taskId: '' },
+    { ...requestedTarget, taskId: 'x'.repeat(257) },
+    { ...requestedTarget, generation: -1 },
+    { ...requestedTarget, generation: 1.5 },
+    { ...requestedTarget, extra: 'nope' },
     'session-only',
     null,
   ])
-    expect(() => PiDurableLeadTargetSchema.parse(bad)).toThrow()
+    expect(() => PiDurableLeadRequestedTargetSchema.parse(bad)).toThrow()
 })
 
 test('935: prepare and dispatch accept an optional target', () => {
@@ -59,19 +62,19 @@ test('935: prepare and dispatch accept an optional target', () => {
   expect(
     PiDurableLeadPrepareRequestSchema.safeParse({
       ...envelope('pi-durable.lead.prepare'),
-      payload: { intentId, target },
+      payload: { intentId, requestedTarget },
     }).success
   ).toBe(false)
   const untargeted = PiDurableLeadPrepareRequestSchema.parse({
     ...envelope('pi-durable.lead.prepare'),
     payload: { intentId },
   })
-  expect(untargeted.payload).not.toHaveProperty('target')
+  expect(untargeted.payload).not.toHaveProperty('requestedTarget')
   const dispatch = PiDurableLeadDispatchRequestSchema.parse({
     ...envelope('pi-durable.lead.dispatch'),
-    payload: { intentId, target },
+    payload: { intentId, requestedTarget },
   })
-  expect(dispatch.payload).toMatchObject({ intentId, target })
+  expect(dispatch.payload).toMatchObject({ intentId, requestedTarget })
 })
 
 test('935: receipts echo the retained target when present', () => {
@@ -82,9 +85,9 @@ test('935: receipts echo the retained target when present', () => {
     executionId: id('exe'),
     attemptId: id('att'),
     runtimeSessionId: id('ses'),
-    target,
+    requestedTarget,
   }
-  expect(PiDurableLeadReceiptResponseSchema.parse(receipt)).toMatchObject({ target })
+  expect(PiDurableLeadReceiptResponseSchema.parse(receipt)).toMatchObject({ requestedTarget })
   const untargeted = PiDurableLeadReceiptResponseSchema.parse({
     schemaVersion: 'pi-lead-dispatch/v1',
     dispatchId: `dispatch_${'a'.repeat(32)}`,
@@ -93,7 +96,7 @@ test('935: receipts echo the retained target when present', () => {
     attemptId: id('att'),
     runtimeSessionId: id('ses'),
   })
-  expect(untargeted).not.toHaveProperty('target')
+  expect(untargeted).not.toHaveProperty('requestedTarget')
   const lookup = PiDurableLeadLookupResponseSchema.parse({
     contractVersion: PublicContractManifest.current,
     requestId: id('req'),
@@ -107,9 +110,9 @@ test('935: receipts echo the retained target when present', () => {
         executionId: id('exe'),
         attemptId: id('att'),
         state: 'dispatched',
-        target,
+        requestedTarget,
       },
     },
   })
-  expect(lookup.data.receipt).toMatchObject({ target })
+  expect(lookup.data.receipt).toMatchObject({ requestedTarget })
 })

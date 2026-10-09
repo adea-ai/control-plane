@@ -27,18 +27,21 @@ export const PiDurableLeadReadEnvelopeSchema = ReadRequestEnvelopeSchema.extend(
   caller: Caller,
   correlation: Correlation,
 }).strict()
-/** Target-bound execution observation: the session, task, and generation a
- *  caller binds to an intent, echoed back on every receipt so the owner can
- *  verify claimed, retained, and observed bindings together. The shape alone
- *  proves nothing — verification happens where receipts meet admissions. */
-export const PiDurableLeadTargetSchema = z
+/** Requested target reference: the session, task, and generation a caller
+ *  asks to bind to an intent, echoed back on every receipt. UNTRUSTED by
+ *  construction — the taskId is an opaque cross-system reference (Adea
+ *  UUIDs and control-plane tsk_ ids share no namespace), and no lookup
+ *  verifies the triple against session authority. Owners verify claimed
+ *  vs retained vs independently observed bindings together; the shape
+ *  alone proves nothing. */
+export const PiDurableLeadRequestedTargetSchema = z
   .strictObject({
     sessionId: z.string().trim().min(1).max(256),
-    taskId: z.uuid(),
+    taskId: z.string().trim().min(1).max(256),
     generation: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   })
   .readonly()
-export type PiDurableLeadTarget = z.output<typeof PiDurableLeadTargetSchema>
+export type PiDurableLeadRequestedTarget = z.output<typeof PiDurableLeadRequestedTargetSchema>
 
 export const PiDurableLeadPrepareRequestSchema = PiDurableLeadCommandEnvelopeSchema.extend({
   operation: z.literal('pi-durable.lead.prepare'),
@@ -50,7 +53,7 @@ export const PiDurableLeadDispatchRequestSchema = PiDurableLeadCommandEnvelopeSc
     .object({
       intentId: IntentId,
       preparationRef: PiDurableLeadPreparationRefSchema.optional(),
-      target: PiDurableLeadTargetSchema.optional(),
+      requestedTarget: PiDurableLeadRequestedTargetSchema.optional(),
     })
     .strict(),
 })
@@ -84,7 +87,7 @@ export const PiDurableLeadReceiptResponseSchema = z
     executionId: IdentifierSchemas.executionId,
     attemptId: IdentifierSchemas.attemptId,
     runtimeSessionId: RuntimeExecutionHandleSchema.shape.externalSessionId.unwrap(),
-    target: PiDurableLeadTargetSchema.optional(),
+    requestedTarget: PiDurableLeadRequestedTargetSchema.optional(),
   })
   .strict()
 const response = SuccessResponseEnvelopeSchema.extend({ correlation: Correlation }).strict()
@@ -138,7 +141,7 @@ export const PiDurableLeadLookupResponseSchema = response.extend({
           runtimeSessionId: RuntimeExecutionHandleSchema.shape.externalSessionId
             .unwrap()
             .optional(),
-          target: PiDurableLeadTargetSchema.optional(),
+          requestedTarget: PiDurableLeadRequestedTargetSchema.optional(),
         })
         .strict()
         .nullable(),

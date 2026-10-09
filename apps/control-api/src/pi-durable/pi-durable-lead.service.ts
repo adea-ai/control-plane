@@ -23,7 +23,7 @@ import {
 export const PI_DURABLE_LEAD_SERVICE = Symbol('PI_DURABLE_LEAD_SERVICE')
 import {
   PiDurableLeadDispatchRequestSchema,
-  PiDurableLeadTargetSchema,
+  PiDurableLeadRequestedTargetSchema,
   PiDurableLeadPrepareRequestSchema,
   PiDurableLeadPrepareResponseSchema,
   PiDurableLeadLookupRequestSchema,
@@ -46,7 +46,7 @@ export {
   PiDurableLeadLookupRequestSchema,
   PiDurableLeadLookupResponseSchema,
   PiDurableLeadDispatchRequestSchema,
-  PiDurableLeadTargetSchema,
+  PiDurableLeadRequestedTargetSchema,
   PiDurableLeadStatusRequestSchema,
   PiDurableLeadProgressRequestSchema,
   PiDurableLeadCancelRequestSchema,
@@ -105,7 +105,7 @@ const ReceiptSchema = z
     executionId: IdentifierSchemas.executionId,
     attemptId: IdentifierSchemas.attemptId,
     allowedPrincipalIds: z.array(z.string().min(1).max(256)).min(1).max(256),
-    target: PiDurableLeadTargetSchema.optional(),
+    requestedTarget: PiDurableLeadRequestedTargetSchema.optional(),
     revision: z.number().int().positive(),
     state: z.enum(['dispatching', 'dispatched', 'reconciliation_required']),
     handle: RuntimeExecutionHandleSchema.optional(),
@@ -316,7 +316,9 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
               ...(receipt.handle?.externalSessionId
                 ? { runtimeSessionId: receipt.handle.externalSessionId }
                 : {}),
-              ...(receipt.target !== undefined ? { target: receipt.target } : {}),
+              ...(receipt.requestedTarget !== undefined
+                ? { requestedTarget: receipt.requestedTarget }
+                : {}),
             }
           : null,
       })
@@ -369,7 +371,9 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       executionId: admission.admittedAttempt.executionId,
       attemptId: admission.admittedAttempt.attemptId,
       allowedPrincipalIds: [...admission.allowedPrincipalIds],
-      ...(request.payload.target !== undefined ? { target: request.payload.target } : {}),
+      ...(request.payload.requestedTarget !== undefined
+        ? { requestedTarget: request.payload.requestedTarget }
+        : {}),
     }
     let receipt = await this.options.receipts.get(dispatchId)
     let replayed = receipt !== undefined
@@ -531,23 +535,11 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       })
     )
     verifyRuntimeHandle(receipt, status.handle)
-    // Cancellation can cross a revocation await. Do not stop governed children
-    // until the same original actor/audience still authorizes the parent stop.
-    await this.options.authority.assertCurrent(admission, principal, 'cancel')
-    if (this.options.delegationService) {
-      try {
-        // Adapter.cancel retains its intent before returning. Bind the cascade to the
-        // canonical parent admission, never to an ID from the cancellation payload.
-        await this.options.delegationService.cancelChildren({
-          parentExecutionId: admission.admittedAttempt.executionId,
-          cancelledAt: request.issuedAt,
-        })
-      } catch {
-        // The parent stop remains durable. An exact command replay retries the
-        // canonical idempotent child stop after a lost acknowledgement or crash.
-        fail('PI_LEAD_UNAVAILABLE')
-      }
-    }
+    // Ordinary lead-stop ends here: it never cascades to child jobs.
+    // Child cancellation is a separately explicit authorized operation
+    // (delegationService.cancelChildren, invoked directly with its own
+    // authorization), never a lead-stop side effect — so independent
+    // child work survives a normal parent stop by construction.
     await this.options.authority.assertCurrent(admission, principal, 'cancel')
     return PiDurableLeadCancelResponseSchema.parse(
       success(request, { ...publicReceipt(receipt), state: status.state, status })
@@ -699,7 +691,7 @@ function publicReceipt(receipt: PiDurableLeadReceipt) {
     executionId: receipt.executionId,
     attemptId: receipt.attemptId,
     runtimeSessionId: requireHandle(receipt).externalSessionId,
-    ...(receipt.target !== undefined ? { target: receipt.target } : {}),
+    ...(receipt.requestedTarget !== undefined ? { requestedTarget: receipt.requestedTarget } : {}),
   }
 }
 function success(request: z.output<typeof command> | z.output<typeof read>, data: unknown) {
