@@ -76,6 +76,7 @@ function createFeed(provider, parentExecutionId = PARENT) {
 }
 
 const USAGE_NAMESPACE = 'child-usage-outcomes'
+
 let directory
 let databasePath
 
@@ -91,8 +92,8 @@ afterAll(async () => {
   if (directory !== undefined) await rm(directory, { recursive: true, force: true })
 })
 
-test('two children and human input flow through the durable publication path', async () => {
-  const provider = new SqlitePersistenceProvider({ path: databasePath })
+test('publishes two children through the durable outlet, survives a restart with exactly-once replay, and restores usage cost states', async () => {
+  let provider = new SqlitePersistenceProvider({ path: databasePath })
   await provider.migrate()
   const { feed } = createFeed(provider)
 
@@ -128,11 +129,9 @@ test('two children and human input flow through the durable publication path', a
   // The canonical outlet retained every publication durably.
   const stored = await feed.list()
   expect(stored).toHaveLength(4)
-  provider.close()
-})
 
-test('restart replays from the durable outlet exactly once and restores usage cost states', async () => {
-  // Persist the usage cost-state snapshot through the canonical durable store.
+  // Build the child usage cost-state projection and persist it through the
+  // durable store BEFORE the restart, so restore proves real durability.
   const running = new ChildUsageLedger()
   const identity = {
     parentExecutionId: PARENT,
@@ -182,9 +181,6 @@ test('restart replays from the durable outlet exactly once and restores usage co
     settlementRef: 'settle:1',
   })
   const before = running.status(identity)
-
-  let provider = new SqlitePersistenceProvider({ path: databasePath })
-  await provider.migrate()
   const snapshotId = recordId(`${DLG_A}:usage-outcome`)
   await provider.transaction(async (transaction) => {
     await transaction.put({
@@ -193,20 +189,23 @@ test('restart replays from the durable outlet exactly once and restores usage co
       value: json(running.snapshot()),
     })
   })
-  // Real restart: close the store, reopen it, rebuild every projection.
+
+  // Real restart: close the store, reopen it, rebuild every projection from
+  // durable bytes — both the lead feed replay and the cost-state restore
+  // cross this close/reopen boundary.
   provider.close()
   provider = new SqlitePersistenceProvider({ path: databasePath })
   await provider.migrate()
 
-  const { feed } = createFeed(provider)
-  const replayed = await feed.replay()
+  const { feed: restartedFeed } = createFeed(provider)
+  const replayed = await restartedFeed.replay()
   expect(replayed).toEqual({ foldedEventCount: 4, duplicateEventCount: 0, rejectedEventCount: 0 })
-  const rebuilt = feed.takeDeliveries()
+  const rebuilt = restartedFeed.takeDeliveries()
   expect(rebuilt.length).toBeGreaterThan(0)
   // Replaying over the rebuilt projection is idempotent.
-  const again = await feed.replay()
+  const again = await restartedFeed.replay()
   expect(again.duplicateEventCount).toBe(4)
-  expect(feed.takeDeliveries()).toEqual([])
+  expect(restartedFeed.takeDeliveries()).toEqual([])
 
   // The resolver's live caller: packet references resolve lazily against the
   // CURRENT durable publications at read time — never a capture-time snapshot.
@@ -230,7 +229,9 @@ test('restart replays from the durable outlet exactly once and restores usage co
     },
   })
   const evidencePacket = rebuilt.find((delivery) => delivery.kind === 'evidence').packet
-  expect(await resolveEvidenceReferences(evidencePacket, liveAuthority(feed))).toContainEqual({
+  expect(
+    await resolveEvidenceReferences(evidencePacket, liveAuthority(restartedFeed))
+  ).toContainEqual({
     kind: 'terminal_result',
     artifactId: ART_A,
     status: 'authorized',
@@ -247,7 +248,7 @@ test('restart replays from the durable outlet exactly once and restores usage co
     reason: 'missing',
   })
   // A later durable cancellation revokes the same reference at read time.
-  await feed.publish(
+  await restartedFeed.publish(
     {
       type: 'delegation.cancelled',
       delegationId: DLG_A,
@@ -258,7 +259,9 @@ test('restart replays from the durable outlet exactly once and restores usage co
     },
     `delegation:${DLG_A}:cancelled:1`
   )
-  expect(await resolveEvidenceReferences(evidencePacket, liveAuthority(feed))).toContainEqual({
+  expect(
+    await resolveEvidenceReferences(evidencePacket, liveAuthority(restartedFeed))
+  ).toContainEqual({
     kind: 'terminal_result',
     artifactId: ART_A,
     status: 'forbidden',
