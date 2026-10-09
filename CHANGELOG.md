@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.87.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.86.2...workspace-v1.87.0) (2026-10-09)
+
+
+### Features
+
+* add explicit Pi role model selection and proof ([#1016](https://github.com/adea-ai/control-plane/issues/1016)) ([b61426b](https://github.com/adea-ai/control-plane/commit/b61426bce2d5b29964fe13806a149c330d3d085e))
+* CP [#941](https://github.com/adea-ai/control-plane/issues/941) runtime ownership/layer replacement map and baseline tooling ([#1032](https://github.com/adea-ai/control-plane/issues/1032)) ([f1a696f](https://github.com/adea-ai/control-plane/commit/f1a696fb953aacfd53a03e59adfd4c04f350a9a4))
+* **pi-durable:** add canonical current tool authority ([#932](https://github.com/adea-ai/control-plane/issues/932)) ([#1038](https://github.com/adea-ai/control-plane/issues/1038)) ([398a902](https://github.com/adea-ai/control-plane/commit/398a902071f94627a88f4f16384b909e7f1d224b))
+
+## [1.86.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.86.1...workspace-v1.86.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* use authenticated gh for local requirements-ledger checks ([#1035](https://github.com/adea-ai/control-plane/issues/1035)) ([2a0785f](https://github.com/adea-ai/control-plane/commit/2a0785ff1c07890e306332b05d6e5ed7a368e699))
+
 ## [1.86.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.86.0...workspace-v1.86.1) (2026-10-09)
 
 

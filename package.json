@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/workspace",
-  "version": "1.86.1",
+  "version": "1.87.0",
   "private": true,
   "workspaces": [
     "apps/*",
@@ -86,6 +86,7 @@
     "@control-plane/object-store": "workspace:*",
     "@control-plane/orchestration": "workspace:*",
     "@control-plane/pi-durable-adapter": "workspace:*",
+    "@control-plane/policy": "workspace:*",
     "@control-plane/production-readiness": "workspace:*",
     "@control-plane/profile-portability": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
@@ -105,6 +106,7 @@
     "oxfmt": "^0.72.0",
     "oxlint": "^1.86.0",
     "railway": "3.13.0",
+    "reflect-metadata": "0.2.2",
     "turbo": "^2.11.7",
     "typescript": "^7.0.2"
   },

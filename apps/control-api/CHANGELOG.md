@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.27.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.26.0...control-api-v1.27.0) (2026-10-09)
+
+
+### Features
+
+* add explicit Pi role model selection and proof ([#1016](https://github.com/adea-ai/control-plane/issues/1016)) ([b61426b](https://github.com/adea-ai/control-plane/commit/b61426bce2d5b29964fe13806a149c330d3d085e))
+* **pi-durable:** add canonical current tool authority ([#932](https://github.com/adea-ai/control-plane/issues/932)) ([#1038](https://github.com/adea-ai/control-plane/issues/1038)) ([398a902](https://github.com/adea-ai/control-plane/commit/398a902071f94627a88f4f16384b909e7f1d224b))
+
 ## [1.26.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.25.0...control-api-v1.26.0) (2026-10-09)
 
 

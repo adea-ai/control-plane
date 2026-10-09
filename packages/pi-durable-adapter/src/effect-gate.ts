@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { performance } from 'node:perf_hooks'
 import type { DatabaseSync } from 'node:sqlite'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import {
@@ -9,7 +10,11 @@ import {
   type DurableToolExecutionOutcome,
   type PreparedToolExecution,
 } from '@control-plane/tool-execution'
-import { DurableToolCallRequestSchema, type DurableToolCallRequest } from '@control-plane/tool-sdk'
+import {
+  DurableToolCallRequestSchema,
+  ToolExecutorError,
+  type DurableToolCallRequest,
+} from '@control-plane/tool-sdk'
 
 export type DurableEffectGateOutcome =
   | DurableToolExecutionOutcome
@@ -27,6 +32,8 @@ export interface DurableEffectGateRecord {
   readonly toolCallId: string
   readonly revision: number
   readonly state: 'invoking' | 'awaiting_approval' | 'settled'
+  /** Durable barrier crossed immediately before invoking the protected executor. */
+  readonly effectAdmittedAt?: string
   readonly outcome?: DurableEffectGateOutcome
 }
 
@@ -91,7 +98,7 @@ export class PiDurableEffectGate {
       /** Resolves current canonical attempt, immutable plan and budget authority. */
       readonly assertAuthority: (
         request: DurableToolCallRequest,
-        boundary: 'admission' | 'approval' | 'effect'
+        boundary: 'admission' | 'approval' | 'effect' | 'publication'
       ) => Promise<void>
       readonly now?: () => string
     }
@@ -117,9 +124,12 @@ export class PiDurableEffectGate {
     ) {
       throw new PiDurableEffectGateError('PI_EFFECT_IDENTITY_CONFLICT')
     }
-    // Retained outcomes remain evidence, but publication requires current canonical authority.
+    // Retained outcomes remain evidence, but admission requires current canonical authority.
     await this.#assertAuthority(request, 'admission')
-    if (record?.state === 'settled' && record.outcome) return record.outcome
+    if (record?.state === 'settled' && record.outcome) {
+      await this.#assertAuthority(request, 'publication')
+      return record.outcome
+    }
     if (record?.state === 'invoking') return unknownOutcome(request)
     const invoking: DurableEffectGateRecord = {
       schemaVersion: 'pi-effect-gate/v1',
@@ -138,6 +148,7 @@ export class PiDurableEffectGate {
     if (!claimed) throw new PiDurableEffectGateError('PI_EFFECT_STORE_CONFLICT')
     let authorityRejected = false
     let effectStarted = false
+    let effectRecord = invoking
     const guard = async (boundary: 'approval' | 'effect') => {
       try {
         await this.#assertAuthority(request, boundary)
@@ -195,7 +206,7 @@ export class PiDurableEffectGate {
       }
       return result
     }
-    const beforeEffect = async (approvalRequired: boolean) => {
+    const beforeEffect = async (approvalRequired: boolean, signal: AbortSignal) => {
       const call = await this.options.service.calls.get(request.toolCallId)
       if ((approvalRequired || call?.policyDecision?.requiresApproval) && !request.approval) {
         authorityRejected = true
@@ -215,6 +226,40 @@ export class PiDurableEffectGate {
         authorityRejected = true
         throw new PiDurableEffectGateError('PI_EFFECT_AUTHORITY_REJECTED')
       }
+      // Observe abort on both sides of each awaited admission-store operation. The
+      // invocation-fence CAS remains durable if cancellation wins before executor start.
+      signal.throwIfAborted()
+      const current = await this.#store(() => this.options.store.get(key))
+      signal.throwIfAborted()
+      if (
+        !current ||
+        current.state !== 'invoking' ||
+        current.requestDigest !== requestDigest ||
+        current.revision !== effectRecord.revision
+      )
+        throw new PiDurableEffectGateError('PI_EFFECT_STORE_CONFLICT')
+      const admitted: DurableEffectGateRecord = {
+        ...current,
+        revision: current.revision + 1,
+        effectAdmittedAt: this.#now(),
+      }
+      if (!(await this.#store(() => this.options.store.compareAndSet(current.revision, admitted))))
+        throw new PiDurableEffectGateError('PI_EFFECT_STORE_CONFLICT')
+      effectRecord = admitted
+      // The current-authority, approval and expiry checks above can go stale while either
+      // storage operation awaits. Re-resolve them after the fence is retained and make no
+      // further async call before the executor; a denial leaves the fence for safe replay.
+      signal.throwIfAborted()
+      await guard('effect')
+      const finalCheckAt = Date.parse(this.#now())
+      if (
+        (request.approval && Date.parse(request.approval.expiresAt) <= finalCheckAt) ||
+        (request.grant.expiresAt && Date.parse(request.grant.expiresAt) <= finalCheckAt)
+      ) {
+        authorityRejected = true
+        throw new PiDurableEffectGateError('PI_EFFECT_AUTHORITY_REJECTED')
+      }
+      signal.throwIfAborted()
       effectStarted = true
     }
     const base = this.options.service
@@ -241,22 +286,24 @@ export class PiDurableEffectGate {
       }
     }
     const next: DurableEffectGateRecord = {
-      ...invoking,
-      revision: invoking.revision + 1,
+      ...effectRecord,
+      revision: effectRecord.revision + 1,
       state: outcome.state === 'awaiting_approval' ? 'awaiting_approval' : 'settled',
       outcome,
     }
-    if (!(await this.#store(() => this.options.store.compareAndSet(invoking.revision, next))))
+    if (!(await this.#store(() => this.options.store.compareAndSet(effectRecord.revision, next))))
       throw new PiDurableEffectGateError('PI_EFFECT_STORE_CONFLICT')
     // Keep the receipt even when authority changes while the effect awaits; publication
     // can be denied without losing evidence or admitting the effect again.
-    await this.#assertAuthority(request, 'admission')
+    // The effect may already have happened. Retain its outcome, then recheck current
+    // authority as a distinct publication boundary before exposing that outcome.
+    await this.#assertAuthority(request, 'publication')
     return outcome
   }
 
   async #assertAuthority(
     request: DurableToolCallRequest,
-    boundary: 'admission' | 'approval' | 'effect'
+    boundary: 'admission' | 'approval' | 'effect' | 'publication'
   ): Promise<void> {
     try {
       await this.options.assertAuthority(structuredClone(request), boundary)
@@ -277,7 +324,7 @@ export class PiDurableEffectGate {
 class AuthorityCheckedGateway extends ToolGateway {
   constructor(
     readonly delegate: ToolGateway,
-    readonly beforeEffect: (approvalRequired: boolean) => Promise<void>
+    readonly beforeEffect: (approvalRequired: boolean, signal: AbortSignal) => Promise<void>
   ) {
     super(delegate.registry)
   }
@@ -289,10 +336,24 @@ class AuthorityCheckedGateway extends ToolGateway {
       ...prepared,
       executor: {
         execute: async (request, version, signal) => {
-          await this.beforeEffect(prepared.operation.approvalMode === 'always')
-          // The gateway may abort while the final authority guard awaits.
+          const operationStartedAt = performance.now()
           signal.throwIfAborted()
-          return executor.execute(request, version, signal)
+          await this.beforeEffect(prepared.operation.approvalMode === 'always', signal)
+          // Once the durable barrier commits, caller cancellation cannot cancel the child.
+          // Keep the original gateway deadline independently because ToolGateway clears
+          // its timer when its caller-abort race wins.
+          const remainingTimeoutMs = Math.max(
+            0,
+            version.limits.timeoutMs - (performance.now() - operationStartedAt)
+          )
+          const detached = detachParentCancellation(signal, remainingTimeoutMs)
+          try {
+            const result = await executor.execute(request, version, detached.signal)
+            if (detached.signal.aborted) throw detached.signal.reason
+            return result
+          } finally {
+            detached.dispose()
+          }
         },
       },
     }
@@ -303,6 +364,38 @@ class AuthorityCheckedGateway extends ToolGateway {
     options: { readonly signal?: AbortSignal } = {}
   ) {
     return this.delegate.invoke(prepared, options)
+  }
+}
+
+function detachParentCancellation(
+  signal: AbortSignal,
+  timeoutMs: number
+): {
+  signal: AbortSignal
+  dispose: () => void
+} {
+  const controller = new AbortController()
+  const timeout = new ToolExecutorError('TIMEOUT', true, 'unknown')
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const dispose = () => {
+    if (timer !== undefined) clearTimeout(timer)
+    signal.removeEventListener('abort', forwardTimeout)
+  }
+  const abortForTimeout = () => {
+    if (!controller.signal.aborted) controller.abort(timeout)
+    dispose()
+  }
+  const forwardTimeout = () => {
+    const reason = signal.reason
+    if (reason && typeof reason === 'object' && Reflect.get(reason, 'code') === 'TIMEOUT')
+      abortForTimeout()
+  }
+  timer = setTimeout(abortForTimeout, timeoutMs)
+  signal.addEventListener('abort', forwardTimeout)
+  if (signal.aborted) forwardTimeout()
+  return {
+    signal: controller.signal,
+    dispose,
   }
 }
 
