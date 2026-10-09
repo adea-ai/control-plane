@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { ChildUsageLedger } from '@control-plane/orchestration'
 import { createGovernedChildCompositionFixture } from './pi-durable-governed-child-composition.fixture.mjs'
 import { PiDurableChildProgressScanner } from '../apps/control-api/src/pi-durable/child-progress-scanner.ts'
 
@@ -287,6 +288,122 @@ test(
       ).toHaveLength(1)
       expect(f.parentNative.requests).toHaveLength(2)
       expect(f.child.requests).toHaveLength(1)
+    }),
+  30000
+)
+
+test(
+  'lead feed carries scanner-published child evidence and human input while usage cost states persist across restart',
+  () =>
+    fixture(async (f) => {
+      const usageIdentity = {
+        parentExecutionId: f.ids.parentExecutionId,
+        delegationId: f.ids.delegationId,
+        childExecutionId: f.ids.childExecutionId,
+        childAttemptId: f.ids.childAttemptId,
+      }
+
+      // Actual composition: lead runs, the governed bridge reserves through
+      // the canonical durable ledger, and the separately funded child runs.
+      const leadHandle = await f.leadRuntime.adapter.start(f.leadRequest)
+      await f.leadRuntime.adapter.drain()
+      expect((await f.leadRuntime.adapter.status(leadHandle)).state).toBe('completed')
+      const childRequest = f.host.starts[0]
+      expect(childRequest.attemptBudget.reservationKey).toBe(
+        `runtime-attempt:${f.ids.childAttemptId}`
+      )
+      await f.childRuntime.adapter.drain()
+      const childHandle = await f.childRuntime.adapter.start(childRequest)
+      expect((await f.childRuntime.adapter.status(childHandle)).state).toBe('completed')
+
+      // Live bridge seam: reserveBudget recorded the reservation evidence in
+      // the cost-state projection during dispatch, and the canonical settle
+      // path (not an estimate) drove reported → reconciled → settled.
+      const settled = f.childUsage.status(usageIdentity)
+      expect(settled.costState).toBe('settled')
+      expect(settled.estimated).toMatchObject({ currency: 'USD', maximumMicrounits: 1_000_000 })
+      expect(settled.reserved).toMatchObject({
+        reservationKey: `runtime-attempt:${f.ids.childAttemptId}`,
+        maximumMicrounits: 500_000,
+      })
+      expect(settled.reported.accounting).toMatchObject({ costExact: true })
+      expect(settled.reconciled).toMatchObject({ result: 'within_reservation' })
+      expect(settled.settled.settledMicrounits).toBe(settled.reported.accounting.chargedMicrounits)
+
+      // Human input is placed on the outbox in its own scheduling step, ahead
+      // of any routine progress batching.
+      f.storage.leadFeed.acceptHumanInput({
+        interactionId: f.host.request.approval.interactionId,
+        kind: 'approval',
+        receivedAt: '2026-08-25T18:02:01.000Z',
+      })
+      const human = f.storage.leadFeed.takeDeliveries()
+      expect(human).toHaveLength(1)
+      expect(human[0]).toMatchObject({ kind: 'human_input', sequence: 1 })
+
+      // The production scanner publishes terminal child evidence through the
+      // canonical durable outlet; the feed folds it into a lead packet with
+      // the lazy artifact reference carried, never the payload.
+      expect(await f.scanner.scan(f.childRuntime.adapter)).toEqual({
+        published: 1,
+        skipped: 0,
+        blocked: [],
+      })
+      const evidence = f.storage.leadFeed.takeDeliveries().filter((d) => d.kind === 'evidence')
+      expect(evidence.length).toBeGreaterThan(0)
+      const terminalEntries = evidence
+        .flatMap((delivery) => delivery.packet.entries)
+        .filter((entry) => entry.delegationId === f.ids.delegationId && entry.kind === 'terminal')
+      expect(terminalEntries).toHaveLength(1)
+      expect(terminalEntries[0].terminalResultRef).toMatch(/^art_/)
+      expect(JSON.stringify(evidence)).not.toContain('Bounded child evidence.')
+
+      // Persist the cost-state projection through the production repository.
+      expect(
+        await f.storage.usageOutcomes.save({ revision: 1, snapshot: f.childUsage.snapshot() })
+      ).toEqual({
+        revision: 1,
+      })
+
+      await f.leadRuntime.close()
+      await f.childRuntime.close()
+      const reopened = await f.reopenCanonical()
+      try {
+        // Restart: the lead projection rebuilds from the durable publications
+        // exactly once, and a second replay answers duplicate with no new
+        // delivery.
+        const replayed = await reopened.storage.leadFeed.replay()
+        expect(replayed.foldedEventCount).toBeGreaterThan(0)
+        expect(replayed.rejectedEventCount).toBe(0)
+        const rebuilt = reopened.storage.leadFeed
+          .takeDeliveries()
+          .filter((d) => d.kind === 'evidence')
+        expect(rebuilt.length).toBeGreaterThan(0)
+        const again = await reopened.storage.leadFeed.replay()
+        expect(again.foldedEventCount).toBe(0)
+        expect(again.duplicateEventCount).toBeGreaterThan(0)
+        expect(reopened.storage.leadFeed.takeDeliveries()).toEqual([])
+
+        // Cost states restore from the durable bytes with their dedup
+        // horizons, byte-identical to the pre-restart outcome.
+        const stored = await reopened.storage.usageOutcomes.load()
+        expect(stored.revision).toBe(1)
+        const restarted = new ChildUsageLedger()
+        restarted.restore(stored.snapshot)
+        expect(restarted.status(usageIdentity)).toStrictEqual(settled)
+        const redelivery = restarted.recordReportedUsage(usageIdentity, settled.reported, {
+          reportId: settled.settled.settlementRef,
+        })
+        expect(redelivery.outcome).toBe('duplicate_report')
+
+        // Forward-only durability: a stale in-memory revision can never
+        // clobber the newer durable projection.
+        await expect(
+          reopened.storage.usageOutcomes.save({ revision: 1, snapshot: stored.snapshot })
+        ).rejects.toThrow('A newer usage-outcome revision is already durable')
+      } finally {
+        reopened.provider.close()
+      }
     }),
   30000
 )

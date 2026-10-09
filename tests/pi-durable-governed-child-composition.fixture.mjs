@@ -1,9 +1,16 @@
 // Actual Pi/J1/SQLite composition. HTTP, grants and approval are deterministic host fixtures.
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { createModels, createProvider } from '@earendil-works/pi-ai/models'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
+import {
+  ChildProgressEvidenceBuffer,
+  ChildProgressLeadDispatcher,
+  ChildProgressLeadFeed,
+  ChildUsageLedger,
+} from '@control-plane/orchestration'
 import { DurableUsageLedger, PinnedModelPrice } from '@control-plane/usage-ledger'
 import { ExecutionPlanCompiler } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
@@ -18,6 +25,7 @@ import {
   SqliteDelegationEventPublisher,
   SqliteToolCallRepository,
   SqliteDelegationToolAdmissionRepository,
+  SqliteChildUsageOutcomeRepository,
 } from '@control-plane/sqlite-persistence'
 import {
   createGovernedChildHostFixture,
@@ -39,12 +47,29 @@ import { canonicalJsonStringify } from '@control-plane/contracts'
 import { SqlitePiLeadRunningLifecycle } from '../apps/control-api/src/pi-durable/lead-running-lifecycle.ts'
 
 function persistentStorage(provider) {
+  const publications = new SqliteDelegationEventPublisher(provider, ids.parentExecutionId)
+  // The lead projection composes over the canonical durable outlet: every
+  // delegation event the service (or the production scanner's
+  // recordChildProgress path) publishes folds through the feed into the lead
+  // dispatcher, and `list()` stays the durable restart source.
+  const dispatcher = new ChildProgressLeadDispatcher({
+    buffer: new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId }),
+  })
+  const leadFeed = new ChildProgressLeadFeed({
+    publications,
+    dispatcher,
+    generationOf: () => 1,
+  })
   return {
     executions: new SqliteExecutionRepository(provider),
     plans: new SqliteExecutionPlanRepository(provider),
     contexts: new SqliteContextPackageRepository(provider),
     delegations: new SqliteDelegationRepository(provider),
-    events: new SqliteDelegationEventPublisher(provider, ids.parentExecutionId),
+    events: leadFeed,
+    publications,
+    leadFeed,
+    dispatcher,
+    usageOutcomes: new SqliteChildUsageOutcomeRepository(provider, ids.delegationId),
     calls: new SqliteToolCallRepository(provider, ids.workspaceId),
     admissions: new SqliteDelegationToolAdmissionRepository(provider, ids.workspaceId),
   }
@@ -188,6 +213,17 @@ export async function createGovernedChildCompositionFixture(
     store: new SqliteDurableUsageStore(provider),
     now: () => now,
   })
+  // The correlated cost-state projection for the child attempt. The money
+  // stays in the canonical durable ledger above; this records the explicit
+  // estimated/reserved/reported/reconciled/settled evidence stages, driven
+  // live by the bridge's reserveBudget seam and the canonical settle path.
+  const childUsage = new ChildUsageLedger()
+  const childUsageIdentity = (admission) => ({
+    parentExecutionId: admission.identity.parentExecutionId,
+    delegationId: admission.identity.delegationId,
+    childExecutionId: admission.record.childExecutionId,
+    childAttemptId: admission.identity.childAttemptId,
+  })
   const selections = {
     lead: { selectionRef: `msel_${'a'.repeat(32)}`, selectionRevision: 1 },
     child: { selectionRef: `msel_${'b'.repeat(32)}`, selectionRevision: 2 },
@@ -298,6 +334,16 @@ export async function createGovernedChildCompositionFixture(
         maximumTokens: budget.maximumTokens,
         source: { sourceId: 'child-reserved', idempotencyKey: 'child-reserved' },
       })
+      // Live bridge seam: the canonical durable reservation above is recorded
+      // verbatim as the attempt's reservation evidence (and the plan ceiling
+      // as its estimate) in the same scheduling step.
+      const usageIdentity = childUsageIdentity(admission)
+      childUsage.recordEstimate(usageIdentity, {
+        currency: 'USD',
+        maximumMicrounits: workspace.command.childPlan.constraints.limits.budget.maximumMicrounits,
+        source: 'fixture-child-plan-constraints',
+      })
+      childUsage.recordReservation(usageIdentity, budget)
     }
     childAdmission = {
       schemaVersion: 'pi-durable-admission/v1',
@@ -318,7 +364,38 @@ export async function createGovernedChildCompositionFixture(
     assertAuthority: assertCurrent,
     scopeAuthority,
     authorizeInference: usage.authorizeInference,
-    settleUsage: usage.settleUsage,
+    settleUsage: async (authority, key, usageInput, counts) => {
+      // Canonical settlement first: the durable usage ledger records the
+      // charge, and only its returned, priced RuntimeUsage feeds the
+      // cost-state projection — never an estimate or an inferred amount.
+      const settled = await usage.settleUsage(authority, key, usageInput, counts)
+      const accounting = settled.accounting
+      if (authority.request.executionId === ids.childExecutionId && accounting !== undefined) {
+        const settlementIdentity = childUsageIdentity({
+          identity: {
+            parentExecutionId: ids.parentExecutionId,
+            delegationId: ids.delegationId,
+            childAttemptId: ids.childAttemptId,
+          },
+          record: { childExecutionId: ids.childExecutionId },
+        })
+        const reportId = `usage-settle:${ids.childAttemptId}:${createHash('sha256')
+          .update(String(key))
+          .digest('hex')
+          .slice(0, 16)}`
+        const receipt = childUsage.recordReportedUsage(settlementIdentity, settled, { reportId })
+        if (receipt.outcome === 'recorded') {
+          childUsage.reconcile(settlementIdentity, { reconciledAt: now })
+          childUsage.settle(settlementIdentity, {
+            currency: 'USD',
+            settledMicrounits: accounting.chargedMicrounits,
+            settledAt: now,
+            settlementRef: reportId,
+          })
+        }
+      }
+      return settled
+    },
     reconcileInference: async () => 'unresolved',
     verifyApproval: async (_authority, _identity, submitted) =>
       state.approved &&
@@ -541,6 +618,7 @@ export async function createGovernedChildCompositionFixture(
       state,
       host,
       ledger,
+      childUsage,
       storage,
       leadDatabase,
       selections,
