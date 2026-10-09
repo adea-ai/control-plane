@@ -12,7 +12,8 @@ bun apps/local-control-plane/dist/operator-measurements-cli.js \
   --workspace wsp_01JABCDEF0123456789ABCDEFG \
   [--window-seconds 86400] \
   [--limit 100] \
-  [--storage-usd-per-gib-month 1.5]
+  [--storage-usd-per-gib-month 1.5] \
+  [--baseline-report /path/to/prior-report.json]
 ```
 
 Use the same protections as the [operator setup command](local-operator-bootstrap.md): stop the
@@ -24,7 +25,9 @@ parameterized `SELECT` statements, and never mutates, retries, cancels, reconcil
 anything. The same compiled command ships in the Hosted Simple image.
 
 Failures exit 1 with `LOCAL_OPERATOR_MEASUREMENTS_FAILED` on stderr and never echo paths or record
-content.
+content. `--baseline-report` reads a prior measurement report the operator already holds — never a
+second look at the operator database — and a malformed baseline, a foreign command or a baseline
+from another workspace fails closed instead of producing a misleading growth delta.
 
 ## Correlation
 
@@ -40,7 +43,10 @@ dimensions, each with an explicit availability state (`resolved`, `missing`, `un
   highest generation reserved for the same workspace and runtime node in
   `runtime-channel-sequences` (the current authority for channel ownership). It is `true` when any
   active job lags, `false` when every active job reports the current generation, and `null` when
-  any active job has no known generation to compare against.
+  any active job has no known generation to compare against **or when the generation source itself
+  is not clean**. `generationScanComplete` makes that distinction explicit: when the reservation
+  walk was truncated or held corrupted rows, a non-stale verdict is forced to unknown — only a
+  positively proven lag survives a damaged source.
 - **attempt** — the execution's current attempt (`latestAttemptId`) with its state, age and retry
   count; a referenced-but-absent attempt is `missing`, an execution that never attempted is
   `not_established`.
@@ -61,6 +67,27 @@ booleans. Prompts, responses, payloads, plan content, connection native referenc
 material are never read into the report, and a seeded-canary test in the package suite enforces
 this.
 
+## Source quality
+
+Incompleteness is propagated, not assumed:
+
+- `summary.complete` is true only when every namespace walk finished **and** every record parsed
+  **and** every summed total stayed in the safe-integer range. `summary.sourceQuality` names the
+  three gates (`scansComplete`, `recordsClean`, `totalsSafe`) and `summary.incompleteSources`
+  lists the exact namespaces at fault, so partiality is attributed rather than merely asserted.
+- Every measurement section carries its own `complete` flag
+  (`queueLatency`, `humanLatency`, `retryAge`, `reconciliationAge`, `usage`, `storage`,
+  `activeObjects`) derived from the sources that section actually reads. Truncated walks and
+  malformed records also appear in `summary.incompleteScans` and `summary.malformedRecords` as
+  before.
+- Telemetry points derived from a degraded source are **suppressed**, not emitted as ordinary
+  observations: a budget-bound usage walk hides `usage.cost.usd`, a corrupted or truncated
+  generation walk suppresses non-stale job verdicts, a partial storage snapshot suppresses
+  `storage.retained.bytes` / `storage.rewritten.bytes` for the affected namespace (and the
+  `total`), and overflowed or partial budget totals suppress `operations.operating_cost.usd`.
+  Sections whose sources are clean keep their points: partiality is attributed per source, not
+  smeared over the whole report.
+
 ## Measurements
 
 The report carries `measurements` with these definitions:
@@ -79,40 +106,64 @@ The report carries `measurements` with these definitions:
   `awaitingReconciliation`: count and oldest age for executions carrying
   `reconciliationRequiredAt` or sitting in `reconciliation_required`.
 - **usage** — durable usage-ledger entries recorded inside the measurement window: total entries,
-  quantity sums per unit, cost sums per currency split into exact and inexact microunits, and
-  per-kind counts; plus point-in-time budget totals (records, open/settled, spent and reserved
+  quantity sums per unit, and cost sums **per currency** both per currency
+  (`byCurrency`, split into exact and inexact microunits) and **per kind**
+  (`byKind[kind].byCurrency` — currencies are never summed together inside a kind or in any
+  derived total); plus point-in-time budget totals (records, open/settled, spent and reserved
   microunits per currency, using the same arithmetic as `calculateTotals` in
-  `usage-ledger/durable.ts`). `unsafeTotals` marks a sum that left the safe-integer range; affected
-  totals then hold their last safe value and are not complete.
+  `usage-ledger/durable.ts`). `unsafeTotals` marks a sum that left the safe-integer range;
+  affected totals then hold their last safe value, `usage.complete` turns false and their
+  operating-cost components are marked `unsafe_totals` instead of `measured`.
 - **storage** — payload bytes (`length(value)` in UTF-8; row and index overhead excluded) and
-  record counts per measured namespace, scoped to the selected workspace, with
-  `bytesTouchedInWindow` from the row's `updated_at` as the in-window growth signal. A
-  cross-workspace total is only a comparison base: store two reports to compute growth between
-  them. `unmeasuredNamespaces` lists every namespace present in the store but outside the measured
-  set, so their bytes are visibly excluded rather than silently missing.
+  record counts per measured namespace, scoped to the selected workspace, with:
+  - `bytesRewrittenInWindow` — payload bytes of rows last written inside the window, from the
+    row's `updated_at`. This counts full rewritten payloads and ignores deletions: it is churn,
+    explicitly **not growth**, and is reported and emitted (`storage.rewritten.bytes`) as such.
+  - `growthBytes` — **true growth**: a signed snapshot delta (`bytes` minus the baseline's
+    `bytes`) against a prior complete report of the same workspace passed via
+    `--baseline-report`. It is negative when the namespace shrank (deletions), and it is `null`
+    — unavailable, never estimated — until such a baseline exists, or when either side of the
+    delta is incomplete. `storage.baseline` states which case applies
+    (`complete` / `incomplete` / `absent` with the baseline's `generatedAt`); `storage.complete`
+    reports whether every measured namespace was whole.
+  - A cross-workspace total is only a comparison base: store two reports to compute growth
+    between them. `unmeasuredNamespaces` lists every namespace present in the store but outside
+    the measured set, so their bytes are visibly excluded rather than silently missing.
 - **activeObjects** — `active` counts (non-terminal executions and attempts, non-settled jobs,
   `active` sessions, `pending` approvals, unarchived effects awaiting publication) with a full
   bounded `byState` breakdown.
 - **operatingCost** — never inferred. The usage component comes from the durable usage budgets
-  (`spentMicrounits` and `reservedMicrounits` per currency); the storage component exists only
+  (`spentMicrounits` and `reservedMicrounits` per currency) and its `availability` names the
+  budget source's own quality: `measured`, `no_budget_records`, `source_partial` (walk truncated
+  or records malformed) or `unsafe_totals` (sums overflowed). The storage component exists only
   when the operator passes an explicit `--storage-usd-per-gib-month` rate, priced as one month of
-  retained bytes; `totalMicrounits` exists only when usage is recorded in exactly one currency
-  (USD) and storage is priced. Every non-computed value is null with an explicit
-  `totalAvailability` (`usage_unavailable`, `usage_currency_unsupported`,
-  `storage_rate_not_configured` or `measured`). External-subscription usage keeps its recorded
-  zero-authoritative-cost semantics; the report never invents a provider price.
+  retained bytes; it reports `priced`, `rate_not_configured` or `source_partial` (rate supplied
+  but bytes are a partial snapshot). `totalMicrounits` exists only when every component is
+  complete and commensurable — usage `measured` in exactly one currency (USD), storage priced
+  from a complete snapshot — otherwise it is null with an explicit `totalAvailability`
+  (`usage_unavailable`, `usage_unsafe_totals`, `usage_source_partial`,
+  `usage_currency_unsupported`, `storage_rate_not_configured`, `storage_source_partial` or
+  `measured`). External-subscription usage keeps its recorded zero-authoritative-cost semantics;
+  the report never invents a provider price.
 
 ## Telemetry points
 
 `telemetry` lists ready-to-emit metric points whose names are members of `operationalMetrics` in
 `@control-plane/telemetry/catalog`: `execution.queue.latency`, `execution.human.latency`,
 `execution.retry.age`, `execution.reconciliation.age`, `usage.cost.usd`,
-`storage.retained.bytes`, `storage.growth.bytes`, `runtime.active_object.count` and
-`operations.operating_cost.usd`. Labels are bounded by the emitter contract
+`storage.retained.bytes`, `storage.rewritten.bytes`, `storage.growth.bytes`,
+`runtime.active_object.count` and `operations.operating_cost.usd`.
+
+Every point is an **observation** — one measurement of a latency, size, count or cost — and the
+emitter records it through `MetricAdapter.record` (histogram/observation semantics), so repeated
+measurements re-observe the same series instead of accumulating it the way the counter instrument
+`MetricAdapter.add` would. Labels are bounded by the emitter contract
 (`createOperationsMetricEmitter`): only fixed keys and fixed values (with an `other` fallback) are
 ever forwarded, unknown keys are dropped, and identifiers — workspace, execution, prompt, payload —
-never become metric labels. `usage.cost.usd` points are emitted only for USD-denominated windowed
-cost; other currencies remain visible in the JSON report only. Live compositions can record the
+never become metric labels. Only `storage.growth.bytes` may be negative: it is a signed snapshot
+delta. `usage.cost.usd` points are emitted only for complete, non-overflowed, USD-denominated
+windowed cost; other currencies remain visible in the JSON report only. Points whose source is
+incomplete are suppressed as described under _Source quality_. Live compositions can record the
 same points through the shared metric adapter; this command computes them for an offline operator.
 
 ## Scope, authority and honest limits
@@ -128,12 +179,12 @@ same points through the shared metric adapter; this command computes them for an
   discovery projection and the current publication status. It never reconstructs state from
   historical journals or superseded generations.
 - **Window.** `--window-seconds` (default 86400, range 60–31536000) bounds windowed usage entries
-  and the storage-growth window; latencies, active objects, budgets and retained bytes are
-  point-in-time over whatever the store currently holds.
+  and the rewritten-bytes window; latencies, active objects, budgets and retained bytes are
+  point-in-time over whatever the store currently holds. Growth always compares against the
+  baseline snapshot, not against the window.
 - **Bounds and incompleteness.** Namespaces are walked with continuation under explicit budgets
-  (echoed in `thresholds`). A walk that stops early appears in `summary.incompleteScans` and flips
-  `summary.complete` to `false`; dependent dimensions are marked `scan_incomplete`, and every count
-  in such a report is a lower bound — never read an empty or small result as confident. Malformed
-  records are counted in `summary.malformedRecords` and never emitted. The correlation listing is
-  bounded by `--limit` (default 100, maximum 500) with `summary.correlationsUnlisted` reporting
-  the rest; aggregates always cover every in-scope record the walk reached.
+  (echoed in `thresholds`). A walk that stops early appears in `summary.incompleteScans`, flips
+  the matching `complete` flags, and makes dependent counts lower bounds; malformed records are
+  counted in `summary.malformedRecords` and never emitted. The correlation listing is bounded by
+  `--limit` (default 100, maximum 500) with `summary.correlationsUnlisted` reporting the rest;
+  aggregates always cover every in-scope record the walk reached.

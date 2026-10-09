@@ -41,6 +41,7 @@ export const operationalMetrics = [
   'execution.retry.age',
   'execution.reconciliation.age',
   'storage.retained.bytes',
+  'storage.rewritten.bytes',
   'storage.growth.bytes',
   'runtime.active_object.count',
   'operations.operating_cost.usd',

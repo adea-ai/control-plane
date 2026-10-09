@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { appendFile, chmod, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { appendFile, chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -151,6 +151,7 @@ function rawCommand({
   executionId,
   attemptId,
   workspaceId = W1,
+  nodeId = NODE,
   status,
   issuedAt,
   expiresAt,
@@ -163,7 +164,7 @@ function rawCommand({
     commandId,
     executionId,
     attemptId,
-    nodeId: NODE,
+    nodeId,
     runtimeConnectionId: RTC,
     workspaceId,
     idempotencyKey: `measurement:${commandId}:command:1`,
@@ -428,7 +429,9 @@ async function seed() {
     }),
     '2026-08-30T12:19:00.000Z'
   )
-  put('executions', 'malformed-execution', { broken: true }, NOW)
+  // Damaged-source cases (malformed records, corrupted generation rows,
+  // overflowing totals, budget-bound scans) are exercised through focused
+  // reader doubles below, so this fixture stays a clean, complete store.
 
   // Attempts, including a completed attempt carrying the artifact reference and
   // an orphan whose execution record does not exist (unattributed, not counted).
@@ -857,6 +860,12 @@ test('correlates conversation, job, attempt, session, approval, effect and artif
   expect(report.command).toBe('local.operator.telemetry.operations')
   expect(report.scope).toEqual({ workspaceId: W1 })
   expect(report.summary.complete).toBe(true)
+  expect(report.summary.sourceQuality).toEqual({
+    scansComplete: true,
+    recordsClean: true,
+    totalsSafe: true,
+  })
+  expect(report.summary.incompleteSources).toEqual([])
   expect(report.summary.incompleteScans).toEqual([])
   expect(report.summary.executions).toBe(7)
   expect(report.summary.outOfScopeExecutions).toBe(1)
@@ -878,6 +887,7 @@ test('correlates conversation, job, attempt, session, approval, effect and artif
     queued: 1,
     settled: 0,
     staleGeneration: true,
+    generationScanComplete: true,
     oldestActiveAgeMs: 1195000,
   })
   expect(queue.attempt).toMatchObject({
@@ -1000,9 +1010,10 @@ test('measures usage, storage growth, active objects and operating cost', async 
     USD: { costMicrounits: 1734, exactCostMicrounits: 1234, inexactCostMicrounits: 500 },
   })
   expect(usage.byKind).toEqual({
-    model_usage: { count: 1, costMicrounits: 1234 },
-    tool_charge: { count: 1, costMicrounits: 500 },
+    model_usage: { count: 1, byCurrency: { USD: 1234 } },
+    tool_charge: { count: 1, byCurrency: { USD: 500 } },
   })
+  expect(usage.complete).toBe(true)
   expect(usage.unsafeTotals).toBe(false)
   expect(usage.budgets).toMatchObject({
     records: 1,
@@ -1012,17 +1023,24 @@ test('measures usage, storage growth, active objects and operating cost', async 
     unsafeTotals: false,
   })
 
-  // Storage: scoped bytes per namespace, a growth window, and explicit
-  // coverage of what was not measured.
+  // Storage: scoped bytes per namespace, rewritten churn inside the window,
+  // explicit per-namespace completeness, and true growth only from a baseline
+  // (absent here, so growth is unavailable rather than estimated).
   expect(storage.totals.bytes).toBeGreaterThan(0)
   expect(storage.totals.records).toBeGreaterThan(0)
+  expect(storage.complete).toBe(true)
+  expect(storage.baseline).toEqual({ availability: 'absent', generatedAt: null })
+  expect(storage.totals.growthBytes).toBeNull()
   const executionsStorage = storage.namespaces.find((row) => row.namespace === 'executions')
   expect(executionsStorage.records).toBe(7)
-  expect(executionsStorage.bytesTouchedInWindow).toBeLessThan(executionsStorage.bytes)
-  expect(storage.totals.bytesTouchedInWindow).toBeLessThan(storage.totals.bytes)
+  expect(executionsStorage.complete).toBe(true)
+  expect(executionsStorage.growthBytes).toBeNull()
+  expect(executionsStorage.bytesRewrittenInWindow).toBeLessThan(executionsStorage.bytes)
+  expect(storage.totals.bytesRewrittenInWindow).toBeLessThan(storage.totals.bytes)
   expect(storage.unmeasuredNamespaces).toEqual(['command-inbox'])
 
   expect(activeObjects).toEqual({
+    complete: true,
     executions: {
       active: 5,
       byState: {
@@ -1076,7 +1094,12 @@ test('scopes every measurement to the selected workspace', async () => {
     'execution-attempts': 1,
     'interaction-requests': 1,
   })
-  expect(report.summary.malformedRecords).toEqual({ executions: 1 })
+  expect(report.summary.malformedRecords).toEqual({})
+  expect(report.summary.sourceQuality).toEqual({
+    scansComplete: true,
+    recordsClean: true,
+    totalsSafe: true,
+  })
   expect(JSON.stringify(report)).not.toContain(EXE.other)
   expect(JSON.stringify(report)).not.toContain(W2)
   expect(report.measurements.usage.byUnit.calls).toBe(3)
@@ -1123,13 +1146,17 @@ test('emits only cataloged, bounded, secret-free telemetry points', async () => 
   const added = []
   const emitter = createOperationsMetricEmitter(
     {
-      add: (name, value, attributes) => added.push({ name, value, attributes }),
-      record: (name, value, attributes) => added.push({ name, value, attributes }),
+      add: (name, value, attributes) => added.push({ method: 'add', name, value, attributes }),
+      record: (name, value, attributes) =>
+        added.push({ method: 'record', name, value, attributes }),
     },
     'local-control-plane'
   )
   for (const point of report.telemetry) emitter.record(point)
   expect(added).toHaveLength(report.telemetry.length)
+  // Snapshot sizes, active counts and latency summaries are observations:
+  // every operations point must take the record path, never the counter path.
+  expect(added.every(({ method }) => method === 'record')).toBe(true)
   expect(added.every(({ name }) => operationalMetrics.includes(name))).toBe(true)
   expect(
     added.every(({ attributes }) => attributes['service.name'] === 'local-control-plane')
@@ -1148,8 +1175,13 @@ test('bounds the correlation listing and reports incompleteness honestly', async
 
   const incomplete = await measure({ maxScanMatches: 2 })
   expect(incomplete.summary.complete).toBe(false)
+  expect(incomplete.summary.sourceQuality.scansComplete).toBe(false)
+  expect(incomplete.summary.incompleteSources).toContain('executions')
   expect(incomplete.summary.executions).toBe(2)
   expect(incomplete.summary.incompleteScans.map((scan) => scan.namespace)).toContain('executions')
+  // The budget-bound usage walk makes the usage section itself admit partiality.
+  expect(incomplete.measurements.usage.complete).toBe(false)
+  expect(incomplete.measurements.storage.complete).toBe(false)
   const [first] = incomplete.correlation
   expect(first.conversation.availability).toBe('scan_incomplete')
   expect(JSON.stringify(incomplete.summary.incompleteScans)).toContain('match_budget_reached')
@@ -1163,8 +1195,10 @@ test('reports an explicit empty workspace instead of a blank one', async () => {
   expect(report.measurements.storage.totals).toEqual({
     records: 0,
     bytes: 0,
-    bytesTouchedInWindow: 0,
+    bytesRewrittenInWindow: 0,
+    growthBytes: null,
   })
+  expect(report.measurements.storage.baseline.availability).toBe('absent')
   expect(report.measurements.usage.windowEntryCount).toBe(0)
   expect(report.measurements.activeObjects.executions.active).toBe(0)
   expect(report.measurements.queueLatency.dispatch.samples).toBe(0)
@@ -1260,4 +1294,654 @@ test('packaged operator command fails closed without a scope', async () => {
   ])
   expect(invalidWindow.code).toBe(1)
   expect(invalidWindow.stderr).toBe('LOCAL_OPERATOR_MEASUREMENTS_FAILED\n')
+})
+
+// ---------------------------------------------------------------------------
+// Source-quality propagation: corrupted, truncated and overflowing sources are
+// marked and their dependent telemetry suppressed instead of asserted.
+// ---------------------------------------------------------------------------
+
+/** In-memory `MeasurementRecordReader` double over plain rows. */
+function fakeReader(rows) {
+  return {
+    pageRecords(namespace, pageSize, afterId) {
+      const all = (rows[namespace] ?? [])
+        .filter((row) => afterId === undefined || row.id > afterId)
+        .toSorted((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+      const page = all.slice(0, pageSize)
+      const records = []
+      let unparseableJsonCount = 0
+      for (const row of page) {
+        const raw = row.raw ?? JSON.stringify(row.value)
+        try {
+          records.push({
+            id: row.id,
+            value: JSON.parse(raw),
+            bytes: Buffer.byteLength(raw, 'utf8'),
+            updatedAt: row.updatedAt ?? NOW,
+          })
+        } catch {
+          unparseableJsonCount += 1
+        }
+      }
+      const hasMore = all.length > pageSize
+      return {
+        records,
+        unparseableJsonCount,
+        rawRowCount: page.length,
+        nextAfterId: hasMore ? page.at(-1).id : null,
+      }
+    },
+    namespaces: () => Object.keys(rows),
+  }
+}
+
+function fakeMeasure(rows, options = {}) {
+  return measureOperations(fakeReader(rows), { workspaceId: W1, now: NOW, ...options })
+}
+
+function rawBudget({ executionId, currency, spent, settled = false }) {
+  return {
+    schemaVersion: 1,
+    workspaceId: W1,
+    executionId,
+    currency,
+    maximumMicrounits: spent,
+    maximumTokens: 0,
+    status: settled ? 'settled' : 'open',
+    nextSequence: 1,
+    reservations: [
+      {
+        reservationKey: `runtime-attempt:${ATT.queue}`,
+        maximumMicrounits: spent,
+        maximumTokens: 0,
+        chargedMicrounits: spent,
+        chargedTokens: 0,
+        status: settled ? 'settled' : 'open',
+      },
+    ],
+  }
+}
+
+test('computes true growth only against a baseline and marks it absent otherwise', async () => {
+  const first = await measure()
+  expect(first.measurements.storage.baseline).toEqual({
+    availability: 'absent',
+    generatedAt: null,
+  })
+  expect(first.measurements.storage.totals.growthBytes).toBeNull()
+  expect(
+    first.telemetry.some((point) => point.name === operationsMetricNames.storageGrowthBytes)
+  ).toBe(false)
+
+  // Snapshot against itself: every namespace and the totals show a true
+  // zero delta, and growth points become emit-able observations.
+  const second = await measure({ baselineReport: first })
+  expect(second.measurements.storage.baseline).toEqual({
+    availability: 'complete',
+    generatedAt: first.generatedAt,
+  })
+  expect(second.measurements.storage.totals.growthBytes).toBe(0)
+  for (const row of second.measurements.storage.namespaces) expect(row.growthBytes).toBe(0)
+  const growthPoints = second.telemetry.filter(
+    (point) => point.name === operationsMetricNames.storageGrowthBytes
+  )
+  expect(growthPoints.length).toBeGreaterThan(0)
+  expect(growthPoints.every((point) => point.value === 0)).toBe(true)
+
+  // Deletions shrink: a baseline that retained 500 more bytes in one
+  // namespace yields a negative delta — rewritten-bytes churn can never
+  // express this, which is exactly why it is no longer called growth.
+  const shrunken = structuredClone(first)
+  const executionsRow = shrunken.measurements.storage.namespaces.find(
+    (row) => row.namespace === 'executions'
+  )
+  executionsRow.bytes += 500
+  const third = await measure({ baselineReport: shrunken })
+  const thirdExecutions = third.measurements.storage.namespaces.find(
+    (row) => row.namespace === 'executions'
+  )
+  expect(thirdExecutions.growthBytes).toBe(-500)
+  expect(third.measurements.storage.totals.growthBytes).toBe(-500)
+  const executionsGrowthPoint = third.telemetry.find(
+    (point) =>
+      point.name === operationsMetricNames.storageGrowthBytes &&
+      point.labels.namespace === 'executions'
+  )
+  expect(executionsGrowthPoint.value).toBe(-500)
+
+  // A baseline from another workspace or an unparsable one fails closed
+  // instead of producing a misleading delta.
+  const foreign = structuredClone(first)
+  foreign.scope.workspaceId = W2
+  expect(() => measure({ baselineReport: foreign })).toThrow('BASELINE_SCOPE_MISMATCH')
+  expect(() => measure({ baselineReport: { nope: true } })).toThrow('BASELINE_REPORT_INVALID')
+})
+
+test('marks a corrupted generation source and refuses current verdicts from it', () => {
+  const nodeB = id('rnr', 'B')
+  const report = fakeMeasure({
+    executions: [
+      {
+        id: recordId(EXE.queue),
+        value: rawExecution({ executionId: EXE.queue, state: 'running', updatedAt: NOW }),
+        updatedAt: NOW,
+      },
+      {
+        id: recordId(EXE.human),
+        value: rawExecution({
+          executionId: EXE.human,
+          letter: 'B',
+          state: 'running',
+          updatedAt: NOW,
+        }),
+        updatedAt: NOW,
+      },
+    ],
+    'runtime-commands': [
+      {
+        id: recordId(CMD.dispatched),
+        value: rawCommand({
+          commandId: CMD.dispatched,
+          executionId: EXE.queue,
+          attemptId: ATT.queue,
+          status: 'dispatched',
+          issuedAt: '2026-08-30T12:00:03.000Z',
+          expiresAt: '2026-08-30T13:00:00.000Z',
+          updatedAt: '2026-08-30T12:00:05.000Z',
+          deliveryAttempts: 1,
+          firstDispatchedAt: '2026-08-30T12:00:05.000Z',
+          lastChannelGeneration: 1,
+        }),
+        updatedAt: '2026-08-30T12:00:05.000Z',
+      },
+      {
+        id: recordId(CMD.waiting),
+        value: rawCommand({
+          commandId: CMD.waiting,
+          executionId: EXE.human,
+          attemptId: ATT.human,
+          nodeId: nodeB,
+          status: 'dispatched',
+          issuedAt: '2026-08-30T12:00:03.000Z',
+          expiresAt: '2026-08-30T13:00:00.000Z',
+          updatedAt: '2026-08-30T12:00:05.000Z',
+          deliveryAttempts: 1,
+          firstDispatchedAt: '2026-08-30T12:00:05.000Z',
+          lastChannelGeneration: 1,
+        }),
+        updatedAt: '2026-08-30T12:00:05.000Z',
+      },
+    ],
+    'runtime-channel-sequences': [
+      {
+        id: 'seq-node-a',
+        value: { identity: JSON.stringify([W1, NODE, 'gwc_measure_0001', 1, 1]), next: 2 },
+        updatedAt: NOW,
+      },
+      // Corrupted reservation row: the walk completes, but the source is not
+      // clean, so no non-stale verdict may be asserted from it.
+      { id: 'seq-node-a-broken', raw: '{corrupted-identity', updatedAt: NOW },
+      {
+        id: 'seq-node-b',
+        value: { identity: JSON.stringify([W1, nodeB, 'gwc_measure_0002', 1, 2]), next: 3 },
+        updatedAt: NOW,
+      },
+    ],
+  })
+
+  expect(report.summary.complete).toBe(false)
+  expect(report.summary.sourceQuality).toEqual({
+    scansComplete: true,
+    recordsClean: false,
+    totalsSafe: true,
+  })
+  expect(report.summary.incompleteSources).toEqual(['runtime-channel-sequences'])
+  expect(report.summary.malformedRecords['runtime-channel-sequences']).toBeGreaterThanOrEqual(1)
+
+  const byId = new Map(report.correlation.map((view) => [view.executionId, view]))
+  // Would look current against the walked generation, but the source is
+  // dirty: verdict collapses to unknown with the completeness made explicit.
+  expect(byId.get(EXE.queue).job).toMatchObject({
+    staleGeneration: null,
+    generationScanComplete: false,
+    active: 1,
+  })
+  // A positive stale verdict survives the damaged source: the walked
+  // reservation already proves the lag.
+  expect(byId.get(EXE.human).job).toMatchObject({
+    staleGeneration: true,
+    generationScanComplete: false,
+  })
+
+  const storage = report.measurements.storage
+  expect(storage.complete).toBe(false)
+  expect(
+    storage.namespaces.find((row) => row.namespace === 'runtime-channel-sequences').complete
+  ).toBe(false)
+
+  // A partial storage snapshot cannot produce an ordinary priced cost.
+  const priced = fakeMeasure(
+    {
+      executions: [
+        {
+          id: recordId(EXE.queue),
+          value: rawExecution({ executionId: EXE.queue, state: 'running', updatedAt: NOW }),
+          updatedAt: NOW,
+        },
+      ],
+      'runtime-channel-sequences': [{ id: 'seq-broken', raw: '{corrupted', updatedAt: NOW }],
+    },
+    { storageUsdPerGiBMonth: 1.5 }
+  )
+  expect(priced.measurements.operatingCost.storage).toMatchObject({
+    availability: 'source_partial',
+  })
+  expect(priced.measurements.operatingCost.storage.costMicrounits).not.toBeNull()
+  expect(
+    priced.telemetry.some((point) => point.name === operationsMetricNames.operatingCostUsd)
+  ).toBe(false)
+})
+
+test('marks budget-bound usage scans partial and suppresses their USD cost points', () => {
+  const rows = {
+    executions: [
+      {
+        id: recordId(EXE.queue),
+        value: rawExecution({ executionId: EXE.queue, state: 'running', updatedAt: NOW }),
+        updatedAt: NOW,
+      },
+    ],
+    'runtime-commands': [
+      {
+        id: recordId(CMD.dispatched),
+        value: rawCommand({
+          commandId: CMD.dispatched,
+          executionId: EXE.queue,
+          attemptId: ATT.queue,
+          status: 'dispatched',
+          issuedAt: '2026-08-30T12:00:03.000Z',
+          expiresAt: '2026-08-30T13:00:00.000Z',
+          updatedAt: '2026-08-30T12:00:05.000Z',
+          deliveryAttempts: 1,
+          firstDispatchedAt: '2026-08-30T12:00:05.000Z',
+          lastChannelGeneration: 1,
+        }),
+        updatedAt: '2026-08-30T12:00:05.000Z',
+      },
+    ],
+    'usage-ledger-entries': [
+      {
+        id: recordId(USG.model),
+        value: rawUsageEntry({
+          entryId: USG.model,
+          sequence: 1,
+          executionId: EXE.retry,
+          attemptId: ATT.retry2,
+          kind: 'model_usage',
+          model: true,
+          quantity: { unit: 'tokens', value: 1000 },
+          costMicrounits: 1234,
+          costExact: true,
+          fundingSource: 'hq_managed',
+          recordedAt: '2026-08-30T12:00:00.000Z',
+        }),
+        updatedAt: NOW,
+      },
+      {
+        id: recordId(USG.tool),
+        value: rawUsageEntry({
+          entryId: USG.tool,
+          sequence: 1,
+          executionId: EXE.queue,
+          kind: 'tool_charge',
+          quantity: { unit: 'calls', value: 3 },
+          costMicrounits: 500,
+          costExact: true,
+          fundingSource: 'hq_managed',
+          recordedAt: '2026-08-30T12:00:10.000Z',
+        }),
+        updatedAt: NOW,
+      },
+      {
+        id: recordId(USG.old),
+        value: rawUsageEntry({
+          entryId: USG.old,
+          sequence: 2,
+          executionId: EXE.retry,
+          attemptId: ATT.retry2,
+          kind: 'model_usage',
+          model: true,
+          quantity: { unit: 'tokens', value: 9999 },
+          costMicrounits: 999,
+          costExact: true,
+          fundingSource: 'hq_managed',
+          recordedAt: '2026-08-30T12:01:00.000Z',
+        }),
+        updatedAt: NOW,
+      },
+    ],
+    'usage-budgets': [
+      {
+        id: recordId(EXE.retry),
+        value: rawBudget({ executionId: EXE.retry, currency: 'USD', spent: 4000 }),
+        updatedAt: NOW,
+      },
+    ],
+  }
+  // One in-scope match per namespace: single-record namespaces stay complete,
+  // the three-entry usage namespace is cut off at the budget.
+  const report = fakeMeasure(rows, { maxScanMatches: 1 })
+
+  expect(report.summary.complete).toBe(false)
+  expect(report.summary.sourceQuality).toEqual({
+    scansComplete: false,
+    recordsClean: true,
+    totalsSafe: true,
+  })
+  expect(report.summary.incompleteSources).toContain('usage-ledger-entries')
+  expect(report.measurements.usage.complete).toBe(false)
+  expect(report.measurements.storage.complete).toBe(false)
+  expect(
+    report.measurements.storage.namespaces.find((row) => row.namespace === 'usage-ledger-entries')
+      .complete
+  ).toBe(false)
+  expect(report.telemetry.some((point) => point.name === operationsMetricNames.usageCostUsd)).toBe(
+    false
+  )
+
+  // Sections whose own sources are clean stay complete and keep their points:
+  // partiality is attributed per source, not smeared over the whole report.
+  expect(report.measurements.queueLatency.complete).toBe(true)
+  expect(report.telemetry.some((point) => point.name === operationsMetricNames.queueLatency)).toBe(
+    true
+  )
+  // The budget snapshot itself is complete, so the operating-cost usage
+  // component remains measured; the total is still blocked by the rate rule.
+  expect(report.measurements.operatingCost.usage.availability).toBe('measured')
+  expect(report.measurements.operatingCost.totalAvailability).toBe('storage_rate_not_configured')
+})
+
+test('marks overflowed totals unsafe instead of reporting them as measured cost', () => {
+  const MAX = Number.MAX_SAFE_INTEGER
+  const rows = {
+    executions: [
+      {
+        id: recordId(EXE.queue),
+        value: rawExecution({ executionId: EXE.queue, state: 'running', updatedAt: NOW }),
+        updatedAt: NOW,
+      },
+    ],
+    'usage-ledger-entries': [
+      {
+        id: recordId(USG.model),
+        value: rawUsageEntry({
+          entryId: USG.model,
+          sequence: 1,
+          executionId: EXE.retry,
+          attemptId: ATT.retry2,
+          kind: 'model_usage',
+          model: true,
+          quantity: { unit: 'tokens', value: 1000 },
+          costMicrounits: MAX,
+          costExact: true,
+          fundingSource: 'hq_managed',
+          recordedAt: '2026-08-30T12:00:00.000Z',
+        }),
+        updatedAt: NOW,
+      },
+      {
+        id: recordId(USG.old),
+        value: rawUsageEntry({
+          entryId: USG.old,
+          sequence: 2,
+          executionId: EXE.retry,
+          attemptId: ATT.retry2,
+          kind: 'model_usage',
+          model: true,
+          quantity: { unit: 'tokens', value: 500 },
+          costMicrounits: MAX,
+          costExact: true,
+          fundingSource: 'hq_managed',
+          recordedAt: '2026-08-30T12:01:00.000Z',
+        }),
+        updatedAt: NOW,
+      },
+    ],
+    'usage-budgets': [
+      {
+        id: recordId(EXE.retry),
+        value: rawBudget({ executionId: EXE.retry, currency: 'USD', spent: MAX, settled: true }),
+        updatedAt: NOW,
+      },
+      {
+        id: recordId(EXE.done),
+        value: rawBudget({ executionId: EXE.done, currency: 'USD', spent: MAX, settled: true }),
+        updatedAt: NOW,
+      },
+    ],
+  }
+  const report = fakeMeasure(rows)
+
+  expect(report.summary.complete).toBe(false)
+  expect(report.summary.sourceQuality).toEqual({
+    scansComplete: true,
+    recordsClean: true,
+    totalsSafe: false,
+  })
+  expect(report.summary.incompleteSources).toEqual(
+    expect.arrayContaining(['usage-ledger-entries', 'usage-budgets'])
+  )
+  expect(report.measurements.usage.unsafeTotals).toBe(true)
+  expect(report.measurements.usage.budgets.unsafeTotals).toBe(true)
+  expect(report.measurements.usage.complete).toBe(false)
+  // Affected totals hold their last safe value and are explicitly unsafe.
+  expect(report.measurements.usage.byCurrency.USD.costMicrounits).toBe(MAX)
+  expect(report.measurements.operatingCost.usage.availability).toBe('unsafe_totals')
+  expect(report.measurements.operatingCost.totalAvailability).toBe('usage_unsafe_totals')
+  expect(report.measurements.operatingCost.totalMicrounits).toBeNull()
+  expect(report.telemetry.some((point) => point.name === operationsMetricNames.usageCostUsd)).toBe(
+    false
+  )
+})
+
+test('keeps currencies separated in every derived total (USD + EUR regression)', () => {
+  const rows = {
+    executions: [
+      {
+        id: recordId(EXE.queue),
+        value: rawExecution({ executionId: EXE.queue, state: 'running', updatedAt: NOW }),
+        updatedAt: NOW,
+      },
+    ],
+    'usage-ledger-entries': [
+      {
+        id: recordId(USG.tool),
+        value: rawUsageEntry({
+          entryId: USG.tool,
+          sequence: 1,
+          executionId: EXE.queue,
+          kind: 'tool_charge',
+          quantity: { unit: 'calls', value: 1 },
+          costMicrounits: 100,
+          costExact: true,
+          fundingSource: 'hq_managed',
+          recordedAt: '2026-08-30T12:00:00.000Z',
+        }),
+        updatedAt: NOW,
+      },
+      {
+        id: recordId(USG.other),
+        value: {
+          ...rawUsageEntry({
+            entryId: USG.other,
+            sequence: 2,
+            executionId: EXE.queue,
+            kind: 'tool_charge',
+            quantity: { unit: 'calls', value: 2 },
+            costMicrounits: 500,
+            costExact: false,
+            fundingSource: 'external_subscription',
+            recordedAt: '2026-08-30T12:00:01.000Z',
+          }),
+          currency: 'EUR',
+        },
+        updatedAt: NOW,
+      },
+      {
+        id: recordId(USG.model),
+        value: rawUsageEntry({
+          entryId: USG.model,
+          sequence: 3,
+          executionId: EXE.retry,
+          attemptId: ATT.retry2,
+          kind: 'model_usage',
+          model: true,
+          quantity: { unit: 'tokens', value: 1000 },
+          costMicrounits: 1234,
+          costExact: true,
+          fundingSource: 'hq_managed',
+          recordedAt: '2026-08-30T12:00:02.000Z',
+        }),
+        updatedAt: NOW,
+      },
+    ],
+    'usage-budgets': [
+      {
+        id: recordId(EXE.retry),
+        value: rawBudget({ executionId: EXE.retry, currency: 'USD', spent: 4000, settled: true }),
+        updatedAt: NOW,
+      },
+      {
+        id: recordId(EXE.done),
+        value: rawBudget({ executionId: EXE.done, currency: 'EUR', spent: 250, settled: true }),
+        updatedAt: NOW,
+      },
+    ],
+  }
+  const report = fakeMeasure(rows)
+
+  // Per-kind costs stay separated: summing USD and EUR microunits together
+  // would be a meaningless number.
+  expect(report.measurements.usage.byKind).toEqual({
+    model_usage: { count: 1, byCurrency: { USD: 1234 } },
+    tool_charge: { count: 2, byCurrency: { EUR: 500, USD: 100 } },
+  })
+  expect(report.measurements.usage.byCurrency).toEqual({
+    EUR: { costMicrounits: 500, exactCostMicrounits: 0, inexactCostMicrounits: 500 },
+    USD: { costMicrounits: 1334, exactCostMicrounits: 1334, inexactCostMicrounits: 0 },
+  })
+  expect(report.measurements.operatingCost.usage).toEqual({
+    availability: 'measured',
+    byCurrency: {
+      EUR: { spentMicrounits: 250, reservedMicrounits: 0 },
+      USD: { spentMicrounits: 4000, reservedMicrounits: 0 },
+    },
+  })
+  // Mixed currencies can never combine into one total.
+  expect(report.measurements.operatingCost.totalMicrounits).toBeNull()
+  expect(report.measurements.operatingCost.totalAvailability).toBe('usage_currency_unsupported')
+
+  // usage.cost.usd is USD-denominated by name: EUR cost never joins it.
+  const usdCostPoints = report.telemetry.filter(
+    (point) => point.name === operationsMetricNames.usageCostUsd
+  )
+  expect(usdCostPoints.length).toBeGreaterThan(0)
+  expect(usdCostPoints.map((point) => point.value).toSorted()).toEqual([0, 1334 / 1_000_000])
+})
+
+test('packaged operator command computes growth against a baseline report', async () => {
+  const first = await runCli(['--data-dir', directory, '--workspace', W1])
+  expect({ code: first.code, stderr: first.stderr }).toEqual({ code: 0, stderr: '' })
+  const baselineReport = JSON.parse(first.stdout)
+  expect(baselineReport.measurements.storage.complete).toBe(true)
+
+  const baselinePath = join(directory, 'baseline-report.json')
+  await writeFile(baselinePath, first.stdout, { mode: 0o600 })
+  const second = await runCli([
+    '--data-dir',
+    directory,
+    '--workspace',
+    W1,
+    '--baseline-report',
+    baselinePath,
+  ])
+  expect({ code: second.code, stderr: second.stderr }).toEqual({ code: 0, stderr: '' })
+  const report = JSON.parse(second.stdout)
+  expect(report.measurements.storage.baseline).toEqual({
+    availability: 'complete',
+    generatedAt: baselineReport.generatedAt,
+  })
+  expect(report.measurements.storage.totals.growthBytes).toBe(0)
+
+  // A baseline file that is not a report fails closed.
+  const invalid = await runCli([
+    '--data-dir',
+    directory,
+    '--workspace',
+    W1,
+    '--baseline-report',
+    databasePath,
+  ])
+  expect(invalid.code).toBe(1)
+  expect(invalid.stderr).toBe('LOCAL_OPERATOR_MEASUREMENTS_FAILED\n')
+  expect(invalid.stdout).toBe('')
+}, 30_000)
+
+test('forces generation verdicts unknown when the reservation walk is budget-bound', () => {
+  // The first walked reservation matches the job's generation (a `false`
+  // verdict without truncation), but a later reservation the budget cut off
+  // could hold a higher generation: the verdict must collapse to unknown.
+  const rows = {
+    executions: [
+      {
+        id: recordId(EXE.queue),
+        value: rawExecution({ executionId: EXE.queue, state: 'running', updatedAt: NOW }),
+        updatedAt: NOW,
+      },
+    ],
+    'runtime-commands': [
+      {
+        id: recordId(CMD.dispatched),
+        value: rawCommand({
+          commandId: CMD.dispatched,
+          executionId: EXE.queue,
+          attemptId: ATT.queue,
+          status: 'dispatched',
+          issuedAt: '2026-08-30T12:00:03.000Z',
+          expiresAt: '2026-08-30T13:00:00.000Z',
+          updatedAt: '2026-08-30T12:00:05.000Z',
+          deliveryAttempts: 1,
+          firstDispatchedAt: '2026-08-30T12:00:05.000Z',
+          lastChannelGeneration: 1,
+        }),
+        updatedAt: '2026-08-30T12:00:05.000Z',
+      },
+    ],
+    'runtime-channel-sequences': [
+      {
+        id: 'seq-1',
+        value: { identity: JSON.stringify([W1, NODE, 'gwc_measure_0001', 1, 1]), next: 2 },
+        updatedAt: NOW,
+      },
+      {
+        id: 'seq-2',
+        value: { identity: JSON.stringify([W1, NODE, 'gwc_measure_0001', 2, 4]), next: 5 },
+        updatedAt: NOW,
+      },
+    ],
+  }
+  const full = fakeMeasure(rows)
+  expect(full.correlation[0].job).toMatchObject({
+    staleGeneration: true,
+    generationScanComplete: true,
+  })
+
+  const truncated = fakeMeasure(rows, { maxScanMatches: 1 })
+  expect(truncated.summary.sourceQuality.scansComplete).toBe(false)
+  expect(truncated.summary.incompleteSources).toContain('runtime-channel-sequences')
+  expect(truncated.correlation[0].job).toMatchObject({
+    staleGeneration: null,
+    generationScanComplete: false,
+  })
 })

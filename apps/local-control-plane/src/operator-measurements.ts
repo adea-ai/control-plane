@@ -47,8 +47,17 @@ import { z, type ZodType } from 'zod'
  *   from the durable usage ledger, and storage is priced only when the operator
  *   supplies an explicit rate.
  *
- * Every dimension carries an explicit availability state, and an incomplete
- * namespace walk makes the whole report a lower bound via `summary.complete`.
+ * Source quality is propagated, not assumed. `summary.complete` is true only
+ * when every namespace walk finished, every record parsed and every summed
+ * total stayed in the safe-integer range; `summary.sourceQuality` and
+ * `summary.incompleteSources` attribute the exact namespaces at fault. Every
+ * measurement section carries its own `complete` flag, correlation dimensions
+ * expose scan and generation-source completeness, and telemetry points derived
+ * from incomplete or overflowed sources are suppressed rather than emitted as
+ * ordinary observations. Storage growth is a signed snapshot delta against a
+ * prior complete report of the same workspace (`baselineReport`) and is
+ * reported as unavailable until one exists; bytes rewritten inside the window
+ * are reported separately and are never called growth.
  */
 
 /** Records fetched per continuation page while walking a namespace. */
@@ -59,7 +68,7 @@ export const MAX_SCAN_ROWS = 100_000
 export const MAX_SCAN_MATCHES = 10_000
 export const DEFAULT_CORRELATION_LIMIT = 100
 export const MAX_CORRELATION_LIMIT = 500
-/** Default measurement window: windowed usage and storage growth over 24 hours. */
+/** Default measurement window: windowed usage and rewritten-byte accounting over 24 hours. */
 export const DEFAULT_WINDOW_SECONDS = 86_400
 export const MIN_WINDOW_SECONDS = 60
 export const MAX_WINDOW_SECONDS = 31_536_000
@@ -98,12 +107,45 @@ export const operationsMeasurementOptionsSchema = z
       .min(MIN_STORAGE_USD_PER_GIB_MONTH)
       .max(MAX_STORAGE_USD_PER_GIB_MONTH)
       .optional(),
+    /**
+     * A prior complete report of the same workspace, used as the snapshot
+     * baseline for true storage-growth deltas. Without one, growth is
+     * explicitly unavailable — never estimated from rewritten bytes.
+     */
+    baselineReport: z.unknown().optional(),
     /** Deterministic measurement clock; defaults to wall time. */
     now: z.iso.datetime().optional(),
   })
   .strict()
 
 export type OperationsMeasurementOptions = z.input<typeof operationsMeasurementOptionsSchema>
+
+/**
+ * The subset of a prior measurement report accepted as a growth baseline:
+ * identity, scope and the baseline storage snapshot under `measurements`.
+ * Superset fields from a full report are ignored; a report from another
+ * workspace, a foreign command or an incomplete baseline is rejected instead
+ * of silently producing a misleading delta.
+ */
+export const OperationsMeasurementBaselineSchema = z.object({
+  schemaVersion: z.literal(1),
+  command: z.literal('local.operator.telemetry.operations'),
+  generatedAt: z.iso.datetime(),
+  scope: z.object({ workspaceId: z.string() }),
+  measurements: z.object({
+    storage: z.object({
+      complete: z.boolean(),
+      namespaces: z.array(
+        z.object({
+          namespace: z.string(),
+          bytes: z.number().int().nonnegative(),
+          complete: z.boolean(),
+        })
+      ),
+      totals: z.object({ bytes: z.number().int().nonnegative() }),
+    }),
+  }),
+})
 
 const NullableId = z.string().nullable()
 const NullableState = z.string().nullable()
@@ -139,9 +181,17 @@ const JobCorrelationViewSchema = z
     /**
      * True when an active job lags its node's current channel generation,
      * false when every active job reports the current one, null when any
-     * active job has no known generation to compare against.
+     * active job has no known generation to compare against — or when the
+     * generation source itself is not clean, in which case a `false` verdict
+     * could be produced by a truncated or corrupted reservation walk.
      */
     staleGeneration: z.boolean().nullable(),
+    /**
+     * False when the `runtime-channel-sequences` walk was truncated or held
+     * malformed records: every non-positively-stale generation verdict is then
+     * forced to unknown instead of being asserted from a damaged source.
+     */
+    generationScanComplete: z.boolean(),
     oldestActiveAgeMs: NullableInt,
   })
   .strict()
@@ -246,7 +296,16 @@ const NamespaceStorageSchema = z
     namespace: z.string(),
     records: z.number().int().nonnegative(),
     bytes: z.number().int().nonnegative(),
-    bytesTouchedInWindow: z.number().int().nonnegative(),
+    /**
+     * Payload bytes of rows last written inside the measurement window. This
+     * counts full rewritten payloads and ignores deletions: it is churn, not
+     * growth. True growth is `growthBytes`, the signed snapshot delta.
+     */
+    bytesRewrittenInWindow: z.number().int().nonnegative(),
+    /** False when this namespace's walk or parsing was incomplete. */
+    complete: z.boolean(),
+    /** Signed delta against the baseline snapshot; null while unavailable. */
+    growthBytes: z.number().int().nullable(),
   })
   .strict()
 
@@ -278,8 +337,28 @@ export const OperationsMeasurementReportSchema = z
       .strict(),
     summary: z
       .object({
-        /** False when any namespace walk stopped before exhausting the store. */
+        /**
+         * True only when every namespace walk finished, every record parsed
+         * and every summed total stayed safe: the conjunction in
+         * `sourceQuality`. Anything less makes dependent counts lower bounds.
+         */
         complete: z.boolean(),
+        sourceQuality: z
+          .object({
+            /** No walk stopped at a scan budget. */
+            scansComplete: z.boolean(),
+            /** No record failed JSON or schema parsing. */
+            recordsClean: z.boolean(),
+            /** No summed total left the safe-integer range. */
+            totalsSafe: z.boolean(),
+          })
+          .strict(),
+        /**
+         * Namespaces responsible for `complete === false`: truncated walks,
+         * malformed records and overflowing totals, deduplicated and sorted,
+         * so partiality is attributed rather than merely asserted.
+         */
+        incompleteSources: z.array(z.string()).readonly(),
         executions: z.number().int().nonnegative(),
         outOfScopeExecutions: z.number().int().nonnegative(),
         correlationsListed: z.number().int().nonnegative(),
@@ -311,6 +390,8 @@ export const OperationsMeasurementReportSchema = z
       .object({
         queueLatency: z
           .object({
+            /** False when the runtime-command source was truncated or malformed. */
+            complete: z.boolean(),
             dispatch: LatencyStatsSchema,
             waiting: LatencyStatsSchema,
             waitingExpiredCount: z.number().int().nonnegative(),
@@ -318,6 +399,8 @@ export const OperationsMeasurementReportSchema = z
           .strict(),
         humanLatency: z
           .object({
+            /** False when the execution or interaction source was degraded. */
+            complete: z.boolean(),
             responded: LatencyStatsSchema,
             waiting: LatencyStatsSchema,
             expiredCount: z.number().int().nonnegative(),
@@ -326,6 +409,8 @@ export const OperationsMeasurementReportSchema = z
           .strict(),
         retryAge: z
           .object({
+            /** False when the execution or attempt source was degraded. */
+            complete: z.boolean(),
             retriedExecutions: z.number().int().nonnegative(),
             gap: LatencyStatsSchema,
             current: LatencyStatsSchema,
@@ -333,6 +418,8 @@ export const OperationsMeasurementReportSchema = z
           .strict(),
         reconciliationAge: z
           .object({
+            /** False when the execution source was truncated or malformed. */
+            complete: z.boolean(),
             nonTerminal: LatencyStatsSchema,
             awaitingReconciliation: z
               .object({
@@ -344,6 +431,13 @@ export const OperationsMeasurementReportSchema = z
           .strict(),
         usage: z
           .object({
+            /**
+             * False when the usage-entry or budget source was truncated or
+             * malformed, or when either total set overflowed. Window costs and
+             * operating-cost totals are then marked partial and their telemetry
+             * points are suppressed.
+             */
+            complete: z.boolean(),
             windowEntryCount: z.number().int().nonnegative(),
             byUnit: z
               .object({
@@ -357,7 +451,11 @@ export const OperationsMeasurementReportSchema = z
             byKind: z.record(
               z.string(),
               z
-                .object({ count: z.number().int().nonnegative(), costMicrounits: NullableInt })
+                .object({
+                  count: z.number().int().nonnegative(),
+                  /** Cost per currency; currencies are never summed together. */
+                  byCurrency: z.record(z.string(), z.number().int().nonnegative()),
+                })
                 .strict()
             ),
             byCurrency: z.record(z.string(), UsageCurrencyTotalsSchema),
@@ -384,7 +482,24 @@ export const OperationsMeasurementReportSchema = z
               .object({
                 records: z.number().int().nonnegative(),
                 bytes: z.number().int().nonnegative(),
-                bytesTouchedInWindow: z.number().int().nonnegative(),
+                bytesRewrittenInWindow: z.number().int().nonnegative(),
+                /** Signed delta against the baseline snapshot; null while unavailable. */
+                growthBytes: z.number().int().nullable(),
+              })
+              .strict(),
+            /** False when any measured namespace was truncated or malformed. */
+            complete: z.boolean(),
+            baseline: z
+              .object({
+                /**
+                 * `complete`: a prior complete report of this workspace was
+                 * supplied and deltas are available; `incomplete`: a baseline
+                 * was supplied but its own storage snapshot was partial, so no
+                 * delta is trustworthy; `absent`: no baseline, actual growth
+                 * is unavailable (never estimated).
+                 */
+                availability: z.enum(['complete', 'incomplete', 'absent']),
+                generatedAt: NullableTimestamp,
               })
               .strict(),
             /**
@@ -396,6 +511,8 @@ export const OperationsMeasurementReportSchema = z
           .strict(),
         activeObjects: z
           .object({
+            /** False when any contributing object source was degraded. */
+            complete: z.boolean(),
             executions: ObjectCountSchema,
             jobs: ObjectCountSchema,
             attempts: ObjectCountSchema,
@@ -408,7 +525,14 @@ export const OperationsMeasurementReportSchema = z
           .object({
             usage: z
               .object({
-                availability: z.enum(['measured', 'no_budget_records']),
+                availability: z.enum([
+                  'measured',
+                  'no_budget_records',
+                  /** Budget source truncated or malformed; totals are partial. */
+                  'source_partial',
+                  /** Budget totals overflowed the safe-integer range. */
+                  'unsafe_totals',
+                ]),
                 byCurrency: z.record(z.string(), BudgetCurrencyTotalsSchema),
               })
               .strict(),
@@ -417,15 +541,27 @@ export const OperationsMeasurementReportSchema = z
                 bytes: z.number().int().nonnegative(),
                 rateUsdPerGiBMonth: z.number().nullable(),
                 costMicrounits: NullableInt,
-                availability: z.enum(['priced', 'rate_not_configured']),
+                availability: z.enum([
+                  'priced',
+                  'rate_not_configured',
+                  /** Rate supplied but bytes are a partial snapshot. */
+                  'source_partial',
+                ]),
               })
               .strict(),
+            /**
+             * Null unless every component is complete and commensurable; the
+             * reason is always named in `totalAvailability`.
+             */
             totalMicrounits: NullableInt,
             totalAvailability: z.enum([
               'measured',
               'storage_rate_not_configured',
               'usage_currency_unsupported',
               'usage_unavailable',
+              'usage_source_partial',
+              'usage_unsafe_totals',
+              'storage_source_partial',
             ]),
           })
           .strict(),
@@ -448,7 +584,7 @@ export interface MeasurementRecord {
   readonly value: unknown
   /** UTF-8 bytes of the stored record payload; row and index overhead excluded. */
   readonly bytes: number
-  /** Row `updated_at`, used for the storage-growth window. */
+  /** Row `updated_at`, used for the rewritten-bytes window. */
   readonly updatedAt: string | null
 }
 
@@ -632,6 +768,35 @@ export function measureOperations(
   const malformedRecords = new Map<string, number>()
   const unattributedRecords = new Map<string, number>()
 
+  // Baseline snapshot for true growth deltas: absent by default, and a
+  // baseline from another workspace, a foreign command or an unparsable shape
+  // fails closed instead of producing a misleading delta.
+  let baseline:
+    | {
+        readonly generatedAt: string
+        readonly complete: boolean
+        readonly bytesByNamespace: ReadonlyMap<string, { bytes: number; complete: boolean }>
+      }
+    | undefined
+  if (parsedOptions.baselineReport !== undefined) {
+    const parsedBaseline = OperationsMeasurementBaselineSchema.safeParse(
+      parsedOptions.baselineReport
+    )
+    if (!parsedBaseline.success) throw new Error('BASELINE_REPORT_INVALID')
+    if (parsedBaseline.data.scope.workspaceId !== parsedOptions.workspaceId)
+      throw new Error('BASELINE_SCOPE_MISMATCH')
+    baseline = {
+      generatedAt: parsedBaseline.data.generatedAt,
+      complete: parsedBaseline.data.measurements.storage.complete,
+      bytesByNamespace: new Map(
+        parsedBaseline.data.measurements.storage.namespaces.map((row) => [
+          row.namespace,
+          { bytes: row.bytes, complete: row.complete },
+        ])
+      ),
+    }
+  }
+
   const noteMalformed = (namespace: string, count: number) => {
     if (count > 0) malformedRecords.set(namespace, (malformedRecords.get(namespace) ?? 0) + count)
   }
@@ -640,20 +805,34 @@ export function measureOperations(
       unattributedRecords.set(namespace, (unattributedRecords.get(namespace) ?? 0) + count)
   }
 
+  /**
+   * Source quality, evaluated after every walk: a namespace is clean only
+   * when its walk finished AND every record in it parsed. Dependent
+   * measurements, correlation dimensions and telemetry points consult this
+   * instead of assuming the sources they read were whole.
+   */
+  const namespaceClean = (namespace: string): boolean =>
+    !incompleteScans.some((scan) => scan.namespace === namespace) &&
+    !malformedRecords.has(namespace)
+
   // Storage accounting: in-scope payload bytes per measured namespace, with
-  // bytes last written inside the growth window.
-  const storage = new Map<string, { records: number; bytes: number; bytesTouchedInWindow: number }>(
+  // bytes last written inside the measurement window reported separately as
+  // rewritten churn — never as growth.
+  const storage = new Map<
+    string,
+    { records: number; bytes: number; bytesRewrittenInWindow: number }
+  >(
     operationsStorageNamespaces
       .filter((namespace) => namespace !== 'total')
-      .map((namespace) => [namespace, { records: 0, bytes: 0, bytesTouchedInWindow: 0 }])
+      .map((namespace) => [namespace, { records: 0, bytes: 0, bytesRewrittenInWindow: 0 }])
   )
   const accountStorage = (namespace: string, record: MeasurementRecord) => {
     const entry = storage.get(namespace)
     if (entry === undefined) return
     entry.records += 1
     entry.bytes += record.bytes
-    const touched = parseMs(record.updatedAt)
-    if (touched !== null && touched >= sinceMs) entry.bytesTouchedInWindow += record.bytes
+    const rewrittenAt = parseMs(record.updatedAt)
+    if (rewrittenAt !== null && rewrittenAt >= sinceMs) entry.bytesRewrittenInWindow += record.bytes
   }
 
   /**
@@ -1043,7 +1222,7 @@ export function measureOperations(
   let usageUnsafe = false
   const unitTotals = new Map<string, number>(BY_UNIT.map((unit) => [unit, 0]))
   const costByCurrency = new Map<string, { cost: number; exact: number; inexact: number }>()
-  const kindTotals = new Map<string, { count: number; cost: number }>()
+  const kindTotals = new Map<string, { count: number; byCurrency: Map<string, number> }>()
   for (const entry of windowEntries) {
     const unitTotal = addSafe(unitTotals.get(entry.quantity.unit) ?? 0, entry.quantity.value)
     if (unitTotal.unsafe) usageUnsafe = true
@@ -1059,11 +1238,13 @@ export function measureOperations(
     currency[exactnessKey] = exactness.value
     costByCurrency.set(entry.currency, currency)
 
-    const kind = kindTotals.get(entry.kind) ?? { count: 0, cost: 0 }
+    const kind = kindTotals.get(entry.kind) ?? { count: 0, byCurrency: new Map<string, number>() }
     kind.count += 1
-    const kindCost = addSafe(kind.cost, entry.costMicrounits)
-    if (kindCost.unsafe) usageUnsafe = true
-    kind.cost = kindCost.value
+    // Costs stay separated per currency inside every derived total: summing
+    // USD and EUR microunits together would be a meaningless number.
+    const kindCurrency = addSafe(kind.byCurrency.get(entry.currency) ?? 0, entry.costMicrounits)
+    if (kindCurrency.unsafe) usageUnsafe = true
+    kind.byCurrency.set(entry.currency, kindCurrency.value)
     kindTotals.set(entry.kind, kind)
   }
 
@@ -1157,6 +1338,11 @@ export function measureOperations(
     compareCodePointOrder(left.executionId, right.executionId)
   )
 
+  // The current-generation source must be clean before a non-stale verdict is
+  // asserted from it; a truncated or corrupted reservation walk can hide the
+  // generation that would have proven staleness.
+  const generationSourceClean = namespaceClean('runtime-channel-sequences')
+
   const correlation: z.output<typeof CorrelationViewSchema>[] = []
   for (const execution of orderedExecutions) {
     if (correlation.length >= parsedOptions.limit) break
@@ -1186,8 +1372,17 @@ export function measureOperations(
         else if (command.lastChannelGeneration < known) anyStaleGeneration = true
       }
     }
+    // A positive stale verdict survives a damaged generation source (a walked
+    // reservation already proves the lag); every other verdict collapses to
+    // unknown when the source is not clean.
     const staleGeneration =
-      activeJobs === 0 ? null : anyStaleGeneration ? true : anyUnknownGeneration ? null : false
+      activeJobs === 0
+        ? null
+        : anyStaleGeneration
+          ? true
+          : anyUnknownGeneration || !generationSourceClean
+            ? null
+            : false
 
     const executionAttempts = attemptsByExecution.get(execution.executionId) ?? []
     const latestStored =
@@ -1350,6 +1545,7 @@ export function measureOperations(
         queued: queuedJobs,
         settled: settledJobs,
         staleGeneration,
+        generationScanComplete: generationSourceClean,
         oldestActiveAgeMs,
       },
       attempt: attemptView,
@@ -1384,21 +1580,52 @@ export function measureOperations(
     })
   }
 
-  // ---- Storage totals and coverage ----
+  // ---- Storage totals, growth baseline and coverage ----
 
-  const namespaceRows = [...storage.entries()].map(([namespace, totals]) => ({
-    namespace,
-    records: totals.records,
-    bytes: totals.bytes,
-    bytesTouchedInWindow: totals.bytesTouchedInWindow,
-  }))
+  // Join-scoped namespaces only account rows anchored to an in-scope
+  // execution, so their bytes are partial whenever the execution walk itself
+  // was truncated; every other namespace is scoped by its own workspace
+  // field. Unattributed rows are an attribution question, not a parse/scan
+  // one, and stay reported under `summary.unattributedRecords`.
+  const joinScopedNamespaces = new Set(['execution-attempts', 'interaction-requests'])
+  const executionsClean = namespaceClean('executions')
+  const rowComplete = (namespace: string): boolean =>
+    namespaceClean(namespace) && (!joinScopedNamespaces.has(namespace) || executionsClean)
+
+  const namespaceRows = [...storage.entries()].map(([namespace, totals]) => {
+    const complete = rowComplete(namespace)
+    const baselineRow = baseline?.bytesByNamespace.get(namespace)
+    // True growth is a signed snapshot delta against a prior complete report
+    // of the same workspace; it is null (unavailable), never estimated, until
+    // such a baseline exists and both sides of the delta are complete.
+    const growthBytes =
+      baseline?.complete === true && baselineRow !== undefined && baselineRow.complete && complete
+        ? totals.bytes - baselineRow.bytes
+        : null
+    return {
+      namespace,
+      records: totals.records,
+      bytes: totals.bytes,
+      bytesRewrittenInWindow: totals.bytesRewrittenInWindow,
+      complete,
+      growthBytes,
+    }
+  })
+  const storageComplete = namespaceRows.every((row) => row.complete)
+  const baselineAvailability =
+    baseline === undefined ? 'absent' : baseline.complete ? 'complete' : 'incomplete'
+  const baselineGeneratedAt = baseline?.generatedAt ?? null
   const storageTotals = namespaceRows.reduce(
     (totals, row) => ({
       records: totals.records + row.records,
       bytes: totals.bytes + row.bytes,
-      bytesTouchedInWindow: totals.bytesTouchedInWindow + row.bytesTouchedInWindow,
+      bytesRewrittenInWindow: totals.bytesRewrittenInWindow + row.bytesRewrittenInWindow,
+      growthBytes:
+        totals.growthBytes === null || row.growthBytes === null
+          ? null
+          : totals.growthBytes + row.growthBytes,
     }),
-    { records: 0, bytes: 0, bytesTouchedInWindow: 0 }
+    { records: 0, bytes: 0, bytesRewrittenInWindow: 0, growthBytes: 0 as number | null }
   )
   const measuredNamespaces = new Set<string>(
     operationsStorageNamespaces.filter((namespace) => namespace !== 'total')
@@ -1408,14 +1635,61 @@ export function measureOperations(
     .filter((namespace) => !measuredNamespaces.has(namespace))
     .toSorted((left, right) => compareCodePointOrder(left, right))
 
+  // ---- Source quality: one place every dependent consumer consults ----
+
+  const scansComplete = incompleteScans.length === 0
+  const recordsClean = malformedRecords.size === 0
+  const totalsSafe = !usageUnsafe && !budgetUnsafe
+  const summaryComplete = scansComplete && recordsClean && totalsSafe
+  const incompleteSources = [
+    ...new Set([
+      ...incompleteScans.map((scan) => scan.namespace),
+      ...malformedRecords.keys(),
+      ...(usageUnsafe ? ['usage-ledger-entries'] : []),
+      ...(budgetUnsafe ? ['usage-budgets'] : []),
+    ]),
+  ].toSorted((left, right) => compareCodePointOrder(left, right))
+
+  const commandsClean = namespaceClean('runtime-commands')
+  const attemptsClean = namespaceClean('execution-attempts') && executionsClean
+  const interactionsClean = namespaceClean('interaction-requests') && executionsClean
+  const eventsClean = namespaceClean('execution-events')
+  const sessionsClean = namespaceClean('runtime-discovery-sessions')
+  const usageEntriesClean = namespaceClean('usage-ledger-entries')
+  const budgetsClean = namespaceClean('usage-budgets')
+
+  const queueLatencyComplete = commandsClean
+  const humanLatencyComplete = executionsClean && interactionsClean
+  const retryAgeComplete = executionsClean && attemptsClean
+  const reconciliationComplete = executionsClean
+  const usageComplete = usageEntriesClean && budgetsClean && !usageUnsafe && !budgetUnsafe
+  const activeObjectsComplete =
+    executionsClean &&
+    attemptsClean &&
+    commandsClean &&
+    sessionsClean &&
+    interactionsClean &&
+    eventsClean
+
   // ---- Operating cost ----
 
-  const usageAvailability = budgets.length > 0 ? 'measured' : 'no_budget_records'
+  // Usage availability names the budget source's own quality: a partial or
+  // overflowed rollup is marked, never dressed up as `measured`.
+  const usageAvailability =
+    budgets.length === 0
+      ? 'no_budget_records'
+      : budgetUnsafe
+        ? 'unsafe_totals'
+        : !budgetsClean
+          ? 'source_partial'
+          : 'measured'
   const storageRate = parsedOptions.storageUsdPerGiBMonth ?? null
   const storageCostMicrounits =
     storageRate === null
       ? null
       : Math.round((storageTotals.bytes / BYTES_PER_GIB) * storageRate * MICROUTENTS_PER_USD)
+  const storageCostAvailability =
+    storageRate === null ? 'rate_not_configured' : storageComplete ? 'priced' : 'source_partial'
   const currencies = sortedKeys(budgetByCurrency).map(([currency]) => currency)
   const usdBudget = budgetByCurrency.get('USD')
   let totalMicrounits: number | null = null
@@ -1424,15 +1698,26 @@ export function measureOperations(
     | 'storage_rate_not_configured'
     | 'usage_currency_unsupported'
     | 'usage_unavailable'
-  if (budgets.length === 0) {
-    totalAvailability = 'usage_unavailable'
+    | 'usage_source_partial'
+    | 'usage_unsafe_totals'
+    | 'storage_source_partial'
+  if (usageAvailability !== 'measured') {
+    // Partial or overflowed budgets never combine into an ordinary total.
+    totalAvailability =
+      usageAvailability === 'no_budget_records'
+        ? 'usage_unavailable'
+        : usageAvailability === 'unsafe_totals'
+          ? 'usage_unsafe_totals'
+          : 'usage_source_partial'
   } else if (currencies.length !== 1 || usdBudget === undefined) {
     totalAvailability = 'usage_currency_unsupported'
   } else if (storageCostMicrounits === null) {
     totalAvailability = 'storage_rate_not_configured'
+  } else if (!storageComplete) {
+    totalAvailability = 'storage_source_partial'
   } else {
     const summed = addSafe(usdBudget.spent, storageCostMicrounits)
-    if (summed.unsafe) totalAvailability = 'usage_currency_unsupported'
+    if (summed.unsafe) totalAvailability = 'usage_unsafe_totals'
     else {
       totalMicrounits = summed.value
       totalAvailability = 'measured'
@@ -1460,21 +1745,31 @@ export function measureOperations(
       { name, value: stats.maxMs, labels: { ...labels, statistic: 'max' } }
     )
   }
-  pushStats(operationsMetricNames.queueLatency, summarize(dispatchLatencies), {
-    stage: 'dispatch',
-  })
-  pushStats(operationsMetricNames.queueLatency, summarize(waitingLatencies), { stage: 'wait' })
-  pushStats(operationsMetricNames.humanLatency, summarize(respondedLatencies), {
-    outcome: 'responded',
-  })
-  pushStats(operationsMetricNames.humanLatency, summarize(waitingHumanLatencies), {
-    outcome: 'waiting',
-  })
-  pushStats(operationsMetricNames.retryAge, summarize(retryGaps), { kind: 'gap' })
-  pushStats(operationsMetricNames.retryAge, summarize(currentRetryAges), { kind: 'current' })
-  pushStats(operationsMetricNames.reconciliationAge, summarize(nonTerminalReconciliationAges), {})
+  // Points derived from a degraded source are suppressed rather than emitted
+  // as ordinary observations: a partial queue latency or overflowed cost must
+  // not look identical to a trustworthy one.
+  if (queueLatencyComplete) {
+    pushStats(operationsMetricNames.queueLatency, summarize(dispatchLatencies), {
+      stage: 'dispatch',
+    })
+    pushStats(operationsMetricNames.queueLatency, summarize(waitingLatencies), { stage: 'wait' })
+  }
+  if (humanLatencyComplete) {
+    pushStats(operationsMetricNames.humanLatency, summarize(respondedLatencies), {
+      outcome: 'responded',
+    })
+    pushStats(operationsMetricNames.humanLatency, summarize(waitingHumanLatencies), {
+      outcome: 'waiting',
+    })
+  }
+  if (retryAgeComplete) {
+    pushStats(operationsMetricNames.retryAge, summarize(retryGaps), { kind: 'gap' })
+    pushStats(operationsMetricNames.retryAge, summarize(currentRetryAges), { kind: 'current' })
+  }
+  if (reconciliationComplete)
+    pushStats(operationsMetricNames.reconciliationAge, summarize(nonTerminalReconciliationAges), {})
   const usdWindowCost = costByCurrency.get('USD')
-  if (usdWindowCost !== undefined) {
+  if (usageEntriesClean && !usageUnsafe && usdWindowCost !== undefined) {
     telemetry.push(
       {
         name: operationsMetricNames.usageCostUsd,
@@ -1489,6 +1784,7 @@ export function measureOperations(
     )
   }
   for (const row of namespaceRows) {
+    if (!row.complete) continue
     telemetry.push(
       {
         name: operationsMetricNames.storageRetainedBytes,
@@ -1496,46 +1792,61 @@ export function measureOperations(
         labels: { namespace: row.namespace },
       },
       {
-        name: operationsMetricNames.storageGrowthBytes,
-        value: row.bytesTouchedInWindow,
+        name: operationsMetricNames.storageRewrittenBytes,
+        value: row.bytesRewrittenInWindow,
         labels: { namespace: row.namespace },
       }
     )
+    if (row.growthBytes !== null)
+      telemetry.push({
+        name: operationsMetricNames.storageGrowthBytes,
+        value: row.growthBytes,
+        labels: { namespace: row.namespace },
+      })
   }
-  telemetry.push(
-    {
-      name: operationsMetricNames.storageRetainedBytes,
-      value: storageTotals.bytes,
-      labels: { namespace: 'total' },
-    },
-    {
-      name: operationsMetricNames.storageGrowthBytes,
-      value: storageTotals.bytesTouchedInWindow,
-      labels: { namespace: 'total' },
-    }
-  )
-  for (const [objectKind, counts] of [
-    ['execution', executionsCounts],
-    ['job', jobsCounts],
-    ['attempt', attemptsCounts],
-    ['session', sessionsCounts],
-    ['approval', approvalsCounts],
-    ['effect', effectsCounts],
+  if (storageComplete) {
+    telemetry.push(
+      {
+        name: operationsMetricNames.storageRetainedBytes,
+        value: storageTotals.bytes,
+        labels: { namespace: 'total' },
+      },
+      {
+        name: operationsMetricNames.storageRewrittenBytes,
+        value: storageTotals.bytesRewrittenInWindow,
+        labels: { namespace: 'total' },
+      }
+    )
+    if (storageTotals.growthBytes !== null)
+      telemetry.push({
+        name: operationsMetricNames.storageGrowthBytes,
+        value: storageTotals.growthBytes,
+        labels: { namespace: 'total' },
+      })
+  }
+  for (const [objectKind, counts, complete] of [
+    ['execution', executionsCounts, executionsClean],
+    ['job', jobsCounts, commandsClean],
+    ['attempt', attemptsCounts, attemptsClean],
+    ['session', sessionsCounts, sessionsClean],
+    ['approval', approvalsCounts, interactionsClean],
+    ['effect', effectsCounts, eventsClean],
   ] as const) {
+    if (!complete) continue
     telemetry.push({
       name: operationsMetricNames.activeObjectCount,
       value: counts.active,
       labels: { object_kind: objectKind },
     })
   }
-  if (storageCostMicrounits !== null) {
+  if (storageCostMicrounits !== null && storageCostAvailability === 'priced') {
     telemetry.push({
       name: operationsMetricNames.operatingCostUsd,
       value: storageCostMicrounits / MICROUTENTS_PER_USD,
       labels: { component: 'storage' },
     })
   }
-  if (totalMicrounits !== null) {
+  if (totalMicrounits !== null && totalAvailability === 'measured') {
     telemetry.push({
       name: operationsMetricNames.operatingCostUsd,
       value: totalMicrounits / MICROUTENTS_PER_USD,
@@ -1567,7 +1878,9 @@ export function measureOperations(
       storageUsdPerGiBMonth: storageRate,
     },
     summary: {
-      complete: incompleteScans.length === 0,
+      complete: summaryComplete,
+      sourceQuality: { scansComplete, recordsClean, totalsSafe },
+      incompleteSources,
       executions: executions.size,
       outOfScopeExecutions: outOfScopeExecutionRecords,
       correlationsListed: correlation.length,
@@ -1581,22 +1894,26 @@ export function measureOperations(
     correlation,
     measurements: {
       queueLatency: {
+        complete: queueLatencyComplete,
         dispatch: summarize(dispatchLatencies),
         waiting: summarize(waitingLatencies),
         waitingExpiredCount,
       },
       humanLatency: {
+        complete: humanLatencyComplete,
         responded: summarize(respondedLatencies),
         waiting: summarize(waitingHumanLatencies),
         expiredCount: expiredInteractions,
         cancelledCount: cancelledInteractions,
       },
       retryAge: {
+        complete: retryAgeComplete,
         retriedExecutions,
         gap: summarize(retryGaps),
         current: summarize(currentRetryAges),
       },
       reconciliationAge: {
+        complete: reconciliationComplete,
         nonTerminal: summarize(nonTerminalReconciliationAges),
         awaitingReconciliation: {
           executions: awaitingReconciliation,
@@ -1604,6 +1921,7 @@ export function measureOperations(
         },
       },
       usage: {
+        complete: usageComplete,
         windowEntryCount: windowEntries.length,
         byUnit: {
           tokens: unitTotals.get('tokens') ?? 0,
@@ -1615,7 +1933,7 @@ export function measureOperations(
         byKind: Object.fromEntries(
           sortedKeys(kindTotals).map(([kind, totals]) => [
             kind,
-            { count: totals.count, costMicrounits: totals.cost },
+            { count: totals.count, byCurrency: Object.fromEntries(sortedKeys(totals.byCurrency)) },
           ])
         ),
         byCurrency: Object.fromEntries(
@@ -1640,9 +1958,15 @@ export function measureOperations(
       storage: {
         namespaces: namespaceRows,
         totals: storageTotals,
+        complete: storageComplete,
+        baseline: {
+          availability: baselineAvailability,
+          generatedAt: baselineGeneratedAt,
+        },
         unmeasuredNamespaces,
       },
       activeObjects: {
+        complete: activeObjectsComplete,
         executions: executionsCounts,
         jobs: jobsCounts,
         attempts: attemptsCounts,
@@ -1659,7 +1983,7 @@ export function measureOperations(
           bytes: storageTotals.bytes,
           rateUsdPerGiBMonth: storageRate,
           costMicrounits: storageCostMicrounits,
-          availability: storageRate === null ? 'rate_not_configured' : 'priced',
+          availability: storageCostAvailability,
         },
         totalMicrounits,
         totalAvailability,

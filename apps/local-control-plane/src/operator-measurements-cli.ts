@@ -1,4 +1,4 @@
-import { lstat } from 'node:fs/promises'
+import { lstat, readFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { IdentifierSchemas } from '@control-plane/contracts'
@@ -32,6 +32,7 @@ try {
       'window-seconds': { type: 'string' },
       limit: { type: 'string' },
       'storage-usd-per-gib-month': { type: 'string' },
+      'baseline-report': { type: 'string' },
     },
     strict: true,
     allowPositionals: false,
@@ -62,6 +63,14 @@ try {
           MAX_STORAGE_USD_PER_GIB_MONTH,
           'INVALID_STORAGE_RATE'
         )
+  // The baseline is a prior measurement report the operator already holds —
+  // never a second look at the operator database. A malformed baseline or one
+  // from another workspace fails closed instead of producing a misleading
+  // growth delta.
+  const baselineReport =
+    values['baseline-report'] === undefined
+      ? undefined
+      : JSON.parse(await readFile(values['baseline-report'], 'utf8'))
   const directoryStat = await lstat(directory)
   if (
     !directoryStat.isDirectory() ||
@@ -85,6 +94,7 @@ try {
     ...(windowSeconds === undefined ? {} : { windowSeconds }),
     ...(limit === undefined ? {} : { limit }),
     ...(storageUsdPerGiBMonth === undefined ? {} : { storageUsdPerGiBMonth }),
+    ...(baselineReport === undefined ? {} : { baselineReport }),
   })
   process.stdout.write(JSON.stringify(report) + '\n')
 } catch {

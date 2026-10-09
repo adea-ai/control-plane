@@ -13,6 +13,9 @@ export const operationsMetricNames = {
   reconciliationAge: 'execution.reconciliation.age',
   usageCostUsd: 'usage.cost.usd',
   storageRetainedBytes: 'storage.retained.bytes',
+  /** Payload bytes of rows rewritten inside the window; never called growth. */
+  storageRewrittenBytes: 'storage.rewritten.bytes',
+  /** True snapshot-delta growth: retained bytes minus a prior complete snapshot. */
   storageGrowthBytes: 'storage.growth.bytes',
   activeObjectCount: 'runtime.active_object.count',
   operatingCostUsd: 'operations.operating_cost.usd',
@@ -80,6 +83,9 @@ const operationsMetricLabels: Readonly<
   [operationsMetricNames.storageRetainedBytes]: {
     namespace: new Set(operationsStorageNamespaces),
   },
+  [operationsMetricNames.storageRewrittenBytes]: {
+    namespace: new Set(operationsStorageNamespaces),
+  },
   [operationsMetricNames.storageGrowthBytes]: {
     namespace: new Set(operationsStorageNamespaces),
   },
@@ -93,9 +99,14 @@ const operationsMetricLabels: Readonly<
 
 /**
  * One telemetry-ready measurement point produced by an operations measurement
- * report: a cataloged metric name, a non-negative finite value and bounded
- * labels. Points carry identifiers and payloads nowhere — they are counts,
- * byte totals, latencies in milliseconds and costs in US dollars only.
+ * report: a cataloged metric name, a finite value and bounded labels. Points
+ * are observations — latencies, byte sizes, active counts and costs from one
+ * measurement — so the emitter records them through `MetricAdapter.record`
+ * (observation/histogram semantics) and never accumulates them as counters.
+ * Only `storage.growth.bytes` may be negative: it is a signed snapshot delta
+ * that shrinks when records are deleted. Points carry identifiers and
+ * payloads nowhere — counts, byte totals, latencies in milliseconds and costs
+ * in US dollars only.
  */
 export interface OperationsMetricPoint {
   readonly name: string
@@ -132,10 +143,16 @@ function boundLabels(
 
 /**
  * Records operations measurement points through the shared metric adapter.
- * Emission is observability, never authority: an unknown metric name, an
- * invalid value or an exporter exception is dropped without failing the
- * caller, and every label value is coerced into the fixed contract above
- * after `sanitizeAttributes` has run over the final attribute set.
+ * Every operations point is an observation — one measurement of a latency,
+ * size, count or cost — so it is written with `MetricAdapter.record`, whose
+ * OpenTelemetry implementation records a histogram observation. Re-measuring
+ * re-observes the same series instead of accumulating it the way
+ * `MetricAdapter.add` (a counter) would, which is what the consistency
+ * emitter's event counts legitimately use. Emission is observability, never
+ * authority: an unknown metric name, an invalid value or an exporter
+ * exception is dropped without failing the caller, and every label value is
+ * coerced into the fixed contract above after `sanitizeAttributes` has run
+ * over the final attribute set.
  */
 export function createOperationsMetricEmitter(
   adapter: MetricAdapter,
@@ -146,12 +163,15 @@ export function createOperationsMetricEmitter(
       try {
         if (!isOperationsMetricName(point.name)) return
         if (!isOperationsMetricCataloged(point.name)) return
-        if (!Number.isFinite(point.value) || point.value < 0) return
+        // Growth is a signed snapshot delta (shrinkage is negative); every
+        // other operations observation is a non-negative magnitude.
+        const signed = point.name === operationsMetricNames.storageGrowthBytes
+        if (!Number.isFinite(point.value) || (!signed && point.value < 0)) return
         const attributes = sanitizeAttributes({
           'service.name': serviceName,
           ...boundLabels(point.name, point.labels),
         })
-        adapter.add(point.name, point.value, attributes)
+        adapter.record(point.name, point.value, attributes)
       } catch {
         // Observability is deliberately non-authoritative and fail-open.
       }
