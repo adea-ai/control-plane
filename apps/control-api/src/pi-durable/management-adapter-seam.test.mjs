@@ -7,9 +7,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { PiDurableRuntimeAdapter } from '../../../../packages/pi-durable-adapter/src/adapter.ts'
-import { piDurableToolSourceKey } from '../../../../packages/pi-durable-adapter/src/tool-source.ts'
-import { fixture } from '../../../../packages/pi-durable-adapter/src/adapter.fixture.mjs'
+import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import { PiDurableRuntimeAdapter, piDurableToolSourceKey } from '@control-plane/pi-durable-adapter'
 import {
   createPiDurableGovernedManagementCall,
   SqlitePiDurableManagementCallStore,
@@ -27,6 +26,94 @@ const conversationId = 'conversation:one'
 const taskId = 'task:one'
 const assistantEntryId = 'entry:one'
 const callId = 'call:one'
+
+/**
+ * Test-local adapter fixture: the package-boundary equivalent of the adapter
+ * package's own test fixture, so this app test never imports package sources.
+ */
+function fixture(directory, overrides = {}) {
+  const plan = createExecutionPlanTestFixture({
+    profileCapabilityRequirements: [],
+    skillRequiredCapabilities: [],
+  })
+  const request = {
+    attemptBudget: {
+      attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+      currency: 'USD',
+      executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+      executionPlanDigest: plan.contentDigest,
+      executionPlanId: plan.executionPlanId,
+      maximumMicrounits: 10000,
+      maximumTokens: 100,
+      reservationKey: 'runtime-attempt:att_01JABCDEF0123456789ABCDEFG',
+      schemaVersion: 1,
+      workspaceId: plan.correlation.workspaceId,
+    },
+    attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+    executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+    executionPlan: plan,
+    idempotencyKey: 'message:one',
+  }
+  const admission = {
+    authority: {
+      expiresAt: '2027-01-01T00:00:00.000Z',
+      principalRef: 'principal:one',
+      revision: 1,
+      scopeRef: 'scope:one',
+    },
+    prompt: 'hello',
+    schemaVersion: 'pi-durable-admission/v1',
+    selection: { selectionRef: `msel_${'a'.repeat(32)}`, selectionRevision: 1 },
+  }
+  const options = {
+    assertAuthority: async () => {},
+    authorizeInference: async () => ({
+      assertActive: async () => {},
+      maximumInputTokens: 64,
+      maxOutputTokens: 10,
+    }),
+    directory,
+    engineFactory: async () => ({
+      cancel: async () => {},
+      close: async () => {},
+      run: async () => ({
+        inferences: [
+          {
+            inferenceId: 'pi-generation:1',
+            usage: {
+              cachedInputTokens: 0,
+              durationMs: 2,
+              inputTokens: 3,
+              outputTokens: 4,
+              reasoningTokens: 0,
+            },
+          },
+        ],
+        submissionId: 'submission',
+        text: 'answer',
+        usage: { costUsd: '0.000007', durationMs: 2, inputTokens: 3, outputTokens: 4 },
+      }),
+    }),
+    now: () => AT,
+    reconcileInference: async () => 'unresolved',
+    resolveAdmission: async () => admission,
+    resolveProvider: async () => ({
+      harness: 'pi_durable',
+      harnessVersion: '1.1.0',
+      location: 'remote_host',
+      provider: 'test',
+      providerBinding: 'pi_durable_models',
+      providerModel: 'mock',
+      selectionRef: admission.selection.selectionRef,
+      selectionRevision: 1,
+      withModels: async (use) => use({}),
+      workspaceId: plan.correlation.workspaceId,
+    }),
+    settleUsage: async (_authority, _key, usage) => usage,
+    ...overrides,
+  }
+  return { admission, options, request }
+}
 
 /**
  * Releases the owned run gate, then attempts the start/run settlement and the

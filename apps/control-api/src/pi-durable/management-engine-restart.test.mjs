@@ -7,9 +7,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createModels, createProvider } from '@earendil-works/pi-ai/models'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
-// Import the engine source directly: the combined integration must exercise
-// the checked-out engine, never a stale prebuilt dist from another lane.
-import { createPiDurableEngine } from '../../../../packages/pi-durable-adapter/src/pi-engine.ts'
+// Package boundary: consume the public adapter entry, never a source path.
+import { createPiDurableEngine } from '@control-plane/pi-durable-adapter'
 import {
   createPiDurableGovernedManagementCall,
   SqlitePiDurableManagementCallStore,
