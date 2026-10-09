@@ -43,8 +43,10 @@ count or cost — so the emitter writes it with `MetricAdapter.record`, whose Op
 implementation records a histogram observation. Re-measuring re-observes the same series instead
 of accumulating it the way `MetricAdapter.add` (a counter, used by the consistency emitter's
 event counts) would; snapshot sizes, active counts and latency summaries must never reach the
-counter instrument. Only `storage.growth.bytes` may be negative: it is a signed snapshot delta
-that shrinks when records are deleted.
+counter instrument. The signed exception is `storage.growth.bytes`: a snapshot delta that shrinks
+when records are deleted, so it observes through `MetricAdapter.recordGauge` — the non-additive
+Gauge instrument. A histogram drops negative values (the OpenTelemetry SDK warns via `diag` and
+discards the observation), which would silently lose shrinkage.
 
 Label cardinality is bounded by a fixed per-metric contract: unknown label keys are dropped,
 unknown values degrade to `other`, invalid values are skipped, and identifiers (workspace,

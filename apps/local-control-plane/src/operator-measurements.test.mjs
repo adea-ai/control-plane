@@ -1149,14 +1149,22 @@ test('emits only cataloged, bounded, secret-free telemetry points', async () => 
       add: (name, value, attributes) => added.push({ method: 'add', name, value, attributes }),
       record: (name, value, attributes) =>
         added.push({ method: 'record', name, value, attributes }),
+      recordGauge: (name, value, attributes) =>
+        added.push({ method: 'recordGauge', name, value, attributes }),
     },
     'local-control-plane'
   )
   for (const point of report.telemetry) emitter.record(point)
   expect(added).toHaveLength(report.telemetry.length)
-  // Snapshot sizes, active counts and latency summaries are observations:
-  // every operations point must take the record path, never the counter path.
-  expect(added.every(({ method }) => method === 'record')).toBe(true)
+  // Snapshot sizes, active counts and latency summaries are observations and
+  // signed growth is a gauge observation: nothing ever takes the counter
+  // path, and every growth point takes the gauge path.
+  expect(added.every(({ method }) => method === 'record' || method === 'recordGauge')).toBe(true)
+  expect(
+    added
+      .filter(({ name }) => name === operationsMetricNames.storageGrowthBytes)
+      .every(({ method }) => method === 'recordGauge')
+  ).toBe(true)
   expect(added.every(({ name }) => operationalMetrics.includes(name))).toBe(true)
   expect(
     added.every(({ attributes }) => attributes['service.name'] === 'local-control-plane')
@@ -1409,6 +1417,31 @@ test('computes true growth only against a baseline and marks it absent otherwise
       point.labels.namespace === 'executions'
   )
   expect(executionsGrowthPoint.value).toBe(-500)
+
+  // The signed shrinkage point survives the shared emission contract through
+  // the gauge path — never the histogram/counter paths.
+  const emitted = []
+  const emitter = createOperationsMetricEmitter(
+    {
+      add: (name, value, attributes) => emitted.push({ method: 'add', name, value, attributes }),
+      record: (name, value, attributes) =>
+        emitted.push({ method: 'record', name, value, attributes }),
+      recordGauge: (name, value, attributes) =>
+        emitted.push({ method: 'recordGauge', name, value, attributes }),
+    },
+    'local-control-plane'
+  )
+  for (const point of third.telemetry) emitter.record(point)
+  const emittedGrowth = emitted.filter(
+    ({ name }) => name === operationsMetricNames.storageGrowthBytes
+  )
+  expect(emittedGrowth).toHaveLength(
+    third.telemetry.filter((point) => point.name === operationsMetricNames.storageGrowthBytes)
+      .length
+  )
+  expect(emittedGrowth.every(({ method }) => method === 'recordGauge')).toBe(true)
+  expect(emittedGrowth.some(({ value }) => value === -500)).toBe(true)
+  expect(emitted.every(({ method }) => method !== 'add')).toBe(true)
 
   // A baseline from another workspace or an unparsable one fails closed
   // instead of producing a misleading delta.

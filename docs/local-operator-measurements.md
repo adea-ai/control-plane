@@ -161,7 +161,8 @@ measurements re-observe the same series instead of accumulating it the way the c
 (`createOperationsMetricEmitter`): only fixed keys and fixed values (with an `other` fallback) are
 ever forwarded, unknown keys are dropped, and identifiers — workspace, execution, prompt, payload —
 never become metric labels. Only `storage.growth.bytes` may be negative: it is a signed snapshot
-delta. `usage.cost.usd` points are emitted only for complete, non-overflowed, USD-denominated
+delta, observed through the non-additive gauge instrument (`MetricAdapter.recordGauge`) because a
+histogram would silently drop the negative shrinkage values. `usage.cost.usd` points are emitted only for complete, non-overflowed, USD-denominated
 windowed cost; other currencies remain visible in the JSON report only. Points whose source is
 incomplete are suppressed as described under _Source quality_. Live compositions can record the
 same points through the shared metric adapter; this command computes them for an offline operator.

@@ -9,6 +9,7 @@ import { operationalMetrics } from './catalog.ts'
 
 function recordingAdapter() {
   const observations = []
+  const gauges = []
   const counters = []
   const adapter = {
     add(name, value, attributes) {
@@ -17,8 +18,11 @@ function recordingAdapter() {
     record(name, value, attributes) {
       observations.push({ name, value, attributes })
     },
+    recordGauge(name, value, attributes) {
+      gauges.push({ name, value, attributes })
+    },
   }
-  return { adapter, observations, counters }
+  return { adapter, observations, gauges, counters }
 }
 
 describe('operations metric contract', () => {
@@ -98,14 +102,27 @@ describe('operations metric contract', () => {
     expect(counters).toEqual([])
   })
 
-  test('accepts signed growth deltas and rejects negative magnitudes elsewhere', () => {
-    const { adapter, observations } = recordingAdapter()
+  test('records signed growth as gauge observations, never as histogram points', () => {
+    const { adapter, observations, gauges } = recordingAdapter()
     const emitter = createOperationsMetricEmitter(adapter, 'local-control-plane')
 
+    // Shrinkage is negative and must survive: only the non-additive gauge
+    // instrument accepts it, so signed points are barred from `record` (whose
+    // OpenTelemetry histogram warns via diag and silently drops negatives).
     emitter.record({
       name: operationsMetricNames.storageGrowthBytes,
       value: -512,
       labels: { namespace: 'executions' },
+    })
+    emitter.record({
+      name: operationsMetricNames.storageGrowthBytes,
+      value: 0,
+      labels: { namespace: 'usage-ledger-entries' },
+    })
+    emitter.record({
+      name: operationsMetricNames.storageGrowthBytes,
+      value: 2048,
+      labels: { namespace: 'total' },
     })
     emitter.record({
       name: operationsMetricNames.storageRetainedBytes,
@@ -113,13 +130,24 @@ describe('operations metric contract', () => {
       labels: { namespace: 'executions' },
     })
 
-    expect(observations).toEqual([
+    expect(gauges).toEqual([
       {
         name: 'storage.growth.bytes',
         value: -512,
         attributes: { 'service.name': 'local-control-plane', namespace: 'executions' },
       },
+      {
+        name: 'storage.growth.bytes',
+        value: 0,
+        attributes: { 'service.name': 'local-control-plane', namespace: 'usage-ledger-entries' },
+      },
+      {
+        name: 'storage.growth.bytes',
+        value: 2048,
+        attributes: { 'service.name': 'local-control-plane', namespace: 'total' },
+      },
     ])
+    expect(observations).toEqual([])
   })
 
   test('accepts every storage namespace in the operations storage contract', () => {
@@ -146,10 +174,21 @@ describe('operations metric contract', () => {
       record() {
         throw new Error('exporter down')
       },
+      recordGauge() {
+        throw new Error('exporter down')
+      },
     }
     const emitter = createOperationsMetricEmitter(exploding, 'local-control-plane')
     expect(() =>
       emitter.record({ name: operationsMetricNames.reconciliationAge, value: 10 })
+    ).not.toThrow()
+    // The signed gauge path is fail-open too.
+    expect(() =>
+      emitter.record({
+        name: operationsMetricNames.storageGrowthBytes,
+        value: -1,
+        labels: { namespace: 'total' },
+      })
     ).not.toThrow()
   })
 

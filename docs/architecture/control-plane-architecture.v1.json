@@ -825,7 +825,11 @@
       "workspaceDependencies": [],
       "externalDependencies": ["@opentelemetry/api", "@sentry/node"],
       "developmentWorkspaceDependencies": [],
-      "developmentExternalDependencies": ["@opentelemetry/api", "@sentry/node"],
+      "developmentExternalDependencies": [
+        "@opentelemetry/api",
+        "@opentelemetry/sdk-metrics",
+        "@sentry/node"
+      ],
       "layer": "core-port"
     },
     {

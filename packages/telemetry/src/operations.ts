@@ -103,10 +103,12 @@ const operationsMetricLabels: Readonly<
  * are observations — latencies, byte sizes, active counts and costs from one
  * measurement — so the emitter records them through `MetricAdapter.record`
  * (observation/histogram semantics) and never accumulates them as counters.
- * Only `storage.growth.bytes` may be negative: it is a signed snapshot delta
- * that shrinks when records are deleted. Points carry identifiers and
- * payloads nowhere — counts, byte totals, latencies in milliseconds and costs
- * in US dollars only.
+ * The signed exception is `storage.growth.bytes`: a snapshot delta that
+ * shrinks when records are deleted, so it observes through
+ * `MetricAdapter.recordGauge` — the non-additive gauge instrument — because a
+ * histogram rejects negative values and would silently drop shrinkage. Points
+ * carry identifiers and payloads nowhere — counts, byte totals, latencies in
+ * milliseconds and costs in US dollars only.
  */
 export interface OperationsMetricPoint {
   readonly name: string
@@ -145,8 +147,12 @@ function boundLabels(
  * Records operations measurement points through the shared metric adapter.
  * Every operations point is an observation — one measurement of a latency,
  * size, count or cost — so it is written with `MetricAdapter.record`, whose
- * OpenTelemetry implementation records a histogram observation. Re-measuring
- * re-observes the same series instead of accumulating it the way
+ * OpenTelemetry implementation records a histogram observation. The signed
+ * exception is `storage.growth.bytes`: a snapshot delta that may shrink, so
+ * it observes through `MetricAdapter.recordGauge`, whose OpenTelemetry
+ * implementation is the synchronous Gauge instrument — a histogram drops
+ * negative values (the SDK warns via `diag` and discards the observation),
+ * which would silently lose shrinkage. Neither path accumulates the way
  * `MetricAdapter.add` (a counter) would, which is what the consistency
  * emitter's event counts legitimately use. Emission is observability, never
  * authority: an unknown metric name, an invalid value or an exporter
@@ -163,15 +169,17 @@ export function createOperationsMetricEmitter(
       try {
         if (!isOperationsMetricName(point.name)) return
         if (!isOperationsMetricCataloged(point.name)) return
-        // Growth is a signed snapshot delta (shrinkage is negative); every
-        // other operations observation is a non-negative magnitude.
+        // Growth is a signed snapshot delta (shrinkage is negative) and
+        // observes through the gauge instrument; every other operations
+        // observation is a non-negative magnitude through the histogram.
         const signed = point.name === operationsMetricNames.storageGrowthBytes
         if (!Number.isFinite(point.value) || (!signed && point.value < 0)) return
         const attributes = sanitizeAttributes({
           'service.name': serviceName,
           ...boundLabels(point.name, point.labels),
         })
-        adapter.record(point.name, point.value, attributes)
+        if (signed) adapter.recordGauge(point.name, point.value, attributes)
+        else adapter.record(point.name, point.value, attributes)
       } catch {
         // Observability is deliberately non-authoritative and fail-open.
       }
