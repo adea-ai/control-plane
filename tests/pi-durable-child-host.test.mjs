@@ -569,15 +569,16 @@ async function mutateCanonicalStartFence(f, mutation) {
       transitionedAt: '2026-08-25T18:02:01.000Z',
     })
   } else {
-    // Another canonical writer wins the latest-attempt fence during the host await.
-    expect(
-      await f.executions.compareAndSetExecution(execution.version, {
-        ...execution,
-        version: execution.version + 1,
-        latestAttemptId: 'att_01JCBCDEF0123456789ABCDEFG',
-        attemptCount: execution.attemptCount + 1,
-      })
-    ).toBe(true)
+    // Another canonical writer wins the latest-attempt fence during the host
+    // await by creating the real next attempt — the only writer path allowed
+    // to move latestAttemptId (compareAndSetExecution refuses a changed
+    // latestAttemptId by contract, and the durable store enforces it).
+    await f.lifecycle.createAttempt({
+      executionId,
+      attemptId: 'att_01JCBCDEF0123456789ABCDEFG',
+      expectedExecutionVersion: execution.version,
+      queuedAt: '2026-08-25T18:02:05.000Z',
+    })
   }
 }
 
