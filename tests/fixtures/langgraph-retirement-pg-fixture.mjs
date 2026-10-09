@@ -101,6 +101,9 @@ function alphaNodes() {
  * - backdateExecutions: rewrites the executions' lifecycle timestamps to an
  *   instant far before the observation time, so the freshness threshold
  *   classifies the section as stale.
+ * - settleRunningExecution: marks the running execution completed in place, so
+ *   the store carries retained work with zero in-flight evidence — the exact
+ *   precondition a pagination bound must respect when it blocks the zero claim.
  * - volume: { definitionRows, checkpointThreads } — pagination volume seeded
  *   directly (shape-valid rows) so exactness can be checked across page sizes.
  */
@@ -113,6 +116,7 @@ export async function createInventoryPgFixture({
   corruptRunningPlanContent = false,
   mutateRunningExecutionPin = false,
   backdateExecutions = false,
+  settleRunningExecution = false,
   volume = undefined,
 } = {}) {
   const database = await createIsolatedTestDatabase({
@@ -242,6 +246,15 @@ export async function createInventoryPgFixture({
             ids.executionRunning,
             `sha256:${createHash('sha256').update('fixture-foreign-plan-digest').digest('hex')}`,
           ]
+        )
+      }
+      if (settleRunningExecution) {
+        // Evidence-shaping raw write (the collector under test never writes):
+        // the running execution becomes terminal so the store holds retained
+        // work with no in-flight evidence at all.
+        await client.unsafe(
+          'update executions set state = $2, updated_at = $3 where execution_id = $1',
+          [ids.executionRunning, 'completed', FIXTURE_AT]
         )
       }
       if (backdateExecutions) {

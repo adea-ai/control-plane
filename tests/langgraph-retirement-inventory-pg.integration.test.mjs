@@ -14,9 +14,14 @@
 // prove section-shape alignment.
 
 import { describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import process from 'node:process'
 import { integrationTestTimeout } from '@control-plane/database/testing'
-import { runInventoryPgCli, dsnIdentity } from '../scripts/langgraph-retirement-inventory-pg.mjs'
+import {
+  runInventoryPgCli,
+  dsnIdentity,
+  observeReadOnly,
+} from '../scripts/langgraph-retirement-inventory-pg.mjs'
 import {
   stableJsonStringify,
   validateDispositions,
@@ -35,7 +40,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
  */
 async function collectFromFixture(
   fixture,
-  { scope = 'deployed-dsn', now = OBSERVED_AT, limit, pageSize } = {}
+  { scope = 'deployed-dsn', now = OBSERVED_AT, limit, pageSize, maxPages } = {}
 ) {
   const chunks = []
   const stdout = { write: (text) => (chunks.push(text), true) }
@@ -49,6 +54,7 @@ async function collectFromFixture(
       now,
       ...(limit === undefined ? [] : ['--limit', String(limit)]),
       ...(pageSize === undefined ? [] : ['--page-size', String(pageSize)]),
+      ...(maxPages === undefined ? [] : ['--max-pages', String(maxPages)]),
     ],
     now: () => now,
     stdout,
@@ -64,6 +70,38 @@ async function withFixture(options, run) {
     return await run(fixture)
   } finally {
     await fixture.cleanup()
+  }
+}
+
+/** Single-column scalar read helper for the snapshot-coherence probes. */
+async function countOf(transaction, text) {
+  const rows = await transaction.unsafe(text)
+  return Number(rows[0]?.count)
+}
+
+async function stateOfExecution(transaction, executionId) {
+  const rows = await transaction.unsafe('select state from executions where execution_id = $1', [
+    executionId,
+  ])
+  return rows[0]?.state
+}
+
+/** Minimal shape-valid definition content for a test-seeded definition row. */
+function graphDefinitionRow() {
+  return {
+    schemaVersion: 1,
+    nodes: [{ node: 'prepare', operation: { kind: 'runtime', name: 'prepare' } }],
+    edges: [
+      { from: '__start__', to: 'prepare' },
+      { from: 'prepare', to: '__end__' },
+    ],
+    schemas: { input: 'schema:json', state: 'schema:json', output: 'schema:json' },
+    requiredCapabilities: [],
+    compatibility: {
+      contractMajorVersions: [1],
+      compilerVersions: ['1.0.0'],
+      adapterVersions: ['1.0.0'],
+    },
   }
 }
 
@@ -382,6 +420,162 @@ describe.skipIf(!enabled)('LangGraph retirement inventory PG collector', () => {
           expect(order).toEqual([...order].toSorted())
         }
       )
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'a pagination bound flags every affected section, bounds its counts, and blocks zero claims',
+    async () => {
+      // Retained work with zero in-flight evidence (both executions terminal):
+      // only the pagination bound may stand between this store and the
+      // none-observed-in-scope classification. One page of one row per table
+      // guarantees every scanned table hits the bound.
+      await withFixture({ settleRunningExecution: true }, async (fixture) => {
+        const { manifest } = await collectFromFixture(fixture, {
+          pageSize: 1,
+          maxPages: 1,
+          limit: 1000,
+        })
+
+        const definitions = manifest.sections.definitions
+        expect(definitions.status).toBe('incomplete')
+        expect(definitions.reasons).toEqual([
+          'CATALOG_COMMAND_INDEX_PAGINATION_BOUND_REACHED',
+          'PAGINATION_BOUND_REACHED',
+        ])
+        expect(definitions.counts.total).toBe(1)
+        expect(definitions.boundReached).toBe(true)
+        expect(definitions.countsBounded).toBe(true)
+        expect(definitions.truncated).toBe(false)
+
+        const consumers = manifest.sections.consumers
+        expect(consumers.status).toBe('incomplete')
+        expect(consumers.reasons).toEqual(['PAGINATION_BOUND_REACHED'])
+        expect(consumers.counts.catalogCommandReceipts).toBe(1)
+        expect(consumers.counts.distinctCatalogCallers).toBe(1)
+        expect(consumers.boundReached).toBe(true)
+        expect(consumers.countsBounded).toBe(true)
+
+        // Both the executions scan and the plan-attribution index scan hit
+        // the bound, so the section carries both typed reasons.
+        const executions = manifest.sections.executions
+        expect(executions.status).toBe('incomplete')
+        expect(executions.reasons).toEqual([
+          'PAGINATION_BOUND_REACHED',
+          'PLAN_INDEX_PAGINATION_BOUND_REACHED',
+        ])
+        expect(executions.counts.total).toBe(1)
+        expect(executions.counts.inFlight).toBe(0)
+        expect(executions.boundReached).toBe(true)
+        expect(executions.countsBounded).toBe(true)
+
+        const checkpoints = manifest.sections.checkpoints
+        expect(checkpoints.status).toBe('incomplete')
+        expect(checkpoints.reasons).toEqual(['PAGINATION_BOUND_REACHED'])
+        expect(checkpoints.counts.total).toBe(2)
+        expect(checkpoints.boundReached).toBe(true)
+        expect(checkpoints.countsBounded).toBe(true)
+
+        // No in-flight work anywhere — but the bounded reads make the
+        // zero-claim unavailable with the section-level typed reasons.
+        expect(manifest.epistemics.retainedWorkClassification).toBe('unknown')
+        expect(manifest.epistemics.zeroLiveWorkClaim.claimAllowed).toBe(false)
+        expect(manifest.epistemics.zeroLiveWorkClaim.claim).toBe('not-claimable')
+        expect(manifest.epistemics.zeroLiveWorkClaim.reasons).toEqual([
+          'CHECKPOINTS_SECTION_NOT_FULLY_READ',
+          'EXECUTIONS_SECTION_NOT_FULLY_READ',
+        ])
+      })
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'the whole observation reads one snapshot: a concurrent mutation mid-capture is invisible',
+    async () => {
+      await withFixture({}, async (fixture) => {
+        // The fixture's own application pool is a second database connection,
+        // independent of the collector's single-connection observation.
+        const secondConnection = fixture.database.application.$client
+        const concurrentDefinition = {
+          reference: {
+            graphDefinitionId: 'graph:concurrent',
+            graphVersion: '9.9.9',
+            contentDigest: `sha256:${createHash('sha256').update('concurrent').digest('hex')}`,
+          },
+          revision: 1,
+          lifecycle: 'published',
+          content: graphDefinitionRow(),
+          publishedAt: OBSERVED_AT,
+          changedAt: OBSERVED_AT,
+        }
+        const reads = []
+        await observeReadOnly(fixture.dsn, async (transaction) => {
+          const firstDefinitions = await countOf(
+            transaction,
+            'select count(*) as count from graph_definition_versions'
+          )
+          const firstState = await stateOfExecution(transaction, fixture.ids.executionRunning)
+          const firstCheckpoints = await countOf(
+            transaction,
+            "select count(*) as count from checkpoints where checkpoint_id like 'ck-inventory-pg-%'"
+          )
+
+          // The interleaved writer commits between the collector's reads:
+          // insert a definition, terminate the running execution, delete a
+          // checkpoint. Awaited sequencing — no sleeps, no polling.
+          await secondConnection.unsafe(
+            `insert into graph_definition_versions (workspace_id, graph_definition_id, graph_version, revision, definition)
+             values ($1, 'graph:concurrent', '9.9.9', 1, $2::jsonb)`,
+            [fixture.ids.workspaceTwo, JSON.stringify(concurrentDefinition)]
+          )
+          await secondConnection.unsafe(
+            'update executions set state = $2 where execution_id = $1',
+            [fixture.ids.executionRunning, 'completed']
+          )
+          await secondConnection.unsafe(
+            "delete from checkpoints where checkpoint_id = 'ck-inventory-pg-0003'"
+          )
+
+          // Every later read in the same capture must observe the same
+          // snapshot: the committed mutations stay invisible.
+          const lastDefinitions = await countOf(
+            transaction,
+            'select count(*) as count from graph_definition_versions'
+          )
+          const lastState = await stateOfExecution(transaction, fixture.ids.executionRunning)
+          const lastCheckpoints = await countOf(
+            transaction,
+            "select count(*) as count from checkpoints where checkpoint_id like 'ck-inventory-pg-%'"
+          )
+          reads.push({
+            firstDefinitions,
+            lastDefinitions,
+            firstState,
+            lastState,
+            firstCheckpoints,
+            lastCheckpoints,
+          })
+        })
+        expect(reads).toEqual([
+          {
+            firstDefinitions: 4,
+            lastDefinitions: 4,
+            firstState: 'running',
+            lastState: 'running',
+            firstCheckpoints: 3,
+            lastCheckpoints: 3,
+          },
+        ])
+
+        // The concurrent writes were real: a capture started after them sees
+        // the mutated store coherently.
+        const after = await collectFromFixture(fixture)
+        expect(after.manifest.sections.definitions.counts.total).toBe(5)
+        expect(after.manifest.sections.executions.counts.inFlight).toBe(0)
+        expect(after.manifest.sections.checkpoints.counts.checkpointRows).toBe(2)
+      })
     },
     integrationTestTimeout()
   )

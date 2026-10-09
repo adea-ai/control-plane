@@ -207,6 +207,7 @@ export async function readStoreProfile(transaction) {
  */
 export async function scanTable(transaction, spec, onRow) {
   const pageSize = boundedPageSize(spec.pageSize)
+  const maximumPages = boundedMaximumPages(spec.maximumPages)
   // Every keyset column must be selected: the cursor is the last row's key.
   const columns = [...new Set([...spec.columns, ...spec.keyColumns])].join(', ')
   const order = spec.keyColumns.join(', ')
@@ -225,7 +226,7 @@ export async function scanTable(transaction, spec, onRow) {
   let boundReached = false
   while (true) {
     pages += 1
-    if (pages > DEFAULT_LIMITS.maximumPages) {
+    if (pages > maximumPages) {
       boundReached = true
       break
     }
@@ -251,6 +252,13 @@ function boundedPageSize(pageSize) {
   return value
 }
 
+function boundedMaximumPages(maximumPages) {
+  const value = maximumPages ?? DEFAULT_LIMITS.maximumPages
+  if (!Number.isSafeInteger(value) || value < 1 || value > DEFAULT_LIMITS.maximumPages)
+    throw new RetirementInventoryPgError('INVALID_MAXIMUM_PAGES')
+  return value
+}
+
 function normalizeLimits(limits) {
   const entriesPerSection = limits?.entriesPerSection ?? DEFAULT_LIMITS.entriesPerSection
   if (
@@ -266,7 +274,7 @@ function normalizeLimits(limits) {
     entriesPerSection,
     maxAgeDays,
     pageSize: boundedPageSize(limits?.pageSize),
-    maximumPages: DEFAULT_LIMITS.maximumPages,
+    maximumPages: boundedMaximumPages(limits?.maximumPages),
   }
 }
 
@@ -406,6 +414,7 @@ async function collectDefinitions(transaction, context) {
         keyColumns: ['workspace_id', 'graph_definition_id', 'graph_version'],
         keyTypes: ['text', 'text', 'text'],
         pageSize: limits.pageSize,
+        maximumPages: limits.maximumPages,
       },
       (row) => {
         rowCount += 1
@@ -594,6 +603,7 @@ async function collectCatalogCallers(transaction, context) {
         keyColumns: ['workspace_id', 'caller_id', 'operation', 'idempotency_key'],
         keyTypes: ['text', 'text', 'text', 'text'],
         pageSize: limits.pageSize,
+        maximumPages: limits.maximumPages,
       },
       (row) => {
         rowCount += 1
@@ -697,6 +707,7 @@ async function collectPlanGraphReferences(transaction, context) {
         keyColumns: ['execution_plan_id'],
         keyTypes: ['text'],
         pageSize: context.pageSize,
+        maximumPages: context.maximumPages,
       },
       (row) => {
         planCount += 1
@@ -787,6 +798,7 @@ async function collectExecutions(transaction, context) {
         keyColumns: ['execution_id'],
         keyTypes: ['text'],
         pageSize: limits.pageSize,
+        maximumPages: limits.maximumPages,
       },
       (row) => {
         rowCount += 1
@@ -1005,6 +1017,7 @@ async function collectCheckpoints(transaction, context) {
         keyColumns: ['thread_id', 'checkpoint_ns', 'checkpoint_id'],
         keyTypes: ['text', 'text', 'text'],
         pageSize: limits.pageSize,
+        maximumPages: limits.maximumPages,
       },
       (row) => {
         rowCount += 1
@@ -1025,6 +1038,7 @@ async function collectCheckpoints(transaction, context) {
         keyColumns: ['thread_id', 'checkpoint_ns', 'checkpoint_id', 'task_id', 'idx'],
         keyTypes: ['text', 'text', 'text', 'text', 'integer'],
         pageSize: limits.pageSize,
+        maximumPages: limits.maximumPages,
       },
       (row) => {
         rowCount += 1
@@ -1045,6 +1059,7 @@ async function collectCheckpoints(transaction, context) {
         keyColumns: ['thread_id', 'checkpoint_ns', 'channel', 'version'],
         keyTypes: ['text', 'text', 'text', 'text'],
         pageSize: limits.pageSize,
+        maximumPages: limits.maximumPages,
       },
       (row) => {
         rowCount += 1
@@ -1214,6 +1229,7 @@ async function catalogCommandsByGraphIndex(transaction, context) {
         keyColumns: ['workspace_id', 'caller_id', 'operation', 'idempotency_key'],
         keyTypes: ['text', 'text', 'text', 'text'],
         pageSize: context.pageSize,
+        maximumPages: context.maximumPages,
       },
       (row) => {
         const reference = row.receipt?.result?.reference
@@ -1414,7 +1430,10 @@ export async function collectInventoryManifest({
       storeProfile = await readStoreProfile(transaction)
       const storeAvailable = storeProfile.status === OBSERVATION_STATUS.OBSERVED
       if (!storeAvailable) return
-      const scanContext = { pageSize: normalizedLimits.pageSize }
+      const scanContext = {
+        pageSize: normalizedLimits.pageSize,
+        maximumPages: normalizedLimits.maximumPages,
+      }
 
       const planIndex = await collectPlanGraphReferences(transaction, scanContext)
       const executions = await collectExecutions(transaction, {
@@ -1671,6 +1690,8 @@ Options:
   --limit <n>               Maximum emitted entries per section (1-1000, default 100).
                             Counts stay exact; truncation is flagged.
   --page-size <n>           Keyset page size (1-128, default 64).
+  --max-pages <n>           Pagination bound per scanned table (1-4096, default 4096).
+                            A bound hit flags the affected sections incomplete.
   --max-age-days <n>        Freshness threshold for the stale status (default 30).
   --source-revision <sha>   Repository revision the curated registry was verified against.
   --help                    Show this text.
@@ -1701,6 +1722,7 @@ export async function runInventoryPgCli({
         now: { type: 'string' },
         limit: { type: 'string' },
         'page-size': { type: 'string' },
+        'max-pages': { type: 'string' },
         'max-age-days': { type: 'string' },
         'source-revision': { type: 'string' },
       },
@@ -1769,6 +1791,10 @@ function cliLimits(values) {
       values['page-size'] === undefined
         ? undefined
         : boundedInteger(values['page-size'], 'INVALID_PAGE_SIZE', 128),
+    maximumPages:
+      values['max-pages'] === undefined
+        ? undefined
+        : boundedInteger(values['max-pages'], 'INVALID_MAXIMUM_PAGES', 4096),
   }
 }
 
