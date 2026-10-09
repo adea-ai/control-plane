@@ -18,14 +18,15 @@ dated root review act, and the tool's export deliberately makes no repository-wi
 ## Scope, method, and safety
 
 - Candidate: base `747a7cf7aec3b7d800d03deb447cd46a2d6eba9c` (= `origin/main` at capture),
-  tooling `52c256ba0a70d5a7916775ee68ebff63a14e474c` plus review repair
-  `0104d31e0d6e0d7c921cdc8eb018b46277a8ab09` (evidence captured at the repair commit), branch
+  tooling `52c256ba0a70d5a7916775ee68ebff63a14e474c` plus review repairs `0104d31e`/`2fc3c5d1`/
+  `dc260cdfabd84b164216c3620f82af5a06e250d2` (evidence captured at
+  `dc260cdfabd84b164216c3620f82af5a06e250d2`), branch
   `feat/m17-runtime-ownership-baseline-941`, `report.candidate.dirty = false`.
 - Environment (from the evidence report): bun 1.4.2 on macOS 25.6.0 `darwin/arm64`, Apple M2 Max
   ×12, 64 GiB, SQLite 3.51.0. `environment.runtime` is bun's Node-compatible `process.version`
   (`v26.3.0`); the repository engine pin remains Node 24.21.0.
 - Exact command: `bun scripts/m17-runtime-baseline.mjs --out docs/evidence/m17-01-runtime-ownership-baseline.json`
-  (≈2 s report wall warm on this host — a cold-cache first run took ≈19 s; defaults: 50
+  (≈4 s report wall on this capture; a cold-cache first run took ≈19 s; defaults: 50
   queue/object/ledger rounds, 200 policy rounds, per-layer import probes).
   Reproduce with `M17_QUEUE_ITERATIONS`, `M17_OBJECT_ITERATIONS`, `M17_LEDGER_ITERATIONS`,
   `M17_POLICY_ITERATIONS`, `M17_IMPORT_PROBES=0`.
@@ -154,16 +155,16 @@ command above; values below are copied from it).
 
 | Layer                   | Files | Source files | Source LOC | Test files | Test LOC | Export statements | Cold import (ms) | Import RSS Δ (MiB) |
 | ----------------------- | ----: | -----------: | ---------: | ---------: | -------: | ----------------: | ---------------: | -----------------: |
-| custom-runtime          |    88 |           49 |     10,536 |         39 |   10,782 |               396 |            132.3 |               62.9 |
-| restate                 |     4 |            3 |        527 |          1 |      254 |                15 |             10.5 |                7.1 |
-| transports              |    17 |           15 |      2,760 |          2 |    1,299 |               137 |             98.0 |               47.0 |
-| auth                    |    17 |           14 |      2,745 |          3 |      893 |               103 |             80.4 |               41.1 |
-| policy                  |     4 |            2 |        685 |          2 |      457 |                25 |             76.8 |               39.1 |
-| billing                 |    10 |            6 |      3,637 |          3 |    1,802 |                46 |             72.4 |               40.7 |
-| artifacts               |    10 |            5 |      1,683 |          5 |    1,482 |                19 |            136.8 |               54.9 |
-| device-supervision      |    45 |           28 |      7,229 |         17 |    6,397 |               149 |              7.7 |                5.4 |
-| pi-durable-node-adapter |    42 |           26 |      6,400 |         16 |    5,155 |               109 |            283.4 |               82.3 |
-| pi-cloudflare-host      |    21 |           10 |      1,636 |         11 |    2,460 |                43 |            113.1 |               47.2 |
+| custom-runtime          |    88 |           49 |     10,536 |         39 |   10,782 |               396 |            403.8 |               63.0 |
+| restate                 |     4 |            3 |        527 |          1 |      254 |                15 |             22.6 |                6.0 |
+| transports              |    17 |           15 |      2,760 |          2 |    1,299 |               137 |            228.2 |               46.9 |
+| auth                    |    17 |           14 |      2,745 |          3 |      893 |               103 |            193.8 |               42.0 |
+| policy                  |     4 |            2 |        685 |          2 |      457 |                25 |            154.5 |               40.8 |
+| billing                 |    10 |            6 |      3,637 |          3 |    1,802 |                46 |            156.2 |               41.1 |
+| artifacts               |    10 |            5 |      1,683 |          5 |    1,482 |                19 |            417.9 |               54.8 |
+| device-supervision      |    45 |           28 |      7,229 |         17 |    6,397 |               149 |             14.8 |                5.4 |
+| pi-durable-node-adapter |    42 |           26 |      6,400 |         16 |    5,155 |               109 |            487.0 |               84.5 |
+| pi-cloudflare-host      |    21 |           10 |      1,636 |         11 |    2,460 |                43 |            187.4 |               47.7 |
 
 Import time and RSS delta come from one fresh bun child per layer entry; RSS delta is not peak
 memory. Layer file sets are disjoint (the tool fails with `M17_LAYER_OVERLAP` on any overlap).
@@ -172,14 +173,14 @@ memory. Layer file sets are disjoint (the tool fails with `M17_LAYER_OVERLAP` on
 
 | Probe                                  | Workload                                        | p50 (ms) | p95 (ms) | p99 (ms) | max (ms) |   n |
 | -------------------------------------- | ----------------------------------------------- | -------: | -------: | -------: | -------: | --: |
-| Local embedded-SQLite queue round trip | enqueue → claim → complete (`WorkflowJobStore`) |     2.35 |     3.79 |    10.27 |    10.27 |  50 |
-| — enqueue phase                        |                                                 |     0.74 |     1.13 |     5.46 |     5.46 |  50 |
-| — claim phase                          |                                                 |     0.92 |     1.43 |     3.04 |     3.04 |  50 |
-| — complete phase                       |                                                 |     0.69 |     1.27 |     1.76 |     1.76 |  50 |
-| Local filesystem artifact put/get      | `FilesystemObjectStore` 1 KiB object            |     2.63 |     4.67 |     6.11 |     6.11 |  50 |
-| Durable usage ledger reserve           | `DurableUsageLedger.reserve` on SQLite          |     8.95 |    14.42 |    16.79 |    16.79 |  50 |
-| — budget open (one-off)                |                                                 |    13.20 |        — |        — |    13.20 |   1 |
-| In-process policy authorize            | Cedar PDP + **fake** evaluator                  |     0.04 |     0.07 |     0.12 |     1.88 | 200 |
+| Local embedded-SQLite queue round trip | enqueue → claim → complete (`WorkflowJobStore`) |     3.39 |     7.69 |    14.69 |    14.69 |  50 |
+| — enqueue phase                        |                                                 |     1.05 |     1.53 |     8.67 |     8.67 |  50 |
+| — claim phase                          |                                                 |     1.33 |     3.43 |     5.70 |     5.70 |  50 |
+| — complete phase                       |                                                 |     0.99 |     1.60 |     2.58 |     2.58 |  50 |
+| Local filesystem artifact put/get      | `FilesystemObjectStore` 1 KiB object            |     4.27 |    11.18 |    12.34 |    12.34 |  50 |
+| Durable usage ledger reserve           | `DurableUsageLedger.reserve` on SQLite          |    16.45 |    24.35 |    29.53 |    29.53 |  50 |
+| — budget open (one-off)                |                                                 |    21.50 |        — |        — |    21.50 |   1 |
+| In-process policy authorize            | Cedar PDP + **fake** evaluator                  |     0.06 |     0.45 |     1.91 |     5.53 | 200 |
 
 Honesty labels: single-process developer host; the policy probe uses `FakeCedarEvaluator`, not a
 real Cedar engine; the ledger probe seeds an execution owner record in its own disposable database;
@@ -187,8 +188,8 @@ outliers reflect an unsandboxed shared host. These are regression baselines, not
 
 ### Memory
 
-Per-layer cold-import RSS deltas are in the complexity table (5.4–82.3 MiB); the probe process ended
-at ~177 MiB RSS after all probes (`rssAfterProbesBytes` in the evidence JSON). RSS snapshots are not
+Per-layer cold-import RSS deltas are in the complexity table (5.4–84.5 MiB); the probe process ended
+at ~179 MiB RSS after all probes (`rssAfterProbesBytes` in the evidence JSON). RSS snapshots are not
 peak memory.
 
 ### Unavailable costs (labeled, not estimated)

@@ -5,7 +5,7 @@
   "status": "candidate-baseline-unaccepted",
   "baselineStatement": "This run is a candidate measurement of this repository state only; it asserts nothing about baselines elsewhere in the repository or history and is not an accepted or published #941 baseline.",
   "candidate": {
-    "commit": "0104d31e0d6e0d7c921cdc8eb018b46277a8ab09",
+    "commit": "dc260cdfabd84b164216c3620f82af5a06e250d2",
     "branch": "feat/m17-runtime-ownership-baseline-941",
     "dirty": false
   },
@@ -28,8 +28,8 @@
     "importProbes": true,
     "writePolicy": "probe state: disposable os.tmpdir() directories only; report: stdout or the explicit --out path"
   },
-  "startedAt": "2026-10-09T02:37:27.038Z",
-  "completedAt": "2026-10-09T02:37:29.145Z",
+  "startedAt": "2026-10-09T03:08:21.952Z",
+  "completedAt": "2026-10-09T03:08:26.205Z",
   "layers": [
     {
       "id": "custom-runtime",
@@ -59,10 +59,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 132.263,
-        "rssBeforeBytes": 10436608,
-        "rssAfterBytes": 76382208,
-        "rssDeltaBytes": 65945600
+        "importMs": 403.849,
+        "rssBeforeBytes": 10403840,
+        "rssAfterBytes": 76496896,
+        "rssDeltaBytes": 66093056
       }
     },
     {
@@ -87,10 +87,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 10.483,
-        "rssBeforeBytes": 10387456,
-        "rssAfterBytes": 17858560,
-        "rssDeltaBytes": 7471104
+        "importMs": 22.585,
+        "rssBeforeBytes": 10403840,
+        "rssAfterBytes": 16678912,
+        "rssDeltaBytes": 6275072
       }
     },
     {
@@ -115,10 +115,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 97.984,
+        "importMs": 228.168,
         "rssBeforeBytes": 10420224,
-        "rssAfterBytes": 59686912,
-        "rssDeltaBytes": 49266688
+        "rssAfterBytes": 59588608,
+        "rssDeltaBytes": 49168384
       }
     },
     {
@@ -146,10 +146,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 80.411,
-        "rssBeforeBytes": 10387456,
-        "rssAfterBytes": 53510144,
-        "rssDeltaBytes": 43122688
+        "importMs": 193.823,
+        "rssBeforeBytes": 10403840,
+        "rssAfterBytes": 54493184,
+        "rssDeltaBytes": 44089344
       }
     },
     {
@@ -170,10 +170,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 76.835,
-        "rssBeforeBytes": 10387456,
-        "rssAfterBytes": 51429376,
-        "rssDeltaBytes": 41041920
+        "importMs": 154.526,
+        "rssBeforeBytes": 10403840,
+        "rssAfterBytes": 53182464,
+        "rssDeltaBytes": 42778624
       }
     },
     {
@@ -199,10 +199,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 72.441,
+        "importMs": 156.171,
         "rssBeforeBytes": 10387456,
-        "rssAfterBytes": 53067776,
-        "rssDeltaBytes": 42680320
+        "rssAfterBytes": 53510144,
+        "rssDeltaBytes": 43122688
       }
     },
     {
@@ -227,10 +227,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 136.819,
+        "importMs": 417.886,
         "rssBeforeBytes": 10387456,
-        "rssAfterBytes": 67977216,
-        "rssDeltaBytes": 57589760
+        "rssAfterBytes": 67829760,
+        "rssDeltaBytes": 57442304
       }
     },
     {
@@ -261,9 +261,9 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 7.717,
-        "rssBeforeBytes": 10387456,
-        "rssAfterBytes": 16056320,
+        "importMs": 14.797,
+        "rssBeforeBytes": 10436608,
+        "rssAfterBytes": 16105472,
         "rssDeltaBytes": 5668864
       }
     },
@@ -285,10 +285,10 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 283.415,
-        "rssBeforeBytes": 10403840,
-        "rssAfterBytes": 96681984,
-        "rssDeltaBytes": 86278144
+        "importMs": 487.003,
+        "rssBeforeBytes": 10387456,
+        "rssAfterBytes": 98959360,
+        "rssDeltaBytes": 88571904
       }
     },
     {
@@ -309,13 +309,14 @@
       },
       "importProbe": {
         "status": "measured",
-        "importMs": 113.09,
-        "rssBeforeBytes": 10403840,
-        "rssAfterBytes": 59916288,
-        "rssDeltaBytes": 49512448
+        "importMs": 187.438,
+        "rssBeforeBytes": 10387456,
+        "rssAfterBytes": 60424192,
+        "rssDeltaBytes": 50036736
       }
     }
   ],
+  "couplingMethod": "static import heuristic (string match, no type resolution): @control-plane scope only, external @other-scope packages never match by basename, package directory mapped to its first-owning layer when one package spans multiple layers, relative .js/.ts spelling resolved, test files and self-edges excluded; not a compiler-resolved dependency graph",
   "coupling": {
     "custom-runtime": {
       "targets": {
@@ -408,35 +409,35 @@
       "latencyMs": {
         "enqueue": {
           "samples": 50,
-          "p50Ms": 0.741,
-          "p95Ms": 1.127,
-          "p99Ms": 5.463,
-          "maxMs": 5.463,
-          "meanMs": 0.872
+          "p50Ms": 1.047,
+          "p95Ms": 1.533,
+          "p99Ms": 8.669,
+          "maxMs": 8.669,
+          "meanMs": 1.261
         },
         "claim": {
           "samples": 50,
-          "p50Ms": 0.919,
-          "p95Ms": 1.425,
-          "p99Ms": 3.042,
-          "maxMs": 3.042,
-          "meanMs": 1.003
+          "p50Ms": 1.329,
+          "p95Ms": 3.431,
+          "p99Ms": 5.7,
+          "maxMs": 5.7,
+          "meanMs": 1.582
         },
         "complete": {
           "samples": 50,
-          "p50Ms": 0.688,
-          "p95Ms": 1.269,
-          "p99Ms": 1.764,
-          "maxMs": 1.764,
-          "meanMs": 0.768
+          "p50Ms": 0.992,
+          "p95Ms": 1.598,
+          "p99Ms": 2.58,
+          "maxMs": 2.58,
+          "meanMs": 1.101
         },
         "roundTrip": {
           "samples": 50,
-          "p50Ms": 2.352,
-          "p95Ms": 3.785,
-          "p99Ms": 10.273,
-          "maxMs": 10.273,
-          "meanMs": 2.645
+          "p50Ms": 3.389,
+          "p95Ms": 7.693,
+          "p99Ms": 14.686,
+          "maxMs": 14.686,
+          "meanMs": 3.945
         }
       },
       "notes": [
@@ -454,27 +455,27 @@
       "latencyMs": {
         "put": {
           "samples": 50,
-          "p50Ms": 2.318,
-          "p95Ms": 4.328,
-          "p99Ms": 5.079,
-          "maxMs": 5.079,
-          "meanMs": 2.475
+          "p50Ms": 3.703,
+          "p95Ms": 9.421,
+          "p99Ms": 11.299,
+          "maxMs": 11.299,
+          "meanMs": 4.66
         },
         "get": {
           "samples": 50,
-          "p50Ms": 0.338,
-          "p95Ms": 0.577,
-          "p99Ms": 1.025,
-          "maxMs": 1.025,
-          "meanMs": 0.372
+          "p50Ms": 0.555,
+          "p95Ms": 1.171,
+          "p99Ms": 3.54,
+          "maxMs": 3.54,
+          "meanMs": 0.693
         },
         "roundTrip": {
           "samples": 50,
-          "p50Ms": 2.634,
-          "p95Ms": 4.67,
-          "p99Ms": 6.107,
-          "maxMs": 6.107,
-          "meanMs": 2.849
+          "p50Ms": 4.272,
+          "p95Ms": 11.178,
+          "p99Ms": 12.339,
+          "maxMs": 12.339,
+          "meanMs": 5.356
         }
       },
       "notes": [
@@ -491,19 +492,19 @@
       "latencyMs": {
         "openBudget": {
           "samples": 1,
-          "p50Ms": 13.195,
-          "p95Ms": 13.195,
-          "p99Ms": 13.195,
-          "maxMs": 13.195,
-          "meanMs": 13.195
+          "p50Ms": 21.502,
+          "p95Ms": 21.502,
+          "p99Ms": 21.502,
+          "maxMs": 21.502,
+          "meanMs": 21.502
         },
         "reserve": {
           "samples": 50,
-          "p50Ms": 8.954,
-          "p95Ms": 14.423,
-          "p99Ms": 16.794,
-          "maxMs": 16.794,
-          "meanMs": 9.207
+          "p50Ms": 16.448,
+          "p95Ms": 24.347,
+          "p99Ms": 29.525,
+          "maxMs": 29.525,
+          "meanMs": 17.166
         }
       },
       "notes": [
@@ -521,11 +522,11 @@
       "latencyMs": {
         "authorize": {
           "samples": 200,
-          "p50Ms": 0.036,
-          "p95Ms": 0.067,
-          "p99Ms": 0.116,
-          "maxMs": 1.882,
-          "meanMs": 0.05
+          "p50Ms": 0.064,
+          "p95Ms": 0.445,
+          "p99Ms": 1.911,
+          "maxMs": 5.529,
+          "meanMs": 0.169
         }
       },
       "notes": [
@@ -566,12 +567,12 @@
       "reason": "Local PostgreSQL fixture (bun run db:up) was not started for this run; hosted-store behavior is not claimed."
     },
     {
-      "cost": "Human review and acceptance time",
+      "cost": "Review and acceptance handling time",
       "status": "unavailable",
-      "reason": "Not machine-measurable; recorded as an explicit non-measured cost."
+      "reason": "Not machine-measurable; recorded as an explicit non-measured cost item, not an acceptance gate."
     }
   ],
-  "rssAfterProbesBytes": 185614336,
+  "rssAfterProbesBytes": 188137472,
   "limitations": [
     "single-process developer host; timings are not capacity numbers",
     "no cloud, Restate server, PostgreSQL, provider, or device was contacted",
