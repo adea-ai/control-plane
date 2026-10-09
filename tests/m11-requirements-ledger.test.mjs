@@ -519,6 +519,8 @@ describe('M11.1 requirements ledger', () => {
 
   test('uses the authenticated GitHub CLI when no token or fetch seam is available', async () => {
     const calls = []
+    const priorHost = process.env.GH_HOST
+    process.env.GH_HOST = 'github.enterprise.example'
     const firstPage = Array.from({ length: 100 }, (_, index) => ({
       number: index + 1,
       title: `Issue ${index + 1}`,
@@ -534,23 +536,29 @@ describe('M11.1 requirements ledger', () => {
         closed_at: '2026-10-09T00:00:00Z',
       },
     ]
-    const issues = await listGitHubIssues({
-      repository: 'owner/repository',
-      token: '',
-      spawnSync: (command, args, options) => {
-        calls.push({ command, args, options })
-        const first = calls.length === 1
-        const headers = {}
-        if (first) {
-          headers.Link =
-            '<https://api.github.com/repositories/42/issues?state=all&per_page=100&page=2&after=opaque%3D>; rel="next"'
-        }
-        return {
-          status: 0,
-          stdout: ghCliOutput(200, firstPageOrSecond(first), headers),
-        }
-      },
-    })
+    let issues
+    try {
+      issues = await listGitHubIssues({
+        repository: 'owner/repository',
+        token: '',
+        spawnSync: (command, args, options) => {
+          calls.push({ command, args, options })
+          const first = calls.length === 1
+          const headers = {}
+          if (first) {
+            headers.Link =
+              '<https://api.github.com/repositories/42/issues?state=all&per_page=100&page=2&after=opaque%3D>; rel="next"'
+          }
+          return {
+            status: 0,
+            stdout: ghCliOutput(200, firstPageOrSecond(first), headers),
+          }
+        },
+      })
+    } finally {
+      if (priorHost === undefined) delete process.env.GH_HOST
+      else process.env.GH_HOST = priorHost
+    }
 
     function firstPageOrSecond(first) {
       return first ? firstPage : secondPage
@@ -570,13 +578,15 @@ describe('M11.1 requirements ledger', () => {
       args: [
         'api',
         '--include',
+        '--hostname',
+        'github.com',
         '--header',
         'Accept: application/vnd.github+json',
         '--header',
         'User-Agent: control-plane-requirements-ledger',
         expect.any(String),
       ],
-      options: { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
+      options: { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 30_000 },
     })
   })
 
@@ -635,6 +645,35 @@ describe('M11.1 requirements ledger', () => {
     }
     expect(failureMessage).toBe('Unable to query GitHub issues (403)')
     expect(failureMessage).not.toContain('response-secret')
+    expect(failureMessage).not.toContain('stderr-secret')
+  })
+
+  test('bounds GitHub CLI requests and sanitizes timeout failures', async () => {
+    const timeoutError = Object.assign(new Error('Bearer timeout-secret'), {
+      code: 'ETIMEDOUT',
+    })
+    let spawnOptions
+    let failureMessage = ''
+    try {
+      await listGitHubIssues({
+        token: '',
+        spawnSync: (_command, _args, options) => {
+          spawnOptions = options
+          return {
+            error: timeoutError,
+            status: null,
+            stderr: 'Bearer stderr-secret',
+          }
+        },
+      })
+    } catch (error) {
+      failureMessage = error.message
+    }
+    expect(spawnOptions.timeout).toBe(30_000)
+    expect(failureMessage).toBe(
+      'Unable to query GitHub issues through authenticated GitHub CLI (ETIMEDOUT)'
+    )
+    expect(failureMessage).not.toContain('timeout-secret')
     expect(failureMessage).not.toContain('stderr-secret')
   })
 

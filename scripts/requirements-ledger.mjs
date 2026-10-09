@@ -489,6 +489,8 @@ function requestGitHubIssuesWithGh(requestUrl, spawn) {
       [
         'api',
         '--include',
+        '--hostname',
+        'github.com',
         '--header',
         'Accept: application/vnd.github+json',
         '--header',
@@ -498,6 +500,7 @@ function requestGitHubIssuesWithGh(requestUrl, spawn) {
       {
         encoding: 'utf8',
         maxBuffer: 32 * 1024 * 1024,
+        timeout: 30_000,
         windowsHide: true,
       }
     )
