@@ -1244,8 +1244,11 @@ describe('delegation event adapter', () => {
     const lastEventId = new Map()
 
     const deliver = async (delegationId, input, adapter = {}) => {
+      // recordChildProgress requires the caller to assert the attempt identity.
+      const childAttemptId = delegationId === ids.delegationIdA ? ids.attemptIdA : ids.attemptIdB
       const outcome = await fixture.service.recordChildProgress({
         delegationId,
+        childAttemptId,
         ...input,
         observedAt: at(lane.get(delegationId)),
       })
@@ -1308,6 +1311,7 @@ describe('delegation event adapter', () => {
     const redeliveredEvent = fixture.events.at(-1)
     const redelivered = await fixture.service.recordChildProgress({
       delegationId: ids.delegationIdB,
+      childAttemptId: ids.attemptIdB,
       state: 'completed',
       terminalResultRef: ids.resultRefB,
       observedAt: at(lane.get(ids.delegationIdB)),
