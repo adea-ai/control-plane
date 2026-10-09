@@ -16,6 +16,12 @@ export const ExecutionProfileSchema = z.enum([
 
 export type ExecutionProfile = z.infer<typeof ExecutionProfileSchema>
 
+const executionProfileDisplayLabels: Readonly<Record<string, ExecutionProfile>> = Object.freeze({
+  Local: ExecutionProfiles.local,
+  'Self-hosted': ExecutionProfiles.selfHosted,
+  Hosted: ExecutionProfiles.hosted,
+})
+
 export type ProfileCapabilityState = 'supported' | 'conditional' | 'unavailable'
 
 export interface ProfileCapabilityMatrixEntry {
@@ -134,9 +140,8 @@ export function bindProfileStorage(
   profileInput: unknown,
   deployment: DeploymentComposition
 ): ProfileStorageBinding {
-  const parsedProfile = ExecutionProfileSchema.safeParse(profileInput)
-  if (!parsedProfile.success) throw new ProfileAdapterError('PROFILE_NAME_INVALID')
-  const profile = parsedProfile.data
+  const profile = resolveExecutionProfile(profileInput)
+  if (!profile) throw new ProfileAdapterError('PROFILE_NAME_INVALID')
   const deploymentProfile = deploymentProfileFor(profile, deployment.profile)
   if (!deploymentProfile) {
     throw new ProfileAdapterError('PROFILE_DEPLOYMENT_MISMATCH', {
@@ -170,6 +175,18 @@ export function bindProfileStorage(
     persistenceDialect: expectedDialect,
     deployment,
   })
+}
+
+function resolveExecutionProfile(profileInput: unknown): ExecutionProfile | undefined {
+  const parsedProfile = ExecutionProfileSchema.safeParse(profileInput)
+  if (parsedProfile.success) return parsedProfile.data
+  if (
+    typeof profileInput === 'string' &&
+    Object.hasOwn(executionProfileDisplayLabels, profileInput)
+  ) {
+    return executionProfileDisplayLabels[profileInput]
+  }
+  return undefined
 }
 
 function deploymentProfileFor(

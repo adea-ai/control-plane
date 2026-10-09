@@ -17,10 +17,13 @@ The product profile names are intentionally distinct from the canonical
 | `self-hosted`   | `hosted-server`              | PostgreSQL with Restate                 |
 | `hosted`        | `cloud`                      | PostgreSQL with Restate                 |
 
-No aliases are inferred. In particular, a self-hosted deployment must be
-selected as either `hosted-simple` or `hosted-server`; the package does not
-guess between them. `DeploymentComposition` proves only that the already
-configured storage and workflow ports match that canonical deployment profile.
+The exact display labels map to the lowercase product names as follows:
+`Local` to `local`, `Self-hosted` to `self-hosted`, and `Hosted` to `hosted`.
+Other capitalization and aliases are rejected. In particular, a self-hosted
+deployment must already identify either `hosted-simple` or `hosted-server`; if
+that canonical variant is missing or unsupported, binding is unavailable rather
+than guessed. `DeploymentComposition` proves only that the already configured
+storage and workflow ports match that canonical deployment profile.
 
 The source-level matrix is not a live certification. Runtime support is
 conditional for Local and Self-hosted and unavailable for Hosted in this

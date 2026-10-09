@@ -132,6 +132,27 @@ describe('profile infrastructure bindings', () => {
     })
   })
 
+  test('maps only exact display labels and requires an exact canonical Self-hosted variant', () => {
+    expect(bindProfileStorage('Local', composition('local'))).toMatchObject({
+      profile: 'local',
+      deploymentProfile: 'local',
+    })
+    expect(bindProfileStorage('Self-hosted', composition('hosted-server'))).toMatchObject({
+      profile: 'self-hosted',
+      deploymentProfile: 'hosted-server',
+    })
+    expect(bindProfileStorage('Hosted', composition('cloud'))).toMatchObject({
+      profile: 'hosted',
+      deploymentProfile: 'cloud',
+    })
+    expect(() => bindProfileStorage('Self-hosted', composition('self-hosted'))).toThrow(
+      expect.objectContaining({ code: 'PROFILE_DEPLOYMENT_MISMATCH' })
+    )
+    expect(() => bindProfileStorage('LOCAL', composition('local'))).toThrow(
+      expect.objectContaining({ code: 'PROFILE_NAME_INVALID' })
+    )
+  })
+
   test('rejects aliases, cross-profile composition, and mismatched persistence/workflow ports', () => {
     expect(() => bindProfileStorage('managed-cloud', composition('cloud'))).toThrow(
       ProfileAdapterError
