@@ -447,3 +447,86 @@ describe('correlated child usage outcomes', () => {
     expect(() => ledger.settle(identityA(), { currency: 'EUR', settledMicrounits: 1 })).toThrow()
   })
 })
+
+describe('child usage ledger durable snapshot', () => {
+  test('snapshot/restore carries cost states and dedup horizons across a restart', () => {
+    const running = new ChildUsageLedger()
+    const identity = identityA()
+    running.recordEstimate(identity, {
+      currency: 'USD',
+      maximumMicrounits: 250_000,
+      source: 'plan-compiler:v1',
+    })
+    running.recordReservation(identity, reservationFor(identity))
+    running.recordReportedUsage(identity, reportedUsage(42_000), { reportId: 'r:1' })
+    running.reconcile(identity, { reconciledAt: at(1_000) })
+    running.settle(identity, {
+      currency: 'USD',
+      settledMicrounits: 42_000,
+      settledAt: at(2_000),
+      settlementRef: 'settle:1',
+    })
+
+    // The owner persists the snapshot through the canonical durable path;
+    // it carries evidence, identities and content hashes — never payloads.
+    const persisted = JSON.stringify(running.snapshot())
+    expect(persisted).toContain(`"reportFingerprints":[["r:1","sha256:`)
+    expect(persisted).not.toContain('prompt')
+
+    const restarted = new ChildUsageLedger()
+    restarted.restore(JSON.parse(persisted))
+    expect(restarted.status(identity)).toStrictEqual(running.status(identity))
+    expect(restarted.status(identity).costState).toBe('settled')
+
+    // Dedup horizons survive the restart: the redelivered report answers
+    // duplicate instead of folding and inflating the retained-report count.
+    const redelivered = restarted.recordReportedUsage(identity, reportedUsage(42_000), {
+      reportId: 'r:1',
+    })
+    expect(redelivered.outcome).toBe('duplicate_report')
+    expect(restarted.status(identity).usageReportCount).toBe(1)
+
+    // And the staleness guarantees survive too: a newer report still clears
+    // the restored settlement and reconciliation.
+    const newer = restarted.recordReportedUsage(identity, reportedUsage(43_000), {
+      reportId: 'r:2',
+    })
+    expect(newer.outcome).toBe('recorded')
+    expect(newer.settled).toBeUndefined()
+    expect(newer.reconciled).toBeUndefined()
+    expect(newer.costState).toBe('reported')
+  })
+
+  test('restore is two-phase: conflicting or inconsistent snapshots restore nothing', () => {
+    const source = new ChildUsageLedger()
+    source.recordEstimate(identityA(), {
+      currency: 'USD',
+      maximumMicrounits: 1_000,
+      source: 'plan-compiler:v1',
+    })
+    const snapshot = source.snapshot()
+
+    const target = new ChildUsageLedger()
+    target.recordEstimate(identityA(), {
+      currency: 'USD',
+      maximumMicrounits: 2_000,
+      source: 'plan-compiler:v1',
+    })
+    expect(() => target.restore(snapshot)).toThrow(ChildUsageLedgerError)
+    // The conflict aborted the whole restore: the target kept its own state.
+    expect(target.status(identityA()).estimated.maximumMicrounits).toBe(2_000)
+
+    // A snapshot whose cost state does not rederive from its evidence is
+    // rejected before anything is applied.
+    const tampered = structuredClone(source.snapshot())
+    tampered.entries[0].outcome.costState = 'settled'
+    const fresh = new ChildUsageLedger()
+    expect(() => fresh.restore(tampered)).toThrow(ChildUsageLedgerError)
+    expect(fresh.listByDelegation(ids.delegationIdA)).toStrictEqual([])
+
+    // Duplicated identities inside one snapshot are a conflict too.
+    const duplicated = structuredClone(source.snapshot())
+    duplicated.entries.push(structuredClone(duplicated.entries[0]))
+    expect(() => new ChildUsageLedger().restore(duplicated)).toThrow(ChildUsageLedgerError)
+  })
+})

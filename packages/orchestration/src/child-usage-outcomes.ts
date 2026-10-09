@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto'
-import { canonicalJsonStringify, IdentifierSchemas } from '@control-plane/contracts'
+import {
+  canonicalJsonStringify,
+  compareCodePointOrder,
+  IdentifierSchemas,
+} from '@control-plane/contracts'
 import { RuntimeAttemptBudgetAuthoritySchema, RuntimeUsageSchema } from '@control-plane/runtime-sdk'
 import { z } from 'zod'
 
@@ -144,6 +148,32 @@ export type ChildUsageReportReceipt =
    * a redelivery from beyond the dedup horizon may never overwrite it.
    */
   | { readonly outcome: 'stale_report'; readonly reportId: string }
+
+const SnapshotFingerprintSchema = z.string().min(1).max(128)
+
+/**
+ * One retained outcome together with its dedup horizons, shaped for durable
+ * persistence by the owner. Fingerprints are content hashes — secret-free by
+ * construction — and restoring them keeps report dedup, stale-report
+ * protection and settlement/reconciliation staleness guarantees intact
+ * across a restart instead of resetting the horizons.
+ */
+export const ChildUsageLedgerSnapshotEntrySchema = z
+  .object({
+    outcome: ChildUsageOutcomeSchema,
+    reportFingerprints: z.array(z.tuple([z.string().min(1).max(256), SnapshotFingerprintSchema])),
+    supersededFingerprints: z.array(SnapshotFingerprintSchema),
+  })
+  .strict()
+
+export const ChildUsageLedgerSnapshotSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    entries: z.array(ChildUsageLedgerSnapshotEntrySchema),
+  })
+  .strict()
+
+export type ChildUsageLedgerSnapshot = z.output<typeof ChildUsageLedgerSnapshotSchema>
 
 export type ChildUsageLedgerErrorCode = 'CONFIGURATION' | 'IDENTITY_CONFLICT' | 'EVIDENCE_MISSING'
 
@@ -388,6 +418,94 @@ export class ChildUsageLedger {
       .toSorted((left, right) =>
         left.identity.childAttemptId < right.identity.childAttemptId ? -1 : 1
       )
+  }
+
+  /**
+   * Serializes every retained outcome with its dedup horizons for the owner
+   * to persist through the canonical durable path. Content fingerprints are
+   * hashes — secret-free by construction — and entries are ordered by
+   * attempt identity so equal states serialize comparably.
+   */
+  snapshot(): ChildUsageLedgerSnapshot {
+    return {
+      schemaVersion: 1,
+      entries: [...this.#entries.values()]
+        .map((entry) => ({
+          outcome: this.#outcome(entry),
+          reportFingerprints: [...entry.reportFingerprints],
+          supersededFingerprints: [...entry.supersededFingerprints],
+        }))
+        .toSorted((left, right) =>
+          compareCodePointOrder(
+            `${left.outcome.identity.delegationId}:${left.outcome.identity.childAttemptId}`,
+            `${right.outcome.identity.delegationId}:${right.outcome.identity.childAttemptId}`
+          )
+        ),
+    }
+  }
+
+  /**
+   * Restores a snapshot the owner loaded from durable storage, rebuilding the
+   * dedup horizons alongside the evidence so restart does not reset report
+   * dedup, stale-report protection or settlement/reconciliation staleness.
+   * Validation is two-phase: every entry is checked and rederived first, so a
+   * conflicting or inconsistent snapshot restores nothing instead of
+   * half-applying. A duplicated snapshot key or an entry colliding with
+   * retained evidence is an explicit IDENTITY_CONFLICT; an outcome that does
+   * not rederive its own cost state is CONFIGURATION.
+   */
+  restore(snapshot: unknown): void {
+    const parsed = ChildUsageLedgerSnapshotSchema.parse(snapshot)
+    const prepared: Array<{ readonly key: string; readonly entry: ChildUsageEntry }> = []
+    const seen = new Set<string>()
+    for (const item of parsed.entries) {
+      const outcome = ChildUsageOutcomeSchema.parse(item.outcome)
+      const key = this.#key(outcome.identity)
+      if (seen.has(key)) {
+        throw new ChildUsageLedgerError(
+          'IDENTITY_CONFLICT',
+          'Snapshot contains a duplicate attempt identity'
+        )
+      }
+      seen.add(key)
+      const retained = this.#entries.get(key)
+      if (retained !== undefined && this.#hasEvidence(retained)) {
+        throw new ChildUsageLedgerError(
+          'IDENTITY_CONFLICT',
+          'Snapshot collides with retained evidence'
+        )
+      }
+      const entry: ChildUsageEntry = {
+        identity: outcome.identity,
+        estimated: outcome.estimated,
+        reserved: outcome.reserved,
+        reported: outcome.reported,
+        usageReportCount: outcome.usageReportCount,
+        reconciled: outcome.reconciled,
+        settled: outcome.settled,
+        reportFingerprints: new Map(item.reportFingerprints),
+        supersededFingerprints: new Set(item.supersededFingerprints),
+      }
+      if (this.#outcome(entry).costState !== outcome.costState) {
+        throw new ChildUsageLedgerError(
+          'CONFIGURATION',
+          'Snapshot outcome does not rederive from its own evidence'
+        )
+      }
+      prepared.push({ key, entry })
+    }
+    for (const { key, entry } of prepared) this.#entries.set(key, entry)
+  }
+
+  #hasEvidence(entry: ChildUsageEntry): boolean {
+    return (
+      entry.estimated !== undefined ||
+      entry.reserved !== undefined ||
+      entry.reported !== undefined ||
+      entry.usageReportCount !== undefined ||
+      entry.reconciled !== undefined ||
+      entry.settled !== undefined
+    )
   }
 
   #key(identity: ChildUsageIdentity): string {

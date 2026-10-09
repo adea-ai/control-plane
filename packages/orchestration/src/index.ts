@@ -271,6 +271,7 @@ export * from './delegation-runtime.js'
 export * from './delegation-tool-admission.js'
 export * from './parallel-delegation.js'
 export * from './child-progress-evidence.js'
+export * from './child-progress-lead-feed.js'
 export * from './child-usage-outcomes.js'
 
 export const packageName = 'orchestration'
