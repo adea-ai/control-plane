@@ -299,3 +299,46 @@ test('a late old-run result cannot replace cancellation state or publish output'
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
+test('cancelling a failed execution preserves its terminal failure and returns a valid status', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-cancel-failed-terminal-'))
+  const { options, request } = fixture(directory)
+  const adapter = new PiDurableRuntimeAdapter(options)
+  try {
+    const handle = await adapter.start(request)
+    await adapter.drain()
+
+    const completed = adapter.journal.get(handle.handleId)
+    const retainedFailure = {
+      code: 'PI_CHILD_DELEGATION_DENIED',
+      classification: 'conflict',
+      message: 'PI_CHILD_DELEGATION_DENIED',
+      retryable: false,
+    }
+    adapter.journal.update(handle.handleId, completed.epoch, {
+      state: 'failed',
+      detail: {
+        ...completed.detail,
+        result: undefined,
+        error: retainedFailure,
+        terminalUsage: { inputTokens: 1, outputTokens: 0, durationMs: 1 },
+      },
+    })
+
+    const beforeCancel = adapter.journal.get(handle.handleId)
+    const status = await adapter.cancel(handle, {
+      idempotencyKey: 'cancel:already-failed',
+      requestedAt: at,
+    })
+
+    expect(status.state).toBe('failed')
+    expect(status.error).toEqual(retainedFailure)
+    expect(status.terminalUsage).toEqual({ inputTokens: 1, outputTokens: 0, durationMs: 1 })
+    expect(adapter.journal.get(handle.handleId)).toEqual(beforeCancel)
+    expect(beforeCancel.detail.error).toEqual(retainedFailure)
+    expect(beforeCancel.detail.cancellationIntent).toBeUndefined()
+  } finally {
+    await adapter.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})

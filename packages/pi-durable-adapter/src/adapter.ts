@@ -386,6 +386,10 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       return this.status(handle)
     }
     if (record.state === 'completed') fail('PI_EXECUTION_TERMINAL', 'conflict')
+    // A stop request can arrive after the native run has already retained a failure.
+    // Keep that terminal outcome authoritative; lead orchestration may still cascade
+    // cancellation to children after receiving this schema-valid status.
+    if (record.state === 'failed' || record.state === 'timed_out') return this.status(handle)
     const active = this.#engines.get(handle.handleId)
     const retainedIntent = readCancellationIntent(record)
     const activeInference = readActiveInference(record)
