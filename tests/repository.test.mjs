@@ -286,6 +286,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/atomic-clause-ledger.test.mjs',
     'tests/canonical-source-lineage.test.mjs',
     'tests/container-promotion.test.mjs',
+    'tests/docker-pull-backoff.test.mjs',
     'tests/foundation.test.mjs',
     'tests/infrastructure.test.mjs',
     'tests/integration-shards.test.mjs',
