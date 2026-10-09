@@ -65,6 +65,41 @@ export interface DeriveSecureAcpRemoteRouteInput {
 /** Families eligible for the sealed ACP route; anything else fails closed. */
 const ROUTE_FAMILIES = new Set(['acp'])
 
+/**
+ * Positively-usable requirements, evaluated in order after revocation: only a CURRENT online node
+ * on a connected, healthy, available connection derives an `active` route. Everything else is a
+ * TYPED denial — an unusable state is never relabeled `revoked` (the schema admits only
+ * `active | revoked`), and a route that is never derived means zero transport dispatch.
+ */
+const USABILITY_REQUIREMENTS: readonly {
+  readonly code: string
+  readonly check: (connection: ServerOwnedRuntimeConnectionView) => boolean
+}[] = [
+  { code: 'ACP_REMOTE_ROUTE_NODE_OFFLINE', check: (c) => c.node?.status === 'offline' },
+  { code: 'ACP_REMOTE_ROUTE_NODE_OFFLINE', check: (c) => c.node?.health === 'offline' },
+  {
+    code: 'ACP_REMOTE_ROUTE_NODE_UNAVAILABLE',
+    check: (c) => c.node?.health === 'unknown',
+  },
+  {
+    code: 'ACP_REMOTE_ROUTE_CONNECTION_DISCONNECTED',
+    check: (c) => c.connection.status === 'disconnected',
+  },
+  {
+    code: 'ACP_REMOTE_ROUTE_CONNECTION_EXPIRED',
+    check: (c) => c.connection.status === 'expired',
+  },
+  {
+    code: 'ACP_REMOTE_ROUTE_CONNECTION_UNAVAILABLE',
+    check: (c) =>
+      c.status !== 'available' ||
+      c.connection.status !== 'connected' ||
+      c.connection.availability !== 'healthy' ||
+      c.node?.status !== 'online' ||
+      c.node.health !== 'online',
+  },
+]
+
 export function deriveSecureAcpRemoteRoute(
   input: DeriveSecureAcpRemoteRouteInput
 ): AcpRemoteDeviceRoute {
@@ -83,6 +118,11 @@ export function deriveSecureAcpRemoteRoute(
   if (revoked && configuration.revokedAt === undefined) {
     // A revoked connection must carry the server-observed revocation time; never invent one.
     throw new Error('ACP_REMOTE_ROUTE_REVOKED_AT_MISSING')
+  }
+  if (!revoked) {
+    for (const requirement of USABILITY_REQUIREMENTS) {
+      if (requirement.check(connection)) throw new Error(requirement.code)
+    }
   }
   return AcpRemoteDeviceRouteSchema.parse({
     workspaceId,
