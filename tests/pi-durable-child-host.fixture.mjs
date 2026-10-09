@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { ExecutionPlanCompiler } from '@control-plane/execution-plan'
+import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
   CanonicalDelegationCommandResolver,
   InMemoryDelegationToolAdmissionRepository,
@@ -64,7 +65,7 @@ export async function createGovernedChildHostFixture({
     ...storage,
     parentPlan,
     parentContext: workspace?.parentContext,
-    scopeAdmission: workspace?.scopeAdmission,
+    scopeAdmission: workspace?.scopeAdmission ?? storage.scopeAdmission,
     ...(childAdmission ? { childAdmission } : {}),
     ...(childAllocator ? { childAllocator } : {}),
   })
@@ -76,6 +77,27 @@ export async function createGovernedChildHostFixture({
     queuedAt: '2026-08-25T18:00:01.000Z',
     runtime: { runtimeConnectionId: connectionId },
   })
+  if (storage.usageStore) {
+    // Governed allocation reserves on the canonical parent budget
+    // transaction; open it once the parent execution exists.
+    const budgetLedger = new DurableUsageLedger({
+      store: storage.usageStore,
+      now: () => '2026-08-25T18:02:00.000Z',
+    })
+    const existingBudget = await storage.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(ids.parentExecutionId)
+    )
+    if (!existingBudget) {
+      await budgetLedger.openBudget({
+        workspaceId: ids.workspaceId,
+        executionId: ids.parentExecutionId,
+        currency: 'USD',
+        maximumMicrounits: parentPlan.constraints.limits.budget.maximumMicrounits,
+        maximumTokens: parentPlan.constraints.limits.tokens.maximumTotal,
+        source: { sourceId: 'child-host-fixture', idempotencyKey: 'child-host-parent-budget' },
+      })
+    }
+  }
   if (initializeParentRunning) {
     let parent = await f.lifecycle.getExecution(ids.parentExecutionId)
     for (const state of ['queued', 'starting', 'running'])
@@ -166,6 +188,9 @@ export async function createGovernedChildHostFixture({
       dispatchedAt: '2026-08-25T18:02:00.000Z',
     },
   }
+  // Persist the derived child plan's context package: a validating (durable)
+  // plan repository rejects the child plan until its context exists.
+  await storage.contexts?.put(command.delegation.childPlan.contextPackage)
   const admissions =
     storage.admissions ?? new InMemoryDelegationToolAdmissionRepository(ids.workspaceId)
   let resolver
