@@ -92,9 +92,9 @@ export const ProfileCapabilityMatrix: readonly ProfileCapabilityMatrixEntry[] = 
       variants: Object.freeze(['restate-ingress']),
     }),
     runtime: Object.freeze({
-      state: 'unavailable',
+      state: 'conditional',
       reason:
-        'No managed-cloud RuntimeAdapter is registered by this package on this source base. The internal Cloudflare adapter is degraded with no capabilities; Node Pi declares CLOUD_PROFILE_UNQUALIFIED. These are specific source limits, not a claim that every hosted topology is unqualified.',
+        'A healthy managed-cloud RuntimeAdapter over the authenticated remote-gateway transport is required, together with the trusted topology, current authority, and residency guards. The Node Pi Durable adapter declares CLOUD_PROFILE_UNQUALIFIED and the unregistered Cloudflare host advertises no capabilities, so both fail closed. No implicit fallback to a local or self-hosted runtime is provided.',
     }),
     residency:
       'Managed-cloud placement requires an explicit current policy; no implicit transfer is allowed.',
@@ -110,7 +110,7 @@ export class ProfileAdapterError extends Error {
       | 'PROFILE_WORKFLOW_MISMATCH'
       | 'PROFILE_WAKE_MISMATCH'
       | 'PROFILE_PLACEMENT_MISMATCH'
-      | 'PROFILE_RUNTIME_NOT_REGISTERED'
+      | 'PROFILE_RUNTIME_NOT_QUALIFIED'
       | 'PROFILE_RUNTIME_TRANSPORT_MISMATCH'
       | 'PROFILE_RUNTIME_BINDING_MISMATCH'
       | 'PROFILE_RUNTIME_PROGRESS_INVALID'

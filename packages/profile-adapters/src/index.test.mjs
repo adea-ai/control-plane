@@ -1,4 +1,8 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { executionConstraintFixtures } from '@control-plane/domain'
 import {
   bindProfileStorage,
   bindProfileRuntime,
@@ -7,6 +11,8 @@ import {
   ProfileAdapterError,
   ProfileCapabilityMatrix,
 } from './index.ts'
+import { ManagedPiAdapter, ManagedPiDriver } from '@control-plane/managed-pi-adapter'
+import { PiDurableRuntimeAdapter } from '@control-plane/pi-durable-adapter'
 import {
   DirectLocalRuntimeTransport,
   MockRuntimeAdapter,
@@ -97,6 +103,139 @@ const trustedWakeTopology = (driver) => ({
   },
 })
 
+const hostedPlacement = Object.freeze({
+  controlPlaneHostId: 'cp-host',
+  runtimeHostId: 'cloud-runtime-host',
+  runtimeLocation: 'agent_hq_cloud',
+  coLocated: false,
+})
+
+const managedPiNow = '2026-08-25T12:00:00.000Z'
+
+/** Minimal managed-Pi client over the canonical driver contract, mirroring
+ *  the hosted runtime-worker fixture so the real adapter classes are used. */
+class RecordingManagedPiClient {
+  starts = []
+  executions = new Map()
+
+  async inspect() {
+    return {
+      driverVersion: '1.0.0',
+      runtimeVersion: '0.52.1',
+      protocolVersion: '1.0.0',
+      health: 'healthy',
+      capabilities: [
+        { name: 'stream.output', support: 'supported' },
+        { name: 'execution.cancel', support: 'supported' },
+        { name: 'interaction.user-input', support: 'supported' },
+        { name: 'interaction.approval', support: 'supported' },
+      ],
+      limitations: [],
+      observedAt: managedPiNow,
+    }
+  }
+
+  async start(command) {
+    this.starts.push(globalThis.structuredClone(command))
+    const handle = {
+      handleId: `managed-pi:${command.attemptId}`,
+      attemptId: command.attemptId,
+      startedAt: managedPiNow,
+    }
+    this.executions.set(handle.handleId, {
+      handle,
+      state: 'running',
+      events: [
+        { sequence: 1, occurredAt: managedPiNow, kind: 'status', state: 'running' },
+        { sequence: 2, occurredAt: managedPiNow, kind: 'output', text: 'working' },
+        {
+          sequence: 3,
+          occurredAt: managedPiNow,
+          kind: 'tool_request',
+          interactionId: 'int_01JABCDEF0123456789ABCDEFG',
+          toolId: 'project-files',
+          operation: 'read',
+        },
+        {
+          sequence: 4,
+          occurredAt: managedPiNow,
+          kind: 'usage',
+          inputTokens: 10,
+          outputTokens: 2,
+          durationMs: 100,
+        },
+      ],
+    })
+    return handle
+  }
+
+  async *progress(handle, afterSequence = 0) {
+    for (const event of this.executions.get(handle.handleId).events) {
+      if (event.sequence > afterSequence) yield event
+    }
+  }
+
+  async submitInput(handle) {
+    return this.status(handle)
+  }
+
+  async submitApproval(handle) {
+    return this.status(handle)
+  }
+
+  async cancel(handle, request) {
+    const execution = this.executions.get(handle.handleId)
+    execution.state = 'cancelled'
+    execution.observedAt = request.requestedAt
+    return this.status(handle)
+  }
+
+  async status(handle) {
+    const execution = this.executions.get(handle.handleId)
+    return { state: execution.state, observedAt: execution.observedAt ?? managedPiNow }
+  }
+}
+
+/** The exact hosted composition from the runtime-worker lane: a managed-Pi
+ *  semantic adapter over the authenticated remote gateway transport. */
+const hostedManagedPiFixture = (client) => {
+  const transport = new RemoteRuntimeGatewayTransport(
+    new ManagedPiDriver({ client, adapterVersion: '1.0.0' })
+  )
+  return { adapter: new ManagedPiAdapter({ transport }), transport }
+}
+
+function managedExecutionPlan() {
+  const digest = (character) => `sha256:${character.repeat(64)}`
+  return {
+    schemaVersion: 1,
+    executionPlanId: 'pln_01JABCDEF0123456789ABCDEFG',
+    contentDigest: digest('a'),
+    profile: {
+      profileId: 'prf_01JABCDEF0123456789ABCDEFG',
+      profileVersionId: 'pfv_01JABCDEF0123456789ABCDEFG',
+      version: 3,
+      revision: 2,
+      schemaVersion: 1,
+      contentDigest: digest('b'),
+    },
+    skills: [],
+    contextPackage: {
+      contextPackageId: 'ctx_01JABCDEF0123456789ABCDEFG',
+      contentDigest: digest('d'),
+      schemaVersion: 1,
+      compilerVersion: '1.0.0',
+    },
+    runtimeRequirements: [
+      { capability: 'stream.output', necessity: 'required', minimumSupport: 'supported' },
+      { capability: 'execution.cancel', necessity: 'required', minimumSupport: 'supported' },
+    ],
+    constraints: globalThis.structuredClone(executionConstraintFixtures.write),
+    policySnapshot: globalThis.structuredClone(executionConstraintFixtures.write.policySnapshot),
+    outputContract: { contractRef: 'contract://execution-result/v1' },
+  }
+}
+
 describe('profile infrastructure bindings', () => {
   test('keeps product profile labels distinct from canonical deployment profiles', () => {
     expect(ProfileCapabilityMatrix.map(({ profile }) => profile)).toEqual([
@@ -110,6 +249,9 @@ describe('profile infrastructure bindings', () => {
       'hosted-server',
     ])
     expect(ProfileCapabilityMatrix[2].deploymentProfiles).toEqual(['cloud'])
+    expect(ProfileCapabilityMatrix[2].runtime).toMatchObject({ state: 'conditional' })
+    expect(ProfileCapabilityMatrix[2].runtime.reason).toContain('remote-gateway')
+    expect(ProfileCapabilityMatrix[2].runtime.reason).toContain('CLOUD_PROFILE_UNQUALIFIED')
   })
 
   test('preserves Local SQLite and both explicit Self-hosted storage variants', () => {
@@ -451,9 +593,47 @@ describe('profile infrastructure bindings', () => {
     ).rejects.toMatchObject({ code: 'PROFILE_RUNTIME_PROGRESS_INVALID' })
   })
 
-  test('keeps Hosted runtime unavailable even when an adapter advertises capabilities', async () => {
-    const runtime = new MockRuntimeAdapter()
-    const transport = new DirectLocalRuntimeTransport(runtime)
+  test('binds hosted runtime through the real managed-Pi adapter over the authenticated remote gateway', async () => {
+    const calls = []
+    const { adapter, transport } = hostedManagedPiFixture(new RecordingManagedPiClient())
+    const binding = await bindProfileRuntime({
+      profile: 'hosted',
+      deployment: composition('cloud'),
+      candidate: { adapter, transport, placement: hostedPlacement },
+      guards: allowedGuards(calls),
+      topology: trustedTopology(adapter, transport, calls),
+      requiredCapabilities: [
+        { capability: 'stream.output', necessity: 'required', minimumSupport: 'supported' },
+        { capability: 'execution.cancel', necessity: 'required', minimumSupport: 'supported' },
+      ],
+    })
+    expect(binding).toMatchObject({
+      profile: 'hosted',
+      deploymentProfile: 'cloud',
+      transportKind: 'remote-gateway',
+      inspection: {
+        metadata: { adapterName: 'managed-pi', transportKind: 'remote-gateway' },
+        capabilityEvaluation: { eligible: true },
+      },
+    })
+    const request = {
+      attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+      idempotencyKey: 'profile-hosted:one',
+      executionPlan: managedExecutionPlan(),
+    }
+    const handle = await binding.adapter.start(request)
+    expect(handle.attemptId).toBe(request.attemptId)
+    const events = []
+    for await (const event of binding.adapter.progress(handle)) events.push(event)
+    expect(events.map((event) => event.sequence)).toEqual([1, 2, 3, 4])
+    expect(calls.filter(([guard]) => guard === 'authority').length).toBeGreaterThanOrEqual(3)
+    expect(calls.filter(([guard]) => guard === 'residency').length).toBeGreaterThanOrEqual(7)
+    expect(calls.filter(([guard]) => guard === 'topology').length).toBeGreaterThanOrEqual(7)
+  })
+
+  test('refuses a hosted runtime over a direct-local transport instead of falling back', async () => {
+    const driver = new MockRuntimeAdapter()
+    const transport = new DirectLocalRuntimeTransport(driver)
     const adapter = new TransportedRuntimeAdapter(transport, 'mock')
     await expect(
       bindProfileRuntime({
@@ -462,12 +642,156 @@ describe('profile infrastructure bindings', () => {
         candidate: {
           adapter,
           transport,
-          placement: placement('hosted'),
+          placement: { ...hostedPlacement, coLocated: true, runtimeHostId: 'cp-host' },
         },
         guards: allowedGuards(),
         topology: trustedTopology(adapter, transport),
       })
-    ).rejects.toMatchObject({ code: 'PROFILE_RUNTIME_NOT_REGISTERED' })
+    ).rejects.toMatchObject({ code: 'PROFILE_RUNTIME_TRANSPORT_MISMATCH' })
+  })
+
+  test('refuses hosted placement outside the managed-cloud location', async () => {
+    const driver = new MockRuntimeAdapter()
+    const transport = new RemoteRuntimeGatewayTransport(driver)
+    const adapter = new TransportedRuntimeAdapter(transport, 'mock')
+    const failure = await bindProfileRuntime({
+      profile: 'hosted',
+      deployment: composition('cloud'),
+      candidate: {
+        adapter,
+        transport,
+        placement: { ...hostedPlacement, runtimeLocation: 'remote_host' },
+      },
+      guards: allowedGuards(),
+      topology: trustedTopology(adapter, transport),
+    }).catch((error) => error)
+    expect(failure.code).toBe('PROFILE_PLACEMENT_MISMATCH')
+  })
+
+  test('refuses the Node Pi Durable adapter and a declared cloud-profile denial for hosted', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'profile-adapters-hosted-'))
+    try {
+      const durable = new PiDurableRuntimeAdapter({ directory })
+      const transport = new RemoteRuntimeGatewayTransport(durable)
+      const adapter = new TransportedRuntimeAdapter(transport, 'pi-durable')
+      const transportFailure = await bindProfileRuntime({
+        profile: 'hosted',
+        deployment: composition('cloud'),
+        candidate: { adapter, transport, placement: hostedPlacement },
+        guards: allowedGuards(),
+        topology: trustedTopology(adapter, transport),
+      }).catch((error) => error)
+      // The real Node adapter self-identifies as direct-local, so the hosted
+      // remote-gateway transport refuses it before any qualification hint.
+      expect(transportFailure.code).toBe('PROFILE_RUNTIME_TRANSPORT_MISMATCH')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+    // A remote-shaped adapter that declares the canonical Node Pi Durable
+    // denial (`packages/pi-durable-adapter/src/adapter.ts`) fails the hosted
+    // qualification gate even while healthy and advertising capabilities.
+    const denialDriver = new MockRuntimeAdapter({ limitations: ['CLOUD_PROFILE_UNQUALIFIED'] })
+    const denialTransport = new RemoteRuntimeGatewayTransport(denialDriver)
+    const denialAdapter = new TransportedRuntimeAdapter(denialTransport, 'mock')
+    const denial = await bindProfileRuntime({
+      profile: 'hosted',
+      deployment: composition('cloud'),
+      candidate: { adapter: denialAdapter, transport: denialTransport, placement: hostedPlacement },
+      guards: allowedGuards(),
+      topology: trustedTopology(denialAdapter, denialTransport),
+    }).catch((error) => error)
+    expect(denial).toMatchObject({
+      code: 'PROFILE_RUNTIME_NOT_QUALIFIED',
+      details: { limitation: 'CLOUD_PROFILE_UNQUALIFIED' },
+    })
+  })
+
+  test('refuses a degraded hosted adapter and a missing required capability', async () => {
+    const degraded = new MockRuntimeAdapter({ health: 'degraded' })
+    const degradedTransport = new RemoteRuntimeGatewayTransport(degraded)
+    const degradedAdapter = new TransportedRuntimeAdapter(degradedTransport, 'mock')
+    await expect(
+      bindProfileRuntime({
+        profile: 'hosted',
+        deployment: composition('cloud'),
+        candidate: {
+          adapter: degradedAdapter,
+          transport: degradedTransport,
+          placement: hostedPlacement,
+        },
+        guards: allowedGuards(),
+        topology: trustedTopology(degradedAdapter, degradedTransport),
+      })
+    ).rejects.toMatchObject({ code: 'PROFILE_RUNTIME_UNAVAILABLE' })
+
+    const { adapter, transport } = hostedManagedPiFixture(new RecordingManagedPiClient())
+    await expect(
+      bindProfileRuntime({
+        profile: 'hosted',
+        deployment: composition('cloud'),
+        candidate: { adapter, transport, placement: hostedPlacement },
+        guards: allowedGuards(),
+        topology: trustedTopology(adapter, transport),
+        requiredCapabilities: [
+          { capability: 'session.history', necessity: 'required', minimumSupport: 'supported' },
+        ],
+      })
+    ).rejects.toMatchObject({ code: 'PROFILE_RUNTIME_CAPABILITY_UNAVAILABLE' })
+  })
+
+  test('keeps hosted authority, residency, and exact-instance topology gates', async () => {
+    const { adapter, transport } = hostedManagedPiFixture(new RecordingManagedPiClient())
+    // Current authority is re-read before effects, not at composition time.
+    const authorityDenied = await bindProfileRuntime({
+      profile: 'hosted',
+      deployment: composition('cloud'),
+      candidate: { adapter, transport, placement: hostedPlacement },
+      guards: {
+        authority: {
+          assertCurrent: async () => {
+            throw new ProfileAdapterError('PROFILE_AUTHORITY_REJECTED')
+          },
+        },
+        residency: { assertCurrent: async () => undefined },
+      },
+      topology: trustedTopology(adapter, transport),
+    })
+    const startFailure = await authorityDenied.adapter
+      .start({
+        attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+        idempotencyKey: 'profile-hosted:denied',
+        executionPlan: managedExecutionPlan(),
+      })
+      .catch((error) => error)
+    expect(startFailure.code).toBe('PROFILE_AUTHORITY_REJECTED')
+
+    const residencyFailure = await bindProfileRuntime({
+      profile: 'hosted',
+      deployment: composition('cloud'),
+      candidate: { adapter, transport, placement: hostedPlacement },
+      guards: {
+        authority: { assertCurrent: async () => undefined },
+        residency: {
+          assertCurrent: async () => {
+            throw new ProfileAdapterError('PROFILE_RESIDENCY_REJECTED')
+          },
+        },
+      },
+      topology: trustedTopology(adapter, transport),
+    }).catch((error) => error)
+    expect(residencyFailure.code).toBe('PROFILE_RESIDENCY_REJECTED')
+
+    const topologyFailure = await bindProfileRuntime({
+      profile: 'hosted',
+      deployment: composition('cloud'),
+      candidate: { adapter, transport, placement: hostedPlacement },
+      guards: allowedGuards(),
+      topology: trustedTopology(
+        hostedManagedPiFixture(new RecordingManagedPiClient()).adapter,
+        transport
+      ),
+    }).catch((error) => error)
+    expect(topologyFailure.code).toBe('PROFILE_RUNTIME_BINDING_MISMATCH')
   })
 
   test('requires the trusted topology to approve the exact adapter and transport instances', async () => {

@@ -66,6 +66,15 @@ export interface BoundProfileRuntime {
 }
 
 /**
+ * Adapter limitations that deny hosted-profile qualification. The Node Pi
+ * Durable adapter declares CLOUD_PROFILE_UNQUALIFIED; it is a denial, never
+ * an authorization hint. Capability metadata still grants nothing.
+ */
+const HOSTED_RUNTIME_QUALIFICATION_DENIALS: ReadonlySet<string> = new Set([
+  'CLOUD_PROFILE_UNQUALIFIED',
+])
+
+/**
  * Validates a single server-selected adapter/transport pair. It never searches
  * alternatives or treats inspection metadata as actor authorization.
  */
@@ -73,12 +82,6 @@ export async function bindProfileRuntime(
   input: BindProfileRuntimeInput
 ): Promise<BoundProfileRuntime> {
   const storage = bindProfileStorage(input.profile, input.deployment)
-  if (storage.profile === ExecutionProfiles.hosted) {
-    throw new ProfileAdapterError('PROFILE_RUNTIME_NOT_REGISTERED', {
-      profile: storage.profile,
-      deploymentProfile: storage.deploymentProfile,
-    })
-  }
   const candidate: ProfileRuntimeCandidate = Object.freeze({
     adapter: input.candidate.adapter,
     transport: input.candidate.transport,
@@ -485,6 +488,20 @@ async function inspectBoundRuntime(
       health: adapterInspection.health,
     })
   }
+  // The hosted profile requires a positively qualified managed-cloud adapter:
+  // an adapter that declares the cloud-profile-unqualified denial fails
+  // closed even when it is healthy and advertises capabilities.
+  if (profile === ExecutionProfiles.hosted) {
+    const denial = adapterInspection.limitations.find((limitation) =>
+      HOSTED_RUNTIME_QUALIFICATION_DENIALS.has(limitation)
+    )
+    if (denial !== undefined) {
+      throw new ProfileAdapterError('PROFILE_RUNTIME_NOT_QUALIFIED', {
+        profile,
+        limitation: denial,
+      })
+    }
+  }
 
   assertEligible(adapterInspection, requirements ?? [])
   const { capabilityEvaluation: _reportedEvaluation, ...inspectionWithoutEvaluation } =
@@ -552,7 +569,9 @@ function expectedTransportKind(
   if (profile === ExecutionProfiles.local) return 'direct-local'
   if (profile === ExecutionProfiles.selfHosted)
     return placement.coLocated ? 'direct-local' : 'remote-gateway'
-  throw new ProfileAdapterError('PROFILE_RUNTIME_NOT_REGISTERED', { profile })
+  // Hosted execution is managed-cloud by definition: the semantic adapter is
+  // reached over the authenticated remote gateway, never in-process.
+  return 'remote-gateway'
 }
 
 function validatePlacement(profile: ExecutionProfile, placement: TrustedProfilePlacement): void {
@@ -566,7 +585,9 @@ function validatePlacement(profile: ExecutionProfile, placement: TrustedProfileP
   if (
     (profile === ExecutionProfiles.local &&
       (placement.runtimeLocation !== 'local_device' || !placement.coLocated)) ||
-    (profile === ExecutionProfiles.selfHosted && placement.runtimeLocation !== 'remote_host')
+    (profile === ExecutionProfiles.selfHosted && placement.runtimeLocation !== 'remote_host') ||
+    (profile === ExecutionProfiles.hosted &&
+      (placement.runtimeLocation !== 'agent_hq_cloud' || placement.coLocated))
   ) {
     throw new ProfileAdapterError('PROFILE_PLACEMENT_MISMATCH', {
       profile,

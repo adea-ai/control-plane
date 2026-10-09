@@ -26,6 +26,11 @@
     "@control-plane/runtime-sdk": "workspace:*",
     "zod": "4.6.5"
   },
+  "devDependencies": {
+    "@control-plane/domain": "workspace:*",
+    "@control-plane/managed-pi-adapter": "workspace:*",
+    "@control-plane/pi-durable-adapter": "workspace:*"
+  },
   "engines": {
     "bun": ">=1.4.0 <2",
     "node": "24.21.0"

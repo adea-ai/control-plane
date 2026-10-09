@@ -50,7 +50,7 @@
     },
     "apps/control-api": {
       "name": "@control-plane/control-api",
-      "version": "1.23.0",
+      "version": "1.27.0",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -125,7 +125,7 @@
     },
     "apps/local-control-plane": {
       "name": "@control-plane/local-control-plane",
-      "version": "1.29.0",
+      "version": "1.30.0",
       "dependencies": {
         "@control-plane/acp-adapter": "workspace:*",
         "@control-plane/bootstrap": "workspace:*",
@@ -275,14 +275,14 @@
     },
     "packages/contracts": {
       "name": "@control-plane/contracts",
-      "version": "1.17.0",
+      "version": "1.19.0",
       "dependencies": {
         "zod": "4.6.5",
       },
     },
     "packages/control-sdk": {
       "name": "@control-plane/sdk",
-      "version": "1.14.0",
+      "version": "1.16.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:^",
         "@control-plane/runtime-sdk": "workspace:^",
@@ -341,7 +341,7 @@
     },
     "packages/domain": {
       "name": "@control-plane/domain",
-      "version": "1.28.0",
+      "version": "1.30.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.6.5",
@@ -440,7 +440,7 @@
     },
     "packages/orchestration": {
       "name": "@control-plane/orchestration",
-      "version": "1.6.0",
+      "version": "1.7.0",
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",
@@ -453,7 +453,7 @@
     },
     "packages/pi-cloudflare-host": {
       "name": "@control-plane/pi-cloudflare-host",
-      "version": "0.2.0",
+      "version": "0.6.0",
       "dependencies": {
         "@control-plane/runtime-sdk": "workspace:*",
         "@earendil-works/chord": "1.1.0",
@@ -466,7 +466,7 @@
     },
     "packages/pi-durable-adapter": {
       "name": "@control-plane/pi-durable-adapter",
-      "version": "0.1.0",
+      "version": "0.4.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/domain": "workspace:*",
@@ -496,7 +496,7 @@
     },
     "packages/production-readiness": {
       "name": "@control-plane/production-readiness",
-      "version": "1.4.2",
+      "version": "1.5.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.6.5",
@@ -510,6 +510,11 @@
         "@control-plane/orchestration": "workspace:*",
         "@control-plane/runtime-sdk": "workspace:*",
         "zod": "4.6.5",
+      },
+      "devDependencies": {
+        "@control-plane/domain": "workspace:*",
+        "@control-plane/managed-pi-adapter": "workspace:*",
+        "@control-plane/pi-durable-adapter": "workspace:*",
       },
     },
     "packages/profile-portability": {
@@ -555,7 +560,7 @@
     },
     "packages/runtime-gateway-protocol": {
       "name": "@control-plane/runtime-gateway-protocol",
-      "version": "1.6.2",
+      "version": "1.7.0",
       "dependencies": {
         "@control-plane/runtime-sdk": "workspace:*",
         "zod": "4.6.5",
@@ -563,7 +568,7 @@
     },
     "packages/runtime-sdk": {
       "name": "@control-plane/runtime-sdk",
-      "version": "1.13.1",
+      "version": "1.14.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.6.5",
@@ -586,7 +591,7 @@
     },
     "packages/sqlite-persistence": {
       "name": "@control-plane/sqlite-persistence",
-      "version": "1.34.0",
+      "version": "1.35.0",
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",
@@ -799,6 +804,8 @@
     "@control-plane/policy": ["@control-plane/policy@workspace:packages/policy"],
 
     "@control-plane/production-readiness": ["@control-plane/production-readiness@workspace:packages/production-readiness"],
+
+    "@control-plane/profile-adapters": ["@control-plane/profile-adapters@workspace:packages/profile-adapters"],
 
     "@control-plane/profile-portability": ["@control-plane/profile-portability@workspace:packages/profile-portability"],
 

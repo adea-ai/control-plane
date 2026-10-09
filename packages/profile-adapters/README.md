@@ -26,11 +26,13 @@ than guessed. `DeploymentComposition` proves only that the already configured
 storage and workflow ports match that canonical deployment profile.
 
 The source-level matrix is not a live certification. Runtime support is
-conditional for Local and Self-hosted and unavailable for Hosted in this
-package. The internal Cloudflare adapter currently reports degraded health,
-no capabilities, and no registered deployment profile. The Node Pi adapter's
-`CLOUD_PROFILE_UNQUALIFIED` limitation is specific to that adapter. Neither
-fact is presented as evidence about every possible hosted topology. There is
+conditional for Local, Self-hosted, and Hosted: Hosted binds only a healthy
+managed-cloud adapter over the authenticated remote-gateway transport,
+together with the trusted topology, current authority, and residency guards.
+The Node Pi Durable adapter's `CLOUD_PROFILE_UNQUALIFIED` denial and its
+direct-local identity fail closed, and the unregistered Cloudflare host
+advertises no capabilities, so neither can be presented as a hosted runtime.
+No fact here is evidence about every possible hosted topology, and there is
 no implicit fallback from Hosted to a local or self-hosted runtime.
 
 ## Runtime binding and authority
@@ -80,6 +82,9 @@ The mapping follows the current sources in `packages/deployment`,
 `apps/hosted-control-plane`, `apps/workflow-worker`, and
 `packages/workflow-runtime`. Runtime behavior follows `packages/runtime-sdk`
 and the internal adapters in `packages/pi-cloudflare-host` and
-`packages/pi-durable-adapter`. This documents those source boundaries; it does
-not claim that the separate profile-specific adapter map requested by issue
-#941 has been accepted or that Hosted runtime is qualified.
+`packages/pi-durable-adapter`; the hosted composition mirrors the canonical
+`ManagedPiAdapter` over `RemoteRuntimeGatewayTransport` path exercised by
+`apps/runtime-worker/src/hosted-managed-pi.test.mjs`. This documents those
+source boundaries and the tested qualification gate; it does not claim a live
+production certification or that the separate profile-specific adapter map
+requested by issue #941 has been accepted.
