@@ -3,6 +3,7 @@ import { PublicContractManifest } from '@control-plane/contracts'
 import {
   PiDurableLeadDispatchRequestSchema,
   PiDurableLeadLookupResponseSchema,
+  PiDurableLeadObservedTargetSchema,
   PiDurableLeadPrepareRequestSchema,
   PiDurableLeadReceiptResponseSchema,
   PiDurableLeadRequestedTargetSchema,
@@ -75,6 +76,16 @@ test('935: prepare and dispatch accept an optional target', () => {
     payload: { intentId, requestedTarget },
   })
   expect(dispatch.payload).toMatchObject({ intentId, requestedTarget })
+})
+
+test('935: observedTarget carries only server-owned session and task', () => {
+  expect(
+    PiDurableLeadObservedTargetSchema.parse({ sessionId: id('ses'), taskId: id('tsk') })
+  ).toEqual({ sessionId: id('ses'), taskId: id('tsk') })
+  // No generation field exists: nothing here may launder a caller-claimed
+  // generation as observed. Nominal task/session shapes stay open.
+  for (const bad of [{}, { sessionId: id('ses') }, { taskId: id('tsk') }, null])
+    expect(() => PiDurableLeadObservedTargetSchema.parse(bad)).toThrow()
 })
 
 test('935: receipts echo the retained target when present', () => {

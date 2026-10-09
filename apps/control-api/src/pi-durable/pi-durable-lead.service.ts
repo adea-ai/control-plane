@@ -319,6 +319,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
               ...(receipt.requestedTarget !== undefined
                 ? { requestedTarget: receipt.requestedTarget }
                 : {}),
+              ...observedTarget(receipt, admission),
             }
           : null,
       })
@@ -451,7 +452,12 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     verifyRuntimeHandle(receipt, status.handle)
     await this.options.authority.assertCurrent(admission, principal, 'dispatch')
     return PiDurableLeadDispatchResponseSchema.parse(
-      success(request, { ...publicReceipt(receipt), state: status.state, replayed })
+      success(request, {
+        ...publicReceipt(receipt),
+        ...observedTarget(receipt, admission),
+        state: status.state,
+        replayed,
+      })
     )
   }
 
@@ -471,7 +477,12 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     verifyRuntimeHandle(receipt, status.handle)
     await this.options.authority.assertCurrent(admission, principal, 'status')
     return PiDurableLeadStatusResponseSchema.parse(
-      success(request, { ...publicReceipt(receipt), state: status.state, status })
+      success(request, {
+        ...publicReceipt(receipt),
+        ...observedTarget(receipt, admission),
+        state: status.state,
+        status,
+      })
     )
   }
 
@@ -512,7 +523,12 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     }
     await this.options.authority.assertCurrent(admission, principal, 'progress')
     return PiDurableLeadProgressResponseSchema.parse(
-      success(request, { ...publicReceipt(receipt), events, nextSequence })
+      success(request, {
+        ...publicReceipt(receipt),
+        ...observedTarget(receipt, admission),
+        events,
+        nextSequence,
+      })
     )
   }
 
@@ -542,7 +558,12 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     // child work survives a normal parent stop by construction.
     await this.options.authority.assertCurrent(admission, principal, 'cancel')
     return PiDurableLeadCancelResponseSchema.parse(
-      success(request, { ...publicReceipt(receipt), state: status.state, status })
+      success(request, {
+        ...publicReceipt(receipt),
+        ...observedTarget(receipt, admission),
+        state: status.state,
+        status,
+      })
     )
   }
 
@@ -693,6 +714,26 @@ function publicReceipt(receipt: PiDurableLeadReceipt) {
     runtimeSessionId: requireHandle(receipt).externalSessionId,
     ...(receipt.requestedTarget !== undefined ? { requestedTarget: receipt.requestedTarget } : {}),
   }
+}
+/** Server-owned execution observation for one verified receipt: the
+ *  adapter-observed execution session plus the authority-resolved plan
+ *  task. Both facts come from server-held records already pinned by the
+ *  surrounding verifyReceipt/verifyRuntimeHandle checks — never from
+ *  caller claims. Absent unless a handle with an observed session exists;
+ *  generation is deliberately not emitted (no current read reports it). */
+function observedTarget(
+  receipt: PiDurableLeadReceipt,
+  admission: PiDurableLeadAdmission
+): { observedTarget: { sessionId: string; taskId: string } } | Record<string, never> {
+  const sessionId = receipt.handle?.externalSessionId
+  // The admission type leaves the plan loosely typed; read the correlation
+  // defensively — anything but a string taskId means no observation.
+  const plan = admission.startRequest.executionPlan as
+    | { correlation?: { taskId?: unknown } }
+    | undefined
+  const taskId = plan?.correlation?.taskId
+  if (typeof sessionId !== 'string' || typeof taskId !== 'string') return {}
+  return { observedTarget: { sessionId, taskId } }
 }
 function success(request: z.output<typeof command> | z.output<typeof read>, data: unknown) {
   return {

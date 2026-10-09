@@ -42,6 +42,19 @@ export const PiDurableLeadRequestedTargetSchema = z
   })
   .readonly()
 export type PiDurableLeadRequestedTarget = z.output<typeof PiDurableLeadRequestedTargetSchema>
+/** Server-owned execution observation: the session the runtime assigned
+ *  this execution plus the authority-resolved plan task. Both facts come
+ *  from server-held records (adapter handle + admitted plan), never from
+ *  caller claims. Generation is deliberately absent: no current read
+ *  reports the target's live generation, and emitting a caller value here
+ *  would launder it as observed. */
+export const PiDurableLeadObservedTargetSchema = z
+  .strictObject({
+    sessionId: z.string().trim().min(1).max(256),
+    taskId: z.string().trim().min(1).max(256),
+  })
+  .readonly()
+export type PiDurableLeadObservedTarget = z.output<typeof PiDurableLeadObservedTargetSchema>
 
 export const PiDurableLeadPrepareRequestSchema = PiDurableLeadCommandEnvelopeSchema.extend({
   operation: z.literal('pi-durable.lead.prepare'),
@@ -88,6 +101,7 @@ export const PiDurableLeadReceiptResponseSchema = z
     attemptId: IdentifierSchemas.attemptId,
     runtimeSessionId: RuntimeExecutionHandleSchema.shape.externalSessionId.unwrap(),
     requestedTarget: PiDurableLeadRequestedTargetSchema.optional(),
+    observedTarget: PiDurableLeadObservedTargetSchema.optional(),
   })
   .strict()
 const response = SuccessResponseEnvelopeSchema.extend({ correlation: Correlation }).strict()
@@ -142,6 +156,7 @@ export const PiDurableLeadLookupResponseSchema = response.extend({
             .unwrap()
             .optional(),
           requestedTarget: PiDurableLeadRequestedTargetSchema.optional(),
+          observedTarget: PiDurableLeadObservedTargetSchema.optional(),
         })
         .strict()
         .nullable(),

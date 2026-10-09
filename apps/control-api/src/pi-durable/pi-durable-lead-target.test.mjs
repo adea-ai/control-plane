@@ -277,6 +277,27 @@ test('935: forged requestedTarget with a valid intent is never an observation', 
   expect(status.data.runtimeSessionId).toBe(id('ses'))
 })
 
+test('935: observedTarget binds server-owned session and plan task', async () => {
+  // The observed target comes ONLY from server-held records: the
+  // adapter-observed execution session plus the authority-resolved plan
+  // task. The claimed task is deliberately different — the observed
+  // triple must follow the records, never the claim.
+  const { service, envelope, principal } = harness()
+  const claimed = {
+    sessionId: 'ses_02JABCDEF0123456789ABCDEH',
+    taskId: '11111111-2222-4333-8444-555555555555',
+    generation: 7,
+  }
+  const dispatched = await service.dispatch(
+    envelope('pi-durable.lead.dispatch', { intentId, requestedTarget: claimed }),
+    principal
+  )
+  expect(dispatched.data.requestedTarget).toEqual(claimed)
+  expect(dispatched.data.observedTarget).toBeDefined()
+  expect(dispatched.data.observedTarget.taskId).not.toBe(claimed.taskId)
+  expect(dispatched.data.observedTarget.sessionId).toBe(dispatched.data.runtimeSessionId)
+})
+
 test('935: ordinary lead-stop performs zero child-cancel calls', async () => {
   // CP935 first clause: ordinary lead-stop stops the lead execution only.
   // The spying delegation service is deliberately configured: the proof
