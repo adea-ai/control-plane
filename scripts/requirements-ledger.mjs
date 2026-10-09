@@ -358,7 +358,8 @@ export async function listGitHubIssues(options = {}) {
   const fetchImplementation = options.fetch ?? globalThis.fetch
   const repository = options.repository ?? 'adea-ai/control-plane'
   const token = options.token ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
-  const useAuthenticatedGhCli = options.fetch === undefined && !token
+  const isCi = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true'
+  const useAuthenticatedGhCli = options.fetch === undefined && !token && !isCi
   const spawn = options.spawnSync ?? spawnSync
   const issues = []
   const maxPages = options.maxPages ?? 1000

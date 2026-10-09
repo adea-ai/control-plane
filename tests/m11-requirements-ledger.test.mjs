@@ -520,7 +520,11 @@ describe('M11.1 requirements ledger', () => {
   test('uses the authenticated GitHub CLI when no token or fetch seam is available', async () => {
     const calls = []
     const priorHost = process.env.GH_HOST
+    const priorCi = process.env.CI
+    const priorGitHubActions = process.env.GITHUB_ACTIONS
     process.env.GH_HOST = 'github.enterprise.example'
+    delete process.env.CI
+    delete process.env.GITHUB_ACTIONS
     const firstPage = Array.from({ length: 100 }, (_, index) => ({
       number: index + 1,
       title: `Issue ${index + 1}`,
@@ -558,6 +562,10 @@ describe('M11.1 requirements ledger', () => {
     } finally {
       if (priorHost === undefined) delete process.env.GH_HOST
       else process.env.GH_HOST = priorHost
+      if (priorCi === undefined) delete process.env.CI
+      else process.env.CI = priorCi
+      if (priorGitHubActions === undefined) delete process.env.GITHUB_ACTIONS
+      else process.env.GITHUB_ACTIONS = priorGitHubActions
     }
 
     function firstPageOrSecond(first) {
@@ -588,6 +596,117 @@ describe('M11.1 requirements ledger', () => {
       ],
       options: { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 30_000 },
     })
+  })
+
+  test('uses public REST fetch in tokenless CI without an injected fetch seam', async () => {
+    const priorToken = process.env.GH_TOKEN
+    const priorLegacyToken = process.env.GITHUB_TOKEN
+    const priorCi = process.env.CI
+    const priorGitHubActions = process.env.GITHUB_ACTIONS
+    const priorFetch = globalThis.fetch
+    const requests = []
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      number: index + 1,
+      title: `Issue ${index + 1}`,
+      state: 'open',
+      html_url: `https://github.com/owner/repository/issues/${index + 1}`,
+    }))
+    const secondPage = [
+      {
+        number: 101,
+        title: 'Public CI issue',
+        state: 'open',
+        html_url: 'https://github.com/owner/repository/issues/101',
+      },
+    ]
+    delete process.env.GH_TOKEN
+    delete process.env.GITHUB_TOKEN
+    process.env.CI = 'true'
+    process.env.GITHUB_ACTIONS = 'true'
+    globalThis.fetch = async (url, init) => {
+      const first = requests.length === 0
+      requests.push({ url, init })
+      return {
+        ok: true,
+        headers: new Headers(
+          first
+            ? {
+                Link: '<https://api.github.com/repos/owner/repository/issues?state=all&per_page=100&page=2&after=opaque%3D>; rel="next"',
+              }
+            : {}
+        ),
+        json: async () => (first ? firstPage : secondPage),
+      }
+    }
+
+    let issues
+    try {
+      issues = await listGitHubIssues({
+        repository: 'owner/repository',
+        token: '',
+        spawnSync: () => {
+          throw new Error('GitHub CLI must not be used in tokenless CI')
+        },
+      })
+    } finally {
+      if (priorToken === undefined) delete process.env.GH_TOKEN
+      else process.env.GH_TOKEN = priorToken
+      if (priorLegacyToken === undefined) delete process.env.GITHUB_TOKEN
+      else process.env.GITHUB_TOKEN = priorLegacyToken
+      if (priorCi === undefined) delete process.env.CI
+      else process.env.CI = priorCi
+      if (priorGitHubActions === undefined) delete process.env.GITHUB_ACTIONS
+      else process.env.GITHUB_ACTIONS = priorGitHubActions
+      globalThis.fetch = priorFetch
+    }
+
+    expect(issues).toHaveLength(101)
+    expect(issues.at(-1)).toMatchObject({ number: 101, state: 'OPEN' })
+    expect(requests.map(({ url }) => url)).toEqual([
+      'https://api.github.com/repos/owner/repository/issues?state=all&per_page=100&page=1',
+      'https://api.github.com/repos/owner/repository/issues?state=all&per_page=100&page=2&after=opaque%3D',
+    ])
+    expect(requests.map(({ init }) => init.headers.authorization)).toEqual([undefined, undefined])
+  })
+
+  test('uses the explicit token ahead of environment tokens in CI', async () => {
+    const priorToken = process.env.GH_TOKEN
+    const priorLegacyToken = process.env.GITHUB_TOKEN
+    const priorCi = process.env.CI
+    const priorGitHubActions = process.env.GITHUB_ACTIONS
+    const priorFetch = globalThis.fetch
+    const requests = []
+    process.env.GH_TOKEN = 'environment-gh-token'
+    process.env.GITHUB_TOKEN = 'environment-github-token'
+    process.env.CI = 'true'
+    process.env.GITHUB_ACTIONS = 'true'
+    globalThis.fetch = async (url, init) => {
+      requests.push({ url, init })
+      return { ok: true, headers: new Headers(), json: async () => [] }
+    }
+
+    try {
+      await listGitHubIssues({
+        repository: 'owner/repository',
+        token: 'explicit-test-token',
+        spawnSync: () => {
+          throw new Error('GitHub CLI must not be used when a token is available')
+        },
+      })
+    } finally {
+      if (priorToken === undefined) delete process.env.GH_TOKEN
+      else process.env.GH_TOKEN = priorToken
+      if (priorLegacyToken === undefined) delete process.env.GITHUB_TOKEN
+      else process.env.GITHUB_TOKEN = priorLegacyToken
+      if (priorCi === undefined) delete process.env.CI
+      else process.env.CI = priorCi
+      if (priorGitHubActions === undefined) delete process.env.GITHUB_ACTIONS
+      else process.env.GITHUB_ACTIONS = priorGitHubActions
+      globalThis.fetch = priorFetch
+    }
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0].init.headers.authorization).toBe('Bearer explicit-test-token')
   })
 
   test('keeps environment-token requests on the injected fetch path', async () => {
