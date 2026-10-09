@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/telemetry",
-  "version": "1.5.6",
+  "version": "1.6.0",
   "description": "Fail-open observability toolkit: structured logging, secret redaction, trace-context propagation, deterministic sampling, and pluggable OpenTelemetry, Sentry, and LangSmith adapters.",
   "keywords": [
     "langsmith",
