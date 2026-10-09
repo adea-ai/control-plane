@@ -517,19 +517,17 @@ export async function createGovernedChildCompositionFixture(
     },
   }
   try {
-    childRuntime = await childRuntimeFactory(
-      {
-        ...shared,
-        directory: join(directory, 'child-runtime'),
-        resolveAdmission: async (request) => {
-          assert.equal(request.executionId, ids.childExecutionId)
-          assert.equal(request.attemptId, ids.childAttemptId)
-          assert.ok(childAdmission, 'separate canonical child admission required')
-          return childAdmission
-        },
+    const childOptions = {
+      ...shared,
+      directory: join(directory, 'child-runtime'),
+      resolveAdmission: async (request) => {
+        assert.equal(request.executionId, ids.childExecutionId)
+        assert.equal(request.attemptId, ids.childAttemptId)
+        assert.ok(childAdmission, 'separate canonical child admission required')
+        return childAdmission
       },
-      { canonicalProvider: provider }
-    )
+    }
+    childRuntime = await childRuntimeFactory(childOptions, { canonicalProvider: provider })
     host = await createGovernedChildHostFixture({
       storage,
       workspace,
@@ -739,6 +737,11 @@ export async function createGovernedChildCompositionFixture(
       },
       childRuntime,
       scanner,
+      async reopenChild() {
+        await childRuntime.close()
+        childRuntime = await childRuntimeFactory(childOptions, { canonicalProvider: provider })
+        return childRuntime
+      },
       async reopenLead() {
         await leadRuntime.close()
         leadRuntime = await createNodePiDurableRuntime(leadOptions)
