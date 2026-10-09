@@ -735,7 +735,9 @@ export async function createGovernedChildCompositionFixture(
       get leadRuntime() {
         return leadRuntime
       },
-      childRuntime,
+      get childRuntime() {
+        return childRuntime
+      },
       scanner,
       async reopenChild() {
         await childRuntime.close()
