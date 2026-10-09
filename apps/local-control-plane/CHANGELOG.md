@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.29.0...local-control-plane-v1.30.0) (2026-10-09)
+
+
+### Features
+
+* **local:** read-only stuck-job inspection operator command and telemetry view ([#974](https://github.com/adea-ai/control-plane/issues/974)) ([337f2d6](https://github.com/adea-ai/control-plane/commit/337f2d632e7f450be560d30809a3d1773dfeaa25))
+
 ## [1.29.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.28.0...local-control-plane-v1.29.0) (2026-10-08)
 
 
