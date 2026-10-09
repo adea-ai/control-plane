@@ -109,7 +109,9 @@ test('management call options fail closed before directory or SQLite creation', 
         directory: malformed,
         fundingDirectory: parent,
         managementAuthority: { service: { execute: fn }, interactions: { get: fn } },
-        managementCall: { issue: fn, resolveTargetId: () => TARGET },
+        // All caller ingredients present but the host exact-call prepare
+        // compiler missing: the compiler cannot be assembled without it.
+        managementCall: { issue: fn, callAdea: fn, resolveTargetId: () => TARGET },
       })
     ).rejects.toThrow('PI_PRODUCTION_BINDING_REQUIRED')
     expect(existsSync(malformed)).toBe(false)

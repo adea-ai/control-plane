@@ -9,7 +9,10 @@ import {
   createProductionChildDelegation,
   type ProductionChildDelegationOptions,
 } from './production-child-delegation.js'
-import type { DurableExecutionAuthority } from '@control-plane/pi-durable-adapter'
+import type {
+  DurableExecutionAuthority,
+  PiDurableGovernedManagementCallCompiler,
+} from '@control-plane/pi-durable-adapter'
 import { RecordedModelFundingDecisionSchema } from '@control-plane/model-gateway'
 import { createPiExecutionBoundModelComposition } from '@control-plane/pi-durable-adapter'
 import { createCurrentModelConnectionComposition } from './current-model-composition.js'
@@ -82,7 +85,15 @@ export interface ProductionPiLeadCompositionOptions {
   readonly managementCall?: Pick<
     PiDurableManagementCallerOptions,
     'issue' | 'callAdea' | 'resolveTargetId' | 'requiresApproval'
-  >
+  > & {
+    /**
+     * Exact-call prepare from the host tool registry — the launcher's
+     * `hostPrepareManagementRequest` (CP PR1043 comment 6076653246). The
+     * host owns registry truth (tool ids, grant, policy snapshot, requested
+     * time); this composition only assembles the compiler around it.
+     */
+    readonly prepare: PiDurableGovernedManagementCallCompiler['prepare']
+  }
   readonly children?: {
     readonly authority: Omit<Parameters<typeof createProductionChildModelAuthority>[0], 'product'>
     readonly forgetCanonicalModels: (authority: DurableExecutionAuthority) => void
@@ -198,6 +209,7 @@ export async function createProductionPiLeadComposition(
       typeof options.managementCall.issue !== 'function' ||
       typeof options.managementCall.callAdea !== 'function' ||
       typeof options.managementCall.resolveTargetId !== 'function' ||
+      typeof options.managementCall.prepare !== 'function' ||
       (options.managementCall.requiresApproval !== undefined &&
         typeof options.managementCall.requiresApproval !== 'function')
     )
@@ -318,13 +330,23 @@ export async function createProductionPiLeadComposition(
     // runtime journal database. Issuer, Adea transport and target mapping are
     // host-built ingredients (DeepSeek1215 factories); this composition only
     // supplies the durable store and the management current-tool authority.
-    const builtManagementCall =
+    const managementCaller =
       options.managementCall && piDurableCurrentToolAuthority && managementJournalDatabase
         ? createProductionGovernedManagementCall({
             authority: { assertCurrent: piDurableCurrentToolAuthority.assertCurrent },
             database: managementJournalDatabase,
             call: options.managementCall,
           })
+        : undefined
+    // Compiler shape per the reviewed relay: host prepare (exact-call,
+    // deterministic idempotency derived from the retained native source by
+    // the launcher) plus the retained caller's execute.
+    const builtManagementCall: PiDurableGovernedManagementCallCompiler | undefined =
+      managementCaller && options.managementCall
+        ? {
+            prepare: options.managementCall.prepare,
+            execute: async (request) => managementCaller.execute(request),
+          }
         : undefined
     const managementPort = options.governedManagementCall ?? builtManagementCall
     let retention: ReturnType<typeof createProductionFacadeRetention> | undefined

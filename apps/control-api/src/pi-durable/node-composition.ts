@@ -22,36 +22,6 @@ import { SqlitePiLeadRunningLifecycle } from './lead-running-lifecycle.js'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import type { DelegationService } from '@control-plane/orchestration'
 
-/**
- * Interface receipt (Root relay): DeepSeek1215 module commit fc42c7dd,
- * CP PR1043 comment 6076412118. The canonical
- * `PiDurableGovernedManagementCallEnginePort` lands in
- * @control-plane/pi-durable-adapter (DeepSeek-owned adapter hook, reported
- * upcoming and not yet qualified); this structural mirror keeps the narrow
- * composition pass-through type-checked in the meantime without importing
- * the not-yet-present module. The caller retains the FULL immutable request
- * (`management-governed-call.ts`, fc42c7dd) — this composition only forwards
- * the port and performs no validation itself.
- */
-export interface PiDurableGovernedManagementCallPort {
-  /**
-   * Always present: one execute per retained identity (the caller built by
-   * createProductionGovernedManagementCall supplies exactly this today).
-   */
-  execute(request: Readonly<Record<string, unknown>>): Promise<unknown>
-  /**
-   * Required by the canonical engine port when DeepSeek1215's adapter hook
-   * publishes it; optional while a composition threads the caller itself.
-   * Repeatable boundary check; never consumes approval or mints a decision.
-   */
-  assertCurrent?(
-    request: Readonly<Record<string, unknown>>,
-    boundary?: 'admission' | 'approval' | 'effect'
-  ): Promise<void>
-  prepare?(authority: unknown, verified: unknown): Promise<unknown>
-  readonly source?: string
-}
-
 export interface NodePiDurableLeadCompositionOptions {
   readonly onAdapterReady?: NodePiDurableCompositionOptions['onAdapterReady']
   readonly directory: string
@@ -65,8 +35,13 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly onParentInboxWake?: NodePiDurableCompositionOptions['onParentInboxWake']
   readonly tools?: NodePiDurableCompositionOptions['tools']
   readonly governedDelegateChild?: NodePiDurableCompositionOptions['governedDelegateChild']
-  /** Durable governed management caller; retains the full immutable request. */
-  readonly governedManagementCall?: PiDurableGovernedManagementCallPort
+  /**
+   * Canonical governed management compiler (PiDurableGovernedManagementCallCompiler,
+   * CP PR1043 comment 6076653246): the host supplies the exact-call prepare
+   * and the caller execute; the retained caller keeps the full immutable
+   * request.
+   */
+  readonly governedManagementCall?: NodePiDurableCompositionOptions['governedManagementCall']
   /** The same canonical service used by child admission/progress. */
   readonly delegationService?: Pick<DelegationService, 'cancelChildren'>
   /** A child must independently reload its canonical lineage, selection and authority. */
@@ -116,9 +91,7 @@ export async function createNodePiDurableLeadComposition(
       executions: options.admission.executions,
       assertAuthority: (authority) => admission.canonicalAuthority.assertAuthority(authority),
     })
-    const runtimeOptions: NodePiDurableCompositionOptions & {
-      readonly governedManagementCall?: PiDurableGovernedManagementCallPort
-    } = {
+    const runtimeOptions: NodePiDurableCompositionOptions = {
       ...(options.onAdapterReady ? { onAdapterReady: options.onAdapterReady } : {}),
       directory: options.directory,
       ...(options.admission.now ? { now: options.admission.now } : {}),
