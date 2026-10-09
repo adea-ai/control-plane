@@ -210,8 +210,15 @@ export async function scanTable(transaction, spec, onRow) {
   // Every keyset column must be selected: the cursor is the last row's key.
   const columns = [...new Set([...spec.columns, ...spec.keyColumns])].join(', ')
   const order = spec.keyColumns.join(', ')
-  const firstText = `select ${columns} from ${spec.table} order by ${order} limit $${spec.keyColumns.length + 1}`
-  const pageText = `select ${columns} from ${spec.table} where (${order}) > ($1) order by ${order} limit $${spec.keyColumns.length + 1}`
+  // Row-value comparisons leave parameters untyped on the wire; explicit
+  // casts (the physical column types from packages/database/src/schema) keep
+  // the keyset predicates plan-safe.
+  const keyTypes = spec.keyTypes ?? spec.keyColumns.map(() => 'text')
+  const cursor = spec.keyColumns
+    .map((column, index) => `$${index + 1}::${keyTypes[index]}`)
+    .join(', ')
+  const firstText = `select ${columns} from ${spec.table} order by ${order} limit $1`
+  const pageText = `select ${columns} from ${spec.table} where (${order}) > (${cursor}) order by ${order} limit $${spec.keyColumns.length + 1}`
   let afterKey = null
   let scanned = 0
   let pages = 0
@@ -397,6 +404,7 @@ async function collectDefinitions(transaction, context) {
         table: OBSERVED_TABLES.definitions,
         columns: ['workspace_id', 'graph_definition_id', 'graph_version', 'revision', 'definition'],
         keyColumns: ['workspace_id', 'graph_definition_id', 'graph_version'],
+        keyTypes: ['text', 'text', 'text'],
         pageSize: limits.pageSize,
       },
       (row) => {
@@ -584,6 +592,7 @@ async function collectCatalogCallers(transaction, context) {
         table: OBSERVED_TABLES.catalogCommands,
         columns: ['workspace_id', 'caller_id', 'operation', 'created_at', 'receipt'],
         keyColumns: ['workspace_id', 'caller_id', 'operation', 'idempotency_key'],
+        keyTypes: ['text', 'text', 'text', 'text'],
         pageSize: limits.pageSize,
       },
       (row) => {
@@ -686,6 +695,7 @@ async function collectPlanGraphReferences(transaction, context) {
         table: OBSERVED_TABLES.executionPlans,
         columns: ['execution_plan_id', 'plan'],
         keyColumns: ['execution_plan_id'],
+        keyTypes: ['text'],
         pageSize: context.pageSize,
       },
       (row) => {
@@ -775,6 +785,7 @@ async function collectExecutions(transaction, context) {
           'updated_at',
         ],
         keyColumns: ['execution_id'],
+        keyTypes: ['text'],
         pageSize: limits.pageSize,
       },
       (row) => {
@@ -992,6 +1003,7 @@ async function collectCheckpoints(transaction, context) {
         table: OBSERVED_TABLES.langgraphCheckpoints,
         columns: ['thread_id', 'checkpoint_ns', 'checkpoint_id'],
         keyColumns: ['thread_id', 'checkpoint_ns', 'checkpoint_id'],
+        keyTypes: ['text', 'text', 'text'],
         pageSize: limits.pageSize,
       },
       (row) => {
@@ -1011,6 +1023,7 @@ async function collectCheckpoints(transaction, context) {
         table: OBSERVED_TABLES.langgraphCheckpointWrites,
         columns: ['thread_id', 'checkpoint_ns', 'checkpoint_id', 'task_id', 'idx'],
         keyColumns: ['thread_id', 'checkpoint_ns', 'checkpoint_id', 'task_id', 'idx'],
+        keyTypes: ['text', 'text', 'text', 'text', 'integer'],
         pageSize: limits.pageSize,
       },
       (row) => {
@@ -1030,6 +1043,7 @@ async function collectCheckpoints(transaction, context) {
         table: OBSERVED_TABLES.langgraphCheckpointBlobs,
         columns: ['thread_id', 'checkpoint_ns', 'channel', 'version'],
         keyColumns: ['thread_id', 'checkpoint_ns', 'channel', 'version'],
+        keyTypes: ['text', 'text', 'text', 'text'],
         pageSize: limits.pageSize,
       },
       (row) => {
@@ -1198,6 +1212,7 @@ async function catalogCommandsByGraphIndex(transaction, context) {
         table: OBSERVED_TABLES.catalogCommands,
         columns: ['workspace_id', 'receipt'],
         keyColumns: ['workspace_id', 'caller_id', 'operation', 'idempotency_key'],
+        keyTypes: ['text', 'text', 'text', 'text'],
         pageSize: context.pageSize,
       },
       (row) => {
