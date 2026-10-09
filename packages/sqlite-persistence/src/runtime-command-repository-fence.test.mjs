@@ -173,24 +173,30 @@ describe('SqliteRuntimeCommandRepository', () => {
       await repository.create(queuedRecord(COMMAND_A))
       const pending = repository.compareAndSet(1, acknowledgedFrom(queuedRecord(COMMAND_A)), FENCE)
       await reached
-      // Narrow revocation/order proof: a concurrent writer through the SAME
-      // provider authority queues behind the parked fenced transaction and
-      // completes only after it commits.
-      let concurrentSettled = false
-      const concurrent = repository.create(queuedRecord(COMMAND_B)).then((result) => {
-        concurrentSettled = true
-        return result
+      // Deterministic order proof (no wall-clock sleeps): a competing update
+      // through the SAME provider authority records what it observes, and the
+      // provider's serialization means it can only run after the parked CAS
+      // commits — it cannot commit while the CAS transaction is held.
+      let competingObservation
+      const competing = provider.transaction(async (transaction) => {
+        competingObservation = await transaction.get('runtime-commands', recordIdFor(COMMAND_A))
+        await transaction.put({
+          namespace: 'competing-writer',
+          id: 'update-1',
+          value: { applied: true },
+        })
       })
-      const raced = await Promise.race([
-        concurrent.then(() => 'settled'),
-        new Promise((resolve) => setTimeout(() => resolve('parked'), 50)),
-      ])
-      expect(raced).toBe('parked')
-      expect(concurrentSettled).toBe(false)
       release()
       expect(await pending).toBe(true)
-      expect((await concurrent).outcome).toBe('created')
-      expect(await repository.get(COMMAND_B)).toBeDefined()
+      await competing
+      expect(RuntimeCommandRecordSchema.parse(competingObservation.value)).toMatchObject({
+        commandId: COMMAND_A,
+        status: 'acknowledged',
+        version: 2,
+      })
+      expect(
+        await provider.transaction((transaction) => transaction.get('competing-writer', 'update-1'))
+      ).toBeDefined()
       expect(await repository.get(COMMAND_A)).toMatchObject({ status: 'acknowledged', version: 2 })
       expect(scopes).toEqual([{ fence: FENCE, scope: { nodeId: NODE, workspaceId: WORKSPACE } }])
       expect(RuntimeCommandRecordSchema.parse(observedInTransaction.value)).toMatchObject({
@@ -270,6 +276,38 @@ describe('SqliteRuntimeCommandRepository', () => {
       // Interface parity with the domain seam: the in-memory reference accepts the same fence arg.
       const memory = new InMemoryRuntimeCommandRepository()
       expect(typeof memory.compareAndSet).toBe('function')
+    })
+  })
+
+  test('a revocation applied before a later fenced write makes that write reject in order', async () => {
+    await withRepository(async (provider) => {
+      const repository = new SqliteRuntimeCommandRepository(
+        provider,
+        async (transaction, fence) => {
+          // Canonical in-transaction authority read: revocation state is
+          // checked on the same transaction as the fenced write.
+          const revoked = await transaction.get(
+            'credential-revocations',
+            recordIdFor(fence.credentialId)
+          )
+          if (revoked !== undefined) throw new Error('CREDENTIAL_REVOKED')
+        }
+      )
+      await repository.create(queuedRecord(COMMAND_A))
+      // Competing revocation through the same provider authority commits first.
+      await provider.transaction(async (transaction) => {
+        await transaction.put({
+          namespace: 'credential-revocations',
+          id: recordIdFor(FENCE.credentialId),
+          value: { revokedAt: issuedAt },
+        })
+      })
+      // Revocation wins the order: the later fenced write rejects and the row
+      // is unchanged.
+      await expect(
+        repository.compareAndSet(1, acknowledgedFrom(queuedRecord(COMMAND_A)), FENCE)
+      ).rejects.toThrow('CREDENTIAL_REVOKED')
+      expect(await repository.get(COMMAND_A)).toMatchObject({ status: 'queued', version: 1 })
     })
   })
 })
