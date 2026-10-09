@@ -100,6 +100,29 @@ describe.skipIf(!enabled)('hosted PostgreSQL durable state qualification', () =>
         provider.transaction((transaction) => transaction.scan('n1', { limit: 0 }))
       ).rejects.toThrow('INVALID_RECORD')
 
+      // Input contract mirrors the SQLite provider (provider.ts validName/validIdentity).
+      await expect(
+        provider.transaction((transaction) => transaction.get('BadNamespace', 'r1'))
+      ).rejects.toThrow('INVALID_RECORD')
+      await expect(
+        provider.transaction((transaction) => transaction.list('Namespace-With-Capital'))
+      ).rejects.toThrow('INVALID_RECORD')
+      await expect(
+        provider.transaction((transaction) =>
+          transaction.put({ namespace: 'n1', id: '', value: {} })
+        )
+      ).rejects.toThrow('INVALID_RECORD')
+      await expect(
+        provider.transaction((transaction) =>
+          transaction.put({ namespace: 'n1', id: 'bad\u0001id', value: {} })
+        )
+      ).rejects.toThrow('INVALID_RECORD')
+      await expect(
+        provider.transaction((transaction) =>
+          transaction.scan('n1', { afterId: 'bad\u0001id', limit: 1 })
+        )
+      ).rejects.toThrow('INVALID_RECORD')
+
       // Concurrent writers on one key: exactly one create wins; the loser conflicts.
       const [first, second] = await Promise.all([
         captured(
