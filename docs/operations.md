@@ -696,6 +696,8 @@ Investigations begin with stable product/execution identifiers, not provider-spe
 
 Provider-specific Railway/Neon/R2/Restate identifiers may appear in operational diagnostics but do not replace stable Control Plane IDs and must not leak secrets or protected content.
 
+Child-progress lead deliveries, evidence packets and correlated child usage cost states are documented in [child-progress-evidence.md](child-progress-evidence.md), including the durable publication path, restart replay, and the current single-child runtime guard limits.
+
 ## Security incidents
 
 - Policy denial is authoritative and cannot be overridden by prompt/model/tool/provider content.

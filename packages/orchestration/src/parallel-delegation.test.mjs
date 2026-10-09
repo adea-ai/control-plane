@@ -129,12 +129,61 @@ describe('parallel delegation, inherited budgets, and state promotion', () => {
   })
 })
 
+test('retains each derived branch context before delegating it when the durable contexts port is provided', async () => {
+  let fixture
+  const retained = []
+  const coordinator = new ParallelDelegationCoordinator({
+    contexts: {
+      async put(contextPackage) {
+        // Capturing how many delegates already happened proves the ordering:
+        // the derived context is retained strictly before its child plan.
+        retained.push({
+          contextPackage,
+          delegatesBeforePut: fixture ? fixture.delegated.length : 0,
+        })
+      },
+    },
+    delegations: {
+      async delegate(input) {
+        fixture.delegated.push(input)
+        return { record: requestedRecord(input), execution: {}, plan: {} }
+      },
+      deriveChildPlan: () => ({}),
+      async dispatchChild(input) {
+        fixture.dispatched.push(input)
+        return { record: {}, attempt: {} }
+      },
+      async listChildren() {
+        return []
+      },
+    },
+    projectState: {
+      async createPromotionProposal(input) {
+        return { ...input, revision: 1, state: 'candidate' }
+      },
+    },
+  })
+  fixture = { delegated: [], dispatched: [], coordinator }
+
+  const branches = await coordinator.fanOut(fanOutInput())
+  expect(branches).toHaveLength(2)
+  // One retained context per branch, each retained BEFORE that branch's
+  // delegate call — durable plan repositories need the row to exist first.
+  expect(retained).toHaveLength(2)
+  expect(retained.map((entry) => entry.delegatesBeforePut)).toStrictEqual([0, 1])
+  expect(new Set(retained.map((entry) => entry.contextPackage.contentDigest)).size).toBe(2)
+  expect(retained.map((entry) => entry.contextPackage.contentDigest).toSorted()).toStrictEqual(
+    fixture.delegated.map((input) => input.childPlan.contextPackage.contentDigest).toSorted()
+  )
+})
+
 function setup(options = {}) {
   const delegated = []
   const dispatched = []
   const children = []
   const promotions = []
   const coordinator = new ParallelDelegationCoordinator({
+    ...(options.contexts ? { contexts: options.contexts } : {}),
     delegations: {
       async delegate(input) {
         delegated.push(input)
