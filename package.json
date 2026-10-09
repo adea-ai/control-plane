@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/workspace",
-  "version": "1.87.0",
+  "version": "1.89.0",
   "private": true,
   "workspaces": [
     "apps/*",
@@ -88,6 +88,7 @@
     "@control-plane/pi-durable-adapter": "workspace:*",
     "@control-plane/policy": "workspace:*",
     "@control-plane/production-readiness": "workspace:*",
+    "@control-plane/profile-adapters": "workspace:*",
     "@control-plane/profile-portability": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
     "@control-plane/sandbox": "workspace:*",

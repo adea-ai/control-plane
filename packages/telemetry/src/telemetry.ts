@@ -13,7 +13,11 @@ import type {
 
 const noopSpan: TelemetrySpan = { end: () => undefined }
 const noopTraceAdapter: TraceAdapter = { startSpan: () => noopSpan }
-const noopMetricAdapter: MetricAdapter = { add: () => undefined, record: () => undefined }
+const noopMetricAdapter: MetricAdapter = {
+  add: () => undefined,
+  record: () => undefined,
+  recordGauge: () => undefined,
+}
 const noopErrorTracker: ErrorTracker = { captureException: () => undefined }
 
 export interface TelemetryOptions {

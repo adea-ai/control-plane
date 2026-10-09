@@ -9,6 +9,18 @@ export {
 } from './context.js'
 export { createStructuredLogger, jsonLogger } from './logger.js'
 export type { StructuredLoggerOptions } from './logger.js'
+export {
+  createOperationsMetricEmitter,
+  isOperationsMetricCataloged,
+  operationsMetricNames,
+  operationsStorageNamespaces,
+} from './operations.js'
+export type {
+  OperationsMetricEmitter,
+  OperationsMetricName,
+  OperationsMetricPoint,
+  OperationsStorageNamespace,
+} from './operations.js'
 export { redactDiagnostics, redactTelemetryValue, sanitizeAttributes } from './redaction.js'
 export { createTelemetry, Telemetry } from './telemetry.js'
 export { createLangSmithTraceAdapter } from './langsmith.js'
