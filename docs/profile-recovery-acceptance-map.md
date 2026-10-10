@@ -131,20 +131,25 @@ Owners are existing issues. Where no open issue names a gap, the row says so.
 8. **Pi Durable startup recovery and orphan adoption are unproven at composition
    level.** Startup recovery runs when the host constructs the runtime:
    `createNodePiDurableRuntime` (`packages/pi-durable-adapter/src/composition.ts`)
-   calls `recover()` before it returns, and `createNodePiDurableLeadComposition`
-   (`apps/control-api/src/pi-durable/node-composition.ts`) adds the preparation
-   and child-progress startup scans. Production constructs it in
-   `apps/control-api/src/models/production-model-composition.ts` (around line 256).
-   Adapter-level SIGKILL restart is proven in
-   `packages/pi-durable-adapter/src/adapter-process.test.mjs`. No test kills the
-   lead composition and then starts a fresh one. Required fixture: a child-process
-   host that opens `createNodePiDurableLeadComposition` on a disposable directory
-   with a held scripted model turn (the in-process form is
+   calls `recover()` before it returns. `createNodePiDurableLeadComposition`
+   (`apps/control-api/src/pi-durable/node-composition.ts`) runs the preparation and
+   child-progress startup scans and the terminal settlement at construction, then
+   repeats them on a timer (`periodicRecoveryIntervalMs`, default 30 s). Production
+   constructs it in `apps/control-api/src/models/production-model-composition.ts`
+   (around line 256). Adapter-level SIGKILL restart is proven in
+   `packages/pi-durable-adapter/src/adapter-process.test.mjs`. The SIGKILL reclaim in
+   `apps/control-api/src/pi-durable/preparation-dispatch-recovery.test.mjs` drives
+   `SqlitePiLeadPreparations` alone, not the composition. Approval close/reopen
+   (`apps/control-api/src/pi-durable/current-tool-authority.approval-restart.test.mjs`)
+   is a unit-level reopen, not a process kill. No test kills the lead composition and
+   then starts a fresh one. Required fixture: a child-process host that opens
+   `createNodePiDurableLeadComposition` on a disposable directory with a held scripted
+   model turn (the in-process form is
    `apps/control-api/src/pi-durable/lead-fence-live-harness.mjs`), is SIGKILLed
-   mid-turn, and is reopened by a second process that asserts retained-run
-   recovery and fencing without a manual reap. Owner: #1025 crash/recovery clause.
-   Approvals across restart are #932 (open). Closed #930 checks "restart/hibernation
-   recovery" but does not cover composition-level adoption.
+   mid-turn, and is reopened by a second process that asserts retained-run recovery
+   and fencing without a manual reap. Owner: #1025 crash/recovery clause. Approvals
+   across restart are #932 (open). Closed #930 checks "restart/hibernation recovery"
+   but does not cover composition-level adoption.
 9. **Pi-owned `drain()`** is excluded from this map's scope. I found no open issue
    that names it; root to assign an owner.
 10. **PostgreSQL restore in GitHub CI** has not run. The disposable local run passes
