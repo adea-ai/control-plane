@@ -177,6 +177,9 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
           ? {
               modelConnectionService: production.modelConnectionService,
               piLeadPublicationService: production.publicationService,
+              ...(production.piDurableCurrentToolAuthority
+                ? { piDurableCurrentToolAuthority: production.piDurableCurrentToolAuthority }
+                : {}),
             }
           : {}),
         ...((production?.piDurableLeadService ?? options.piDurableLeadService) === undefined
