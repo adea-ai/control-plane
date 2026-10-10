@@ -34,6 +34,8 @@ export async function createNativeEngineToolFixture({
   argumentsInput = { objective: 'Inspect the child scope' },
   execute,
   enabled = true,
+  firstGenerationUsage = { promptTokens: 5, completionTokens: 3 },
+  failGeneration,
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'pi-native-tool-'))
   const requests = [],
@@ -45,6 +47,8 @@ export async function createNativeEngineToolFixture({
     port: 0,
     async fetch(request) {
       requests.push(await request.json())
+      if (requests.length === failGeneration)
+        return new Response('Scripted provider failure', { status: 503 })
       const tool = requests.length === 1
       const delta = tool
         ? {
@@ -73,7 +77,14 @@ export async function createNativeEngineToolFixture({
           created: 1,
           model: 'loopback-model',
           choices: [{ index: 0, delta: {}, finish_reason: tool ? 'tool_calls' : 'stop' }],
-          usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+          usage: tool
+            ? {
+                prompt_tokens: firstGenerationUsage.promptTokens,
+                completion_tokens: firstGenerationUsage.completionTokens,
+                total_tokens:
+                  firstGenerationUsage.promptTokens + firstGenerationUsage.completionTokens,
+              }
+            : { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
         },
       ]
       return new Response(

@@ -122,6 +122,17 @@ import {
   type ProjectStateInitializationService,
 } from './project-states/project-state-initialization.service.js'
 import { ContextPackageResolutionController } from './queries/context-package-resolution.controller.js'
+import { PiLeadPublicationController } from './pi-durable/publication-current.controller.js'
+import {
+  PI_LEAD_PUBLICATION_SERVICE,
+  PiLeadPublicationService,
+} from './pi-durable/publication-current.service.js'
+import {
+  PI_DURABLE_MANAGEMENT_CURRENT_AUTHORITY,
+  PiDurableManagementCurrentController,
+  UnavailablePiDurableCurrentToolAuthority,
+} from './pi-durable/management-current.controller.js'
+import type { PiDurableCurrentToolAuthority } from './pi-durable/current-tool-authority.js'
 import {
   CONTEXT_PACKAGE_RESOLUTION_SERVICE,
   UnavailableContextPackageResolutionService,
@@ -129,6 +140,8 @@ import {
 } from './queries/context-package-resolution.service.js'
 
 export interface AppModuleOptions extends ApiRuntimeBindings {
+  readonly piLeadPublicationService?: PiLeadPublicationService
+  readonly piDurableCurrentToolAuthority?: PiDurableCurrentToolAuthority
   readonly piDurableLeadService?: PiDurableLeadService
   readonly modelConnectionService?: ModelConnectionService
   readonly graphAdministrationService?: GraphAdministrationService
@@ -170,6 +183,8 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
     module: AppModule,
     controllers: [
       PiDurableLeadController,
+      PiLeadPublicationController,
+      PiDurableManagementCurrentController,
       ModelConnectionsController,
       AuthenticationController,
       GraphAdministrationController,
@@ -192,8 +207,17 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
     ],
     providers: [
       {
+        provide: PI_LEAD_PUBLICATION_SERVICE,
+        useValue: options.piLeadPublicationService ?? new PiLeadPublicationService(),
+      },
+      {
         provide: PI_DURABLE_LEAD_SERVICE,
         useValue: options.piDurableLeadService ?? new UnavailablePiDurableLeadService(),
+      },
+      {
+        provide: PI_DURABLE_MANAGEMENT_CURRENT_AUTHORITY,
+        useValue:
+          options.piDurableCurrentToolAuthority ?? new UnavailablePiDurableCurrentToolAuthority(),
       },
       {
         provide: MODEL_CONNECTION_SERVICE,

@@ -1,5 +1,93 @@
 # Changelog
 
+## [1.29.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.29.1...control-api-v1.29.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* **control-api:** settle completed lead attempt reservations exactly once ([#1068](https://github.com/adea-ai/control-plane/issues/1068)) ([2036405](https://github.com/adea-ai/control-plane/commit/2036405a90161ac23d49fb2bbced9bb640a27031))
+
+## [1.29.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.29.0...control-api-v1.29.1) (2026-10-10)
+
+
+### Tests
+
+* **control-api:** prove persisted approvals survive physical restart ([b1b1667](https://github.com/adea-ai/control-plane/commit/b1b16670a7e081127aec31d039293176f2567dff))
+* **control-api:** prove persisted approvals survive physical restart ([#932](https://github.com/adea-ai/control-plane/issues/932)) ([#1062](https://github.com/adea-ai/control-plane/issues/1062)) ([b1b1667](https://github.com/adea-ai/control-plane/commit/b1b16670a7e081127aec31d039293176f2567dff))
+* **pi-durable:** register secret canaries for journal and lead-preparation sinks ([#1059](https://github.com/adea-ai/control-plane/issues/1059)) ([b5bec50](https://github.com/adea-ai/control-plane/commit/b5bec5075ef0fa0e99f3e368961479883a5f5842))
+
+## [1.29.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.28.0...control-api-v1.29.0) (2026-10-10)
+
+
+### Features
+
+* issue-932-management-current-authority ([#1043](https://github.com/adea-ai/control-plane/issues/1043)) ([3118a7c](https://github.com/adea-ai/control-plane/commit/3118a7c9f5d177a3fdce2de8ced7fbf353d91e43))
+
+
+### Tests
+
+* **models:** qualify confirmed funding at inference boundaries ([#970](https://github.com/adea-ai/control-plane/issues/970)) ([5ee3dbf](https://github.com/adea-ai/control-plane/commit/5ee3dbf06f9a85bcb63ac29bdb13aecfeeac9a4a))
+
+## [1.28.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.27.1...control-api-v1.28.0) (2026-10-09)
+
+
+### Features
+
+* **pi:** 935 cancel-intent persistence, attempt fencing, and target-bound observation ([#1045](https://github.com/adea-ai/control-plane/issues/1045)) ([1208729](https://github.com/adea-ai/control-plane/commit/12087297deac41190f52f629d70e40bdb8d50d01))
+
+## [1.27.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.27.0...control-api-v1.27.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **pi:** fence cancellation by inference generation ([#1031](https://github.com/adea-ai/control-plane/issues/1031)) ([f735d7e](https://github.com/adea-ai/control-plane/commit/f735d7eae4f6b909c53a7bb4b6b4f8ef1769c9b7))
+
+## [1.27.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.26.0...control-api-v1.27.0) (2026-10-09)
+
+
+### Features
+
+* add explicit Pi role model selection and proof ([#1016](https://github.com/adea-ai/control-plane/issues/1016)) ([b61426b](https://github.com/adea-ai/control-plane/commit/b61426bce2d5b29964fe13806a149c330d3d085e))
+* **pi-durable:** add canonical current tool authority ([#932](https://github.com/adea-ai/control-plane/issues/932)) ([#1038](https://github.com/adea-ai/control-plane/issues/1038)) ([398a902](https://github.com/adea-ai/control-plane/commit/398a902071f94627a88f4f16384b909e7f1d224b))
+
+## [1.26.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.25.0...control-api-v1.26.0) (2026-10-09)
+
+
+### Features
+
+* compose production Pi lead model and publication authority ([#996](https://github.com/adea-ai/control-plane/issues/996)) ([1332100](https://github.com/adea-ai/control-plane/commit/13321009f6e9d7984a8774df8818e1b775c582ea))
+
+
+### Bug Fixes
+
+* **pi:** fence continuation retention on current child journal ([#1007](https://github.com/adea-ai/control-plane/issues/1007)) ([b237e7a](https://github.com/adea-ai/control-plane/commit/b237e7a034a0687bd5f1ed7489c7225085e8b17d))
+
+
+### Tests
+
+* specify unfinished Pi child process recovery proofs ([#979](https://github.com/adea-ai/control-plane/issues/979)) ([6b82ccd](https://github.com/adea-ai/control-plane/commit/6b82ccd677e69eca14d765ac77d9d273df228d42))
+
+## [1.25.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.24.1...control-api-v1.25.0) (2026-10-08)
+
+
+### Features
+
+* pi-child-continuation ([#981](https://github.com/adea-ai/control-plane/issues/981)) ([a9d8228](https://github.com/adea-ai/control-plane/commit/a9d8228d70ee6eb6234204c24c9b46dc2fc38d7a))
+
+## [1.24.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.24.0...control-api-v1.24.1) (2026-10-08)
+
+
+### Tests
+
+* compose stored model selections with prepared lead host ([#983](https://github.com/adea-ai/control-plane/issues/983)) ([357f41c](https://github.com/adea-ai/control-plane/commit/357f41c32331788cf5a3d6bf05ef4044e17fb383))
+
+## [1.24.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.23.0...control-api-v1.24.0) (2026-10-08)
+
+
+### Features
+
+* **pi-durable:** add persistent governed Node runtime and funded lead admission ([#949](https://github.com/adea-ai/control-plane/issues/949)) ([2ad205f](https://github.com/adea-ai/control-plane/commit/2ad205f783c09a0cc7e208d5c799d6c18636500a))
+
 ## [1.23.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.22.0...control-api-v1.23.0) (2026-10-08)
 
 

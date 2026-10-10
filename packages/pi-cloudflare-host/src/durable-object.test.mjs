@@ -1,3 +1,4 @@
+import { createRegistry } from '@earendil-works/pi-durable'
 import { expect, test } from 'bun:test'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { CloudflarePiDurableOwner } from './durable-object.ts'
@@ -11,6 +12,12 @@ function reopen(f) {
       pins,
       authority: f.authority,
       now: () => 42,
+      nativeTaskCatalog: {
+        schemaVersion: 1,
+        configurationDigest: pins.configurationDigest,
+        registry: createRegistry().snapshot(),
+        migrations: [],
+      },
       openEngine: f.openEngine,
     }
   )
@@ -69,5 +76,107 @@ test('a revoked first task cannot starve valid later work in an alarm batch', as
     expect(f.db.query('SELECT due_at FROM cp_pi_wake').get().due_at).toBe(30042)
   } finally {
     f.db.close()
+  }
+})
+
+test('public facade composes actual durable owner alarm/storage lifecycle with retained handles', async () => {
+  const f = fixture()
+  try {
+    const owner = reopen(f),
+      runtime = owner.runtimeAdapter()
+    const handle = await runtime.start(request)
+    expect((await runtime.status(handle)).state).toBe('starting')
+    expect(f.counts().opens).toBe(0)
+    await owner.alarm()
+    expect((await runtime.status(handle)).state).toBe('completed')
+    const values = []
+    for await (const event of runtime.progress(handle)) values.push(event)
+    expect(values.map((event) => event.data.state)).toEqual(['starting', 'running', 'completed'])
+    expect(values.every((event) => event.occurredAt === handle.startedAt)).toBe(true)
+    const restarted = reopen(f).runtimeAdapter()
+    expect(await restarted.start(request)).toEqual(handle)
+    expect((await restarted.status(handle)).state).toBe('completed')
+    expect(f.counts().sends).toBe(1)
+  } finally {
+    f.db.close()
+  }
+})
+
+import { openCloudflarePiStorage } from './storage.ts'
+
+test('missing catalog and unknown native definitions deny before engine without changing native records', async () => {
+  for (const mode of ['missing-catalog', 'unknown-definition']) {
+    const f = fixture()
+    try {
+      await f.host.accept(request, 42)
+      const storage = await openCloudflarePiStorage(f.storage)
+      const conversationId = await storage.mintId(),
+        nativeTaskId = await storage.mintId()
+      await storage.commit(
+        [
+          { type: 'conversation', value: { id: conversationId } },
+          {
+            type: 'task',
+            value: {
+              id: nativeTaskId,
+              conversationId,
+              kind: 'uninstalled-probe',
+              version: 9,
+              input: { opaque: 'retained' },
+              background: false,
+              abortRequested: false,
+              state: { status: 'pending', checkpoint: { phase: 'retained' } },
+            },
+          },
+        ],
+        BACKGROUND_CONTEXT
+      )
+      const before = await storage.scanTasks({}, 64, undefined, BACKGROUND_CONTEXT)
+      await storage.close(BACKGROUND_CONTEXT)
+      const owner = new CloudflarePiDurableOwner(
+        { storage: f.storage, blockConcurrencyWhile: (fn) => fn() },
+        {
+          context: BACKGROUND_CONTEXT,
+          pins,
+          authority: f.authority,
+          now: () => 42,
+          openEngine: f.openEngine,
+          ...(mode === 'unknown-definition'
+            ? {
+                nativeTaskCatalog: {
+                  schemaVersion: 1,
+                  configurationDigest: pins.configurationDigest,
+                  registry: createRegistry().snapshot(),
+                  migrations: [],
+                },
+              }
+            : {}),
+        }
+      )
+      let failure
+      try {
+        await owner.alarm()
+      } catch (error) {
+        failure = error
+      }
+      expect(failure.message).toBe('CLOUDFLARE_WAKE_BATCH_INCOMPLETE')
+      expect(failure.errors[0].code).toBe(
+        mode === 'missing-catalog'
+          ? 'CLOUDFLARE_TASK_CATALOG_UNAVAILABLE'
+          : 'CLOUDFLARE_TASK_DEFINITION_MISSING'
+      )
+      expect(failure.errors[0].retryable).toBe(false)
+      expect(f.counts().opens).toBe(0)
+      expect(f.counts().sends).toBe(0)
+      const reopened = await openCloudflarePiStorage(f.storage)
+      try {
+        expect(await reopened.scanTasks({}, 64, undefined, BACKGROUND_CONTEXT)).toEqual(before)
+      } finally {
+        await reopened.close(BACKGROUND_CONTEXT)
+      }
+      expect((await owner.read(request.attemptId)).state).toBe('reconciliation_required')
+    } finally {
+      f.db.close()
+    }
   }
 })

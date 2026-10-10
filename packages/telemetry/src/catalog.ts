@@ -36,6 +36,15 @@ export const operationalMetrics = [
   'memory.write.decision.count',
   'control.event.quarantine.count',
   'usage.cost.usd',
+  'execution.queue.latency',
+  'execution.human.latency',
+  'execution.retry.age',
+  'execution.reconciliation.age',
+  'storage.retained.bytes',
+  'storage.rewritten.bytes',
+  'storage.growth.bytes',
+  'runtime.active_object.count',
+  'operations.operating_cost.usd',
 ] as const
 
 export type ExecutionTraceSpanName = (typeof executionTraceSpans)[number]

@@ -188,6 +188,7 @@ export const DecisionResolutionDiagnosticSchema = z.enum([
   'NO_DEFAULT_MODEL',
   'CAPABILITY_BEYOND_GRANT',
   'HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME',
+  'NO_COMPATIBLE_RUNTIME',
   'CONTEXT_PACKAGE_PIN_MISMATCH',
 ])
 export type DecisionResolutionDiagnostic = z.output<typeof DecisionResolutionDiagnosticSchema>

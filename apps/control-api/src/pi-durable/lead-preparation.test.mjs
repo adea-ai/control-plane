@@ -284,16 +284,17 @@ test('changed funding cannot replace the accepted attempt winner or renew its TT
 test('retained dispatch fence prohibits expiry, rejection or refreshed funding from releasing in-flight allocation', async () =>
   fixture(async (f) => {
     const prepared = await f.store.prepare(f.admission, f.principal)
-    f.store.markDispatching(prepared.preparationRef)
-    f.store.markDispatching(prepared.preparationRef)
+    const claim = f.store.markDispatching(prepared.preparationRef)
+    expect(() => f.store.markDispatching(prepared.preparationRef)).toThrow(stale)
     await f.store.rejectPreparation(prepared.preparationRef)
     f.advance(300_000)
     await f.store.recoverExpired()
     await expect(f.store.prepare(f.admission, f.principal)).rejects.toThrow(stale)
     expect(f.releaseCalls()).toBe(0)
     expect(f.rows(f.db).find((row) => row.preparationRef === prepared.preparationRef).state).toBe(
-      'dispatched'
+      'dispatching'
     )
+    f.store.finishDispatchClaim(claim)
   }))
 
 test('dispatch checks expiry atomically even when no scanner has run', async () =>
@@ -467,3 +468,80 @@ test('mandatory cleanup callback is checked before configuring the preparation t
     ).toThrow(stale)
     expect(f.rows(f.db)).toEqual([])
   }))
+
+test('keeps a secret canary out of Pi lead preparation rows through every failure path', async () => {
+  await fixture(async (f) => {
+    // The canary is thrown from the funding read. Cleanup succeeds, so the row is released.
+    f.authority.readFunding = async () => {
+      throw new Error(canary)
+    }
+    await expect(f.store.prepare(f.admission, f.principal)).rejects.toThrow(stale)
+    expect(f.physicalReleases()).toBe(1)
+    expect(f.rows(f.db).map((row) => row.state)).toEqual(['released'])
+    expect(JSON.stringify(f.rows(f.db))).not.toContain(canary)
+  })
+  await fixture(async (f) => {
+    // A canary carried as an extension of the funding display is rejected and then released.
+    const value = f.funding()
+    value.credential = canary
+    f.setFunding(value)
+    await expect(f.store.prepare(f.admission, f.principal)).rejects.toThrow(stale)
+    expect(f.physicalReleases()).toBe(1)
+    expect(f.rows(f.db).map((row) => row.state)).toEqual(['released'])
+    expect(JSON.stringify(f.rows(f.db))).not.toContain(canary)
+  })
+  await fixture(async (f) => {
+    // Callback and cleanup both fail with the canary. The retained row survives a physical reopen.
+    f.authority.readFunding = async () => {
+      throw new Error(canary)
+    }
+    f.authority.releaseExpired = async () => {
+      throw new Error(canary)
+    }
+    await expect(f.store.prepare(f.admission, f.principal)).rejects.toThrow(stale)
+    expect(f.rows(f.db).map((row) => row.state)).toEqual(['release_pending'])
+    expect(JSON.stringify(f.rows(f.db))).not.toContain(canary)
+    f.db.close()
+    const reopened = f.open()
+    let releases = 0
+    f.authority.releaseExpired = async () => {
+      releases++
+    }
+    await reopened.store.recoverExpired()
+    expect(releases).toBe(1)
+    expect(f.rows(reopened.db).map((row) => row.state)).toEqual(['released'])
+    expect(JSON.stringify(f.rows(reopened.db))).not.toContain(canary)
+  })
+  await fixture(async (f) => {
+    // Rejection cleanup fails with the canary. Retrying after reopen releases the row without persisting it.
+    const prepared = await f.store.prepare(f.admission, f.principal)
+    f.authority.releaseExpired = async () => {
+      throw new Error(canary)
+    }
+    await expect(f.store.rejectPreparation(prepared.preparationRef)).rejects.toThrow(stale)
+    // prepare() superseded its initial preparing row; the rejected prepared row awaits release.
+    expect(
+      f
+        .rows(f.db)
+        .map((row) => row.state)
+        .toSorted()
+    ).toEqual(['release_pending', 'superseded'])
+    expect(JSON.stringify(f.rows(f.db))).not.toContain(canary)
+    f.db.close()
+    const reopened = f.open()
+    let count = 0
+    f.authority.releaseExpired = async () => {
+      count++
+    }
+    await reopened.store.recoverExpired()
+    await reopened.store.rejectPreparation(prepared.preparationRef)
+    expect(count).toBe(1)
+    expect(
+      f
+        .rows(reopened.db)
+        .map((row) => row.state)
+        .toSorted()
+    ).toEqual(['released', 'superseded'])
+    expect(JSON.stringify(f.rows(reopened.db))).not.toContain(canary)
+  })
+})

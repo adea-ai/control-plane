@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
+import { isMainThread } from 'node:worker_threads'
 import { z } from 'zod'
 import {
   canonicalJsonStringify,
@@ -10,8 +11,36 @@ import {
   type ServicePrincipal,
 } from '@control-plane/contracts'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
-import { RuntimeStartRequestSchema } from '@control-plane/runtime-sdk'
+import {
+  RuntimeStartRequestSchema,
+  RuntimeExecutionHandleSchema,
+  type RuntimeStartRequest,
+  type RuntimeExecutionHandle,
+} from '@control-plane/runtime-sdk'
 import type { PiDurableLeadAdmission } from './pi-durable-lead.service.js'
+
+// The qualified host is one main Node realm. Duplicate module loads share both
+// generation and active tokens; worker realms with the same PID are unsupported.
+const processStateKey = Symbol.for('control-plane.pi-lead-preparation.process-state.v1')
+type ProcessState = { readonly bootRef: string; readonly activeClaims: Set<string> }
+const globals = globalThis as typeof globalThis & { [key: symbol]: ProcessState | undefined }
+const processState = (globals[processStateKey] ??= {
+  bootRef: `piboot_${randomUUID().replaceAll('-', '')}`,
+  activeClaims: new Set<string>(),
+})
+const processBootRef = processState.bootRef
+const activeClaims = processState.activeClaims
+const Claim = z.strictObject({
+  claimRef: z.string().regex(/^pclaim_[a-f0-9]{32}$/),
+  ownerPid: z.number().int().positive().max(2147483647),
+  ownerBootRef: z.string().regex(/^piboot_[a-f0-9]{32}$/),
+})
+
+export interface PiLeadPreparationRecoveryOptions {
+  readonly findRuntimeHandle?: (
+    request: RuntimeStartRequest
+  ) => Promise<RuntimeExecutionHandle | undefined>
+}
 
 type ReadyFunding = Extract<ModelSelectionFundingView, { state: 'ready' }>
 export interface PiLeadPreparationAuthority {
@@ -47,11 +76,14 @@ const Record = z.strictObject({
   state: z.enum([
     'preparing',
     'prepared',
+    'dispatching',
     'dispatched',
     'release_pending',
     'released',
     'superseded',
   ]),
+  dispatchClaim: Claim.optional(),
+  runtimeHandle: RuntimeExecutionHandleSchema.optional(),
 })
 type Preparation = z.output<typeof Record>
 export class PiLeadPreparationError extends Error {
@@ -69,9 +101,11 @@ export class SqlitePiLeadPreparations {
   constructor(
     readonly database: DatabaseSync,
     readonly authority: PiLeadPreparationAuthority,
-    readonly now: () => string = () => new Date().toISOString()
+    readonly now: () => string = () => new Date().toISOString(),
+    readonly recovery: PiLeadPreparationRecoveryOptions = {}
   ) {
     if (
+      !isMainThread ||
       typeof authority?.readFunding !== 'function' ||
       typeof authority?.releaseExpired !== 'function'
     )
@@ -104,7 +138,9 @@ export class SqlitePiLeadPreparations {
       for (const prior of this.#all()) {
         if (!sameAttempt(prior.admission, admission)) continue
         if (
-          ['preparing', 'dispatched', 'release_pending', 'released'].includes(prior.state) ||
+          ['preparing', 'dispatching', 'dispatched', 'release_pending', 'released'].includes(
+            prior.state
+          ) ||
           (prior.state === 'prepared' && Date.parse(prior.expiresAt) <= this.#at())
         )
           this.#stale()
@@ -207,23 +243,98 @@ export class SqlitePiLeadPreparations {
       this.#stale()
     }
   }
-  /** Persist before RuntimeAdapter.start; atomic with expiry/rejection claims. */
-  markDispatching(preparationRef: string): void {
+  /** Pure retained-reference check before any mutating canonical admission. */
+  assertDispatchReference(
+    ref: string | undefined,
+    workspaceId: string,
+    intentId: string,
+    principalInput: ServicePrincipal
+  ): void {
+    if (!ref) throw new PiLeadPreparationError('PI_LEAD_PREPARATION_REQUIRED')
+    const principal = ServicePrincipalSchema.parse(principalInput)
+    const canonicalWorkspaceId = IdentifierSchemas.workspaceId.parse(workspaceId)
+    const stored = this.#get(ref)
+    if (
+      !stored ||
+      stored.admission.workspaceId !== workspaceId ||
+      stored.admission.intentId !== intentId ||
+      !principal.workspaceIds.includes(canonicalWorkspaceId) ||
+      !stored.admission.allowedPrincipalIds.includes(principal.principalId)
+    )
+      this.#stale()
+    this.#dispatchable(ref, stored.admission, principal)
+  }
+  /** Persist an exclusive live-process claim before the awaited runtime admission. */
+  markDispatching(preparationRef: string): string | undefined {
+    const claimRef = this.#transaction(() => {
+      const stored = this.#get(preparationRef)
+      if (!stored || !['prepared', 'dispatching', 'dispatched'].includes(stored.state))
+        this.#stale()
+      this.#assertAttemptFence(stored)
+      if (stored.state === 'dispatched') return undefined
+      if (Date.parse(stored.expiresAt) <= this.#at()) this.#stale()
+      if (stored.dispatchClaim && !this.#locallyInactive(stored.dispatchClaim)) this.#stale()
+      const claim = {
+        claimRef: `pclaim_${randomUUID().replaceAll('-', '')}`,
+        ownerPid: process.pid,
+        ownerBootRef: processBootRef,
+      }
+      this.#replace(stored, { ...stored, state: 'dispatching', dispatchClaim: claim })
+      return claim.claimRef
+    })
+    if (claimRef) activeClaims.add(claimRef)
+    return claimRef
+  }
+  assertDispatchClaim(preparationRef: string, claimRef: string | undefined): void {
+    const stored = this.#get(preparationRef)
+    if (!stored) this.#stale()
+    if (stored.state === 'dispatched' && claimRef === undefined) return
+    if (
+      stored.state !== 'dispatching' ||
+      !stored.dispatchClaim ||
+      stored.dispatchClaim.claimRef !== claimRef ||
+      stored.dispatchClaim.ownerPid !== process.pid ||
+      stored.dispatchClaim.ownerBootRef !== processBootRef ||
+      !activeClaims.has(claimRef!)
+    )
+      this.#stale()
+  }
+  /** Called synchronously after the actual journal handle ACK, before dropping the live claim. */
+  markDispatched(
+    preparationRef: string,
+    claimRef: string | undefined,
+    handleInput: RuntimeExecutionHandle
+  ): void {
+    const handle = RuntimeExecutionHandleSchema.parse(handleInput)
     this.#transaction(() => {
       const stored = this.#get(preparationRef)
-      if (!stored || !['prepared', 'dispatched'].includes(stored.state)) this.#stale()
-      this.#assertAttemptFence(stored)
-      if (stored.state === 'prepared') {
-        if (Date.parse(stored.expiresAt) <= this.#at()) this.#stale()
-        this.#replace(stored, { ...stored, state: 'dispatched' })
+      if (
+        !stored ||
+        handle.attemptId !== stored.admission.admittedAttempt.attemptId ||
+        !handle.externalSessionId
+      )
+        this.#stale()
+      if (stored.state === 'dispatched') {
+        if (stored.runtimeHandle && digest(stored.runtimeHandle) !== digest(handle)) this.#stale()
+        if (!stored.runtimeHandle) this.#replace(stored, { ...stored, runtimeHandle: handle })
+        return
       }
+      this.assertDispatchClaim(preparationRef, claimRef)
+      this.#replace(stored, { ...stored, state: 'dispatched', runtimeHandle: handle })
     })
+  }
+  finishDispatchClaim(claimRef: string | undefined): void {
+    if (claimRef) activeClaims.delete(claimRef)
   }
   /** Rejected publication/current authority claims cleanup; dispatched is final. */
   async rejectPreparation(preparationRef: string): Promise<void> {
     this.#transaction(() => {
       const current = this.#get(preparationRef)
-      if (!current || ['dispatched', 'released', 'superseded'].includes(current.state)) return
+      if (
+        !current ||
+        ['dispatching', 'dispatched', 'released', 'superseded'].includes(current.state)
+      )
+        return
       this.#assertAttemptFence(current)
       if (current.state !== 'release_pending')
         this.#replace(current, { ...current, state: 'release_pending' })
@@ -242,7 +353,7 @@ export class SqlitePiLeadPreparations {
     for (const stored of records) {
       if (
         stored.state !== 'release_pending' &&
-        (!['preparing', 'prepared'].includes(stored.state) ||
+        (!['preparing', 'prepared', 'dispatching'].includes(stored.state) ||
           Date.parse(stored.expiresAt) > this.#at())
       )
         continue
@@ -250,12 +361,30 @@ export class SqlitePiLeadPreparations {
         const current = this.#get(stored.preparationRef)
         if (!current || digest(current) !== digest(stored)) return undefined
         this.#assertAttemptFence(current)
+        if (current.dispatchClaim && !this.#ownerInactive(current.dispatchClaim)) return undefined
         const next: Preparation = { ...current, state: 'release_pending' }
         if (current.state !== 'release_pending') this.#replace(current, next)
         return next
       })
       if (!pending) continue
       try {
+        if (pending.dispatchClaim) {
+          if (!this.recovery.findRuntimeHandle) this.#stale()
+          const input = await this.recovery.findRuntimeHandle(
+            structuredClone(pending.admission.startRequest)
+          )
+          if (input) {
+            const handle = RuntimeExecutionHandleSchema.parse(input)
+            if (
+              handle.attemptId !== pending.admission.admittedAttempt.attemptId ||
+              !handle.externalSessionId
+            )
+              this.#stale()
+            if (!this.#compare(pending, { ...pending, state: 'dispatched', runtimeHandle: handle }))
+              this.#stale()
+            continue
+          }
+        }
         await this.authority.releaseExpired(structuredClone(pending.admission))
         this.#compare(pending, { ...pending, state: 'released' })
       } catch {
@@ -272,10 +401,11 @@ export class SqlitePiLeadPreparations {
     const stored = this.#get(ref)
     if (
       !stored ||
-      !['prepared', 'dispatched'].includes(stored.state) ||
+      !['prepared', 'dispatching', 'dispatched'].includes(stored.state) ||
       stored.principalId !== principal.principalId ||
       digest(stored.admission) !== digest(admission) ||
-      (stored.state === 'prepared' && Date.parse(stored.expiresAt) <= this.#at())
+      (['prepared', 'dispatching'].includes(stored.state) &&
+        Date.parse(stored.expiresAt) <= this.#at())
     )
       this.#stale()
     this.#assertAttemptFence(stored)
@@ -286,7 +416,14 @@ export class SqlitePiLeadPreparations {
       if (
         other.preparationRef !== stored.preparationRef &&
         sameAttempt(other.admission, stored.admission) &&
-        ['preparing', 'prepared', 'dispatched', 'release_pending', 'released'].includes(other.state)
+        [
+          'preparing',
+          'prepared',
+          'dispatching',
+          'dispatched',
+          'release_pending',
+          'released',
+        ].includes(other.state)
       )
         this.#stale()
     }
@@ -346,10 +483,37 @@ export class SqlitePiLeadPreparations {
             `prep_${digest([record.admission.admissionDigest, record.principalId, funding]).slice(0, 32)}`
         )
           this.#stale()
-      } else if (['prepared', 'dispatched'].includes(record.state)) this.#stale()
+      } else if (['prepared', 'dispatching', 'dispatched'].includes(record.state)) this.#stale()
+      if (record.state === 'dispatching' && !record.dispatchClaim) this.#stale()
+      if (
+        record.runtimeHandle &&
+        (record.state !== 'dispatched' ||
+          record.runtimeHandle.attemptId !== record.admission.admittedAttempt.attemptId ||
+          !record.runtimeHandle.externalSessionId)
+      )
+        this.#stale()
       return record
     } catch {
       this.#stale()
+    }
+  }
+  #locallyInactive(claim: z.output<typeof Claim>): boolean {
+    return (
+      claim.ownerPid === process.pid &&
+      claim.ownerBootRef === processBootRef &&
+      !activeClaims.has(claim.claimRef)
+    )
+  }
+  #ownerInactive(claim: z.output<typeof Claim>): boolean {
+    // Live exact-token evidence wins even if retained owner metadata changed.
+    if (activeClaims.has(claim.claimRef)) return false
+    if (claim.ownerPid === process.pid)
+      return claim.ownerBootRef !== processBootRef || this.#locallyInactive(claim)
+    try {
+      process.kill(claim.ownerPid, 0)
+      return false
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ESRCH'
     }
   }
   #get(ref: string): Preparation | undefined {

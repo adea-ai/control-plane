@@ -30,6 +30,9 @@ ports with `createPiDurableUsageAuthority`, which reserves through the existing
 ledger's physical-dispatch fence and settles authoritative usage. Accepted plan
 allowance and selection readiness do not authorize spending. Uncertain sends
 remain held; replay never silently issues another paid request.
+Committed native generation receipts settle before another generation reserves
+its full context or a governed child executes. A later generation failure keeps
+its uncertain hold while preserving the earlier committed usage.
 
 The engine returns committed output snapshots. Compaction, deferred requests,
 retries, redirects and positive cache writes are disabled. The optional native
@@ -44,6 +47,11 @@ Both provider and spending ports must share the canonical host's confirmed
 execution facade. Unused preparation allocations are recovered after restart;
 ambiguous physical sends keep their ledger holds. Intent-only receipt lookup
 repairs lost dispatch acknowledgements without starting another model call.
+The Node preparation store runs in the main thread. A retained process claim
+fences cleanup while dispatch awaits admission. Recovery requires an inactive
+owner, a metadata-only runtime journal lookup and the canonical allocation's
+no-send checks. An actual journal handle prevents unused-allocation release;
+unknown owners, lookup failures and ambiguous sends remain fenced.
 
 Run `bun test src --timeout 30000` from this package. Process fixtures use Node
 from `CONTROL_PLANE_TEST_NODE` when specified, otherwise `node` on PATH. Tests

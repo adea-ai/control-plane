@@ -29,6 +29,7 @@ import {
   PiDurableVersion,
   ProviderBindingSchema,
   type DurableExecutionAuthority,
+  type PiDurableGovernedManagementCallEnginePort,
   type DurablePiEngine,
   type PiDurableRuntimeOptions,
 } from './contracts.js'
@@ -40,6 +41,7 @@ import { z } from 'zod'
 import { PiDurableEffectGate, type DurableEffectGateOutcome } from './effect-gate.js'
 import {
   PiDurableToolSourceSchema,
+  verifyPiDurableManagementToolSource,
   verifyPiDurableToolSource,
   piDurableToolSourceKey,
   type PiDurableToolSource,
@@ -55,6 +57,47 @@ interface StoredAdmission extends DurableExecutionAuthority {
   readonly handle: RuntimeExecutionHandle
   readonly providerDigest: string
 }
+
+const PiInferenceGenerationSchema = z
+  .strictObject({
+    schemaVersion: z.literal('pi-inference-generation/v1'),
+    attemptId: IdentifierSchemas.attemptId,
+    turnKey: z.string().min(1).max(4096),
+    inferenceId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/),
+    inferenceKey: z.string().min(1).max(8192),
+  })
+  .superRefine((generation, context) => {
+    if (generation.inferenceKey !== `${generation.turnKey}:${generation.inferenceId}`)
+      context.addIssue({ code: 'custom', path: ['inferenceKey'], message: 'invalid inference key' })
+  })
+
+const PiCancellationIntentSchema = z
+  .strictObject({
+    schemaVersion: z.literal('pi-cancellation-intent/v1'),
+    attemptId: IdentifierSchemas.attemptId,
+    turnKey: z.string().min(1).max(4096),
+    requestedAt: z.string().datetime(),
+    requestDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    targetKind: z.enum(['active_generation', 'no_active_generation', 'untracked_generation']),
+    generation: PiInferenceGenerationSchema.nullable(),
+    resolution: z.literal('safe_to_resume').optional(),
+    confirmedAt: z.string().datetime().optional(),
+  })
+  .superRefine((intent, context) => {
+    if ((intent.targetKind === 'active_generation') !== (intent.generation !== null))
+      context.addIssue({ code: 'custom', path: ['generation'], message: 'invalid target binding' })
+    if (
+      intent.generation &&
+      (intent.generation.attemptId !== intent.attemptId ||
+        intent.generation.turnKey !== intent.turnKey)
+    )
+      context.addIssue({ code: 'custom', path: ['generation'], message: 'mismatched target' })
+    if (intent.resolution === 'safe_to_resume' && !intent.confirmedAt)
+      context.addIssue({ code: 'custom', path: ['confirmedAt'], message: 'confirmation required' })
+  })
+
+type PiInferenceGeneration = z.infer<typeof PiInferenceGenerationSchema>
+type PiCancellationIntent = z.infer<typeof PiCancellationIntentSchema>
 
 export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   readonly journal: SqliteDurableJournal
@@ -258,6 +301,10 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           detail: {
             observedAt: this.#now(),
             actions: { ...actions, [request.idempotencyKey]: digest(request) },
+            inferenceTrackingVersion: 1,
+            engineRunStarted: false,
+            activeInference: undefined,
+            inferencePending: false,
             turn: {
               requestId: `pi-input:${record.attemptId}:${request.idempotencyKey}`,
               input: request.text,
@@ -341,9 +388,47 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       return this.status(handle)
     }
     if (record.state === 'completed') fail('PI_EXECUTION_TERMINAL', 'conflict')
+    // A stop request can arrive after the native run has already retained a failure.
+    // Keep that terminal outcome authoritative; lead orchestration may still cascade
+    // cancellation to children after receiving this schema-valid status.
+    if (record.state === 'failed' || record.state === 'timed_out') return this.status(handle)
     const active = this.#engines.get(handle.handleId)
+    const retainedIntent = readCancellationIntent(record)
+    const activeInference = readActiveInference(record)
+    const targetKind =
+      retainedIntent?.targetKind ??
+      (activeInference
+        ? 'active_generation'
+        : record.detail['engineRunStarted'] === true && record.detail['inferencePending'] === true
+          ? 'untracked_generation'
+          : record.detail['inferenceTrackingVersion'] === 1
+            ? 'no_active_generation'
+            : 'untracked_generation')
+    const cancellationIntent: PiCancellationIntent =
+      retainedIntent ??
+      PiCancellationIntentSchema.parse({
+        schemaVersion: 'pi-cancellation-intent/v1',
+        attemptId: record.attemptId,
+        turnKey: turnKey(record),
+        requestedAt: request.requestedAt,
+        requestDigest: digest(request),
+        targetKind,
+        generation: activeInference ?? null,
+      })
     const epoch = this.#claim(record)
-    const state = record.detail['inferencePending'] ? 'cancelling' : 'cancelled'
+    const cancellationPending =
+      targetKind === 'active_generation' ||
+      record.detail['inferencePending'] === true ||
+      this.#active.has(handle.handleId)
+    const state = cancellationPending ? 'cancelling' : 'cancelled'
+    const retainedCancellationIntent =
+      state === 'cancelled' && targetKind === 'no_active_generation'
+        ? {
+            ...cancellationIntent,
+            resolution: 'safe_to_resume' as const,
+            confirmedAt: this.#now(),
+          }
+        : cancellationIntent
     this.journal.update(
       record.handleId,
       epoch,
@@ -353,6 +438,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           ...record.detail,
           observedAt: this.#now(),
           actions: { ...actions, [key]: digest(request) },
+          cancellationIntent: retainedCancellationIntent,
+          inferencePending: state === 'cancelling',
         },
       },
       { type: 'status', data: { state }, at: this.#now() }
@@ -471,6 +558,11 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     this.#assertOpen()
     const provider = await this.#provider(authority)
     this.#assertOpen()
+    // Provider readiness may await while a canonical attempt is cancelled or its
+    // unused allocation is reclaimed. Fence that change before retaining a
+    // runtime admission; readiness itself never grants execution authority.
+    await this.#authority(authority)
+    this.#assertOpen()
     const id = digest([request.attemptBudget.workspaceId, request.attemptId]).slice(7, 39)
     const handle = RuntimeExecutionHandleSchema.parse({
       handleId: `pi-durable:${id}`,
@@ -503,6 +595,17 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       })
     } catch (error) {
       fail(error instanceof Error ? error.message : 'PI_ADMISSION_CONFLICT', 'conflict')
+    }
+    if (!previous && record.state === 'starting') {
+      record = this.journal.update(record.handleId, record.epoch, {
+        detail: {
+          ...record.detail,
+          inferenceTrackingVersion: 1,
+          engineRunStarted: false,
+          activeInference: undefined,
+          inferencePending: false,
+        },
+      })
     }
     if (record.state === 'starting') this.#schedule(record)
     return this.#stored(record).handle
@@ -537,17 +640,47 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     await this.#authority(authority)
     this.#assertOpen()
     if (!this.#active.has(handle.handleId) && record.state === 'cancelling') {
-      const safe = await this.#options.reconcileInference(authority, turnKey(record))
+      const intent = readCancellationIntent(record)
+      let safe: 'safe_to_resume' | 'unresolved'
+      if (intent?.targetKind === 'active_generation' && intent.generation) {
+        safe = await this.#options.reconcileInference(authority, intent.generation.inferenceKey)
+      } else if (
+        intent?.targetKind === 'no_active_generation' &&
+        record.detail['inferenceTrackingVersion'] === 1
+      ) {
+        // No generation was authorized for this turn. The owner epoch fences any late callback.
+        safe = 'safe_to_resume'
+      } else if (intent?.targetKind === 'untracked_generation') {
+        // A run entered the engine without a durable generation identity. Reconcile the
+        // legacy turn scope conservatively instead of treating an unknown send as absent.
+        safe = await this.#options.reconcileInference(authority, intent.turnKey)
+      } else if (intent) {
+        // An old or malformed record has no exact generation identity; never guess by turn.
+        safe = 'unresolved'
+      } else {
+        // Compatibility for cancellation records written before exact generation tracking.
+        safe = await this.#options.reconcileInference(authority, turnKey(record))
+      }
+      await this.#authority(authority)
       this.#assertOpen()
-      const epoch = this.#claim(record)
+      const current = this.journal.get(record.handleId)
+      if (current.epoch !== record.epoch || current.state !== record.state)
+        return this.status(handle)
+      const epoch = this.#claim(current)
       const state = safe === 'safe_to_resume' ? 'cancelled' : 'cancelling'
+      const resolvedIntent =
+        state === 'cancelled' && intent
+          ? { ...intent, resolution: 'safe_to_resume' as const, confirmedAt: this.#now() }
+          : intent
       this.journal.update(
         record.handleId,
         epoch,
         {
           state,
           detail: {
-            ...record.detail,
+            ...current.detail,
+            ...(resolvedIntent ? { cancellationIntent: resolvedIntent } : {}),
+            activeInference: state === 'cancelled' ? undefined : record.detail['activeInference'],
             inferencePending: state === 'cancelling',
             observedAt: this.#now(),
             reasonCode:
@@ -576,10 +709,30 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       !this.#active.has(handle.handleId) &&
       ['running', 'unknown'].includes(record.state)
     ) {
-      const safe = await this.#options.reconcileInference(authority, turnKey(record))
+      const activeInference = readActiveInference(record)
+      const safe = activeInference
+        ? await this.#options.reconcileInference(authority, activeInference.inferenceKey)
+        : await this.#options.reconcileInference(authority, turnKey(record))
+      await this.#authority(authority)
       this.#assertOpen()
-      if (safe === 'safe_to_resume') this.#schedule(record)
-      else {
+      const current = this.journal.get(record.handleId)
+      if (current.epoch !== record.epoch || current.state !== record.state)
+        return this.status(handle)
+      if (safe === 'safe_to_resume') {
+        const epoch = this.#claim(current)
+        const resumable = this.journal.update(record.handleId, epoch, {
+          detail: {
+            ...record.detail,
+            inferenceTrackingVersion: 1,
+            engineRunStarted: false,
+            activeInference: undefined,
+            inferencePending: false,
+            observedAt: this.#now(),
+            reasonCode: undefined,
+          },
+        })
+        this.#schedule(resumable)
+      } else {
         const epoch = this.#claim(record)
         this.journal.update(record.handleId, epoch, {
           state: 'unknown',
@@ -735,16 +888,78 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
                     signal?.throwIfAborted()
                   },
                 })
-                return delegateChildOutcome(
+                const outcome = delegateChildOutcome(
                   await gate.execute(request, signal ? { signal } : {}),
                   request
                 )
+                if (outcome.state === 'succeeded' && governance.retainContinuation) {
+                  signal?.throwIfAborted()
+                  await governance.retainContinuation({
+                    authority: structuredClone(authority),
+                    source: structuredClone(verified),
+                    request: structuredClone(request),
+                    outcome: structuredClone(outcome),
+                  })
+                  await assertToolCurrent(verified.source)
+                  signal?.throwIfAborted()
+                }
+                return outcome
               } catch {
                 fail('PI_CHILD_DELEGATION_REJECTED', 'conflict')
               }
             },
           }
         : undefined
+      const governedManagementCall: PiDurableGovernedManagementCallEnginePort | undefined =
+        this.#options.governedManagementCall
+          ? {
+              source: sourcePrefix,
+              assertCurrent: assertToolCurrent,
+              execute: async (input, reader, signal) => {
+                try {
+                  signal?.throwIfAborted()
+                  const nativeReader = { ...reader, assertCurrent: assertToolCurrent }
+                  const verified = await verifyPiDurableManagementToolSource(
+                    input.source,
+                    { input: input.input, operation: input.operation },
+                    nativeReader
+                  )
+                  if (verified.sourceKey !== input.sourceKey)
+                    fail('PI_TOOL_SOURCE_REJECTED', 'conflict')
+                  signal?.throwIfAborted()
+                  const compiler = this.#options.governedManagementCall!
+                  const request = DurableToolCallRequestSchema.parse(
+                    await compiler.prepare(structuredClone(authority), structuredClone(verified))
+                  )
+                  if (
+                    request.workspaceId !== sourcePrefix.workspaceId ||
+                    request.executionId !== sourcePrefix.parentExecutionId ||
+                    request.attemptId !== sourcePrefix.parentAttemptId ||
+                    request.profileId !== plan.profile.profileId ||
+                    request.operation !== verified.args.operation ||
+                    !authority.admission.canonicalActorPrincipalId ||
+                    request.audit.principalRef !== authority.admission.canonicalActorPrincipalId ||
+                    canonicalJsonStringify(request.input) !==
+                      canonicalJsonStringify(verified.args.input)
+                  )
+                    fail('PI_MANAGEMENT_REQUEST_AUTHORITY_REJECTED', 'conflict')
+                  signal?.throwIfAborted()
+                  const outcome = await compiler.execute(request, signal)
+                  if (
+                    outcome === null ||
+                    typeof outcome !== 'object' ||
+                    !['succeeded', 'refused', 'reconciliation_required'].includes(outcome.state)
+                  )
+                    fail('PI_MANAGEMENT_OUTCOME_INVALID', 'conflict')
+                  await assertToolCurrent(verified.source)
+                  signal?.throwIfAborted()
+                  return outcome
+                } catch {
+                  fail('PI_MANAGEMENT_CALL_REJECTED', 'conflict')
+                }
+              },
+            }
+          : undefined
       const runningAt = this.#now()
       this.journal.update(
         record.handleId,
@@ -756,6 +971,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             ownerPid: process.pid,
             ownerEpoch: epoch,
             observedAt: runningAt,
+            inferenceTrackingVersion: 1,
+            engineRunStarted: false,
             inferencePending: true,
           },
         },
@@ -773,11 +990,42 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         model: { provider: provider.binding.provider, modelId: provider.binding.providerModel },
         maxOutputTokens: authority.request.attemptBudget!.maximumTokens,
         assertAuthority: assertCurrent,
+        retainInferences: async (inferences) => {
+          await this.#retainInferences(record, epoch, authority, inferences, assertCurrent)
+        },
         authorizeInference: async (inference) => {
           await assertCurrent()
+          const generation = PiInferenceGenerationSchema.parse({
+            schemaVersion: 'pi-inference-generation/v1',
+            attemptId: record.attemptId,
+            turnKey: turnKey(record),
+            inferenceId: inference.inferenceId,
+            inferenceKey: `${turnKey(record)}:${inference.inferenceId}`,
+          })
+          const current = this.journal.get(record.handleId)
+          if (
+            current.state !== 'running' ||
+            current.epoch !== epoch ||
+            current.detail['cancellationIntent'] !== undefined
+          )
+            fail('PI_CANCELLATION_ALREADY_REQUESTED', 'conflict')
+          const existingGeneration = readActiveInference(current)
+          if (
+            existingGeneration &&
+            canonicalJsonStringify(existingGeneration) !== canonicalJsonStringify(generation)
+          )
+            fail('PI_INFERENCE_GENERATION_CONFLICT', 'conflict')
+          this.journal.update(record.handleId, epoch, {
+            detail: {
+              ...current.detail,
+              inferenceTrackingVersion: 1,
+              activeInference: generation,
+              inferencePending: true,
+            },
+          })
           const allowance = await this.#options.authorizeInference(
             authority,
-            `${turnKey(record)}:${inference.inferenceId}`
+            generation.inferenceKey
           )
           if (typeof allowance.assertActive !== 'function')
             fail('PI_MODEL_SPENDING_AUTHORITY_REQUIRED', 'validation')
@@ -806,10 +1054,21 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           return current.access.withModels(use)
         },
         ...(governedDelegateChild ? { governedDelegateChild } : {}),
+        ...(governedManagementCall ? { governedManagementCall } : {}),
       })
       this.#engines.set(record.handleId, engine)
       await assertCurrent()
       const turn = record.detail['turn'] as { requestId: string; input: string } | undefined
+      const beforeRun = this.journal.get(record.handleId)
+      if (
+        beforeRun.state !== 'running' ||
+        beforeRun.epoch !== epoch ||
+        beforeRun.detail['cancellationIntent'] !== undefined
+      )
+        fail('PI_CANCELLATION_ALREADY_REQUESTED', 'conflict')
+      this.journal.update(record.handleId, epoch, {
+        detail: { ...beforeRun.detail, engineRunStarted: true },
+      })
       const result = await engine.run({
         sessionId: authority.handle.externalSessionId!,
         requestId: turnKey(record),
@@ -837,6 +1096,9 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             pendingApproval: undefined,
             error: undefined,
             terminalUsage: undefined,
+            activeInference: undefined,
+            inferenceTrackingVersion: 1,
+            engineRunStarted: false,
             ownerPid: process.pid,
             ownerEpoch: epoch,
             inferencePending: false,
@@ -886,6 +1148,9 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               state,
               detail: {
                 ...this.journal.get(record.handleId).detail,
+                activeInference: undefined,
+                inferenceTrackingVersion: 1,
+                engineRunStarted: false,
                 inferencePending: false,
                 observedAt: this.#now(),
                 nativeToolBlocked: { source, sourceKey: error.sourceKey, outcome },
@@ -975,6 +1240,26 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         fail('PI_INFERENCE_RECEIPT_REQUIRED', 'validation')
       await assertCurrent()
       const key = `${turnKey(record)}:${inference.inferenceId}`
+      const retained = this.journal.get(record.handleId).detail['inferenceReceipts'] as
+        | Record<
+            string,
+            {
+              turnKey: string
+              nativeDigest: string
+              usage: ReturnType<typeof RuntimeUsageSchema.parse>
+            }
+          >
+        | undefined
+      if (retained?.[key]) {
+        if (
+          retained[key].turnKey !== turnKey(record) ||
+          retained[key].nativeDigest !== digest(inference.usage)
+        )
+          fail('PI_INFERENCE_RECEIPT_CONFLICT', 'conflict')
+        RuntimeUsageSchema.parse(retained[key].usage)
+        this.#clearActiveInference(record, epoch, key)
+        continue
+      }
       const usage = RuntimeUsageSchema.parse(
         await this.#options.settleUsage(
           authority,
@@ -1006,6 +1291,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           detail: { ...current.detail, inferenceReceipts: { ...receipts, [key]: value } },
         })
       }
+      this.#clearActiveInference(record, epoch, key)
     }
     const receipts = this.journal.get(record.handleId).detail['inferenceReceipts'] as Record<
       string,
@@ -1023,6 +1309,15 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         .filter(([, value]) => value.turnKey === turnKey(record))
         .map(([, value]) => value.usage)
     )
+  }
+
+  #clearActiveInference(record: JournalRecord, epoch: number, inferenceKey: string): void {
+    const current = this.journal.get(record.handleId)
+    const active = readActiveInference(current)
+    if (active?.inferenceKey !== inferenceKey) return
+    this.journal.update(record.handleId, epoch, {
+      detail: { ...current.detail, activeInference: undefined },
+    })
   }
 
   async #authority(authority: DurableExecutionAuthority): Promise<void> {
@@ -1171,6 +1466,33 @@ function turnKey(record: JournalRecord): string {
     `pi-turn:${record.attemptId}:initial`
   )
 }
+
+function readActiveInference(record: JournalRecord): PiInferenceGeneration | undefined {
+  const value = record.detail['activeInference']
+  if (value === undefined) return undefined
+  const parsed = PiInferenceGenerationSchema.safeParse(value)
+  if (
+    !parsed.success ||
+    parsed.data.attemptId !== record.attemptId ||
+    parsed.data.turnKey !== turnKey(record)
+  )
+    fail('PI_INFERENCE_GENERATION_INVALID', 'conflict')
+  return parsed.data
+}
+
+function readCancellationIntent(record: JournalRecord): PiCancellationIntent | undefined {
+  const value = record.detail['cancellationIntent']
+  if (value === undefined) return undefined
+  const parsed = PiCancellationIntentSchema.safeParse(value)
+  if (
+    !parsed.success ||
+    parsed.data.attemptId !== record.attemptId ||
+    parsed.data.turnKey !== turnKey(record)
+  )
+    fail('PI_CANCELLATION_INTENT_INVALID', 'conflict')
+  return parsed.data
+}
+
 function digest(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonicalJsonStringify(value)).digest('hex')}`
 }
