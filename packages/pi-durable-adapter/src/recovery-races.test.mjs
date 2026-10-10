@@ -852,6 +852,37 @@ test('a stale safe reconciliation cannot create an engine after concurrent cance
   }
 }, 10000)
 
+test('reconcile leaves a run to the live process that owns it', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-reconcile-live-owner-'))
+  const owner = Bun.spawn(['sleep', '60'])
+  let reconciliations = 0
+  const setup = fixture(directory, {
+    reconcileInference: async () => {
+      reconciliations++
+      return 'safe_to_resume'
+    },
+  })
+  const adapter = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    const handle = await adapter.start(setup.request)
+    await adapter.drain()
+    const prior = adapter.journal.get(handle.handleId)
+    adapter.journal.update(handle.handleId, prior.epoch, {
+      state: 'running',
+      detail: { ...prior.detail, result: undefined, ownerPid: owner.pid, ownerEpoch: prior.epoch },
+    })
+    const owned = adapter.journal.get(handle.handleId)
+    expect((await adapter.reconcile(handle)).state).toBe('running')
+    expect(reconciliations).toBe(0)
+    expect(adapter.journal.get(handle.handleId)).toEqual(owned)
+  } finally {
+    owner.kill()
+    await owner.exited
+    await adapter.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('shutdown fences start paused at every asynchronous admission boundary', async () => {
   for (const boundary of ['resolveAdmission', 'assertAuthority', 'resolveProvider']) {
     const directory = mkdtempSync(join(tmpdir(), 'pi-close-admission-'))

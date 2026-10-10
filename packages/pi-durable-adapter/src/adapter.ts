@@ -709,6 +709,9 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       !this.#active.has(handle.handleId) &&
       ['running', 'unknown'].includes(record.state)
     ) {
+      // A live process owns this run and finishes it. Reconciling or fencing it from here would
+      // advance the epoch past its ownerEpoch and reject that owner's own commits.
+      if (this.#hasLiveForeignOwner(this.journal.get(record.handleId))) return this.status(handle)
       const activeInference = readActiveInference(record)
       const safe = activeInference
         ? await this.#options.reconcileInference(authority, activeInference.inferenceKey)
@@ -718,30 +721,45 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       const current = this.journal.get(record.handleId)
       if (current.epoch !== record.epoch || current.state !== record.state)
         return this.status(handle)
-      if (safe === 'safe_to_resume') {
-        const epoch = this.#claim(current)
-        const resumable = this.journal.update(record.handleId, epoch, {
-          detail: {
-            ...record.detail,
-            inferenceTrackingVersion: 1,
-            engineRunStarted: false,
-            activeInference: undefined,
-            inferencePending: false,
-            observedAt: this.#now(),
-            reasonCode: undefined,
-          },
-        })
-        this.#schedule(resumable)
-      } else {
-        const epoch = this.#claim(record)
-        this.journal.update(record.handleId, epoch, {
-          state: 'unknown',
-          detail: {
-            ...record.detail,
-            observedAt: this.#now(),
-            reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
-          },
-        })
+      // Claim only after the probe settles. The claim checks liveness and advances the epoch in
+      // one transaction, so a reconciler that loses the race reads the winner's live owner.
+      let owned: number
+      try {
+        owned = this.journal.claimProcess(record.handleId, current)
+      } catch (error) {
+        if (isOwnerContention(error)) return this.status(handle)
+        throw error
+      }
+      const claimed = this.journal.get(record.handleId)
+      try {
+        if (safe === 'safe_to_resume') {
+          const resumable = this.journal.update(record.handleId, owned, {
+            detail: {
+              ...claimed.detail,
+              inferenceTrackingVersion: 1,
+              engineRunStarted: false,
+              activeInference: undefined,
+              inferencePending: false,
+              observedAt: this.#now(),
+              reasonCode: undefined,
+            },
+          })
+          this.#schedule(resumable, owned)
+        } else {
+          this.journal.update(record.handleId, owned, {
+            state: 'unknown',
+            detail: {
+              ...claimed.detail,
+              observedAt: this.#now(),
+              reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
+            },
+          })
+          this.journal.releaseProcess(record.handleId, owned)
+        }
+      } catch (error) {
+        // No run has started with this claim when the write or schedule fails, so release it.
+        this.journal.releaseProcess(record.handleId, owned)
+        throw error
       }
     } else if (record.state === 'starting') this.#schedule(record)
     return this.status(handle)
@@ -769,20 +787,24 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     return this.#closePromise
   }
 
-  #schedule(record: JournalRecord): void {
+  #schedule(record: JournalRecord, owned?: number): void {
     this.#assertOpen()
-    if (this.#active.has(record.handleId)) return
-    const work = this.#run(record).finally(() => this.#active.delete(record.handleId))
+    if (this.#active.has(record.handleId)) {
+      // A run already holds this record, so the claim handed to this schedule is not kept.
+      if (owned !== undefined) this.journal.releaseProcess(record.handleId, owned)
+      return
+    }
+    const work = this.#run(record, owned).finally(() => this.#active.delete(record.handleId))
     this.#active.set(record.handleId, work)
   }
 
-  async #run(record: JournalRecord): Promise<void> {
+  async #run(record: JournalRecord, owned?: number): Promise<void> {
     const authority = this.#stored(record)
     const plan = assertExecutionPlanIntegrity(authority.request.executionPlan)
     const nativeAdmissions = new Map<string, DurableToolCallRequest>()
     let epoch: number
     try {
-      epoch = this.journal.claimProcess(record.handleId, record)
+      epoch = owned ?? this.journal.claimProcess(record.handleId, record)
     } catch {
       return
     }
@@ -1405,6 +1427,18 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     }
   }
 
+  // The liveness test claimProcess applies, for an owner other than this process.
+  #hasLiveForeignOwner(record: JournalRecord): boolean {
+    const ownerPid = record.detail['ownerPid']
+    if (typeof ownerPid !== 'number' || ownerPid === process.pid) return false
+    try {
+      process.kill(ownerPid, 0)
+      return true
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== 'ESRCH'
+    }
+  }
+
   #transitionInteraction(
     record: JournalRecord,
     kind: 'input' | 'approval',
@@ -1458,6 +1492,13 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   #assertOpen(): void {
     if (this.#closing || this.#closed) fail('PI_ADAPTER_CLOSED', 'unavailable')
   }
+}
+
+// claimProcess refuses a stale snapshot or a live owner; either means another process moved first.
+function isOwnerContention(error: unknown): boolean {
+  return (
+    error instanceof Error && ['STALE_STATE', 'PI_SESSION_OWNER_ACTIVE'].includes(error.message)
+  )
 }
 
 function turnKey(record: JournalRecord): string {
