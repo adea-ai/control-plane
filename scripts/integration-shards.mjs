@@ -74,6 +74,8 @@ export const INTEGRATION_SHARDS = [
           'src/budget-admission.integration.test.mjs',
           'src/tool-repositories.integration.test.mjs',
           'src/runtime-node-identity-repository.integration.test.mjs',
+          'src/runtime-node-credential-binding.integration.test.mjs',
+          'src/runtime-node-credential-restricted.integration.test.mjs',
           'src/delegation-reference.integration.test.mjs',
           'src/admission-rollout-admin.integration.test.mjs',
           'src/graph-definition-repository.integration.test.mjs',
@@ -111,9 +113,14 @@ export const INTEGRATION_SHARDS = [
         ],
       },
       {
+        package: 'apps/runtime-gateway',
+        files: ['src/runtime-node-credential-binding.integration.test.mjs'],
+      },
+      {
         package: '.',
         files: [
           './tests/memory-process-loss.integration.test.mjs',
+          './tests/acp-remote-device-postgres.integration.test.mjs',
           './tests/runtime-node-credential-revocation.integration.test.mjs',
         ],
       },

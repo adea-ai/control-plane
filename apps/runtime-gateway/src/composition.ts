@@ -36,6 +36,7 @@ import {
   SqliteContextProviderRegistrationRepository,
   SqlitePersistenceProvider,
   SqliteRuntimeChannelSequenceRepository,
+  createRuntimeNodeCredentialFenceValidator,
   SqliteRuntimeCommandRepository,
 } from '@control-plane/sqlite-persistence'
 import type { RuntimeChannelSequenceRepository } from '@control-plane/runtime-sdk'
@@ -47,6 +48,7 @@ import {
   type StructuredLogger,
 } from '@control-plane/telemetry'
 import { RuntimeNodeChannelAuthenticator, type RuntimeNodeChannel } from './authentication.js'
+import type { RuntimeNodeIdentityGatewayPort } from './runtime-node-identity-port.js'
 import {
   authenticateRuntimeNodeUpgrade,
   PostgresRuntimeNodeIdentityValidationPort,
@@ -162,6 +164,12 @@ export interface RuntimeGatewayCompositionOptions {
    */
   readonly objectStore: ObjectStore | undefined
   readonly authenticateUpgrade: ((request: Request) => Promise<RuntimeNodeChannel>) | undefined
+  /**
+   * SQLite-profile credential authority for runtime-command fences: the SAME
+   * runtime-node credential source the channel authenticator trusts. When
+   * absent, fenced ACK/result settlements fail closed (never silently pass).
+   */
+  readonly runtimeNodeCredentialAuthority?: RuntimeNodeIdentityGatewayPort
   /** Required for PostgreSQL/server composition; contains only issuer public keys. */
   readonly runtimeNodeIdentity?: RuntimeNodeIdentityTrustConfig | undefined
   readonly metrics: GatewayMetrics | undefined
@@ -211,6 +219,35 @@ export interface RuntimeGatewayComposition {
  * SQLite stores are migrated idempotently here; PostgreSQL migration authority
  * stays separate and is never invoked by this composition.
  */
+/**
+ * Credential-fence validator for SQLite-profile runtime-command repositories:
+ * consults the SAME runtime-node credential authority the channel authenticator
+ * uses, and receives the LIVE in-transaction handle so durable authorities can
+ * read within the fenced transaction. Revoked (and, for version-aware
+ * authorities, stale-generation) credentials reject with the wire parity code.
+ */
+export function createRuntimeCommandCredentialFenceValidator(
+  authority: RuntimeNodeIdentityGatewayPort
+) {
+  return createRuntimeNodeCredentialFenceValidator(authority)
+}
+
+/**
+ * Production factory for the SQLite-profile runtime-command repository. A
+ * missing authority keeps the fail-closed behavior: fenced settlements reject.
+ */
+export function createSqliteRuntimeCommandRepository(
+  provider: SqlitePersistenceProvider,
+  credentialAuthority?: RuntimeNodeIdentityGatewayPort
+): SqliteRuntimeCommandRepository {
+  return new SqliteRuntimeCommandRepository(
+    provider,
+    credentialAuthority === undefined
+      ? undefined
+      : createRuntimeCommandCredentialFenceValidator(credentialAuthority)
+  )
+}
+
 export async function composeRuntimeGateway(
   options: RuntimeGatewayCompositionOptions
 ): Promise<RuntimeGatewayComposition> {
@@ -269,7 +306,10 @@ export async function composeRuntimeGateway(
     grants = new SqliteContextCommandGrantRepository(provider)
     registrations = new SqliteContextProviderRegistrationRepository(provider)
     if (options.runtime !== undefined)
-      runtimeCommands = new SqliteRuntimeCommandRepository(provider)
+      runtimeCommands = createSqliteRuntimeCommandRepository(
+        provider,
+        options.runtimeNodeCredentialAuthority
+      )
     sequences = new SqliteRuntimeChannelSequenceRepository(provider)
     // Durable channel ownership has no SQLite adapter: single-instance coordination only.
     coordination = new InMemoryRuntimeNodeCoordination()

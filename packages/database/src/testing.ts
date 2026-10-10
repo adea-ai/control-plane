@@ -18,12 +18,22 @@ export interface IsolatedDatabaseCredentials {
   readonly migration: DatabaseCredentials<'migration'>
 }
 
+export interface IsolatedMigrationOptions {
+  /** Test-only alternate chain, such as a predecessor state for an in-place upgrade proof. */
+  readonly migrationsFolder?: string
+  /**
+   * `broad` (default) grants the application role table-wide DML, as the existing suites expect.
+   * `migrations-only` leaves the application role with exactly the grants the migrations declare.
+   */
+  readonly applicationGrants?: 'broad' | 'migrations-only'
+}
+
 export interface IsolatedTestDatabase {
   readonly application: ControlPlaneDatabase
   readonly name: string
   assertApplicationCannotCreateOrAlter(): Promise<void>
   dispose(): Promise<void>
-  migrate(): Promise<void>
+  migrate(options?: IsolatedMigrationOptions): Promise<void>
   waitForBlockedTransaction(): Promise<void>
   withMigrationDatabase<Result>(
     operation: (database: ControlPlaneDatabase) => Promise<Result>
@@ -103,9 +113,15 @@ export async function createIsolatedTestDatabase(
         }
         throw new TestDatabaseError('EXPECTED_BLOCKED_POSTGRES_TRANSACTION')
       },
-      async migrate() {
-        await migrateDatabase({ role: 'migration', url: migrationUrl })
-        await grantApplicationAccess(migrationUrl, applicationRole)
+      async migrate(options = {}) {
+        await migrateDatabase(
+          { role: 'migration', url: migrationUrl },
+          options.migrationsFolder === undefined
+            ? {}
+            : { migrationsFolder: options.migrationsFolder }
+        )
+        if ((options.applicationGrants ?? 'broad') === 'broad')
+          await grantApplicationAccess(migrationUrl, applicationRole)
       },
       async withMigrationDatabase(operation) {
         const client = postgres(migrationUrl, { max: 1, prepare: false })

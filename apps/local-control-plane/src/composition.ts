@@ -6,6 +6,11 @@ import {
 import { createRequire } from 'node:module'
 import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import {
+  createPersistentSecureAcpDeviceEndpoint,
+  type PersistentSecureAcpDeviceEndpointOptions,
+  type SecureAcpDeviceEndpoint,
+} from '@control-plane/acp-adapter'
 import type {
   DeploymentComponentHealth,
   ObjectStore,
@@ -46,6 +51,7 @@ import {
   SqliteExecutionCancellationRepository,
   SqliteExecutionEventRepository,
   SqlitePersistenceProvider,
+  type RuntimeNodeCredentialFenceAuthorityPort,
   SqliteDurableUsageStore,
   SqliteReconciliationEffects,
   SqliteReconciliationSource,
@@ -216,6 +222,19 @@ export interface LocalControlPlaneCompositionOptions {
   readonly graphActivitiesFactory?: (input: {
     readonly persistence: SqlitePersistenceProvider
   }) => GraphSegmentActivityPort
+  /**
+   * Production construction of the secure remote ACP device route (#1023/#1040). When present the
+   * composition builds the device endpoint over its OWN persistence provider through
+   * `createPersistentSecureAcpDeviceEndpoint`, so revocation, the accepted channel generation, and
+   * the replay ledger always use the durable scoped `PersistenceProvider` store — never the
+   * in-memory test seam. Absent constructs no secure route (behavior unchanged).
+   */
+  readonly secureAcpRemoteRoute?: Omit<PersistentSecureAcpDeviceEndpointOptions, 'provider'>
+  /**
+   * Host-injected credential authority for runtime-command fences (same source the gateway
+   * authenticator trusts). Absent keeps the fail-closed default.
+   */
+  readonly runtimeCommandCredentialAuthority?: RuntimeNodeCredentialFenceAuthorityPort
   readonly runtimeTransport?: LocalRuntimeTransport
   readonly runtimeFactory?: (input: {
     readonly catalog: LocalControlApiComposition['catalog']
@@ -246,6 +265,8 @@ export class LocalControlPlaneComposition {
   readonly profile: 'local' | 'hosted-simple'
   readonly durableExecution: 'embedded-sqlite' | 'restate'
   readonly persistence: SqlitePersistenceProvider
+  /** Constructed only when `secureAcpRemoteRoute` is configured; durable over `persistence`. */
+  readonly secureAcpDevice: SecureAcpDeviceEndpoint | undefined
   readonly objectStore: ObjectStore
   readonly workflow: WorkflowRuntime
   /** Durable queue behind the embedded workflow runtime; empty in restate mode. */
@@ -350,6 +371,13 @@ export class LocalControlPlaneComposition {
       path: join(this.dataDirectory, 'control-plane.sqlite'),
       profile: this.profile,
     })
+    this.secureAcpDevice =
+      options.secureAcpRemoteRoute === undefined
+        ? undefined
+        : createPersistentSecureAcpDeviceEndpoint({
+            provider: this.persistence,
+            ...options.secureAcpRemoteRoute,
+          })
     this.objectStore = new FilesystemObjectStore({
       rootDirectory: join(this.dataDirectory, 'artifacts'),
       maxObjectBytes: MAX_ARTIFACT_BYTES,
@@ -422,7 +450,8 @@ export class LocalControlPlaneComposition {
       options.catalogApprovalPolicy,
       graphRuntime?.authority,
       memoryWriteback,
-      consistencyMetrics
+      consistencyMetrics,
+      options.runtimeCommandCredentialAuthority
     )
     this.#initializeGraphRuntime =
       graphRuntime === undefined ? undefined : () => graphRuntime.initialize(controlApi)

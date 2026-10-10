@@ -287,3 +287,127 @@ function runtimeConnection(runtimeConnectionId, overrides = {}) {
     ...overrides,
   }
 }
+
+describe('no implicit cloud rerouting (TDD-A377)', () => {
+  test('an offline local device is never silently replaced by a remote runtime', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const router = new RuntimeDiscoveryAttemptRouter({
+      discovery: {
+        listRuntimeConnections: async () => [offlineLocalDevice(), cloudRuntime()],
+      },
+      now: () => '2026-08-28T12:00:00.000Z',
+    })
+
+    await expect(
+      router.resolve({ execution: execution(plan), executionPlan: plan })
+    ).rejects.toThrow('WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK')
+  })
+
+  test('a revoked local device is fenced the same way and never rerouted', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const router = new RuntimeDiscoveryAttemptRouter({
+      discovery: {
+        listRuntimeConnections: async () => [revokedLocalDevice(), cloudRuntime()],
+      },
+      now: () => '2026-08-28T12:00:00.000Z',
+    })
+
+    await expect(
+      router.resolve({ execution: execution(plan), executionPlan: plan })
+    ).rejects.toThrow('WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK')
+  })
+
+  test('an offline local device with no remote alternative stays unavailable', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const router = new RuntimeDiscoveryAttemptRouter({
+      discovery: { listRuntimeConnections: async () => [offlineLocalDevice()] },
+      now: () => '2026-08-28T12:00:00.000Z',
+    })
+
+    await expect(
+      router.resolve({ execution: execution(plan), executionPlan: plan })
+    ).rejects.toThrow('WORKFLOW_RUNTIME_UNAVAILABLE')
+  })
+
+  test('a remote runtime stays selectable when the offline local device could not have served the plan', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const incapableLocal = offlineLocalDevice({
+      capabilities: ['filesystem.read'],
+      capabilityDetails: [{ name: 'filesystem.read', support: 'supported' }],
+    })
+    const cloud = cloudRuntime()
+    const router = new RuntimeDiscoveryAttemptRouter({
+      discovery: { listRuntimeConnections: async () => [incapableLocal, cloud] },
+      now: () => '2026-08-28T12:00:00.000Z',
+    })
+
+    const selected = await router.resolve({ execution: execution(plan), executionPlan: plan })
+
+    expect(selected.runtimeConnectionId).toBe(cloud.runtimeConnectionId)
+  })
+
+  test('a plan that excludes local locations is not blocked by an offline local device', async () => {
+    const base = createExecutionPlanTestFixture()
+    const remoteOnly = {
+      ...base,
+      constraints: {
+        ...base.constraints,
+        runtime: { ...base.constraints.runtime, allowedLocations: ['remote'] },
+      },
+    }
+    const cloud = cloudRuntime()
+    const router = new RuntimeDiscoveryAttemptRouter({
+      discovery: { listRuntimeConnections: async () => [offlineLocalDevice(), cloud] },
+      now: () => '2026-08-28T12:00:00.000Z',
+    })
+
+    const selected = await router.resolve({
+      execution: execution(remoteOnly),
+      executionPlan: remoteOnly,
+    })
+
+    expect(selected.runtimeConnectionId).toBe(cloud.runtimeConnectionId)
+  })
+})
+
+function localDevice(overrides = {}) {
+  return runtimeConnection('rtc_01JABCDEF0123456789ABCDEFA', {
+    location: 'local_device',
+    node: runtimeNode({ location: 'local_device' }),
+    ...overrides,
+  })
+}
+
+function offlineLocalDevice(overrides = {}) {
+  return localDevice({
+    status: 'unavailable',
+    node: runtimeNode({ location: 'local_device', status: 'offline', health: 'offline' }),
+    connection: { status: 'disconnected', health: 'unavailable', availability: 'offline' },
+    ...overrides,
+  })
+}
+
+function revokedLocalDevice() {
+  return localDevice({
+    status: 'revoked',
+    node: runtimeNode({ location: 'local_device', status: 'revoked', health: 'revoked' }),
+    connection: { status: 'revoked', health: 'unavailable', availability: 'revoked' },
+    compatibility: { state: 'revoked', limitations: [] },
+  })
+}
+
+function cloudRuntime(runtimeConnectionId = 'rtc_01JABCDEF0123456789ABCDEFB') {
+  return runtimeConnection(runtimeConnectionId, {
+    // The reroute fence is location-based; the accepted contract keeps exact
+    // managed-pi identity, so this cloud stand-in uses the pi family the plan
+    // accepts rather than relying on the removed managed-pi alias.
+    family: 'pi',
+    connectionType: 'managed_cloud',
+    location: 'agent_hq_cloud',
+    node: runtimeNode({ location: 'agent_hq_cloud' }),
+    access: {
+      localProjectGrant: { required: false, state: 'not_required' },
+      entitlement: { state: 'allowed' },
+    },
+  })
+}

@@ -617,6 +617,9 @@ async function createFixture({
           channelGeneration: generation,
         })
       },
+      // The SAME runtime-node credential source the channel authenticator
+      // trusts also fences runtime-command settlements (SQLite profile).
+      runtimeNodeCredentialAuthority: authority.validationPort(),
       metrics,
       reachability: new RecordingRuntimeNodeReachabilityPublisher(),
       traceId: () => golden.command.traceId,

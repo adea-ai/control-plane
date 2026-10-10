@@ -211,6 +211,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'apps/hosted-control-plane/src/hosted-http.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-metrics.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-projection.integration.test.mjs',
+    'apps/runtime-gateway/src/runtime-node-credential-binding.integration.test.mjs',
     'apps/workflow-worker/src/runtime-budget-admission.integration.test.mjs',
     'packages/database/src/admission-rollout-admin.integration.test.mjs',
     'packages/database/src/budget-admission.integration.test.mjs',
@@ -230,6 +231,8 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/database/src/retention-hold-owner-activation.integration.test.mjs',
     'packages/database/src/retention-hold-repository.integration.test.mjs',
     'packages/database/src/retention-reference-windows.integration.test.mjs',
+    'packages/database/src/runtime-node-credential-binding.integration.test.mjs',
+    'packages/database/src/runtime-node-credential-restricted.integration.test.mjs',
     'packages/database/src/runtime-node-identity-repository.integration.test.mjs',
     'packages/database/src/tool-repositories.integration.test.mjs',
     'packages/database/src/usage-store.integration.test.mjs',
@@ -238,6 +241,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/langgraph-adapter/src/postgres-checkpointer.integration.test.mjs',
     'packages/profile-portability/src/postgres.integration.test.mjs',
     'packages/testing/src/postgres.integration.test.mjs',
+    'tests/acp-remote-device-postgres.integration.test.mjs',
     'tests/langgraph-retirement-inventory-pg.integration.test.mjs',
     'tests/memory-process-loss.integration.test.mjs',
     'tests/runtime-node-credential-revocation.integration.test.mjs',
@@ -278,6 +282,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/pi-production-runtime-startup.test.mjs',
     'tests/pi-production-factory.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
+    'tests/acp-remote-shared-provider.test.mjs',
   ])
   const manifest = await readJson('package.json')
   assert.match(

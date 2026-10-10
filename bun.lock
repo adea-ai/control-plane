@@ -53,7 +53,7 @@
     },
     "apps/control-api": {
       "name": "@control-plane/control-api",
-      "version": "1.27.1",
+      "version": "1.28.0",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -247,6 +247,8 @@
         "@control-plane/domain": "workspace:*",
         "@control-plane/runtime-gateway-protocol": "workspace:*",
         "@control-plane/runtime-sdk": "workspace:*",
+        "@hpke/core": "1.9.0",
+        "@hpke/dhkem-x25519": "1.8.0",
         "zod": "4.6.5",
       },
     },
@@ -285,7 +287,7 @@
     },
     "packages/control-sdk": {
       "name": "@control-plane/sdk",
-      "version": "1.16.0",
+      "version": "1.17.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:^",
         "@control-plane/runtime-sdk": "workspace:^",
@@ -456,7 +458,7 @@
     },
     "packages/pi-cloudflare-host": {
       "name": "@control-plane/pi-cloudflare-host",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "dependencies": {
         "@control-plane/runtime-sdk": "workspace:*",
         "@earendil-works/chord": "1.1.0",
@@ -469,7 +471,7 @@
     },
     "packages/pi-durable-adapter": {
       "name": "@control-plane/pi-durable-adapter",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/domain": "workspace:*",
@@ -571,7 +573,7 @@
     },
     "packages/runtime-sdk": {
       "name": "@control-plane/runtime-sdk",
-      "version": "1.14.0",
+      "version": "1.15.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.6.5",

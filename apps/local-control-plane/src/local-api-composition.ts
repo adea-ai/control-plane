@@ -49,6 +49,8 @@ import {
   SqliteProjectStateRepository,
   SqliteReconciliationCheckpointRepository,
   SqliteRuntimeCommandRepository,
+  createRuntimeNodeCredentialFenceValidator,
+  type RuntimeNodeCredentialFenceAuthorityPort,
   SqliteRuntimeDiscoveryRepository,
   SqliteRuntimeInventoryCheckpointRepository,
   SqliteRuntimeEventEffectSink,
@@ -102,7 +104,14 @@ export class LocalControlApiComposition {
     catalogApprovalPolicy?: { readonly required: boolean; readonly requiredSince?: string },
     graphs?: ExecutionGraphAuthority,
     memoryWriteback?: MemoryWriteApplicationConfiguration,
-    memoryWriteMetrics?: MemoryWriteDecisionMetrics
+    memoryWriteMetrics?: MemoryWriteDecisionMetrics,
+    /**
+     * Host-injected credential authority for runtime-command fences; absent = fail-closed.
+     * Forward-compatibility only: the Local all-in-one has no fenced settlement callers today
+     * (gateway deliveries are the only production fence source), so this default is unreachable
+     * in production Local until such a caller is added.
+     */
+    runtimeCommandCredentialAuthority?: RuntimeNodeCredentialFenceAuthorityPort
   ) {
     const dispatcher: LocalWorkflowDispatcher =
       workflowDispatcher ??
@@ -137,7 +146,12 @@ export class LocalControlApiComposition {
     this.projectStates = new SqliteProjectStateRepository(persistence)
     this.statePromotionProposals = new SqliteStatePromotionProposalRepository(persistence)
     this.reconciliationCheckpoints = new SqliteReconciliationCheckpointRepository(persistence)
-    this.runtimeCommands = new SqliteRuntimeCommandRepository(persistence)
+    this.runtimeCommands = new SqliteRuntimeCommandRepository(
+      persistence,
+      runtimeCommandCredentialAuthority === undefined
+        ? undefined
+        : createRuntimeNodeCredentialFenceValidator(runtimeCommandCredentialAuthority)
+    )
     this.runtimeInventoryCheckpoints = new SqliteRuntimeInventoryCheckpointRepository(persistence)
     this.runtimeEventEffects = new SqliteRuntimeEventEffectSink(persistence)
     this.runtimeDiscoveryRepository = new SqliteRuntimeDiscoveryRepository(persistence)

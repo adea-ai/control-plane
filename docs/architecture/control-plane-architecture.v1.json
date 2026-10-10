@@ -21,7 +21,7 @@
         "@control-plane/runtime-gateway-protocol",
         "@control-plane/runtime-sdk"
       ],
-      "externalDependencies": ["zod"],
+      "externalDependencies": ["@hpke/core", "@hpke/dhkem-x25519", "zod"],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
@@ -74,7 +74,7 @@
     {
       "name": "@control-plane/contracts",
       "path": "packages/contracts",
-      "version": "1.19.0",
+      "version": "1.19.1",
       "lockVersion": "1.19.0",
       "kind": "package",
       "private": false,
@@ -89,8 +89,8 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.27.0",
-      "lockVersion": "1.27.0",
+      "version": "1.29.2",
+      "lockVersion": "1.28.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -264,7 +264,7 @@
     {
       "name": "@control-plane/execution-plan",
       "path": "packages/execution-plan",
-      "version": "1.9.0",
+      "version": "1.9.1",
       "lockVersion": "1.9.0",
       "kind": "package",
       "private": true,
@@ -353,8 +353,8 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.30.0",
-      "lockVersion": "1.30.0",
+      "version": "1.31.0",
+      "lockVersion": "1.31.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -437,7 +437,7 @@
     {
       "name": "@control-plane/model-gateway",
       "path": "packages/model-gateway",
-      "version": "1.5.0",
+      "version": "1.5.1",
       "lockVersion": "1.5.0",
       "kind": "package",
       "private": true,
@@ -500,8 +500,8 @@
     {
       "name": "@control-plane/pi-cloudflare-host",
       "path": "packages/pi-cloudflare-host",
-      "version": "0.6.0",
-      "lockVersion": "0.6.0",
+      "version": "0.6.1",
+      "lockVersion": "0.6.1",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -519,8 +519,8 @@
     {
       "name": "@control-plane/pi-durable-adapter",
       "path": "packages/pi-durable-adapter",
-      "version": "0.4.0",
-      "lockVersion": "0.4.0",
+      "version": "0.6.1",
+      "lockVersion": "0.5.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -549,7 +549,7 @@
     {
       "name": "@control-plane/policy",
       "path": "packages/policy",
-      "version": "1.4.1",
+      "version": "1.4.2",
       "lockVersion": "1.4.1",
       "kind": "package",
       "private": true,
@@ -579,8 +579,8 @@
     {
       "name": "@control-plane/profile-adapters",
       "path": "packages/profile-adapters",
-      "version": "1.0.0",
-      "lockVersion": "1.0.0",
+      "version": "1.1.0",
+      "lockVersion": "1.1.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -656,7 +656,7 @@
     {
       "name": "@control-plane/runtime-gateway",
       "path": "apps/runtime-gateway",
-      "version": "1.7.3",
+      "version": "1.7.4",
       "lockVersion": "1.7.3",
       "kind": "application",
       "private": true,
@@ -700,8 +700,8 @@
     {
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
-      "version": "1.14.0",
-      "lockVersion": "1.14.0",
+      "version": "1.15.1",
+      "lockVersion": "1.15.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -756,8 +756,8 @@
     {
       "name": "@control-plane/sdk",
       "path": "packages/control-sdk",
-      "version": "1.16.0",
-      "lockVersion": "1.16.0",
+      "version": "1.17.0",
+      "lockVersion": "1.17.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -816,8 +816,8 @@
     {
       "name": "@control-plane/telemetry",
       "path": "packages/telemetry",
-      "version": "1.5.6",
-      "lockVersion": "1.5.6",
+      "version": "1.6.0",
+      "lockVersion": "1.6.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -938,8 +938,8 @@
     {
       "name": "@control-plane/workflow-worker",
       "path": "apps/workflow-worker",
-      "version": "1.15.0",
-      "lockVersion": "1.15.0",
+      "version": "1.16.1",
+      "lockVersion": "1.16.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -3360,7 +3360,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:622e32acac52d2f7581b9df796669e306204436dd1ee0b4540cf91d7e31b311b"
+      "sourceDigest": "sha256:31a06098ed2da7f769ae13528fae13dc5f6b8ce65c724ad3ad20e55ccb9ce74b"
     },
     {
       "id": "local",
@@ -3403,7 +3403,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:622e32acac52d2f7581b9df796669e306204436dd1ee0b4540cf91d7e31b311b"
+      "sourceDigest": "sha256:31a06098ed2da7f769ae13528fae13dc5f6b8ce65c724ad3ad20e55ccb9ce74b"
     }
   ],
   "ownership": [
