@@ -1,15 +1,18 @@
 // M17.02.2 (#1025): SIGKILL of the self-hosted simple composition while its owned, pinned Restate
-// child runs. The composition is the supported LocalControlPlaneComposition (profile
-// `hosted-simple`, durable execution `restate`) in a child process. The parent kills that process
-// only. The launcher and native Restate server it started keep running as orphans. The parent
-// reaps exactly those recorded identities, then a second composition recovers the same execution.
+// child runs.
 //
-// Proven here: the paused approval survives the kill with its execution, attempt, and version;
-// the recovered composition serves the same execution; a duplicate run submission starts no second
-// effect; one approval resumes the workflow; `prepare` runs once, `finalize` runs once, and one
-// result artifact is written across both incarnations; owned processes are reaped by identity.
+// Scope label: this proof uses the legacy LangGraph test composition (`graphActivitiesFactory` over
+// LocalControlPlaneComposition, profile `hosted-simple`, durable execution `restate`). It is not Pi
+// Durable host wiring. The parent kills the composition process only. The launcher and native
+// Restate server it started keep running as orphans. The parent then reaps exactly those recorded
+// identities by hand before a second composition starts on the same data. It does not adopt orphans.
 //
-// Not covered: Restate drain, upgrade, rollback, and Hosted. Those stay in
+// Proven here: the paused approval survives the kill with its execution, attempt, and version; the
+// recovered composition serves the same execution; a duplicate run submission starts no second
+// effect; one approval resumes the workflow; `prepare` runs once, `finalize` once, and one result
+// artifact is written across both incarnations; owned processes are reaped by recorded identity.
+//
+// Not covered: automatic orphan adoption, Restate drain, upgrade, rollback, and Hosted. Those stay in
 // docs/profile-recovery-acceptance-map.md.
 
 import { spawn } from 'node:child_process'
@@ -23,19 +26,26 @@ import { createRegisteredGraphPlan } from './fixtures/registered-graph-plan.mjs'
 import {
   approvalInteractionId,
   artifactIdOf,
-  fixturePath,
+  boundedWait,
   graph,
   graphInput,
+  identityOfPid,
   liveIdentity,
   ownedNativeServer,
+  parseProtocolLine,
   pinnedRestateCommands,
-  processTable,
+  processExit,
   reapIdentity,
   runInputOf,
+  spawnProtocolChild,
+  spawnSelfHostedSimpleComposition,
+  stopChild,
 } from './fixtures/self-hosted-simple-sigkill.mjs'
 
-const repositoryRoot = fileURLToPath(new URL('../..', import.meta.url))
+// This file sits in tests/, so one `..` is the repository root.
+const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const pinned = pinnedRestateCommands()
+const EXIT_BOUND_MS = 15_000
 const cleanup = []
 
 async function isolatedPorts() {
@@ -62,49 +72,9 @@ async function isolatedPorts() {
   }
 }
 
-/** A composition child process with a line protocol on stdout. */
-function spawnComposition(mode, config) {
-  const child = spawn(process.execPath, [fixturePath, mode], {
-    cwd: repositoryRoot,
-    env: { ...process.env, SELF_HOSTED_SIMPLE_CONFIG: JSON.stringify(config) },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  })
-  const stages = []
-  let buffer = ''
-  let stderr = ''
-  child.stdout.on('data', (chunk) => {
-    buffer += chunk
-    const lines = buffer.split('\n')
-    buffer = lines.pop()
-    // Restate and framework logs share stdout; only protocol records are parsed.
-    for (const line of lines) if (line.startsWith('{')) stages.push(JSON.parse(line))
-  })
-  child.stderr.on('data', (chunk) => {
-    stderr = `${stderr}${chunk}`.slice(-4096)
-  })
-  const exited = new Promise((resolve) =>
-    child.once('exit', (code, signal) => resolve({ code, signal }))
-  )
-  async function next(stage, timeoutMs = 60_000) {
-    const deadline = Date.now() + timeoutMs
-    for (;;) {
-      const found = stages.find((entry) => entry.stage === stage)
-      if (found) return found
-      const failed = stages.find((entry) => entry.stage === 'failed')
-      if (failed) throw new Error(`COMPOSITION_CHILD_FAILED: ${failed.message}`)
-      if (child.exitCode !== null || child.signalCode !== null) {
-        throw new Error(`COMPOSITION_CHILD_EXITED_BEFORE_${stage}: ${stderr}`)
-      }
-      if (Date.now() > deadline) throw new Error(`COMPOSITION_CHILD_TIMEOUT_${stage}: ${stderr}`)
-      await new Promise((resolve) => setTimeout(resolve, 50))
-    }
-  }
-  return { child, exited, next }
-}
-
-/** Identity of a live process row, recorded before the parent signals anything. */
+/** Identity of a recorded pid whose command must include the expected pinned path. */
 async function identityOf(pid, commandIncludes) {
-  const row = (await processTable()).find((entry) => entry.pid === pid)
+  const row = await identityOfPid(pid)
   if (row === undefined || !row.command.includes(commandIncludes)) {
     throw new Error('OWNED_PROCESS_IDENTITY_MISMATCH')
   }
@@ -123,7 +93,7 @@ async function ingressPost(ports, executionId, path, body) {
   )
 }
 
-/** Records the owned launcher and native server of one incarnation, once its composition started. */
+/** Records the launcher and native server of one incarnation, once its composition has started. */
 async function recordOwnedRestate(owned, launcherPid) {
   const launcher = await identityOf(launcherPid, pinned.launcher)
   owned.push(launcher)
@@ -154,7 +124,7 @@ afterEach(async () => {
   if (failures.length > 0) throw new AggregateError(failures, 'self-hosted simple SIGKILL cleanup')
 })
 
-describe('M17.02.2 self-hosted simple SIGKILL recovery (hosted-simple, owned pinned Restate)', () => {
+describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan reap (not Pi Durable host wiring, no orphan adoption)', () => {
   test('SIGKILL of the composition while its pinned Restate child runs recovers the same execution with no duplicate effect', async () => {
     const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-sigkill-'))
     const dataDirectory = join(work, 'data')
@@ -163,17 +133,22 @@ describe('M17.02.2 self-hosted simple SIGKILL recovery (hosted-simple, owned pin
     const owned = []
     const incarnations = []
     cleanup.push(async () => {
-      for (const incarnation of incarnations) {
-        if (incarnation.child.exitCode === null && incarnation.child.signalCode === null) {
-          incarnation.child.kill('SIGKILL')
+      try {
+        // Each spawned composition is awaited to exit before any state is removed.
+        for (const [index, incarnation] of incarnations.entries()) {
+          await stopChild(incarnation, {
+            label: `composition incarnation ${index}`,
+            timeoutMs: EXIT_BOUND_MS,
+          })
         }
+        await reapOwned(owned)
+      } finally {
+        await rm(work, { recursive: true, force: true })
       }
-      await reapOwned(owned)
-      await rm(work, { recursive: true, force: true })
     })
     const config = { dataDirectory, ports, evidencePath }
 
-    const initial = spawnComposition('initial', config)
+    const initial = spawnSelfHostedSimpleComposition('initial', config)
     incarnations.push(initial)
     const started = await initial.next('started')
     const initialOwned = await recordOwnedRestate(owned, started.launcherPid)
@@ -183,17 +158,20 @@ describe('M17.02.2 self-hosted simple SIGKILL recovery (hosted-simple, owned pin
 
     // SIGKILL the composition process only. Its owned Restate child keeps running.
     expect(initial.child.kill('SIGKILL')).toBe(true)
-    expect(await initial.exited).toEqual({ code: null, signal: 'SIGKILL' })
+    expect(await boundedWait(initial.exited, EXIT_BOUND_MS, 'initial composition exit')).toEqual({
+      code: null,
+      signal: 'SIGKILL',
+    })
     expect(await liveIdentity(initialOwned.native)).toBeDefined()
     expect(await liveIdentity(initialOwned.launcher)).toBeDefined()
 
-    // The recovery composition needs the data directory and ports, so the orphans are reaped
-    // first. Only the identities recorded above are signalled.
+    // Manual orphan reap: the recovery composition needs the data directory and ports. Only the
+    // identities recorded above are signalled.
     await reapOwned(owned)
     expect(await liveIdentity(initialOwned.native)).toBeUndefined()
     expect(await liveIdentity(initialOwned.launcher)).toBeUndefined()
 
-    const recovery = spawnComposition('recover', { ...config, executionId })
+    const recovery = spawnSelfHostedSimpleComposition('recover', { ...config, executionId })
     incarnations.push(recovery)
     const recoveredStarted = await recovery.next('started')
     const recoveredOwned = await recordOwnedRestate(owned, recoveredStarted.launcherPid)
@@ -240,7 +218,10 @@ describe('M17.02.2 self-hosted simple SIGKILL recovery (hosted-simple, owned pin
     // Graceful close of the recovery composition stops its own Restate child.
     recovery.child.stdin.write('close\n')
     await recovery.next('closed')
-    expect(await recovery.exited).toEqual({ code: 0, signal: null })
+    expect(await boundedWait(recovery.exited, EXIT_BOUND_MS, 'recovery composition exit')).toEqual({
+      code: 0,
+      signal: null,
+    })
     expect(await liveIdentity(recoveredOwned.native)).toBeUndefined()
     expect(await liveIdentity(recoveredOwned.launcher)).toBeUndefined()
 
@@ -263,11 +244,16 @@ describe('M17.02.2 self-hosted simple SIGKILL recovery (hosted-simple, owned pin
 
   test('reaping signals only the recorded identity, never a reused pid or a same-named process', async () => {
     const bystander = spawn('sleep', ['60'], { stdio: 'ignore' })
+    const bystanderExit = processExit(bystander)
     cleanup.push(async () => {
       if (bystander.exitCode === null && bystander.signalCode === null) bystander.kill('SIGKILL')
+      await boundedWait(bystanderExit, EXIT_BOUND_MS, 'bystander exit')
     })
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    const identity = (await processTable()).find((row) => row.pid === bystander.pid)
+    let identity
+    for (let attempt = 0; attempt < 50 && identity === undefined; attempt += 1) {
+      identity = await identityOfPid(bystander.pid)
+      if (identity === undefined) await new Promise((resolve) => setTimeout(resolve, 20))
+    }
     expect(identity).toBeDefined()
 
     // A recorded start time that no longer matches means the pid was reused: nothing is signalled.
@@ -277,5 +263,52 @@ describe('M17.02.2 self-hosted simple SIGKILL recovery (hosted-simple, owned pin
     // The exact recorded identity is reaped.
     expect(await reapIdentity(identity)).toBe(true)
     expect(await liveIdentity(identity)).toBeUndefined()
+    expect(await boundedWait(bystanderExit, EXIT_BOUND_MS, 'bystander exit')).toMatchObject({
+      signal: 'SIGTERM',
+    })
+  })
+
+  test('the protocol reader ignores non-protocol JSON and malformed records without throwing', async () => {
+    expect(parseProtocolLine('{"level":"info","stage":"started","launcherPid":9}')).toBeUndefined()
+    expect(parseProtocolLine('{"stage":"started","pid":1}')).toBeUndefined()
+    expect(parseProtocolLine('SELF_HOSTED_SIMPLE_PROTOCOL {not json')).toBeUndefined()
+    expect(parseProtocolLine('SELF_HOSTED_SIMPLE_PROTOCOL {"stage":"unknown"}')).toBeUndefined()
+    expect(parseProtocolLine('SELF_HOSTED_SIMPLE_PROTOCOL null')).toBeUndefined()
+
+    // A real child writes framework JSON, a bare protocol-shaped line, and a malformed record
+    // before the valid record. The stdout handler must survive all of them.
+    const script = [
+      'process.stdout.write(\'{"level":"warn","msg":"framework"}\\n\')',
+      'process.stdout.write(\'{"stage":"started","pid":1}\\n\')',
+      "process.stdout.write('SELF_HOSTED_SIMPLE_PROTOCOL {broken\\n')",
+      "process.stdout.write('SELF_HOSTED_SIMPLE_PROTOCOL ' + JSON.stringify({ stage: 'started', pid: 2, launcherPid: 3 }) + '\\n')",
+    ].join(';')
+    const child = spawnProtocolChild({
+      executable: process.execPath,
+      args: ['-e', script],
+      cwd: repositoryRoot,
+    })
+    cleanup.push(() => stopChild(child, { label: 'protocol child', timeoutMs: EXIT_BOUND_MS }))
+    expect(await child.next('started', 10_000)).toEqual({
+      stage: 'started',
+      pid: 2,
+      launcherPid: 3,
+    })
+    expect(await boundedWait(child.exited, EXIT_BOUND_MS, 'protocol child exit')).toEqual({
+      code: 0,
+      signal: null,
+    })
+  })
+
+  test('a spawn failure is reported promptly instead of hanging the protocol wait', async () => {
+    const child = spawnProtocolChild({
+      executable: join(repositoryRoot, 'no-such-composition-binary'),
+    })
+    cleanup.push(() => stopChild(child, { label: 'spawn-failed child', timeoutMs: EXIT_BOUND_MS }))
+    await expect(child.next('started', 10_000)).rejects.toThrow(
+      'PROTOCOL_CHILD_SPAWN_FAILED: ENOENT'
+    )
+    const exit = await boundedWait(child.exited, EXIT_BOUND_MS, 'spawn-failed child exit')
+    expect(exit.error).toMatchObject({ code: 'ENOENT' })
   })
 })

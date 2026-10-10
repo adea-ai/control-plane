@@ -1,16 +1,21 @@
 // Test-owned helper for the self-hosted simple SIGKILL proof (M17.02.2, #1025).
 //
+// Scope label: this proof uses the legacy LangGraph test composition
+// (`graphActivitiesFactory` over `LocalControlPlaneComposition`). It is not Pi Durable host wiring.
+// The parent reaps the orphaned Restate launcher and native server by recorded identity before the
+// recovery composition starts. It does not adopt orphans.
+//
 // Runs as a child process: `node <this file> initial|recover` with configuration in
 // SELF_HOSTED_SIMPLE_CONFIG. Each incarnation opens the supported LocalControlPlaneComposition
 // (profile `hosted-simple`, durable execution `restate`), which launches the pinned Restate
 // server through its own process provider. The parent kills the composition process only, so
-// the owned Restate launcher and its native server are orphaned while they run. The parent
-// reaps those exact processes by identity, then a second incarnation recovers the same data.
+// the owned Restate launcher and its native server are orphaned while they run.
 //
-// The process-table helpers at the bottom only ever signal identities recorded by the parent
-// (pid, start time, and pinned command). They never match by name.
+// Process control is scoped to identities recorded by the parent: `ps -p <pid>` for one recorded
+// pid, and `pgrep -P <recorded launcher pid>` for that launcher's direct children. Nothing lists
+// the system process table and nothing matches by name.
 
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
@@ -38,6 +43,19 @@ export const graph = {
 }
 export const graphInput = { objective: 'recover a self-hosted simple approval' }
 export const approvalInteractionId = 'approval-1'
+
+/** Only lines with this prefix are protocol records. Restate and framework logs never match it. */
+export const PROTOCOL_PREFIX = 'SELF_HOSTED_SIMPLE_PROTOCOL '
+const PROTOCOL_STAGES = new Set([
+  'started',
+  'awaiting_input',
+  'recovered',
+  'completed',
+  'closed',
+  'failed',
+])
+const MAXIMUM_STDOUT_BUFFER = 1 << 20
+
 const execFileAsync = promisify(execFile)
 const fixturePath = fileURLToPath(import.meta.url)
 const require = createRequire(
@@ -169,8 +187,8 @@ export function runInputOf(plan, executionId) {
   }
 }
 
-function emit(message) {
-  process.stdout.write(`${JSON.stringify(message)}\n`)
+function emit(message, callback) {
+  process.stdout.write(`${PROTOCOL_PREFIX}${JSON.stringify(message)}\n`, callback)
 }
 
 async function waitForExecution(composition, executionId, done) {
@@ -293,9 +311,7 @@ async function runRecover(config) {
   lines.close()
   await composition.close()
   // Explicit exit once the composition has released its Restate child and storage.
-  process.stdout.write(`${JSON.stringify({ stage: 'closed', pid: process.pid })}\n`, () =>
-    process.exit(0)
-  )
+  emit({ stage: 'closed', pid: process.pid }, () => process.exit(0))
 }
 
 if (process.argv[1] === fixturePath) {
@@ -312,7 +328,125 @@ if (process.argv[1] === fixturePath) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Parent-side process control. Identities are (pid, start time, command); nothing matches by name.
+// Parent-side protocol and process control.
+
+/** Parses one stdout line. Anything that is not a protocol record yields undefined; never throws. */
+export function parseProtocolLine(line) {
+  if (!line.startsWith(PROTOCOL_PREFIX)) return undefined
+  let record
+  try {
+    record = JSON.parse(line.slice(PROTOCOL_PREFIX.length))
+  } catch {
+    return undefined
+  }
+  if (
+    record === null ||
+    typeof record !== 'object' ||
+    typeof record.stage !== 'string' ||
+    !PROTOCOL_STAGES.has(record.stage)
+  ) {
+    return undefined
+  }
+  return record
+}
+
+/** Resolves with the exit or spawn-error outcome. The promise is attached before any event can fire. */
+export function processExit(child) {
+  return new Promise((resolve) => {
+    let settled = false
+    const settle = (value) => {
+      if (!settled) {
+        settled = true
+        resolve(value)
+      }
+    }
+    child.once('error', (error) => settle({ code: null, signal: null, error }))
+    child.once('exit', (code, signal) => settle({ code, signal }))
+  })
+}
+
+/** A child process with a protocol-only stdout reader. Every wait is bounded by a caller timeout. */
+export function spawnProtocolChild({ executable, args = [], cwd, env = process.env }) {
+  const child = spawn(executable, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
+  const exited = processExit(child)
+  const stages = []
+  let stdoutBuffer = ''
+  let stderrTail = ''
+  let spawnError
+  let wake = () => {}
+  child.once('error', (error) => {
+    spawnError = error
+    wake()
+  })
+  child.stdout.on('data', (chunk) => {
+    try {
+      stdoutBuffer = `${stdoutBuffer}${chunk}`
+      const lines = stdoutBuffer.split('\n')
+      stdoutBuffer = lines.pop()
+      if (stdoutBuffer.length > MAXIMUM_STDOUT_BUFFER) stdoutBuffer = ''
+      for (const line of lines) {
+        const record = parseProtocolLine(line)
+        if (record !== undefined) stages.push(record)
+      }
+      wake()
+    } catch {
+      // Protocol parsing never escapes the event handler; malformed lines are ignored.
+    }
+  })
+  child.stderr.on('data', (chunk) => {
+    stderrTail = `${stderrTail}${chunk}`.slice(-4096)
+  })
+  async function next(stage, timeoutMs = 60_000) {
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      const found = stages.find((entry) => entry.stage === stage)
+      if (found) return found
+      const failed = stages.find((entry) => entry.stage === 'failed')
+      if (failed) throw new Error(`PROTOCOL_CHILD_FAILED: ${failed.message}`)
+      if (spawnError)
+        throw new Error(`PROTOCOL_CHILD_SPAWN_FAILED: ${spawnError.code ?? 'UNKNOWN'}`)
+      if (child.exitCode !== null || child.signalCode !== null) {
+        throw new Error(`PROTOCOL_CHILD_EXITED_BEFORE_${stage}: ${stderrTail}`)
+      }
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) throw new Error(`PROTOCOL_CHILD_TIMEOUT_${stage}: ${stderrTail}`)
+      await new Promise((resolve) => {
+        wake = resolve
+        setTimeout(resolve, Math.min(remaining, 100))
+      })
+    }
+  }
+  return { child, exited, next, stages }
+}
+
+/** One self-hosted simple composition incarnation, spawned from this helper. */
+export function spawnSelfHostedSimpleComposition(mode, config) {
+  return spawnProtocolChild({
+    executable: process.execPath,
+    args: [fixturePath, mode],
+    cwd: fileURLToPath(new URL('../..', import.meta.url)),
+    env: { ...process.env, SELF_HOSTED_SIMPLE_CONFIG: JSON.stringify(config) },
+  })
+}
+
+/** Rejects if a promise has not settled within the bound. Used for every exit wait. */
+export function boundedWait(promise, timeoutMs, label) {
+  let timer
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`BOUNDED_WAIT_TIMEOUT:${label}`)), timeoutMs)
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
+
+/** Ends one child this test spawned: SIGKILL if still running, then await its exit (bounded). */
+export async function stopChild(entry, { label, timeoutMs = 10_000 }) {
+  if (entry.child.exitCode === null && entry.child.signalCode === null) {
+    entry.child.kill('SIGKILL')
+  }
+  return boundedWait(entry.exited, timeoutMs, label)
+}
 
 /** The launcher the composition spawns, and the native server the launcher spawns. Both are
  *  resolved the way the launcher resolves its own binary, so the paths compare equal. */
@@ -327,44 +461,69 @@ export function pinnedRestateCommands() {
   }
 }
 
-export async function processTable() {
-  const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,lstart=,command='])
+const PS_ROW = /^\s*(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/
+
+/** Identity of one recorded pid, read with `ps -p <pid>`. Undefined when the pid no longer exists. */
+export async function identityOfPid(pid) {
+  let stdout
+  try {
+    ;({ stdout } = await execFileAsync('ps', [
+      '-p',
+      String(pid),
+      '-o',
+      'pid=,ppid=,lstart=,command=',
+    ]))
+  } catch (error) {
+    if (error.code === 1) return undefined
+    throw error
+  }
+  const match = PS_ROW.exec(stdout.trim())
+  if (match === null) throw new Error('OWNED_PROCESS_PS_OUTPUT_INVALID')
+  return {
+    pid: Number(match[1]),
+    ppid: Number(match[2]),
+    started: match[3].replace(/\s+/g, ' '),
+    command: match[4],
+  }
+}
+
+/** Returns the live row for a recorded identity, or undefined when that identity is gone. */
+export async function liveIdentity(identity) {
+  const row = await identityOfPid(identity.pid)
+  if (row === undefined || row.started !== identity.started || row.command !== identity.command) {
+    return undefined
+  }
+  return row
+}
+
+/** Direct children of one recorded launcher, via `pgrep -P`. Never a system-wide listing. */
+export async function childrenOfRecorded(parentPid) {
+  let stdout
+  try {
+    ;({ stdout } = await execFileAsync('pgrep', ['-P', String(parentPid)]))
+  } catch (error) {
+    if (error.code === 1) return []
+    if (error.code === 'ENOENT') {
+      throw new Error('NATIVE_CHILD_RECORDING_UNAVAILABLE', { cause: error })
+    }
+    throw error
+  }
   const rows = []
   for (const line of stdout.split('\n')) {
-    const match =
-      /^\s*(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/.exec(line)
-    if (match) {
-      rows.push({
-        pid: Number(match[1]),
-        ppid: Number(match[2]),
-        started: match[3].replace(/\s+/g, ' '),
-        command: match[4],
-      })
-    }
+    const pid = Number(line.trim())
+    if (!Number.isSafeInteger(pid) || pid < 1) continue
+    const row = await identityOfPid(pid)
+    if (row !== undefined) rows.push(row)
   }
   return rows
 }
 
-function sameIdentity(identity, row) {
-  return (
-    row !== undefined &&
-    row.pid === identity.pid &&
-    row.started === identity.started &&
-    row.command === identity.command
-  )
-}
-
-/** Returns the live row for a recorded identity, or undefined when the identity is gone. */
-export async function liveIdentity(identity) {
-  return (await processTable()).find((row) => sameIdentity(identity, row))
-}
-
-/** Finds the native server owned by a recorded launcher, identified by parent and pinned path. */
+/** Finds the native server owned by a recorded launcher, by its direct parent and pinned path. */
 export async function ownedNativeServer(launcherPid, nativePath, deadlineMs = 15_000) {
   const deadline = Date.now() + deadlineMs
   while (Date.now() < deadline) {
-    const matches = (await processTable()).filter(
-      (row) => row.ppid === launcherPid && row.command.includes(nativePath)
+    const matches = (await childrenOfRecorded(launcherPid)).filter((row) =>
+      row.command.includes(nativePath)
     )
     if (matches.length === 1) return matches[0]
     if (matches.length > 1) throw new Error('SELF_HOSTED_SIMPLE_NATIVE_AMBIGUOUS')
