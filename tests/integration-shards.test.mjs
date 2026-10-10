@@ -172,6 +172,7 @@ describe('integration shard partition', () => {
       'apps/local-control-plane/src',
       'tests',
       'apps/hosted-control-plane/src',
+      'apps/runtime-gateway/src',
     ]
     const assigned = new Map()
     for (const entry of INTEGRATION_SHARDS) {
