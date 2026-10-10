@@ -18,6 +18,7 @@ CREATE INDEX "runtime_node_credential_audit_events_credential_index" ON "runtime
 CREATE FUNCTION public.reject_runtime_node_credential_audit_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
+SET search_path = pg_catalog
 AS $runtime_node_credential_audit_immutable$
 BEGIN
 	RAISE EXCEPTION 'RUNTIME_NODE_CREDENTIAL_AUDIT_IMMUTABLE';
@@ -41,7 +42,7 @@ CREATE FUNCTION public.revoke_runtime_node_credential(
 RETURNS TABLE (result_outcome varchar, result_credential_id varchar)
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog
 AS $runtime_node_credential_revocation$
 DECLARE
 	target public.runtime_node_issued_credentials%ROWTYPE;
@@ -79,7 +80,7 @@ BEGIN
 	END IF;
 	UPDATE public.runtime_node_issued_credentials AS credential
 	SET revocation_version = target.revocation_version + 1,
-		revoked_at = p_now
+		revoked_at = transaction_timestamp()
 	WHERE credential.credential_id = p_credential_id;
 	INSERT INTO public.runtime_node_credential_audit_events (
 		action, outcome, credential_id, node_id, workspace_id, revocation_version, principal_ref, at
@@ -93,12 +94,27 @@ $runtime_node_credential_revocation$;
 --> statement-breakpoint
 REVOKE ALL ON FUNCTION public.revoke_runtime_node_credential(varchar, varchar, varchar, timestamp with time zone) FROM PUBLIC;
 --> statement-breakpoint
+REVOKE ALL ON FUNCTION public.reject_runtime_node_credential_audit_mutation() FROM PUBLIC;
+--> statement-breakpoint
 REVOKE ALL ON TABLE public.runtime_node_credential_audit_events FROM PUBLIC;
+--> statement-breakpoint
+REVOKE ALL ON SEQUENCE public.runtime_node_credential_audit_events_sequence_seq FROM PUBLIC;
 --> statement-breakpoint
 DO $runtime_node_credential_revocation_privileges$
 BEGIN
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_plane_app') THEN
+		-- The application role may only read the identity tables, consume issued
+		-- credentials through the narrow column grant, and execute the audited
+		-- definer function. It can never write the revocation columns, the audit
+		-- table, or the audit sequence directly, so every revocation is audited.
+		EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.runtime_node_verification_keys FROM control_plane_app';
+		EXECUTE 'GRANT SELECT ON TABLE public.runtime_node_verification_keys TO control_plane_app';
+		EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.runtime_node_issued_credentials FROM control_plane_app';
+		EXECUTE 'GRANT SELECT ON TABLE public.runtime_node_issued_credentials TO control_plane_app';
+		EXECUTE 'GRANT UPDATE (consumed_at) ON TABLE public.runtime_node_issued_credentials TO control_plane_app';
 		EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.runtime_node_credential_audit_events FROM control_plane_app';
+		EXECUTE 'REVOKE ALL PRIVILEGES ON SEQUENCE public.runtime_node_credential_audit_events_sequence_seq FROM control_plane_app';
+		EXECUTE 'REVOKE ALL ON FUNCTION public.reject_runtime_node_credential_audit_mutation() FROM control_plane_app';
 		EXECUTE 'GRANT EXECUTE ON FUNCTION public.revoke_runtime_node_credential(varchar, varchar, varchar, timestamp with time zone) TO control_plane_app';
 	END IF;
 END

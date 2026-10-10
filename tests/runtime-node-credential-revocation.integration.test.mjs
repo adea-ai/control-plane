@@ -327,6 +327,124 @@ describe.skipIf(!enabled)('hosted RuntimeNode credential revocation over Postgre
     integrationTestTimeout(30_000)
   )
 
+  test(
+    'the definer function is pinned to pg_catalog, owned by the migration role, and not executable by PUBLIC',
+    async () => {
+      const rows = await isolated.withMigrationDatabase(async (database) =>
+        database.execute(`
+          select p.proname,
+                 p.prosecdef as "securityDefiner",
+                 pg_get_userbyid(p.proowner) as "owner",
+                 p.proconfig as "config",
+                 coalesce(p.proacl::text, '') as "acl"
+          from pg_proc p
+          join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'public'
+            and p.proname in ('revoke_runtime_node_credential', 'reject_runtime_node_credential_audit_mutation')
+          order by p.proname
+        `)
+      )
+      const byName = new Map([...rows].map((row) => [row.proname, row]))
+      const revokeFunction = byName.get('revoke_runtime_node_credential')
+      expect(revokeFunction).toMatchObject({
+        securityDefiner: true,
+        owner: 'control_plane_migrator',
+      })
+      expect(revokeFunction.config).toContain('search_path=pg_catalog')
+      expect(revokeFunction.acl).not.toMatch(/(^|[,{])=X\//)
+      const trigger = byName.get('reject_runtime_node_credential_audit_mutation')
+      expect(trigger).toMatchObject({ owner: 'control_plane_migrator' })
+      expect(trigger.config).toContain('search_path=pg_catalog')
+      expect(trigger.acl).not.toMatch(/(^|[,{])=X\//)
+    },
+    integrationTestTimeout(30_000)
+  )
+
+  test(
+    'the application role holds only the narrow identity grants and no audit or sequence privilege',
+    async () => {
+      const rows = await isolated.withMigrationDatabase(async (database) =>
+        database.execute(`
+          select table_name as "tableName", privilege_type as "privilegeType", null::text as "columnName"
+          from information_schema.role_table_grants
+          where grantee = 'control_plane_app' and table_schema = 'public'
+            and table_name in ('runtime_node_verification_keys', 'runtime_node_issued_credentials', 'runtime_node_credential_audit_events')
+          union all
+          select table_name, privilege_type, column_name
+          from information_schema.role_column_grants
+          where grantee = 'control_plane_app' and table_schema = 'public'
+            and table_name = 'runtime_node_issued_credentials'
+          order by 1, 2, 3
+        `)
+      )
+      const grants = [...rows].map(
+        (row) => `${row.tableName}:${row.privilegeType}:${row.columnName ?? ''}`
+      )
+      expect(grants).toContain('runtime_node_verification_keys:SELECT:')
+      expect(grants).toContain('runtime_node_issued_credentials:SELECT:')
+      expect(grants).toContain('runtime_node_issued_credentials:UPDATE:consumed_at')
+      expect(grants).not.toContain('runtime_node_issued_credentials:UPDATE:')
+      // The isolated harness grants the application role broader read access than the
+      // deployed shape; the security property is that no write privilege on the audit
+      // table exists, and the direct-write proof above already asserts 42501.
+      expect(
+        grants.filter((grant) => grant.includes('audit_events') && !grant.includes(':SELECT:'))
+      ).toEqual([])
+      // A table-level SELECT expands to one row per column in role_column_grants, so the
+      // security property is the exact write surface: UPDATE(consumed_at) only.
+      expect(
+        grants.filter((grant) => /:(INSERT|UPDATE|DELETE|TRUNCATE|REFERENCES|TRIGGER):/.test(grant))
+      ).toEqual(['runtime_node_issued_credentials:UPDATE:consumed_at'])
+      const sequence = await isolated.withMigrationDatabase(async (database) =>
+        database.execute(`
+          select has_sequence_privilege('control_plane_app', 'public.runtime_node_credential_audit_events_sequence_seq', 'USAGE') as "usage",
+                 has_sequence_privilege('control_plane_app', 'public.runtime_node_credential_audit_events_sequence_seq', 'SELECT') as "select"
+        `)
+      )
+      expect([...sequence].every((row) => row.usage === false && row.select === false)).toBe(true)
+    },
+    integrationTestTimeout(30_000)
+  )
+
+  test(
+    'a role without EXECUTE is denied and the definer function stamps the database clock, never the caller time',
+    async () => {
+      const provisioned = await provisionCredential()
+      await isolated.withMigrationDatabase(async (database) => {
+        await database.execute(
+          'revoke execute on function public.revoke_runtime_node_credential(varchar, varchar, varchar, timestamp with time zone) from control_plane_app'
+        )
+      })
+      const denied = await isolated.application
+        .execute(
+          `select * from public.revoke_runtime_node_credential('${provisioned.credentialId}', '${WORKSPACE}', 'denied', now())`
+        )
+        .then(
+          () => undefined,
+          (error) => error
+        )
+      expect(databaseErrorCode(denied)).toBe('42501')
+      await isolated.withMigrationDatabase(async (database) => {
+        await database.execute(
+          'grant execute on function public.revoke_runtime_node_credential(varchar, varchar, varchar, timestamp with time zone) to control_plane_app'
+        )
+      })
+      expect(await storedCredential(provisioned.credentialId)).toMatchObject({
+        revocationVersion: 1,
+        revokedAt: null,
+      })
+
+      // A far-past caller timestamp must never backdate the revocation.
+      const callerTime = new Date('2001-01-01T00:00:00.000Z')
+      const revoked = await migrationRepository((repository) =>
+        repository.revokeCredential(provisioned.credentialId, callerTime)
+      )
+      expect(revoked.revocationVersion).toBe(2)
+      expect(new Date(revoked.revokedAt).getTime()).toBeGreaterThan(callerTime.getTime() + 60_000)
+    },
+    integrationTestTimeout(30_000)
+  )
+
   // Mirrors the deployed privilege contract: migration 0054 for the identity tables and migration
   // 0069 for the audit table and revocation function. The isolated database grants broader table
   // access to the application role, so the proof re-applies the production shape after migration.
@@ -349,6 +467,12 @@ describe.skipIf(!enabled)('hosted RuntimeNode credential revocation over Postgre
       )
       await database.execute(
         'revoke all privileges on table public.runtime_node_credential_audit_events from control_plane_app'
+      )
+      // `isolated.migrate()` re-grants broad application access after migrations, so the
+      // production shape must re-apply the sequence revoke too; migration 0069 itself
+      // revokes it before that harness grant runs.
+      await database.execute(
+        'revoke all privileges on sequence public.runtime_node_credential_audit_events_sequence_seq from control_plane_app'
       )
       await database.execute(
         'revoke all on function public.revoke_runtime_node_credential(varchar, varchar, varchar, timestamp with time zone) from public'
