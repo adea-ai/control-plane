@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.91.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.90.1...workspace-v1.91.0) (2026-10-10)
+
+
+### Features
+
+* issue-932-management-current-authority ([#1043](https://github.com/adea-ai/control-plane/issues/1043)) ([3118a7c](https://github.com/adea-ai/control-plane/commit/3118a7c9f5d177a3fdce2de8ced7fbf353d91e43))
+
+
+### Tests
+
+* **models:** qualify confirmed funding at inference boundaries ([#970](https://github.com/adea-ai/control-plane/issues/970)) ([5ee3dbf](https://github.com/adea-ai/control-plane/commit/5ee3dbf06f9a85bcb63ac29bdb13aecfeeac9a4a))
+
+## [1.90.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.90.0...workspace-v1.90.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **ci:** back off Docker Hub rate-limited integration pulls ([#1054](https://github.com/adea-ai/control-plane/issues/1054)) ([6b6bfba](https://github.com/adea-ai/control-plane/commit/6b6bfba28293fd8f140767ca4dd96d8908e4b2e8))
+
+## [1.90.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.89.1...workspace-v1.90.0) (2026-10-09)
+
+
+### Features
+
+* **pi:** 935 cancel-intent persistence, attempt fencing, and target-bound observation ([#1045](https://github.com/adea-ai/control-plane/issues/1045)) ([1208729](https://github.com/adea-ai/control-plane/commit/12087297deac41190f52f629d70e40bdb8d50d01))
+
+## [1.89.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.89.0...workspace-v1.89.1) (2026-10-09)
+
+
+### Maintenance
+
+* **deps:** update dependency undici to v8 ([#986](https://github.com/adea-ai/control-plane/issues/986)) ([b8290b5](https://github.com/adea-ai/control-plane/commit/b8290b533e0ce4cee80cf980d35162a53a5cff55))
+
 ## [1.89.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.88.0...workspace-v1.89.0) (2026-10-09)
 
 

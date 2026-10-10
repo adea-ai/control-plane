@@ -134,6 +134,12 @@ import {
   PiLeadPublicationService,
 } from './pi-durable/publication-current.service.js'
 import {
+  PI_DURABLE_MANAGEMENT_CURRENT_AUTHORITY,
+  PiDurableManagementCurrentController,
+  UnavailablePiDurableCurrentToolAuthority,
+} from './pi-durable/management-current.controller.js'
+import type { PiDurableCurrentToolAuthority } from './pi-durable/current-tool-authority.js'
+import {
   CONTEXT_PACKAGE_RESOLUTION_SERVICE,
   UnavailableContextPackageResolutionService,
   type ContextPackageResolutionService,
@@ -141,6 +147,7 @@ import {
 
 export interface AppModuleOptions extends ApiRuntimeBindings {
   readonly piLeadPublicationService?: PiLeadPublicationService
+  readonly piDurableCurrentToolAuthority?: PiDurableCurrentToolAuthority
   readonly piDurableLeadService?: PiDurableLeadService
   readonly modelConnectionService?: ModelConnectionService
   readonly graphAdministrationService?: GraphAdministrationService
@@ -184,6 +191,7 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
     controllers: [
       PiDurableLeadController,
       PiLeadPublicationController,
+      PiDurableManagementCurrentController,
       ModelConnectionsController,
       AuthenticationController,
       GraphAdministrationController,
@@ -213,6 +221,11 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       {
         provide: PI_DURABLE_LEAD_SERVICE,
         useValue: options.piDurableLeadService ?? new UnavailablePiDurableLeadService(),
+      },
+      {
+        provide: PI_DURABLE_MANAGEMENT_CURRENT_AUTHORITY,
+        useValue:
+          options.piDurableCurrentToolAuthority ?? new UnavailablePiDurableCurrentToolAuthority(),
       },
       {
         provide: MODEL_CONNECTION_SERVICE,
