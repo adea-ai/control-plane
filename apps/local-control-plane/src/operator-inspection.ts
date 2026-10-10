@@ -10,6 +10,10 @@ import {
   InteractionRequestSchema,
   RuntimeCommandRecordSchema,
 } from '@control-plane/domain'
+import {
+  ExecutionCancellationReceiptSchema,
+  ReconciliationCheckpointSchema,
+} from '@control-plane/domain'
 import { ExecutionEventSchema } from '@control-plane/events'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import { constants, type Stats } from 'node:fs'
@@ -34,6 +38,18 @@ import { z, type ZodType } from 'zod'
  *
  * Every correlated dimension carries an explicit availability state. An
  * inspection never answers "unknown" with a blank field.
+ *
+ * Each stuck job additionally carries a `controls` view that connects the job
+ * to the existing control operations where the persisted store supports it:
+ * the durable runtime-channel sequence generations (the local projection of
+ * channel generation), the durable execution-cancellation receipts, and the
+ * durable reconciliation checkpoints plus the execution's own
+ * reconciliation-required lifecycle mark. Operations whose durable state this
+ * store does not carry — the cloud Postgres runtime-channel ownership record
+ * and the write-time runtime credential revocation fence — surface the typed
+ * `{ status: 'unavailable', reason }` state instead of a guessed value. The
+ * report-level `controlOperations` section names that support for every
+ * operation even when no stuck job exists.
  */
 
 /** Records fetched per continuation page while walking a namespace. */
@@ -59,6 +75,12 @@ export const STALLED_DELIVERY_ATTEMPTS = 3
 /** Per-execution job and pending-interaction listing bounds. */
 export const MAX_LISTED_JOBS = 10
 export const MAX_LISTED_PENDING_INTERACTIONS = 10
+/** Per-execution cancellation receipt listing bound. */
+export const MAX_LISTED_CANCELLATION_RECEIPTS = 10
+/** Per-execution reconciliation checkpoint listing bound. */
+export const MAX_LISTED_CHECKPOINTS = 10
+/** Per-execution channel-generation node listing bound. */
+export const MAX_LISTED_CHANNEL_NODES = 10
 /** Bound on the profile-filter unattributed execution list. */
 export const MAX_LISTED_UNATTRIBUTED = 32
 
@@ -89,6 +111,146 @@ const NullableId = z.string().nullable()
 const NullableState = z.string().nullable()
 const NullableTimestamp = z.string().nullable()
 const NullableInt = z.number().int().nullable()
+
+/**
+ * Availability of a control operation for this report. A connected operation
+ * carries real persisted state; an unavailable operation names the exact
+ * reason its state cannot be surfaced from this store — never a guessed or
+ * invented value.
+ */
+export const controlOperationStateSchema = z
+  .object({
+    status: z.enum(['connected', 'unavailable']),
+    /** Nonempty exactly when `status` is `'unavailable'`. */
+    reason: z.string().min(1).nullable(),
+  })
+  .refine(
+    (state) => (state.status === 'unavailable') === (state.reason !== null),
+    'An unavailable control operation names its reason; a connected one has none'
+  )
+
+export type ControlOperationState = z.output<typeof controlOperationStateSchema>
+
+const ChannelGenerationNodeViewSchema = z.object({
+  nodeId: z.string(),
+  /** Highest channel generation reserved for this node in this store. */
+  currentGeneration: z.number().int().positive(),
+})
+
+const CancellationReceiptViewSchema = z.object({
+  commandId: z.string(),
+  /** The cancellation command's issue timestamp. */
+  requestedAt: z.string(),
+  /** Set once the durable service accepted the cancellation; `null` while the receipt only reserves intent. */
+  acceptedAt: NullableTimestamp,
+})
+
+const ReconciliationCheckpointViewSchema = z.object({
+  checkpointId: z.string(),
+  state: z.string(),
+  reason: z.string(),
+  action: z.string(),
+  pendingEventCount: z.number().int().nonnegative(),
+  checkedAt: z.string(),
+  updatedAt: z.string(),
+  resolvedAt: NullableTimestamp,
+})
+
+/**
+ * The per-execution connection to the existing revocation, fencing,
+ * cancellation and reconciliation primitives. Connected views carry their
+ * scan-completeness flag so a budget-stopped namespace can never be read as a
+ * confident zero; unavailable operations carry only their typed reason.
+ */
+const CompleteScanCount = z.number().int().nonnegative().nullable()
+
+const ControlsViewSchema = z
+  .object({
+    /**
+     * Durable runtime-channel ownership records (which gateway connection
+     * holds a node's channel) live in the cloud Postgres inventory, not in
+     * this SQLite store. Channel *generation* state below is the local
+     * projection that does exist.
+     */
+    channelOwnership: controlOperationStateSchema,
+    /**
+     * The runtime credential revocation fence is validated inside the write
+     * transaction that applies a credential-sensitive transition and is never
+     * persisted as durable state, so no fence state exists to inspect.
+     */
+    credentialFence: controlOperationStateSchema,
+    channelGeneration: z.object({
+      status: z.literal('connected'),
+      reason: z.null(),
+      /**
+       * False when a budget stopped the sequence or runtime-command walk, or either holds a
+       * malformed record. Counts are exact only when this is true.
+       */
+      scanComplete: z.boolean(),
+      nodes: z.array(ChannelGenerationNodeViewSchema).max(MAX_LISTED_CHANNEL_NODES),
+      /** Null unless scanComplete: a budget or a malformed record never yields a count. */
+      unlistedNodeCount: CompleteScanCount,
+      /** In-scope job nodes with no reserved generation recorded in this store; null unless exact. */
+      unresolvedNodeCount: CompleteScanCount,
+    }),
+    cancellation: z.object({
+      status: z.literal('connected'),
+      reason: z.null(),
+      /** False when a budget stopped the receipt walk or it holds a malformed record. */
+      scanComplete: z.boolean(),
+      receiptCount: CompleteScanCount,
+      acceptedCount: CompleteScanCount,
+      listed: z.array(CancellationReceiptViewSchema).max(MAX_LISTED_CANCELLATION_RECEIPTS),
+      unlistedCount: CompleteScanCount,
+    }),
+    reconciliation: z.object({
+      status: z.literal('connected'),
+      reason: z.null(),
+      /** False when a budget stopped the checkpoint walk or it holds a malformed record. */
+      scanComplete: z.boolean(),
+      /** The execution's own reconciliation-required lifecycle mark. */
+      markRequired: z.object({
+        recorded: z.boolean(),
+        at: NullableTimestamp,
+        ageMs: NullableInt,
+      }),
+      checkpointCount: CompleteScanCount,
+      listed: z.array(ReconciliationCheckpointViewSchema).max(MAX_LISTED_CHECKPOINTS),
+      unlistedCount: CompleteScanCount,
+    }),
+  })
+  .strict()
+  // A count is present exactly when its population is exact: the scan completed and no
+  // record in it was malformed. Listed records are always truthful lower bounds; only
+  // counts can mislead.
+  .superRefine((controls, context) => {
+    const require = (complete: boolean, path: string[], values: (number | null)[]) => {
+      for (const value of values) {
+        if ((value === null) === complete) {
+          context.addIssue({
+            code: 'custom',
+            message: complete
+              ? 'A complete scan must report its counts'
+              : 'An incomplete scan must not report a count',
+            path,
+          })
+        }
+      }
+    }
+    require(controls.channelGeneration.scanComplete, ['channelGeneration'], [
+      controls.channelGeneration.unlistedNodeCount,
+      controls.channelGeneration.unresolvedNodeCount,
+    ])
+    require(controls.cancellation.scanComplete, ['cancellation'], [
+      controls.cancellation.receiptCount,
+      controls.cancellation.acceptedCount,
+      controls.cancellation.unlistedCount,
+    ])
+    require(controls.reconciliation.scanComplete, ['reconciliation'], [
+      controls.reconciliation.checkpointCount,
+      controls.reconciliation.unlistedCount,
+    ])
+  })
 
 export const LocalStuckJobInspectionOptionsSchema = z
   .object({
@@ -226,11 +388,14 @@ const ExecutionViewSchema = z.object({
   approvals: ApprovalsViewSchema,
   effects: EffectsViewSchema,
   profile: ProfileViewSchema,
+  controls: ControlsViewSchema,
 })
 
 export const StuckJobInspectionReportSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    // Schema 2 adds the per-execution `controls` connection view and the
+    // report-level `controlOperations` support map.
+    schemaVersion: z.literal(2),
     command: z.literal('local.operator.inspection.stuck-jobs'),
     readOnly: z.literal(true),
     generatedAt: z.iso.datetime(),
@@ -291,6 +456,20 @@ export const StuckJobInspectionReportSchema = z
       })
       .strict(),
     executions: z.array(ExecutionViewSchema),
+    /**
+     * Which control operations this report connects to, independent of any
+     * listed execution. Unavailable operations name the reason their durable
+     * state does not exist in this store.
+     */
+    controlOperations: z
+      .object({
+        channelGeneration: controlOperationStateSchema,
+        channelOwnership: controlOperationStateSchema,
+        credentialFence: controlOperationStateSchema,
+        cancellationReceipts: controlOperationStateSchema,
+        reconciliationProjection: controlOperationStateSchema,
+      })
+      .strict(),
     profileResolution: z.object({
       filtered: z.boolean(),
       unattributedCount: z.number().int().nonnegative(),
@@ -697,44 +876,129 @@ export function inspectStuckJobs(
   // unknown (staleGeneration: null).
   const currentGenerations = new Map<string, number>()
   let generationMalformed = 0
-  walkNamespace('runtime-channel-sequences', parsedOptions.maxScanMatches, (record) => {
-    const value = record.value as { identity?: unknown; next?: unknown } | null
-    if (
-      value === null ||
-      typeof value !== 'object' ||
-      typeof value.identity !== 'string' ||
-      typeof value.next !== 'number'
-    ) {
-      generationMalformed += 1
-      return false
+  const sequenceWalk = walkNamespace(
+    'runtime-channel-sequences',
+    parsedOptions.maxScanMatches,
+    (record) => {
+      const value = record.value as { identity?: unknown; next?: unknown } | null
+      if (
+        value === null ||
+        typeof value !== 'object' ||
+        typeof value.identity !== 'string' ||
+        typeof value.next !== 'number'
+      ) {
+        generationMalformed += 1
+        return false
+      }
+      let identity: unknown
+      try {
+        identity = JSON.parse(value.identity)
+      } catch {
+        generationMalformed += 1
+        return false
+      }
+      // The producer always writes a five-part identity, so any other shape is schema-invalid.
+      if (!Array.isArray(identity) || identity.length !== 5) {
+        generationMalformed += 1
+        return false
+      }
+      const workspace = identity[0]
+      const node = identity[1]
+      const generation = identity[4]
+      if (
+        typeof workspace !== 'string' ||
+        typeof node !== 'string' ||
+        typeof generation !== 'number'
+      ) {
+        generationMalformed += 1
+        return false
+      }
+      if (workspace !== parsedOptions.workspaceId) return false
+      const key = `${workspace}|${node}`
+      const known = currentGenerations.get(key)
+      if (known === undefined || generation > known) currentGenerations.set(key, generation)
+      return true
     }
-    let identity: unknown
-    try {
-      identity = JSON.parse(value.identity)
-    } catch {
-      generationMalformed += 1
-      return false
+  )
+  if (sequenceWalk.malformed + generationMalformed > 0)
+    malformedRecords.set('runtime-channel-sequences', sequenceWalk.malformed + generationMalformed)
+
+  // Durable cancellation receipts recorded by the execution cancellation
+  // service. Receipts carry their own workspace scope and join to in-scope
+  // executions through the cancellation command payload.
+  const receiptsByExecution = new Map<
+    string,
+    z.output<typeof ExecutionCancellationReceiptSchema>[]
+  >()
+  let receiptMalformed = 0
+  const receiptWalk = walkNamespace(
+    'execution-cancellation-receipts',
+    parsedOptions.maxScanMatches,
+    (record) => {
+      const parsed = ExecutionCancellationReceiptSchema.safeParse(record.value)
+      if (!parsed.success) {
+        receiptMalformed += 1
+        return false
+      }
+      if (parsed.data.request.workspaceId !== parsedOptions.workspaceId) return false
+      const executionId = parsed.data.request.payload.executionId
+      if (!executions.has(executionId)) return false
+      const existing = receiptsByExecution.get(executionId)
+      if (existing === undefined) receiptsByExecution.set(executionId, [parsed.data])
+      else existing.push(parsed.data)
+      return true
     }
-    if (!Array.isArray(identity) || identity.length !== 5) return false
-    const workspace = identity[0]
-    const node = identity[1]
-    const generation = identity[4]
-    if (
-      typeof workspace !== 'string' ||
-      typeof node !== 'string' ||
-      typeof generation !== 'number'
-    ) {
-      generationMalformed += 1
-      return false
+  )
+  if (receiptWalk.malformed + receiptMalformed > 0)
+    malformedRecords.set(
+      'execution-cancellation-receipts',
+      receiptWalk.malformed + receiptMalformed
+    )
+
+  // Durable reconciliation checkpoints written by the reconciliation service.
+  // Checkpoints carry no workspace field, so scope flows entirely through the
+  // in-scope execution join; cross-workspace checkpoints can never attach.
+  const checkpointsByExecution = new Map<
+    string,
+    z.output<typeof ReconciliationCheckpointSchema>[]
+  >()
+  let checkpointMalformed = 0
+  const checkpointWalk = walkNamespace(
+    'reconciliation-checkpoints',
+    parsedOptions.maxScanMatches,
+    (record) => {
+      const parsed = ReconciliationCheckpointSchema.safeParse(record.value)
+      if (!parsed.success) {
+        checkpointMalformed += 1
+        return false
+      }
+      if (!executions.has(parsed.data.executionId)) return false
+      const existing = checkpointsByExecution.get(parsed.data.executionId)
+      if (existing === undefined) checkpointsByExecution.set(parsed.data.executionId, [parsed.data])
+      else existing.push(parsed.data)
+      return true
     }
-    if (workspace !== parsedOptions.workspaceId) return false
-    const key = `${workspace}|${node}`
-    const known = currentGenerations.get(key)
-    if (known === undefined || generation > known) currentGenerations.set(key, generation)
-    return true
-  })
-  if (generationMalformed > 0)
-    malformedRecords.set('runtime-channel-sequences', generationMalformed)
+  )
+  if (checkpointWalk.malformed + checkpointMalformed > 0)
+    malformedRecords.set(
+      'reconciliation-checkpoints',
+      checkpointWalk.malformed + checkpointMalformed
+    )
+
+  // A count is exact only when its population walk completed and every record it
+  // read parsed. A malformed record cannot be attributed to a workspace, node or
+  // execution, so it may belong to any of them and never leaves a count exact.
+  const isExactPopulation = (
+    walk: { incomplete: boolean; malformed: number },
+    schemaMalformed: number
+  ): boolean => !walk.incomplete && walk.malformed + schemaMalformed === 0
+  const receiptsExact = isExactPopulation(receiptWalk, receiptMalformed)
+  const checkpointsExact = isExactPopulation(checkpointWalk, checkpointMalformed)
+  // Channel generation counts need both the sequence reservations and the runtime
+  // commands that name each job node; the commands are a prerequisite population.
+  const channelGenerationExact =
+    isExactPopulation(sequenceWalk, generationMalformed) &&
+    isExactPopulation(commandWalk, runtimeCommandMalformed)
 
   // Runtime discovery projections (connections and external sessions).
   const connectionsById = new Map<
@@ -889,6 +1153,7 @@ export function inspectStuckJobs(
     // Runtime command (job) correlation.
     const executionCommands = commandsByExecution.get(execution.executionId) ?? []
     const jobViews: z.output<typeof CommandJobViewSchema>[] = []
+    const activeJobNodes = new Set<string>()
     let unlistedJobs = 0
     let settledJobs = 0
     for (const command of executionCommands) {
@@ -899,6 +1164,7 @@ export function inspectStuckJobs(
         settledJobs += 1
         continue
       }
+      activeJobNodes.add(command.nodeId)
       const commandAge = ageMs(command.updatedAt, nowMs) ?? 0
       const expired = Date.parse(command.expiresAt) < nowMs
       if (expired) stuckReasons.add('command_expired')
@@ -1104,6 +1370,102 @@ export function inspectStuckJobs(
 
     if (!terminal) considerEvidence(executionUpdatedAtAge)
 
+    // Control-operation connection: connect this stuck job to the existing
+    // revocation/fencing/cancellation/reconciliation primitives where this
+    // store durably supports them, and name the typed unavailable state where
+    // it does not.
+    const generationNodes: z.output<typeof ChannelGenerationNodeViewSchema>[] = []
+    let unlistedGenerationNodes = 0
+    let unresolvedGenerationNodes = 0
+    for (const nodeId of [...activeJobNodes].toSorted((left, right) =>
+      compareCodePointOrder(left, right)
+    )) {
+      const known = currentGenerations.get(`${parsedOptions.workspaceId}|${nodeId}`)
+      if (known === undefined) {
+        unresolvedGenerationNodes += 1
+        continue
+      }
+      if (generationNodes.length < MAX_LISTED_CHANNEL_NODES)
+        generationNodes.push({ nodeId, currentGeneration: known })
+      else unlistedGenerationNodes += 1
+    }
+    const executionReceipts = (receiptsByExecution.get(execution.executionId) ?? []).toSorted(
+      (left, right) => compareCodePointOrder(left.request.commandId, right.request.commandId)
+    )
+    const listedReceipts: z.output<typeof CancellationReceiptViewSchema>[] = []
+    let acceptedReceiptCount = 0
+    for (const receipt of executionReceipts) {
+      if (receipt.acceptedAt !== undefined) acceptedReceiptCount += 1
+      if (listedReceipts.length < MAX_LISTED_CANCELLATION_RECEIPTS)
+        listedReceipts.push({
+          commandId: receipt.request.commandId,
+          requestedAt: receipt.request.issuedAt,
+          acceptedAt: receipt.acceptedAt ?? null,
+        })
+    }
+    const reconciliationMarkAt = execution.reconciliationRequiredAt ?? null
+    const executionCheckpoints = (checkpointsByExecution.get(execution.executionId) ?? []).toSorted(
+      (left, right) => compareCodePointOrder(left.checkpointId, right.checkpointId)
+    )
+    const listedCheckpoints: z.output<typeof ReconciliationCheckpointViewSchema>[] = []
+    for (const checkpoint of executionCheckpoints) {
+      if (listedCheckpoints.length < MAX_LISTED_CHECKPOINTS)
+        listedCheckpoints.push({
+          checkpointId: checkpoint.checkpointId,
+          state: checkpoint.state,
+          reason: checkpoint.reason,
+          action: checkpoint.action,
+          pendingEventCount: checkpoint.pendingEventCount,
+          checkedAt: checkpoint.checkedAt,
+          updatedAt: checkpoint.updatedAt,
+          resolvedAt: checkpoint.resolvedAt ?? null,
+        })
+    }
+    const controls: z.output<typeof ControlsViewSchema> = {
+      channelOwnership: {
+        status: 'unavailable',
+        reason: 'CHANNEL_OWNERSHIP_POSTGRES_INVENTORY_ONLY',
+      },
+      credentialFence: {
+        status: 'unavailable',
+        reason: 'CREDENTIAL_FENCE_WRITE_TIME_LOCK_ONLY',
+      },
+      channelGeneration: {
+        status: 'connected',
+        reason: null,
+        scanComplete: channelGenerationExact,
+        nodes: generationNodes,
+        unlistedNodeCount: channelGenerationExact ? unlistedGenerationNodes : null,
+        unresolvedNodeCount: channelGenerationExact ? unresolvedGenerationNodes : null,
+      },
+      cancellation: {
+        status: 'connected',
+        reason: null,
+        scanComplete: receiptsExact,
+        receiptCount: receiptsExact ? executionReceipts.length : null,
+        acceptedCount: receiptsExact ? acceptedReceiptCount : null,
+        listed: listedReceipts,
+        unlistedCount: receiptsExact
+          ? Math.max(0, executionReceipts.length - listedReceipts.length)
+          : null,
+      },
+      reconciliation: {
+        status: 'connected',
+        reason: null,
+        scanComplete: checkpointsExact,
+        markRequired: {
+          recorded: reconciliationMarkAt !== null || execution.state === 'reconciliation_required',
+          at: reconciliationMarkAt,
+          ageMs: ageMs(reconciliationMarkAt ?? undefined, nowMs),
+        },
+        checkpointCount: checkpointsExact ? executionCheckpoints.length : null,
+        listed: listedCheckpoints,
+        unlistedCount: checkpointsExact
+          ? Math.max(0, executionCheckpoints.length - listedCheckpoints.length)
+          : null,
+      },
+    }
+
     const isStuck = stuckReasons.size > 0
     if (!isStuck) continue
 
@@ -1145,6 +1507,7 @@ export function inspectStuckJobs(
         publicationBacklog: stuckReasons.has('effects_pending'),
       },
       profile: profileView,
+      controls,
     }
     candidates.push(view)
   }
@@ -1183,7 +1546,7 @@ export function inspectStuckJobs(
     )
 
   const report: StuckJobInspectionReport = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     command: 'local.operator.inspection.stuck-jobs',
     readOnly: true,
     generatedAt: new Date(nowMs).toISOString(),
@@ -1227,6 +1590,19 @@ export function inspectStuckJobs(
       ),
     },
     executions: limited,
+    controlOperations: {
+      channelGeneration: { status: 'connected', reason: null },
+      channelOwnership: {
+        status: 'unavailable',
+        reason: 'CHANNEL_OWNERSHIP_POSTGRES_INVENTORY_ONLY',
+      },
+      credentialFence: {
+        status: 'unavailable',
+        reason: 'CREDENTIAL_FENCE_WRITE_TIME_LOCK_ONLY',
+      },
+      cancellationReceipts: { status: 'connected', reason: null },
+      reconciliationProjection: { status: 'connected', reason: null },
+    },
     profileResolution: {
       filtered,
       unattributedCount,

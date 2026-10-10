@@ -2,6 +2,7 @@ import { IdentifierSchemas, ServiceCallerAssertionSchema } from '@control-plane/
 import { z } from 'zod'
 import type { PiLeadProductAuthorityPort } from '../pi-durable/node-admission.js'
 import { ProductionLeadProductEvidenceSchema } from './production-lead-product.js'
+import { parseLeadProductFence } from './lead-product-fence.js'
 
 const Selectors = z.strictObject({
   workspaceId: IdentifierSchemas.workspaceId,
@@ -118,9 +119,10 @@ export function createProductionProductHttpReader(options: {
             reader.releaseLock()
           }
         }
-        const evidence = ProductionLeadProductEvidenceSchema.parse(
-          JSON.parse(Buffer.concat(chunks).toString('utf8'))
-        )
+        const parsedBody = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        const fenced = parseLeadProductFence(parsedBody, selectors, () => Date.now())
+        if (fenced) return fenced.facts
+        const evidence = ProductionLeadProductEvidenceSchema.parse(parsedBody)
         if (
           evidence.workspaceId !== selectors.workspaceId ||
           evidence.intentId !== selectors.intentId ||

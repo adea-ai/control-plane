@@ -191,6 +191,23 @@ try {
     run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1', '--log-order=stream'], {
       environment: integrationEnvironment,
     })
+    // Root-level scenarios import these workspace packages through their built entry
+    // points. turbo's test:integration graph builds only the upstream packages of the
+    // integration packages, so build the root's own imports before those scenarios run.
+    run(
+      'bun',
+      [
+        'x',
+        'turbo',
+        'run',
+        'build',
+        '--filter=@control-plane/runtime-gateway...',
+        '--filter=@control-plane/control-api...',
+      ],
+      {
+        environment: integrationEnvironment,
+      }
+    )
     // Repository-owned scenarios span composition roots without importing
     // repository fixtures from inside an application package.
     run(
@@ -201,6 +218,7 @@ try {
         remoteDatabase ? '120000' : '30000',
         './tests/memory-process-loss.integration.test.mjs',
         './tests/langgraph-retirement-inventory-pg.integration.test.mjs',
+        './tests/runtime-node-credential-revocation.integration.test.mjs',
       ],
       {
         environment: integrationEnvironment,

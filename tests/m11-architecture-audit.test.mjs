@@ -78,6 +78,7 @@ const publicOperations = [
   'project-state.resolve',
   'runtime-connection.get',
   'runtime-connection.list',
+  'runtime-node-credential.revoke',
   'runtime.list',
 ]
 

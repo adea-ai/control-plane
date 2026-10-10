@@ -16,6 +16,7 @@ import {
   VerifiedPiLeadIntentEvidenceSchema,
   type PiLeadProductAuthorityPort,
 } from '../pi-durable/node-admission.js'
+import { parseLeadProductFence } from './lead-product-fence.js'
 import { createProductionRoleModelSelection } from './production-role-selection.js'
 
 /** Fresh authenticated Adea evidence, before CP supplies model/profile references. */
@@ -103,6 +104,10 @@ export function createProductionLeadProductAuthority(options: {
   ) => {
     const raw = await options.product.readCurrent(structuredClone(input))
     if (raw === undefined) return undefined
+    // Fenced facts are never a dispatchable product: return them before any
+    // profile, selection or model path is touched (M18.01.3).
+    const fenced = parseLeadProductFence(raw, input, () => Date.parse(now()))
+    if (fenced) return { fenced: fenced.facts }
     const evidence = ProductionLeadProductEvidenceSchema.parse(raw)
     if (
       evidence.workspaceId !== input.workspaceId ||
@@ -130,6 +135,7 @@ export function createProductionLeadProductAuthority(options: {
   const readCurrent: PiLeadProductAuthorityPort['readCurrent'] = async (input) => {
     const current = await readCanonicalProduct(input)
     if (current === undefined) return undefined
+    if ('fenced' in current) return current.fenced
     const { evidence, profile, evidenceDigest } = current
     let pin = read(evidence.workspaceId, evidence.intentId)
     if (!pin) {
@@ -235,6 +241,7 @@ export function createProductionLeadProductAuthority(options: {
       const current = await readCanonicalProduct(input)
       if (
         !current ||
+        !('evidence' in current) ||
         current.evidence.canonicalActorPrincipalId !== currentChild.canonicalActorPrincipalId
       )
         throw new Error('PI_CHILD_MODEL_AUTHORITY_DENIED')

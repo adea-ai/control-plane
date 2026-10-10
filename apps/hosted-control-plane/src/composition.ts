@@ -23,6 +23,7 @@ import {
   RepositoryProjectStateResolutionService,
   RepositoryProjectStateInitializationService,
   RepositoryContextPackageResolutionService,
+  RepositoryRuntimeNodeCredentialRevocationService,
   createExecutionId,
 } from '@control-plane/control-api'
 import {
@@ -52,6 +53,7 @@ import {
   PostgresRuntimeCommandRepository,
   PostgresRuntimeConnectionRepository,
   PostgresRuntimeDiscoveryRepository,
+  PostgresRuntimeNodeIdentityRepository,
   type PostgresConnection,
 } from '@control-plane/database'
 import type {
@@ -252,6 +254,7 @@ export class HostedServerControlPlaneComposition {
   readonly projectStateInitializationService: RepositoryProjectStateInitializationService
   readonly contextPackageResolutionService: RepositoryContextPackageResolutionService
   readonly runtimeDiscoveryRepository: PostgresRuntimeDiscoveryRepository
+  readonly runtimeNodeCredentialRevocationService: RepositoryRuntimeNodeCredentialRevocationService
   readonly runtimeActivityPort: WorkflowRuntimeActivityPort
   readonly executionLifecycleActivities: DurableExecutionLifecycleActivities
   readonly runtimeAttemptRouter: RuntimeDiscoveryAttemptRouter
@@ -436,6 +439,10 @@ export class HostedServerControlPlaneComposition {
     this.runtimeDiscoveryRepository = new PostgresRuntimeDiscoveryRepository(
       this.connection.database
     )
+    this.runtimeNodeCredentialRevocationService =
+      new RepositoryRuntimeNodeCredentialRevocationService({
+        repository: new PostgresRuntimeNodeIdentityRepository(this.connection.database),
+      })
     const executions = new PostgresExecutionRepository(this.connection.database)
     const runtimeCommands = new PostgresRuntimeCommandRepository(this.connection.database)
     const executionEvents = new PostgresExecutionEventRepository(this.connection.database)

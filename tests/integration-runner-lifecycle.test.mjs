@@ -141,7 +141,7 @@ describe('integration runner resource ownership', () => {
     const result = executeRunner(remoteTarget)
     expect(result.status).toBe(0)
     expect(result.calls.filter(({ program }) => program === 'docker')).toEqual([])
-    expect(result.calls.filter(({ program }) => program === 'bun')).toHaveLength(3)
+    expect(result.calls.filter(({ program }) => program === 'bun')).toHaveLength(4)
   })
 
   test('remote configuration rejection does not contact Docker', () => {
