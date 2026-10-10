@@ -45,16 +45,55 @@ async function withState(run) {
   }
 }
 
-async function runChild(directory, scenario) {
+// Owned-child deadline. A child still running at the deadline is stopped by this test, and the
+// caller gets this diagnostic instead of an exit code.
+const CHILD_DEADLINE_MS = 30_000
+
+class ChildDeadlineError extends Error {
+  constructor(scenario, deadlineMs, exit) {
+    super(
+      `crash-window child "${scenario}" was still running after ${deadlineMs} ms; it was stopped`
+    )
+    this.name = 'ChildDeadlineError'
+    this.code = 'CHILD_DEADLINE_EXCEEDED'
+    this.scenario = scenario
+    this.exit = exit
+  }
+}
+
+// Runs one owned child and returns its exit code, stderr, and last stdout line. The finally block
+// stops this child only if it is still alive, then awaits its exit and output, so the caller can
+// remove the directory afterwards. No other process is inspected or signalled.
+async function runChild(directory, scenario, { deadlineMs = CHILD_DEADLINE_MS } = {}) {
   const spawned = Bun.spawn([process.execPath, child, directory, scenario], {
     stdout: 'pipe',
     stderr: 'pipe',
   })
-  const [stdout, stderr, code] = await Promise.all([
+  const output = Promise.all([
     new Response(spawned.stdout).text(),
     new Response(spawned.stderr).text(),
     spawned.exited,
   ])
+  const expired = Symbol('expired')
+  let timer
+  const deadline = new Promise((resolve) => {
+    timer = setTimeout(resolve, deadlineMs, expired)
+  })
+  let finished
+  try {
+    finished = await Promise.race([output, deadline])
+  } finally {
+    clearTimeout(timer)
+    if (spawned.exitCode === null && spawned.signalCode === null) spawned.kill('SIGKILL')
+    await output.catch(() => undefined)
+  }
+  if (finished === expired) {
+    throw new ChildDeadlineError(scenario, deadlineMs, {
+      exitCode: spawned.exitCode,
+      signalCode: spawned.signalCode,
+    })
+  }
+  const [stdout, stderr, code] = finished
   const line = stdout.trim().split('\n').at(-1)
   return { code, stderr, result: line ? JSON.parse(line) : undefined }
 }
@@ -158,4 +197,20 @@ test(
       expect(await objectCount(directory)).toBe(1)
     }),
   120_000
+)
+
+test(
+  'an owned child that outlives its deadline is stopped and reported as a deadline error, never as an exit code',
+  () =>
+    withState(async (directory) => {
+      const error = await runChild(directory, 'hang', { deadlineMs: 500 }).then(
+        () => undefined,
+        (caught) => caught
+      )
+      expect(error).toBeInstanceOf(ChildDeadlineError)
+      expect(error).toMatchObject({ code: 'CHILD_DEADLINE_EXCEEDED', scenario: 'hang' })
+      // Stopped by signal and awaited before the helper threw: no exit code was produced.
+      expect(error.exit).toEqual({ exitCode: null, signalCode: 'SIGKILL' })
+    }),
+  30_000
 )

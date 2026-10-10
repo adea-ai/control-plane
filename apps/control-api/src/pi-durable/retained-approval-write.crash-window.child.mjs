@@ -7,6 +7,11 @@ import { fixture } from '../models/canonical-model-host-fixtures.mjs'
 import { compose, taskFor, working } from './retained-approval-write.harness.mjs'
 
 const [directory, scenario] = process.argv.slice(2)
+if (scenario === 'hang') {
+  // Test-only: never finishes, so the owner's deadline is what ends it. The interval keeps it alive.
+  setInterval(() => {}, 1_000)
+  await new Promise(() => {})
+}
 if (scenario === 'crash-before-settlement') {
   const compareAndSet = SqliteDurableEffectGateStore.prototype.compareAndSet
   SqliteDurableEffectGateStore.prototype.compareAndSet = function (expectedRevision, record) {
