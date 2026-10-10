@@ -178,6 +178,13 @@ export const ChildUsageLedgerSnapshotEntrySchema = z
      * conflict even when its usage body matches.
      */
     retainedReportId: z.string().min(1).max(256).optional(),
+    /**
+     * Serialized uncertainty marker: a snapshot that predates the ordering
+     * watermark carries ambiguous history, and that ambiguity must survive
+     * arbitrary snapshot round trips (snapshot -> restore -> snapshot ->
+     * restore) instead of silently collapsing to a zero watermark.
+     */
+    orderingUncertain: z.boolean().optional(),
   })
   .strict()
 
@@ -334,6 +341,15 @@ export class ChildUsageLedger {
     usage: unknown,
     delivery: { readonly reportId: string; readonly publicationSequence?: number }
   ): ChildUsageReportReceipt | ChildUsageOutcome {
+    // A malformed canonical sequence fails closed before the duplicate shortcut
+    // and before any entry mutation; it can never be trusted to order a report.
+    const sequence = delivery.publicationSequence
+    if (sequence !== undefined && (!Number.isSafeInteger(sequence) || sequence < 1)) {
+      throw new ChildUsageLedgerError(
+        'CONFIGURATION',
+        'publicationSequence must be a positive safe integer'
+      )
+    }
     const entry = this.#entryFor(identity)
     const reportId = ReferenceSchema.parse(delivery.reportId)
     const parsed = RuntimeUsageSchema.parse(usage)
@@ -344,15 +360,6 @@ export class ChildUsageLedger {
         return { outcome: 'conflicting_report', reportId }
       }
       return { outcome: 'duplicate_report', reportId }
-    }
-    const sequence = delivery.publicationSequence
-    if (sequence !== undefined && (!Number.isSafeInteger(sequence) || sequence < 1)) {
-      // A malformed canonical sequence must fail closed before any mutation;
-      // it can never be trusted to order a report.
-      throw new ChildUsageLedgerError(
-        'CONFIGURATION',
-        'publicationSequence must be a positive safe integer'
-      )
     }
     if (sequence === undefined) {
       // A sequence-free delivery is only trustworthy while no ordered
@@ -500,6 +507,7 @@ export class ChildUsageLedger {
           supersededFingerprints: [...entry.supersededFingerprints],
           highestPublication: entry.highestPublication,
           retainedReportId: entry.retainedReportId,
+          orderingUncertain: entry.orderingUncertain,
         }))
         .toSorted((left, right) =>
           compareCodePointOrder(
@@ -559,7 +567,9 @@ export class ChildUsageLedger {
         // A snapshot that predates the ordering watermark lost its ordering
         // history on the wire: once it carries a report the evidence is
         // ambiguous, so a sequence-free replay must not overwrite it.
-        orderingUncertain: item.highestPublication === undefined && outcome.reported !== undefined,
+        orderingUncertain:
+          item.orderingUncertain ??
+          (item.highestPublication === undefined && outcome.reported !== undefined),
       }
       if (this.#outcome(entry).costState !== outcome.costState) {
         throw new ChildUsageLedgerError(

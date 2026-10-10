@@ -686,6 +686,8 @@ describe('canonical publication sequence validation and identity binding', () =>
     for (const entry of older.entries) {
       delete entry.highestPublication
       delete entry.retainedReportId
+      // A snapshot written before these fields existed carries none of them.
+      delete entry.orderingUncertain
     }
     const restored = new ChildUsageLedger()
     // Restoring must not break schema validation on the missing fields.
@@ -696,5 +698,103 @@ describe('canonical publication sequence validation and identity binding', () =>
     })
     expect(replay.outcome).toBe('conflicting_report')
     expect(restored.status(identity).settled?.settlementRef).toBe('settlement:legacy')
+  })
+})
+
+describe('per-request sequence binding, round-trip uncertainty, and validation order', () => {
+  const identityB = () => ({
+    ...identityA(),
+    delegationId: ids.delegationIdB,
+    childExecutionId: ids.childExecutionIdB,
+    childAttemptId: ids.attemptIdB,
+  })
+
+  test('interleaved settling requests each bind their own sequence; an old entry redelivery is stale', () => {
+    const ledger = new ChildUsageLedger({ maximumTrackedReportIds: 16 })
+    const a = identityA()
+    const b = identityB()
+    // Two request streams interleaved deterministically: A1, B1, A2, B2, A3.
+    const interleaved = [
+      [a, 'usage:report:a1', 1],
+      [b, 'usage:report:b1', 1],
+      [a, 'usage:report:a2', 2],
+      [b, 'usage:report:b2', 2],
+      [a, 'usage:report:a3', 3],
+    ]
+    for (const [identity, reportId, publicationSequence] of interleaved) {
+      expect(
+        ledger.recordReportedUsage(identity, reportedUsage(publicationSequence * 1_000), {
+          reportId,
+          publicationSequence,
+        }).outcome
+      ).toBe('recorded')
+    }
+    // Each entry's watermark follows its OWN stream (A=3, B=2), never the
+    // interleaved maximum of the other request.
+    expect(ledger.status(a).reported).toBeDefined()
+    expect(ledger.status(b).reported).toBeDefined()
+    // Old-entry redelivery: a fresh id carrying A's retired sequence 1 is stale.
+    expect(
+      ledger.recordReportedUsage(a, reportedUsage(1_000), {
+        reportId: 'usage:report:a1-redelivered',
+        publicationSequence: 1,
+      }).outcome
+    ).toBe('stale_report')
+    // The genuine old id still converges as a duplicate.
+    expect(
+      ledger.recordReportedUsage(a, reportedUsage(1_000), {
+        reportId: 'usage:report:a1',
+        publicationSequence: 1,
+      }).outcome
+    ).toBe('duplicate_report')
+  })
+
+  test('ordering uncertainty survives repeated snapshot round trips', () => {
+    const ledger = new ChildUsageLedger()
+    const identity = identityA()
+    ledger.recordReportedUsage(identity, reportedUsage(42_000), {
+      reportId: 'usage:report:legacy',
+    })
+    ledger.settle(identity, {
+      currency: 'USD',
+      settledMicrounits: 42_000,
+      settledAt: at(1_000),
+      settlementRef: 'settlement:legacy',
+    })
+    const older = ledger.snapshot()
+    for (const entry of older.entries) {
+      delete entry.highestPublication
+      delete entry.retainedReportId
+      // A snapshot written before these fields existed carries none of them.
+      delete entry.orderingUncertain
+    }
+    const first = new ChildUsageLedger()
+    first.restore(older)
+    const second = first.snapshot()
+    const third = new ChildUsageLedger()
+    third.restore(second)
+    // Uncertainty survived both round trips: the replay still fails closed.
+    const replay = third.recordReportedUsage(identity, reportedUsage(1_000), {
+      reportId: 'usage:report:ambiguous-round-trip',
+    })
+    expect(replay.outcome).toBe('conflicting_report')
+    expect(third.status(identity).settled?.settlementRef).toBe('settlement:legacy')
+  })
+
+  test('a malformed sequence fails closed even for an already-seen report id', () => {
+    const ledger = new ChildUsageLedger()
+    const identity = identityA()
+    ledger.recordReportedUsage(identity, reportedUsage(1_000), {
+      reportId: 'usage:report:1',
+      publicationSequence: 1,
+    })
+    // Validation runs before the duplicate shortcut: a malformed sequence on a
+    // known id still fails closed rather than answering duplicate_report.
+    expect(() =>
+      ledger.recordReportedUsage(identity, reportedUsage(1_000), {
+        reportId: 'usage:report:1',
+        publicationSequence: 1.5,
+      })
+    ).toThrow(ChildUsageLedgerError)
   })
 })

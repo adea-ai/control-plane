@@ -245,11 +245,15 @@ export async function createGovernedChildCompositionFixture(
   // authority settles means a redelivery of the same entry (same idempotency
   // key) reuses its ORIGINAL sequence instead of minting a new one — the
   // property that keeps an old provider report from ever ordering as new.
-  let lastPublishedSequence
+  // Each canonical settle entry carries its own idempotency identity, so the
+  // sequence is bound to THAT identity rather than a shared last-result. Two
+  // concurrently settling requests can therefore never lend their sequence to
+  // one another's report.
+  const settleSequenceByIdempotency = new Map()
   const canonicalSettleModelRequest = ledger.settleModelRequest.bind(ledger)
   ledger.settleModelRequest = async (settleInput) => {
     const entry = await canonicalSettleModelRequest(settleInput)
-    lastPublishedSequence = entry.sequence
+    settleSequenceByIdempotency.set(entry.source.idempotencyKey, entry.sequence)
     return entry
   }
   // The correlated cost-state projection for the child attempt. The money
@@ -492,11 +496,15 @@ export async function createGovernedChildCompositionFixture(
           .update(String(key))
           .digest('hex')
           .slice(0, 16)}`
+        // The sequence is looked up by THIS settlement's own idempotency
+        // identity (the authority settles with `<sourceId>:settle`), so a
+        // concurrently settling request can never lend its sequence here.
+        const publicationSequence = settleSequenceByIdempotency.get(
+          `${settled.accounting.sourceId}:settle`
+        )
         const receipt = childUsage.recordReportedUsage(settlementIdentity, settled, {
           reportId,
-          ...(lastPublishedSequence === undefined
-            ? {}
-            : { publicationSequence: lastPublishedSequence }),
+          ...(publicationSequence === undefined ? {} : { publicationSequence }),
         })
         if (receipt.outcome === 'recorded') {
           childUsage.reconcile(settlementIdentity, { reconciledAt: now })
