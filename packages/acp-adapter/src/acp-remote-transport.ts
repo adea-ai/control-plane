@@ -828,20 +828,24 @@ export class SecureAcpDeviceEndpoint {
       if (fencedAfterRead !== undefined) return { kind: 'denial', reason: fencedAfterRead }
       const replayed = replayOutcome(stored, identity)
       if (replayed !== undefined) return replayed
-      if ((await this.#stateStore.countLedger()) >= this.#ledgerCapacity) {
-        return { kind: 'denial', reason: 'replay_ledger_full' }
-      }
       const fencedBeforeClaim = this.#commandFenceReason(header)
       if (fencedBeforeClaim !== undefined) return { kind: 'denial', reason: fencedBeforeClaim }
       let claimResult: AcpRemoteDeviceClaimResult
       try {
+        // Capacity admission happens INSIDE the claim's serialized/CAS fence transaction (never
+        // as a separate pre-read), so distinct concurrent commands at capacity one admit exactly
+        // one effect; a duplicate replayed above still succeeds while the ledger is full.
         claimResult = await this.#stateStore.claim({
           commandId: header.commandId,
           identity,
           channelGeneration: header.channelGeneration,
+          capacity: this.#ledgerCapacity,
         })
       } catch {
         return { kind: 'denial', reason: 'state_unavailable' }
+      }
+      if (claimResult === 'replay_ledger_full') {
+        return { kind: 'denial', reason: 'replay_ledger_full' }
       }
       // Atomic durable fence results: the persisted fence rejected the claim inside the same
       // transaction that would have created the ledger entry, so nothing was written and nothing

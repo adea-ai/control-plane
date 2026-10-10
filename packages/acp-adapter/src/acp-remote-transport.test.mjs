@@ -814,6 +814,7 @@ describe('parked storage awaits re-check window and generation before every effe
         commandId: commandIds.second,
         identity: 'concurrent-higher-generation',
         channelGeneration: 2,
+        capacity: 1024,
       })
     ).toBe('claimed')
     parking.release()
@@ -1040,5 +1041,84 @@ describe('revocation at execution, sealing, and response-opening boundaries', ()
       })
       expect(fixture.wire.inventoryAttempts()).toBe(1) // the signed fixture wire was never polled
     })
+  })
+})
+
+describe('replay-ledger capacity admission is serialized with the claim', () => {
+  const headerFor = (fixture, command) => ({
+    suite: ACP_REMOTE_SUITE,
+    workspaceId: ids.workspaceId,
+    nodeId: ids.nodeId,
+    runtimeConnectionId: ids.runtimeConnectionId,
+    commandId: command.commandId,
+    payloadHash: command.payloadHash,
+    issuedAt: command.issuedAt,
+    expiresAt: command.expiresAt,
+    channelGeneration: command.channelGeneration,
+    controllerKeyId: fixture.route.controllerKeyId,
+    recipientKeyId: fixture.route.deviceEncryptionKeyId,
+    returnKeyId: 'ret_000000000000000000000000000000f1',
+    returnPublicKey: fixture.keys.otherRecipient.publicKey,
+  })
+  const sealFor = async (fixture, command) =>
+    sealRawCommand({
+      route: fixture.route,
+      signingKey: fixture.keys.controllerSigning,
+      header: headerFor(fixture, command),
+      plaintext: utf8(canonicalJson(command)),
+    })
+
+  test('two distinct commands racing one capacity-1 ledger admit exactly one effect (in-memory)', async () => {
+    const store = new InMemoryAcpRemoteDeviceStateStore()
+    const fixture = await createSecureFixture({ stateStore: store, replayLedgerCapacity: 1 })
+    // A SECOND endpoint over the same authenticated route scope and the same store: #inflight
+    // cannot coalesce these — they are distinct commandIds on distinct endpoint instances.
+    const peer = new SecureAcpDeviceEndpoint({
+      route: fixture.route,
+      identity: { keyId: fixture.route.deviceKeyId, signingKey: fixture.keys.deviceSigning },
+      encryption: {
+        keyId: fixture.route.deviceEncryptionKeyId,
+        privateKey: fixture.keys.deviceRecipient.keyPair.privateKey,
+        publicKey: fixture.keys.deviceRecipient.publicKey,
+      },
+      executor: fixture.executor,
+      now: fixture.now,
+      replayLedgerCapacity: 1,
+      stateStore: store,
+    })
+    const [first, second] = await Promise.all([
+      fixture.device.handleCommand(
+        await sealFor(fixture, runtimeCommand({ commandId: commandIds.first }))
+      ),
+      peer.handleCommand(await sealFor(fixture, runtimeCommand({ commandId: commandIds.second }))),
+    ])
+    const results = [first, second]
+    // Deterministic: exactly one command is admitted and executed; the other hits the bound
+    // inside its own claim transaction — never a second effect or ledger entry.
+    expect(results.filter((result) => result.kind === 'exchange')).toHaveLength(1)
+    expect(
+      results.filter((result) => result.kind === 'denial' && result.reason === 'replay_ledger_full')
+    ).toHaveLength(1)
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+    expect(await store.countLedger()).toBe(1)
+
+    // Capacity-1 ledger: the admitted command still replays from the record (no eviction),
+    // and the refused command stays refused — neither path creates a second effect.
+    const winner = results.find((result) => result.kind === 'exchange')
+    expect(winner).toBeDefined()
+    const winnerCommand =
+      first.kind === 'exchange'
+        ? runtimeCommand({ commandId: commandIds.first })
+        : runtimeCommand({ commandId: commandIds.second })
+    const replayed = await fixture.device.handleCommand(await sealFor(fixture, winnerCommand))
+    expect(replayed).toMatchObject({ kind: 'exchange' })
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+    const loserCommand =
+      first.kind === 'exchange'
+        ? runtimeCommand({ commandId: commandIds.second })
+        : runtimeCommand({ commandId: commandIds.first })
+    const refusedAgain = await peer.handleCommand(await sealFor(fixture, loserCommand))
+    expect(refusedAgain).toMatchObject({ kind: 'denial', reason: 'replay_ledger_full' })
+    expect(await store.countLedger()).toBe(1)
   })
 })

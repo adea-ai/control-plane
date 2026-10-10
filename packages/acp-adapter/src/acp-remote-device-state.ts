@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto'
-import type { JsonValue, PersistenceProvider } from '@control-plane/deployment'
+import type {
+  JsonValue,
+  PersistenceProvider,
+  PersistenceTransaction,
+} from '@control-plane/deployment'
 import type { AcpGatewayExchange } from './acp-gateway-types.js'
 import type { AcpRemoteDenialReason } from './acp-remote-fence.js'
 
@@ -42,17 +46,26 @@ export interface AcpRemoteDeviceClaim {
   readonly commandId: string
   readonly identity: string
   readonly channelGeneration: number
+  /**
+   * Replay-ledger admission bound. Enforced INSIDE the claim's serialized/CAS fence
+   * transaction — never by a separate pre-read — so distinct concurrent commands cannot
+   * all observe spare capacity and each claim beyond the bound.
+   */
+  readonly capacity: number
 }
 
 /**
  * Result of one claim attempt. Only `claimed` may execute; `already_claimed`
- * replays the recorded entry, and the fence results deny without creating any
- * ledger entry, so a revoked or superseded delivery can never become an
- * executable claim.
+ * replays the recorded entry (a duplicate replays even when the ledger is at
+ * capacity), `replay_ledger_full` refuses a NEW identity once the capacity bound
+ * is reached inside the same transaction, and the fence results deny without
+ * creating any ledger entry, so a revoked or superseded delivery can never
+ * become an executable claim.
  */
 export type AcpRemoteDeviceClaimResult =
   | 'claimed'
   | 'already_claimed'
+  | 'replay_ledger_full'
   | 'device_revoked'
   | 'stale_channel_generation'
 
@@ -103,7 +116,9 @@ export interface AcpRemoteDeviceStateStore {
    * that same transaction: a revoked fence returns `device_revoked` and a generation below the
    * persisted fence returns `stale_channel_generation`, both without writing anything. A duplicate
    * command returns `already_claimed`, so the caller must replay the recorded outcome instead of
-   * executing again.
+   * executing again — including while the ledger is at capacity. A NEW command beyond `capacity`
+   * returns `replay_ledger_full` when the bounded count reaches the bound inside this same
+   * transaction, so two distinct commands racing at capacity one admit exactly one effect.
    */
   claim(input: AcpRemoteDeviceClaim): Promise<AcpRemoteDeviceClaimResult>
   /** Records the finished outcome over the claimed entry. */
@@ -190,6 +205,9 @@ export class InMemoryAcpRemoteDeviceStateStore implements AcpRemoteDeviceStateSt
     if (this.#fence.revokedAt !== undefined) return 'device_revoked'
     if (input.channelGeneration < this.#fence.highestGeneration) return 'stale_channel_generation'
     if (this.#ledger.has(input.commandId)) return 'already_claimed'
+    // Capacity admission in the same synchronous claim step as the write (duplicates above
+    // already replayed), so racing distinct commands admit exactly one at the bound.
+    if (this.#ledger.size >= input.capacity) return 'replay_ledger_full'
     this.#ledger.set(input.commandId, { identity: input.identity })
     this.#fence = {
       ...this.#fence,
@@ -271,13 +289,38 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
   }
 
   async countLedger(): Promise<number> {
-    // Ledger ids embed the scope digest, so entries are counted per route even in a shared store.
+    // Bounded keyset scan over THIS route's authenticated scope prefix: pages stop at the
+    // prefix end (or namespace end), so a shared store never lists other routes' records.
+    return this.#provider.transaction((transaction) => this.#countPrefix(transaction, undefined))
+  }
+
+  /**
+   * Counts this route's ledger entries with the provider's exclusive-id cursor scan, stopping
+   * at `bound` (capacity admission), at the end of the authenticated scope prefix, or at the
+   * end of the namespace — never listing records outside the scope.
+   */
+  async #countPrefix(
+    transaction: PersistenceTransaction,
+    bound: number | undefined
+  ): Promise<number> {
     const prefix = `c-${this.#scope}-`
-    return this.#provider.transaction(
-      async (transaction) =>
-        (await transaction.list(LEDGER_NAMESPACE)).filter((record) => record.id.startsWith(prefix))
-          .length
-    )
+    // Exclusive cursor immediately before this route's contiguous block: ledger ids embed the
+    // scope digest, so every id of the route sorts between `c-<scope>` and `c-<scope>-\uFFFF...`.
+    let afterId = `c-${this.#scope}`
+    let counted = 0
+    for (;;) {
+      const page = await transaction.scan(LEDGER_NAMESPACE, { afterId, limit: 128 })
+      if (page.length === 0) return counted
+      for (const record of page) {
+        if (!record.id.startsWith(prefix)) return counted
+        counted += 1
+        if (bound !== undefined && counted >= bound) return counted
+      }
+      if (page.length < 128) return counted
+      const last = page[page.length - 1]
+      if (last === undefined) return counted
+      afterId = last.id
+    }
   }
 
   async readLedger(commandId: string): Promise<AcpRemoteDeviceLedgerRecord | undefined> {
@@ -298,6 +341,14 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
         }
         const existing = await transaction.get(LEDGER_NAMESPACE, this.#ledgerId(input.commandId))
         if (existing !== undefined) return 'already_claimed' as const
+        // Capacity admission in the SAME transaction as the fence write and ledger insert:
+        // every admitting claim rewrites the fence row under its read revision, so a racing
+        // claimer that counted spare capacity conflicts, retries, and re-counts against the
+        // committed entry — at most `capacity` distinct commands ever become executable.
+        // Duplicates returned above replay regardless of capacity; nothing is evicted here.
+        if ((await this.#countPrefix(transaction, input.capacity)) >= input.capacity) {
+          return 'replay_ledger_full' as const
+        }
         // Create-if-absent: the provider rejects an unconditional put over an existing record, so a
         // concurrent claimer for the same command fails instead of overwriting the recorded effect.
         await transaction.put({

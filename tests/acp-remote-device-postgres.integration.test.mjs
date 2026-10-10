@@ -8,8 +8,21 @@ import { describe, expect, test } from 'bun:test'
 import { createIsolatedTestDatabase } from '../packages/database/src/testing.ts'
 import {
   PersistenceProviderAcpRemoteDeviceStateStore,
+  SecureAcpDeviceEndpoint,
   acpRemoteDeviceStateScope,
 } from '../packages/acp-adapter/src/gateway.ts'
+import {
+  createSecureFixture,
+  runtimeCommand,
+  sealRawCommand,
+  commandIds,
+  ids,
+} from '../packages/acp-adapter/src/acp-remote-fixtures.mjs'
+import {
+  ACP_REMOTE_SUITE,
+  canonicalJson,
+  utf8,
+} from '../packages/acp-adapter/src/acp-remote-crypto.ts'
 import { PostgresPersistenceProvider } from '../packages/profile-portability/src/postgres-persistence-provider.ts'
 import { loadDatabaseCredentials } from '../packages/config/src/database.ts'
 
@@ -159,13 +172,28 @@ describe.skipIf(!enabled)('hosted PostgreSQL durable state qualification', () =>
         acpRemoteDeviceStateScope(route)
       )
       expect(
-        await store.claim({ commandId: COMMAND_A, identity: 'identity-a', channelGeneration: 2 })
+        await store.claim({
+          commandId: COMMAND_A,
+          identity: 'identity-a',
+          channelGeneration: 2,
+          capacity: 1024,
+        })
       ).toBe('claimed')
       expect(
-        await store.claim({ commandId: COMMAND_A, identity: 'identity-a', channelGeneration: 2 })
+        await store.claim({
+          commandId: COMMAND_A,
+          identity: 'identity-a',
+          channelGeneration: 2,
+          capacity: 1024,
+        })
       ).toBe('already_claimed')
       expect(
-        await store.claim({ commandId: COMMAND_B, identity: 'identity-b', channelGeneration: 1 })
+        await store.claim({
+          commandId: COMMAND_B,
+          identity: 'identity-b',
+          channelGeneration: 1,
+          capacity: 1024,
+        })
       ).toBe('stale_channel_generation')
       expect(await store.readLedger(COMMAND_B)).toBeUndefined()
       await store.recordOutcome(COMMAND_A, { kind: 'denial', reason: 'executor_failed' })
@@ -180,9 +208,21 @@ describe.skipIf(!enabled)('hosted PostgreSQL durable state qualification', () =>
       )
       const [left, right] = await Promise.all([
         captured(
-          concurrent.claim({ commandId: COMMAND_C, identity: 'race-c', channelGeneration: 2 })
+          concurrent.claim({
+            commandId: COMMAND_C,
+            identity: 'race-c',
+            channelGeneration: 2,
+            capacity: 1024,
+          })
         ),
-        captured(store.claim({ commandId: COMMAND_C, identity: 'race-c', channelGeneration: 2 })),
+        captured(
+          store.claim({
+            commandId: COMMAND_C,
+            identity: 'race-c',
+            channelGeneration: 2,
+            capacity: 1024,
+          })
+        ),
       ])
       const results = [left, right].map(
         (result) => result.value ?? String(result.error?.message ?? result.error)
@@ -207,6 +247,7 @@ describe.skipIf(!enabled)('hosted PostgreSQL durable state qualification', () =>
           commandId: COMMAND_B,
           identity: 'identity-b',
           channelGeneration: 3,
+          capacity: 1024,
         })
       ).toBe('device_revoked')
       expect(await restarted.readLedger(COMMAND_B)).toBeUndefined()
@@ -225,21 +266,41 @@ describe.skipIf(!enabled)('hosted PostgreSQL durable state qualification', () =>
         acpRemoteDeviceStateScope(routeOther)
       )
       expect(
-        await storeA.claim({ commandId: COMMAND_A, identity: 'route-a', channelGeneration: 4 })
+        await storeA.claim({
+          commandId: COMMAND_A,
+          identity: 'route-a',
+          channelGeneration: 4,
+          capacity: 1024,
+        })
       ).toBe('claimed')
       expect(await storeB.loadFence()).toEqual({ highestGeneration: 0 })
       expect(
-        await storeB.claim({ commandId: COMMAND_A, identity: 'route-b', channelGeneration: 1 })
+        await storeB.claim({
+          commandId: COMMAND_A,
+          identity: 'route-b',
+          channelGeneration: 1,
+          capacity: 1024,
+        })
       ).toBe('claimed')
       await storeA.recordOutcome(COMMAND_A, { kind: 'denial', reason: 'executor_failed' })
       expect(await storeB.readLedger(COMMAND_A)).toEqual({ identity: 'route-b' })
       await storeA.applyRevocation('2026-08-25T12:00:10.000Z')
       expect(await storeB.loadFence()).toEqual({ highestGeneration: 1 })
       expect(
-        await storeB.claim({ commandId: COMMAND_B, identity: 'route-b', channelGeneration: 2 })
+        await storeB.claim({
+          commandId: COMMAND_B,
+          identity: 'route-b',
+          channelGeneration: 2,
+          capacity: 1024,
+        })
       ).toBe('claimed')
       expect(
-        await storeA.claim({ commandId: COMMAND_B, identity: 'route-a', channelGeneration: 2 })
+        await storeA.claim({
+          commandId: COMMAND_B,
+          identity: 'route-a',
+          channelGeneration: 2,
+          capacity: 1024,
+        })
       ).toBe('device_revoked')
     })
   })
@@ -329,11 +390,21 @@ describe.skipIf(!enabled)('hosted PostgreSQL durable state qualification', () =>
       // Seed the fence at generation 1 so the raced claim (also generation 1) reads an
       // UNCHANGED generation — exactly the path that used to skip fence participation.
       expect(
-        await other.claim({ commandId: COMMAND_B, identity: 'seed', channelGeneration: 1 })
+        await other.claim({
+          commandId: COMMAND_B,
+          identity: 'seed',
+          channelGeneration: 1,
+          capacity: 1024,
+        })
       ).toBe('claimed')
 
       const pending = captured(
-        claimant.claim({ commandId: COMMAND_A, identity: 'race-a', channelGeneration: 1 })
+        claimant.claim({
+          commandId: COMMAND_A,
+          identity: 'race-a',
+          channelGeneration: 1,
+          capacity: 1024,
+        })
       )
       // The claim is parked immediately after reading the persisted fence, on this connection.
       await gate.reached
@@ -365,16 +436,31 @@ describe.skipIf(!enabled)('hosted PostgreSQL durable state qualification', () =>
       // Fence seeded at generation 1 (COMMAND_C) so the raced generation-1 claim skips the fence
       // write it would otherwise perform against generation 0.
       expect(
-        await other.claim({ commandId: COMMAND_C, identity: 'seed', channelGeneration: 1 })
+        await other.claim({
+          commandId: COMMAND_C,
+          identity: 'seed',
+          channelGeneration: 1,
+          capacity: 1024,
+        })
       ).toBe('claimed')
 
       const pending = captured(
-        claimant.claim({ commandId: COMMAND_A, identity: 'race-a', channelGeneration: 1 })
+        claimant.claim({
+          commandId: COMMAND_A,
+          identity: 'race-a',
+          channelGeneration: 1,
+          capacity: 1024,
+        })
       )
       await gate.reached
       // A superseding generation commits on a DIFFERENT pool connection mid-claim.
       expect(
-        await other.claim({ commandId: COMMAND_B, identity: 'race-b', channelGeneration: 2 })
+        await other.claim({
+          commandId: COMMAND_B,
+          identity: 'race-b',
+          channelGeneration: 2,
+          capacity: 1024,
+        })
       ).toBe('claimed')
       gate.release()
 
@@ -406,6 +492,113 @@ describe.skipIf(!enabled)('hosted PostgreSQL durable state qualification', () =>
       gate.release()
 
       await expect(parkedDelete).rejects.toThrow('REVISION_CONFLICT')
+    })
+  })
+
+  const RUNTIME_SESSION = 'runtime.session'
+  const headerFor = (fixture, command) => ({
+    suite: ACP_REMOTE_SUITE,
+    workspaceId: ids.workspaceId,
+    nodeId: ids.nodeId,
+    runtimeConnectionId: ids.runtimeConnectionId,
+    commandId: command.commandId,
+    payloadHash: command.payloadHash,
+    issuedAt: command.issuedAt,
+    expiresAt: command.expiresAt,
+    channelGeneration: command.channelGeneration,
+    controllerKeyId: fixture.route.controllerKeyId,
+    recipientKeyId: fixture.route.deviceEncryptionKeyId,
+    returnKeyId: 'ret_000000000000000000000000000000f1',
+    returnPublicKey: fixture.keys.otherRecipient.publicKey,
+  })
+  const sealFor = async (fixture, command) =>
+    sealRawCommand({
+      route: fixture.route,
+      signingKey: fixture.keys.controllerSigning,
+      header: headerFor(fixture, command),
+      plaintext: utf8(canonicalJson(command)),
+    })
+
+  test('two endpoints racing two distinct commands at capacity one admit exactly one effect over PostgreSQL', async () => {
+    await withPostgresProvider(async (provider) => {
+      // Another route writes into the SAME shared provider first: the scoped keyset count must
+      // never see its records.
+      const otherRouteStore = new PersistenceProviderAcpRemoteDeviceStateStore(
+        provider,
+        acpRemoteDeviceStateScope(routeOther)
+      )
+      expect(
+        await otherRouteStore.claim({
+          commandId: COMMAND_A,
+          identity: 'other-route',
+          channelGeneration: 1,
+          capacity: 1024,
+        })
+      ).toBe('claimed')
+
+      const fixture = await createSecureFixture()
+      const routeScope = acpRemoteDeviceStateScope(fixture.route)
+      const endpointStoreA = new PersistenceProviderAcpRemoteDeviceStateStore(provider, routeScope)
+      const endpointStoreB = new PersistenceProviderAcpRemoteDeviceStateStore(provider, routeScope)
+      expect(await endpointStoreA.countLedger()).toBe(0)
+
+      const endpointA = new SecureAcpDeviceEndpoint({
+        route: fixture.route,
+        identity: { keyId: fixture.route.deviceKeyId, signingKey: fixture.keys.deviceSigning },
+        encryption: {
+          keyId: fixture.route.deviceEncryptionKeyId,
+          privateKey: fixture.keys.deviceRecipient.keyPair.privateKey,
+          publicKey: fixture.keys.deviceRecipient.publicKey,
+        },
+        executor: fixture.executor,
+        now: fixture.now,
+        replayLedgerCapacity: 1,
+        stateStore: endpointStoreA,
+      })
+      const endpointB = new SecureAcpDeviceEndpoint({
+        route: fixture.route,
+        identity: { keyId: fixture.route.deviceKeyId, signingKey: fixture.keys.deviceSigning },
+        encryption: {
+          keyId: fixture.route.deviceEncryptionKeyId,
+          privateKey: fixture.keys.deviceRecipient.keyPair.privateKey,
+          publicKey: fixture.keys.deviceRecipient.publicKey,
+        },
+        executor: fixture.executor,
+        now: fixture.now,
+        replayLedgerCapacity: 1,
+        stateStore: endpointStoreB,
+      })
+
+      const [first, second] = await Promise.all([
+        endpointA.handleCommand(
+          await sealFor(fixture, runtimeCommand({ commandId: commandIds.first }))
+        ),
+        endpointB.handleCommand(
+          await sealFor(fixture, runtimeCommand({ commandId: commandIds.second }))
+        ),
+      ])
+      const results = [first, second]
+      // Exactly one effect and one ledger entry may ever be admitted at capacity one, even
+      // though both endpoints observed spare capacity before either claim committed.
+      expect(results.filter((result) => result.kind === 'exchange')).toHaveLength(1)
+      expect(
+        results.filter(
+          (result) => result.kind === 'denial' && result.reason === 'replay_ledger_full'
+        )
+      ).toHaveLength(1)
+      expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+      expect(await endpointStoreA.countLedger()).toBe(1)
+      expect(await endpointStoreB.countLedger()).toBe(1)
+      // The other route's record in the same provider is outside this scope's prefix.
+      expect(await otherRouteStore.countLedger()).toBe(1)
+      const winnerCommand =
+        first.kind === 'exchange'
+          ? runtimeCommand({ commandId: commandIds.first })
+          : runtimeCommand({ commandId: commandIds.second })
+      const replayed = await endpointA.handleCommand(await sealFor(fixture, winnerCommand))
+      expect(replayed).toMatchObject({ kind: 'exchange' })
+      expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+      expect(await endpointStoreA.countLedger()).toBe(1)
     })
   })
 })

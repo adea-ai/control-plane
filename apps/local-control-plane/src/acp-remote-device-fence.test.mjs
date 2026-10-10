@@ -186,20 +186,40 @@ test('the durable claim rejects revoked and superseded deliveries without writin
       acpRemoteDeviceStateScope(route)
     )
     expect(
-      await store.claim({ commandId: COMMAND_A, identity: 'identity-a', channelGeneration: 2 })
+      await store.claim({
+        commandId: COMMAND_A,
+        identity: 'identity-a',
+        channelGeneration: 2,
+        capacity: 1024,
+      })
     ).toBe('claimed')
     expect(
-      await store.claim({ commandId: COMMAND_A, identity: 'identity-a', channelGeneration: 2 })
+      await store.claim({
+        commandId: COMMAND_A,
+        identity: 'identity-a',
+        channelGeneration: 2,
+        capacity: 1024,
+      })
     ).toBe('already_claimed')
     expect(
-      await store.claim({ commandId: COMMAND_B, identity: 'identity-b', channelGeneration: 1 })
+      await store.claim({
+        commandId: COMMAND_B,
+        identity: 'identity-b',
+        channelGeneration: 1,
+        capacity: 1024,
+      })
     ).toBe('stale_channel_generation')
     expect(await store.readLedger(COMMAND_B)).toBeUndefined()
     expect(await store.countLedger()).toBe(1)
 
     await store.applyRevocation('2026-08-25T12:00:10.000Z')
     expect(
-      await store.claim({ commandId: COMMAND_C, identity: 'identity-c', channelGeneration: 3 })
+      await store.claim({
+        commandId: COMMAND_C,
+        identity: 'identity-c',
+        channelGeneration: 3,
+        capacity: 1024,
+      })
     ).toBe('device_revoked')
     expect(await store.readLedger(COMMAND_C)).toBeUndefined()
     expect(await store.countLedger()).toBe(1)
@@ -211,14 +231,29 @@ test('the durable claim rejects revoked and superseded deliveries without writin
     // The in-memory seam enforces the same atomic fence semantics.
     const memory = new InMemoryAcpRemoteDeviceStateStore()
     expect(
-      await memory.claim({ commandId: COMMAND_A, identity: 'identity-a', channelGeneration: 2 })
+      await memory.claim({
+        commandId: COMMAND_A,
+        identity: 'identity-a',
+        channelGeneration: 2,
+        capacity: 1024,
+      })
     ).toBe('claimed')
     expect(
-      await memory.claim({ commandId: COMMAND_B, identity: 'identity-b', channelGeneration: 1 })
+      await memory.claim({
+        commandId: COMMAND_B,
+        identity: 'identity-b',
+        channelGeneration: 1,
+        capacity: 1024,
+      })
     ).toBe('stale_channel_generation')
     await memory.applyRevocation('2026-08-25T12:00:11.000Z')
     expect(
-      await memory.claim({ commandId: COMMAND_C, identity: 'identity-c', channelGeneration: 2 })
+      await memory.claim({
+        commandId: COMMAND_C,
+        identity: 'identity-c',
+        channelGeneration: 2,
+        capacity: 1024,
+      })
     ).toBe('device_revoked')
     expect(await memory.readLedger(COMMAND_B)).toBeUndefined()
     expect(await memory.readLedger(COMMAND_C)).toBeUndefined()
@@ -335,16 +370,31 @@ test('fence and ledger records are namespaced by the authenticated route identit
     // One store instance per authenticated route over one provider: the second scope derives from
     // a different route record (node, connection, and device key), so the two never conflate.
     expect(
-      await storeA.claim({ commandId: COMMAND_B, identity: 'route-a', channelGeneration: 4 })
+      await storeA.claim({
+        commandId: COMMAND_B,
+        identity: 'route-a',
+        channelGeneration: 4,
+        capacity: 1024,
+      })
     ).toBe('claimed')
     // Route A's generation-4 fence is invisible to the other scope.
     expect(await storeB.loadFence()).toEqual({ highestGeneration: 0 })
     // The same command id is claimable independently: command-only keys would conflate the routes.
     expect(
-      await storeB.claim({ commandId: COMMAND_B, identity: 'route-b', channelGeneration: 1 })
+      await storeB.claim({
+        commandId: COMMAND_B,
+        identity: 'route-b',
+        channelGeneration: 1,
+        capacity: 1024,
+      })
     ).toBe('claimed')
     expect(
-      await storeB.claim({ commandId: COMMAND_B, identity: 'route-b', channelGeneration: 1 })
+      await storeB.claim({
+        commandId: COMMAND_B,
+        identity: 'route-b',
+        channelGeneration: 1,
+        capacity: 1024,
+      })
     ).toBe('already_claimed')
     await storeA.recordOutcome(COMMAND_B, { kind: 'denial', reason: 'executor_failed' })
     // Route B keeps its own pending entry; route A's recorded outcome never leaks across.
@@ -357,10 +407,20 @@ test('fence and ledger records are namespaced by the authenticated route identit
     await storeA.applyRevocation('2026-08-25T12:00:10.000Z')
     expect(await storeB.loadFence()).toEqual({ highestGeneration: 1 })
     expect(
-      await storeB.claim({ commandId: COMMAND_C, identity: 'route-b', channelGeneration: 2 })
+      await storeB.claim({
+        commandId: COMMAND_C,
+        identity: 'route-b',
+        channelGeneration: 2,
+        capacity: 1024,
+      })
     ).toBe('claimed')
     expect(
-      await storeA.claim({ commandId: COMMAND_C, identity: 'route-a', channelGeneration: 2 })
+      await storeA.claim({
+        commandId: COMMAND_C,
+        identity: 'route-a',
+        channelGeneration: 2,
+        capacity: 1024,
+      })
     ).toBe('device_revoked')
   })
 })
