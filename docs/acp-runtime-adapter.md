@@ -66,10 +66,13 @@ Authority checks are current-authority: the route fence (revocation, trust-recor
 clock) and the command's window/channel-generation gates are evaluated before decryption and
 re-evaluated after **every** await on the effect and publication paths — after send and after reply
 opening at the controller, and after each storage read, the ledger claim, execution, and reply
-sealing at the device — with every reply publication (fresh, sealed, or cached) fenced and the
-persisted fence enforced atomically inside the durable claim transaction, so revocation,
-cancellation, an expired window, a superseded generation, or a broken clock landing while work is
-parked can never reach an effect or leave one. A non-finite clock or malformed window fails
+sealing at the device — with every reply publication (fresh, sealed, or cached) fenced against the
+persisted fence, and the persisted fence enforced atomically inside the durable claim transaction.
+A revocation or superseded generation durable before a claim refuses that command atomically, and any
+revocation, superseded generation, expired window, or broken clock in force at the final read refuses
+the reply (see the response authorization boundary below). The one window not closed is between a
+successful claim and dispatch, where the pre-effect check still reads the in-process mirror. A
+non-finite clock or malformed window fails
 closed. Unauthenticated input receives no signed reply, so an intermediary cannot harvest a device
 signature over copyable header fields. Every denial carries an explicit `fallback: 'none'`.
 
@@ -85,7 +88,19 @@ current window under current authority may recover it. Fence and ledger keys der
 authenticated route identity through `acpRemoteDeviceStateScope`, so two routes sharing one store
 never observe each other's revocation, generation, or recorded effects, and `claim` re-evaluates the
 persisted fence inside the same transaction that would create the ledger entry — an endpoint that
-loaded its mirror once still fails closed on a revocation or supersession applied elsewhere.
+loaded its mirror once still fails closed on a revocation or supersession applied elsewhere: claims
+are decided inside the durable transaction, and replay, publication, and inventory re-read the
+persisted fence before deciding.
+
+**Response authorization boundary:** a device reply (exchange, cached replay, or signed denial) is
+authorized by the last durable fence read that completes before the endpoint returns its bytes to the
+caller. For a fresh outcome that read follows sealing; for a cached replay it precedes returning the
+cached bytes; inventory replies follow the same rule. A revocation, higher channel generation, or
+expired window that is durable before that read refuses the reply, and the refusal is sealed in place
+of the bytes. The boundary is a point-in-time read, not a lock: no durable transaction or lock is held
+across sealing or transmission, and the endpoint makes no claim about delivery once bytes leave it, so
+a revocation committed afterwards is not reflected in bytes already returned. A refused publication
+never repeats the effect; the outcome recorded at execution stays durable.
 
 **Production construction is wired (no documented-gap substitute):**
 `createPersistentSecureAcpDeviceEndpoint` always builds the scoped
@@ -125,7 +140,9 @@ Evidence: `packages/acp-adapter/src/acp-remote-fence.test.mjs` (route schema, fe
 finite-clock guards, HPKE/signature binding), `packages/acp-adapter/src/acp-remote-transport.test.mjs`
 (parked-async revocation/abort regressions, parked storage window/generation regressions,
 revocation at execution/sealing/response-opening boundaries, authenticated and encrypted runs,
-replay/conflict/generation proofs, edge fences),
+replay/conflict/generation proofs, edge fences), `packages/acp-adapter/src/acp-remote-response-boundary.test.mjs`
+(the response authorization boundary: peer revocation before the final read and while sealing, cached
+replay after revocation, identity conflict),
 `apps/local-control-plane/src/acp-remote-device-restart.test.mjs` (restart proofs through the real
 SQLite persistence composition using disposable per-test databases), and
 `apps/local-control-plane/src/acp-remote-device-fence.test.mjs` (two endpoints over one shared
