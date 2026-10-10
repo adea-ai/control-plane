@@ -120,12 +120,18 @@ describe('governed publisher report ordering', () => {
             await released
           }
           const firstPending = f.shared.settleUsage(authority, FIRST_KEY, FIRST_USAGE, {})
-          // The first settle has now recorded its ledger entry (settleModelRequest returned
-          // and the wrapper captured its sequence) and is parked before its lookup/report.
-          await bounded(parked, 'first-settle-parked')
+          // Attach rejection handling immediately so an early rejection of the parked
+          // request is never an unhandled failure while later work runs.
+          firstPending.catch(() => {})
 
           let settled2
+          let primaryError
+          let cleanupFailure
           try {
+            // The first settle has recorded its ledger entry (settleModelRequest returned
+            // and the wrapper captured its sequence) and parks before its lookup/report —
+            // a timeout here still falls through to the releasing finally.
+            await bounded(parked, 'first-settle-parked')
             settled2 = await f.shared.settleUsage(authority, SECOND_KEY, SECOND_USAGE, {})
             // Before releasing the older first settle: the NEWER request's actual ledger
             // sequence IS the publication watermark.
@@ -134,12 +140,27 @@ describe('governed publisher report ordering', () => {
             )
             expect(seq2BeforeRelease).toBeDefined()
             expect(watermarkOf(f.childUsage)).toBe(seq2BeforeRelease)
+          } catch (error) {
+            primaryError = error
           } finally {
-            // Always release the owned parked request — even when the newer settle or an
-            // assertion throws — so fixture.close never meets a permanently parked request.
+            // Always release and settle the owned parked request — even when the parked
+            // wait, the newer settle, or an assertion throws — so fixture.close never
+            // meets a permanently parked request.
             releaseFirst()
-            await firstPending.catch(() => {})
+            try {
+              await bounded(firstPending, 'first-settle-cleanup')
+            } catch (cleanupError) {
+              if (primaryError === undefined) {
+                // No primary failure: surface the cleanup failure after the finally block.
+                cleanupFailure = cleanupError
+              } else {
+                // The primary failure wins; the cleanup failure stays attached as evidence.
+                primaryError.cleanupError = cleanupError
+              }
+            }
           }
+          if (primaryError !== undefined) throw primaryError
+          if (cleanupFailure !== undefined) throw cleanupFailure
           const settled1 = await firstPending
 
           // Both real sources are distinct and each map sequence equals its OWN actual
