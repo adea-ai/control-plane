@@ -80,14 +80,19 @@ coupling, and neither ever substitutes for the other:
   `pi`, which named the durable Pi family; their evidence cites only
   `packages/managed-pi-adapter`, so the key was corrected and the evidence and
   dates were kept. No certification row covers the durable `pi` family.
-- Production does not apply the certification registry.
-  `apps/runtime-gateway/src/runtime-inventory-ingestion.ts` records
-  `compatibilityState: 'untested'`, and no production code calls
-  `applyRuntimeCompatibilityCertification` or `assessRuntimeCompatibility`. The
-  router admits only `compatible` or `degraded` candidates, so a discovered
-  managed Pi runtime is not routable in production until the registry is wired
-  into inventory ingestion. The cloud remote drill's discovery fixture sets
-  compatibility to `compatible` directly and does not exercise the reader.
+- Production does not consult the certification registry. No production code
+  calls `applyRuntimeCompatibilityCertification` or `assessRuntimeCompatibility`.
+  Inventory ingestion records `compatibilityState: 'untested'`, but the health
+  ingest that follows recomputes it from the health report
+  (`packages/runtime-sdk/src/health.ts`, `compatibilityState`): a healthy driver
+  with a verified capability snapshot becomes `compatible` with no certification
+  row check. Production routing of managed Pi therefore does not depend on a
+  certification row. The hosted managed Pi worker
+  (`apps/runtime-worker/src/hosted-managed-pi-worker.ts`) sets `compatible`
+  directly for a host that is neither unavailable nor degraded. Whether certification should gate
+  production compatibility is a root decision. The cloud remote drill's discovery
+  fixture sets compatibility to `compatible` directly and does not exercise the
+  reader.
 - Runtime discovery records one harness version per node. Revisit this model if
   a node hosts several harnesses concurrently.
 - Canonical-JSON sites that persist harness-adjacent digests are tracked in
