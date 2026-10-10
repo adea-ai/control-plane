@@ -439,6 +439,7 @@ test('concrete node composition persists real Pi generation, canonical admission
       pending: 1,
       unbound: 0,
     })
+    expect(composition.terminalSettlementBlocked).toBe(true)
     expect(
       (await ledger().entries(evidence.workspaceId, ids.executionId)).filter(
         (entry) => entry.kind === 'release'
@@ -463,6 +464,7 @@ test('concrete node composition persists real Pi generation, canonical admission
       reservedMicrounits: 0,
       spentMicrounits: charged,
     })
+    expect(composition.terminalSettlementBlocked).toBe(false)
     const releases = (await ledger().entries(evidence.workspaceId, ids.executionId)).filter(
       (entry) => entry.kind === 'release'
     )

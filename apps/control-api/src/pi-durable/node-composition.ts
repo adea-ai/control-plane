@@ -19,10 +19,7 @@ import { createPiLeadRuntimeAuthorityRouter } from './runtime-authority-router.j
 import { SqlitePiLeadPreparations, type PiLeadPreparationAuthority } from './lead-preparation.js'
 import type { PiDurableChildProgressScanner } from './child-progress-scanner.js'
 import { SqlitePiLeadRunningLifecycle } from './lead-running-lifecycle.js'
-import {
-  SqlitePiLeadTerminalSettlement,
-  type LeadTerminalSettlementResult,
-} from './lead-terminal-settlement.js'
+import { SqlitePiLeadTerminalSettlement } from './lead-terminal-settlement.js'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 
 export interface NodePiDurableLeadCompositionOptions {
@@ -46,6 +43,8 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly preparationAuthority?: PiLeadPreparationAuthority
   /** Server-bound canonical child scanner. No child identity is accepted from an HTTP payload. */
   readonly childProgress?: Pick<PiDurableChildProgressScanner, 'scan'>
+  /** Cadence of the periodic recovery pass; defaults to 30 seconds. Tests shorten it. */
+  readonly periodicRecoveryIntervalMs?: number
 }
 
 /** Explicit remote-host composition with canonical admission and existing ledger.
@@ -63,6 +62,9 @@ export async function createNodePiDurableLeadComposition(
       !options.consumeParentInbox)
   )
     throw new Error('PI_CHILD_COMPOSITION_REQUIRED')
+  const recoveryIntervalMs = options.periodicRecoveryIntervalMs ?? 30_000
+  if (!Number.isSafeInteger(recoveryIntervalMs) || recoveryIntervalMs < 1)
+    throw new Error('PI_LEAD_RECOVERY_INTERVAL_INVALID')
   const usage = createPiDurableUsageAuthority(options.usage)
   mkdirSync(options.directory, { recursive: true })
   const database = new DatabaseSync(join(options.directory, 'lead-admission.sqlite'), {
@@ -128,25 +130,6 @@ export async function createNodePiDurableLeadComposition(
       journal: runtime.adapter.journal,
       ledger: options.usage.ledger,
     })
-    let terminalSettlementRun: Promise<unknown> | undefined
-    let terminalSettlementBlocked = false
-    const settleTerminalAccounting = (): Promise<LeadTerminalSettlementResult> => {
-      const pass = terminalSettlement.settle()
-      terminalSettlementRun = pass.then(
-        () => {
-          terminalSettlementBlocked = false
-        },
-        () => {
-          terminalSettlementBlocked = true
-        }
-      )
-      return pass
-    }
-    // A refused or interrupted pass leaves the reservation open; the next pass retries it.
-    const terminalSettlementTimer = setInterval(() => {
-      void settleTerminalAccounting().catch(() => undefined)
-    }, 30_000)
-    terminalSettlementTimer.unref()
     const recoverUnclaimedPreparations = async () => {
       if (!preparations || !options.preparationAuthority) return undefined
       return admission.recoverUnclaimedPreparations(
@@ -159,28 +142,6 @@ export async function createNodePiDurableLeadComposition(
     let childProgressRecovery = await options.childProgress?.scan(runtime.adapter)
     let preparationRecovery: Promise<void> | undefined
     let preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
-    const preparationTimer =
-      preparations || options.childProgress
-        ? setInterval(() => {
-            if (preparationRecovery) return
-            preparationRecovery = (async () => {
-              await preparations?.recoverExpired()
-              unclaimedPreparationRecovery = await recoverUnclaimedPreparations()
-              childProgressRecovery = await options.childProgress?.scan(runtime!.adapter)
-            })()
-              .then(() => {
-                preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
-              })
-              .catch(() => {
-                // A failed release remains retained for the next scan; never infer to repair it.
-                preparationRecoveryBlocked = true
-              })
-              .finally(() => {
-                preparationRecovery = undefined
-              })
-          }, 30_000)
-        : undefined
-    preparationTimer?.unref()
     const service = new DurablePiDurableLeadService({
       authority: admission,
       adapter: runtime.adapter,
@@ -189,19 +150,48 @@ export async function createNodePiDurableLeadComposition(
       ...(preparations ? { preparations } : {}),
       ...(options.admission.now ? { now: options.admission.now } : {}),
     })
+    // Created last: after every awaited step and the service, nothing can throw before the return, so a
+    // failed initialization never leaves an interval running against a closed store.
+    const recoveryTimer = setInterval(() => {
+      if (preparationRecovery) return
+      preparationRecovery = (async () => {
+        await preparations?.recoverExpired()
+        unclaimedPreparationRecovery = await recoverUnclaimedPreparations()
+        childProgressRecovery = await options.childProgress?.scan(runtime!.adapter)
+      })()
+        .then(() => {
+          preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
+        })
+        .catch(() => {
+          // A failed release remains retained for the next scan; never infer to repair it.
+          preparationRecoveryBlocked = true
+        })
+        .then(async () => {
+          // Terminal health lives in the settlement: a refused or failed pass leaves the store blocked.
+          await terminalSettlement.settle().catch(() => undefined)
+        })
+        .finally(() => {
+          preparationRecovery = undefined
+        })
+    }, recoveryIntervalMs)
+    recoveryTimer.unref()
     const initializedRuntime = runtime
     let closePromise: Promise<void> | undefined
+    const assertOpen = () => {
+      if (closePromise !== undefined) throw new Error('PI_LEAD_COMPOSITION_CLOSED')
+    }
     return {
       ...runtime,
       admission,
       service,
       async recover() {
+        assertOpen()
         await initializedRuntime.recover()
         await preparations?.recoverExpired()
         unclaimedPreparationRecovery = await recoverUnclaimedPreparations()
         preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
         childProgressRecovery = await options.childProgress?.scan(initializedRuntime.adapter)
-        await settleTerminalAccounting()
+        await terminalSettlement.settle()
       },
       get preparationRecoveryBlocked() {
         return preparationRecoveryBlocked
@@ -215,16 +205,15 @@ export async function createNodePiDurableLeadComposition(
       get recoveryBlocked() {
         return initializedRuntime.recoveryBlocked
       },
-      settleTerminalAccounting,
+      settleTerminalAccounting: () => terminalSettlement.settle(),
       get terminalSettlementBlocked() {
-        return terminalSettlementBlocked
+        return terminalSettlement.blocked
       },
       close() {
         closePromise ??= (async () => {
-          if (preparationTimer) clearInterval(preparationTimer)
-          clearInterval(terminalSettlementTimer)
+          clearInterval(recoveryTimer)
+          await terminalSettlement.close()
           await preparationRecovery
-          await terminalSettlementRun
           try {
             await initializedRuntime.close()
           } finally {

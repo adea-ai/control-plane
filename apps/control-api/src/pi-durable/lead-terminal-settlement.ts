@@ -25,6 +25,8 @@ export interface LeadTerminalSettlementResult {
  */
 export class SqlitePiLeadTerminalSettlement {
   #pass: Promise<LeadTerminalSettlementResult> | undefined
+  #blocked = false
+  #closed = false
 
   constructor(
     readonly options: {
@@ -34,12 +36,35 @@ export class SqlitePiLeadTerminalSettlement {
     }
   ) {}
 
-  /** One pass at a time: a caller that arrives during a pass shares that pass. */
+  /** True while the last pass left a completed attempt pending, or the last pass threw. */
+  get blocked(): boolean {
+    return this.#blocked
+  }
+
+  /** One pass at a time: a caller that arrives during a pass shares that pass. Refused once closed. */
   settle(): Promise<LeadTerminalSettlementResult> {
-    this.#pass ??= this.#run().finally(() => {
-      this.#pass = undefined
-    })
+    if (this.#closed) return Promise.reject(new Error('PI_LEAD_TERMINAL_SETTLEMENT_CLOSED'))
+    this.#pass ??= this.#run()
+      .then(
+        (result) => {
+          this.#blocked = result.pending > 0
+          return result
+        },
+        (error: unknown) => {
+          this.#blocked = true
+          throw error
+        }
+      )
+      .finally(() => {
+        this.#pass = undefined
+      })
     return this.#pass
+  }
+
+  /** Refuses later passes and waits for a running one, so the database can close after this returns. */
+  async close(): Promise<void> {
+    this.#closed = true
+    await this.#pass?.catch(() => undefined)
   }
 
   async #run(): Promise<LeadTerminalSettlementResult> {
