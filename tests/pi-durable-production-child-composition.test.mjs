@@ -384,6 +384,9 @@ test('actual production composition uses the canonical Pi tool authority and sha
     expect(host.state.toolExecutorCalls).toBe(0)
     expect(host.state.physicalSends).toBe(1)
 
+    const childExecutionBeforeStop =
+      await host.repositories.executions.getExecution(childExecutionId)
+    const childAttemptBeforeStop = await host.repositories.executions.getAttempt(childAttemptId)
     const cancelCommand = host.command('pi-durable.lead.cancel', {
       dispatchId: dispatch.dispatchId,
     })
@@ -396,6 +399,30 @@ test('actual production composition uses the canonical Pi tool authority and sha
       state: 'failed',
       error: { code: 'PI_CHILD_DELEGATION_DENIED' },
     })
+    // CP935 contract (Root-adjudicated authoritative): a lead-stop must NOT
+    // implicitly cancel child sessions — child cancellation is a separate,
+    // explicitly authorized operation. Prove the lead-stop leaves the
+    // dispatched child untouched.
+    expect(host.state.cancelChildCalls).toEqual([])
+    expect(await host.repositories.executions.getExecution(childExecutionId)).toEqual(
+      childExecutionBeforeStop
+    )
+    expect(await host.repositories.executions.getAttempt(childAttemptId)).toEqual(
+      childAttemptBeforeStop
+    )
+    expect(
+      host.state.retainedEvents.filter((event) => event.type === 'delegation.cancelled')
+    ).toHaveLength(0)
+
+    // Separately invoke the governed child-cancel path with its own
+    // authorization; it durably cancels the child and publishes the terminal
+    // packet exactly once.
+    const cancelChildren = () =>
+      host.state.governedDelegationService.cancelChildren({
+        parentExecutionId: dispatch.executionId,
+        cancelledAt: host.at,
+      })
+    await cancelChildren()
     expect(host.state.cancelChildCalls).toEqual([
       { parentExecutionId: dispatch.executionId, cancelledAt: host.at },
     ])
@@ -420,15 +447,19 @@ test('actual production composition uses the canonical Pi tool authority and sha
     expect(terminalWakeIndex).toBeGreaterThan(terminalIndex)
     expect(host.state.parentInboxWakeSnapshots.at(-1)).toContainEqual(terminalEvents[0])
 
+    // A repeated child-cancel is idempotent (terminal packet published once),
+    // and a lead-stop replay still never cascades to children.
+    await cancelChildren()
+    expect(host.state.cancelChildCalls).toHaveLength(2)
+    expect(
+      host.state.retainedEvents.filter((event) => event.type === 'delegation.cancelled')
+    ).toHaveLength(1)
     const replayed = await host.composition.piDurableLeadService.cancel(
       cancelCommand,
       host.principal
     )
     expect(replayed.data.state).toBe('failed')
     expect(host.state.cancelChildCalls).toHaveLength(2)
-    expect(
-      host.state.retainedEvents.filter((event) => event.type === 'delegation.cancelled')
-    ).toHaveLength(1)
     expect(host.state.physicalSends).toBe(1)
     expect(host.state.toolExecutorCalls).toBe(0)
   } finally {
