@@ -79,6 +79,15 @@ or rewrite previously published version schemas. Prior accepted graph pins and u
 the earlier key convention require verified reconciliation before replay. The launcher acceptance
 uses a fresh test directory; it does not certify upgrades of existing installations.
 
+Connector credential administration (`/v1/credentials/*`, including revocation) is served by the
+`start()` launcher only when the operator supplies `CONTROL_PLANE_SECRET_ENCRYPTION_KEY`: a 32-byte
+AES-256 key as 64 hexadecimal characters or base64url. The launcher never generates, stores, or
+replaces this key. A malformed key stops startup before any listener opens. Without a key, every
+credential route reports `CREDENTIAL_VAULT_NOT_CONFIGURED` (HTTP 503). Ciphertext lives in the
+SQLite records table under the `credential-secrets` namespace. Revocation marks the credential
+revoked, revokes its active leases, and deletes every stored secret revision. Runtime-node
+credential revocation is not part of the Local profile: Local has no runtime-node identity store.
+
 For the built-in immutable JSON tool, `operations` can be a server-owned factory receiving
 `{ api, persistence, objectStore }` from the Local composition. Return `LocalGraphToolOperations`
 (exported from the Local package) with those resources and an operator-owned `prices` array. Each
