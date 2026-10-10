@@ -3,8 +3,8 @@ import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from '
 import process from 'node:process'
 import { CredentialApiFixtures } from '@control-plane/contracts'
 import {
-  Ed25519ServiceCredentialVerifier,
   ConfiguredCredentialRevocationChecker,
+  Ed25519ServiceCredentialVerifier,
   PolicyServiceAuthenticator,
   RepositoryRuntimeNodeCredentialRevocationService,
   createControlApiApplication,
@@ -25,14 +25,11 @@ import {
   runtimeNodeWebSocketChallenge,
 } from '@control-plane/runtime-gateway-protocol'
 
-// Disposable PostgreSQL proof for hosted RuntimeNode credential revocation. The control route,
-// the existing revocation primitive, and the gateway's notification and durable-recheck path
-// all run against an isolated database. Every key below is ephemeral test material generated
-// for this run; no credential, issuer, or deployed grant is created or changed.
-//
-// The deployed application role holds no UPDATE on the revocation columns (migration 0054).
-// Revocation therefore runs through the migration role in the control wiring below, which
-// proves the revocation semantics; the application-role wiring proves the fail-closed refusal.
+// Disposable PostgreSQL proof for the hosted RuntimeNode revocation route. The route runs under the
+// application role, which holds EXECUTE on the migration-owned revocation function and no write
+// privilege on the identity tables or the audit table. The privilege block below mirrors the
+// migrations (0054 and 0069). Every key is ephemeral test material generated for this run. No real
+// credential, grant, or security setting is read or changed.
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const ISSUER = 'https://identity.example.test/runtime-nodes'
@@ -44,6 +41,7 @@ const CONTROL_KEY_ID = 'rnr-revocation-operator-v1'
 const CONTROL_PRINCIPAL = 'svc_agent-hq'
 const WORKSPACE = 'wsp_01JABCDEF0123456789ABCDEFG'
 const OTHER_WORKSPACE = 'wsp_01JABCDEF0123456789ABCDEGH'
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 const metadata = {
   serviceName: 'control-api',
   version: 'test',
@@ -61,8 +59,7 @@ describe.skipIf(!enabled)('hosted RuntimeNode credential revocation over Postgre
   let gatewayRepository
   let gatewayPort
   let authenticator
-  let privilegedControl
-  let applicationRoleControl
+  let control
 
   beforeAll(async () => {
     isolated = await createIsolatedTestDatabase({
@@ -71,7 +68,7 @@ describe.skipIf(!enabled)('hosted RuntimeNode credential revocation over Postgre
       migration: loadDatabaseCredentials(process.env, 'migration'),
     })
     await isolated.migrate()
-    await restrictApplicationPrivileges()
+    await applyProductionPrivileges()
 
     const credentials = loadDatabaseSessionCredentials(process.env)
     const notificationUrl = new URL(credentials.url)
@@ -90,25 +87,15 @@ describe.skipIf(!enabled)('hosted RuntimeNode credential revocation over Postgre
       logger: { write: () => undefined },
     })
 
-    privilegedControl = await controlApiFor(
-      new RepositoryRuntimeNodeCredentialRevocationService({
-        repository: {
-          getIssuedCredential: (credentialId) =>
-            migrationRepository((repository) => repository.getIssuedCredential(credentialId)),
-          revokeCredential: (credentialId, now) =>
-            migrationRepository((repository) => repository.revokeCredential(credentialId, now)),
-        },
-      })
-    )
-    applicationRoleControl = await controlApiFor(
+    // The route is wired over the application role, exactly as the hosted composition is.
+    control = await controlApiFor(
       new RepositoryRuntimeNodeCredentialRevocationService({ repository: gatewayRepository })
     )
   }, integrationTestTimeout(60_000))
 
   afterAll(async () => {
     try {
-      await privilegedControl?.close()
-      await applicationRoleControl?.close()
+      await control?.close()
       authenticator?.close()
       await gatewayPort?.close()
       await notificationConnection?.close()
@@ -118,7 +105,7 @@ describe.skipIf(!enabled)('hosted RuntimeNode credential revocation over Postgre
   })
 
   test(
-    'an authorized revocation invalidates the authenticated channel, refuses re-authentication, and replays without a second notification',
+    'an authorized revocation through the application role invalidates the channel, refuses re-authentication, and replays without a second notification',
     async () => {
       const provisioned = await provisionCredential()
       const channel = await authenticate(authenticator, provisioned)
@@ -127,7 +114,7 @@ describe.skipIf(!enabled)('hosted RuntimeNode credential revocation over Postgre
         observed.push(invalidation)
       )
       try {
-        const first = await revoke(privilegedControl, provisioned.credentialId, WORKSPACE)
+        const first = await revoke(control, provisioned.credentialId, WORKSPACE)
         expect(first.statusCode).toBe(200)
         expect(first.json().data.credential).toMatchObject({
           credentialId: provisioned.credentialId,
@@ -147,20 +134,21 @@ describe.skipIf(!enabled)('hosted RuntimeNode credential revocation over Postgre
         )
         expect(reauthentication.code).toBe('RUNTIME_NODE_CREDENTIAL_MALFORMED')
 
-        const replay = await revoke(privilegedControl, provisioned.credentialId, WORKSPACE)
+        const replay = await revoke(control, provisioned.credentialId, WORKSPACE)
         expect(replay.statusCode).toBe(200)
         expect(replay.json().data.credential).toEqual(first.json().data.credential)
-        expect(
-          await migrationRepository((repository) =>
-            repository.getIssuedCredential(provisioned.credentialId)
-          )
-        ).toMatchObject({
+        expect(await storedCredential(provisioned.credentialId)).toMatchObject({
           revocationVersion: 2,
         })
         await settle()
         expect(
           observed.filter((item) => item.credentialId === provisioned.credentialId)
         ).toHaveLength(1)
+
+        expect(await auditOutcomes(provisioned.credentialId)).toEqual([
+          { outcome: 'applied', principalRef: CONTROL_PRINCIPAL, revocationVersion: 2 },
+          { outcome: 'replayed', principalRef: CONTROL_PRINCIPAL, revocationVersion: 2 },
+        ])
       } finally {
         unsubscribe()
       }
@@ -179,7 +167,7 @@ describe.skipIf(!enabled)('hosted RuntimeNode credential revocation over Postgre
       try {
         const provisioned = await provisionCredential()
         const channel = await authenticate(isolatedAuthenticator, provisioned)
-        const revoked = await revoke(privilegedControl, provisioned.credentialId, WORKSPACE)
+        const revoked = await revoke(control, provisioned.credentialId, WORKSPACE)
         expect(revoked.statusCode).toBe(200)
         expect(channel.invalidatedReason).toBeUndefined()
 
@@ -195,12 +183,12 @@ describe.skipIf(!enabled)('hosted RuntimeNode credential revocation over Postgre
   )
 
   test(
-    'a read-only principal is refused before any state change and its channel stays active',
+    'a read-only principal is refused before any state change or audit row, and its channel stays active',
     async () => {
       const provisioned = await provisionCredential()
       const channel = await authenticate(authenticator, provisioned)
 
-      const response = await revoke(privilegedControl, provisioned.credentialId, WORKSPACE, {
+      const response = await revoke(control, provisioned.credentialId, WORKSPACE, {
         scopes: ['credential:read'],
       })
       expect(response.statusCode).toBe(403)
@@ -208,75 +196,141 @@ describe.skipIf(!enabled)('hosted RuntimeNode credential revocation over Postgre
         revocationVersion: 1,
         revokedAt: null,
       })
+      expect(await auditOutcomes(provisioned.credentialId)).toEqual([])
       await expect(channel.assertActive()).resolves.toBeUndefined()
     },
     integrationTestTimeout(30_000)
   )
 
   test(
-    'a caller that is not the authenticated principal, a wrong workspace, and an unknown credential are refused without a state change',
+    'a caller that is not the authenticated principal is refused before any state change or audit row',
     async () => {
       const provisioned = await provisionCredential()
       const channel = await authenticate(authenticator, provisioned)
 
-      const wrongCaller = await revoke(privilegedControl, provisioned.credentialId, WORKSPACE, {
+      const wrongCaller = await revoke(control, provisioned.credentialId, WORKSPACE, {
         caller: 'svc_someone-else',
       })
       expect(wrongCaller.statusCode).toBe(403)
-
-      const wrongWorkspace = await revoke(
-        privilegedControl,
-        provisioned.credentialId,
-        OTHER_WORKSPACE,
-        {
-          principalWorkspaces: [WORKSPACE, OTHER_WORKSPACE],
-        }
-      )
-      expect(wrongWorkspace.statusCode).toBe(404)
-      expect(wrongWorkspace.json().error.code).toBe('RUNTIME_NODE_CREDENTIAL_NOT_FOUND')
-
-      const unknown = await revoke(
-        privilegedControl,
-        `rgc_${randomUUID().replaceAll('-', '')}`,
-        WORKSPACE
-      )
-      expect(unknown.statusCode).toBe(404)
-
       expect(await storedCredential(provisioned.credentialId)).toMatchObject({
         revocationVersion: 1,
         revokedAt: null,
       })
+      expect(await auditOutcomes(provisioned.credentialId)).toEqual([])
       await expect(channel.assertActive()).resolves.toBeUndefined()
     },
     integrationTestTimeout(30_000)
   )
 
   test(
-    'the deployed application role is refused by the database and the control fails closed with no state change',
+    'a credential bound to another workspace is refused and audited without a state change',
     async () => {
       const provisioned = await provisionCredential()
       const channel = await authenticate(authenticator, provisioned)
 
-      const direct = await gatewayRepository
-        .revokeCredential(provisioned.credentialId, new Date())
-        .catch((error) => error)
-      expect(databaseErrorCode(direct)).toBe('42501')
+      const wrongWorkspace = await revoke(control, provisioned.credentialId, OTHER_WORKSPACE, {
+        principalWorkspaces: [WORKSPACE, OTHER_WORKSPACE],
+      })
+      expect(wrongWorkspace.statusCode).toBe(404)
+      expect(wrongWorkspace.json().error.code).toBe('RUNTIME_NODE_CREDENTIAL_NOT_FOUND')
 
-      const response = await revoke(applicationRoleControl, provisioned.credentialId, WORKSPACE)
-      expect(response.statusCode).toBe(503)
-      expect(response.json().error.code).toBe('RUNTIME_NODE_CREDENTIAL_REVOCATION_NOT_PERMITTED')
       expect(await storedCredential(provisioned.credentialId)).toMatchObject({
         revocationVersion: 1,
         revokedAt: null,
       })
+      expect(await auditOutcomes(provisioned.credentialId)).toEqual([
+        { outcome: 'workspace_refused', principalRef: CONTROL_PRINCIPAL, revocationVersion: null },
+      ])
       await expect(channel.assertActive()).resolves.toBeUndefined()
     },
     integrationTestTimeout(30_000)
   )
 
-  async function restrictApplicationPrivileges() {
-    // Mirrors the deployed grants from migration 0054 for the application role. The isolated
-    // database grants broader table access for other suites; the proof must run on the real shape.
+  test(
+    'an unknown credential is refused without an audit row, so unknown identifiers cannot flood the trail',
+    async () => {
+      const unknownId = `rgc_${randomUUID().replaceAll('-', '')}`
+      const response = await revoke(control, unknownId, WORKSPACE)
+      expect(response.statusCode).toBe(404)
+      expect(await auditOutcomes(unknownId)).toEqual([])
+    },
+    integrationTestTimeout(30_000)
+  )
+
+  test(
+    'the application role cannot write or read the identity or audit tables directly',
+    async () => {
+      const provisioned = await provisionCredential()
+      const attempts = [
+        `update public.runtime_node_issued_credentials set revoked_at = now(), revocation_version = 2 where credential_id = '${provisioned.credentialId}'`,
+        `update public.runtime_node_issued_credentials set expires_at = now() where credential_id = '${provisioned.credentialId}'`,
+        `insert into public.runtime_node_credential_audit_events (action, outcome, credential_id, workspace_id, principal_ref) values ('revoke', 'applied', '${provisioned.credentialId}', '${WORKSPACE}', 'forged')`,
+        `select count(*) from public.runtime_node_credential_audit_events`,
+        `update public.runtime_node_verification_keys set status = 'revoked'`,
+      ]
+      for (const statement of attempts) {
+        const error = await isolated.application.execute(statement).then(
+          () => undefined,
+          (caught) => caught
+        )
+        expect(error, statement).toBeDefined()
+        expect(databaseErrorCode(error), statement).toBe('42501')
+      }
+      expect(await storedCredential(provisioned.credentialId)).toMatchObject({
+        revocationVersion: 1,
+        revokedAt: null,
+      })
+      expect(await auditOutcomes(provisioned.credentialId)).toEqual([])
+    },
+    integrationTestTimeout(30_000)
+  )
+
+  test(
+    'the audit trail is append-only even for the migration owner',
+    async () => {
+      const provisioned = await provisionCredential()
+      const revoked = await revoke(control, provisioned.credentialId, WORKSPACE)
+      expect(revoked.statusCode).toBe(200)
+      const mutation = await isolated
+        .withMigrationDatabase((database) =>
+          database.execute(
+            `update public.runtime_node_credential_audit_events set outcome = 'replayed' where credential_id = '${provisioned.credentialId}'`
+          )
+        )
+        .then(
+          () => undefined,
+          (caught) => caught
+        )
+      expect(errorMessages(mutation)).toContain('RUNTIME_NODE_CREDENTIAL_AUDIT_IMMUTABLE')
+      expect(await auditOutcomes(provisioned.credentialId)).toEqual([
+        { outcome: 'applied', principalRef: CONTROL_PRINCIPAL, revocationVersion: 2 },
+      ])
+    },
+    integrationTestTimeout(30_000)
+  )
+
+  test(
+    'the operator path under the migration role revokes through the same function and records its own principal',
+    async () => {
+      const provisioned = await provisionCredential()
+      const channel = await authenticate(authenticator, provisioned)
+      const revokedAt = new Date()
+      const revokedRecord = await migrationRepository((repository) =>
+        repository.revokeCredential(provisioned.credentialId, revokedAt)
+      )
+      expect(revokedRecord).toMatchObject({ revocationVersion: 2 })
+      await waitFor(() => channel.invalidatedReason === 'revoked')
+      expect(await auditOutcomes(provisioned.credentialId)).toEqual([
+        { outcome: 'applied', principalRef: 'control_plane_migrator', revocationVersion: 2 },
+      ])
+    },
+    integrationTestTimeout(30_000)
+  )
+
+  // Mirrors the deployed privilege contract: migration 0054 for the identity tables and migration
+  // 0069 for the audit table and revocation function. The isolated database grants broader table
+  // access to the application role, so the proof re-applies the production shape after migration.
+  async function applyProductionPrivileges() {
     await isolated.withMigrationDatabase(async (database) => {
       await database.execute(
         'revoke all privileges on table public.runtime_node_verification_keys from control_plane_app'
@@ -293,6 +347,15 @@ describe.skipIf(!enabled)('hosted RuntimeNode credential revocation over Postgre
       await database.execute(
         'grant update (consumed_at) on table public.runtime_node_issued_credentials to control_plane_app'
       )
+      await database.execute(
+        'revoke all privileges on table public.runtime_node_credential_audit_events from control_plane_app'
+      )
+      await database.execute(
+        'revoke all on function public.revoke_runtime_node_credential(varchar, varchar, varchar, timestamp with time zone) from public'
+      )
+      await database.execute(
+        'grant execute on function public.revoke_runtime_node_credential(varchar, varchar, varchar, timestamp with time zone) to control_plane_app'
+      )
     })
   }
 
@@ -304,6 +367,22 @@ describe.skipIf(!enabled)('hosted RuntimeNode credential revocation over Postgre
 
   async function storedCredential(credentialId) {
     return migrationRepository((repository) => repository.getIssuedCredential(credentialId))
+  }
+
+  async function auditOutcomes(credentialId) {
+    return isolated.withMigrationDatabase(async (database) => {
+      const rows = await database.execute(`
+        select outcome, principal_ref as "principalRef", revocation_version as "revocationVersion"
+        from public.runtime_node_credential_audit_events
+        where credential_id = '${credentialId}'
+        order by sequence
+      `)
+      return [...rows].map((row) => ({
+        outcome: row.outcome,
+        principalRef: row.principalRef,
+        revocationVersion: row.revocationVersion === null ? null : Number(row.revocationVersion),
+      }))
+    })
   }
 
   async function provisionCredential() {
@@ -365,8 +444,6 @@ describe.skipIf(!enabled)('hosted RuntimeNode credential revocation over Postgre
   }
 })
 
-const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
-
 function randomNodeId() {
   return `rnr_${Array.from(randomBytes(26), (byte) => CROCKFORD[byte % CROCKFORD.length]).join('')}`
 }
@@ -417,10 +494,7 @@ async function controlApiFor(revocationService) {
     }),
     runtimeNodeCredentialRevocationService: revocationService,
   })
-  return {
-    close: () => application.close(),
-    application,
-  }
+  return { application, close: () => application.close() }
 }
 
 function controlBearer({
@@ -447,7 +521,6 @@ function controlBearer({
 
 async function revoke(control, credentialId, workspaceId, options = {}) {
   const base = CredentialApiFixtures.revoke.request
-  const caller = options.caller ?? CONTROL_PRINCIPAL
   return control.application.inject({
     method: 'POST',
     url: '/v1/runtime-node-credentials/revoke',
@@ -461,7 +534,7 @@ async function revoke(control, credentialId, workspaceId, options = {}) {
       ...base,
       operation: 'runtime-node-credential.revoke',
       workspaceId,
-      caller: { servicePrincipalId: caller },
+      caller: { servicePrincipalId: options.caller ?? CONTROL_PRINCIPAL },
       idempotencyKey: `runtime-node-revoke-${randomUUID().slice(0, 8)}`,
       payload: { credentialId },
     },
@@ -488,4 +561,15 @@ function databaseErrorCode(error) {
     current = Reflect.get(current, 'cause')
   }
   return undefined
+}
+
+function errorMessages(error) {
+  const messages = []
+  let current = error
+  for (let depth = 0; depth < 4 && typeof current === 'object' && current !== null; depth += 1) {
+    const message = Reflect.get(current, 'message')
+    if (typeof message === 'string') messages.push(message)
+    current = Reflect.get(current, 'cause')
+  }
+  return messages.join('\n')
 }

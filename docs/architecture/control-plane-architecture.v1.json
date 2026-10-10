@@ -3172,13 +3172,13 @@
       "classification": "partially_verified",
       "trace": {
         "auth": "service bearer with credential:write scope; authenticated caller binding; principal workspace scope enforced by the shared guard",
-        "service": "RuntimeNodeCredentialRevocationController -> RepositoryRuntimeNodeCredentialRevocationService -> PostgresRuntimeNodeIdentityRepository.revokeCredential",
-        "persistence": "runtime_node_issued_credentials revocation_version and revoked_at, with pg_notify on runtime_node_credential_revocations_v1",
-        "execution": "workspace-bound lookup, then the existing idempotent revocation; gateway channels are invalidated by notification and rechecked durably on every command",
+        "service": "RuntimeNodeCredentialRevocationController -> RepositoryRuntimeNodeCredentialRevocationService -> PostgresRuntimeNodeIdentityRepository.revokeCredential -> revoke_runtime_node_credential (SECURITY DEFINER, migration 0069)",
+        "persistence": "runtime_node_issued_credentials revocation_version and revoked_at written only by the function; runtime_node_credential_audit_events appends applied, replayed, and workspace-refused outcomes; pg_notify on runtime_node_credential_revocations_v1",
+        "execution": "row-locked, workspace-bound, idempotent revocation inside the function; gateway channels are invalidated by notification and rechecked durably on every command",
         "delivery": "metadata-only response: credential ID, node, workspace, revocation version and revoked time; no secret material",
-        "cleanup": "composition-owned connection shutdown; the revocation is one transaction and leaves no partial state"
+        "cleanup": "composition-owned connection shutdown; the revocation and its audit row commit in one transaction"
       },
-      "assessment": "API, SDK and OpenAPI agree. Hosted composes the route over the application role, which migration 0054 grants SELECT and UPDATE(consumed_at) only, so the database refuses revocation (SQLSTATE 42501) and the route fails closed with RUNTIME_NODE_CREDENTIAL_REVOCATION_NOT_PERMITTED. Local leaves it explicitly unavailable. The disposable PostgreSQL proof runs revocation under the migration role and proves gateway channel invalidation, replay and refusals. Deployed acceptance is not certified and no database grant is made.",
+      "assessment": "API, SDK and OpenAPI agree. The application role holds EXECUTE on the function and no write privilege on the revocation columns or the audit table (migration 0069, source only). Hosted composition routes through the application role. Local leaves the route explicitly unavailable. The disposable PostgreSQL proof runs the route under the application role and proves gateway invalidation, replay, workspace and caller refusals, audited outcomes, and direct-write denial. No environment is granted and deployed acceptance is not certified.",
       "evidence": [
         {
           "kind": "service",
@@ -3201,7 +3201,7 @@
         "issue": 188,
         "severity": "high",
         "owner": "execution-control",
-        "disposition": "Hosted runtime-node revocation: root decides the application role write path (a reviewed column grant or definer function) before deployed verification from a frozen candidate. The route fails closed until then."
+        "disposition": "Root reviews migration 0069 and its privilege contract before any environment applies it. Then verify deployed hosted revocation from a frozen candidate. No live grant is made by this change."
       },
       "inOpenApi": true,
       "openApiOperationId": "runtime-node-credential.revoke",

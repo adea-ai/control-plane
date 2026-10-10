@@ -280,8 +280,12 @@ describe.skipIf(!enabled)('PostgreSQL RuntimeNode identity persistence', () => {
     const credential = makeIssuedCredential(key)
     await expect(applicationRepository.insertIssuedCredential(credential)).rejects.toThrow()
     await migrationRepository((repository) => repository.insertIssuedCredential(credential))
+    // Revocation is reachable only through the migration-owned function. A direct column write is denied.
     await expect(
-      applicationRepository.revokeCredential(credential.credentialId, baseNow)
+      (async () =>
+        isolated.application.execute(
+          sql`update public.runtime_node_issued_credentials set revoked_at = ${baseNow} where credential_id = ${credential.credentialId}`
+        ))()
     ).rejects.toThrow()
     await expect(
       applicationRepository.consumeCredential(credential.credentialId, 1, baseNow)

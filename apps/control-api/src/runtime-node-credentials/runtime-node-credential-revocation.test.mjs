@@ -10,9 +10,10 @@ import {
 } from '../auth/service-authentication.ts'
 import { RepositoryRuntimeNodeCredentialRevocationService } from './runtime-node-credential-revocation.service.ts'
 
-// Route-level proofs for the RuntimeNode revocation control with a repository test double.
-// The double mirrors the repository's revocation semantics; the disposable PostgreSQL proof
-// that uses the real repository and gateway is in tests/runtime-node-credential-revocation.
+// Route-level proofs for the RuntimeNode revocation control with a repository test double. The
+// double mirrors the migration function's contract: workspace-bound, idempotent, and audited. The
+// disposable PostgreSQL proof with real app and migration roles is in
+// tests/runtime-node-credential-revocation.integration.test.mjs.
 const KEY_ID = 'runtime-node-revocation-unit'
 const ISSUER = 'https://runtime-node-revocation.example'
 const AUDIENCE = 'control-plane'
@@ -60,9 +61,8 @@ function bearer({
 }
 
 function envelope(overrides = {}, payloadOverrides = {}) {
-  const base = CredentialApiFixtures.revoke.request
   return {
-    ...base,
+    ...CredentialApiFixtures.revoke.request,
     operation: 'runtime-node-credential.revoke',
     workspaceId: WORKSPACE,
     idempotencyKey: 'runtime-node-revoke-unit-0001',
@@ -71,7 +71,7 @@ function envelope(overrides = {}, payloadOverrides = {}) {
   }
 }
 
-/** A repository double with the revocation semantics the control relies on. */
+/** A repository double with the migration function's contract: workspace-bound and idempotent. */
 function repositoryDouble(
   records = [
     {
@@ -88,15 +88,10 @@ function repositoryDouble(
   return {
     calls,
     store,
-    async getIssuedCredential(credentialId) {
-      calls.push(['get', credentialId])
+    async revokeCredential(credentialId, now, actor) {
+      calls.push(['revoke', credentialId, actor])
       const record = store.get(credentialId)
-      return record === undefined ? undefined : { ...record }
-    },
-    async revokeCredential(credentialId, now) {
-      calls.push(['revoke', credentialId])
-      const record = store.get(credentialId)
-      if (record === undefined) {
+      if (record === undefined || record.workspaceId !== actor.workspaceId) {
         throw new RuntimeNodeIdentityRepositoryError('RUNTIME_NODE_IDENTITY_CREDENTIAL_NOT_FOUND')
       }
       if (record.revokedAt === null) {
@@ -156,7 +151,7 @@ describe('RuntimeNode credential revocation Control API', () => {
     })
   })
 
-  test('an authorized revocation bumps the version once and returns the revoked metadata', async () => {
+  test('an authorized revocation is bound to the envelope workspace and the authenticated principal', async () => {
     const repository = repositoryDouble()
     await withApplication(repository, async (application) => {
       const response = await revoke(application, envelope())
@@ -170,8 +165,7 @@ describe('RuntimeNode credential revocation Control API', () => {
       })
     })
     expect(repository.calls).toEqual([
-      ['get', CREDENTIAL_ID],
-      ['revoke', CREDENTIAL_ID],
+      ['revoke', CREDENTIAL_ID, { workspaceId: WORKSPACE, principalRef: OPERATOR }],
     ])
   })
 
@@ -189,7 +183,7 @@ describe('RuntimeNode credential revocation Control API', () => {
     expect(repository.store.get(CREDENTIAL_ID).revocationVersion).toBe(2)
   })
 
-  test('a read-only principal is refused by the scope guard before any repository call', async () => {
+  test('a read-only principal is refused by the scope guard before any revocation attempt', async () => {
     const repository = repositoryDouble()
     await withApplication(repository, async (application) => {
       const response = await revoke(
@@ -203,7 +197,7 @@ describe('RuntimeNode credential revocation Control API', () => {
     expect(repository.store.get(CREDENTIAL_ID).revokedAt).toBeNull()
   })
 
-  test('a caller other than the authenticated principal is refused before any repository call', async () => {
+  test('a caller other than the authenticated principal is refused before any revocation attempt', async () => {
     const repository = repositoryDouble()
     await withApplication(repository, async (application) => {
       // The shared service guard binds the envelope caller to the authenticated principal.
@@ -255,23 +249,23 @@ describe('RuntimeNode credential revocation Control API', () => {
     await withApplication(repository, async (application) => {
       const response = await revoke(
         application,
-        envelope({}, {}),
+        envelope(),
         bearer({ workspaceIds: [WORKSPACE, OTHER_WORKSPACE] })
       )
       expect(response.statusCode).toBe(404)
       expect(response.json().error.code).toBe('RUNTIME_NODE_CREDENTIAL_NOT_FOUND')
     })
-    expect(repository.calls).toEqual([['get', CREDENTIAL_ID]])
+    expect(repository.calls).toHaveLength(1)
     expect(repository.store.get(CREDENTIAL_ID).revokedAt).toBeNull()
   })
 
-  test('an unknown credential is reported as not found without a revocation attempt', async () => {
+  test('an unknown credential is reported as not found', async () => {
     const repository = repositoryDouble([])
     await withApplication(repository, async (application) => {
       const response = await revoke(application, envelope())
       expect(response.statusCode).toBe(404)
+      expect(response.json().error.code).toBe('RUNTIME_NODE_CREDENTIAL_NOT_FOUND')
     })
-    expect(repository.calls).toEqual([['get', CREDENTIAL_ID]])
   })
 
   test('a payload that is not a RuntimeNode credential identifier is rejected as invalid', async () => {
@@ -284,10 +278,22 @@ describe('RuntimeNode credential revocation Control API', () => {
     expect(repository.calls).toEqual([])
   })
 
+  test('a version that cannot advance is a typed conflict with no state change', async () => {
+    const repository = repositoryDouble()
+    repository.revokeCredential = async () => {
+      throw new RuntimeNodeIdentityRepositoryError('RUNTIME_NODE_IDENTITY_VERSION_EXHAUSTED')
+    }
+    await withApplication(repository, async (application) => {
+      const response = await revoke(application, envelope())
+      expect(response.statusCode).toBe(409)
+      expect(response.json().error.code).toBe('RUNTIME_NODE_CREDENTIAL_REVOCATION_CONFLICT')
+    })
+  })
+
   test('a database grant refusal is an explicit fail-closed state with no state change', async () => {
     const repository = repositoryDouble()
     repository.revokeCredential = async () => {
-      throw Object.assign(new Error('permission denied for table'), { cause: { code: '42501' } })
+      throw Object.assign(new Error('permission denied for function'), { cause: { code: '42501' } })
     }
     await withApplication(repository, async (application) => {
       const response = await revoke(application, envelope())
@@ -300,7 +306,7 @@ describe('RuntimeNode credential revocation Control API', () => {
 
   test('an unexpected repository failure surfaces as unavailable without internal detail', async () => {
     const repository = repositoryDouble()
-    repository.getIssuedCredential = async () => {
+    repository.revokeCredential = async () => {
       throw new Error('connection reset by peer at 10.0.0.4')
     }
     await withApplication(repository, async (application) => {

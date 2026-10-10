@@ -25,15 +25,15 @@ export interface RuntimeNodeCredentialRevocationService {
 }
 
 /**
- * The durable identity operations this control uses. `PostgresRuntimeNodeIdentityRepository`
- * satisfies it structurally, so the control reuses the existing revocation primitive and its
- * version bump, notification, and replay semantics without a second identity store.
+ * The durable identity operation this control uses. `PostgresRuntimeNodeIdentityRepository`
+ * satisfies it structurally. The migration-owned revocation function binds the credential to the
+ * envelope workspace and records the audited outcome, so the control needs no separate pre-read.
  */
 export interface RuntimeNodeCredentialRevocationRepository {
-  getIssuedCredential(credentialId: string): Promise<{ readonly workspaceId: string } | undefined>
   revokeCredential(
     credentialId: string,
-    now: Date
+    now: Date,
+    actor: { readonly workspaceId: string; readonly principalRef: string }
   ): Promise<{
     readonly credentialId: string
     readonly nodeId: string
@@ -73,14 +73,14 @@ export class RepositoryRuntimeNodeCredentialRevocationService implements Runtime
     assertCaller(request, principalId)
     const { credentialId } = request.payload
 
-    const existing = await repositoryCall(() => this.#repository.getIssuedCredential(credentialId))
-    // A credential bound to another workspace is reported exactly like an unknown one.
-    if (existing === undefined || existing.workspaceId !== request.workspaceId) throw notFound()
-
-    // Revocation is idempotent in the repository: a repeated request returns the first
-    // revocation without bumping the version or notifying the gateway again.
+    // Revocation is idempotent: a repeated request returns the first revocation without bumping
+    // the version or notifying the gateway again. A credential bound to another workspace is
+    // refused by the function and reported exactly like an unknown one.
     const revoked = await repositoryCall(() =>
-      this.#repository.revokeCredential(credentialId, this.#now())
+      this.#repository.revokeCredential(credentialId, this.#now(), {
+        workspaceId: request.workspaceId,
+        principalRef: principalId,
+      })
     )
     if (revoked.workspaceId !== request.workspaceId || revoked.revokedAt === null) {
       throw unavailable('RUNTIME_NODE_CREDENTIAL_REVOCATION_UNAVAILABLE')
