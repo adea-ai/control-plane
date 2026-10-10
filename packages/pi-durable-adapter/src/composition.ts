@@ -1,11 +1,14 @@
 import type { PolicyControlledToolExecutionService } from '@control-plane/tool-execution'
 import type { DelegationEvent } from '@control-plane/orchestration'
-import { PiDurableRuntimeAdapter } from './adapter.js'
+import { isRecoveryAuthorityDenial, PiDurableRuntimeAdapter } from './adapter.js'
 import type {
   PiDurableRuntimeOptions,
   PiDurableGovernedDelegateChildCompiler,
 } from './contracts.js'
 import { PiDurableEffectGate, SqliteDurableEffectGateStore } from './effect-gate.js'
+
+/** Codes persisted or reported for a retained record that recovery could not resume. */
+export type RecoveryBlockCode = 'PI_RECOVERY_AUTHORITY_BLOCKED' | 'PI_RECOVERY_UNCLASSIFIED'
 
 export interface NodePiDurableCompositionOptions extends Omit<
   PiDurableRuntimeOptions,
@@ -52,7 +55,7 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
   })
 
   async function recover(): Promise<void> {
-    const blocked: Array<{ handleId: string; code: 'PI_RECOVERY_AUTHORITY_BLOCKED' }> = []
+    const blocked: Array<{ handleId: string; code: RecoveryBlockCode }> = []
     if (options.parentInbox && options.consumeParentInbox) {
       await options.consumeParentInbox(await options.parentInbox.list())
       try {
@@ -67,14 +70,21 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
       if (['starting', 'running', 'unknown', 'cancelling'].includes(record.state)) {
         try {
           await adapter.reconcile(handle)
-        } catch {
-          blocked.push({ handleId: record.handleId, code: 'PI_RECOVERY_AUTHORITY_BLOCKED' })
-          try {
-            adapter.journal.update(record.handleId, record.epoch, {
-              detail: { ...record.detail, recoveryBlocked: 'PI_RECOVERY_AUTHORITY_BLOCKED' },
-            })
-          } catch {
-            /* A newer owner keeps its record. */
+        } catch (error) {
+          // Only a denial observed under this process's exclusive claim is revocation, and only
+          // that is persisted. Any other failure is unclassified: fenced for this start, retried later.
+          if (isRecoveryAuthorityDenial(error)) {
+            blocked.push({ handleId: record.handleId, code: 'PI_RECOVERY_AUTHORITY_BLOCKED' })
+            try {
+              const current = adapter.journal.get(record.handleId)
+              adapter.journal.update(record.handleId, current.epoch, {
+                detail: { ...current.detail, recoveryBlocked: 'PI_RECOVERY_AUTHORITY_BLOCKED' },
+              })
+            } catch {
+              /* A newer owner keeps its record. */
+            }
+          } else {
+            blocked.push({ handleId: record.handleId, code: 'PI_RECOVERY_UNCLASSIFIED' })
           }
         }
       }
@@ -82,7 +92,7 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
     recoveryBlocked = blocked
   }
 
-  let recoveryBlocked: readonly { handleId: string; code: 'PI_RECOVERY_AUTHORITY_BLOCKED' }[] = []
+  let recoveryBlocked: readonly { handleId: string; code: RecoveryBlockCode }[] = []
 
   try {
     effects = options.tools

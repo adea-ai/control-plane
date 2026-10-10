@@ -23,6 +23,15 @@ interface JournalEvent {
   at: string
 }
 
+// Records that may be owned by one live process at a time.
+const OWNERSHIP_STATES: readonly string[] = [
+  'starting',
+  'running',
+  'awaiting_input',
+  'cancelling',
+  'unknown',
+]
+
 /** One synchronous transaction commits state and its replay cursor together. */
 export class SqliteDurableJournal {
   readonly database: DatabaseSync
@@ -136,7 +145,7 @@ export class SqliteDurableJournal {
     return this.transaction(() => {
       const record = this.get(handleId)
       if (
-        !['starting', 'running', 'unknown'].includes(record.state) ||
+        !OWNERSHIP_STATES.includes(record.state) ||
         (expected && (record.epoch !== expected.epoch || record.state !== expected.state))
       )
         throw new Error('STALE_STATE')
@@ -160,10 +169,26 @@ export class SqliteDurableJournal {
     })
   }
 
-  releaseProcess(handleId: string, epoch: number): void {
+  /** Undoes a recovery claim that was never decided (shutdown interrupted it): clears this
+   * process's owner fields and, if no later write bumped the epoch, restores the prior epoch. */
+  releaseRecoveryClaim(handleId: string, epoch: number): void {
     this.transaction(() => {
       const record = this.get(handleId)
-      if (record.detail['ownerEpoch'] === epoch && record.detail['ownerPid'] === process.pid)
+      if (record.detail['ownerPid'] !== process.pid || record.detail['ownerEpoch'] !== epoch) return
+      this.save({
+        ...record,
+        epoch: record.epoch === epoch ? epoch - 1 : record.epoch,
+        detail: { ...record.detail, ownerPid: undefined, ownerEpoch: undefined },
+      })
+    })
+  }
+
+  /** Clears this process's owner claim. Same-process holders are serialized by claimProcess,
+   * so a later command epoch bump cannot orphan the pid that is still recorded here. */
+  releaseProcess(handleId: string, _epoch?: number): void {
+    this.transaction(() => {
+      const record = this.get(handleId)
+      if (record.detail['ownerPid'] === process.pid)
         this.save({
           ...record,
           detail: { ...record.detail, ownerPid: undefined, ownerEpoch: undefined },

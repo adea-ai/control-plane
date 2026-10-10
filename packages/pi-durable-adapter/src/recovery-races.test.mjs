@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { canonicalJsonStringify } from '@control-plane/contracts'
@@ -834,12 +834,16 @@ test('a stale safe reconciliation cannot create an engine after concurrent cance
     const cancel = { idempotencyKey: 'cancel:reconcile-race', requestedAt: at }
     expect((await adapter.cancel(handle, cancel)).state).toBe('cancelled')
     const cancelled = adapter.journal.get(handle.handleId)
+    // The stale reconciliation held this process's durable owner claim while it probed, so the
+    // cancelled snapshot carries those owner fields. The claim is released; nothing else changes.
+    expect(cancelled.detail.ownerPid).toBe(process.pid)
     safe.resolve('safe_to_resume')
     expect((await recovery).state).toBe('cancelled')
     await adapter.drain()
     expect({ engines, sends }).toEqual({ engines: 0, sends: 0 })
     const retained = adapter.journal.get(handle.handleId)
-    expect(retained).toEqual(cancelled)
+    const { ownerPid: _pid, ownerEpoch: _epoch, ...cancelledDetail } = cancelled.detail
+    expect(retained).toEqual({ ...cancelled, detail: cancelledDetail })
     expect(retained.detail.ownerPid).toBeUndefined()
     expect(retained.detail.ownerEpoch).toBeUndefined()
     expect((await adapter.cancel(handle, cancel)).state).toBe('cancelled')
@@ -1080,3 +1084,234 @@ test('concurrent close shares one drain and store close while admitted inference
     rmSync(directory, { recursive: true, force: true })
   }
 }, 10000)
+
+test('a recovery contender behind a live owner observes without authority, probe, or mutation', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-live-owner-observe-'))
+  const setup = fixture(directory)
+  const seed = new PiDurableRuntimeAdapter(setup.options)
+  let observer
+  try {
+    const handle = await seed.start(setup.request)
+    await seed.drain()
+    const stored = seed.journal.get(handle.handleId)
+    seed.journal.update(handle.handleId, stored.epoch, {
+      state: 'running',
+      detail: { inferencePending: true, ownerPid: process.ppid, ownerEpoch: stored.epoch },
+    })
+    await seed.close()
+    let authorityCalls = 0
+    let probes = 0
+    observer = new PiDurableRuntimeAdapter({
+      ...setup.options,
+      assertAuthority: async () => {
+        authorityCalls += 1
+        throw new Error('secret-revoked-grant')
+      },
+      reconcileInference: async () => {
+        probes += 1
+        return 'safe_to_resume'
+      },
+    })
+    const before = observer.journal.get(handle.handleId)
+    expect((await observer.reconcile(handle)).state).toBe('running')
+    expect({ authorityCalls, probes }).toEqual({ authorityCalls: 0, probes: 0 })
+    expect(observer.journal.get(handle.handleId)).toEqual(before)
+  } finally {
+    await observer?.close()
+    await seed.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('composition startup does not classify a contended retained record as revoked', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-live-owner-startup-'))
+  const setup = fixture(directory)
+  const seed = new PiDurableRuntimeAdapter(setup.options)
+  let runtime
+  try {
+    const handle = await seed.start(setup.request)
+    await seed.drain()
+    const stored = seed.journal.get(handle.handleId)
+    seed.journal.update(handle.handleId, stored.epoch, {
+      state: 'running',
+      detail: { inferencePending: true, ownerPid: process.ppid, ownerEpoch: stored.epoch },
+    })
+    await seed.close()
+    let engines = 0
+    let sends = 0
+    runtime = await createNodePiDurableRuntime({
+      ...setup.options,
+      assertAuthority: async () => {
+        throw new Error('secret-revoked-grant')
+      },
+      reconcileInference: async () => 'safe_to_resume',
+      engineFactory: async () => {
+        engines += 1
+        return {
+          run: async () => {
+            sends += 1
+            return result
+          },
+          close: async () => {},
+          cancel: async () => {},
+        }
+      },
+    })
+    expect(runtime.recoveryBlocked).toEqual([])
+    const retained = runtime.adapter.journal.get(handle.handleId)
+    expect(retained.state).toBe('running')
+    expect(retained.detail.recoveryBlocked).toBeUndefined()
+    expect({ engines, sends }).toEqual({ engines: 0, sends: 0 })
+  } finally {
+    if (runtime) await runtime.close()
+    else await seed.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('an unclassified recovery failure is fenced for this start, releases its claim, and persists no revocation', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-unclassified-recovery-'))
+  const setup = fixture(directory)
+  const seed = new PiDurableRuntimeAdapter(setup.options)
+  let runtime
+  try {
+    const handle = await seed.start(setup.request)
+    await seed.drain()
+    const stored = seed.journal.get(handle.handleId)
+    seed.journal.update(handle.handleId, stored.epoch, {
+      state: 'running',
+      detail: { inferencePending: true },
+    })
+    await seed.close()
+    runtime = await createNodePiDurableRuntime({
+      ...setup.options,
+      reconcileInference: async () => {
+        throw new Error('PROBE_UNAVAILABLE')
+      },
+    })
+    expect(runtime.recoveryBlocked).toEqual([
+      { handleId: handle.handleId, code: 'PI_RECOVERY_UNCLASSIFIED' },
+    ])
+    const retained = runtime.adapter.journal.get(handle.handleId)
+    expect(retained.state).toBe('running')
+    expect(retained.detail.recoveryBlocked).toBeUndefined()
+    expect(retained.detail.ownerPid).toBeUndefined()
+  } finally {
+    if (runtime) await runtime.close()
+    else await seed.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a concurrent epoch change while recovery probes is a stale result, never a revocation', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-stale-cas-probe-'))
+  const setup = fixture(directory)
+  const seed = new PiDurableRuntimeAdapter(setup.options)
+  let adapter
+  try {
+    const handle = await seed.start(setup.request)
+    await seed.drain()
+    const stored = seed.journal.get(handle.handleId)
+    seed.journal.update(handle.handleId, stored.epoch, {
+      state: 'running',
+      detail: { inferencePending: true },
+    })
+    await seed.close()
+    let engines = 0
+    let sends = 0
+    let concurrentEpoch
+    adapter = new PiDurableRuntimeAdapter({
+      ...setup.options,
+      reconcileInference: async () => {
+        // A concurrent command writer advances the epoch while this recovery is probing.
+        const current = adapter.journal.get(handle.handleId)
+        concurrentEpoch = adapter.journal.claim(handle.handleId, current)
+        return 'safe_to_resume'
+      },
+      engineFactory: async () => {
+        engines += 1
+        return {
+          run: async () => {
+            sends += 1
+            return result
+          },
+          close: async () => {},
+          cancel: async () => {},
+        }
+      },
+    })
+    // The stale recovery observes the newer record and returns it; it neither throws nor resumes.
+    expect((await adapter.reconcile(handle)).state).toBe('running')
+    await adapter.drain()
+    expect({ engines, sends }).toEqual({ engines: 0, sends: 0 })
+    const retained = adapter.journal.get(handle.handleId)
+    expect(retained.epoch).toBe(concurrentEpoch)
+    expect(retained.detail.ownerPid).toBeUndefined()
+    expect(retained.detail.recoveryBlocked).toBeUndefined()
+  } finally {
+    await adapter?.close()
+    await seed.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a recovery run whose Pi store lease is held elsewhere is reconcilable, not ownerless and running', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-lease-unavailable-'))
+  const setup = fixture(directory)
+  const seed = new PiDurableRuntimeAdapter(setup.options)
+  let adapter
+  try {
+    const handle = await seed.start(setup.request)
+    await seed.drain()
+    const stored = seed.journal.get(handle.handleId)
+    seed.journal.update(handle.handleId, stored.epoch, {
+      state: 'running',
+      detail: { inferencePending: true },
+    })
+    const externalSessionId = stored.admission.handle.externalSessionId
+    await seed.close()
+    // Another live process (this test's parent) holds the Pi store lease for the session.
+    const ownersDirectory = join(directory, 'owners')
+    mkdirSync(ownersDirectory, { recursive: true })
+    const leasePath = join(
+      ownersDirectory,
+      `${createHash('sha256').update(externalSessionId).digest('hex')}.owner`
+    )
+    writeFileSync(leasePath, JSON.stringify({ pid: process.ppid, identity: 'other-process' }))
+    let engines = 0
+    let sends = 0
+    const engineFactory = async () => {
+      engines += 1
+      return {
+        run: async () => {
+          sends += 1
+          return result
+        },
+        close: async () => {},
+        cancel: async () => {},
+      }
+    }
+    adapter = new PiDurableRuntimeAdapter({
+      ...setup.options,
+      reconcileInference: async () => 'safe_to_resume',
+      engineFactory,
+    })
+    await adapter.reconcile(handle)
+    await adapter.drain()
+    expect({ engines, sends }).toEqual({ engines: 0, sends: 0 })
+    const stranded = adapter.journal.get(handle.handleId)
+    expect(stranded.state).toBe('unknown')
+    expect(stranded.detail.reasonCode).toBe('PI_SESSION_LEASE_UNAVAILABLE')
+    expect(stranded.detail.ownerPid).toBeUndefined()
+    // Once the other process releases its lease, reconciliation resumes this same record.
+    rmSync(leasePath)
+    await adapter.reconcile(handle)
+    await adapter.drain()
+    expect(adapter.journal.get(handle.handleId).state).toBe('completed')
+    expect({ engines, sends }).toEqual({ engines: 1, sends: 1 })
+  } finally {
+    await adapter?.close()
+    await seed.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
