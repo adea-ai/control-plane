@@ -16,6 +16,7 @@
 // docs/profile-recovery-acceptance-map.md.
 
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -102,14 +103,61 @@ async function recordOwnedRestate(owned, launcherPid) {
   return { launcher, native }
 }
 
+/** Attempts every recorded identity. A confirmed identity leaves `owned`; any other stays in it, with
+ *  the reason, so it can be diagnosed or retried by identity. Each attempt is independent. */
 async function reapOwned(owned) {
-  const leftovers = []
-  for (const identity of owned.splice(0).toReversed()) {
-    if (!(await reapIdentity(identity))) leftovers.push(identity)
+  const unconfirmed = []
+  for (const identity of [...owned].toReversed()) {
+    try {
+      if (await reapIdentity(identity)) {
+        owned.splice(owned.indexOf(identity), 1)
+      } else {
+        unconfirmed.push({ identity, reason: 'still live after SIGTERM and SIGKILL' })
+      }
+    } catch (error) {
+      unconfirmed.push({ identity, reason: `signal failed: ${error.code ?? error.message}` })
+    }
   }
-  if (leftovers.length > 0) {
-    throw new Error(`OWNED_PROCESS_REAP_FAILED: ${leftovers.map((entry) => entry.pid).join(',')}`)
+  return unconfirmed
+}
+
+/** Ends every spawned composition, then every recorded Restate identity. Each step is attempted even
+ *  after an earlier failure. The work directory is removed only when nothing remains unconfirmed;
+ *  otherwise it and the recorded identities are kept for diagnosis. */
+async function releaseOwnership({ work, incarnations, owned, exitBoundMs = EXIT_BOUND_MS }) {
+  const problems = []
+  for (const [index, incarnation] of incarnations.entries()) {
+    const label = `composition incarnation ${index} (pid ${incarnation.child.pid ?? 'unspawned'})`
+    try {
+      await stopChild(incarnation, { label, timeoutMs: exitBoundMs })
+    } catch (error) {
+      problems.push(error)
+    }
+    // Without a started or failed record, that incarnation's Restate processes were never recorded.
+    const reported = incarnation.stages.some(
+      (entry) => entry.stage === 'started' || entry.stage === 'failed'
+    )
+    if (!reported) {
+      problems.push(new Error(`RESTATE_OWNERSHIP_UNRECORDED: ${label}`))
+    }
   }
+  let unconfirmed = await reapOwned(owned)
+  // One retry, limited to identities that are still recorded and not confirmed gone.
+  if (unconfirmed.length > 0) unconfirmed = await reapOwned(owned)
+  for (const { identity, reason } of unconfirmed) {
+    problems.push(
+      new Error(
+        `OWNED_PROCESS_UNCONFIRMED: pid ${identity.pid} started ${identity.started} (${reason})`
+      )
+    )
+  }
+  if (problems.length > 0) {
+    throw new AggregateError(
+      problems,
+      `cleanup incomplete; state preserved for diagnosis at ${work}`
+    )
+  }
+  await rm(work, { recursive: true, force: true })
 }
 
 afterEach(async () => {
@@ -132,20 +180,7 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
     const ports = await isolatedPorts()
     const owned = []
     const incarnations = []
-    cleanup.push(async () => {
-      try {
-        // Each spawned composition is awaited to exit before any state is removed.
-        for (const [index, incarnation] of incarnations.entries()) {
-          await stopChild(incarnation, {
-            label: `composition incarnation ${index}`,
-            timeoutMs: EXIT_BOUND_MS,
-          })
-        }
-        await reapOwned(owned)
-      } finally {
-        await rm(work, { recursive: true, force: true })
-      }
-    })
+    cleanup.push(() => releaseOwnership({ work, incarnations, owned }))
     const config = { dataDirectory, ports, evidencePath }
 
     const initial = spawnSelfHostedSimpleComposition('initial', config)
@@ -167,7 +202,7 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
 
     // Manual orphan reap: the recovery composition needs the data directory and ports. Only the
     // identities recorded above are signalled.
-    await reapOwned(owned)
+    expect(await reapOwned(owned)).toEqual([])
     expect(await liveIdentity(initialOwned.native)).toBeUndefined()
     expect(await liveIdentity(initialOwned.launcher)).toBeUndefined()
 
@@ -298,6 +333,52 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       code: 0,
       signal: null,
     })
+  })
+
+  test('cleanup attempts every child after one exit is unconfirmed, and keeps the state for diagnosis', async () => {
+    const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-cleanup-'))
+    const signalled = []
+    // Test doubles for spawned children: one never exits, one exits on SIGKILL.
+    const neverExits = {
+      child: {
+        pid: 1,
+        exitCode: null,
+        signalCode: null,
+        kill: () => {
+          signalled.push('never-exits')
+          return true
+        },
+      },
+      exited: new Promise(() => {}),
+      stages: [{ stage: 'started' }],
+    }
+    const exits = {
+      child: {
+        pid: 2,
+        exitCode: null,
+        signalCode: null,
+        kill: () => {
+          signalled.push('exits')
+          return true
+        },
+      },
+      exited: Promise.resolve({ code: null, signal: 'SIGKILL' }),
+      stages: [{ stage: 'started' }],
+    }
+    const error = await releaseOwnership({
+      work,
+      incarnations: [neverExits, exits],
+      owned: [],
+      exitBoundMs: 200,
+    }).catch((caught) => caught)
+    expect(error).toBeInstanceOf(AggregateError)
+    expect(error.message).toContain(`state preserved for diagnosis at ${work}`)
+    expect(error.errors.map((entry) => entry.message)).toEqual([
+      expect.stringContaining('BOUNDED_WAIT_TIMEOUT'),
+    ])
+    expect(signalled).toEqual(['never-exits', 'exits'])
+    expect(existsSync(work)).toBe(true)
+    await rm(work, { recursive: true, force: true })
   })
 
   test('a spawn failure is reported promptly instead of hanging the protocol wait', async () => {
