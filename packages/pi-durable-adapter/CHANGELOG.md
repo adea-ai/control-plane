@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.5.0...pi-durable-adapter-v0.6.0) (2026-10-10)
+
+
+### Features
+
+* issue-932-management-current-authority ([#1043](https://github.com/adea-ai/control-plane/issues/1043)) ([3118a7c](https://github.com/adea-ai/control-plane/commit/3118a7c9f5d177a3fdce2de8ced7fbf353d91e43))
+
 ## [0.5.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.4.1...pi-durable-adapter-v0.5.0) (2026-10-09)
 
 
