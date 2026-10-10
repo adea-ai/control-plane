@@ -1,4 +1,4 @@
-import { test, expect } from 'bun:test'
+import { afterEach, test, expect } from 'bun:test'
 import { DatabaseSync } from 'node:sqlite'
 import { SqlitePiLeadTerminalSettlement } from './lead-terminal-settlement.ts'
 
@@ -23,8 +23,12 @@ const budget = {
   maximumTokens: 100,
 }
 
+// Every database opened here is closed after its test, so no handle outlives this file.
+const openDatabases = []
+
 function leadDatabase() {
   const database = new DatabaseSync(':memory:')
+  openDatabases.push(database)
   database.exec(`CREATE TABLE pi_lead_intent_admissions (intent_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, attempt_id TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, state TEXT NOT NULL, record TEXT NOT NULL);
     CREATE TABLE pi_lead_intent_budgets (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL);`)
   database
@@ -69,6 +73,10 @@ function deferred() {
   })
   return { promise, resolve }
 }
+
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close()
+})
 
 const completed = [{ attemptId, state: 'completed' }]
 
