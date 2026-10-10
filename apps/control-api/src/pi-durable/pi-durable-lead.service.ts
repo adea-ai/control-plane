@@ -78,13 +78,39 @@ export interface PiDurableLeadAdmission {
   readonly startRequest: RuntimeStartRequest
 }
 
+/**
+ * Root-approved M18.01.3 pinned-fence result: an admitted read-safe observation or
+ * original-actor cancellation decision against retained revision/scope — never an
+ * admission, never a dispatchable product.
+ */
+export interface PiDurableLeadFencedResult {
+  readonly schemaVersion: 'pi-lead-fenced/v1'
+  readonly kind: 'fenced'
+  readonly operation: 'status' | 'progress' | 'cancel'
+  readonly fenceVariant: 'v1' | 'v2'
+  readonly retainedMatch: boolean
+  readonly fence: {
+    readonly intentId: string
+    readonly workspaceId: string
+    readonly fencedAt: string
+    readonly reason: 'operator_intervention' | 'rollback_cohort'
+    readonly actor:
+      | { readonly kind: 'user'; readonly userId: string }
+      | { readonly kind: 'operator'; readonly operatorId: string }
+    readonly authorityRevision: number
+    readonly canonicalActorPrincipalId: string
+    readonly scopeRef: string
+    readonly allowedPrincipalIds: readonly string[]
+  }
+}
+
 export interface PiDurableLeadAuthority {
   resolveIntent(input: {
     readonly workspaceId: string
     readonly intentId: string
     readonly principal: ServicePrincipal
     readonly operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
-  }): Promise<PiDurableLeadAdmission>
+  }): Promise<PiDurableLeadAdmission | PiDurableLeadFencedResult>
   /** Checks canonical audience, current accepted attempt, pinned plan, deadline and budget. */
   assertCurrent(
     admission: PiDurableLeadAdmission,
@@ -573,9 +599,20 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     principal: ServicePrincipal,
     operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
   ) {
-    const admission = structuredClone(
-      await this.options.authority.resolveIntent({ workspaceId, intentId, principal, operation })
-    )
+    const resolved = await this.options.authority.resolveIntent({
+      workspaceId,
+      intentId,
+      principal,
+      operation,
+    })
+    if (!('schemaVersion' in resolved) || resolved.schemaVersion !== 'pi-lead-authority/v1') {
+      // Fenced observation/cancel is admitted at the admission layer (M18.01.3);
+      // service-level receipt surfacing remains pending root's decision because the
+      // receipt-bound admissionDigest is cryptographically unreachable while the
+      // product discloses no prompt. Fail closed here rather than weaken verification.
+      fail('PI_LEAD_UNAVAILABLE')
+    }
+    const admission = structuredClone(resolved)
     const plan = assertExecutionPlanIntegrity(admission.startRequest.executionPlan)
     const request = RuntimeStartRequestSchema.parse(admission.startRequest)
     if (
