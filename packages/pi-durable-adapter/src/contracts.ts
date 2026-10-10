@@ -152,6 +152,62 @@ export interface PiDurableGovernedDelegateChildCompiler {
   }) => Promise<void>
 }
 
+/** One governed management effect outcome, structurally identical to the app caller. */
+export type PiDurableGovernedManagementCallOutcome =
+  | Readonly<{ state: 'succeeded'; value: unknown }>
+  | Readonly<{ state: 'refused'; code: string; reason?: string }>
+  | Readonly<{ state: 'reconciliation_required'; code: 'PI_MANAGEMENT_EFFECT_UNKNOWN' }>
+
+/** Engine-facing management port built by the adapter from the host compiler. */
+export interface PiDurableGovernedManagementCallEnginePort {
+  readonly source: Pick<
+    PiDurableToolSource,
+    | 'workspaceId'
+    | 'parentExecutionId'
+    | 'parentAttemptId'
+    | 'runtimeHandleId'
+    | 'externalSessionId'
+    | 'admittedTurnKey'
+  >
+  readonly assertCurrent: (source: PiDurableToolSource) => Promise<void>
+  readonly execute: (
+    input: {
+      readonly input: Readonly<Record<string, unknown>>
+      readonly operation: string
+      readonly source: PiDurableToolSource
+      readonly sourceKey: string
+    },
+    reader: Pick<PiDurableToolSourceReader, 'readAssistantEntry' | 'readTask'>,
+    signal?: AbortSignal
+  ) => Promise<PiDurableGovernedManagementCallOutcome>
+}
+
+/**
+ * Host compiler that retains the full immutable DurableToolCallRequest for the
+ * exact verified native source, plus the durable caller that fences on the
+ * canonical workspaceId + idempotencyKey identity.
+ */
+/** Verified management call arguments bound to the native source. */
+export interface PiDurableVerifiedManagementToolSource {
+  readonly args: Readonly<{
+    readonly input: Readonly<Record<string, unknown>>
+    readonly operation: string
+  }>
+  readonly source: PiDurableToolSource
+  readonly sourceKey: string
+}
+
+export interface PiDurableGovernedManagementCallCompiler {
+  readonly prepare: (
+    authority: DurableExecutionAuthority,
+    input: PiDurableVerifiedManagementToolSource
+  ) => Promise<DurableToolCallRequest>
+  readonly execute: (
+    request: DurableToolCallRequest,
+    signal?: AbortSignal
+  ) => Promise<PiDurableGovernedManagementCallOutcome>
+}
+
 export interface PiDurableRuntimeOptions {
   readonly directory: string
   readonly now?: () => string
@@ -193,6 +249,8 @@ export interface PiDurableRuntimeOptions {
   readonly governedDelegateChild?: PiDurableGovernedDelegateChildCompiler & {
     readonly gate: () => PiDurableEffectGate
   }
+  /** Durable governed management caller; retains the full immutable request. */
+  readonly governedManagementCall?: PiDurableGovernedManagementCallCompiler
   readonly engineFactory?: (options: {
     directory: string
     model: { provider: string; modelId: string }
@@ -211,5 +269,6 @@ export interface PiDurableRuntimeOptions {
     withModels: <T>(use: (models: Models) => Promise<T>) => Promise<T>
     readonly retainInferences?: (inferences: PiEngineResult['inferences']) => Promise<void>
     readonly governedDelegateChild?: PiDurableGovernedDelegateChildEnginePort
+    readonly governedManagementCall?: PiDurableGovernedManagementCallEnginePort
   }) => Promise<DurablePiEngine>
 }

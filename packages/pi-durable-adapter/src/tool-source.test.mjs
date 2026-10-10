@@ -1,5 +1,9 @@
 import { expect, test } from 'bun:test'
-import { piDurableToolSourceKey, verifyPiDurableToolSource } from './tool-source.ts'
+import {
+  piDurableToolSourceKey,
+  verifyPiDurableManagementToolSource,
+  verifyPiDurableToolSource,
+} from './tool-source.ts'
 
 function fixture() {
   const source = {
@@ -80,6 +84,40 @@ test('native source binds replay identity and rereads authority without admittin
     }
     expect(piDurableToolSourceKey(changed)).not.toBe(first.sourceKey)
   }
+})
+
+function managementFixture() {
+  const setup = fixture()
+  const args = { operation: 'project.update', input: { name: 'Renamed' } }
+  setup.task.state.checkpoint.arguments = structuredClone(args)
+  setup.entry.model[0].content[0] = {
+    type: 'toolCall',
+    id: setup.source.callId,
+    name: 'management_call',
+    arguments: structuredClone(args),
+  }
+  return { ...setup, args }
+}
+
+test('management source verifies the exact operation and input and rejects any change', async () => {
+  const setup = managementFixture()
+  const verified = await verifyPiDurableManagementToolSource(setup.source, setup.args, setup.reader)
+  expect(verified.args).toEqual(setup.args)
+  expect(verified.sourceKey).toBe(piDurableToolSourceKey(setup.source))
+  await expect(
+    verifyPiDurableManagementToolSource(
+      setup.source,
+      { operation: 'project.delete', input: setup.args.input },
+      setup.reader
+    )
+  ).rejects.toThrow('PI_TOOL_SOURCE_REJECTED')
+  await expect(
+    verifyPiDurableManagementToolSource(
+      setup.source,
+      { operation: setup.args.operation, input: { name: 'Other' } },
+      setup.reader
+    )
+  ).rejects.toThrow('PI_TOOL_SOURCE_REJECTED')
 })
 
 test('Pi1.1 numeric durable identities normalize without accepting foreign records', async () => {
