@@ -1,34 +1,36 @@
 import { expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { dirname, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import {
-  assertCleanPinnedRepository,
-  assertSdkArtifactAgainstManifest,
-} from './candidate-provenance.fixture.mjs'
+import { assertFundingCandidateProvenance } from './candidate-provenance.fixture.mjs'
 
 // Explicit candidate qualification: no installed-version inference or ambient host fallback.
+// Provenance is checked before either candidate module is imported.
 const entry = process.env.PI_FUNDING_CANDIDATE_HOST_ENTRY
 const qualify = entry ? test : test.skip
-let startHost, ControlPlaneClient
+let startHost, ControlPlaneClient, provenance
 if (entry) {
-  const pin = assertCleanPinnedRepository({
-    directory: dirname(resolve(entry)),
-    expectedHead: process.env.PI_FUNDING_CANDIDATE_HEAD,
-    prefix: 'CANDIDATE',
-  })
-  const sdk = process.env.PI_CANDIDATE_SDK_ENTRY
-  if (!sdk) throw new Error('CANDIDATE_SDK_ENTRY_REQUIRED')
-  assertSdkArtifactAgainstManifest({
-    sdkEntry: sdk,
+  provenance = assertFundingCandidateProvenance({
+    hostEntry: entry,
+    head: process.env.PI_FUNDING_CANDIDATE_HEAD,
     manifestPath: process.env.PI_CANDIDATE_MANIFEST,
-    hostCommit: pin,
+    manifestSha256: process.env.PI_CANDIDATE_MANIFEST_SHA256,
+    sdkEntry: process.env.PI_CANDIDATE_SDK_ENTRY,
   })
   ;({ startNodePiDurableCandidateHost: startHost } = await import(
     pathToFileURL(resolve(entry)).href
   ))
-  ;({ ControlPlaneClient } = await import(pathToFileURL(resolve(sdk)).href))
+  ;({ ControlPlaneClient } = await import(
+    pathToFileURL(resolve(process.env.PI_CANDIDATE_SDK_ENTRY)).href
+  ))
 }
+
+qualify('candidate provenance binds the pinned head, manifest hash and installed SDK', () => {
+  expect(provenance.head).toBe(process.env.PI_FUNDING_CANDIDATE_HEAD)
+  expect(provenance.manifestSha256).toBe(process.env.PI_CANDIDATE_MANIFEST_SHA256)
+  expect(provenance.artifacts.sdk.name).toBe('@adea-ai/sdk')
+  expect(provenance.artifacts.contracts.name).toBe('@adea-ai/contracts')
+})
 
 async function fixture(body) {
   const host = await startHost({ workspaceScope: true, prepareFunding: true })
