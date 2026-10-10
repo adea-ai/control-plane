@@ -149,6 +149,40 @@ const LIMIT_FIXTURE_EXECUTIONS = 25
 let directory
 let databasePath
 
+// The cancellation service's request record; the principal is a canary that must never surface.
+const cancellationRequest = (commandId, executionId, issuedAt, workspaceId, projectId) => ({
+  contractVersion: { major: 1, minor: 0 },
+  commandId,
+  requestId: id('req', commandId[6]),
+  workspaceId,
+  projectId,
+  caller: { servicePrincipalId: CANCELLATION_CANARY_PRINCIPAL },
+  correlation: { traceId: id('trc', commandId[6]) },
+  operation: 'execution.cancel',
+  idempotencyKey: `inspection:cancel:${commandId}`,
+  payloadHash: '9'.repeat(64),
+  issuedAt,
+  payload: { executionId },
+})
+
+// A reconciliation checkpoint for the stuck execution, with per-case overrides.
+const checkpoint = (overrides) => ({
+  checkpointId: RCP.stuck,
+  executionId: EXE.stuck,
+  commandId: CMD.stuck,
+  attemptId: ATT.stuck,
+  pendingEventCount: 2,
+  observationHash: 'a'.repeat(64),
+  reason: 'stale_heartbeat',
+  action: 'wait_for_runtime',
+  state: 'waiting',
+  diagnostics: [],
+  version: 1,
+  checkedAt: '2026-08-30T12:05:00.000Z',
+  updatedAt: '2026-08-30T12:05:00.000Z',
+  ...overrides,
+})
+
 async function seed() {
   directory = await mkdtemp(join(tmpdir(), 'cp-operator-inspection-'))
   databasePath = join(directory, 'control-plane.sqlite')
@@ -405,20 +439,6 @@ async function seed() {
   // caller principal carries a canary the report must never surface.
   const cancellations = new SqliteExecutionCancellationRepository(provider)
   // commandId[6] is the fixture's distinguishing letter (cmd_01<X>…).
-  const cancellationRequest = (commandId, executionId, issuedAt, workspaceId, projectId) => ({
-    contractVersion: { major: 1, minor: 0 },
-    commandId,
-    requestId: id('req', commandId[6]),
-    workspaceId,
-    projectId,
-    caller: { servicePrincipalId: CANCELLATION_CANARY_PRINCIPAL },
-    correlation: { traceId: id('trc', commandId[6]) },
-    operation: 'execution.cancel',
-    idempotencyKey: `inspection:cancel:${commandId}`,
-    payloadHash: '9'.repeat(64),
-    issuedAt,
-    payload: { executionId },
-  })
   await cancellations.reserve({
     request: cancellationRequest(
       CMD.cancelReserved,
@@ -444,22 +464,6 @@ async function seed() {
   // malformed records that must be counted but never emitted.
   await provider.transaction(async (transaction) => {
     const put = (namespace, id_, value) => transaction.put({ namespace, id: recordId(id_), value })
-    const checkpoint = (overrides) => ({
-      checkpointId: RCP.stuck,
-      executionId: EXE.stuck,
-      commandId: CMD.stuck,
-      attemptId: ATT.stuck,
-      pendingEventCount: 2,
-      observationHash: 'a'.repeat(64),
-      reason: 'stale_heartbeat',
-      action: 'wait_for_runtime',
-      state: 'waiting',
-      diagnostics: [],
-      version: 1,
-      checkedAt: '2026-08-30T12:05:00.000Z',
-      updatedAt: '2026-08-30T12:05:00.000Z',
-      ...overrides,
-    })
     await put('reconciliation-checkpoints', 'recon-stuck', checkpoint({}))
     await put(
       'reconciliation-checkpoints',
@@ -870,20 +874,22 @@ test('correlates stuck executions with explicit states, ages and availability', 
     status: 'unavailable',
     reason: 'CHANNEL_OWNERSHIP_POSTGRES_INVENTORY_ONLY',
   })
+  // The seeded store holds a malformed record in each control population, so no count
+  // is exact here. Listings stay truthful lower bounds.
   expect(stuck.controls.channelGeneration).toEqual({
     status: 'connected',
     reason: null,
-    scanComplete: true,
+    scanComplete: false,
     nodes: [{ nodeId: NODE, currentGeneration: 2 }],
-    unlistedNodeCount: 0,
-    unresolvedNodeCount: 0,
+    unlistedNodeCount: null,
+    unresolvedNodeCount: null,
   })
   expect(stuck.controls.cancellation).toEqual({
     status: 'connected',
     reason: null,
-    scanComplete: true,
-    receiptCount: 2,
-    acceptedCount: 1,
+    scanComplete: false,
+    receiptCount: null,
+    acceptedCount: null,
     listed: [
       {
         commandId: CMD.cancelAccepted,
@@ -896,14 +902,14 @@ test('correlates stuck executions with explicit states, ages and availability', 
         acceptedAt: null,
       },
     ],
-    unlistedCount: 0,
+    unlistedCount: null,
   })
   expect(stuck.controls.reconciliation).toEqual({
     status: 'connected',
     reason: null,
-    scanComplete: true,
+    scanComplete: false,
     markRequired: { recorded: false, at: null, ageMs: null },
-    checkpointCount: 1,
+    checkpointCount: null,
     listed: [
       {
         checkpointId: RCP.stuck,
@@ -916,7 +922,7 @@ test('correlates stuck executions with explicit states, ages and availability', 
         resolvedAt: null,
       },
     ],
-    unlistedCount: 0,
+    unlistedCount: null,
   })
 
   // Human wait surfaces the pending approval without its prompt content.
@@ -946,8 +952,9 @@ test('correlates stuck executions with explicit states, ages and availability', 
   // reconciliation projection's own durable state.
   expect(effects.controls.reconciliation).toMatchObject({
     status: 'connected',
-    checkpointCount: 1,
-    unlistedCount: 0,
+    scanComplete: false,
+    checkpointCount: null,
+    unlistedCount: null,
   })
   expect(effects.controls.reconciliation.listed[0]).toMatchObject({
     checkpointId: RCP.effects,
@@ -1310,13 +1317,15 @@ test('excludes cross-workspace control evidence from every in-scope report', asy
       RCP.otherWorkspace
     )
   }
-  // The owning workspace still sees its own control evidence; the seeded W2
-  // execution is its oldest stuck candidate, so it heads the bounded listing.
+  // The owning workspace still sees its own control evidence as listings; the seeded W2
+  // execution is its oldest stuck candidate, so it heads the bounded listing. The shared
+  // namespaces hold malformed records that cannot be attributed to a workspace, so the
+  // counts stay null.
   const other = await inspect({ workspaceId: W2, limit: 100 })
   const otherStuck = other.executions[0]
   expect(otherStuck.executionId).toBe(EXE.otherWorkspace)
-  expect(otherStuck.controls.cancellation.receiptCount).toBe(1)
-  expect(otherStuck.controls.reconciliation.checkpointCount).toBe(1)
+  expect(otherStuck.controls.cancellation.receiptCount).toBe(null)
+  expect(otherStuck.controls.reconciliation.checkpointCount).toBe(null)
   expect(otherStuck.controls.reconciliation.listed[0]).toMatchObject({
     checkpointId: RCP.otherWorkspace,
     state: 'manual_intervention',
@@ -1416,11 +1425,19 @@ test('a budget-stopped control walk reports null counts, never a confident count
   // Precondition: this budget really stops a control namespace walk, so the assertions below are not vacuous.
   expect(incomplete.has('runtime-channel-sequences')).toBe(true)
   expect(report.executions.length).toBeGreaterThan(0)
+  // A population is exact only when its walk completed and it held no malformed record.
+  const exact = (...namespaces) =>
+    namespaces.every(
+      (namespace) =>
+        !incomplete.has(namespace) && (report.summary.malformedRecords[namespace] ?? 0) === 0
+    )
   for (const execution of report.executions) {
     const { channelGeneration, cancellation, reconciliation } = execution.controls
-    expect(channelGeneration.scanComplete).toBe(!incomplete.has('runtime-channel-sequences'))
-    expect(cancellation.scanComplete).toBe(!incomplete.has('execution-cancellation-receipts'))
-    expect(reconciliation.scanComplete).toBe(!incomplete.has('reconciliation-checkpoints'))
+    expect(channelGeneration.scanComplete).toBe(
+      exact('runtime-channel-sequences', 'runtime-commands')
+    )
+    expect(cancellation.scanComplete).toBe(exact('execution-cancellation-receipts'))
+    expect(reconciliation.scanComplete).toBe(exact('reconciliation-checkpoints'))
     expect(channelGeneration.unresolvedNodeCount === null).toBe(!channelGeneration.scanComplete)
     expect(channelGeneration.unlistedNodeCount === null).toBe(!channelGeneration.scanComplete)
     expect(cancellation.receiptCount === null).toBe(!cancellation.scanComplete)
@@ -1428,6 +1445,250 @@ test('a budget-stopped control walk reports null counts, never a confident count
     expect(cancellation.unlistedCount === null).toBe(!cancellation.scanComplete)
     expect(reconciliation.checkpointCount === null).toBe(!reconciliation.scanComplete)
     expect(reconciliation.unlistedCount === null).toBe(!reconciliation.scanComplete)
+  }
+})
+
+/**
+ * Writes one raw row as on-disk damage would leave it. The schema's json_valid CHECK and
+ * scope triggers refuse torn JSON, so this disposable copy drops them first: the reader
+ * must still tolerate such rows in a store that was damaged after it was written.
+ */
+function insertDamagedRow(path, namespace, id_, text) {
+  const writer = new DatabaseSync(path)
+  try {
+    writer.exec('PRAGMA ignore_check_constraints = ON')
+    const triggers = writer.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'").all()
+    for (const { name } of triggers) writer.exec(`DROP TRIGGER "${name}"`)
+    writer
+      .prepare(
+        'INSERT INTO control_plane_records (namespace, id, revision, value, updated_at) VALUES (?, ?, 1, ?, ?)'
+      )
+      .run(namespace, recordId(id_), text, T0)
+  } finally {
+    writer.close()
+  }
+}
+
+/**
+ * A disposable store with one stuck execution and one valid record in each control
+ * population. Each case adds only its own damage, so one population is isolated per test.
+ */
+async function controlPopulationStore({ commandCount = 1, damage = [] } = {}) {
+  const storeDirectory = await mkdtemp(join(tmpdir(), 'cp-operator-inspection-populations-'))
+  const path = join(storeDirectory, 'control-plane.sqlite')
+  const provider = new SqlitePersistenceProvider({ path })
+  await provider.migrate()
+  await provider.transaction(async (transaction) => {
+    const put = (namespace, id_, value) => transaction.put({ namespace, id: recordId(id_), value })
+    await put(
+      'executions',
+      EXE.stuck,
+      rawExecution({
+        executionId: EXE.stuck,
+        state: 'reconciliation_required',
+        acceptedAt: T0,
+        updatedAt: T0,
+      })
+    )
+    await put('execution-cancellation-receipts', 'receipt-accepted', {
+      request: cancellationRequest(
+        CMD.cancelAccepted,
+        EXE.stuck,
+        '2026-08-30T12:00:07.000Z',
+        W1,
+        PRJ1
+      ),
+      acceptedAt: '2026-08-30T12:01:00.000Z',
+    })
+    await put('reconciliation-checkpoints', 'checkpoint-stuck', checkpoint({}))
+  })
+  const commands = new SqliteRuntimeCommandRepository(provider)
+  const commandLetters = ['J', 'K', 'M']
+  for (let index = 0; index < commandCount; index += 1) {
+    await commands.create({
+      commandId: id('cmd', commandLetters[index]),
+      executionId: EXE.stuck,
+      attemptId: ATT.stuck,
+      nodeId: NODE,
+      runtimeConnectionId: RTC.stuck,
+      workspaceId: W1,
+      idempotencyKey: `inspection:population:command:${index}`,
+      payloadHash: `sha256:${'a'.repeat(64)}`,
+      commandEnvelope: { operation: 'run' },
+      issuedAt: '2026-08-30T12:00:03.000Z',
+      expiresAt: '2026-08-30T12:05:00.000Z',
+      status: 'queued',
+      version: 1,
+      deliveryAttempts: 0,
+      createdAt: T0,
+      updatedAt: T0,
+    })
+  }
+  await new SqliteRuntimeChannelSequenceRepository(provider).reserve({
+    channel: {
+      workspaceId: W1,
+      nodeId: NODE,
+      ...CHANNELS.nodeAGeneration1,
+      channelGeneration: 1,
+      protocolVersion: { major: 1, minor: 0 },
+      connectedAt: T0,
+      lastHeartbeatAt: T0,
+    },
+    count: 1,
+    minimum: 1,
+  })
+  provider.close()
+  for (const [namespace, id_, text] of damage) insertDamagedRow(path, namespace, id_, text)
+  const database = await openReadOnlyInspectionDatabase(path)
+  return {
+    reader: createSqliteRecordReader(database),
+    async cleanup() {
+      database.close()
+      await rm(storeDirectory, { recursive: true, force: true })
+    },
+  }
+}
+
+test('control counts are exact only when every population parses cleanly', async () => {
+  const store = await controlPopulationStore()
+  try {
+    const report = inspectStuckJobs(store.reader, { workspaceId: W1, now: INSPECT_AT })
+    const [stuck] = report.executions
+    expect(stuck.executionId).toBe(EXE.stuck)
+    expect(report.summary.complete).toBe(true)
+    expect(report.summary.malformedRecords).toEqual({})
+    expect(stuck.controls.channelGeneration).toMatchObject({
+      scanComplete: true,
+      nodes: [{ nodeId: NODE, currentGeneration: 1 }],
+      unlistedNodeCount: 0,
+      unresolvedNodeCount: 0,
+    })
+    expect(stuck.controls.cancellation).toMatchObject({
+      scanComplete: true,
+      receiptCount: 1,
+      acceptedCount: 1,
+      unlistedCount: 0,
+    })
+    expect(stuck.controls.reconciliation).toMatchObject({
+      scanComplete: true,
+      checkpointCount: 1,
+      unlistedCount: 0,
+    })
+  } finally {
+    await store.cleanup()
+  }
+})
+
+test('a malformed JSON receipt nulls only the cancellation counts and keeps the listing', async () => {
+  const store = await controlPopulationStore({
+    damage: [['execution-cancellation-receipts', 'receipt-torn', '{broken']],
+  })
+  try {
+    const report = inspectStuckJobs(store.reader, { workspaceId: W1, now: INSPECT_AT })
+    const [stuck] = report.executions
+    expect(report.summary.malformedRecords).toEqual({ 'execution-cancellation-receipts': 1 })
+    expect(stuck.controls.cancellation).toEqual({
+      status: 'connected',
+      reason: null,
+      scanComplete: false,
+      receiptCount: null,
+      acceptedCount: null,
+      listed: [
+        {
+          commandId: CMD.cancelAccepted,
+          requestedAt: '2026-08-30T12:00:07.000Z',
+          acceptedAt: '2026-08-30T12:01:00.000Z',
+        },
+      ],
+      unlistedCount: null,
+    })
+    expect(stuck.controls.reconciliation).toMatchObject({ scanComplete: true, checkpointCount: 1 })
+    expect(stuck.controls.channelGeneration).toMatchObject({
+      scanComplete: true,
+      unresolvedNodeCount: 0,
+    })
+    expect(JSON.stringify(report)).not.toContain('{broken')
+  } finally {
+    await store.cleanup()
+  }
+})
+
+test('a schema-invalid checkpoint nulls only the reconciliation counts', async () => {
+  const store = await controlPopulationStore({
+    damage: [['reconciliation-checkpoints', 'checkpoint-invalid', '{"broken":true}']],
+  })
+  try {
+    const report = inspectStuckJobs(store.reader, { workspaceId: W1, now: INSPECT_AT })
+    const [stuck] = report.executions
+    expect(report.summary.malformedRecords).toEqual({ 'reconciliation-checkpoints': 1 })
+    expect(stuck.controls.reconciliation).toMatchObject({
+      scanComplete: false,
+      checkpointCount: null,
+      unlistedCount: null,
+    })
+    expect(stuck.controls.reconciliation.listed.map((entry) => entry.checkpointId)).toEqual([
+      RCP.stuck,
+    ])
+    expect(stuck.controls.cancellation).toMatchObject({ scanComplete: true, receiptCount: 1 })
+    expect(stuck.controls.channelGeneration).toMatchObject({ scanComplete: true })
+  } finally {
+    await store.cleanup()
+  }
+})
+
+test('unparseable and schema-invalid channel sequence rows null only the channel generation counts', async () => {
+  const store = await controlPopulationStore({
+    damage: [
+      ['runtime-channel-sequences', 'sequence-torn', '{broken'],
+      [
+        'runtime-channel-sequences',
+        'sequence-short',
+        JSON.stringify({ identity: JSON.stringify([W1, NODE]), next: 1 }),
+      ],
+    ],
+  })
+  try {
+    const report = inspectStuckJobs(store.reader, { workspaceId: W1, now: INSPECT_AT })
+    const [stuck] = report.executions
+    expect(report.summary.malformedRecords).toEqual({ 'runtime-channel-sequences': 2 })
+    expect(stuck.controls.channelGeneration).toEqual({
+      status: 'connected',
+      reason: null,
+      scanComplete: false,
+      nodes: [{ nodeId: NODE, currentGeneration: 1 }],
+      unlistedNodeCount: null,
+      unresolvedNodeCount: null,
+    })
+    expect(stuck.controls.cancellation).toMatchObject({ scanComplete: true, receiptCount: 1 })
+    expect(stuck.controls.reconciliation).toMatchObject({ scanComplete: true, checkpointCount: 1 })
+  } finally {
+    await store.cleanup()
+  }
+})
+
+test('a budget-truncated runtime-command scan nulls only the channel generation counts', async () => {
+  const store = await controlPopulationStore({ commandCount: 3 })
+  try {
+    const report = inspectStuckJobs(store.reader, {
+      workspaceId: W1,
+      now: INSPECT_AT,
+      maxScanMatches: 2,
+    })
+    const [stuck] = report.executions
+    expect(report.summary.complete).toBe(false)
+    expect(report.summary.incompleteScans.map((scan) => [scan.namespace, scan.reason])).toEqual([
+      ['runtime-commands', 'match_budget_reached'],
+    ])
+    expect(stuck.controls.channelGeneration).toMatchObject({
+      scanComplete: false,
+      unlistedNodeCount: null,
+      unresolvedNodeCount: null,
+    })
+    expect(stuck.controls.channelGeneration.nodes).toEqual([{ nodeId: NODE, currentGeneration: 1 }])
+    expect(stuck.controls.cancellation).toMatchObject({ scanComplete: true, receiptCount: 1 })
+    expect(stuck.controls.reconciliation).toMatchObject({ scanComplete: true, checkpointCount: 1 })
+  } finally {
+    await store.cleanup()
   }
 })
 

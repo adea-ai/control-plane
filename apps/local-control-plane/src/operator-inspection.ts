@@ -182,17 +182,21 @@ const ControlsViewSchema = z
     channelGeneration: z.object({
       status: z.literal('connected'),
       reason: z.null(),
-      /** False when the sequence namespace walk stopped at a budget. */
+      /**
+       * False when a budget stopped the sequence or runtime-command walk, or either holds a
+       * malformed record. Counts are exact only when this is true.
+       */
       scanComplete: z.boolean(),
       nodes: z.array(ChannelGenerationNodeViewSchema).max(MAX_LISTED_CHANNEL_NODES),
-      /** Null unless the scan is complete: a budget-stopped walk never yields a count. */
+      /** Null unless scanComplete: a budget or a malformed record never yields a count. */
       unlistedNodeCount: CompleteScanCount,
-      /** In-scope job nodes with no reserved generation recorded in this store; null unless complete. */
+      /** In-scope job nodes with no reserved generation recorded in this store; null unless exact. */
       unresolvedNodeCount: CompleteScanCount,
     }),
     cancellation: z.object({
       status: z.literal('connected'),
       reason: z.null(),
+      /** False when a budget stopped the receipt walk or it holds a malformed record. */
       scanComplete: z.boolean(),
       receiptCount: CompleteScanCount,
       acceptedCount: CompleteScanCount,
@@ -202,6 +206,7 @@ const ControlsViewSchema = z
     reconciliation: z.object({
       status: z.literal('connected'),
       reason: z.null(),
+      /** False when a budget stopped the checkpoint walk or it holds a malformed record. */
       scanComplete: z.boolean(),
       /** The execution's own reconciliation-required lifecycle mark. */
       markRequired: z.object({
@@ -215,8 +220,9 @@ const ControlsViewSchema = z
     }),
   })
   .strict()
-  // A count is present exactly when the scan that produces it completed. The listed
-  // records are always truthful lower bounds; only counts can mislead under a budget.
+  // A count is present exactly when its population is exact: the scan completed and no
+  // record in it was malformed. Listed records are always truthful lower bounds; only
+  // counts can mislead.
   .superRefine((controls, context) => {
     const require = (complete: boolean, path: string[], values: (number | null)[]) => {
       for (const value of values) {
@@ -891,7 +897,11 @@ export function inspectStuckJobs(
         generationMalformed += 1
         return false
       }
-      if (!Array.isArray(identity) || identity.length !== 5) return false
+      // The producer always writes a five-part identity, so any other shape is schema-invalid.
+      if (!Array.isArray(identity) || identity.length !== 5) {
+        generationMalformed += 1
+        return false
+      }
       const workspace = identity[0]
       const node = identity[1]
       const generation = identity[4]
@@ -910,8 +920,8 @@ export function inspectStuckJobs(
       return true
     }
   )
-  if (generationMalformed > 0)
-    malformedRecords.set('runtime-channel-sequences', generationMalformed)
+  if (sequenceWalk.malformed + generationMalformed > 0)
+    malformedRecords.set('runtime-channel-sequences', sequenceWalk.malformed + generationMalformed)
 
   // Durable cancellation receipts recorded by the execution cancellation
   // service. Receipts carry their own workspace scope and join to in-scope
@@ -974,6 +984,21 @@ export function inspectStuckJobs(
       'reconciliation-checkpoints',
       checkpointWalk.malformed + checkpointMalformed
     )
+
+  // A count is exact only when its population walk completed and every record it
+  // read parsed. A malformed record cannot be attributed to a workspace, node or
+  // execution, so it may belong to any of them and never leaves a count exact.
+  const isExactPopulation = (
+    walk: { incomplete: boolean; malformed: number },
+    schemaMalformed: number
+  ): boolean => !walk.incomplete && walk.malformed + schemaMalformed === 0
+  const receiptsExact = isExactPopulation(receiptWalk, receiptMalformed)
+  const checkpointsExact = isExactPopulation(checkpointWalk, checkpointMalformed)
+  // Channel generation counts need both the sequence reservations and the runtime
+  // commands that name each job node; the commands are a prerequisite population.
+  const channelGenerationExact =
+    isExactPopulation(sequenceWalk, generationMalformed) &&
+    isExactPopulation(commandWalk, runtimeCommandMalformed)
 
   // Runtime discovery projections (connections and external sessions).
   const connectionsById = new Map<
@@ -1408,36 +1433,36 @@ export function inspectStuckJobs(
       channelGeneration: {
         status: 'connected',
         reason: null,
-        scanComplete: !sequenceWalk.incomplete,
+        scanComplete: channelGenerationExact,
         nodes: generationNodes,
-        unlistedNodeCount: sequenceWalk.incomplete ? null : unlistedGenerationNodes,
-        unresolvedNodeCount: sequenceWalk.incomplete ? null : unresolvedGenerationNodes,
+        unlistedNodeCount: channelGenerationExact ? unlistedGenerationNodes : null,
+        unresolvedNodeCount: channelGenerationExact ? unresolvedGenerationNodes : null,
       },
       cancellation: {
         status: 'connected',
         reason: null,
-        scanComplete: !receiptWalk.incomplete,
-        receiptCount: receiptWalk.incomplete ? null : executionReceipts.length,
-        acceptedCount: receiptWalk.incomplete ? null : acceptedReceiptCount,
+        scanComplete: receiptsExact,
+        receiptCount: receiptsExact ? executionReceipts.length : null,
+        acceptedCount: receiptsExact ? acceptedReceiptCount : null,
         listed: listedReceipts,
-        unlistedCount: receiptWalk.incomplete
-          ? null
-          : Math.max(0, executionReceipts.length - listedReceipts.length),
+        unlistedCount: receiptsExact
+          ? Math.max(0, executionReceipts.length - listedReceipts.length)
+          : null,
       },
       reconciliation: {
         status: 'connected',
         reason: null,
-        scanComplete: !checkpointWalk.incomplete,
+        scanComplete: checkpointsExact,
         markRequired: {
           recorded: reconciliationMarkAt !== null || execution.state === 'reconciliation_required',
           at: reconciliationMarkAt,
           ageMs: ageMs(reconciliationMarkAt ?? undefined, nowMs),
         },
-        checkpointCount: checkpointWalk.incomplete ? null : executionCheckpoints.length,
+        checkpointCount: checkpointsExact ? executionCheckpoints.length : null,
         listed: listedCheckpoints,
-        unlistedCount: checkpointWalk.incomplete
-          ? null
-          : Math.max(0, executionCheckpoints.length - listedCheckpoints.length),
+        unlistedCount: checkpointsExact
+          ? Math.max(0, executionCheckpoints.length - listedCheckpoints.length)
+          : null,
       },
     }
 

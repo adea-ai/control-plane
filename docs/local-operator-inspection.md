@@ -99,11 +99,16 @@ incomplete scan means every count and candidate list in the report is a lower bo
 never presents a truncated correlation as confident, and an empty result is never produced by
 truncation silently.
 
-Per-execution control views follow the same rule. A control walk (channel-generation sequences,
-cancellation receipts or reconciliation checkpoints) that stopped early reports `scanComplete: false`
-and sets its counts (`unresolvedNodeCount`, `unlistedNodeCount`, `receiptCount`, `acceptedCount`,
-`checkpointCount`, `unlistedCount`) to `null`: a budget-stopped walk never yields a confident count.
-Listed records in those views remain truthful lower bounds.
+Per-execution control views follow the same rule. A control population is exact only when its walk
+completed and every record in it parsed. Channel-generation counts depend on two populations, the
+channel sequences and the runtime commands that name each job node; cancellation counts depend on
+cancellation receipts, and reconciliation counts on reconciliation checkpoints. A population that
+stopped early, or that holds a malformed record (unparseable JSON or schema-invalid), reports
+`scanComplete: false` and sets its counts (`unresolvedNodeCount`, `unlistedNodeCount`, `receiptCount`,
+`acceptedCount`, `checkpointCount`, `unlistedCount`) to `null`: a budget-stopped or malformed population
+never yields a confident count. A malformed record cannot be attributed to a workspace, node or
+execution, so it makes its namespace inexact for every view. Listed records in those views remain
+truthful lower bounds.
 
 Results are additionally bounded: at most `--limit` executions (default 20, maximum 100), ordered
 oldest-evidence first with `summary.selected.remainingStuckCandidates` reporting the rest; job and
