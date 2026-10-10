@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.6.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.5.0...pi-durable-adapter-v0.6.0) (2026-10-10)
+
+
+### Features
+
+* issue-932-management-current-authority ([#1043](https://github.com/adea-ai/control-plane/issues/1043)) ([3118a7c](https://github.com/adea-ai/control-plane/commit/3118a7c9f5d177a3fdce2de8ced7fbf353d91e43))
+
+## [0.5.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.4.1...pi-durable-adapter-v0.5.0) (2026-10-09)
+
+
+### Features
+
+* **pi:** 935 cancel-intent persistence, attempt fencing, and target-bound observation ([#1045](https://github.com/adea-ai/control-plane/issues/1045)) ([1208729](https://github.com/adea-ai/control-plane/commit/12087297deac41190f52f629d70e40bdb8d50d01))
+
+## [0.4.1](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.4.0...pi-durable-adapter-v0.4.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **pi:** fence cancellation by inference generation ([#1031](https://github.com/adea-ai/control-plane/issues/1031)) ([f735d7e](https://github.com/adea-ai/control-plane/commit/f735d7eae4f6b909c53a7bb4b6b4f8ef1769c9b7))
+
 ## [0.4.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.3.0...pi-durable-adapter-v0.4.0) (2026-10-09)
 
 

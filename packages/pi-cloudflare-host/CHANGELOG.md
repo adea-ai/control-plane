@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/adea-ai/control-plane/compare/pi-cloudflare-host-v0.6.0...pi-cloudflare-host-v0.6.1) (2026-10-09)
+
+
+### Maintenance
+
+* **deps:** update dependency undici to v8 ([#986](https://github.com/adea-ai/control-plane/issues/986)) ([b8290b5](https://github.com/adea-ai/control-plane/commit/b8290b533e0ce4cee80cf980d35162a53a5cff55))
+
 ## [0.6.0](https://github.com/adea-ai/control-plane/compare/pi-cloudflare-host-v0.5.0...pi-cloudflare-host-v0.6.0) (2026-10-09)
 
 

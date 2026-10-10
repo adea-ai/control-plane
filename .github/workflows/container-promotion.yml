@@ -92,14 +92,14 @@ jobs:
       - name: Scan the immutable image
         run: >-
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
-          aquasec/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436
+          ghcr.io/aquasecurity/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436
           image --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH "$REF"
 
       - name: Generate the CycloneDX SBOM
         run: >-
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
           -v "$PWD":/output
-          aquasec/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436
+          ghcr.io/aquasecurity/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436
           image --format cyclonedx --output "/output/sbom-$TARGET.json" "$REF"
 
       - name: Publish the scanned image

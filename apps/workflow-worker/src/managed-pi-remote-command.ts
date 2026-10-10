@@ -18,6 +18,14 @@ import {
 import type { RemoteRuntimeCommandFactory } from './remote-workflow-runtime.js'
 import type { WorkflowInteractionResponse } from './execution-workflow.js'
 
+/**
+ * Driver identity of the managed Pi gateway command contract. Discovery reports
+ * a managed driver's family as this exact value (driverFamily in gateway
+ * inventory; driver.family on every command envelope). The durable Pi adapter's
+ * `pi` family is a different driver and is never commanded through this path.
+ */
+export const MANAGED_PI_DRIVER_FAMILY = 'managed-pi'
+
 export interface ManagedPiRuntimeDiscoveryReader {
   getRuntimeConnection(input: {
     readonly workspaceId: string
@@ -238,7 +246,7 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
     const node = runtime.node
     const grant = runtime.access.localProjectGrant
     if (
-      !['pi', 'managed-pi'].includes(runtime.family) ||
+      runtime.family !== MANAGED_PI_DRIVER_FAMILY ||
       runtime.runtimeDefinitionId !== attempt.runtime?.runtimeDefinitionId ||
       node?.runtimeNodeRefId !== attempt.runtime?.runtimeNodeRefId ||
       runtime.status !== 'available' ||
@@ -302,7 +310,7 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
       expiresAt: expiresAt.toISOString(),
       family: 'runtime',
       operation: input.operation,
-      driver: { family: 'managed-pi', version: input.runtime.versions.adapter },
+      driver: { family: MANAGED_PI_DRIVER_FAMILY, version: input.runtime.versions.adapter },
       runtimeConnectionId: input.runtime.runtimeConnectionId,
       executionId: input.executionId,
       attemptId: input.attempt.attemptId,

@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/workspace",
-  "version": "1.87.0",
+  "version": "1.91.0",
   "private": true,
   "workspaces": [
     "apps/*",
@@ -88,6 +88,7 @@
     "@control-plane/pi-durable-adapter": "workspace:*",
     "@control-plane/policy": "workspace:*",
     "@control-plane/production-readiness": "workspace:*",
+    "@control-plane/profile-adapters": "workspace:*",
     "@control-plane/profile-portability": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
     "@control-plane/sandbox": "workspace:*",
@@ -114,7 +115,7 @@
     "esbuild": "0.28.2",
     "fastify": "5.12.5",
     "sharp": "0.35.5",
-    "undici": "7.29.1"
+    "undici": "8.11.2"
   },
   "engines": {
     "bun": ">=1.4.0 <2",
