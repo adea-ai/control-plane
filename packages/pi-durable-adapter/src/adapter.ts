@@ -63,6 +63,11 @@ interface StoredAdmission extends DurableExecutionAuthority {
   readonly providerDigest: string
 }
 
+/** The admission a retained run started from, with its handle. Immutable once admitted. */
+export interface RetainedAdmission extends DurableExecutionAuthority {
+  readonly handle: RuntimeExecutionHandle
+}
+
 const PiInferenceGenerationSchema = z
   .strictObject({
     schemaVersion: z.literal('pi-inference-generation/v1'),
@@ -384,9 +389,57 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   }
 
   async cancel(handle: RuntimeExecutionHandle, input: Parameters<RuntimeAdapter['cancel']>[1]) {
+    return this.#cancel(handle, input, (authority) => this.#authority(authority))
+  }
+
+  /** Cancels a run retained under a lead fence. The canonical prompt cannot be re-derived while the
+   * product withholds it, so the caller's `authorize` verifies the fence and the retained binding
+   * instead. Expiry and execution scope are still enforced here. */
+  async cancelFenced(
+    handle: RuntimeExecutionHandle,
+    input: Parameters<RuntimeAdapter['cancel']>[1],
+    authorize: (retained: RetainedAdmission) => Promise<void>
+  ) {
+    return this.#cancel(handle, input, async (authority) => {
+      this.#assertUnexpired(authority)
+      await authorize(structuredClone(this.#stored(this.#record(handle))))
+      try {
+        await this.#assertExecutionScope(authority)
+      } catch (error) {
+        authorityFailure(error)
+      }
+    })
+  }
+
+  /** Retained admission and handle for a run this process started. Reads the journal only: it never
+   * starts, reconciles, or calls a provider. */
+  async findRetainedAdmission(
+    handle: RuntimeExecutionHandle
+  ): Promise<RetainedAdmission | undefined> {
+    this.#assertOpen()
+    let record: JournalRecord
+    try {
+      record = this.journal.get(handle.handleId)
+    } catch {
+      return undefined
+    }
+    // Identity is the caller's to compare: a receipt handle that differs from the journal is a conflict.
+    const stored = this.#stored(record)
+    return structuredClone({
+      request: stored.request,
+      admission: stored.admission,
+      handle: stored.handle,
+    })
+  }
+
+  async #cancel(
+    handle: RuntimeExecutionHandle,
+    input: Parameters<RuntimeAdapter['cancel']>[1],
+    authorize: (authority: DurableExecutionAuthority) => Promise<void>
+  ) {
     const request = RuntimeCancelRequestSchema.parse(input)
     const record = this.#record(handle)
-    await this.#authority(this.#stored(record))
+    await authorize(this.#stored(record))
     this.#assertOpen()
     const key = `cancel:${request.idempotencyKey}`
     const actions = record.detail['actions'] as Record<string, string> | undefined
@@ -1455,11 +1508,24 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     })
   }
 
-  async #authority(authority: DurableExecutionAuthority): Promise<void> {
+  #assertUnexpired(authority: DurableExecutionAuthority): void {
     if (Date.parse(authority.admission.authority.expiresAt) <= Date.parse(this.#now()))
       denyAuthority('PI_AUTHORITY_EXPIRED')
+  }
+
+  async #authority(authority: DurableExecutionAuthority): Promise<void> {
+    this.#assertUnexpired(authority)
     try {
       await this.#options.assertAuthority(authority)
+      await this.#assertExecutionScope(authority)
+    } catch (error) {
+      authorityFailure(error)
+    }
+  }
+
+  /** Current execution scope for a scoped plan. Shared by the canonical and the fenced paths. */
+  async #assertExecutionScope(authority: DurableExecutionAuthority): Promise<void> {
+    {
       const plan = assertExecutionPlanIntegrity(authority.request.executionPlan)
       if (plan.schemaVersion === 2) {
         const actor = authority.admission.canonicalActorPrincipalId
@@ -1482,8 +1548,6 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         )
           denyAuthority('PI_EXECUTION_SCOPE_REJECTED')
       }
-    } catch (error) {
-      authorityFailure(error)
     }
   }
 

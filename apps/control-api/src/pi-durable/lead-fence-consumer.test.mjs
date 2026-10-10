@@ -197,7 +197,7 @@ async function harness(body) {
   }
 }
 
-function bindRetainedMarker(authority, overrides = {}) {
+function bindRetainedMarker(authority, overrides = {}, state = 'ready') {
   const ids = deterministicPiLeadIntentIds(workspaceId, intentId)
   return authority.store.bind({
     intentId,
@@ -227,7 +227,7 @@ function bindRetainedMarker(authority, overrides = {}) {
       ...overrides,
     },
     receivedAt: at,
-    state: 'ready',
+    state,
   })
 }
 
@@ -264,27 +264,80 @@ test('minimal v1 refuses every operation (status, progress and cancel included)'
   }
 })
 
-test('v2 admits current authorized status/progress observation without creating state', async () => {
-  const { authority, calls, cleanup } = await harness(fenceV2())
+test('v2 observation requires a ready retained marker with matching pins and never creates state', async () => {
+  const missing = await harness(fenceV2())
   try {
     for (const operation of ['status', 'progress']) {
-      const result = await authority.resolveIntent({
+      await expect(
+        missing.authority.resolveIntent({ workspaceId, intentId, principal: caller, operation })
+      ).rejects.toThrow('PI_LEAD_MISSING')
+    }
+    expect(missing.calls.resolvePlan).toBe(0)
+    expect(missing.authority.store.marker(intentId)).toBeUndefined()
+  } finally {
+    await missing.cleanup()
+  }
+
+  const pending = await harness(fenceV2())
+  try {
+    bindRetainedMarker(pending.authority, {}, 'pending')
+    await expect(
+      pending.authority.resolveIntent({
+        workspaceId,
+        intentId,
+        principal: caller,
+        operation: 'status',
+      })
+    ).rejects.toThrow('PI_LEAD_MISSING')
+  } finally {
+    await pending.cleanup()
+  }
+
+  const ready = await harness(fenceV2())
+  try {
+    bindRetainedMarker(ready.authority)
+    for (const operation of ['status', 'progress']) {
+      const result = await ready.authority.resolveIntent({
         workspaceId,
         intentId,
         principal: caller,
         operation,
       })
-      expect(result.kind).toBe('fenced')
-      expect(result.schemaVersion).toBe('pi-lead-fenced/v1')
-      expect(result.operation).toBe(operation)
-      expect(result.fenceVariant).toBe('v2')
-      expect(result.fence.authorityRevision).toBe(7)
-      expect(result.fence.scopeRef).toBe(scopeRef)
-      expect(result.retainedMatch).toBe(false)
+      expect(result).toMatchObject({
+        kind: 'fenced',
+        schemaVersion: 'pi-lead-fenced/v1',
+        operation,
+        fenceVariant: 'v2',
+        retainedMatch: true,
+        fence: { authorityRevision: 7, scopeRef },
+      })
     }
-    expect(calls.resolvePlan).toBe(0)
-    expect(calls.getExecution).toBe(0)
-    expect(authority.store.marker(intentId)).toBeUndefined()
+    expect(ready.calls.resolvePlan).toBe(0)
+    expect(ready.calls.getExecution).toBe(0)
+  } finally {
+    await ready.cleanup()
+  }
+})
+
+test('v2 observation refuses a legacy marker that lacks the canonical actor pin', async () => {
+  const { authority, cleanup } = await harness(fenceV2())
+  try {
+    // A legacy marker: retained before canonical actors and scoped plans were pinned. It is
+    // rewritten in place as a schema-v1 plan without an executionScope or canonical actor.
+    bindRetainedMarker(authority)
+    const stored = authority.store.marker(intentId)
+    const { canonicalActorPrincipalId: _actor, executionScope: _scope, ...intent } = stored.intent
+    authority.store.database
+      .prepare('UPDATE pi_lead_intent_admissions SET record = ? WHERE intent_id = ?')
+      .run(
+        JSON.stringify({ ...stored, planPin: { ...stored.planPin, schemaVersion: 1 }, intent }),
+        intentId
+      )
+    for (const operation of ['status', 'progress', 'cancel']) {
+      await expect(
+        authority.resolveIntent({ workspaceId, intentId, principal: caller, operation })
+      ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+    }
   } finally {
     await cleanup()
   }
@@ -306,18 +359,24 @@ test('v2 refuses status/progress from a principal outside allowedPrincipalIds', 
   }
 })
 
-test('v2 cancellation: non-original actor denied, original actor with matching retained revision/scope admitted, wrong revision denied', async () => {
+test('v2 cancellation: only the original actor with matching retained pins is admitted', async () => {
   const { authority, cleanup } = await harness(fenceV2())
   try {
-    // No retained state: cancel is denied.
     await expect(
       authority.resolveIntent({ workspaceId, intentId, principal: caller, operation: 'cancel' })
+    ).rejects.toThrow('PI_LEAD_MISSING')
+
+    bindRetainedMarker(authority)
+    // A second principal inside allowedPrincipalIds is not the original actor: cancellation refused.
+    await expect(
+      authority.resolveIntent({
+        workspaceId,
+        intentId,
+        principal: { ...caller, principalId: 'svc_pi-admission' },
+        operation: 'cancel',
+      })
     ).rejects.toThrow('PI_LEAD_SCOPE_REJECTED')
-
-    const marker = bindRetainedMarker(authority)
-    expect(marker.intent.authorityRevision).toBe(7)
-
-    // Wrong (non-original) actor: denied even though the caller is in allowedPrincipalIds.
+    // A principal outside the fence allowlist is refused before any retained state is read.
     await expect(
       authority.resolveIntent({
         workspaceId,
@@ -327,64 +386,62 @@ test('v2 cancellation: non-original actor denied, original actor with matching r
       })
     ).rejects.toThrow('PI_LEAD_SCOPE_REJECTED')
 
-    // Original actor with matching retained revision/scope: admitted fence result.
     const admitted = await authority.resolveIntent({
       workspaceId,
       intentId,
       principal: caller,
       operation: 'cancel',
     })
-    expect(admitted.kind).toBe('fenced')
-    expect(admitted.operation).toBe('cancel')
-    expect(admitted.retainedMatch).toBe(true)
-    expect(admitted.fence.authorityRevision).toBe(7)
-
-    // Superseded revision in the fence facts vs retained marker: conflict.
-    const stale = await harness(fenceV2({ authorityRevision: 8 }))
-    try {
-      bindRetainedMarker(stale.authority)
-      await expect(
-        stale.authority.resolveIntent({
-          workspaceId,
-          intentId,
-          principal: caller,
-          operation: 'cancel',
-        })
-      ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
-      // Observation also refuses a revision/scope mismatch against retained state.
-      await expect(
-        stale.authority.resolveIntent({
-          workspaceId,
-          intentId,
-          principal: caller,
-          operation: 'status',
-        })
-      ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
-    } finally {
-      await stale.cleanup()
-    }
-
-    // Scope mismatch against retained state: conflict.
-    const rescoped = await harness(fenceV2({ scopeRef: `adea-product:sha256:${'e'.repeat(64)}` }))
-    try {
-      bindRetainedMarker(rescoped.authority)
-      await expect(
-        rescoped.authority.resolveIntent({
-          workspaceId,
-          intentId,
-          principal: caller,
-          operation: 'status',
-        })
-      ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
-    } finally {
-      await rescoped.cleanup()
-    }
+    expect(admitted).toMatchObject({
+      kind: 'fenced',
+      operation: 'cancel',
+      retainedMatch: true,
+      fence: { authorityRevision: 7 },
+    })
   } finally {
     await cleanup()
   }
+
+  const stale = await harness(fenceV2({ authorityRevision: 8 }))
+  try {
+    bindRetainedMarker(stale.authority)
+    await expect(
+      stale.authority.resolveIntent({
+        workspaceId,
+        intentId,
+        principal: caller,
+        operation: 'cancel',
+      })
+    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+    await expect(
+      stale.authority.resolveIntent({
+        workspaceId,
+        intentId,
+        principal: caller,
+        operation: 'status',
+      })
+    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+  } finally {
+    await stale.cleanup()
+  }
+
+  const rescoped = await harness(fenceV2({ scopeRef: `adea-product:sha256:${'e'.repeat(64)}` }))
+  try {
+    bindRetainedMarker(rescoped.authority)
+    await expect(
+      rescoped.authority.resolveIntent({
+        workspaceId,
+        intentId,
+        principal: caller,
+        operation: 'status',
+      })
+    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+  } finally {
+    await rescoped.cleanup()
+  }
 })
 
-test('assertCurrent: v2 status passes only against matching retained revision/scope; wrong actor and revision denied', async () => {
+test('assertCurrent fails closed under a fence; retained status and cancel are verified only by assertFencedBinding', async () => {
   const { authority, cleanup } = await harness(fenceV2())
   try {
     const ids = deterministicPiLeadIntentIds(workspaceId, intentId)
@@ -393,49 +450,11 @@ test('assertCurrent: v2 status passes only against matching retained revision/sc
       workspaceId,
       admittedAttempt: { executionId: ids.executionId, attemptId: ids.attemptId },
     }
-    // Without retained state the fence cannot authorize an assertion.
-    await expect(authority.assertCurrent(admission, caller, 'status')).rejects.toThrow(
-      'PI_LEAD_SCOPE_REJECTED'
-    )
-
     bindRetainedMarker(authority)
-    // Matching retained revision/scope: status assertion passes (no canonical re-derivation).
-    await authority.assertCurrent(admission, caller, 'status')
-    // Prepare/dispatch are refused under any fence.
-    await expect(authority.assertCurrent(admission, caller, 'prepare')).rejects.toThrow(
-      'PI_LEAD_UNAVAILABLE'
-    )
-    await expect(authority.assertCurrent(admission, caller, 'dispatch')).rejects.toThrow(
-      'PI_LEAD_UNAVAILABLE'
-    )
-    // Non-original actor cancelling: denied.
-    await expect(
-      authority.assertCurrent(admission, { ...caller, principalId: 'svc_other' }, 'cancel')
-    ).rejects.toThrow('PI_LEAD_SCOPE_REJECTED')
-    // Original actor with mismatching admitted attempt vs retained marker: conflict.
-    await expect(
-      authority.assertCurrent(
-        {
-          ...admission,
-          admittedAttempt: {
-            executionId: 'exe_OTHER00000000000000000AA',
-            attemptId: 'att_OTHER00000000000000000AA',
-          },
-        },
-        caller,
-        'status'
+    for (const operation of ['status', 'progress', 'cancel', 'prepare', 'dispatch']) {
+      await expect(authority.assertCurrent(admission, caller, operation)).rejects.toThrow(
+        'PI_LEAD_UNAVAILABLE'
       )
-    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
-
-    // Superseded revision facts: conflict.
-    const stale = await harness(fenceV2({ authorityRevision: 9 }))
-    try {
-      bindRetainedMarker(stale.authority)
-      await expect(stale.authority.assertCurrent(admission, caller, 'status')).rejects.toThrow(
-        'PI_LEAD_AUTHORITY_CONFLICT'
-      )
-    } finally {
-      await stale.cleanup()
     }
   } finally {
     await cleanup()

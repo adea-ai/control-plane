@@ -115,6 +115,17 @@ export interface CanonicalPiDurableAuthorityOptions {
   readonly now?: () => string
 }
 
+/** The admission digest the canonical derivation commits to. Exported so the lead fence can verify
+ * a retained receipt from retained authority alone, without re-reading the withheld prompt. */
+export function canonicalAdmissionDigest(input: {
+  readonly startRequest: RuntimeStartRequest
+  readonly admission: PiDurableAdmission
+  readonly allowedPrincipalIds: readonly string[]
+  readonly deadlineAt: string
+}): string {
+  return digest(input)
+}
+
 export interface CanonicalPiDurableAdmission {
   readonly startRequest: RuntimeStartRequest
   readonly admission: PiDurableAdmission
@@ -251,7 +262,12 @@ export class CanonicalPiDurableAuthority {
       admission,
       allowedPrincipalIds,
       deadlineAt,
-      admissionDigest: digest({ startRequest, admission, allowedPrincipalIds, deadlineAt }),
+      admissionDigest: canonicalAdmissionDigest({
+        startRequest,
+        admission,
+        allowedPrincipalIds,
+        deadlineAt,
+      }),
     })
   }
 

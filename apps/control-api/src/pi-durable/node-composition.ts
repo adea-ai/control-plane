@@ -158,6 +158,11 @@ export async function createNodePiDurableLeadComposition(
       adapter: runtime.adapter,
       receipts: new SqlitePiDurableLeadReceiptStore(database),
       findRuntimeHandle: (request) => runtime!.adapter.findExistingHandle(request),
+      fence: {
+        findRetainedAdmission: (handle) => runtime!.adapter.findRetainedAdmission(handle),
+        cancelFenced: (handle, input, authorize) =>
+          runtime!.adapter.cancelFenced(handle, input, authorize),
+      },
       ...(preparations ? { preparations } : {}),
       ...(options.admission.now ? { now: options.admission.now } : {}),
     })

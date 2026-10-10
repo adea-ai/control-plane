@@ -33,13 +33,16 @@ import {
   RuntimeStartRequestSchema,
   type RuntimeAttemptBudgetAuthority,
   type RuntimeAdapter,
+  type RuntimeStartRequest,
 } from '@control-plane/runtime-sdk'
 import {
   CanonicalPiDurableAuthority,
   ProviderSelectionReferenceSchema,
+  canonicalAdmissionDigest,
   type CanonicalLeadIntent,
   type CanonicalLeadIntentReader,
   type CanonicalPiDurableAdmission,
+  type PiDurableAdmission,
 } from '@control-plane/pi-durable-adapter'
 import {
   PiDurableLeadError,
@@ -52,6 +55,7 @@ import {
   parseLeadProductFence,
   type LeadFenceVariant,
   type LeadIntentFenceFacts,
+  type LeadIntentFenceFactsV2,
   type LeadOperation,
 } from '../models/lead-product-fence.js'
 
@@ -524,7 +528,13 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
             ...(plan.correlation.executionScope
               ? { executionScope: plan.correlation.executionScope }
               : {}),
-            ...(plan.correlation.executionScope ? { canonicalActorPrincipalId } : {}),
+            // A v2 fence pins the canonical actor, so an admitted actor is retained even without an
+            // explicit scope. Scoped plans keep the fallback actor they were always pinned to.
+            ...(plan.correlation.executionScope
+              ? { canonicalActorPrincipalId }
+              : evidence.canonicalActorPrincipalId !== undefined
+                ? { canonicalActorPrincipalId: evidence.canonicalActorPrincipalId }
+                : {}),
             executionId: ids.executionId,
             attemptId: ids.attemptId,
           },
@@ -672,17 +682,9 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       )
       if (product === undefined) VerifiedPiLeadIntentEvidenceSchema.parse(undefined)
       if (product === undefined) throw new Error('unreachable')
-      if (product.kind === 'fenced') {
-        this.#assertFencedCurrent(
-          admission,
-          product.variant,
-          product.facts,
-          checked.principalId,
-          operation,
-          marker
-        )
-        return
-      }
+      // An ordinary admission cannot be re-derived under a fence (the prompt is withheld), so it
+      // fails closed. Fenced observation and cancel go through assertFencedBinding instead.
+      if (product.kind === 'fenced') throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
       const evidence = product.evidence
       if (hash({ evidence, planPin: marker.planPin }) !== marker.evidenceDigest) conflict()
       const current = project(
@@ -897,10 +899,11 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     return { kind: 'evidence', evidence }
   }
   /**
-   * Root-approved M18.01.3 fence routing: minimal v1 refuses every operation; pinned v2
-   * permits only current authorized status/progress and original-actor cancellation against
-   * matching retained revision/scope — never prepare, dispatch, resume or publication, and
-   * before any marker, inbox, attempt or model path runs.
+   * Root-approved M18.01.3 fence routing for an observation or cancel. Minimal v1 refuses every
+   * operation. Pinned v2 needs a ready retained marker whose authority revision, scope, allowed
+   * principals and canonical actor equal the fence pins, and cancel is limited to the original
+   * actor. Prepare, dispatch, resume and publication are refused before any marker, attempt, budget
+   * or model path runs.
    */
   #fencedResolve(
     input: {
@@ -919,33 +922,16 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
     if (!facts.allowedPrincipalIds.includes(principal.principalId)) denied()
     const marker = this.store.marker(input.intentId)
-    if (decision === 'cancel-as-actor') {
-      if (!marker) denied()
-      // Original actor = the CP principal that originally admitted the retained intent;
-      // the fence's canonical actor must be the retained one (actor continuity).
-      if (marker.actorPrincipalId !== principal.principalId) denied()
-      if (
-        marker.intent.authorityRevision !== facts.authorityRevision ||
-        marker.intent.scopeRef !== facts.scopeRef ||
-        hash([...marker.intent.allowedPrincipalIds].toSorted()) !==
-          hash([...facts.allowedPrincipalIds].toSorted()) ||
-        (marker.intent.canonicalActorPrincipalId ?? null) !== facts.canonicalActorPrincipalId
-      )
-        conflict()
-    } else if (
-      marker &&
-      (marker.intent.authorityRevision !== facts.authorityRevision ||
-        marker.intent.scopeRef !== facts.scopeRef ||
-        hash([...marker.intent.allowedPrincipalIds].toSorted()) !==
-          hash([...facts.allowedPrincipalIds].toSorted()))
-    )
-      conflict()
+    if (marker?.state !== 'ready') throw new PiDurableLeadError('PI_LEAD_MISSING')
+    this.#assertFencePins(marker, facts)
+    if (decision === 'cancel-as-actor' && marker.actorPrincipalId !== principal.principalId)
+      denied()
     return Object.freeze({
       schemaVersion: 'pi-lead-fenced/v1',
       kind: 'fenced',
       operation: operation as 'status' | 'progress' | 'cancel',
       fenceVariant: variant,
-      retainedMatch: marker !== undefined,
+      retainedMatch: true,
       fence: Object.freeze({
         intentId: facts.intentId,
         workspaceId: facts.workspaceId,
@@ -959,38 +945,128 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       }),
     })
   }
-  /** Fenced counterpart of `assertCurrent`: retained revision/scope must match the facts. */
-  #assertFencedCurrent(
-    admission: PiDurableLeadAdmission,
-    variant: LeadFenceVariant,
-    facts: LeadIntentFenceFacts,
-    principalId: string,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel',
-    marker: LeadIntentMarker
-  ): void {
-    const decision = fencedOperationPolicy(variant)[operation as LeadOperation]
-    if (decision === 'refuse') throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
-    if (variant !== 'v2' || facts.schemaVersion !== 'pi-lead-intent-fence/v2')
-      throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
-    if (!facts.allowedPrincipalIds.includes(principalId)) denied()
-    if (decision === 'cancel-as-actor') {
-      if (marker.actorPrincipalId !== principalId) denied()
-      if ((marker.intent.canonicalActorPrincipalId ?? null) !== facts.canonicalActorPrincipalId)
-        denied()
-    }
+
+  /**
+   * Retained pins must equal the fence. A legacy marker without a canonical actor is an
+   * insufficient pin, so it fails the canonical actor comparison and is refused.
+   */
+  #assertFencePins(marker: LeadIntentMarker, facts: LeadIntentFenceFactsV2): void {
     if (
       marker.intent.authorityRevision !== facts.authorityRevision ||
       marker.intent.scopeRef !== facts.scopeRef ||
       hash([...marker.intent.allowedPrincipalIds].toSorted()) !==
-        hash([...facts.allowedPrincipalIds].toSorted())
-    )
-      conflict()
-    if (
-      admission.admittedAttempt.executionId !== marker.intent.executionId ||
-      admission.admittedAttempt.attemptId !== marker.intent.attemptId
+        hash([...facts.allowedPrincipalIds].toSorted()) ||
+      marker.intent.canonicalActorPrincipalId === undefined ||
+      marker.intent.canonicalActorPrincipalId !== facts.canonicalActorPrincipalId
     )
       conflict()
   }
+
+  /**
+   * Re-verifies a retained fenced run. It runs before and after every awaited effect. The fence and
+   * the marker pins are checked again, and the receipt is verified against the retained request and
+   * admission. The admission digest is re-derived with the canonical function, so the withheld prompt
+   * is never re-read, and no attempt, budget or model path runs.
+   */
+  async assertFencedBinding(input: {
+    readonly workspaceId: string
+    readonly intentId: string
+    readonly principal: ServicePrincipal
+    readonly operation: 'status' | 'progress' | 'cancel'
+    readonly receipt: FencedReceiptBinding
+    readonly retained: {
+      readonly request: RuntimeStartRequest
+      readonly admission: PiDurableAdmission
+    }
+  }): Promise<void> {
+    return this.#safe(async () => {
+      const principal = ServicePrincipalSchema.parse(input.principal)
+      const scope = input.operation === 'cancel' ? 'execution:cancel' : 'execution:read'
+      if (!principal.scopes.includes(scope)) denied()
+      if (!principal.workspaceIds.includes(IdentifierSchemas.workspaceId.parse(input.workspaceId)))
+        denied()
+      const product = await this.#readUnion(
+        input.workspaceId,
+        input.intentId,
+        principal.principalId
+      )
+      if (product?.kind !== 'fenced') conflict()
+      this.#fencedResolve(
+        { workspaceId: input.workspaceId, intentId: input.intentId, operation: input.operation },
+        product.variant,
+        product.facts,
+        principal
+      )
+      const marker = this.store.marker(input.intentId)
+      if (marker?.state !== 'ready') throw new PiDurableLeadError('PI_LEAD_MISSING')
+      const request = RuntimeStartRequestSchema.parse(input.retained.request)
+      const admission = input.retained.admission
+      const plan = assertExecutionPlanIntegrity(request.executionPlan)
+      if (plan.correlation.workspaceId !== input.workspaceId) conflict()
+      if (
+        plan.correlation.projectId !== undefined &&
+        !principal.projectIds.includes(plan.correlation.projectId)
+      )
+        denied()
+      const ids = deterministicPiLeadIntentIds(input.workspaceId, input.intentId)
+      if (
+        request.executionId !== ids.executionId ||
+        request.attemptId !== ids.attemptId ||
+        input.receipt.executionId !== ids.executionId ||
+        input.receipt.attemptId !== ids.attemptId
+      )
+        conflict()
+      if (
+        admission.authority.revision !== marker.intent.authorityRevision ||
+        admission.authority.scopeRef !== marker.intent.scopeRef ||
+        admission.authority.principalRef !== marker.intent.principalRef ||
+        admission.authority.expiresAt !== marker.intent.expiresAt ||
+        admission.selection.selectionRef !== marker.intent.selectionRef ||
+        admission.selection.selectionRevision !== marker.intent.selectionRevision
+      )
+        conflict()
+      if (input.receipt.startDigest !== hash(request)) conflict()
+      const allowed = [...marker.intent.allowedPrincipalIds].toSorted()
+      if (hash(allowed) !== hash([...input.receipt.allowedPrincipalIds].toSorted())) conflict()
+      // The dispatch-time deadline is the canonical minimum of the same retained records.
+      const [execution, attempt] = await Promise.all([
+        this.options.executions.getExecution(marker.intent.executionId),
+        this.options.executions.getAttempt(marker.intent.attemptId),
+      ])
+      const executionView = ExecutionSchema.parse(execution)
+      const attemptView = ExecutionAttemptSchema.parse(attempt)
+      const base = earliestDeadline([
+        marker.intent.expiresAt,
+        executionView.deadlineAt,
+        attemptView.deadlineAt,
+      ])
+      const baseDigest = canonicalAdmissionDigest({
+        startRequest: request,
+        admission,
+        allowedPrincipalIds: allowed,
+        deadlineAt: base,
+      })
+      const expectedDeadline =
+        marker.preparationDeadlineAt === undefined
+          ? base
+          : new Date(
+              Math.min(Date.parse(base), Date.parse(marker.preparationDeadlineAt))
+            ).toISOString()
+      const expectedDigest =
+        marker.preparationDeadlineAt === undefined
+          ? baseDigest
+          : hash({
+              canonicalAdmissionDigest: baseDigest,
+              preparationDeadlineAt: marker.preparationDeadlineAt,
+            })
+      if (
+        input.receipt.deadlineAt !== expectedDeadline ||
+        input.receipt.admissionDigest !== expectedDigest
+      )
+        conflict()
+    })
+  }
+
   async #evidence(
     workspaceId: string,
     intentId: string,
@@ -1038,6 +1114,21 @@ function project(
     startRequest: current.startRequest,
   })
 }
+/** The receipt fields that bind a dispatch to its retained admission. */
+export interface FencedReceiptBinding {
+  readonly executionId: string
+  readonly attemptId: string
+  readonly startDigest: string
+  readonly admissionDigest: string
+  readonly deadlineAt: string
+  readonly allowedPrincipalIds: readonly string[]
+}
+
+function earliestDeadline(values: readonly (string | undefined)[]): string {
+  const present = values.filter((value): value is string => value !== undefined)
+  return present.toSorted((left, right) => Date.parse(left) - Date.parse(right))[0]!
+}
+
 function hash(input: unknown): string {
   return `sha256:${createHash('sha256')
     .update(canonicalJsonStringify(input) ?? 'null')
