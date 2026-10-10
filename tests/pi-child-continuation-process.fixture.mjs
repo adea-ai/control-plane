@@ -262,7 +262,7 @@ const pin = (plan) => ({
   contentDigest: plan.contentDigest,
   schemaVersion: plan.schemaVersion,
 })
-const actor = 'user:original-canonical-actor'
+const actor = 'user:6ba7b810-9dad-41d1-80b4-00c04fd430c8'
 
 export async function continuationPorts(directory, journal, canonicalProvider) {
   const sqlite = await import('@control-plane/sqlite-persistence')

@@ -7,7 +7,7 @@ import { ExecutionPlanCompiler } from '@control-plane/execution-plan'
 import { ids, parentPlanInput } from './delegation-fixtures.mjs'
 
 export const now = '2026-08-25T18:01:00.000Z'
-export const actor = 'user:original-canonical-actor'
+export const actor = 'user:6ba7b810-9dad-41d1-80b4-00c04fd430c8'
 export const workspaceScope = { schemaVersion: 1, kind: 'workspace' }
 
 export function workspaceInput() {
