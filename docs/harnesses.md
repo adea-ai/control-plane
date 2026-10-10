@@ -15,7 +15,7 @@ permissions. Each harness is a pluggable implementation.
 | Selection            | `packages/policy` decision layer; production router         | `HarnessIdSchema` is a free-form kebab-case id; a runtime exposes up to 16 `harnessIds`; an accepted harness pin is a hard candidate filter (exact id) before ranking; decision-layer resolution is explicit pin → policy default → first exposed, fail-closed |
 | Marketplace          | control-api                                                 | `harness` is a free-form profile dimension validated against the requested harness                                                                                                                                                                             |
 | Discovery            | `packages/contracts/runtime-discovery`                      | runtime inventory records the harness version; discovery advertises `harnessIds: [family]`; attempt routing selects by capabilities, scope, and an accepted harness id matched exactly                                                                         |
-| Certifications       | `docs/runtime-compatibility/runtime-certifications.v1.json` | rows keyed by `runtimeFamily` (today: `pi`, `acp`) with per-harness version pins                                                                                                                                                                               |
+| Certifications       | `docs/runtime-compatibility/runtime-certifications.v1.json` | rows keyed by `runtimeFamily` (today: `managed-pi`, `acp`) with per-harness version pins                                                                                                                                                                       |
 
 Pi integrations are wired in the relevant composition roots. Local constructs
 the managed Pi runtime in `apps/local-control-plane/src/managed-pi-runtime.ts`.
@@ -75,10 +75,19 @@ coupling, and neither ever substitutes for the other:
   driver identity by discovered family only; the pin is enforced at routing.
 - `resolveDecisionLayer` has no production caller yet. Production harness
   filtering happens in the router above.
-- The managed Pi certification row is keyed `runtimeFamily: pi`
-  (`docs/runtime-compatibility/runtime-certifications.v1.json`). Compatibility
-  matching is exact on `runtimeFamily`, so no row matches the `managed-pi`
-  family. Not changed here.
+- The managed Pi certification rows are keyed `runtimeFamily: managed-pi`
+  (`docs/runtime-compatibility/runtime-certifications.v1.json`). They were keyed
+  `pi`, which named the durable Pi family; their evidence cites only
+  `packages/managed-pi-adapter`, so the key was corrected and the evidence and
+  dates were kept. No certification row covers the durable `pi` family.
+- Production does not apply the certification registry.
+  `apps/runtime-gateway/src/runtime-inventory-ingestion.ts` records
+  `compatibilityState: 'untested'`, and no production code calls
+  `applyRuntimeCompatibilityCertification` or `assessRuntimeCompatibility`. The
+  router admits only `compatible` or `degraded` candidates, so a discovered
+  managed Pi runtime is not routable in production until the registry is wired
+  into inventory ingestion. The cloud remote drill's discovery fixture sets
+  compatibility to `compatible` directly and does not exercise the reader.
 - Runtime discovery records one harness version per node. Revisit this model if
   a node hosts several harnesses concurrently.
 - Canonical-JSON sites that persist harness-adjacent digests are tracked in
