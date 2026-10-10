@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.35.0...sqlite-persistence-v1.36.0) (2026-10-10)
+
+
+### Features
+
+* **operations:** audited admission controls, stuck-job inspection, retirement gates ([#1052](https://github.com/adea-ai/control-plane/issues/1052)) ([7451dec](https://github.com/adea-ai/control-plane/commit/7451dec27386f0ebde2edebbb2e01b670ccb44c0))
+
 ## [1.35.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.34.0...sqlite-persistence-v1.35.0) (2026-10-08)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.31.0...local-control-plane-v1.32.0) (2026-10-10)
+
+
+### Features
+
+* **operations:** audited admission controls, stuck-job inspection, retirement gates ([#1052](https://github.com/adea-ai/control-plane/issues/1052)) ([7451dec](https://github.com/adea-ai/control-plane/commit/7451dec27386f0ebde2edebbb2e01b670ccb44c0))
+
 ## [1.31.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.30.0...local-control-plane-v1.31.0) (2026-10-09)
 
 
