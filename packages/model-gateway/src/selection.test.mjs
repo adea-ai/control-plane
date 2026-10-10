@@ -100,6 +100,82 @@ test('pins defaults and overrides independently; immutable admission survives la
     'SELECTION_CHANGED'
   )
 })
+async function twoConnections() {
+  const repository = new InMemoryModelSelectionRepository()
+  const second = {
+    ...connection,
+    connectionRef: `mconn_${'3'.repeat(32)}`,
+    credentialRef: 'crd_01JBBCDEF0123456789ABCDEFG',
+    accountRef: 'account:byo-two',
+    workspaceGrant: { ...connection.workspaceGrant, grantRef: 'grant:two' },
+  }
+  await repository.saveConnection(0, connection)
+  await repository.saveConnection(0, second)
+  await repository.saveDefaults(0, {
+    workspaceId: connection.workspaceId,
+    revision: 1,
+    lead: { connectionRef: connection.connectionRef, providerModel: 'gpt-5' },
+    child: { connectionRef: second.connectionRef, providerModel: 'gpt-5' },
+    direct: { connectionRef: second.connectionRef, providerModel: 'gpt-5' },
+  })
+  const blocked = new Set()
+  const service = new ModelSelectionService({
+    repository,
+    vault: {
+      metadata: async (credentialRef) => ({
+        credentialId: credentialRef,
+        workspaceId: connection.workspaceId,
+        provider: 'openai',
+        revision: 1,
+        status: 'active',
+      }),
+    },
+    qualification: {
+      evaluate: async ({ connection: candidate, providerModel }) =>
+        blocked.has(`${candidate.connectionRef}:${providerModel}`) ? 'QUOTA_EXHAUSTED' : 'READY',
+    },
+    now: () => '2026-10-08T12:00:00.000Z',
+  })
+  return { repository, service, blocked, second }
+}
+test('a blocked default never falls back to another connection, model or role default', async () => {
+  const { repository, service, blocked, second } = await twoConnections()
+  blocked.add(`${connection.connectionRef}:gpt-5`)
+  let inserted = 0
+  const insert = repository.insertSelection.bind(repository)
+  repository.insertSelection = async (next) => {
+    inserted++
+    return insert(next)
+  }
+  await expect(
+    service.select({ workspaceId: connection.workspaceId, role: 'lead', target })
+  ).rejects.toThrow('QUOTA_EXHAUSTED')
+  expect(inserted).toBe(0)
+  // Only an explicit caller override can choose the other ready connection.
+  expect(
+    (
+      await service.select({
+        workspaceId: connection.workspaceId,
+        role: 'lead',
+        target,
+        override: { connectionRef: second.connectionRef, providerModel: 'gpt-5' },
+      })
+    ).connectionRef
+  ).toBe(second.connectionRef)
+  expect(inserted).toBe(1)
+})
+test('a blocked lead default leaves child and direct selections usable without substituting the lead', async () => {
+  const { service, blocked, second } = await twoConnections()
+  blocked.add(`${connection.connectionRef}:gpt-5`)
+  await expect(
+    service.select({ workspaceId: connection.workspaceId, role: 'lead', target })
+  ).rejects.toThrow('QUOTA_EXHAUSTED')
+  for (const role of ['child', 'direct']) {
+    expect(
+      (await service.select({ workspaceId: connection.workspaceId, role, target })).connectionRef
+    ).toBe(second.connectionRef)
+  }
+})
 test('readiness and request boundary fail closed for every revocation, expiry, quota and target fault', async () => {
   for (const code of [
     'QUOTA_EXHAUSTED',

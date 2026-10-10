@@ -8,6 +8,7 @@ import type { DurableExecutionAuthority } from '@control-plane/pi-durable-adapte
 import { RecordedModelFundingDecisionSchema } from '@control-plane/model-gateway'
 import { createPiExecutionBoundModelComposition } from '@control-plane/pi-durable-adapter'
 import { createCurrentModelConnectionComposition } from './current-model-composition.js'
+import { pinModelConnectionOptions } from './pinned-model-connections.js'
 import { createCanonicalModelHostComposition } from './canonical-model-composition.js'
 import { ConfiguredModelConnectionService } from './model-connections.service.js'
 import { createPiLeadModelAdmissionReadiness } from './pi-lead-model-readiness.js'
@@ -141,7 +142,9 @@ export async function createProductionPiLeadComposition(
     intentDatabase = new DatabaseSync(join(options.directory, 'lead-admission.sqlite'))
     fundingDatabase.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL')
     intentDatabase.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL')
-    const metadata = createCurrentModelConnectionComposition(options.modelConnections)
+    const metadata = createCurrentModelConnectionComposition(
+      pinModelConnectionOptions(options.modelConnections)
+    )
     const product = createProductionLeadProductAuthority({
       database: fundingDatabase,
       product: options.product,
