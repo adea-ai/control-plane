@@ -10,7 +10,9 @@ test('physical native child store reopen after observer fault publishes retained
   const directory = await mkdtemp(join(tmpdir(), 'j1-native-child-store-restart-'))
   let f
   try {
-    f = await createGovernedChildCompositionFixture(directory)
+    f = await createGovernedChildCompositionFixture(directory, {
+      transactionalChildAdmission: true,
+    })
     expect((await f.storage.executions.getAttempt(f.leadRequest.attemptId)).state).toBe('queued')
     const lead = await f.leadRuntime.adapter.start(f.leadRequest)
     await f.leadRuntime.adapter.drain()
@@ -78,7 +80,9 @@ test('canonical parent termination denies a new child start while previously com
   const directory = await mkdtemp(join(tmpdir(), 'j1-parent-terminal-evidence-'))
   let f
   try {
-    f = await createGovernedChildCompositionFixture(directory)
+    f = await createGovernedChildCompositionFixture(directory, {
+      transactionalChildAdmission: true,
+    })
     const lead = await f.leadRuntime.adapter.start(f.leadRequest)
     await f.leadRuntime.adapter.drain()
     await f.childRuntime.adapter.drain()
