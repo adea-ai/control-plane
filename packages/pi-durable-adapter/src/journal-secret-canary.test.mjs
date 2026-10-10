@@ -92,8 +92,10 @@ test('keeps a secret canary out of Pi durable admission rows', async () => {
       (error) => error
     )
     await strictAdapter.close()
-    expect(failure?.message).toBe('PI_ADMISSION_AUTHORITY_REJECTED')
+    // The sink is checked first, so an accepted canary is reported as a persisted leak.
+    expect(JSON.stringify(rows(rejected, 'pi_admissions'))).not.toContain(admissionCanary)
     expect(rows(rejected, 'pi_admissions')).toEqual([])
+    expect(failure?.message).toBe('PI_ADMISSION_AUTHORITY_REJECTED')
   } finally {
     rmSync(directory, { recursive: true, force: true })
     rmSync(rejected, { recursive: true, force: true })
