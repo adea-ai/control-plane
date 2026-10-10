@@ -83,6 +83,8 @@ import type { MetricAdapter } from '@control-plane/telemetry'
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.js'
 import { LocalRuntimeInteractions } from './runtime-interactions.js'
 import { LocalControlApiComposition } from './local-api-composition.js'
+import { LocalAdmissionControlService } from './operator-admission-control-service.js'
+import { admissionControlledBeforeEnqueue } from './operator-admission-controls.js'
 import {
   ManagedLocalGraphRuntime,
   type ManagedLocalGraphRuntimeOptions,
@@ -238,6 +240,7 @@ export interface LocalControlPlaneCompositionOptions {
 export class LocalControlPlaneComposition {
   readonly interactionCommandService: LocalControlApiComposition['interactionCommandService']
   readonly executionCancellationService: LocalControlApiComposition['executionCancellationService']
+  readonly admissionControlService: LocalAdmissionControlService
   readonly memoryWrites: MemoryWriteApplication
   readonly dataDirectory: string
   readonly profile: 'local' | 'hosted-simple'
@@ -386,11 +389,21 @@ export class LocalControlPlaneComposition {
     // The embedded mode routes acceptance, interactions, cancellations, and
     // reconciliation remediation through one queue-backed dispatcher; restate
     // mode keeps the ingress client as the default inside the API composition.
+    // The admission stop/resume control and the queue gate share one
+    // enforcement mode: only the embedded queue runs the beforeEnqueue gate,
+    // so a composition without it must report the control unavailable rather
+    // than record a stop nothing enforces.
+    this.admissionControlService = new LocalAdmissionControlService({
+      persistence: this.persistence,
+      enforcement: this.durableExecution === 'embedded-sqlite' ? 'embedded-queue' : 'unavailable',
+    })
     this.workflowJobs = new WorkflowJobStore(
       this.persistence,
       this.durableExecution !== 'embedded-sqlite'
         ? {}
-        : { beforeEnqueue: assertSqliteWorkflowExecutionReference }
+        : {
+            beforeEnqueue: admissionControlledBeforeEnqueue(assertSqliteWorkflowExecutionReference),
+          }
     )
     this.workflowDispatcher =
       this.durableExecution === 'embedded-sqlite'

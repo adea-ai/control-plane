@@ -162,9 +162,11 @@ describe.skipIf(!enabled)('PostgreSQL RuntimeNode identity persistence', () => {
 
     const revoked = makeIssuedCredential(key, { credentialId: makeCredentialId() })
     await migrationRepository((repository) => repository.insertIssuedCredential(revoked))
+    const revokeStarted = Date.now()
     await migrationRepository((repository) =>
       repository.revokeCredential(revoked.credentialId, baseNow)
     )
+    const revokeFinished = Date.now()
     expect(await applicationRepository.isCredentialRevoked(revoked.credentialId, 1)).toBe(true)
     await expect(
       applicationRepository.consumeCredential(revoked.credentialId, 1, baseNow)
@@ -185,10 +187,14 @@ describe.skipIf(!enabled)('PostgreSQL RuntimeNode identity persistence', () => {
         restartedConnection.database
       )
       expect(await restartedRepository.isCredentialRevoked(revoked.credentialId, 1)).toBe(true)
-      expect(await restartedRepository.getIssuedCredential(revoked.credentialId)).toMatchObject({
-        revocationVersion: 2,
-        revokedAt: baseNow.toISOString(),
-      })
+      // Revocation is stamped from the database clock, not the caller's past timestamp (migration 0069).
+      // The stamp must fall inside the revoke call's own window, with slack for container clock drift.
+      const stamped = await restartedRepository.getIssuedCredential(revoked.credentialId)
+      expect(stamped).toMatchObject({ revocationVersion: 2 })
+      const stampedAt = new Date(stamped.revokedAt).getTime()
+      expect(stampedAt).toBeGreaterThanOrEqual(revokeStarted - 60_000)
+      expect(stampedAt).toBeLessThanOrEqual(revokeFinished + 60_000)
+      expect(stampedAt).not.toBe(baseNow.getTime())
       expect(await restartedRepository.getIssuedCredential(used.credentialId)).toMatchObject({
         consumedAt: baseNow.toISOString(),
       })
@@ -280,8 +286,12 @@ describe.skipIf(!enabled)('PostgreSQL RuntimeNode identity persistence', () => {
     const credential = makeIssuedCredential(key)
     await expect(applicationRepository.insertIssuedCredential(credential)).rejects.toThrow()
     await migrationRepository((repository) => repository.insertIssuedCredential(credential))
+    // Revocation is reachable only through the migration-owned function. A direct column write is denied.
     await expect(
-      applicationRepository.revokeCredential(credential.credentialId, baseNow)
+      (async () =>
+        isolated.application.execute(
+          sql`update public.runtime_node_issued_credentials set revoked_at = ${baseNow} where credential_id = ${credential.credentialId}`
+        ))()
     ).rejects.toThrow()
     await expect(
       applicationRepository.consumeCredential(credential.credentialId, 1, baseNow)

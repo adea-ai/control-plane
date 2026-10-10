@@ -19,9 +19,15 @@ import {
   type ToolVersionId,
   type WorkspaceId,
 } from '@control-plane/contracts'
-import { createControlApiApplication, MarketplaceRegistryService } from '@control-plane/control-api'
+import {
+  createControlApiApplication,
+  createCredentialAdministrationService,
+  MarketplaceRegistryService,
+} from '@control-plane/control-api'
 import type { GraphNodeOperation, GraphNodeOperationPort } from '@control-plane/orchestration'
 import {
+  SqliteCredentialVaultRepository,
+  SqliteEncryptedSecretStore,
   SqliteToolRegistryRepository,
   type SqlitePersistenceProvider,
 } from '@control-plane/sqlite-persistence'
@@ -62,6 +68,10 @@ interface LocalGraphToolConfiguration {
 }
 
 const LOCAL_GRAPH_CONFIG_ENV = 'CONTROL_PLANE_LOCAL_GRAPH_CONFIG'
+/** Existing managed-cloud key variable; the Local profile honors it, never invents a key. */
+const LOCAL_SECRET_ENCRYPTION_KEY_ENV = 'CONTROL_PLANE_SECRET_ENCRYPTION_KEY'
+const LOCAL_SECRET_KEY_REFERENCE = 'control-plane-local-secret-key'
+const LOCAL_SECRET_PREFIX = 'local://credential-secrets'
 const LOCAL_GRAPH_CONFIG_MAX_BYTES = 16_384
 const LOCAL_GRAPH_TOOL_NAME = 'local-object-store-json'
 const LOCAL_GRAPH_TOOL_VERSION = '1.0.0'
@@ -137,13 +147,30 @@ export const start = (options: LocalControlPlaneStartOptions = {}) =>
                 : {}),
             })
           : undefined
+      // Connector credential revocation is wired only when the operator supplies the key.
+      // A malformed key throws here, so startup fails closed rather than serving a default.
+      const secretEncryptionKey = environment[LOCAL_SECRET_ENCRYPTION_KEY_ENV]
+      const credentialAdministrationService =
+        secretEncryptionKey === undefined || secretEncryptionKey.length === 0
+          ? undefined
+          : createCredentialAdministrationService({
+              repository: new SqliteCredentialVaultRepository(composition.persistence),
+              secretStore: new SqliteEncryptedSecretStore(composition.persistence),
+              encryptionKey: secretEncryptionKey,
+              keyReference: LOCAL_SECRET_KEY_REFERENCE,
+              secretPrefix: LOCAL_SECRET_PREFIX,
+            })
       const application = await createControlApiApplication({
+        ...(credentialAdministrationService === undefined
+          ? {}
+          : { credentialAdministrationService }),
         ...(graphToolOperations === undefined
           ? {}
           : { toolEffectRecoveryService: graphToolOperations }),
         ...(marketplaceRegistryService ? { marketplaceRegistryService } : {}),
         interactionCommandService: composition.interactionCommandService,
         executionCancellationService: composition.executionCancellationService,
+        admissionControlService: composition.admissionControlService,
         executionAcceptanceService: composition.executionAcceptanceService,
         executionValidationService: composition.executionValidationService,
         graphAdministrationService: composition.graphAdministrationService,
