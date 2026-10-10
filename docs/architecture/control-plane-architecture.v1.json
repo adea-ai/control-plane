@@ -3165,6 +3165,53 @@
       "openApiHasRequestSchema": true
     },
     {
+      "id": "OP-RUNTIME-NODE-CREDENTIAL-REVOKE",
+      "name": "revokeRuntimeNodeCredential",
+      "operation": "runtime-node-credential.revoke",
+      "method": "POST",
+      "path": "/v1/runtime-node-credentials/revoke",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "service bearer with credential:write scope; authenticated caller binding; principal workspace scope enforced by the shared guard",
+        "service": "RuntimeNodeCredentialRevocationController -> RepositoryRuntimeNodeCredentialRevocationService -> PostgresRuntimeNodeIdentityRepository.revokeCredential -> revoke_runtime_node_credential (SECURITY DEFINER, migration 0069)",
+        "persistence": "runtime_node_issued_credentials revocation_version and revoked_at written only by the function; runtime_node_credential_audit_events appends applied, replayed, and workspace-refused outcomes; pg_notify on runtime_node_credential_revocations_v1",
+        "execution": "row-locked, workspace-bound, idempotent revocation inside the function; gateway channels are invalidated by notification and rechecked durably on every command",
+        "delivery": "metadata-only response: credential ID, node, workspace, revocation version and revoked time; no secret material",
+        "cleanup": "composition-owned connection shutdown; the revocation and its audit row commit in one transaction"
+      },
+      "assessment": "API, SDK and OpenAPI agree. The application role holds EXECUTE on the function and no write privilege on the revocation columns or the audit table (migration 0069, source only). Hosted composition routes through the application role. Local leaves the route explicitly unavailable. The disposable PostgreSQL proof runs the route under the application role and proves gateway invalidation, replay, workspace and caller refusals, audited outcomes, and direct-write denial. No environment is granted and deployed acceptance is not certified.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/runtime-node-credentials/runtime-node-credential-revocation.service.ts"
+        },
+        {
+          "kind": "service",
+          "path": "apps/runtime-gateway/src/authentication.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/runtime-node-credentials/runtime-node-credential-revocation.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "tests/runtime-node-credential-revocation.integration.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Root reviews migration 0069 and its privilege contract before any environment applies it. Then verify deployed hosted revocation from a frozen candidate. No live grant is made by this change."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "runtime-node-credential.revoke",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
       "id": "OP-RUNTIME-LIST",
       "name": "listRuntimes",
       "operation": "runtime.list",
@@ -3275,7 +3322,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:6036c288ce03e2d3038e25ddaff20d3100ba023b052d2f63ff21f30262cdcefa"
+      "sourceDigest": "sha256:6bd56cef0f50263177010fcf01ab37bad3d420ff7a64217df777813febbdb58f"
     },
     {
       "id": "hosted-simple",
@@ -3314,7 +3361,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:3aa78c99ea66be6da86245800f6521b641cdf88ccb6ece19b2a8877207d075f3"
+      "sourceDigest": "sha256:622e32acac52d2f7581b9df796669e306204436dd1ee0b4540cf91d7e31b311b"
     },
     {
       "id": "local",
@@ -3357,7 +3404,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:3aa78c99ea66be6da86245800f6521b641cdf88ccb6ece19b2a8877207d075f3"
+      "sourceDigest": "sha256:622e32acac52d2f7581b9df796669e306204436dd1ee0b4540cf91d7e31b311b"
     }
   ],
   "ownership": [

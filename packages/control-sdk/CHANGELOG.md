@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.17.0...sdk-v1.18.0) (2026-10-10)
+
+
+### Features
+
+* **operations:** audited admission controls, stuck-job inspection, retirement gates ([#1052](https://github.com/adea-ai/control-plane/issues/1052)) ([7451dec](https://github.com/adea-ai/control-plane/commit/7451dec27386f0ebde2edebbb2e01b670ccb44c0))
+
 ## [1.17.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.16.0...sdk-v1.17.0) (2026-10-09)
 
 
