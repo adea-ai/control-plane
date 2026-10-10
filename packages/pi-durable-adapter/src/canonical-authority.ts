@@ -30,6 +30,11 @@ import {
   type PiDurableAdmission,
   type DurableExecutionAuthority,
 } from './contracts.js'
+import {
+  authoritativeDenial,
+  authorityOutcome,
+  transientAuthorityFailure,
+} from './authority-outcome.js'
 
 const ReferenceSchema = z.string().min(1).max(256)
 const AudienceSchema = z
@@ -253,8 +258,10 @@ export class CanonicalPiDurableAuthority {
   async #safe<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation()
-    } catch {
-      return reject()
+    } catch (error) {
+      // Only this module's own policy decisions keep the denial classification.
+      if (error instanceof Error && policyDenials.has(error)) throw error
+      throw publicFailure(error)
     }
   }
 }
@@ -286,8 +293,20 @@ function assertLifecycle(
   )
     reject()
 }
+// Denials decided by this module's own policy checks. A port or transport failure never enters.
+const policyDenials = new WeakSet<Error>()
+
 function reject(): never {
-  throw new Error('PI_CANONICAL_AUTHORITY_REJECTED')
+  const error = authoritativeDenial(new Error('PI_CANONICAL_AUTHORITY_REJECTED'))
+  policyDenials.add(error)
+  throw error
+}
+
+// Sanitized public rejection for every failure that is not an explicit local decision. The public
+// message is unchanged. Only the internal outcome separates a transient port failure from a denial.
+function publicFailure(error: unknown): Error {
+  const failure = new Error('PI_CANONICAL_AUTHORITY_REJECTED')
+  return authorityOutcome(error) === 'unavailable' ? transientAuthorityFailure(failure) : failure
 }
 function digest(input: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(input)).digest('hex')}`

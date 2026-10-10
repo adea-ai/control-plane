@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
+import {
+  authoritativeDenial,
+  authorityOutcome,
+  transientAuthorityFailure,
+} from './authority-outcome.js'
 import { canonicalJsonStringify, IdentifierSchemas } from '@control-plane/contracts'
 import {
   assertExecutionPlanIntegrity,
@@ -813,19 +818,13 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     }
   }
 
-  /** Inference reconciliation port. A probe failure carrying an authority denial is a
+  /** Inference reconciliation port. Only an explicit authoritative denial it raises is a
    * revocation under the held claim; every other failure stays unclassified. */
   async #probeInference(
     authority: DurableExecutionAuthority,
     key: string
   ): Promise<'safe_to_resume' | 'unresolved'> {
-    try {
-      return await this.#options.reconcileInference(authority, key)
-    } catch (error) {
-      if (error instanceof Error && AUTHORITY_DENIAL_CODES.has(error.message))
-        recoveryAuthorityDenied(error)
-      throw error
-    }
+    return this.#options.reconcileInference(authority, key)
   }
 
   async drain(): Promise<void> {
@@ -1458,7 +1457,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             this.#now()
           ))
         )
-          fail('PI_EXECUTION_SCOPE_REJECTED', 'conflict')
+          denyAuthority('PI_EXECUTION_SCOPE_REJECTED')
       }
     } catch (error) {
       authorityFailure(error)
@@ -1717,56 +1716,39 @@ function externalSession(hex: string): string {
 const RECOVERY_RESAMPLE_LIMIT = 3
 const RECOVERY_CONTENTION_WAIT_MS = 10_000
 const RECOVERY_CONTENTION_POLL_MS = 25
-// Typed authority denials that terminate a retained record under a held recovery claim. Each is
-// an explicit authority decision; a transient or transport failure never carries one of these.
-const AUTHORITY_DENIAL_CODES: ReadonlySet<string> = new Set([
-  'PI_AUTHORITY_EXPIRED',
-  'PI_CANONICAL_AUTHORITY_REJECTED',
-  'PI_EXECUTION_SCOPE_REJECTED',
-  'PI_CHILD_CONTINUATION_REJECTED',
-  'PI_CHILD_CONTINUATION_DENIED',
-])
 // Persisted on a retained record whose recovery claim ended in a declared authority denial.
 const RECOVERY_AUTHORITY_BLOCKED = 'PI_RECOVERY_AUTHORITY_BLOCKED'
 
-// Errors raised by authority under a held recovery claim. The error object itself is unchanged,
-// so callers see the original code; only composition consults this marker.
-const recoveryAuthorityDenials = new WeakSet<object>()
-
-function recoveryAuthorityDenied(error: unknown): void {
-  if (typeof error === 'object' && error !== null) recoveryAuthorityDenials.add(error)
+/** Throws an explicit local authority denial. Recovery may persist it under the claim it holds. */
+function denyAuthority(code: string): never {
+  throw authoritativeDenial(
+    new RuntimeAdapterError({ code, classification: 'conflict', message: code, retryable: false })
+  )
 }
 
-/** Throws a declared authority denial, marked so that a recovery claim may persist it. */
-function denyAuthority(code: string): never {
-  const error = new RuntimeAdapterError({
-    code,
+/** Maps a failed authority check. Only an explicit denial may become a revocation. A typed
+ * unavailable failure keeps its contract. Everything else fails closed and persists nothing. */
+function authorityFailure(error: unknown): never {
+  const outcome = authorityOutcome(error)
+  if (outcome === 'denied') denyAuthority('PI_AUTHORITY_REJECTED')
+  if (error instanceof RuntimeAdapterError && outcome === 'unavailable') throw error
+  const failure = new RuntimeAdapterError({
+    code: 'PI_AUTHORITY_REJECTED',
     classification: 'conflict',
-    message: code,
+    message: 'PI_AUTHORITY_REJECTED',
     retryable: false,
   })
-  recoveryAuthorityDenials.add(error)
-  throw error
-}
-
-/** Classifies a failed authority check. A typed unavailable failure keeps its contract and is
- * never a denial. Only a declared denial code becomes one. Anything else fails closed as an
- * unclassified rejection, which recovery neither persists nor treats as revocation. */
-function authorityFailure(error: unknown): never {
-  if (isRecoveryUnavailable(error)) throw error
-  const code = error instanceof Error ? error.message : ''
-  if (AUTHORITY_DENIAL_CODES.has(code)) denyAuthority('PI_AUTHORITY_REJECTED')
-  fail('PI_AUTHORITY_REJECTED', 'conflict')
+  throw outcome === 'unavailable' ? transientAuthorityFailure(failure) : failure
 }
 
 /** True only for an authority denial observed while a recovery claim was held. */
 export function isRecoveryAuthorityDenial(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && recoveryAuthorityDenials.has(error)
+  return authorityOutcome(error) === 'denied'
 }
 
-/** True for a typed transient authority failure: retryable, and never a revocation. */
+/** True for a transient authority failure: retryable, and never a revocation. */
 export function isRecoveryUnavailable(error: unknown): boolean {
-  return error instanceof RuntimeAdapterError && error.classification === 'unavailable'
+  return authorityOutcome(error) === 'unavailable'
 }
 
 function recoveryPause(milliseconds: number): Promise<void> {

@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import { RuntimeAdapterError } from '@control-plane/runtime-sdk'
 import { PiDurableRuntimeAdapter } from './adapter.ts'
+import { authoritativeDenial } from './authority-outcome.ts'
 import { createNodePiDurableRuntime } from './composition.ts'
 import { at, fixture, result } from './recovery-races.fixture.mjs'
 
@@ -22,7 +23,7 @@ function typedUnavailable() {
 const oldOwnerFailures = [
   [
     'declared denial',
-    () => new Error('PI_CANONICAL_AUTHORITY_REJECTED'),
+    () => authoritativeDenial(new Error('PI_CANONICAL_AUTHORITY_REJECTED')),
     'PI_RECOVERY_AUTHORITY_BLOCKED',
   ],
   ['typed unavailable', typedUnavailable, 'PI_RECOVERY_UNAVAILABLE'],
@@ -189,7 +190,7 @@ test.each(transientProbes)(
           raced = true
           await adapter.cancel(handle, { idempotencyKey: 'cancel:competing', requestedAt: at })
           current = adapter.journal.get(handle.handleId)
-          throw new Error('PI_CANONICAL_AUTHORITY_REJECTED')
+          throw authoritativeDenial(new Error('PI_CANONICAL_AUTHORITY_REJECTED'))
         },
         reconcileInference: async () => 'safe_to_resume',
       })
@@ -332,7 +333,7 @@ test('a second composition that finds the live owner observes only, and the decl
             },
           })
         }
-        throw new Error('PI_CANONICAL_AUTHORITY_REJECTED')
+        throw authoritativeDenial(new Error('PI_CANONICAL_AUTHORITY_REJECTED'))
       },
       reconcileInference: async () => 'safe_to_resume',
     })
@@ -582,7 +583,7 @@ test('a competing cancel on one retained execution never changes another retaine
         raced = true
         await adapter.cancel(first.handle, { idempotencyKey: 'cancel:competing', requestedAt: at })
         current = adapter.journal.get(first.handle.handleId)
-        throw new Error('PI_CANONICAL_AUTHORITY_REJECTED')
+        throw authoritativeDenial(new Error('PI_CANONICAL_AUTHORITY_REJECTED'))
       },
       reconcileInference: async () => 'safe_to_resume',
     })

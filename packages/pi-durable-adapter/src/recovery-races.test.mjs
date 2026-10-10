@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import { RuntimeAdapterError } from '@control-plane/runtime-sdk'
 import { PiDurableRuntimeAdapter } from './adapter.ts'
+import { authoritativeDenial } from './authority-outcome.ts'
 import { createNodePiDurableRuntime } from './composition.ts'
 import { at, fixture, result, writeRecoverySourceOverride } from './recovery-races.fixture.mjs'
 
@@ -602,7 +603,7 @@ test('composition startup isolates revoked retained work and recovers the next v
       assertAuthority: async (authority) => {
         authorities.push(authority.request.attemptId)
         if (authority.request.attemptId === revoked.attemptId)
-          throw new Error('PI_CANONICAL_AUTHORITY_REJECTED')
+          throw authoritativeDenial(new Error('PI_CANONICAL_AUTHORITY_REJECTED'))
       },
       reconcileInference: async () => 'safe_to_resume',
       engineFactory: async () => {
@@ -1310,7 +1311,7 @@ test('a denied recovery persists its fence before a newer owner claims, and the 
     runtime = await createNodePiDurableRuntime({
       ...setup.options,
       assertAuthority: async () => {
-        throw new Error('PI_CANONICAL_AUTHORITY_REJECTED')
+        throw authoritativeDenial(new Error('PI_CANONICAL_AUTHORITY_REJECTED'))
       },
       reconcileInference: async () => 'safe_to_resume',
       onAdapterReady: (adapter) => {
@@ -1376,7 +1377,7 @@ test('a denial superseded while its check is pending is reported in memory and n
         // A public command supersedes the held recovery claim while its authority check is pending.
         const current = adapter.journal.get(handle.handleId)
         adapter.journal.claim(handle.handleId, { epoch: current.epoch, state: current.state })
-        throw new Error('PI_CANONICAL_AUTHORITY_REJECTED')
+        throw authoritativeDenial(new Error('PI_CANONICAL_AUTHORITY_REJECTED'))
       },
       reconcileInference: async () => 'safe_to_resume',
     })
@@ -1394,3 +1395,59 @@ test('a denial superseded while its check is pending is reported in memory and n
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
+test.each([
+  ['assertAuthority', 'PI_CANONICAL_AUTHORITY_REJECTED'],
+  ['reconcileInference', 'PI_CHILD_CONTINUATION_REJECTED'],
+])(
+  'a denial code string thrown by %s is a caller-supplied failure: it persists no revocation and resumes on a healthy startup',
+  async (port, code) => {
+    const directory = mkdtempSync(join(tmpdir(), 'pi-forged-denial-'))
+    const setup = fixture(directory)
+    const seed = new PiDurableRuntimeAdapter(setup.options)
+    let runtime, healthy
+    try {
+      const handle = await seed.start(setup.request)
+      await seed.drain()
+      const stored = seed.journal.get(handle.handleId)
+      seed.journal.update(handle.handleId, stored.epoch, {
+        state: 'running',
+        detail: { inferencePending: true },
+      })
+      const retained = seed.journal.get(handle.handleId)
+      await seed.close()
+      runtime = await createNodePiDurableRuntime({
+        ...setup.options,
+        ...(port === 'assertAuthority'
+          ? {
+              assertAuthority: async () => {
+                throw new Error(code)
+              },
+            }
+          : {
+              reconcileInference: async () => {
+                throw new Error(code)
+              },
+            }),
+      })
+      expect(runtime.recoveryBlocked).toEqual([
+        { handleId: retained.handleId, code: 'PI_RECOVERY_UNCLASSIFIED' },
+      ])
+      expect(runtime.adapter.journal.get(retained.handleId)).toEqual(retained)
+      await runtime.close()
+      runtime = undefined
+      healthy = await createNodePiDurableRuntime({
+        ...setup.options,
+        reconcileInference: async () => 'safe_to_resume',
+      })
+      await healthy.adapter.drain()
+      expect(healthy.recoveryBlocked).toEqual([])
+      expect(healthy.adapter.journal.get(retained.handleId).state).toBe('completed')
+    } finally {
+      await runtime?.close()
+      await healthy?.close()
+      await seed.close().catch(() => {})
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }
+)
