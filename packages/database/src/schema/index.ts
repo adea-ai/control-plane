@@ -116,3 +116,5 @@ export { contextCommandGrants } from './context-command-grants.js'
 export { contextProviderRegistrations } from './context-provider-registrations.js'
 
 export { modelSelectionRecords } from './model-selections.js'
+
+export { langgraphLegacyDrainFences } from './langgraph-legacy-drain-fences.js'

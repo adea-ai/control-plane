@@ -752,7 +752,11 @@ export function createLegacyResumeFence(provider: PersistenceProvider): {
 }
 
 export interface AdmissionEvidence {
-  readonly remainder: LegacyRemainder
+  /**
+   * Absent when this composition observed no inventory. An absent remainder is never closure-eligible, and it is
+   * never replaced by fabricated counts.
+   */
+  readonly remainder?: LegacyRemainder
   /** Every legacy graph version that new admissions could currently use. */
   readonly admissibleGraphs: readonly GraphReference[]
   readonly replacements: readonly ReplacementEvidence[]
@@ -774,10 +778,14 @@ export type AdmissionDecision = {
  */
 export function evaluateLegacyAdmissionGate(evidence: AdmissionEvidence): AdmissionDecision {
   const reasons: string[] = []
-  if (evidence.remainder.observationScope !== 'deployed-dsn') {
-    reasons.push('REMAINING_NOT_DEPLOYED_SCOPE')
+  if (evidence.remainder === undefined) {
+    reasons.push('REMAINING_NOT_OBSERVED')
+  } else {
+    if (evidence.remainder.observationScope !== 'deployed-dsn') {
+      reasons.push('REMAINING_NOT_DEPLOYED_SCOPE')
+    }
+    if (!evidence.remainder.zero.established) reasons.push('REMAINING_ZERO_NOT_ESTABLISHED')
   }
-  if (!evidence.remainder.zero.established) reasons.push('REMAINING_ZERO_NOT_ESTABLISHED')
   if (evidence.admissibleGraphs.length === 0) reasons.push('NO_ADMISSIBLE_GRAPHS_OBSERVED')
   for (const graph of evidence.admissibleGraphs) {
     const label = `${graph.graphDefinitionId}@${graph.graphVersion}`

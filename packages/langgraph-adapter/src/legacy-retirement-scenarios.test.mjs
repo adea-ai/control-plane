@@ -7,6 +7,7 @@ import {
   LEGACY_STATUS_SCHEMA,
   buildLegacyOperatorStatus,
   claimLegacyDrainFence,
+  createLegacyAdmissionGuard,
   createLegacyResumeFence,
   evaluateLegacyAdmissionGate,
   planLegacyDrain,
@@ -596,6 +597,23 @@ describe('legacy retirement scenarios in disposable state (M16.03, #940)', () =>
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
+  })
+
+  test('a composition that observes no legacy inventory keeps the admission gate open and never fabricates a remainder', async () => {
+    const unobserved = {
+      admissibleGraphs: [],
+      replacements: [],
+      profiles: [],
+      failures: [],
+      closureRequested: true,
+    }
+    expect(evaluateLegacyAdmissionGate(unobserved)).toEqual({
+      decision: 'open',
+      reasons: ['REMAINING_NOT_OBSERVED', 'NO_ADMISSIBLE_GRAPHS_OBSERVED'],
+    })
+    await expect(
+      createLegacyAdmissionGuard(() => unobserved).assertNewAdmissionAllowed()
+    ).resolves.toBeUndefined()
   })
 
   test('the graph route marker matches the controller decorator path and version', async () => {

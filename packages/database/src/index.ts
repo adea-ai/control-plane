@@ -206,3 +206,10 @@ export {
 } from './langgraph-checkpoint-schema.js'
 
 export * from './model-selection-repository.js'
+
+export {
+  LegacyDrainFenceRepositoryError,
+  PostgresLegacyDrainFenceRepository,
+  type LegacyDrainFenceHandle,
+  type LegacyDrainFenceRepositoryErrorCode,
+} from './legacy-drain-fence-repository.js'
