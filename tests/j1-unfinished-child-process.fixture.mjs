@@ -131,7 +131,12 @@ export async function createUnfinishedChildProcessHarness(options = {}) {
   }
   async function evidence() {
     try {
-      return (await readFile(join(directory, 'process-evidence.jsonl'), 'utf8'))
+      // Each record is appended as one newline-terminated write. A read that lands
+      // mid-append sees an unterminated tail, which is not a record yet: leave it for
+      // the next poll instead of failing the wait.
+      const text = await readFile(join(directory, 'process-evidence.jsonl'), 'utf8')
+      return text
+        .slice(0, text.lastIndexOf('\n') + 1)
         .split('\n')
         .filter(Boolean)
         .map(JSON.parse)
