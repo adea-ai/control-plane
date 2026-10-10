@@ -31,6 +31,30 @@ const signedRefusals = (fixture) =>
     ({ direction, message }) => direction === 'response' && message.kind === 'denial'
   )
 
+/** Seals a runtime command under one fixed return key, as a single controller delivery would. */
+async function sealCommandFor(fixture, command) {
+  return sealRawCommand({
+    route: fixture.route,
+    signingKey: fixture.keys.controllerSigning,
+    header: {
+      suite: ACP_REMOTE_SUITE,
+      workspaceId: ids.workspaceId,
+      nodeId: ids.nodeId,
+      runtimeConnectionId: ids.runtimeConnectionId,
+      commandId: command.commandId,
+      payloadHash: command.payloadHash,
+      issuedAt: command.issuedAt,
+      expiresAt: command.expiresAt,
+      channelGeneration: command.channelGeneration,
+      controllerKeyId: fixture.route.controllerKeyId,
+      recipientKeyId: fixture.route.deviceEncryptionKeyId,
+      returnKeyId: 'ret_000000000000000000000000000000f1',
+      returnPublicKey: fixture.keys.otherRecipient.publicKey,
+    },
+    plaintext: utf8(canonicalJson(command)),
+  })
+}
+
 /** Flips one base64url character inside the sealed data (never a padding bit). */
 function flipInside(encoded) {
   const index = 4
@@ -1120,5 +1144,25 @@ describe('replay-ledger capacity admission is serialized with the claim', () => 
     const refusedAgain = await peer.handleCommand(await sealFor(fixture, loserCommand))
     expect(refusedAgain).toMatchObject({ kind: 'denial', reason: 'replay_ledger_full' })
     expect(await store.countLedger()).toBe(1)
+  })
+})
+
+describe('cached publication is bound to the command identity', () => {
+  test('a reused command id and return key with a different identity is a conflict, not the cached response', async () => {
+    const fixture = await createSecureFixture()
+    const original = runtimeCommand({ commandId: commandIds.first, parameters: { action: 'list' } })
+    expect(
+      await fixture.device.handleCommand(await sealCommandFor(fixture, original))
+    ).toMatchObject({ kind: 'exchange' })
+
+    const conflicting = runtimeCommand({
+      commandId: commandIds.first,
+      parameters: { action: 'list', afterSequence: 1 },
+    })
+    const response = await fixture.device.handleCommand(await sealCommandFor(fixture, conflicting))
+
+    expect(response).toMatchObject({ kind: 'denial', reason: 'command_conflict' })
+    expect(response.header.payloadHash).toBe(conflicting.payloadHash)
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
   })
 })

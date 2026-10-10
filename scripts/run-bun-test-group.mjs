@@ -40,6 +40,7 @@ const repositoryGroups = {
     'tests/pi-production-runtime-startup.test.mjs',
     'tests/pi-production-factory.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
+    'tests/acp-remote-shared-provider.test.mjs',
   ],
   smoke: [
     'tests/agent-skill-library.test.mjs',
