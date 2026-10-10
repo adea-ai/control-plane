@@ -533,6 +533,13 @@ describe('child usage ledger durable snapshot', () => {
 
 describe('bounded report-horizon ordering', () => {
   const reportIdFor = (index) => `usage:report:${index}`
+  // The canonical publisher passes the durable usage ledger's monotonic entry
+  // sequence with every report; a redelivery of the same entry reuses it.
+  const publish = (ledger, identity, index) =>
+    ledger.recordReportedUsage(identity, reportedUsage(index * 1_000), {
+      reportId: reportIdFor(index),
+      publicationSequence: index,
+    })
   const settleLatest = (ledger, identity) => {
     ledger.reconcile(identity, { reconciledAt: at(1_000) })
     ledger.settle(identity, {
@@ -546,20 +553,15 @@ describe('bounded report-horizon ordering', () => {
   test('an evicted report id cannot replay over newer reconciliation and settlement', () => {
     const ledger = new ChildUsageLedger({ maximumTrackedReportIds: 16 })
     const identity = identityA()
-    // Retain more distinct reports than the bounded horizon so report 1 and
-    // its superseded fingerprint both leave the dedup windows.
-    for (let index = 1; index <= 18; index += 1) {
-      ledger.recordReportedUsage(identity, reportedUsage(index * 1_000), {
-        reportId: reportIdFor(index),
-      })
-    }
+    for (let index = 1; index <= 18; index += 1) publish(ledger, identity, index)
     settleLatest(ledger, identity)
     expect(ledger.status(identity).costState).toBe('settled')
 
-    // Replaying the evicted report 1 must be stale — never a fresh recording
-    // that clears the newer reconciliation and settlement.
+    // Replaying the evicted report 1 with its ORIGINAL canonical sequence must
+    // be stale — never a fresh recording that clears newer evidence.
     const replay = ledger.recordReportedUsage(identity, reportedUsage(1_000), {
       reportId: reportIdFor(1),
+      publicationSequence: 1,
     })
     expect(replay.outcome).toBe('stale_report')
     const after = ledger.status(identity)
@@ -571,20 +573,47 @@ describe('bounded report-horizon ordering', () => {
   test('the eviction horizon stays ordered across a snapshot restore', () => {
     const ledger = new ChildUsageLedger({ maximumTrackedReportIds: 16 })
     const identity = identityA()
-    for (let index = 1; index <= 18; index += 1) {
-      ledger.recordReportedUsage(identity, reportedUsage(index * 1_000), {
-        reportId: reportIdFor(index),
-      })
-    }
+    for (let index = 1; index <= 18; index += 1) publish(ledger, identity, index)
     settleLatest(ledger, identity)
 
     const restored = new ChildUsageLedger({ maximumTrackedReportIds: 16 })
     restored.restore(ledger.snapshot())
     const replay = restored.recordReportedUsage(identity, reportedUsage(1_000), {
       reportId: reportIdFor(1),
+      publicationSequence: 1,
     })
     expect(replay.outcome).toBe('stale_report')
     const after = restored.status(identity)
+    expect(after.reconciled).toBeDefined()
+    expect(after.settled?.settlementRef).toBe('settlement:run:latest')
+  })
+
+  test('a redelivered canonical entry converges, a changed one conflicts, and a sequence-free report fails closed', () => {
+    const ledger = new ChildUsageLedger({ maximumTrackedReportIds: 16 })
+    const identity = identityA()
+    for (let index = 1; index <= 18; index += 1) publish(ledger, identity, index)
+    settleLatest(ledger, identity)
+
+    // Redelivery of the retained entry at its ORIGINAL sequence with identical
+    // content converges instead of recording again.
+    const duplicate = ledger.recordReportedUsage(identity, reportedUsage(18_000), {
+      reportId: reportIdFor(18),
+      publicationSequence: 18,
+    })
+    expect(duplicate.outcome).toBe('duplicate_report')
+    // A changed body at the retained sequence is a conflict, not a new report.
+    const changed = ledger.recordReportedUsage(identity, reportedUsage(18_500), {
+      reportId: 'usage:report:18-altered',
+      publicationSequence: 18,
+    })
+    expect(changed.outcome).toBe('conflicting_report')
+    // A sequence-free report after ordering history exists fails closed rather
+    // than overwriting the newer reconciled/settled truth.
+    const legacy = ledger.recordReportedUsage(identity, reportedUsage(99_000), {
+      reportId: 'usage:report:legacy',
+    })
+    expect(legacy.outcome).toBe('conflicting_report')
+    const after = ledger.status(identity)
     expect(after.reconciled).toBeDefined()
     expect(after.settled?.settlementRef).toBe('settlement:run:latest')
   })

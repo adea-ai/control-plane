@@ -163,6 +163,13 @@ export const ChildUsageLedgerSnapshotEntrySchema = z
     outcome: ChildUsageOutcomeSchema,
     reportFingerprints: z.array(z.tuple([z.string().min(1).max(256), SnapshotFingerprintSchema])),
     supersededFingerprints: z.array(SnapshotFingerprintSchema),
+    /**
+     * O(1) watermark of the highest canonical publication sequence this entry
+     * has accepted. Unlike the bounded dedup horizons it is never evicted, so
+     * an old report replayed from beyond the horizon can still be ordered as
+     * stale instead of overwriting newer reconciled/settled truth.
+     */
+    highestPublication: z.number().int().nonnegative(),
   })
   .strict()
 
@@ -206,6 +213,12 @@ interface ChildUsageEntry {
    * evicted would look brand new and overwrite the newer retained report.
    */
   supersededFingerprints: Set<string>
+  /**
+   * Highest canonical publication sequence accepted for this entry. Never
+   * evicted: it is the ordering watermark that keeps an old replay stale even
+   * after both bounded horizons have turned over.
+   */
+  highestPublication: number
 }
 
 function costStateOf(
@@ -307,7 +320,7 @@ export class ChildUsageLedger {
   recordReportedUsage(
     identity: unknown,
     usage: unknown,
-    delivery: { readonly reportId: string }
+    delivery: { readonly reportId: string; readonly publicationSequence?: number }
   ): ChildUsageReportReceipt | ChildUsageOutcome {
     const entry = this.#entryFor(identity)
     const reportId = ReferenceSchema.parse(delivery.reportId)
@@ -320,15 +333,33 @@ export class ChildUsageLedger {
       }
       return { outcome: 'duplicate_report', reportId }
     }
-    if (entry.reported !== undefined) {
-      // The id left the dedup horizon (or never existed): content, not the
-      // id, orders the report against what is retained.
-      if (usageFingerprint(entry.reported) === fingerprint) {
-        return { outcome: 'duplicate_report', reportId }
+    const sequence = delivery.publicationSequence
+    if (sequence === undefined) {
+      // A sequence-free delivery is only trustworthy while no ordered
+      // publication has happened yet. Once the canonical ordering history
+      // exists the retained-content horizon cannot order an arbitrary replay,
+      // so the report fails closed instead of overwriting newer truth.
+      if (entry.highestPublication > 0) {
+        return { outcome: 'conflicting_report', reportId }
       }
-      if (entry.supersededFingerprints.has(fingerprint)) {
+      if (entry.reported !== undefined) {
+        if (usageFingerprint(entry.reported) === fingerprint) {
+          return { outcome: 'duplicate_report', reportId }
+        }
+        if (entry.supersededFingerprints.has(fingerprint)) {
+          return { outcome: 'stale_report', reportId }
+        }
+      }
+    } else if (sequence <= entry.highestPublication) {
+      // The canonical sequence orders the report against everything retained,
+      // even beyond the bounded dedup horizons: a redelivery of the retained
+      // sequence converges, a changed one conflicts, an older one is stale.
+      if (sequence < entry.highestPublication) {
         return { outcome: 'stale_report', reportId }
       }
+      return entry.reported !== undefined && usageFingerprint(entry.reported) === fingerprint
+        ? { outcome: 'duplicate_report', reportId }
+        : { outcome: 'conflicting_report', reportId }
     }
     const previous = entry.reported
     entry.reported = parsed
@@ -338,6 +369,7 @@ export class ChildUsageLedger {
     entry.reconciled = undefined
     entry.settled = undefined
     if (previous !== undefined) this.#trackSuperseded(entry, usageFingerprint(previous))
+    if (sequence !== undefined) entry.highestPublication = sequence
     this.#trackReportId(entry, reportId, fingerprint)
     return { outcome: 'recorded', ...this.#outcome(entry) }
   }
@@ -434,6 +466,7 @@ export class ChildUsageLedger {
           outcome: this.#outcome(entry),
           reportFingerprints: [...entry.reportFingerprints],
           supersededFingerprints: [...entry.supersededFingerprints],
+          highestPublication: entry.highestPublication,
         }))
         .toSorted((left, right) =>
           compareCodePointOrder(
@@ -485,6 +518,7 @@ export class ChildUsageLedger {
         settled: outcome.settled,
         reportFingerprints: new Map(item.reportFingerprints),
         supersededFingerprints: new Set(item.supersededFingerprints),
+        highestPublication: item.highestPublication,
       }
       if (this.#outcome(entry).costState !== outcome.costState) {
         throw new ChildUsageLedgerError(
@@ -544,6 +578,7 @@ export class ChildUsageLedger {
       settled: undefined,
       reportFingerprints: new Map(),
       supersededFingerprints: new Set(),
+      highestPublication: 0,
     }
     this.#entries.set(key, entry)
     return entry

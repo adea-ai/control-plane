@@ -1931,7 +1931,7 @@ const threeDigitSecond = '2026-08-25T18:05:00.100Z'
 const nextSecondZeroFraction = '2026-08-25T18:05:01Z'
 
 test('a coarser-fraction terminal observation supersedes an earlier running snapshot chronologically', () => {
-  const buffer = trackedBuffer()
+  const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
   buffer.accept(runningEvent({ observedAt: zeroFractionSecond }))
   buffer.accept(
     runningEvent({
@@ -1950,7 +1950,7 @@ test('a coarser-fraction terminal observation supersedes an earlier running snap
 })
 
 test('the observation window span stays chronological across mixed fractional precision', () => {
-  const buffer = trackedBuffer()
+  const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
   buffer.accept(runningEvent({ observedAt: zeroFractionSecond }))
   buffer.accept(runningEvent({ observedAt: threeDigitSecond }))
   const packet = buffer.flush()
@@ -1961,7 +1961,7 @@ test('the observation window span stays chronological across mixed fractional pr
 })
 
 test('a coarser-fraction terminal observation closes the generation against later events', () => {
-  const buffer = trackedBuffer()
+  const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
   buffer.accept(runningEvent({ observedAt: zeroFractionSecond }))
   buffer.accept(
     runningEvent({
