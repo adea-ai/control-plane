@@ -50,6 +50,7 @@ import {
 import {
   InMemoryAcpRemoteDeviceStateStore,
   type AcpRemoteDeviceClaimResult,
+  type AcpRemoteDeviceFenceRecord,
   type AcpRemoteDeviceLedgerRecord,
   type AcpRemoteDeviceOutcome,
   type AcpRemoteDeviceStateStore,
@@ -567,7 +568,11 @@ export class SecureAcpDeviceEndpoint {
   readonly #inflight = new Map<string, AcpRemoteInflight>()
   readonly #delivered = new Map<
     string,
-    { readonly returnKeyId: string; readonly response: AcpRemoteSealedResponse }
+    {
+      readonly returnKeyId: string
+      readonly identity: string
+      readonly response: AcpRemoteSealedResponse
+    }
   >()
   #loadPromise: Promise<void> | undefined
   #stateLoaded = false
@@ -659,6 +664,35 @@ export class SecureAcpDeviceEndpoint {
   }
 
   /**
+   * Folds the persisted fence into the local mirror. A peer endpoint on the same scoped store can
+   * durably revoke the device or accept a higher channel generation at any time, which this mirror
+   * cannot observe on its own. A failed read is `state_unavailable`, never a continued grant.
+   */
+  async #refreshFence(): Promise<AcpRemoteDenialReason | undefined> {
+    let fence: AcpRemoteDeviceFenceRecord
+    try {
+      fence = await this.#stateStore.loadFence()
+    } catch {
+      return 'state_unavailable'
+    }
+    this.#highestGeneration = Math.max(this.#highestGeneration, fence.highestGeneration)
+    this.#revokedAt ??= fence.revokedAt
+    return undefined
+  }
+
+  /** Route fence decided against the durable store, before inventory is produced or published. */
+  async #currentRouteFence(): Promise<AcpRemoteDenialReason | undefined> {
+    return (await this.#refreshFence()) ?? this.#fenceReason()
+  }
+
+  /** Command fence decided against the durable store, before any replay or publication. */
+  async #currentCommandFence(
+    header: AcpRemoteCommandHeader
+  ): Promise<AcpRemoteDenialReason | undefined> {
+    return (await this.#refreshFence()) ?? this.#commandFenceReason(header)
+  }
+
+  /**
    * Applies a controller-signed revocation: the local mirror flips synchronously so a command parked
    * in flight is fenced immediately, and the durable record is written before this resolves so the
    * revocation survives a restart. Notices from any other key are rejected, never applied.
@@ -705,12 +739,13 @@ export class SecureAcpDeviceEndpoint {
         return this.#signDenial(header, 'state_unavailable')
       }
     }
-    const fenced = this.#fenceReason()
+    const fenced = await this.#currentRouteFence()
     if (fenced !== undefined) return this.#signDenial(header, fenced)
     const envelope = await this.#executor.inventory()
     GatewayInventoryEnvelopeSchema.parse(envelope)
-    // Publication fence: revocation or a broken clock can land while inventory is produced.
-    const afterAwait = this.#fenceReason()
+    // Publication fence against the durable store: revocation from this endpoint or a peer on the
+    // same store, or a broken clock, can land while inventory is produced.
+    const afterAwait = await this.#currentRouteFence()
     if (afterAwait !== undefined) return this.#signDenial(header, afterAwait)
     const body = { kind: 'inventory' as const, header, envelope }
     return { ...body, signature: signCanonical(DOMAIN.inventory, body, this.#signingKey) }
@@ -783,8 +818,9 @@ export class SecureAcpDeviceEndpoint {
     // outcome, so cached output is never re-sealed under stale delivery context.
     const postDecrypt = this.#commandFenceReason(header)
     if (postDecrypt !== undefined) return this.#refuse(header, postDecrypt)
-    const outcome = await this.#outcomeFor(header, command)
-    return this.#reply(outcome, header)
+    const identity = semanticIdentityOf(command)
+    const outcome = await this.#outcomeFor(header, command, identity)
+    return this.#reply(outcome, header, identity)
   }
 
   /**
@@ -794,9 +830,9 @@ export class SecureAcpDeviceEndpoint {
    */
   async #outcomeFor(
     header: AcpRemoteCommandHeader,
-    command: GatewayCommandEnvelope
+    command: GatewayCommandEnvelope,
+    identity: string
   ): Promise<AcpRemoteDeviceOutcome> {
-    const identity = semanticIdentityOf(command)
     const inflight = this.#inflight.get(header.commandId)
     if (inflight !== undefined) {
       if (inflight.identity !== identity) return { kind: 'denial', reason: 'command_conflict' }
@@ -824,7 +860,8 @@ export class SecureAcpDeviceEndpoint {
   ): Promise<AcpRemoteDeviceOutcome> {
     try {
       const stored = await this.#stateStore.readLedger(header.commandId)
-      const fencedAfterRead = this.#commandFenceReason(header)
+      // Recorded outcomes replay only after the durable fence confirms current authority.
+      const fencedAfterRead = await this.#currentCommandFence(header)
       if (fencedAfterRead !== undefined) return { kind: 'denial', reason: fencedAfterRead }
       const replayed = replayOutcome(stored, identity)
       if (replayed !== undefined) return replayed
@@ -856,7 +893,7 @@ export class SecureAcpDeviceEndpoint {
       if (claimResult === 'already_claimed') {
         // Another delivery recorded this command first; replay its record instead of executing.
         const winner = await this.#stateStore.readLedger(header.commandId)
-        const fencedAfterRace = this.#commandFenceReason(header)
+        const fencedAfterRace = await this.#currentCommandFence(header)
         if (fencedAfterRace !== undefined) return { kind: 'denial', reason: fencedAfterRace }
         const raced = replayOutcome(winner, identity)
         return raced ?? { kind: 'denial', reason: 'state_unavailable' }
@@ -897,31 +934,44 @@ export class SecureAcpDeviceEndpoint {
     }
   }
 
-  /** Seals an outcome to this delivery's return key, replaying byte-identical output when possible. */
+  /**
+   * Seals an outcome to this delivery's return key, replaying byte-identical output when possible.
+   * A cached response answers only the same delivery (same return key AND same semantic identity):
+   * a different command reusing the command id gets its own outcome, such as `command_conflict`.
+   */
   async #reply(
     outcome: AcpRemoteDeviceOutcome,
-    header: AcpRemoteCommandHeader
+    header: AcpRemoteCommandHeader,
+    identity: string
   ): Promise<AcpRemoteSealedResponse> {
-    // Publication fence before any output leaves: a cached response and a freshly sealed exchange
-    // are both device publications, so current authority, window, and generation must hold at
-    // serve time — not only when the effect first ran.
-    const beforePublish = this.#commandFenceReason(header)
+    // Publication fence against the durable store before any output leaves: a cached response and a
+    // freshly sealed exchange are both device publications, so current authority, window, and
+    // generation must hold at serve time — not only when the effect first ran.
+    const beforePublish = await this.#currentCommandFence(header)
     if (beforePublish !== undefined) return this.#refuse(header, beforePublish)
     const cached = this.#delivered.get(header.commandId)
-    if (cached !== undefined && cached.returnKeyId === header.returnKeyId) {
+    if (
+      cached !== undefined &&
+      cached.returnKeyId === header.returnKeyId &&
+      cached.identity === identity
+    ) {
       return cached.response
     }
     const response = await this.#sealOutcome(outcome, header)
     // Post-await publication fence: revocation, expiry, or supersession landing while the reply was
     // being sealed discards the sealed exchange. The recorded outcome stays durable for replay, so
     // the effect is never repeated to produce another response.
-    const afterSeal = this.#commandFenceReason(header)
+    const afterSeal = await this.#currentCommandFence(header)
     if (afterSeal !== undefined) return this.#refuse(header, afterSeal)
     if (!this.#delivered.has(header.commandId) && this.#delivered.size >= this.#ledgerCapacity) {
       const oldest = this.#delivered.keys().next().value
       if (oldest !== undefined) this.#delivered.delete(oldest)
     }
-    this.#delivered.set(header.commandId, { returnKeyId: header.returnKeyId, response })
+    this.#delivered.set(header.commandId, {
+      returnKeyId: header.returnKeyId,
+      identity,
+      response,
+    })
     return response
   }
 
