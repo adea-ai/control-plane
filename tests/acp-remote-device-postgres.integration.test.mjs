@@ -5,13 +5,13 @@
 // repository's supported fixture (createIsolatedTestDatabase); no shared container, server, or port
 // is touched by this file, and only the fixture writes.
 import { describe, expect, test } from 'bun:test'
-import { createIsolatedTestDatabase } from '@control-plane/database/testing'
+import { createIsolatedTestDatabase } from '../packages/database/src/testing.ts'
 import {
   PersistenceProviderAcpRemoteDeviceStateStore,
   acpRemoteDeviceStateScope,
-} from '@control-plane/acp-adapter'
-import { PostgresPersistenceProvider } from '@control-plane/profile-portability'
-import { loadDatabaseCredentials } from '@control-plane/config'
+} from '../packages/acp-adapter/src/gateway.ts'
+import { PostgresPersistenceProvider } from '../packages/profile-portability/src/postgres-persistence-provider.ts'
+import { loadDatabaseCredentials } from '../packages/config/src/database.ts'
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 
