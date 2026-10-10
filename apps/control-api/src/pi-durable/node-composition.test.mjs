@@ -6,7 +6,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { canonicalJsonStringify } from '@control-plane/contracts'
-import { VersionedCatalog } from '@control-plane/domain'
+import { ExecutionLifecycleService, VersionedCatalog } from '@control-plane/domain'
 import {
   ExecutionPlanCompiler,
   ExecutionPlanAcceptanceValidator,
@@ -78,7 +78,7 @@ test('governed child composition requires the canonical delegation service befor
 // Local HTTP Models transport and scripted verified product/spending ports.
 // The Pi engine, CP admission, SQLite stores and usage settlement are real.
 // This does not qualify a live provider account or recorded grant integration.
-test('concrete node composition persists real Pi generation, canonical admission and usage across store reopen', async () => {
+test('concrete node composition persists real Pi generation, canonical admission and usage across store reopen, and settles the completed attempt reservation exactly once', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'pi-concrete-node-'))
   const state = {
     requests: [],
@@ -432,6 +432,121 @@ test('concrete node composition persists real Pi generation, canonical admission
       'PI_LEAD_SCOPE_REJECTED'
     )
     expect(state.requests).toHaveLength(1)
+    // Terminal accounting. A normally completed run keeps its attempt reservation open, and an open
+    // reservation refuses supersession until the lead settles it. Settlement releases only the unspent
+    // remainder, and replays add nothing, including after a store reopen.
+    const laterAttemptId = 'att_01JBBCDEF0123456789ABCDEFG'
+    const lifecycle = new ExecutionLifecycleService(repositories.executions)
+    const supersede = async () =>
+      lifecycle.createAttempt({
+        executionId: ids.executionId,
+        attemptId: laterAttemptId,
+        expectedExecutionVersion: (await repositories.executions.getExecution(ids.executionId))
+          .version,
+        queuedAt: at,
+      })
+    const attemptReservation = async () =>
+      (await ledger().entries(evidence.workspaceId, ids.executionId)).find(
+        (entry) =>
+          entry.kind === 'reservation' &&
+          entry.reservationKey === `runtime-attempt:${ids.attemptId}`
+      )
+    const reserved = await attemptReservation()
+    const charged = modelUsage[0].costMicrounits
+    // An open hold counts only its unspent part as reserved; the charge has already moved to spent.
+    expect((await ledger().summary(evidence.workspaceId, ids.executionId)).reservedMicrounits).toBe(
+      reserved.quantity.value - charged
+    )
+    await expect(supersede()).rejects.toThrow('SETTLEMENT_INCOMPLETE')
+    // An open model request keeps the completed attempt pending, and nothing is released meanwhile.
+    const openRequest = {
+      workspaceId: evidence.workspaceId,
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      reservationKey: `runtime-attempt:${ids.attemptId}`,
+      fundingSource: 'hq_managed',
+      priceSnapshotDigest: `sha256:${'a'.repeat(64)}`,
+      requestDigest: `sha256:${'b'.repeat(64)}`,
+    }
+    const probeCallId = 'mdc_01JABCDEF0123456789ABCDEFG'
+    await ledger().reserveModelRequestForDispatch({
+      ...openRequest,
+      modelCallId: probeCallId,
+      maximumMicrounits: 1,
+      maximumTokens: 1,
+      source: { sourceId: probeCallId, idempotencyKey: 'terminal-probe:open-request' },
+    })
+    expect(await composition.settleTerminalAccounting()).toEqual({
+      settled: 0,
+      pending: 1,
+      unbound: 0,
+    })
+    expect(composition.terminalSettlementBlocked).toBe(true)
+    expect(
+      (await ledger().entries(evidence.workspaceId, ids.executionId)).filter(
+        (entry) => entry.kind === 'release'
+      )
+    ).toHaveLength(0)
+    await ledger().settleModelRequest({
+      workspaceId: evidence.workspaceId,
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      reservationKey: openRequest.reservationKey,
+      modelCallId: probeCallId,
+      costMicrounits: 0,
+      tokens: 0,
+      source: { sourceId: probeCallId, idempotencyKey: 'terminal-probe:open-request:settle' },
+    })
+    expect(await composition.settleTerminalAccounting()).toEqual({
+      settled: 1,
+      pending: 0,
+      unbound: 0,
+    })
+    expect(await ledger().summary(evidence.workspaceId, ids.executionId)).toMatchObject({
+      reservedMicrounits: 0,
+      spentMicrounits: charged,
+    })
+    expect(composition.terminalSettlementBlocked).toBe(false)
+    const releases = (await ledger().entries(evidence.workspaceId, ids.executionId)).filter(
+      (entry) => entry.kind === 'release'
+    )
+    expect(releases).toHaveLength(1)
+    expect(releases[0].quantity.value).toBe(reserved.quantity.value - charged)
+    await supersede()
+    expect(
+      (await repositories.executions.listAttempts(ids.executionId)).map(
+        (attempt) => attempt.attemptId
+      )
+    ).toEqual([ids.attemptId, laterAttemptId])
+    const settled = await ledger().entries(evidence.workspaceId, ids.executionId)
+    expect(await composition.settleTerminalAccounting()).toEqual({
+      settled: 1,
+      pending: 0,
+      unbound: 0,
+    })
+    expect(await ledger().entries(evidence.workspaceId, ids.executionId)).toEqual(settled)
+    await close()
+    await open()
+    expect(await composition.settleTerminalAccounting()).toEqual({
+      settled: 1,
+      pending: 0,
+      unbound: 0,
+    })
+    expect(await ledger().entries(evidence.workspaceId, ids.executionId)).toEqual(settled)
+    // Once settled, the same allowance cannot fund another model request.
+    await expect(
+      ledger().reserveModelRequestForDispatch({
+        ...openRequest,
+        modelCallId: 'mdc_01JABCDEF0123456789ABCDEFH',
+        maximumMicrounits: 1,
+        maximumTokens: 1,
+        source: {
+          sourceId: 'mdc_01JABCDEF0123456789ABCDEFH',
+          idempotencyKey: 'terminal-probe:post-settlement-spend',
+        },
+      })
+    ).rejects.toMatchObject({ code: 'RESERVATION_SETTLED' })
+    expect(await ledger().entries(evidence.workspaceId, ids.executionId)).toEqual(settled)
     const closing = composition.close()
     expect(composition.close()).toBe(closing)
     await closing

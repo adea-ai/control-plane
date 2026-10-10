@@ -345,7 +345,7 @@ export async function createGovernedChildCompositionFixture(
       })
     : undefined
   const childAdmissionAuthority = productionChildDelegation?.childAdmission
-  let childRuntime, leadRuntime, host, childAdmission
+  let childRuntime, leadRuntime, host, childAdmission, childOptions
   const child = await childTransport(state)
   const parentNative = await createNativeEngineToolFixture({
     argumentsInput: { objective: workspace.command.objective },
@@ -558,7 +558,7 @@ export async function createGovernedChildCompositionFixture(
     },
   }
   try {
-    const childOptions = {
+    childOptions = {
       ...shared,
       directory: join(directory, 'child-runtime'),
       resolveAdmission: async (request) => {
