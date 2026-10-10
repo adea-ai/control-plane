@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.91.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.90.1...workspace-v1.91.0) (2026-10-10)
+
+
+### Features
+
+* issue-932-management-current-authority ([#1043](https://github.com/adea-ai/control-plane/issues/1043)) ([3118a7c](https://github.com/adea-ai/control-plane/commit/3118a7c9f5d177a3fdce2de8ced7fbf353d91e43))
+
+
+### Tests
+
+* **models:** qualify confirmed funding at inference boundaries ([#970](https://github.com/adea-ai/control-plane/issues/970)) ([5ee3dbf](https://github.com/adea-ai/control-plane/commit/5ee3dbf06f9a85bcb63ac29bdb13aecfeeac9a4a))
+
 ## [1.90.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.90.0...workspace-v1.90.1) (2026-10-09)
 
 
