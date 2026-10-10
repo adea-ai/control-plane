@@ -25,6 +25,7 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 const HOST_TEXT = 'export const startNodePiDurableCandidateHost = null\n'
 const SDK_TEXT = 'export const ControlPlaneClient = class {}\n'
 const CONTRACTS_TEXT = 'export const Contract = {}\n'
+const RUNTIME_TEXT = 'export const Runtime = {}\n'
 const created = []
 
 afterAll(() => {
@@ -81,6 +82,12 @@ function candidateSet({ head, dirty = false }) {
       name: '@adea-ai/contracts',
       version: '1.14.0',
       files: packageFiles('@adea-ai/contracts', '1.14.0', CONTRACTS_TEXT),
+    },
+    {
+      key: 'runtime-sdk',
+      name: '@adea-ai/runtime-sdk',
+      version: '1.14.0',
+      files: packageFiles('@adea-ai/runtime-sdk', '1.14.0', RUNTIME_TEXT),
     },
   ]
   const nodeModules = join(root, 'consumer', 'node_modules', '@adea-ai')
@@ -194,8 +201,12 @@ test('consistent candidate binds the pinned head, manifest hash and installed SD
   const provenance = provenanceFor(host, set)
   expect(provenance.head).toBe(host.head)
   expect(provenance.manifestSha256).toBe(set.manifestSha256)
-  expect(provenance.artifacts.sdk).toMatchObject({ name: '@adea-ai/sdk', version: '1.14.0' })
-  expect(provenance.artifacts.contracts).toMatchObject({ name: '@adea-ai/contracts' })
+  expect(provenance.sdk).toMatchObject({ name: '@adea-ai/sdk', version: '1.14.0' })
+  expect(provenance.artifacts.map((artifact) => artifact.name).toSorted()).toEqual([
+    '@adea-ai/contracts',
+    '@adea-ai/runtime-sdk',
+    '@adea-ai/sdk',
+  ])
 })
 
 test('dirty host repository fails before the manifest is considered', () => {
@@ -284,11 +295,32 @@ test('extra file in the installed SDK package fails closed', () => {
   expect(() => provenanceFor(host, set)).toThrow('CANDIDATE_SDK_INSTALLED_MISMATCH')
 })
 
-test('missing installed contracts dependency fails closed', () => {
+test('missing installed sibling artifact fails closed', () => {
   const host = hostRepository()
   const set = candidateSet({ head: host.head })
-  rmSync(join(set.nodeModules, 'contracts'), { recursive: true, force: true })
+  rmSync(join(set.nodeModules, 'runtime-sdk'), { recursive: true, force: true })
   expect(() => provenanceFor(host, set)).toThrow('CANDIDATE_SDK_INSTALLED_MISSING')
+})
+
+test('substituted installed sibling artifact fails closed', () => {
+  const host = hostRepository()
+  const set = candidateSet({ head: host.head })
+  writeFiles(join(set.nodeModules, 'contracts'), {
+    'dist/index.js': 'export const Contract = null\n',
+  })
+  expect(() => provenanceFor(host, set)).toThrow('CANDIDATE_SDK_INSTALLED_MISMATCH')
+})
+
+test('unscoped or duplicate manifest artifact names fail closed', () => {
+  const host = hostRepository()
+  const unscoped = repinManifest(candidateSet({ head: host.head }), (m) => {
+    m.artifacts[1].name = 'contracts'
+  })
+  expect(() => provenanceFor(host, unscoped)).toThrow('CANDIDATE_MANIFEST_INVALID')
+  const duplicate = repinManifest(candidateSet({ head: host.head }), (m) => {
+    m.artifacts[1].name = '@adea-ai/sdk'
+  })
+  expect(() => provenanceFor(host, duplicate)).toThrow('CANDIDATE_MANIFEST_INVALID')
 })
 
 test('SDK installed outside the @adea-ai scope layout fails closed', () => {

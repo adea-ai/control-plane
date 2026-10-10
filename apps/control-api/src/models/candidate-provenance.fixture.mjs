@@ -10,7 +10,7 @@ import { basename, dirname, join, parse, relative, resolve } from 'node:path'
 // manifest is not self-attesting.
 export const CANDIDATE_MANIFEST_SCHEMA = 'pi-durable-candidate-artifacts/v1'
 export const SDK_PACKAGE = '@adea-ai/sdk'
-const CONTRACTS_PACKAGE = '@adea-ai/contracts'
+const SCOPE = '@adea-ai/'
 const COMMIT = /^[a-f0-9]{40}$/
 const SHA256 = /^[a-f0-9]{64}$/
 
@@ -56,20 +56,27 @@ export function assertCandidateManifest({ manifestPath, manifestSha256, expected
   return manifest
 }
 
-function artifactFor(manifest, name) {
-  const matches = manifest.artifacts.filter((artifact) => artifact?.name === name)
-  if (matches.length !== 1) throw new Error('CANDIDATE_SDK_ARTIFACT_MISSING')
-  const [artifact] = matches
-  if (
-    typeof artifact.archive !== 'string' ||
-    basename(artifact.archive) !== artifact.archive ||
-    !artifact.archive.endsWith('.tgz') ||
-    typeof artifact.version !== 'string' ||
-    !SHA256.test(artifact.sha256 ?? '') ||
-    !Number.isSafeInteger(artifact.bytes)
-  )
-    throw new Error('CANDIDATE_MANIFEST_INVALID')
-  return artifact
+// Every manifest artifact must be a unique @adea-ai package with a safe archive name and digests.
+function validatedArtifacts(manifest) {
+  const names = new Set()
+  for (const artifact of manifest.artifacts) {
+    if (
+      typeof artifact?.name !== 'string' ||
+      !artifact.name.startsWith(SCOPE) ||
+      artifact.name.slice(SCOPE.length).includes('/') ||
+      names.has(artifact.name) ||
+      typeof artifact.archive !== 'string' ||
+      basename(artifact.archive) !== artifact.archive ||
+      !artifact.archive.endsWith('.tgz') ||
+      typeof artifact.version !== 'string' ||
+      !SHA256.test(artifact.sha256 ?? '') ||
+      !Number.isSafeInteger(artifact.bytes)
+    )
+      throw new Error('CANDIDATE_MANIFEST_INVALID')
+    names.add(artifact.name)
+  }
+  if (!names.has(SDK_PACKAGE)) throw new Error('CANDIDATE_SDK_ARTIFACT_MISSING')
+  return manifest.artifacts
 }
 
 // Map of relative path to bytes for every regular file under root.
@@ -134,24 +141,26 @@ function assertInstalledArtifact({ artifact, manifestPath, installedRoot }) {
 }
 
 /**
- * Verifies the explicit installed SDK entry and its contracts dependency against the manifest's
- * archives. Both installed package trees must equal the archive contents byte for byte.
+ * Verifies the explicit installed SDK entry against the manifest. The SDK package and every
+ * sibling artifact in the manifest, installed under the same @adea-ai scope, must equal their
+ * archive contents byte for byte. An uninstalled sibling fails closed.
  */
 export function assertCandidateArtifacts({ manifest, manifestPath, installedSdkEntry }) {
+  const artifacts = validatedArtifacts(manifest)
   const sdkRoot = packageRootOf(installedSdkEntry)
-  if (basename(dirname(sdkRoot)) !== '@adea-ai')
+  const scopeRoot = dirname(sdkRoot)
+  if (
+    basename(scopeRoot) !== SCOPE.slice(0, -1) ||
+    basename(sdkRoot) !== SDK_PACKAGE.slice(SCOPE.length)
+  )
     throw new Error('CANDIDATE_SDK_INSTALL_LAYOUT_INVALID')
-  const sdk = assertInstalledArtifact({
-    artifact: artifactFor(manifest, SDK_PACKAGE),
-    manifestPath,
-    installedRoot: sdkRoot,
-  })
-  const contracts = assertInstalledArtifact({
-    artifact: artifactFor(manifest, CONTRACTS_PACKAGE),
-    manifestPath,
-    installedRoot: join(dirname(sdkRoot), 'contracts'),
-  })
-  return { sdk, contracts }
+  return artifacts.map((artifact) =>
+    assertInstalledArtifact({
+      artifact,
+      manifestPath,
+      installedRoot: join(scopeRoot, artifact.name.slice(SCOPE.length)),
+    })
+  )
 }
 
 /** Single entry point for the funding candidate profile. Throws on the first failed guard. */
@@ -174,5 +183,6 @@ export function assertFundingCandidateProvenance({
     manifestPath,
     installedSdkEntry: sdkEntry,
   })
-  return { head: pin, manifestSha256, artifacts }
+  const sdk = artifacts.find((artifact) => artifact.name === SDK_PACKAGE)
+  return { head: pin, manifestSha256, sdk, artifacts }
 }

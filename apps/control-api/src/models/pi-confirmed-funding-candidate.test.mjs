@@ -28,8 +28,8 @@ if (entry) {
 qualify('candidate provenance binds the pinned head, manifest hash and installed SDK', () => {
   expect(provenance.head).toBe(process.env.PI_FUNDING_CANDIDATE_HEAD)
   expect(provenance.manifestSha256).toBe(process.env.PI_CANDIDATE_MANIFEST_SHA256)
-  expect(provenance.artifacts.sdk.name).toBe('@adea-ai/sdk')
-  expect(provenance.artifacts.contracts.name).toBe('@adea-ai/contracts')
+  expect(provenance.sdk.name).toBe('@adea-ai/sdk')
+  expect(provenance.artifacts.map((artifact) => artifact.name)).toContain('@adea-ai/contracts')
 })
 
 async function fixture(body) {
