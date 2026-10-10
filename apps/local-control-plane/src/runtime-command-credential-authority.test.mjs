@@ -6,7 +6,11 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
-import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
+import {
+  SqlitePersistenceProvider,
+  SqliteRuntimeCommandRepository,
+  createRuntimeNodeCredentialFenceValidator,
+} from '@control-plane/sqlite-persistence'
 import { LocalControlApiComposition } from './local-api-composition.ts'
 
 const ISSUED_AT = '2026-05-01T10:00:00.000Z'
@@ -79,7 +83,7 @@ async function withComposition(authority, run) {
       undefined,
       authority
     )
-    await run(composition)
+    await run(composition, provider)
   } finally {
     provider.close({ checkpoint: true })
     await rm(directory, { recursive: true, force: true })
@@ -144,6 +148,101 @@ describe('Local all-in-one credential authority for runtime-command fences', () 
         status: 'queued',
         version: 1,
       })
+    })
+  })
+
+  test('an in-transaction authority read sees invalidation that landed first, and queued invalidation cannot admit stale authority', async () => {
+    await withComposition(fixtureAuthority(), async (composition, provider) => {
+      // Provider-backed authority: reads durable invalidation state through the LIVE transaction
+      // handle the validator receives.
+      const inTransaction = async (transaction, fence) => {
+        const revoked = await transaction.get('credential-revocations', `r-${fence.credentialId}`)
+        return revoked !== undefined
+      }
+      const validatorAuthority = {
+        isRevoked: async () => false,
+      }
+      const repository = new SqliteRuntimeCommandRepository(
+        provider,
+        async (transaction, fence) => {
+          if (await inTransaction(transaction, fence)) {
+            throw new Error('INVENTORY_CREDENTIAL_FENCE_INVALID')
+          }
+          await createRuntimeNodeCredentialFenceValidator(validatorAuthority)(transaction, fence)
+        }
+      )
+      // Half 1: invalidation that commits FIRST is visible to the in-transaction read.
+      await provider.transaction(async (transaction) =>
+        transaction.put({
+          namespace: 'credential-revocations',
+          id: `r-${FENCE.credentialId}-a`,
+          value: { revokedAt: ISSUED_AT },
+        })
+      )
+      const first = queuedRecord('cmd_01ARZ3NDEKTSV4RRFFQ69G5FAA')
+      await repository.create(first)
+      // The parked proof below uses a fence whose revocation record this validator reads.
+      let announce
+      const reached = new Promise((resolve) => {
+        announce = resolve
+      })
+      let release
+      const barrier = new Promise((resolve) => {
+        release = resolve
+      })
+      const parking = new SqliteRuntimeCommandRepository(provider, async (transaction, fence) => {
+        announce()
+        await barrier
+        if (await inTransaction(transaction, fence)) {
+          throw new Error('INVENTORY_CREDENTIAL_FENCE_INVALID')
+        }
+      })
+      const second = queuedRecord('cmd_01ARZ3NDEKTSV4RRFFQ69G5FAB')
+      await parking.create(second)
+      const pending = parking.compareAndSet(1, acknowledgedFrom(second), {
+        credentialId: 'crd_parked',
+        revocationVersion: 1,
+      })
+      await reached
+      // Invalidating through the SAME provider cannot commit while the fenced
+      // ACK transaction is held (single-writer serialization).
+      let invalidationCommitted = false
+      const invalidation = provider
+        .transaction(async (transaction) =>
+          transaction.put({
+            namespace: 'credential-revocations',
+            id: 'r-crd_parked',
+            value: { revokedAt: ISSUED_AT },
+          })
+        )
+        .then(() => {
+          invalidationCommitted = true
+        })
+      release()
+      expect(await pending).toBe(true)
+      await invalidation
+      expect(invalidationCommitted).toBe(true)
+      // The invalidation applies strictly after the ACK: the NEXT fenced
+      // transition for that credential is rejected — stale authority never admits.
+      const fourth = queuedRecord('cmd_01ARZ3NDEKTSV4RRFFQ69G5FAD')
+      await parking.create(fourth)
+      await expect(
+        parking.compareAndSet(1, acknowledgedFrom(fourth), {
+          credentialId: 'crd_parked',
+          revocationVersion: 1,
+        })
+      ).rejects.toThrow('INVENTORY_CREDENTIAL_FENCE_INVALID')
+      // Half 1 direct: an in-transaction read that observes a committed
+      // invalidation rejects (first-landed invalidation is visible).
+      const third = queuedRecord('cmd_01ARZ3NDEKTSV4RRFFQ69G5FAC')
+      await repository.create(third)
+      await expect(
+        repository.compareAndSet(1, acknowledgedFrom(third), {
+          credentialId: `${FENCE.credentialId}-a`,
+          revocationVersion: 1,
+        })
+      ).rejects.toThrow('INVENTORY_CREDENTIAL_FENCE_INVALID')
+      void first
     })
   })
 })

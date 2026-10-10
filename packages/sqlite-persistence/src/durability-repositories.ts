@@ -685,8 +685,13 @@ export interface RuntimeNodeCredentialFenceAuthorityPort {
 
 /**
  * Builds the credential-fence validator from the SAME runtime-node credential authority the
- * channel authenticator trusts; the validator receives the LIVE in-transaction handle so durable
- * authorities can read within the fenced transaction. Consumes no credentials and creates none.
+ * channel authenticator trusts. The port-based check consults `isRevoked` only; the LIVE
+ * transaction handle is passed through so provider-backed authorities can additionally read
+ * durable invalidation state IN-TRANSACTION. Ordering under the store contract: the SQLite
+ * provider serializes writers, so an invalidation applied through the same provider cannot commit
+ * between this check and the fenced ACK write — it orders strictly before (visible to the check)
+ * or strictly after (applies to the next fenced transition). Consumes no credentials and creates
+ * none. No revocation re-check exists at commit time beyond this ordering guarantee.
  */
 export function createRuntimeNodeCredentialFenceValidator(
   authority: RuntimeNodeCredentialFenceAuthorityPort
