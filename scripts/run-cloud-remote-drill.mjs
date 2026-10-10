@@ -87,7 +87,13 @@ try {
     localProjectGrantRefs: ['grant:runtime-node:drill'],
     contributions: [],
   })
-  const plan = createExecutionPlanTestFixture({ contextPackage: context })
+  // The drill's runtime is the managed Pi driver (family 'managed-pi', see the
+  // discovery record below). The plan must declare that family explicitly; the
+  // durable 'pi' family is a different driver and is not selected here.
+  const plan = createExecutionPlanTestFixture({
+    contextPackage: context,
+    runtimeFamilies: ['managed-pi'],
+  })
   const executionId = golden.command.executionId
   const nodeId = golden.command.nodeId
   const workspaceId = plan.correlation.workspaceId

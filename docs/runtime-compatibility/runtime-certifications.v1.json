@@ -5,7 +5,7 @@
   "classifications": ["supported", "preview", "degraded", "incompatible", "revoked", "untested"],
   "minimumSupportedVersions": [
     {
-      "runtimeFamily": "pi",
+      "runtimeFamily": "managed-pi",
       "adapter": "1.0.0",
       "driver": "1.0.0",
       "harness": "0.52.0",
@@ -22,7 +22,7 @@
   "certifications": [
     {
       "certificationId": "managed-pi-reference-gateway-1-7-0",
-      "runtimeFamily": "pi",
+      "runtimeFamily": "managed-pi",
       "connectionType": "managed_local",
       "classification": "supported",
       "versions": {
@@ -117,7 +117,7 @@
     },
     {
       "certificationId": "managed-pi-reference-gateway-1-6-0",
-      "runtimeFamily": "pi",
+      "runtimeFamily": "managed-pi",
       "connectionType": "managed_local",
       "classification": "supported",
       "versions": {
@@ -212,7 +212,7 @@
     },
     {
       "certificationId": "managed-pi-reference-1-0-0",
-      "runtimeFamily": "pi",
+      "runtimeFamily": "managed-pi",
       "connectionType": "managed_local",
       "classification": "supported",
       "versions": {

@@ -16,7 +16,7 @@
   "runtimes": [
     {
       "runtimeId": "managed-pi-local",
-      "family": "pi",
+      "family": "managed-pi",
       "deployment": "local",
       "adapterVersion": "1.0.0",
       "driverVersion": "1.0.0",
@@ -25,7 +25,7 @@
     },
     {
       "runtimeId": "managed-pi-hosted",
-      "family": "pi",
+      "family": "managed-pi",
       "deployment": "managed",
       "adapterVersion": "1.0.0",
       "driverVersion": "1.0.0",
