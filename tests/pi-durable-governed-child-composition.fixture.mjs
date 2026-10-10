@@ -240,6 +240,18 @@ export async function createGovernedChildCompositionFixture(
     store: new SqliteDurableUsageStore(provider),
     now: () => now,
   })
+  // Canonical publication ordering source: the durable usage ledger assigns a
+  // monotonic sequence per settle entry. Capturing it from the very entry the
+  // authority settles means a redelivery of the same entry (same idempotency
+  // key) reuses its ORIGINAL sequence instead of minting a new one — the
+  // property that keeps an old provider report from ever ordering as new.
+  let lastPublishedSequence
+  const canonicalSettleModelRequest = ledger.settleModelRequest.bind(ledger)
+  ledger.settleModelRequest = async (settleInput) => {
+    const entry = await canonicalSettleModelRequest(settleInput)
+    lastPublishedSequence = entry.sequence
+    return entry
+  }
   // The correlated cost-state projection for the child attempt. The money
   // stays in the canonical durable ledger above; this records the explicit
   // estimated/reserved/reported/reconciled/settled evidence stages, driven
@@ -480,7 +492,12 @@ export async function createGovernedChildCompositionFixture(
           .update(String(key))
           .digest('hex')
           .slice(0, 16)}`
-        const receipt = childUsage.recordReportedUsage(settlementIdentity, settled, { reportId })
+        const receipt = childUsage.recordReportedUsage(settlementIdentity, settled, {
+          reportId,
+          ...(lastPublishedSequence === undefined
+            ? {}
+            : { publicationSequence: lastPublishedSequence }),
+        })
         if (receipt.outcome === 'recorded') {
           childUsage.reconcile(settlementIdentity, { reconciledAt: now })
           childUsage.settle(settlementIdentity, {

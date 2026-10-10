@@ -168,8 +168,16 @@ export const ChildUsageLedgerSnapshotEntrySchema = z
      * has accepted. Unlike the bounded dedup horizons it is never evicted, so
      * an old report replayed from beyond the horizon can still be ordered as
      * stale instead of overwriting newer reconciled/settled truth.
+     * Optional so a sequence-free (older) snapshot restores safely to 0
+     * instead of failing schema validation.
      */
-    highestPublication: z.number().int().nonnegative(),
+    highestPublication: z.number().int().nonnegative().optional(),
+    /**
+     * O(1) identity binding of the retained publication: the report id that
+     * owns the watermark. A different id claiming the retained sequence is a
+     * conflict even when its usage body matches.
+     */
+    retainedReportId: z.string().min(1).max(256).optional(),
   })
   .strict()
 
@@ -219,6 +227,10 @@ interface ChildUsageEntry {
    * after both bounded horizons have turned over.
    */
   highestPublication: number
+  /** O(1) report id that owns the watermark above. */
+  retainedReportId: string | undefined
+  /** True when a restored snapshot predates the ordering watermark. */
+  orderingUncertain: boolean
 }
 
 function costStateOf(
@@ -334,6 +346,14 @@ export class ChildUsageLedger {
       return { outcome: 'duplicate_report', reportId }
     }
     const sequence = delivery.publicationSequence
+    if (sequence !== undefined && (!Number.isSafeInteger(sequence) || sequence < 1)) {
+      // A malformed canonical sequence must fail closed before any mutation;
+      // it can never be trusted to order a report.
+      throw new ChildUsageLedgerError(
+        'CONFIGURATION',
+        'publicationSequence must be a positive safe integer'
+      )
+    }
     if (sequence === undefined) {
       // A sequence-free delivery is only trustworthy while no ordered
       // publication has happened yet. Once the canonical ordering history
@@ -349,15 +369,24 @@ export class ChildUsageLedger {
         if (entry.supersededFingerprints.has(fingerprint)) {
           return { outcome: 'stale_report', reportId }
         }
+        // Ambiguous history: a restored snapshot that predates the ordering
+        // watermark cannot order an unorderable report, so it never overwrites
+        // the retained truth it carried across the restart.
+        if (entry.orderingUncertain) {
+          return { outcome: 'conflicting_report', reportId }
+        }
       }
-    } else if (sequence <= entry.highestPublication) {
+    } else if (sequence < entry.highestPublication) {
       // The canonical sequence orders the report against everything retained,
-      // even beyond the bounded dedup horizons: a redelivery of the retained
-      // sequence converges, a changed one conflicts, an older one is stale.
-      if (sequence < entry.highestPublication) {
-        return { outcome: 'stale_report', reportId }
-      }
-      return entry.reported !== undefined && usageFingerprint(entry.reported) === fingerprint
+      // even beyond the bounded dedup horizons: an older sequence is stale.
+      return { outcome: 'stale_report', reportId }
+    } else if (sequence === entry.highestPublication) {
+      // The retained sequence is owned by exactly one report id: an identical
+      // redelivery converges, while a changed id or body is a conflict even
+      // when the usage bytes match.
+      return entry.retainedReportId === reportId &&
+        entry.reported !== undefined &&
+        usageFingerprint(entry.reported) === fingerprint
         ? { outcome: 'duplicate_report', reportId }
         : { outcome: 'conflicting_report', reportId }
     }
@@ -369,7 +398,10 @@ export class ChildUsageLedger {
     entry.reconciled = undefined
     entry.settled = undefined
     if (previous !== undefined) this.#trackSuperseded(entry, usageFingerprint(previous))
-    if (sequence !== undefined) entry.highestPublication = sequence
+    if (sequence !== undefined) {
+      entry.highestPublication = sequence
+      entry.retainedReportId = reportId
+    }
     this.#trackReportId(entry, reportId, fingerprint)
     return { outcome: 'recorded', ...this.#outcome(entry) }
   }
@@ -467,6 +499,7 @@ export class ChildUsageLedger {
           reportFingerprints: [...entry.reportFingerprints],
           supersededFingerprints: [...entry.supersededFingerprints],
           highestPublication: entry.highestPublication,
+          retainedReportId: entry.retainedReportId,
         }))
         .toSorted((left, right) =>
           compareCodePointOrder(
@@ -518,7 +551,15 @@ export class ChildUsageLedger {
         settled: outcome.settled,
         reportFingerprints: new Map(item.reportFingerprints),
         supersededFingerprints: new Set(item.supersededFingerprints),
-        highestPublication: item.highestPublication,
+        // An older sequence-free snapshot restores to a zero watermark, which
+        // the ordering rules treat as uncertain ordering history rather than a
+        // schema break.
+        highestPublication: item.highestPublication ?? 0,
+        retainedReportId: item.retainedReportId,
+        // A snapshot that predates the ordering watermark lost its ordering
+        // history on the wire: once it carries a report the evidence is
+        // ambiguous, so a sequence-free replay must not overwrite it.
+        orderingUncertain: item.highestPublication === undefined && outcome.reported !== undefined,
       }
       if (this.#outcome(entry).costState !== outcome.costState) {
         throw new ChildUsageLedgerError(
@@ -579,6 +620,8 @@ export class ChildUsageLedger {
       reportFingerprints: new Map(),
       supersededFingerprints: new Set(),
       highestPublication: 0,
+      retainedReportId: undefined,
+      orderingUncertain: false,
     }
     this.#entries.set(key, entry)
     return entry

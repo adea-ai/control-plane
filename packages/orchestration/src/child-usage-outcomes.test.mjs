@@ -618,3 +618,83 @@ describe('bounded report-horizon ordering', () => {
     expect(after.settled?.settlementRef).toBe('settlement:run:latest')
   })
 })
+
+describe('canonical publication sequence validation and identity binding', () => {
+  const reportIdFor = (index) => `usage:report:${index}`
+  const publish = (ledger, identity, index) =>
+    ledger.recordReportedUsage(identity, reportedUsage(index * 1_000), {
+      reportId: reportIdFor(index),
+      publicationSequence: index,
+    })
+
+  test('a malformed publication sequence fails closed before any mutation', () => {
+    const malformed = [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      1.5,
+      -1,
+      0,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]
+    for (const bad of malformed) {
+      const ledger = new ChildUsageLedger()
+      const identity = identityA()
+      expect(() =>
+        ledger.recordReportedUsage(identity, reportedUsage(1_000), {
+          reportId: 'usage:report:malformed',
+          publicationSequence: bad,
+        })
+      ).toThrow(ChildUsageLedgerError)
+      // Fail closed before mutation: nothing was recorded or superseded.
+      expect(ledger.status(identity).reported).toBeUndefined()
+      expect(ledger.status(identity).costState).toBe('unknown')
+    }
+  })
+
+  test('a changed report identity at the retained sequence conflicts even with matching usage', () => {
+    const ledger = new ChildUsageLedger()
+    const identity = identityA()
+    publish(ledger, identity, 1)
+    // Same usage bytes and same retained sequence, but a DIFFERENT report id:
+    // the retained sequence is owned by one identity, so this is a conflict.
+    const impostor = ledger.recordReportedUsage(identity, reportedUsage(1_000), {
+      reportId: 'usage:report:impostor',
+      publicationSequence: 1,
+    })
+    expect(impostor.outcome).toBe('conflicting_report')
+    // The genuine retained report id still converges.
+    const duplicate = ledger.recordReportedUsage(identity, reportedUsage(1_000), {
+      reportId: reportIdFor(1),
+      publicationSequence: 1,
+    })
+    expect(duplicate.outcome).toBe('duplicate_report')
+  })
+
+  test('an older sequence-free snapshot restores safely and never overwrites settled truth', () => {
+    const ledger = new ChildUsageLedger()
+    const identity = identityA()
+    ledger.recordReportedUsage(identity, reportedUsage(42_000), { reportId: 'usage:report:legacy' })
+    ledger.settle(identity, {
+      currency: 'USD',
+      settledMicrounits: 42_000,
+      settledAt: at(1_000),
+      settlementRef: 'settlement:legacy',
+    })
+    // Emulate an OLDER snapshot shape: no ordering watermark, no identity.
+    const older = ledger.snapshot()
+    for (const entry of older.entries) {
+      delete entry.highestPublication
+      delete entry.retainedReportId
+    }
+    const restored = new ChildUsageLedger()
+    // Restoring must not break schema validation on the missing fields.
+    expect(() => restored.restore(older)).not.toThrow()
+    // Ambiguous legacy history must not be overwritten by an unorderable report.
+    const replay = restored.recordReportedUsage(identity, reportedUsage(1_000), {
+      reportId: 'usage:report:ambiguous',
+    })
+    expect(replay.outcome).toBe('conflicting_report')
+    expect(restored.status(identity).settled?.settlementRef).toBe('settlement:legacy')
+  })
+})
