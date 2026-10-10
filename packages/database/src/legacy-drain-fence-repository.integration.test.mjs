@@ -1,8 +1,10 @@
 import { describe, expect, test, beforeAll, afterAll } from 'bun:test'
 import process from 'node:process'
+import { eq } from 'drizzle-orm'
 import { loadDatabaseCredentials } from '@control-plane/config'
 import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
 import { PostgresLegacyDrainFenceRepository } from './legacy-drain-fence-repository.ts'
+import { langgraphLegacyDrainFences } from './schema/langgraph-legacy-drain-fences.ts'
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
@@ -102,4 +104,94 @@ describe.skipIf(!enabled)('hosted legacy drain fence in PostgreSQL', () => {
     },
     integrationTestTimeout(60_000)
   )
+
+  describe('counter exhaustion refuses before any write', () => {
+    const maximum = Number.MAX_SAFE_INTEGER
+    const boundaryThread = (name) => `${workspaceId}:${executionId}:boundary-${name}`
+    const seed = (storageThreadId, generation, revision) =>
+      isolated.application.insert(langgraphLegacyDrainFences).values({
+        storageThreadId,
+        owner: null,
+        generation,
+        revision,
+        updatedAt: new Date('2026-10-10T00:00:00.000Z'),
+      })
+    const rowOf = async (storageThreadId) => {
+      const [row] = await isolated.application
+        .select()
+        .from(langgraphLegacyDrainFences)
+        .where(eq(langgraphLegacyDrainFences.storageThreadId, storageThreadId))
+      return row
+    }
+
+    test('the last generation a release can hand back is released, and the claim after it is refused before any write', async () => {
+      const thread = boundaryThread('generation')
+      await seed(thread, maximum - 2, 1)
+      const issued = await fences.claim({ storageThreadId: thread, owner: 'owner-a' })
+      expect(issued).toEqual({
+        storageThreadId: thread,
+        owner: 'owner-a',
+        generation: maximum - 1,
+        revision: 2,
+      })
+      expect(await fences.release(issued)).toBe(true)
+      const stored = await rowOf(thread)
+      expect(stored).toMatchObject({ owner: null, generation: maximum - 1, revision: 3 })
+      await expect(
+        fences.claim({ storageThreadId: thread, owner: 'owner-b' })
+      ).rejects.toMatchObject({ code: 'LEGACY_DRAIN_FENCE_STATE_INVALID' })
+      expect(await rowOf(thread)).toEqual(stored)
+    })
+
+    test('a revision at the last issuable value releases to the stored maximum, and the claim after it is refused before any write', async () => {
+      const thread = boundaryThread('revision')
+      await seed(thread, 1, maximum - 2)
+      const issued = await fences.claim({ storageThreadId: thread, owner: 'owner-a' })
+      expect(issued).toEqual({
+        storageThreadId: thread,
+        owner: 'owner-a',
+        generation: 2,
+        revision: maximum - 1,
+      })
+      expect(await fences.release(issued)).toBe(true)
+      const stored = await rowOf(thread)
+      expect(stored).toMatchObject({ owner: null, generation: 2, revision: maximum })
+      await expect(
+        fences.claim({ storageThreadId: thread, owner: 'owner-b' })
+      ).rejects.toMatchObject({ code: 'LEGACY_DRAIN_FENCE_STATE_INVALID' })
+      expect(await rowOf(thread)).toEqual(stored)
+    })
+
+    test('a claim whose generation or revision would reach the safe-integer maximum is refused before any write', async () => {
+      const generationThread = boundaryThread('generation-at-maximum')
+      await seed(generationThread, maximum - 1, 1)
+      const beforeGeneration = await rowOf(generationThread)
+      await expect(
+        fences.claim({ storageThreadId: generationThread, owner: 'owner-a' })
+      ).rejects.toMatchObject({ code: 'LEGACY_DRAIN_FENCE_STATE_INVALID' })
+      expect(await rowOf(generationThread)).toEqual(beforeGeneration)
+
+      const revisionThread = boundaryThread('revision-at-maximum')
+      await seed(revisionThread, 1, maximum - 1)
+      const beforeRevision = await rowOf(revisionThread)
+      await expect(
+        fences.claim({ storageThreadId: revisionThread, owner: 'owner-a' })
+      ).rejects.toMatchObject({ code: 'LEGACY_DRAIN_FENCE_STATE_INVALID' })
+      expect(await rowOf(revisionThread)).toEqual(beforeRevision)
+    })
+
+    test('a release refuses a handle outside the counter domain and leaves the held claim in place', async () => {
+      const thread = boundaryThread('handle-domain')
+      const held = await fences.claim({ storageThreadId: thread, owner: 'owner-a' })
+      const before = await rowOf(thread)
+      await expect(fences.release({ ...held, generation: maximum })).rejects.toMatchObject({
+        code: 'LEGACY_FENCE_INVALID',
+      })
+      await expect(fences.release({ ...held, revision: maximum })).rejects.toMatchObject({
+        code: 'LEGACY_FENCE_INVALID',
+      })
+      expect(await rowOf(thread)).toEqual(before)
+      expect(await fences.release(held)).toBe(true)
+    })
+  })
 })

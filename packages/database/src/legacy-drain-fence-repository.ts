@@ -44,7 +44,24 @@ function counter(value: number): number {
   return value
 }
 
+/**
+ * The successor a claim issues for a generation or revision. counter() accepts [1, MAXIMUM_COUNTER - 1], so a value
+ * whose successor is MAXIMUM_COUNTER is refused here, before any write. Otherwise the claim would issue a handle that
+ * its own release refuses, and that claim could never be released.
+ */
 function nextCounter(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value >= MAXIMUM_COUNTER - 1) {
+    throw new LegacyDrainFenceRepositoryError('LEGACY_DRAIN_FENCE_STATE_INVALID')
+  }
+  return value + 1
+}
+
+/**
+ * The stored revision after a release. The release's revision already passed counter() and matched the row, and the
+ * column accepts MAXIMUM_COUNTER, so a valid release does not refuse here. A fence stored at MAXIMUM_COUNTER is refused
+ * by every later claim before any write.
+ */
+function releasedRevision(value: number): number {
   if (!Number.isSafeInteger(value) || value < 1 || value >= MAXIMUM_COUNTER) {
     throw new LegacyDrainFenceRepositoryError('LEGACY_DRAIN_FENCE_STATE_INVALID')
   }
@@ -152,7 +169,7 @@ export class PostgresLegacyDrainFenceRepository {
       }
       const [released] = await transaction
         .update(langgraphLegacyDrainFences)
-        .set({ owner: null, revision: nextCounter(row.revision), updatedAt: new Date() })
+        .set({ owner: null, revision: releasedRevision(row.revision), updatedAt: new Date() })
         .where(
           and(
             eq(langgraphLegacyDrainFences.storageThreadId, storageThreadId),

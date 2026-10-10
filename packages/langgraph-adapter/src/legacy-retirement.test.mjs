@@ -1,9 +1,12 @@
 import { describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { readFile, rm } from 'node:fs/promises'
 import { emptyCheckpoint } from '@langchain/langgraph'
 import { LangGraphSqliteCheckpointSaver } from './index.ts'
 import {
   LEGACY_CHECKPOINT_NAMESPACE,
+  LEGACY_DRAIN_FENCE_GENERATION_NAMESPACE,
+  LEGACY_DRAIN_FENCE_NAMESPACE,
   LEGACY_EXECUTION_NAMESPACE,
   LEGACY_EXECUTION_PLAN_NAMESPACE,
   LEGACY_GRAPH_API,
@@ -181,6 +184,133 @@ describe('legacy LangGraph retirement controls (M16.03, #940)', () => {
         reopened.close()
       }
     } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('a generation at the safe-integer boundary is refused before any write, and the last issuable one releases', async () => {
+    const { directory, provider } = await disposableStore()
+    const maximum = Number.MAX_SAFE_INTEGER
+    const idOf = (thread) => `fence:${createHash('sha256').update(thread).digest('hex')}`
+    const seedCounter = (thread, generation) =>
+      provider.transaction((tx) =>
+        tx.put({
+          namespace: LEGACY_DRAIN_FENCE_GENERATION_NAMESPACE,
+          id: idOf(thread),
+          value: { storageThreadId: thread, generation },
+        })
+      )
+    const stateOf = (thread) =>
+      provider.transaction(async (tx) => ({
+        counter: await tx.get(LEGACY_DRAIN_FENCE_GENERATION_NAMESPACE, idOf(thread)),
+        live: await tx.get(LEGACY_DRAIN_FENCE_NAMESPACE, idOf(thread)),
+      }))
+    try {
+      const last = `${storageThread}:last-generation`
+      await seedCounter(last, maximum - 2)
+      const issued = await claimLegacyDrainFence(provider, {
+        storageThreadId: last,
+        owner: 'drain-a',
+      })
+      expect(issued.generation).toBe(maximum - 1)
+      expect(await releaseLegacyDrainFence(provider, issued)).toBe(true)
+      const stored = await stateOf(last)
+      await expect(
+        claimLegacyDrainFence(provider, { storageThreadId: last, owner: 'drain-b' })
+      ).rejects.toMatchObject({ code: 'LEGACY_DRAIN_FENCE_STATE_INVALID' })
+      expect(await stateOf(last)).toEqual(stored)
+
+      // A counter at the maximum, or one below it, would issue a generation no release accepts: refused before any write.
+      for (const [name, generation] of [
+        ['at-maximum', maximum - 1],
+        ['maximum', maximum],
+      ]) {
+        const thread = `${storageThread}:${name}`
+        await seedCounter(thread, generation)
+        const before = await stateOf(thread)
+        await expect(
+          claimLegacyDrainFence(provider, { storageThreadId: thread, owner: 'drain-a' })
+        ).rejects.toMatchObject({ code: 'LEGACY_DRAIN_FENCE_STATE_INVALID' })
+        expect(await stateOf(thread)).toEqual(before)
+      }
+
+      // A counter past the safe range does not parse as a generation: the persisted record fails closed before any write.
+      const unsafe = `${storageThread}:past-safe-range`
+      await seedCounter(unsafe, maximum + 1)
+      const beforeUnsafe = await stateOf(unsafe)
+      await expect(
+        claimLegacyDrainFence(provider, { storageThreadId: unsafe, owner: 'drain-a' })
+      ).rejects.toMatchObject({ code: 'LEGACY_DRAIN_FENCE_INVALID' })
+      expect(await stateOf(unsafe)).toEqual(beforeUnsafe)
+    } finally {
+      provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('a release refuses a handle outside the counter domain before reading the fence', async () => {
+    const { directory, provider } = await disposableStore()
+    try {
+      const held = await claimLegacyDrainFence(provider, {
+        storageThreadId: storageThread,
+        owner: 'drain-a',
+      })
+      await expect(
+        releaseLegacyDrainFence(provider, { ...held, generation: Number.MAX_SAFE_INTEGER })
+      ).rejects.toMatchObject({ code: 'LEGACY_FENCE_INVALID' })
+      await expect(
+        releaseLegacyDrainFence(provider, { ...held, revision: Number.MAX_SAFE_INTEGER })
+      ).rejects.toMatchObject({ code: 'LEGACY_FENCE_INVALID' })
+      expect(await releaseLegacyDrainFence(provider, held)).toBe(true)
+    } finally {
+      provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('a live revision outside the handle domain rolls back the claim and its counter, so nothing commits', async () => {
+    const { directory, provider } = await disposableStore()
+    const id = `fence:${createHash('sha256').update(storageThread).digest('hex')}`
+    const stateOf = () =>
+      provider.transaction(async (tx) => ({
+        counter: await tx.get(LEGACY_DRAIN_FENCE_GENERATION_NAMESPACE, id),
+        live: await tx.get(LEGACY_DRAIN_FENCE_NAMESPACE, id),
+      }))
+    try {
+      // The store performs both writes in the claim's transaction, then reports an out-of-domain revision for the live record.
+      for (const reported of [0, Number.MAX_SAFE_INTEGER]) {
+        const reportingOutOfDomain = {
+          transaction: (operation) =>
+            provider.transaction((tx) =>
+              operation({
+                get: (namespace, key) => tx.get(namespace, key),
+                put: async (input) => {
+                  const written = await tx.put(input)
+                  return input.namespace === LEGACY_DRAIN_FENCE_NAMESPACE
+                    ? { ...written, revision: reported }
+                    : written
+                },
+                delete: (namespace, key, revision) => tx.delete(namespace, key, revision),
+              })
+            ),
+        }
+        await expect(
+          claimLegacyDrainFence(reportingOutOfDomain, {
+            storageThreadId: storageThread,
+            owner: 'drain-a',
+          })
+        ).rejects.toMatchObject({ code: 'LEGACY_FENCE_INVALID' })
+        expect(await stateOf()).toEqual({ counter: undefined, live: undefined })
+      }
+      // Nothing committed, so the next honest claim is the first generation.
+      const honest = await claimLegacyDrainFence(provider, {
+        storageThreadId: storageThread,
+        owner: 'drain-a',
+      })
+      expect(honest.generation).toBe(1)
+      expect(await releaseLegacyDrainFence(provider, honest)).toBe(true)
+    } finally {
+      provider.close()
       await rm(directory, { recursive: true, force: true })
     }
   })

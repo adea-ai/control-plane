@@ -656,6 +656,25 @@ function requireIdentifier(value: string): string {
   return value
 }
 
+// The largest generation a claim issues, and the largest handle counter a release accepts. The PostgreSQL repository's
+// counter() accepts the same range, so both stores refuse the same values.
+const MAXIMUM_CLAIM_GENERATION = Number.MAX_SAFE_INTEGER - 1
+
+// The generation after previous. Refused before any write when previous is not a safe non-negative integer, or when
+// the new generation's handle could not be released.
+function nextGeneration(previous: number): number {
+  if (!Number.isSafeInteger(previous) || previous < 0 || previous >= MAXIMUM_CLAIM_GENERATION) {
+    throw new LegacyRetirementError('LEGACY_DRAIN_FENCE_STATE_INVALID')
+  }
+  return previous + 1
+}
+
+function requireHandleCounter(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAXIMUM_CLAIM_GENERATION) {
+    throw new LegacyRetirementError('LEGACY_FENCE_INVALID')
+  }
+}
+
 /**
  * A claim handle, returned by claimLegacyDrainFence and required by releaseLegacyDrainFence. A release
  * matches the exact generation and live revision, so a stale handle cannot release a later claim.
@@ -691,7 +710,7 @@ export async function claimLegacyDrainFence(
     }
     const counter = await tx.get(LEGACY_DRAIN_FENCE_GENERATION_NAMESPACE, id)
     const previous = counter === undefined ? 0 : parseGenerationRecord(counter.value).generation
-    const generation = previous + 1
+    const generation = nextGeneration(previous)
     // The counter is never deleted, so its revision only grows. An update names the revision it read.
     await tx.put({
       namespace: LEGACY_DRAIN_FENCE_GENERATION_NAMESPACE,
@@ -705,6 +724,8 @@ export async function claimLegacyDrainFence(
       id,
       value: { storageThreadId, owner, generation, claimedAt: now() },
     })
+    // A revision that release would refuse must not be returned. Throwing here rolls back the counter write too.
+    requireHandleCounter(written.revision)
     return { storageThreadId, owner, generation, revision: written.revision }
   })
 }
@@ -720,9 +741,8 @@ export async function releaseLegacyDrainFence(
 ): Promise<boolean> {
   const storageThreadId = requireIdentifier(claim.storageThreadId)
   const owner = requireIdentifier(claim.owner)
-  if (!Number.isSafeInteger(claim.generation) || claim.generation < 1) {
-    throw new LegacyRetirementError('LEGACY_FENCE_INVALID')
-  }
+  requireHandleCounter(claim.generation)
+  requireHandleCounter(claim.revision)
   return provider.transaction(async (tx) => {
     const id = fenceId(storageThreadId)
     const live = await tx.get(LEGACY_DRAIN_FENCE_NAMESPACE, id)
