@@ -396,6 +396,14 @@ test('actual production composition uses the canonical Pi tool authority and sha
       state: 'failed',
       error: { code: 'PI_CHILD_DELEGATION_DENIED' },
     })
+    // Lead-stop never cascades to child jobs (#1045): child cancellation is a
+    // separately authorized operation. The production composition wires that
+    // same canonical delegation service, so the explicit stop publishes the
+    // durable child-stop events through the shared service proven here.
+    await host.state.governedDelegationService.cancelChildren({
+      parentExecutionId: dispatch.executionId,
+      cancelledAt: host.at,
+    })
     expect(host.state.cancelChildCalls).toEqual([
       { parentExecutionId: dispatch.executionId, cancelledAt: host.at },
     ])
@@ -425,6 +433,12 @@ test('actual production composition uses the canonical Pi tool authority and sha
       host.principal
     )
     expect(replayed.data.state).toBe('failed')
+    // A repeated explicit child stop repairs the terminal publication
+    // idempotently without a second lifecycle transition or event.
+    await host.state.governedDelegationService.cancelChildren({
+      parentExecutionId: dispatch.executionId,
+      cancelledAt: host.at,
+    })
     expect(host.state.cancelChildCalls).toHaveLength(2)
     expect(
       host.state.retainedEvents.filter((event) => event.type === 'delegation.cancelled')
