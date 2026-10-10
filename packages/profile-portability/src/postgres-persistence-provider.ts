@@ -195,7 +195,7 @@ export class PostgresPersistenceProvider implements PersistenceProvider {
 
   /**
    * Schema guard. The canonical dependency for DDL is the hosted-server migration chain
-   * (`packages/database` drizzle migrations, 0069_persistence_records, applied by the migration
+   * (`packages/database` drizzle migrations, 0071_persistence_records, applied by the migration
    * role before the application starts): the application role must never create tables, so this
    * method verifies presence and fails typed when the chain has not run instead of issuing DDL.
    */
