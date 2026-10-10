@@ -234,6 +234,11 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
 }
 
 export { createControlApiApplication, createOpenApiDocument } from './application.js'
+export {
+  createCredentialAdministrationService,
+  type CredentialAdministrationComposition,
+  VaultCredentialAdministrationService,
+} from './credentials/credential-administration.service.js'
 export { createManagedCloudControlApiComposition } from './cloud-composition.js'
 export {
   DurableExecutionAcceptanceService,
