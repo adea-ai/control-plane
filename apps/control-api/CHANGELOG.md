@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.29.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.29.1...control-api-v1.29.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* **control-api:** settle completed lead attempt reservations exactly once ([#1068](https://github.com/adea-ai/control-plane/issues/1068)) ([2036405](https://github.com/adea-ai/control-plane/commit/2036405a90161ac23d49fb2bbced9bb640a27031))
+
 ## [1.29.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.29.0...control-api-v1.29.1) (2026-10-10)
 
 
