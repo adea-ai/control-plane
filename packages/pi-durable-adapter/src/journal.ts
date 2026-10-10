@@ -169,8 +169,11 @@ export class SqliteDurableJournal {
     })
   }
 
-  /** Undoes a recovery claim that was never decided (shutdown interrupted it): clears this
-   * process's owner fields and, if no later write bumped the epoch, restores the prior epoch. */
+  /** Undoes a recovery claim that reached no decision (a transient authority failure, or a
+   * shutdown interrupting it): clears this process's owner fields and restores the predecessor
+   * epoch only while the claimed epoch is still current. Restoring is safe here because the
+   * claimant has returned and no writer still holds that token. A declared denial must use
+   * releaseRecoveryDenial instead, so its fence is never reissued. */
   releaseRecoveryClaim(handleId: string, epoch: number): void {
     this.transaction(() => {
       const record = this.get(handleId)
@@ -179,6 +182,28 @@ export class SqliteDurableJournal {
         ...record,
         epoch: record.epoch === epoch ? epoch - 1 : record.epoch,
         detail: { ...record.detail, ownerPid: undefined, ownerEpoch: undefined },
+      })
+    })
+  }
+
+  /** Ends a recovery claim with a declared authority denial. The marker and the epoch advance are
+   * written only while the expected claim is still current, and the epoch moves forward rather
+   * than back, so the denied attempt's token is never accepted again. A superseded claim writes
+   * no marker and leaves the newer epoch alone; it clears only its own owner fields. */
+  releaseRecoveryDenial(handleId: string, epoch: number, recoveryBlocked: string): void {
+    this.transaction(() => {
+      const record = this.get(handleId)
+      if (record.detail['ownerPid'] !== process.pid || record.detail['ownerEpoch'] !== epoch) return
+      const held = record.epoch === epoch
+      this.save({
+        ...record,
+        epoch: held ? epoch + 1 : record.epoch,
+        detail: {
+          ...record.detail,
+          ownerPid: undefined,
+          ownerEpoch: undefined,
+          ...(held ? { recoveryBlocked } : {}),
+        },
       })
     })
   }

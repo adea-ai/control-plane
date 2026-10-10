@@ -1,14 +1,22 @@
 import type { PolicyControlledToolExecutionService } from '@control-plane/tool-execution'
 import type { DelegationEvent } from '@control-plane/orchestration'
-import { isRecoveryAuthorityDenial, PiDurableRuntimeAdapter } from './adapter.js'
+import {
+  isRecoveryAuthorityDenial,
+  isRecoveryUnavailable,
+  PiDurableRuntimeAdapter,
+} from './adapter.js'
 import type {
   PiDurableRuntimeOptions,
   PiDurableGovernedDelegateChildCompiler,
 } from './contracts.js'
 import { PiDurableEffectGate, SqliteDurableEffectGateStore } from './effect-gate.js'
 
-/** Codes persisted or reported for a retained record that recovery could not resume. */
-export type RecoveryBlockCode = 'PI_RECOVERY_AUTHORITY_BLOCKED' | 'PI_RECOVERY_UNCLASSIFIED'
+/** Codes reported for a retained record that recovery did not resume in this start. A declared
+ * denial is also persisted by the adapter, under the recovery claim that observed it. */
+export type RecoveryBlockCode =
+  | 'PI_RECOVERY_AUTHORITY_BLOCKED'
+  | 'PI_RECOVERY_UNAVAILABLE'
+  | 'PI_RECOVERY_UNCLASSIFIED'
 
 export interface NodePiDurableCompositionOptions extends Omit<
   PiDurableRuntimeOptions,
@@ -71,21 +79,13 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
         try {
           await adapter.reconcile(handle)
         } catch (error) {
-          // Only a denial observed under this process's exclusive claim is revocation, and only
-          // that is persisted. Any other failure is unclassified: fenced for this start, retried later.
-          if (isRecoveryAuthorityDenial(error)) {
+          // The adapter persisted any declared denial under the claim it held; this start only
+          // reports. Unavailable and unclassified failures fence this start and persist nothing.
+          if (isRecoveryAuthorityDenial(error))
             blocked.push({ handleId: record.handleId, code: 'PI_RECOVERY_AUTHORITY_BLOCKED' })
-            try {
-              const current = adapter.journal.get(record.handleId)
-              adapter.journal.update(record.handleId, current.epoch, {
-                detail: { ...current.detail, recoveryBlocked: 'PI_RECOVERY_AUTHORITY_BLOCKED' },
-              })
-            } catch {
-              /* A newer owner keeps its record. */
-            }
-          } else {
-            blocked.push({ handleId: record.handleId, code: 'PI_RECOVERY_UNCLASSIFIED' })
-          }
+          else if (isRecoveryUnavailable(error))
+            blocked.push({ handleId: record.handleId, code: 'PI_RECOVERY_UNAVAILABLE' })
+          else blocked.push({ handleId: record.handleId, code: 'PI_RECOVERY_UNCLASSIFIED' })
         }
       }
     }

@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { canonicalJsonStringify } from '@control-plane/contracts'
+import { RuntimeAdapterError } from '@control-plane/runtime-sdk'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { PiDurableRuntimeAdapter } from './adapter.ts'
 import { createNodePiDurableRuntime } from './composition.ts'
@@ -692,7 +693,7 @@ test('composition startup isolates revoked retained work and recovers the next v
       assertAuthority: async (authority) => {
         authorities.push(authority.request.attemptId)
         if (authority.request.attemptId === revoked.attemptId)
-          throw new Error('secret-revoked-grant')
+          throw new Error('PI_CANONICAL_AUTHORITY_REJECTED')
       },
       reconcileInference: async () => 'safe_to_resume',
       engineFactory: async () => {
@@ -713,8 +714,12 @@ test('composition startup isolates revoked retained work and recovers the next v
     expect(runtime.recoveryBlocked).toEqual([
       { handleId: revoked.handleId, code: 'PI_RECOVERY_AUTHORITY_BLOCKED' },
     ])
-    expect(JSON.stringify(runtime.recoveryBlocked)).not.toContain('secret-revoked-grant')
-    expect(runtime.adapter.journal.get(revoked.handleId).state).toBe('running')
+    // The declared denial is persisted under its own claim: marker set, epoch advanced once.
+    const persisted = runtime.adapter.journal.get(revoked.handleId)
+    expect(persisted.detail.recoveryBlocked).toBe('PI_RECOVERY_AUTHORITY_BLOCKED')
+    expect(persisted.epoch).toBe(revoked.epoch + 2)
+    expect(persisted.detail.ownerPid).toBeUndefined()
+    expect(persisted.state).toBe('running')
     expect(runtime.adapter.journal.get(valid.handleId).state).toBe('completed')
     expect((await runtime.adapter.inspect()).health).toBe('healthy')
     expect((await runtime.adapter.status(first)).handle).toEqual(first)
@@ -1311,6 +1316,171 @@ test('a recovery run whose Pi store lease is held elsewhere is reconcilable, not
     expect({ engines, sends }).toEqual({ engines: 1, sends: 1 })
   } finally {
     await adapter?.close()
+    await seed.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test.each([
+  [
+    'typed unavailable',
+    () =>
+      new RuntimeAdapterError({
+        code: 'PI_AUTHORITY_UNAVAILABLE',
+        classification: 'unavailable',
+        message: 'PI_AUTHORITY_UNAVAILABLE',
+        retryable: true,
+      }),
+    'PI_RECOVERY_UNAVAILABLE',
+  ],
+  [
+    'untyped transport',
+    () => new Error('connect ECONNRESET secret-transport-token'),
+    'PI_RECOVERY_UNCLASSIFIED',
+  ],
+])(
+  'a transient %s authority failure fences this start, persists no revocation, and resumes on healthy startup',
+  async (_label, failure, code) => {
+    const directory = mkdtempSync(join(tmpdir(), 'pi-transient-authority-'))
+    const setup = fixture(directory)
+    const seed = new PiDurableRuntimeAdapter(setup.options)
+    let runtime, healthy
+    try {
+      const handle = await seed.start(setup.request)
+      await seed.drain()
+      const stored = seed.journal.get(handle.handleId)
+      seed.journal.update(handle.handleId, stored.epoch, {
+        state: 'running',
+        detail: { inferencePending: true },
+      })
+      const retained = seed.journal.get(handle.handleId)
+      await seed.close()
+      runtime = await createNodePiDurableRuntime({
+        ...setup.options,
+        assertAuthority: async () => {
+          throw failure()
+        },
+        reconcileInference: async () => 'safe_to_resume',
+      })
+      expect(runtime.recoveryBlocked).toEqual([{ handleId: handle.handleId, code }])
+      // The undone claim leaves the retained record exactly as it was: no marker, no owner.
+      expect(runtime.adapter.journal.get(handle.handleId)).toEqual(retained)
+      expect(JSON.stringify(runtime.recoveryBlocked)).not.toContain('secret-transport-token')
+      await runtime.close()
+      runtime = undefined
+      healthy = await createNodePiDurableRuntime({
+        ...setup.options,
+        reconcileInference: async () => 'safe_to_resume',
+      })
+      await healthy.adapter.drain()
+      expect(healthy.recoveryBlocked).toEqual([])
+      expect(healthy.adapter.journal.get(handle.handleId).state).toBe('completed')
+    } finally {
+      await runtime?.close()
+      await healthy?.close()
+      await seed.close().catch(() => {})
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }
+)
+
+test('a denied recovery persists its fence before a newer owner claims, and the newer owner keeps its record', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-release-to-catch-'))
+  const setup = fixture(directory)
+  const seed = new PiDurableRuntimeAdapter(setup.options)
+  let runtime, newerOwner
+  try {
+    const handle = await seed.start(setup.request)
+    await seed.drain()
+    const stored = seed.journal.get(handle.handleId)
+    seed.journal.update(handle.handleId, stored.epoch, {
+      state: 'running',
+      detail: { inferencePending: true },
+    })
+    await seed.close()
+    runtime = await createNodePiDurableRuntime({
+      ...setup.options,
+      assertAuthority: async () => {
+        throw new Error('PI_CANONICAL_AUTHORITY_REJECTED')
+      },
+      reconcileInference: async () => 'safe_to_resume',
+      onAdapterReady: (adapter) => {
+        const reconcile = adapter.reconcile.bind(adapter)
+        adapter.reconcile = async (target) => {
+          try {
+            return await reconcile(target)
+          } catch (error) {
+            // The denied claim is already released. A second live owner claims the record
+            // before composition observes the denial.
+            const current = adapter.journal.get(target.handleId)
+            const epoch = adapter.journal.claim(target.handleId, {
+              epoch: current.epoch,
+              state: current.state,
+            })
+            adapter.journal.update(target.handleId, epoch, {
+              detail: { ...current.detail, ownerPid: process.ppid, ownerEpoch: epoch },
+            })
+            newerOwner = adapter.journal.get(target.handleId)
+            throw error
+          }
+        }
+      },
+    })
+    // Retained E, denied claim E+1, denial release E+2, newer owner claim E+3.
+    expect(newerOwner.epoch).toBe(stored.epoch + 3)
+    expect(newerOwner.detail.ownerPid).toBe(process.ppid)
+    expect(runtime.recoveryBlocked).toEqual([
+      { handleId: handle.handleId, code: 'PI_RECOVERY_AUTHORITY_BLOCKED' },
+    ])
+    expect(runtime.adapter.journal.get(handle.handleId)).toEqual(newerOwner)
+    expect(newerOwner.detail.recoveryBlocked).toBe('PI_RECOVERY_AUTHORITY_BLOCKED')
+    expect(() => runtime.adapter.journal.assertOwner(handle.handleId, stored.epoch + 1)).toThrow(
+      'STALE_OWNER'
+    )
+  } finally {
+    await runtime?.close()
+    await seed.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a denial superseded while its check is pending is reported in memory and never written onto the newer epoch', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-superseded-denial-'))
+  const setup = fixture(directory)
+  const seed = new PiDurableRuntimeAdapter(setup.options)
+  let runtime, adapter
+  try {
+    const handle = await seed.start(setup.request)
+    await seed.drain()
+    const stored = seed.journal.get(handle.handleId)
+    seed.journal.update(handle.handleId, stored.epoch, {
+      state: 'running',
+      detail: { inferencePending: true },
+    })
+    await seed.close()
+    runtime = await createNodePiDurableRuntime({
+      ...setup.options,
+      onAdapterReady: (ready) => {
+        adapter = ready
+      },
+      assertAuthority: async () => {
+        // A public command supersedes the held recovery claim while its authority check is pending.
+        const current = adapter.journal.get(handle.handleId)
+        adapter.journal.claim(handle.handleId, { epoch: current.epoch, state: current.state })
+        throw new Error('PI_CANONICAL_AUTHORITY_REJECTED')
+      },
+      reconcileInference: async () => 'safe_to_resume',
+    })
+    expect(runtime.recoveryBlocked).toEqual([
+      { handleId: handle.handleId, code: 'PI_RECOVERY_AUTHORITY_BLOCKED' },
+    ])
+    // Claim E+1 was superseded at E+2: the denial writes no marker and no owner fields.
+    const superseded = runtime.adapter.journal.get(handle.handleId)
+    expect(superseded.epoch).toBe(stored.epoch + 2)
+    expect(superseded.detail.recoveryBlocked).toBeUndefined()
+    expect(superseded.detail.ownerPid).toBeUndefined()
+  } finally {
+    await runtime?.close()
     await seed.close().catch(() => {})
     rmSync(directory, { recursive: true, force: true })
   }
