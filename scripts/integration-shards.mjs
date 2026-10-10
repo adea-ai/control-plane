@@ -97,7 +97,10 @@ export const INTEGRATION_SHARDS = [
       },
       {
         package: '.',
-        files: ['./tests/langgraph-retirement-inventory-pg.integration.test.mjs'],
+        files: [
+          './tests/langgraph-retirement-inventory-pg.integration.test.mjs',
+          './tests/langgraph-retirement-status-adapter.integration.test.mjs',
+        ],
       },
       {
         package: 'apps/workflow-worker',
