@@ -45,7 +45,15 @@ import {
   PiDurableLeadError,
   type PiDurableLeadAdmission,
   type PiDurableLeadAuthority,
+  type PiDurableLeadFencedResult,
 } from './pi-durable-lead.service.js'
+import {
+  fencedOperationPolicy,
+  parseLeadProductFence,
+  type LeadFenceVariant,
+  type LeadIntentFenceFacts,
+  type LeadOperation,
+} from '../models/lead-product-fence.js'
 
 const Digest = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 const Ref = z.string().min(1).max(256)
@@ -80,7 +88,7 @@ export interface PiLeadProductAuthorityPort {
     intentId: string
     workspaceId: string
     principalId: string
-  }): Promise<VerifiedPiLeadIntentEvidence | undefined>
+  }): Promise<VerifiedPiLeadIntentEvidence | LeadIntentFenceFacts | undefined>
 }
 export interface PiLeadIntentIds {
   readonly executionId: z.output<typeof IdentifierSchemas.executionId>
@@ -398,7 +406,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     intentId: string
     principal: ServicePrincipal
     operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
-  }): Promise<PiDurableLeadAdmission> {
+  }): Promise<PiDurableLeadAdmission | PiDurableLeadFencedResult> {
     return this.#safe(async () => {
       const principal = ServicePrincipalSchema.parse(input.principal)
       const requiredScope =
@@ -412,11 +420,16 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       if (!principal.scopes.includes(requiredScope)) denied()
       if (!principal.workspaceIds.includes(IdentifierSchemas.workspaceId.parse(input.workspaceId)))
         denied()
-      const evidence = await this.#evidence(
+      const current = await this.#readUnion(
         input.workspaceId,
         input.intentId,
         principal.principalId
       )
+      if (current === undefined) VerifiedPiLeadIntentEvidenceSchema.parse(undefined)
+      if (current === undefined) throw new Error('unreachable')
+      if (current.kind === 'fenced')
+        return this.#fencedResolve(input, current.variant, current.facts, principal)
+      const evidence = current.evidence
       const workspaceScope = evidence.projectId === undefined || evidence.projectId === null
       if (workspaceScope) {
         if (!this.options.scopeAuthority || !this.options.inspectRuntime)
@@ -652,11 +665,25 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       )
         denied()
       if (operation === 'prepare' || operation === 'dispatch') this.#assertPreparationLive(marker)
-      const evidence = await this.#evidence(
+      const product = await this.#readUnion(
         admission.workspaceId,
         admission.intentId,
         checked.principalId
       )
+      if (product === undefined) VerifiedPiLeadIntentEvidenceSchema.parse(undefined)
+      if (product === undefined) throw new Error('unreachable')
+      if (product.kind === 'fenced') {
+        this.#assertFencedCurrent(
+          admission,
+          product.variant,
+          product.facts,
+          checked.principalId,
+          operation,
+          marker
+        )
+        return
+      }
+      const evidence = product.evidence
       if (hash({ evidence, planPin: marker.planPin }) !== marker.evidenceDigest) conflict()
       const current = project(
         await this.canonicalAuthority.get(
@@ -833,20 +860,32 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     )
       throw new PiDurableLeadError('PI_LEAD_SCOPE_REJECTED')
   }
-  async #evidence(
+  async #readUnion(
     workspaceId: string,
     intentId: string,
     principalId: string
-  ): Promise<VerifiedPiLeadIntentEvidence> {
+  ): Promise<
+    | { readonly kind: 'evidence'; readonly evidence: VerifiedPiLeadIntentEvidence }
+    | {
+        readonly kind: 'fenced'
+        readonly variant: LeadFenceVariant
+        readonly facts: LeadIntentFenceFacts
+      }
+    | undefined
+  > {
     z.uuid().parse(intentId)
-    const evidence = VerifiedPiLeadIntentEvidenceSchema.parse(
-      await this.options.product.readCurrent({
-        schemaVersion: 'pi-lead-intent/v1',
-        intentId,
-        workspaceId,
-        principalId,
-      })
+    const raw = await this.options.product.readCurrent({
+      schemaVersion: 'pi-lead-intent/v1',
+      intentId,
+      workspaceId,
+      principalId,
+    })
+    if (raw === undefined) return undefined
+    const fenced = parseLeadProductFence(raw, { workspaceId, intentId }, () =>
+      Date.parse(this.#now())
     )
+    if (fenced) return fenced
+    const evidence = VerifiedPiLeadIntentEvidenceSchema.parse(raw)
     if (
       evidence.intentId !== intentId ||
       evidence.workspaceId !== workspaceId ||
@@ -855,7 +894,113 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       denied()
     if (Date.parse(evidence.expiresAt) <= Date.parse(this.#now()))
       throw new PiDurableLeadError('PI_LEAD_DEADLINE_EXPIRED')
-    return evidence
+    return { kind: 'evidence', evidence }
+  }
+  /**
+   * Root-approved M18.01.3 fence routing: minimal v1 refuses every operation; pinned v2
+   * permits only current authorized status/progress and original-actor cancellation against
+   * matching retained revision/scope — never prepare, dispatch, resume or publication, and
+   * before any marker, inbox, attempt or model path runs.
+   */
+  #fencedResolve(
+    input: {
+      workspaceId: string
+      intentId: string
+      operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    },
+    variant: LeadFenceVariant,
+    facts: LeadIntentFenceFacts,
+    principal: ServicePrincipal
+  ): PiDurableLeadFencedResult {
+    const operation = (input.operation ?? 'prepare') as LeadOperation
+    const decision = fencedOperationPolicy(variant)[operation]
+    if (decision === 'refuse') throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
+    if (variant !== 'v2' || facts.schemaVersion !== 'pi-lead-intent-fence/v2')
+      throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
+    if (!facts.allowedPrincipalIds.includes(principal.principalId)) denied()
+    const marker = this.store.marker(input.intentId)
+    if (decision === 'cancel-as-actor') {
+      if (!marker) denied()
+      // Original actor = the CP principal that originally admitted the retained intent;
+      // the fence's canonical actor must be the retained one (actor continuity).
+      if (marker.actorPrincipalId !== principal.principalId) denied()
+      if (
+        marker.intent.authorityRevision !== facts.authorityRevision ||
+        marker.intent.scopeRef !== facts.scopeRef ||
+        hash([...marker.intent.allowedPrincipalIds].toSorted()) !==
+          hash([...facts.allowedPrincipalIds].toSorted()) ||
+        (marker.intent.canonicalActorPrincipalId ?? null) !== facts.canonicalActorPrincipalId
+      )
+        conflict()
+    } else if (
+      marker &&
+      (marker.intent.authorityRevision !== facts.authorityRevision ||
+        marker.intent.scopeRef !== facts.scopeRef ||
+        hash([...marker.intent.allowedPrincipalIds].toSorted()) !==
+          hash([...facts.allowedPrincipalIds].toSorted()))
+    )
+      conflict()
+    return Object.freeze({
+      schemaVersion: 'pi-lead-fenced/v1',
+      kind: 'fenced',
+      operation: operation as 'status' | 'progress' | 'cancel',
+      fenceVariant: variant,
+      retainedMatch: marker !== undefined,
+      fence: Object.freeze({
+        intentId: facts.intentId,
+        workspaceId: facts.workspaceId,
+        fencedAt: facts.rollbackFence.fencedAt,
+        reason: facts.rollbackFence.reason,
+        actor: facts.rollbackFence.actor,
+        authorityRevision: facts.authorityRevision,
+        canonicalActorPrincipalId: facts.canonicalActorPrincipalId,
+        scopeRef: facts.scopeRef,
+        allowedPrincipalIds: [...facts.allowedPrincipalIds],
+      }),
+    })
+  }
+  /** Fenced counterpart of `assertCurrent`: retained revision/scope must match the facts. */
+  #assertFencedCurrent(
+    admission: PiDurableLeadAdmission,
+    variant: LeadFenceVariant,
+    facts: LeadIntentFenceFacts,
+    principalId: string,
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel',
+    marker: LeadIntentMarker
+  ): void {
+    const decision = fencedOperationPolicy(variant)[operation as LeadOperation]
+    if (decision === 'refuse') throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
+    if (variant !== 'v2' || facts.schemaVersion !== 'pi-lead-intent-fence/v2')
+      throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
+    if (!facts.allowedPrincipalIds.includes(principalId)) denied()
+    if (decision === 'cancel-as-actor') {
+      if (marker.actorPrincipalId !== principalId) denied()
+      if ((marker.intent.canonicalActorPrincipalId ?? null) !== facts.canonicalActorPrincipalId)
+        denied()
+    }
+    if (
+      marker.intent.authorityRevision !== facts.authorityRevision ||
+      marker.intent.scopeRef !== facts.scopeRef ||
+      hash([...marker.intent.allowedPrincipalIds].toSorted()) !==
+        hash([...facts.allowedPrincipalIds].toSorted())
+    )
+      conflict()
+    if (
+      admission.admittedAttempt.executionId !== marker.intent.executionId ||
+      admission.admittedAttempt.attemptId !== marker.intent.attemptId
+    )
+      conflict()
+  }
+  async #evidence(
+    workspaceId: string,
+    intentId: string,
+    principalId: string
+  ): Promise<VerifiedPiLeadIntentEvidence> {
+    const current = await this.#readUnion(workspaceId, intentId, principalId)
+    if (current === undefined) VerifiedPiLeadIntentEvidenceSchema.parse(undefined)
+    if (current === undefined) throw new Error('unreachable')
+    if (current.kind === 'fenced') throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
+    return current.evidence
   }
   async #safe<T>(operation: () => Promise<T>): Promise<T> {
     try {
