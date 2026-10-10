@@ -448,10 +448,15 @@ export class DelegationService {
     readonly plan: ExecutionPlan
   }> {
     const parsed = DelegateInputSchema.parse(input)
+    // initialDispatch is transport routing attached at delegate() time, not
+    // delegation identity: the child-continuation repository recomputes the
+    // input digest over the stored admission command's plain delegation, and
+    // idempotent replay compares records across that same shape.
+    const { initialDispatch: _, ...delegationInput } = parsed
     // Dual-accept (#612): records persisted before the code-point cutover
     // carry the legacy locale-dependent digest of the same delegation.
-    const inputDigest = digestV2(parsed)
-    const legacyInputDigest = digest(parsed)
+    const inputDigest = digestV2(delegationInput)
+    const legacyInputDigest = digest(delegationInput)
     const existing = await this.#delegations.get(parsed.delegationId)
     if (existing) {
       if (existing.inputDigest !== inputDigest && existing.inputDigest !== legacyInputDigest)
