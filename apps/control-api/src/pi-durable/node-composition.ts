@@ -19,6 +19,10 @@ import { createPiLeadRuntimeAuthorityRouter } from './runtime-authority-router.j
 import { SqlitePiLeadPreparations, type PiLeadPreparationAuthority } from './lead-preparation.js'
 import type { PiDurableChildProgressScanner } from './child-progress-scanner.js'
 import { SqlitePiLeadRunningLifecycle } from './lead-running-lifecycle.js'
+import {
+  SqlitePiLeadTerminalSettlement,
+  type LeadTerminalSettlementResult,
+} from './lead-terminal-settlement.js'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 
 export interface NodePiDurableLeadCompositionOptions {
@@ -119,6 +123,30 @@ export async function createNodePiDurableLeadComposition(
           { findRuntimeHandle: (request) => runtime!.adapter.findExistingHandle(request) }
         )
       : undefined
+    const terminalSettlement = new SqlitePiLeadTerminalSettlement({
+      database,
+      journal: runtime.adapter.journal,
+      ledger: options.usage.ledger,
+    })
+    let terminalSettlementRun: Promise<unknown> | undefined
+    let terminalSettlementBlocked = false
+    const settleTerminalAccounting = (): Promise<LeadTerminalSettlementResult> => {
+      const pass = terminalSettlement.settle()
+      terminalSettlementRun = pass.then(
+        () => {
+          terminalSettlementBlocked = false
+        },
+        () => {
+          terminalSettlementBlocked = true
+        }
+      )
+      return pass
+    }
+    // A refused or interrupted pass leaves the reservation open; the next pass retries it.
+    const terminalSettlementTimer = setInterval(() => {
+      void settleTerminalAccounting().catch(() => undefined)
+    }, 30_000)
+    terminalSettlementTimer.unref()
     const recoverUnclaimedPreparations = async () => {
       if (!preparations || !options.preparationAuthority) return undefined
       return admission.recoverUnclaimedPreparations(
@@ -173,6 +201,7 @@ export async function createNodePiDurableLeadComposition(
         unclaimedPreparationRecovery = await recoverUnclaimedPreparations()
         preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
         childProgressRecovery = await options.childProgress?.scan(initializedRuntime.adapter)
+        await settleTerminalAccounting()
       },
       get preparationRecoveryBlocked() {
         return preparationRecoveryBlocked
@@ -186,10 +215,16 @@ export async function createNodePiDurableLeadComposition(
       get recoveryBlocked() {
         return initializedRuntime.recoveryBlocked
       },
+      settleTerminalAccounting,
+      get terminalSettlementBlocked() {
+        return terminalSettlementBlocked
+      },
       close() {
         closePromise ??= (async () => {
           if (preparationTimer) clearInterval(preparationTimer)
+          clearInterval(terminalSettlementTimer)
           await preparationRecovery
+          await terminalSettlementRun
           try {
             await initializedRuntime.close()
           } finally {
