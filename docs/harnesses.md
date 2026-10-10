@@ -93,6 +93,14 @@ coupling, and neither ever substitutes for the other:
   production compatibility is a root decision. The cloud remote drill's discovery
   fixture sets compatibility to `compatible` directly and does not exercise the
   reader.
+- Adapter inspection metadata declares `runtimeFamily: pi` for both managed Pi
+  (`packages/managed-pi-adapter/src/index.ts`) and durable Pi
+  (`packages/pi-durable-adapter/src/adapter.ts`), so that field does not identify
+  the managed driver. Certification keys and routing use the discovered driver
+  family, `managed-pi` for managed Pi, taken from the gateway driver contract.
+  Profile adapters compare the metadata field for equality
+  (`packages/profile-adapters/src/runtime.ts`). Changing the declared value is a
+  root decision and is not made here.
 - Runtime discovery records one harness version per node. Revisit this model if
   a node hosts several harnesses concurrently.
 - Canonical-JSON sites that persist harness-adjacent digests are tracked in
