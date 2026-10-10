@@ -1921,3 +1921,59 @@ function parentPlanInput() {
     compiledAt: '2026-08-25T17:00:00.000Z',
   }
 }
+
+// Mixed fractional-second precision: lexical order is not chronological, so
+// these regressions pin the chronological comparison at every evidence
+// boundary. `…18:05:00Z` (zero fraction) sorts AFTER `…18:05:00.100Z`
+// lexically even though it is earlier in time.
+const zeroFractionSecond = '2026-08-25T18:05:00Z'
+const threeDigitSecond = '2026-08-25T18:05:00.100Z'
+const nextSecondZeroFraction = '2026-08-25T18:05:01Z'
+
+test('a coarser-fraction terminal observation supersedes an earlier running snapshot chronologically', () => {
+  const buffer = trackedBuffer()
+  buffer.accept(runningEvent({ observedAt: zeroFractionSecond }))
+  buffer.accept(
+    runningEvent({
+      phase: 'completed',
+      observedAt: threeDigitSecond,
+      terminalResultRef: ids.resultRefA,
+    })
+  )
+  const packet = buffer.flush()
+  // Chronologically the terminal (.100) is later, so it must supersede the
+  // running snapshot even though it sorts before the zero-fraction lexically.
+  expect(packet.childSnapshots[0]).toMatchObject({
+    phase: 'completed',
+    lastObservedAt: threeDigitSecond,
+  })
+})
+
+test('the observation window span stays chronological across mixed fractional precision', () => {
+  const buffer = trackedBuffer()
+  buffer.accept(runningEvent({ observedAt: zeroFractionSecond }))
+  buffer.accept(runningEvent({ observedAt: threeDigitSecond }))
+  const packet = buffer.flush()
+  // The zero-fraction instant is the chronological minimum and the three-digit
+  // one the maximum, so the span must not be swapped by lexical ordering.
+  expect(packet.firstEventAt).toBe(zeroFractionSecond)
+  expect(packet.lastEventAt).toBe(threeDigitSecond)
+})
+
+test('a coarser-fraction terminal observation closes the generation against later events', () => {
+  const buffer = trackedBuffer()
+  buffer.accept(runningEvent({ observedAt: zeroFractionSecond }))
+  buffer.accept(
+    runningEvent({
+      phase: 'completed',
+      observedAt: threeDigitSecond,
+      terminalResultRef: ids.resultRefA,
+    })
+  )
+  // Because the terminal observation actually superseded, the generation is
+  // terminal and a later event must be rejected, not silently accepted.
+  expect(buffer.accept(runningEvent({ observedAt: nextSecondZeroFraction }))).toMatchObject({
+    outcome: 'rejected',
+    reason: 'terminated_generation',
+  })
+})

@@ -371,6 +371,26 @@ function isTerminalPhase(phase: ChildProgressEvidenceEvent['phase']): boolean {
 }
 
 /**
+ * One chronological ordering rule for every evidence timestamp boundary.
+ *
+ * Evidence timestamps are schema-validated ISO-8601 instants with variable
+ * fractional-second precision, and lexical order is not chronological across
+ * that variation: `…T00:00:00Z` sorts after `…T00:00:00.100Z` even though it
+ * is earlier. Comparing parsed instants (not raw strings) keeps a later
+ * terminal observation able to supersede an earlier running snapshot. The
+ * stored evidence strings, provenance and digests are unchanged — only the
+ * comparison is normalized.
+ */
+function compareChronologicalTimestamps(left: string, right: string): number {
+  const a = Date.parse(left)
+  const b = Date.parse(right)
+  if (!Number.isFinite(a) || !Number.isFinite(b))
+    throw new Error('CHILD_PROGRESS_EVIDENCE_TIMESTAMP_UNORDERABLE')
+  if (a === b) return 0
+  return a < b ? -1 : 1
+}
+
+/**
  * Placeholder digest with the exact serialized length of a real one, so size
  * projection includes the digest field without computing it twice.
  */
@@ -674,9 +694,10 @@ export class ChildProgressEvidenceBuffer {
     const delta = field === 'duplicateEventCount' ? { duplicateDelta: 1 } : { rejectedDelta: 1 }
     const open = this.#open
     const extendedSpan =
-      open.firstEventAt !== '' && observedAt < open.firstEventAt
+      open.firstEventAt !== '' && compareChronologicalTimestamps(observedAt, open.firstEventAt) < 0
         ? { firstEventAt: observedAt, lastEventAt: open.lastEventAt }
-        : open.lastEventAt === '' || observedAt > open.lastEventAt
+        : open.lastEventAt === '' ||
+            compareChronologicalTimestamps(observedAt, open.lastEventAt) > 0
           ? { firstEventAt: open.firstEventAt, lastEventAt: observedAt }
           : {}
     if (this.#fitsInPacket({ ...delta, ...extendedSpan })) {
@@ -726,9 +747,13 @@ export class ChildProgressEvidenceBuffer {
     const open = this.#open
     if (!open) return
     const firstEventAt =
-      open.firstEventAt === '' || observedAt < open.firstEventAt ? observedAt : open.firstEventAt
+      open.firstEventAt === '' || compareChronologicalTimestamps(observedAt, open.firstEventAt) < 0
+        ? observedAt
+        : open.firstEventAt
     const lastEventAt =
-      open.lastEventAt === '' || observedAt > open.lastEventAt ? observedAt : open.lastEventAt
+      open.lastEventAt === '' || compareChronologicalTimestamps(observedAt, open.lastEventAt) > 0
+        ? observedAt
+        : open.lastEventAt
     if (firstEventAt === open.firstEventAt && lastEventAt === open.lastEventAt) return
     // The span extension is recorded only while the projected packet stays
     // within the byte budget; otherwise the window keeps its existing span
@@ -783,7 +808,8 @@ export class ChildProgressEvidenceBuffer {
     // binding commits with the snapshot placement below: a failed placement
     // (byte-pressure seal that cannot place it) leaves the identity free.
     const attemptId = window.attemptId ?? event.childAttemptId
-    const supersedes = event.observedAt >= window.snapshot.lastObservedAt
+    const supersedes =
+      compareChronologicalTimestamps(event.observedAt, window.snapshot.lastObservedAt) >= 0
     const merged: ChildProgressSnapshot = {
       ...window.snapshot,
       // Surface the attempt bound to this generation once it is known.
