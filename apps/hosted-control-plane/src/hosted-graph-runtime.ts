@@ -15,12 +15,16 @@ import {
   PostgresExecutionRepository,
   PostgresGraphDefinitionRepository,
   PostgresInteractionRepository,
+  PostgresLegacyDrainFenceRepository,
   verifyLangGraphCheckpointSchema,
+  type LegacyDrainFenceHandle,
 } from '@control-plane/database'
 import {
   createDeclarativeGraphAssembly,
+  createLegacyAdmissionGuard,
   DurableGraphEventPublisher,
   LangGraphPostgresCheckpointProvider,
+  type AdmissionEvidence,
 } from '@control-plane/langgraph-adapter'
 import { OrchestrationGraphSegmentActivities } from '@control-plane/workflow-runtime'
 import {
@@ -44,11 +48,31 @@ const COMPATIBILITY: GraphCompatibilityEnvironment = {
   adapterVersion: '1.4.12',
 }
 
+/**
+ * This composition observes no deployed legacy inventory and wires no replacement evidence. Admissions therefore
+ * stay open. Closure cannot become eligible without an attested deployed observation.
+ */
+const UNOBSERVED_LEGACY_ADMISSION_EVIDENCE: AdmissionEvidence = {
+  admissibleGraphs: [],
+  replacements: [],
+  profiles: [],
+  failures: [],
+  closureRequested: false,
+}
+
 /** Real PostgreSQL checkpoint, catalog authority, event and effect assembly for Hosted Server. */
 export class HostedServerGraphRuntime {
   readonly operations: HostedGraphToolOperations
   readonly activities: OrchestrationGraphSegmentActivities
   readonly authority: ExecutionGraphAuthority
+  /** Operator handles for fencing a retained legacy thread before a drain or handoff. Nothing claims automatically. */
+  readonly legacyDrainFence: {
+    claim(input: {
+      readonly storageThreadId: string
+      readonly owner: string
+    }): Promise<LegacyDrainFenceHandle>
+    release(handle: LegacyDrainFenceHandle): Promise<boolean>
+  }
   readonly #database: ControlPlaneDatabase
   readonly #checkpointer: LangGraphPostgresCheckpointProvider
   #started = false
@@ -73,6 +97,7 @@ export class HostedServerGraphRuntime {
       ...(options.now === undefined ? {} : { now: options.now }),
     }
     this.operations = new HostedGraphToolOperations(operationsOptions)
+    const legacyFences = new PostgresLegacyDrainFenceRepository(options.database)
     const graphRepository = (workspaceId: string) =>
       new PostgresGraphDefinitionRepository(options.database, workspaceId)
     const assembly = createDeclarativeGraphAssembly({
@@ -93,12 +118,23 @@ export class HostedServerGraphRuntime {
         events: new PostgresExecutionEventRepository(options.database),
         ...(options.now === undefined ? {} : { now: options.now }),
       }),
+      resumeFence: legacyFences,
+      // A retained uncertain effect on the requested execution refuses admission until it is reconciled.
+      admissionGuard: createLegacyAdmissionGuard(async ({ executionId }) => ({
+        ...UNOBSERVED_LEGACY_ADMISSION_EVIDENCE,
+        retainedUncertainEffect:
+          (await executions.getExecution(executionId))?.state === 'reconciliation_required',
+      })),
       authorizeDefinitionAndInput: (definition) =>
         isHostedGraphDefinition(definition, this.operations.toolPin),
       compilerVersion: COMPATIBILITY.compilerVersion,
       adapterVersion: COMPATIBILITY.adapterVersion,
     })
     this.activities = new OrchestrationGraphSegmentActivities(assembly.orchestration)
+    this.legacyDrainFence = {
+      claim: (input) => legacyFences.claim(input),
+      release: (handle) => legacyFences.release(handle),
+    }
     this.authority = {
       validate: async (workspaceId, selection) => {
         try {

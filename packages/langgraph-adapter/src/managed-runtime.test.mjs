@@ -75,6 +75,9 @@ describe('provider-neutral declarative graph assembly', () => {
         },
       },
       events: { async publish() {} },
+      // Test doubles: this test covers compilation and admission policy, not legacy fencing or gating.
+      resumeFence: { async assertResumeAllowed() {} },
+      admissionGuard: { async assertNewAdmissionAllowed() {} },
       authorizeDefinitionAndInput: (definition, input) =>
         typeof input.value === 'number' &&
         definition.content.nodes.every(

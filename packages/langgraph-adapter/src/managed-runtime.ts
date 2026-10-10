@@ -24,6 +24,15 @@ export interface DeclarativeGraphAssemblyOptions {
   readonly checkpointer: BaseCheckpointSaver
   readonly operations: GraphNodeOperationPort
   readonly events: GraphEventPublisher
+  /** Required: the composition states how legacy resume and continue are fenced. */
+  readonly resumeFence: { assertResumeAllowed(storageThreadId: string): Promise<void> }
+  /** Required: the composition states how new legacy admissions are gated. */
+  readonly admissionGuard: {
+    assertNewAdmissionAllowed(request: {
+      readonly executionId: string
+      readonly storageThreadId: string
+    }): Promise<void>
+  }
   /** Additional server policy for catalog-owned definitions and inputs. */
   readonly authorizeDefinitionAndInput?: (
     definition: Parameters<
@@ -74,6 +83,8 @@ export function createDeclarativeGraphAssembly(options: DeclarativeGraphAssembly
     operations: options.operations,
     events: options.events,
     checkpointer: options.checkpointer,
+    resumeFence: options.resumeFence,
+    admissionGuard: options.admissionGuard,
     ...(options.compilerVersion === undefined ? {} : { compilerVersion: options.compilerVersion }),
     ...(options.adapterVersion === undefined ? {} : { adapterVersion: options.adapterVersion }),
   })
