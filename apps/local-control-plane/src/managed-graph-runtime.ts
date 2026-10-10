@@ -49,6 +49,19 @@ export interface ManagedLocalGraphRuntimeOptions {
   readonly initialize?: (resources: LocalGraphOperationResources) => Promise<void>
 }
 
+/**
+ * Retained-effect evidence for one execution: the canonical execution state, as the hosted composition reads it.
+ * An execution in reconciliation_required keeps its uncertain effect until the lifecycle reconciles it. A missing
+ * execution is not retained, because a first admission creates it. A read error propagates, so admission fails
+ * closed instead of proceeding on unknown state.
+ */
+async function retainedUncertainEffect(
+  api: LocalControlApiComposition,
+  executionId: string
+): Promise<boolean> {
+  return (await api.executions.getExecution(executionId))?.state === 'reconciliation_required'
+}
+
 /** Shares the catalog and compiler between admission and execution. Owns no database connection. */
 export class ManagedLocalGraphRuntime {
   readonly authority: GraphDefinitionExecutionAuthority
@@ -164,7 +177,12 @@ export class ManagedLocalGraphRuntime {
             : this.#operations,
         checkpointer: new LangGraphSqliteCheckpointSaver(this.#persistence, 'managed-graphs'),
         resumeFence: createLegacyResumeFence(this.#persistence),
-        admissionGuard: createLegacyAdmissionGuard(() => this.#legacyAdmissionEvidence()),
+        // Checked per execution, exactly as the hosted composition checks it. The execution id comes from the
+        // admission request, so one retained effect cannot admit a second run of that execution.
+        admissionGuard: createLegacyAdmissionGuard(async ({ executionId }) => ({
+          ...(await this.#legacyAdmissionEvidence()),
+          retainedUncertainEffect: await retainedUncertainEffect(controlApi, executionId),
+        })),
         events: new DurableGraphEventPublisher({
           commands: controlApi.commandRepository,
           attempts: controlApi.executions,
