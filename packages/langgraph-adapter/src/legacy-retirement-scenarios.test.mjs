@@ -6,9 +6,12 @@ import {
   LEGACY_STATUS_ITEM_LIMIT,
   LEGACY_STATUS_SCHEMA,
   buildLegacyOperatorStatus,
+  claimLegacyDrainFence,
+  createLegacyResumeFence,
   evaluateLegacyAdmissionGate,
   planLegacyDrain,
   readLegacyRemainder,
+  releaseLegacyDrainFence,
 } from './legacy-retirement.ts'
 import {
   adapterFor,
@@ -539,6 +542,58 @@ describe('legacy retirement scenarios in disposable state (M16.03, #940)', () =>
       expect(status.admission).toBeUndefined()
     } finally {
       provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('a stale release from an earlier claim cannot release a later claim by the same owner, across a restart', async () => {
+    const { directory, path, provider } = await disposableStore()
+    try {
+      const first = await claimLegacyDrainFence(provider, {
+        storageThreadId: storageThread,
+        owner: 'drain-a',
+      })
+      expect(await releaseLegacyDrainFence(provider, first)).toBe(true)
+      const second = await claimLegacyDrainFence(provider, {
+        storageThreadId: storageThread,
+        owner: 'drain-a',
+      })
+      expect(second.generation).toBe(first.generation + 1)
+      // Same-owner re-claim while held is idempotent: the held handle comes back and no generation is spent.
+      expect(
+        await claimLegacyDrainFence(provider, { storageThreadId: storageThread, owner: 'drain-a' })
+      ).toEqual(second)
+      provider.close()
+
+      const reopened = await reopen(path)
+      try {
+        // The live record was deleted and recreated, so its revision restarted. Only the generation tells the claims apart.
+        expect(second.revision).toBe(first.revision)
+        await expect(releaseLegacyDrainFence(reopened, first)).rejects.toMatchObject({
+          code: 'LEGACY_DRAIN_FENCE_STALE',
+        })
+        await expect(
+          releaseLegacyDrainFence(reopened, { ...second, owner: 'drain-b' })
+        ).rejects.toMatchObject({
+          code: 'LEGACY_DRAIN_FENCE_NOT_OWNED',
+        })
+        await expect(
+          createLegacyResumeFence(reopened).assertResumeAllowed(storageThread)
+        ).rejects.toMatchObject({ code: 'LEGACY_DRAIN_FENCE_HELD' })
+        expect(await releaseLegacyDrainFence(reopened, second)).toBe(true)
+        await expect(
+          createLegacyResumeFence(reopened).assertResumeAllowed(storageThread)
+        ).resolves.toBeUndefined()
+        // The generation keeps advancing across the restart, so no reclaim reuses an earlier one.
+        const third = await claimLegacyDrainFence(reopened, {
+          storageThreadId: storageThread,
+          owner: 'drain-a',
+        })
+        expect(third.generation).toBe(second.generation + 1)
+      } finally {
+        reopened.close()
+      }
+    } finally {
       await rm(directory, { recursive: true, force: true })
     }
   })

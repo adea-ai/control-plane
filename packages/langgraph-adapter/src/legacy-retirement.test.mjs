@@ -147,7 +147,10 @@ describe('legacy LangGraph retirement controls (M16.03, #940)', () => {
       const first = await adapterFor(provider, { calls }).run(request)
       expect(first).toMatchObject({ status: 'awaiting_input' })
       await writeExecution(provider, 'awaiting_input')
-      await claimLegacyDrainFence(provider, { storageThreadId: storageThread, owner: 'drain-a' })
+      const held = await claimLegacyDrainFence(provider, {
+        storageThreadId: storageThread,
+        owner: 'drain-a',
+      })
       await expect(
         claimLegacyDrainFence(provider, { storageThreadId: storageThread, owner: 'drain-b' })
       ).rejects.toMatchObject({ code: 'LEGACY_DRAIN_FENCE_HELD' })
@@ -165,20 +168,10 @@ describe('legacy LangGraph retirement controls (M16.03, #940)', () => {
           claimLegacyDrainFence(reopened, { storageThreadId: storageThread, owner: 'drain-b' })
         ).rejects.toMatchObject({ code: 'LEGACY_DRAIN_FENCE_HELD' })
         await expect(
-          releaseLegacyDrainFence(reopened, { storageThreadId: storageThread, owner: 'drain-b' })
+          releaseLegacyDrainFence(reopened, { ...held, owner: 'drain-b' })
         ).rejects.toMatchObject({ code: 'LEGACY_DRAIN_FENCE_NOT_OWNED' })
-        expect(
-          await releaseLegacyDrainFence(reopened, {
-            storageThreadId: storageThread,
-            owner: 'drain-a',
-          })
-        ).toBe(true)
-        expect(
-          await releaseLegacyDrainFence(reopened, {
-            storageThreadId: storageThread,
-            owner: 'drain-a',
-          })
-        ).toBe(false)
+        expect(await releaseLegacyDrainFence(reopened, held)).toBe(true)
+        expect(await releaseLegacyDrainFence(reopened, held)).toBe(false)
         const resumed = await adapterFor(reopened, {
           calls,
           resumeFence: createLegacyResumeFence(reopened),

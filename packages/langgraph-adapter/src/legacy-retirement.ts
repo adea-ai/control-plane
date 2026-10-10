@@ -17,6 +17,8 @@ export const LEGACY_CHECKPOINT_NAMESPACE = 'langgraph-checkpoints-v1'
 export const LEGACY_EXECUTION_NAMESPACE = 'executions'
 export const LEGACY_EXECUTION_PLAN_NAMESPACE = 'execution-plans'
 export const LEGACY_DRAIN_FENCE_NAMESPACE = 'langgraph-legacy-drain-fences'
+// Never deleted by any release, so each thread's generation only grows. A reclaim cannot reuse a generation.
+export const LEGACY_DRAIN_FENCE_GENERATION_NAMESPACE = 'langgraph-legacy-drain-fence-generations'
 export const LEGACY_SAVER_OWNER = 'legacy-langgraph-saver'
 export const TYPED_REPLACEMENT_OWNER = 'typed-replacement'
 export const LEGACY_STATUS_SCHEMA = 'langgraph-legacy-operator-status/v1'
@@ -177,11 +179,30 @@ const ExecutionRowSchema = z
   .passthrough()
 
 const PlanIdentitySchema = z.object({ executionPlanId: z.string() }).passthrough()
-const FenceRecordSchema = z.object({ owner: z.string() }).passthrough()
+const FenceRecordSchema = z
+  .object({
+    storageThreadId: z.string(),
+    owner: z.string(),
+    generation: z.number().int().positive(),
+    claimedAt: z.string(),
+  })
+  .passthrough()
 
-function fenceOwner(value: unknown): string | undefined {
+const GenerationRecordSchema = z
+  .object({ storageThreadId: z.string(), generation: z.number().int().nonnegative() })
+  .passthrough()
+
+// A persisted record that does not parse fails closed: it is never treated as absent or as someone else's.
+function parseFenceRecord(value: unknown): z.infer<typeof FenceRecordSchema> {
   const parsed = FenceRecordSchema.safeParse(value)
-  return parsed.success ? parsed.data.owner : undefined
+  if (!parsed.success) throw new LegacyRetirementError('LEGACY_DRAIN_FENCE_INVALID')
+  return parsed.data
+}
+
+function parseGenerationRecord(value: unknown): z.infer<typeof GenerationRecordSchema> {
+  const parsed = GenerationRecordSchema.safeParse(value)
+  if (!parsed.success) throw new LegacyRetirementError('LEGACY_DRAIN_FENCE_INVALID')
+  return parsed.data
 }
 
 function boundedInteger(value: number, minimum: number, maximum: number): number {
@@ -636,54 +657,83 @@ function requireIdentifier(value: string): string {
 }
 
 /**
+ * A claim handle, returned by claimLegacyDrainFence and required by releaseLegacyDrainFence. A release
+ * matches the exact generation and live revision, so a stale handle cannot release a later claim.
+ * Generations are monotonic per thread and survive releases, so a reclaim never reuses one.
+ */
+export interface LegacyDrainFenceClaim {
+  readonly storageThreadId: string
+  readonly owner: string
+  readonly generation: number
+  readonly revision: number
+}
+
+/**
  * Claims the handoff fence for a legacy thread. A second owner is refused until the first releases it.
- * The fence is a revision-checked record in the existing persistence transaction, so it survives a
- * physical restart. Claiming again with the same owner is idempotent.
+ * The live record survives a physical restart in the existing persistence transaction. Claiming again
+ * with the same owner while held is idempotent: it returns the held handle and does not advance the
+ * generation. Both writes use the persistence layer's revision CAS.
  */
 export async function claimLegacyDrainFence(
   provider: PersistenceProvider,
   input: { readonly storageThreadId: string; readonly owner: string; readonly now?: () => string }
-): Promise<{
-  readonly storageThreadId: string
-  readonly owner: string
-  readonly revision: number
-}> {
+): Promise<LegacyDrainFenceClaim> {
   const storageThreadId = requireIdentifier(input.storageThreadId)
   const owner = requireIdentifier(input.owner)
   const now = input.now ?? (() => new Date().toISOString())
   return provider.transaction(async (tx) => {
     const id = fenceId(storageThreadId)
-    const existing = await tx.get(LEGACY_DRAIN_FENCE_NAMESPACE, id)
-    if (existing !== undefined) {
-      if (fenceOwner(existing.value) === owner) {
-        return { storageThreadId, owner, revision: existing.revision }
-      }
-      throw new LegacyRetirementError('LEGACY_DRAIN_FENCE_HELD')
+    const live = await tx.get(LEGACY_DRAIN_FENCE_NAMESPACE, id)
+    if (live !== undefined) {
+      const record = parseFenceRecord(live.value)
+      if (record.owner !== owner) throw new LegacyRetirementError('LEGACY_DRAIN_FENCE_HELD')
+      return { storageThreadId, owner, generation: record.generation, revision: live.revision }
     }
+    const counter = await tx.get(LEGACY_DRAIN_FENCE_GENERATION_NAMESPACE, id)
+    const previous = counter === undefined ? 0 : parseGenerationRecord(counter.value).generation
+    const generation = previous + 1
+    // The counter is never deleted, so its revision only grows. An update names the revision it read.
+    await tx.put({
+      namespace: LEGACY_DRAIN_FENCE_GENERATION_NAMESPACE,
+      id,
+      ...(counter === undefined ? {} : { expectedRevision: counter.revision }),
+      value: { storageThreadId, generation },
+    })
+    // The live record was absent in this transaction, so a write without expectedRevision is create-only.
     const written = await tx.put({
       namespace: LEGACY_DRAIN_FENCE_NAMESPACE,
       id,
-      value: { storageThreadId, owner, claimedAt: now() },
+      value: { storageThreadId, owner, generation, claimedAt: now() },
     })
-    return { storageThreadId, owner, revision: written.revision }
+    return { storageThreadId, owner, generation, revision: written.revision }
   })
 }
 
-/** Releases only the owner's fence, checked against the exact revision it created. */
+/**
+ * Releases the fence only for the exact handle that claimed it. Returns false when nothing is held.
+ * A handle from an earlier generation or revision is refused with LEGACY_DRAIN_FENCE_STALE, and a handle
+ * for another owner with LEGACY_DRAIN_FENCE_NOT_OWNED. Nothing is deleted in either refusal.
+ */
 export async function releaseLegacyDrainFence(
   provider: PersistenceProvider,
-  input: { readonly storageThreadId: string; readonly owner: string }
+  claim: LegacyDrainFenceClaim
 ): Promise<boolean> {
-  const storageThreadId = requireIdentifier(input.storageThreadId)
-  const owner = requireIdentifier(input.owner)
+  const storageThreadId = requireIdentifier(claim.storageThreadId)
+  const owner = requireIdentifier(claim.owner)
+  if (!Number.isSafeInteger(claim.generation) || claim.generation < 1) {
+    throw new LegacyRetirementError('LEGACY_FENCE_INVALID')
+  }
   return provider.transaction(async (tx) => {
     const id = fenceId(storageThreadId)
-    const existing = await tx.get(LEGACY_DRAIN_FENCE_NAMESPACE, id)
-    if (existing === undefined) return false
-    if (fenceOwner(existing.value) !== owner) {
-      throw new LegacyRetirementError('LEGACY_DRAIN_FENCE_NOT_OWNED')
+    const live = await tx.get(LEGACY_DRAIN_FENCE_NAMESPACE, id)
+    if (live === undefined) return false
+    const record = parseFenceRecord(live.value)
+    if (record.owner !== owner) throw new LegacyRetirementError('LEGACY_DRAIN_FENCE_NOT_OWNED')
+    if (record.generation !== claim.generation || live.revision !== claim.revision) {
+      throw new LegacyRetirementError('LEGACY_DRAIN_FENCE_STALE')
     }
-    return tx.delete(LEGACY_DRAIN_FENCE_NAMESPACE, id, existing.revision)
+    // The revision was verified in this transaction, so the delete is an exact-revision CAS.
+    return tx.delete(LEGACY_DRAIN_FENCE_NAMESPACE, id, live.revision)
   })
 }
 
