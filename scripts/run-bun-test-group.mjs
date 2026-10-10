@@ -53,6 +53,7 @@ const repositoryGroups = {
     'tests/hosted-compose-lifecycle.test.mjs',
     'tests/hosted-graph-qualification.test.mjs',
     'tests/langgraph-retirement-inventory.test.mjs',
+    'tests/langgraph-retirement-status-adapter.test.mjs',
     'tests/m11-admission-rollout-admin.test.mjs',
     'tests/m11-acp-installation.test.mjs',
     'tests/m11-architecture-audit.test.mjs',
