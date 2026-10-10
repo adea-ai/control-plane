@@ -48,6 +48,18 @@ function watermarkOf(childUsage) {
   return found
 }
 
+/** Bounded wait that fails loudly instead of hanging the fixture; no retries. */
+function bounded(promise, label, ms = 15_000) {
+  let timer
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`BOUNDED_WAIT_TIMEOUT:${label}`)), ms)
+      timer.unref?.()
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
+
 describe('governed publisher report ordering', () => {
   test(
     'an old settle released after a newer one keeps the newer watermark, each report uses its own ledger sequence, replay mints no entry, and a missing lookup fails closed',
@@ -110,11 +122,24 @@ describe('governed publisher report ordering', () => {
           const firstPending = f.shared.settleUsage(authority, FIRST_KEY, FIRST_USAGE, {})
           // The first settle has now recorded its ledger entry (settleModelRequest returned
           // and the wrapper captured its sequence) and is parked before its lookup/report.
-          await parked
+          await bounded(parked, 'first-settle-parked')
 
-          const settled2 = await f.shared.settleUsage(authority, SECOND_KEY, SECOND_USAGE, {})
-          // Release the held FIRST settle: its report arrives after the newer one.
-          releaseFirst()
+          let settled2
+          try {
+            settled2 = await f.shared.settleUsage(authority, SECOND_KEY, SECOND_USAGE, {})
+            // Before releasing the older first settle: the NEWER request's actual ledger
+            // sequence IS the publication watermark.
+            const seq2BeforeRelease = f.settleSequenceByIdempotency.get(
+              `${settled2.accounting.sourceId}:settle`
+            )
+            expect(seq2BeforeRelease).toBeDefined()
+            expect(watermarkOf(f.childUsage)).toBe(seq2BeforeRelease)
+          } finally {
+            // Always release the owned parked request — even when the newer settle or an
+            // assertion throws — so fixture.close never meets a permanently parked request.
+            releaseFirst()
+            await firstPending.catch(() => {})
+          }
           const settled1 = await firstPending
 
           // Both real sources are distinct and each map sequence equals its OWN actual
