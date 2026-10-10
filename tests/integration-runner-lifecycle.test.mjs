@@ -16,6 +16,10 @@ import { fileURLToPath } from 'node:url'
 
 const repository = fileURLToPath(new URL('..', import.meta.url))
 const runner = join(repository, 'scripts/run-integration-tests.mjs')
+// The harness spawns the real runner and its interpreter doubles, so each
+// test's wall clock is spawn-bound; align it with the smoke lane's per-test
+// budget so the harness timeout above stays the binding bound.
+const runnerTestBudgetMs = 30_000
 
 // These executable doubles exercise the real runner without a Docker engine,
 // network target, database, install, build, or integration suite.
@@ -69,10 +73,12 @@ if (program === 'docker') {
     const result = spawnSync(process.execPath, [runner], {
       cwd: repository,
       encoding: 'utf8',
-      // Multiple fresh CLI starts can exceed two seconds on a busy runner.
+      // The runner boots several interpreter instances (node plus one bun
+      // double per probe), which costs a few seconds idle and more under smoke
+      // lane contention; 5s sat inside that envelope and killed healthy runs.
       // This is only the executable-double harness; production probes retain
       // their independent two-second deadline below.
-      timeout: 5000,
+      timeout: 20_000,
       env: {
         ...environment,
         PATH: `${directory}${delimiter}${process.env.PATH}`,
@@ -116,160 +122,217 @@ function destructiveCalls(result) {
 }
 
 describe('integration runner resource ownership', () => {
-  test('trusted remote shard 3 delegates Hosted graph exactly once to qualification', () => {
-    const result = executeRunner({
-      ...remoteTarget,
-      INTEGRATION_SHARD: '3',
-      GITHUB_ACTIONS: 'true',
-    })
-    expect(result.status).toBe(0)
-    expect(result.calls.filter(({ program }) => program === 'docker')).toEqual([])
-    expect(
-      result.calls.some(({ args }) => args.includes('src/hosted-graph.integration.test.mjs'))
-    ).toBe(false)
-    expect(result.stdout).toContain(
-      'Hosted PostgreSQL/Restate graph runs in its required qualification step.'
-    )
-    const developer = executeRunner({ ...remoteTarget, INTEGRATION_SHARD: '3', GITHUB_ACTIONS: '' })
-    expect(developer.status).toBe(0)
-    expect(
-      developer.calls.filter(({ args }) => args.includes('src/hosted-graph.integration.test.mjs'))
-    ).toHaveLength(1)
-  }, 10_000)
+  test(
+    'trusted remote shard 3 delegates Hosted graph exactly once to qualification',
+    () => {
+      const result = executeRunner({
+        ...remoteTarget,
+        INTEGRATION_SHARD: '3',
+        GITHUB_ACTIONS: 'true',
+      })
+      expect(result.status).toBe(0)
+      expect(result.calls.filter(({ program }) => program === 'docker')).toEqual([])
+      expect(
+        result.calls.some(({ args }) => args.includes('src/hosted-graph.integration.test.mjs'))
+      ).toBe(false)
+      expect(result.stdout).toContain(
+        'Hosted PostgreSQL/Restate graph runs in its required qualification step.'
+      )
+      const developer = executeRunner({
+        ...remoteTarget,
+        INTEGRATION_SHARD: '3',
+        GITHUB_ACTIONS: '',
+      })
+      expect(developer.status).toBe(0)
+      expect(
+        developer.calls.filter(({ args }) => args.includes('src/hosted-graph.integration.test.mjs'))
+      ).toHaveLength(1)
+    },
+    runnerTestBudgetMs
+  )
 
-  test('remote verification needs no Docker command even when the engine is unavailable', () => {
-    const result = executeRunner(remoteTarget)
-    expect(result.status).toBe(0)
-    expect(result.calls.filter(({ program }) => program === 'docker')).toEqual([])
-    expect(result.calls.filter(({ program }) => program === 'bun')).toHaveLength(3)
-  })
+  test(
+    'remote verification needs no Docker command even when the engine is unavailable',
+    () => {
+      const result = executeRunner(remoteTarget)
+      expect(result.status).toBe(0)
+      expect(result.calls.filter(({ program }) => program === 'docker')).toEqual([])
+      expect(result.calls.filter(({ program }) => program === 'bun')).toHaveLength(3)
+    },
+    runnerTestBudgetMs
+  )
 
-  test('remote configuration rejection does not contact Docker', () => {
-    const result = executeRunner({ ...remoteTarget, DATABASE_ADMIN_URL: '' })
-    expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('explicit DATABASE_ADMIN_URL')
-    expect(result.calls).toEqual([])
-  })
+  test(
+    'remote configuration rejection does not contact Docker',
+    () => {
+      const result = executeRunner({ ...remoteTarget, DATABASE_ADMIN_URL: '' })
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain('explicit DATABASE_ADMIN_URL')
+      expect(result.calls).toEqual([])
+    },
+    runnerTestBudgetMs
+  )
 
-  test('a runner-owned PostgreSQL project removes its volume after success', () => {
-    const result = executeRunner()
-    expect(result.status).toBe(0)
-    const start = result.calls.find(
-      ({ program, args }) => program === 'docker' && args.includes('up')
-    )
-    expect(start.project).toMatch(/^control-plane-integration-/)
-    expect(result.stdout).toContain(start.project)
-    const cleanup = destructiveCalls(result)
-    expect(cleanup).toHaveLength(1)
-    expect(cleanup[0].project).toBe(start.project)
-    expect(cleanup[0].args).toEqual([
-      'compose',
-      'down',
-      '--volumes',
-      '--remove-orphans',
-      '--timeout',
-      '60',
-    ])
-    expect(
-      result.calls
-        .filter(({ program, args }) => program === 'docker' && !args.includes('ps'))
-        .every(({ project }) => project === start.project)
-    ).toBe(true)
-  })
+  test(
+    'a runner-owned PostgreSQL project removes its volume after success',
+    () => {
+      const result = executeRunner()
+      expect(result.status).toBe(0)
+      const start = result.calls.find(
+        ({ program, args }) => program === 'docker' && args.includes('up')
+      )
+      expect(start.project).toMatch(/^control-plane-integration-/)
+      expect(result.stdout).toContain(start.project)
+      const cleanup = destructiveCalls(result)
+      expect(cleanup).toHaveLength(1)
+      expect(cleanup[0].project).toBe(start.project)
+      expect(cleanup[0].args).toEqual([
+        'compose',
+        'down',
+        '--volumes',
+        '--remove-orphans',
+        '--timeout',
+        '60',
+      ])
+      expect(
+        result.calls
+          .filter(({ program, args }) => program === 'docker' && !args.includes('ps'))
+          .every(({ project }) => project === start.project)
+      ).toBe(true)
+    },
+    runnerTestBudgetMs
+  )
 
-  test('separate invocations cannot reuse an owned fixture volume', () => {
-    const first = executeRunner()
-    const second = executeRunner()
-    const startedProject = (result) =>
-      result.calls.find(({ program, args }) => program === 'docker' && args.includes('up')).project
-    expect(first.status).toBe(0)
-    expect(second.status).toBe(0)
-    expect(startedProject(first)).not.toBe(startedProject(second))
-  })
+  test(
+    'separate invocations cannot reuse an owned fixture volume',
+    () => {
+      const first = executeRunner()
+      const second = executeRunner()
+      const startedProject = (result) =>
+        result.calls.find(({ program, args }) => program === 'docker' && args.includes('up'))
+          .project
+      expect(first.status).toBe(0)
+      expect(second.status).toBe(0)
+      expect(startedProject(first)).not.toBe(startedProject(second))
+    },
+    runnerTestBudgetMs
+  )
 
   for (const [label, overrides] of [
     ['partial startup failure', { FAKE_DOCKER_FAIL_ON: 'up' }],
     ['integration failure', { FAKE_BUN_FAIL: 'true' }],
   ]) {
-    test(`owned volume cleanup runs after ${label}`, () => {
-      const result = executeRunner(overrides)
-      expect(result.status).not.toBe(0)
-      const start = result.calls.find(
-        ({ program, args }) => program === 'docker' && args.includes('up')
-      )
-      const [cleanup] = destructiveCalls(result)
-      expect(cleanup.project).toBe(start.project)
-      expect(cleanup.args).toContain('down')
-      expect(cleanup.args).toContain('--volumes')
-    })
+    test(
+      `owned volume cleanup runs after ${label}`,
+      () => {
+        const result = executeRunner(overrides)
+        expect(result.status).not.toBe(0)
+        const start = result.calls.find(
+          ({ program, args }) => program === 'docker' && args.includes('up')
+        )
+        const [cleanup] = destructiveCalls(result)
+        expect(cleanup.project).toBe(start.project)
+        expect(cleanup.args).toContain('down')
+        expect(cleanup.args).toContain('--volumes')
+      },
+      runnerTestBudgetMs
+    )
   }
 
-  test('a previously running PostgreSQL service is preserved', () => {
-    const result = executeRunner({ FAKE_POSTGRES_RUNNING: 'true' })
-    expect(result.status).toBe(0)
-    expect(destructiveCalls(result)).toEqual([])
-    expect(
-      result.calls.some(({ program, args }) => program === 'docker' && args.includes('up'))
-    ).toBe(false)
-  })
+  test(
+    'a previously running PostgreSQL service is preserved',
+    () => {
+      const result = executeRunner({ FAKE_POSTGRES_RUNNING: 'true' })
+      expect(result.status).toBe(0)
+      expect(destructiveCalls(result)).toEqual([])
+      expect(
+        result.calls.some(({ program, args }) => program === 'docker' && args.includes('up'))
+      ).toBe(false)
+    },
+    runnerTestBudgetMs
+  )
 
-  test('caller project is omitted from the startup receipt while command diagnostics stay visible', () => {
-    const result = executeRunner({
-      COMPOSE_PROJECT_NAME: 'caller-project-private-marker',
-      FAKE_DOCKER_ECHO_PROJECT: 'true',
-    })
-    expect(result.status).toBe(0)
-    const startup = result.stdout.split('\n').filter((line) => line.startsWith('Starting'))
-    expect(startup).toHaveLength(1)
-    expect(startup[0]).not.toContain('caller-project-private-marker')
-    // Docker/Bun diagnostics retain their existing stream behavior. This is
-    // intentionally not a claim that arbitrary child output is redacted.
-    expect(result.stdout).toContain('Created caller-project-private-marker-postgres')
-  })
+  test(
+    'caller project is omitted from the startup receipt while command diagnostics stay visible',
+    () => {
+      const result = executeRunner({
+        COMPOSE_PROJECT_NAME: 'caller-project-private-marker',
+        FAKE_DOCKER_ECHO_PROJECT: 'true',
+      })
+      expect(result.status).toBe(0)
+      const startup = result.stdout.split('\n').filter((line) => line.startsWith('Starting'))
+      expect(startup).toHaveLength(1)
+      expect(startup[0]).not.toContain('caller-project-private-marker')
+      // Docker/Bun diagnostics retain their existing stream behavior. This is
+      // intentionally not a claim that arbitrary child output is redacted.
+      expect(result.stdout).toContain('Created caller-project-private-marker-postgres')
+    },
+    runnerTestBudgetMs
+  )
 
-  test('an explicit caller project retains its volume and original project identity', () => {
-    const result = executeRunner({ COMPOSE_PROJECT_NAME: 'caller-owned-recovery' })
-    expect(result.status).toBe(0)
-    expect(
-      result.calls
-        .filter(({ program }) => program === 'docker')
-        .every(({ project }) => project === 'caller-owned-recovery')
-    ).toBe(true)
-    expect(destructiveCalls(result).map(({ args }) => args)).toEqual([
-      ['compose', 'stop', '--timeout', '60', 'postgres'],
-    ])
-  })
+  test(
+    'an explicit caller project retains its volume and original project identity',
+    () => {
+      const result = executeRunner({ COMPOSE_PROJECT_NAME: 'caller-owned-recovery' })
+      expect(result.status).toBe(0)
+      expect(
+        result.calls
+          .filter(({ program }) => program === 'docker')
+          .every(({ project }) => project === 'caller-owned-recovery')
+      ).toBe(true)
+      expect(destructiveCalls(result).map(({ args }) => args)).toEqual([
+        ['compose', 'stop', '--timeout', '60', 'postgres'],
+      ])
+    },
+    runnerTestBudgetMs
+  )
 
-  test('a failed engine query creates no cleanup authority', () => {
-    const result = executeRunner({ FAKE_DOCKER_DISABLED: 'true' })
-    expect(result.status).not.toBe(0)
-    expect(destructiveCalls(result)).toEqual([])
-    expect(result.calls.some(({ args }) => args.includes('up'))).toBe(false)
-  })
+  test(
+    'a failed engine query creates no cleanup authority',
+    () => {
+      const result = executeRunner({ FAKE_DOCKER_DISABLED: 'true' })
+      expect(result.status).not.toBe(0)
+      expect(destructiveCalls(result)).toEqual([])
+      expect(result.calls.some(({ args }) => args.includes('up'))).toBe(false)
+    },
+    runnerTestBudgetMs
+  )
 
-  test('both verification and cleanup errors remain observable', () => {
-    const result = executeRunner({ FAKE_BUN_FAIL: 'true', FAKE_DOCKER_FAIL_ON: 'down' })
-    expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('bun exited with status 9')
-    expect(result.stderr).toContain('docker exited with status 7')
-  })
+  test(
+    'both verification and cleanup errors remain observable',
+    () => {
+      const result = executeRunner({ FAKE_BUN_FAIL: 'true', FAKE_DOCKER_FAIL_ON: 'down' })
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain('bun exited with status 9')
+      expect(result.stderr).toContain('docker exited with status 7')
+    },
+    runnerTestBudgetMs
+  )
 
-  test('IPv6 loopback keeps the local lifecycle', () => {
-    const result = executeRunner({
-      DATABASE_URL: 'postgresql://app:fixture@[::1]:54329/control_plane',
-    })
-    expect(result.status).toBe(0)
-    expect(
-      result.calls.some(({ program, args }) => program === 'docker' && args.includes('up'))
-    ).toBe(true)
-    expect(destructiveCalls(result)[0].args).toContain('--volumes')
-  })
+  test(
+    'IPv6 loopback keeps the local lifecycle',
+    () => {
+      const result = executeRunner({
+        DATABASE_URL: 'postgresql://app:fixture@[::1]:54329/control_plane',
+      })
+      expect(result.status).toBe(0)
+      expect(
+        result.calls.some(({ program, args }) => program === 'docker' && args.includes('up'))
+      ).toBe(true)
+      expect(destructiveCalls(result)[0].args).toContain('--volumes')
+    },
+    runnerTestBudgetMs
+  )
 
-  test('cleanup failure makes the verification fail', () => {
-    const result = executeRunner({ FAKE_DOCKER_FAIL_ON: 'down' })
-    expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('docker exited with status 7')
-  })
+  test(
+    'cleanup failure makes the verification fail',
+    () => {
+      const result = executeRunner({ FAKE_DOCKER_FAIL_ON: 'down' })
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain('docker exited with status 7')
+    },
+    runnerTestBudgetMs
+  )
 })
 
 function readScriptFunction(path, name, globals) {

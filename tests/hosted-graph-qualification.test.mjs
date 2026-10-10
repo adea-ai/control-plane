@@ -19,24 +19,36 @@ const repository = fileURLToPath(new URL('..', import.meta.url))
 // The production entry point is Linux CI-only. Keep command-double tests
 // available on macOS even when optional GNU coreutils are not installed.
 const timeoutExecutable = Bun.which('gtimeout') ?? Bun.which('timeout')
+// The qualifier script is spawn-bound: one run launches ~14 interpreter
+// instances (docker/curl/node/bun/timeout fakes), which costs ~1s on an idle
+// CI runner but ~5s on a loaded developer host. The watchdog bounds a wedged
+// child, not script speed, so it must sit well above that legitimate runtime
+// and inside the smoke lane's 30s per-test budget. Bash traps its SIGTERM and
+// still runs the cleanup trap.
+const runWatchdogMs = 25_000
+const fixtureTestBudgetMs = 30_000
 
-test('Neon requires a real Hosted PostgreSQL/Restate graph qualification', () => {
-  const workflow = readFileSync(
-    new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
-    'utf8'
-  )
-  const gate = readFileSync(
-    new URL('../.github/scripts/neon-migration-gate.mjs', import.meta.url),
-    'utf8'
-  )
-  const step = workflow
-    .split('      - name: Verify Hosted PostgreSQL and Restate graph')[1]
-    ?.split('\n      - name:')[0]
-  expect(step).toBeDefined()
-  expect(step).toContain("if: steps.credentials.outputs.available == 'true' && matrix.shard == 3")
-  expect(step).toContain('bash scripts/run-hosted-graph-qualification.sh')
-  expect(gate).toContain("const HOSTED_GRAPH_STEP = 'Verify Hosted PostgreSQL and Restate graph'")
-})
+test(
+  'Neon requires a real Hosted PostgreSQL/Restate graph qualification',
+  () => {
+    const workflow = readFileSync(
+      new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
+      'utf8'
+    )
+    const gate = readFileSync(
+      new URL('../.github/scripts/neon-migration-gate.mjs', import.meta.url),
+      'utf8'
+    )
+    const step = workflow
+      .split('      - name: Verify Hosted PostgreSQL and Restate graph')[1]
+      ?.split('\n      - name:')[0]
+    expect(step).toBeDefined()
+    expect(step).toContain("if: steps.credentials.outputs.available == 'true' && matrix.shard == 3")
+    expect(step).toContain('bash scripts/run-hosted-graph-qualification.sh')
+    expect(gate).toContain("const HOSTED_GRAPH_STEP = 'Verify Hosted PostgreSQL and Restate graph'")
+  },
+  fixtureTestBudgetMs
+)
 
 for (const failure of [
   'none',
@@ -49,44 +61,48 @@ for (const failure of [
   'signal',
   'signal-active',
 ]) {
-  test(`Hosted graph qualifier cleans its own resources after ${failure}`, async () => {
-    await fixture(async (context) => {
-      const result = await context.run(failure)
-      expect(result.exitCode).toBe(
-        failure === 'none'
-          ? 0
-          : ['signal', 'signal-active'].includes(failure)
-            ? 143
-            : ['skipped', 'empty', 'unrelated'].includes(failure)
-              ? 1
-              : 42
-      )
-      expect(await readdir(context.runner)).toEqual(['caller-data'])
-      const calls = await context.calls()
-      if (failure === 'provision') expect(calls).toHaveLength(0)
-      else {
-        const start = calls.find((call) => call[0] === 'run')
-        const removal = calls.find((call) => call[0] === 'container' && call[1] === 'rm')
-        expect(removal.at(-1)).toBe(start[start.indexOf('--name') + 1])
-        expect(start).toContain('--memory')
-        expect(start).toContain('1g')
-        expect(start).toContain('--pids-limit')
-        expect(start[start.indexOf('--user') + 1]).toBe(`${process.getuid()}:${process.getgid()}`)
-        expect(start).toContain(
-          `/restate-data:rw,nosuid,nodev,size=256m,uid=${process.getuid()},gid=${process.getgid()},mode=0700`
+  test(
+    `Hosted graph qualifier cleans its own resources after ${failure}`,
+    async () => {
+      await fixture(async (context) => {
+        const result = await context.run(failure)
+        expect(result.exitCode).toBe(
+          failure === 'none'
+            ? 0
+            : ['signal', 'signal-active'].includes(failure)
+              ? 143
+              : ['skipped', 'empty', 'unrelated'].includes(failure)
+                ? 1
+                : 42
         )
-        expect(calls.every((call) => !call.includes('prune'))).toBe(true)
-      }
-      if (failure === 'signal-active') {
-        const lifecycle = await context.lifecycle()
-        expect(lifecycle.some((entry) => entry.state === 'terminated')).toBe(true)
-        expect(
-          lifecycle.filter((entry) => entry.state === 'running').map((entry) => entry.id)
-        ).toEqual(lifecycle.filter((entry) => entry.state === 'reaped').map((entry) => entry.id))
-      }
-      expect(await readFile(context.caller, 'utf8')).toBe('caller-owned')
-    })
-  })
+        expect(await readdir(context.runner)).toEqual(['caller-data'])
+        const calls = await context.calls()
+        if (failure === 'provision') expect(calls).toHaveLength(0)
+        else {
+          const start = calls.find((call) => call[0] === 'run')
+          const removal = calls.find((call) => call[0] === 'container' && call[1] === 'rm')
+          expect(removal.at(-1)).toBe(start[start.indexOf('--name') + 1])
+          expect(start).toContain('--memory')
+          expect(start).toContain('1g')
+          expect(start).toContain('--pids-limit')
+          expect(start[start.indexOf('--user') + 1]).toBe(`${process.getuid()}:${process.getgid()}`)
+          expect(start).toContain(
+            `/restate-data:rw,nosuid,nodev,size=256m,uid=${process.getuid()},gid=${process.getgid()},mode=0700`
+          )
+          expect(calls.every((call) => !call.includes('prune'))).toBe(true)
+        }
+        if (failure === 'signal-active') {
+          const lifecycle = await context.lifecycle()
+          expect(lifecycle.some((entry) => entry.state === 'terminated')).toBe(true)
+          expect(
+            lifecycle.filter((entry) => entry.state === 'running').map((entry) => entry.id)
+          ).toEqual(lifecycle.filter((entry) => entry.state === 'reaped').map((entry) => entry.id))
+        }
+        expect(await readFile(context.caller, 'utf8')).toBe('caller-owned')
+      })
+    },
+    fixtureTestBudgetMs
+  )
 }
 
 test.skipIf(!timeoutExecutable)(
@@ -99,51 +115,64 @@ test.skipIf(!timeoutExecutable)(
       expect((await context.lifecycle()).some((entry) => entry.state === 'terminated')).toBe(true)
       expect(await readFile(context.caller, 'utf8')).toBe('caller-owned')
     })
-  }
+  },
+  fixtureTestBudgetMs
 )
 
-test('Hosted graph qualifier keeps ownership readable during a slow state write', async () => {
-  await fixture(async (context) => {
-    const result = await context.run('signal-active', { FAKE_SLOW_LEDGER: 'true' })
-    if (result.exitCode !== 143) console.error(result.stdout, result.stderr)
-    expect(result.exitCode).toBe(143)
-    expect(await readdir(context.runner)).toEqual(['caller-data'])
-    expect((await context.lifecycle()).some((entry) => entry.state === 'terminated')).toBe(true)
-    expect(await readFile(context.caller, 'utf8')).toBe('caller-owned')
-  })
-})
-
-for (const failure of ['remove', 'wrong-owner', 'lookup', 'lingering']) {
-  test(`Hosted graph qualifier preserves reconciliation data after ${failure}`, async () => {
+test(
+  'Hosted graph qualifier keeps ownership readable during a slow state write',
+  async () => {
     await fixture(async (context) => {
-      const result = await context.run(failure)
-      expect(result.exitCode).not.toBe(0)
-      expect(result.stderr).toContain('cleanup failed')
-      expect((await readdir(context.runner)).filter((name) => name !== 'caller-data')).toHaveLength(
-        1
-      )
-      if (['wrong-owner', 'lookup'].includes(failure)) {
-        expect((await context.calls()).some((call) => call.includes('rm'))).toBe(false)
-      }
+      const result = await context.run('signal-active', { FAKE_SLOW_LEDGER: 'true' })
+      if (result.exitCode !== 143) console.error(result.stdout, result.stderr)
+      expect(result.exitCode).toBe(143)
+      expect(await readdir(context.runner)).toEqual(['caller-data'])
+      expect((await context.lifecycle()).some((entry) => entry.state === 'terminated')).toBe(true)
       expect(await readFile(context.caller, 'utf8')).toBe('caller-owned')
     })
-  })
+  },
+  fixtureTestBudgetMs
+)
+
+for (const failure of ['remove', 'wrong-owner', 'lookup', 'lingering']) {
+  test(
+    `Hosted graph qualifier preserves reconciliation data after ${failure}`,
+    async () => {
+      await fixture(async (context) => {
+        const result = await context.run(failure)
+        expect(result.exitCode).not.toBe(0)
+        expect(result.stderr).toContain('cleanup failed')
+        expect(
+          (await readdir(context.runner)).filter((name) => name !== 'caller-data')
+        ).toHaveLength(1)
+        if (['wrong-owner', 'lookup'].includes(failure)) {
+          expect((await context.calls()).some((call) => call.includes('rm'))).toBe(false)
+        }
+        expect(await readFile(context.caller, 'utf8')).toBe('caller-owned')
+      })
+    },
+    fixtureTestBudgetMs
+  )
 }
 
-test('Hosted graph qualifier refuses local Docker and invalid ownership inputs before resource creation', async () => {
-  await fixture(async (context) => {
-    for (const overrides of [
-      { GITHUB_ACTIONS: '' },
-      { GITHUB_RUN_ID: '../caller' },
-      { RUNNER_TEMP: 'relative' },
-      { DATABASE_ADMIN_URL: '' },
-    ]) {
-      expect((await context.run('none', overrides)).exitCode).toBe(2)
-      expect(await context.calls()).toEqual([])
-      expect(await readdir(context.runner)).toEqual(['caller-data'])
-    }
-  })
-})
+test(
+  'Hosted graph qualifier refuses local Docker and invalid ownership inputs before resource creation',
+  async () => {
+    await fixture(async (context) => {
+      for (const overrides of [
+        { GITHUB_ACTIONS: '' },
+        { GITHUB_RUN_ID: '../caller' },
+        { RUNNER_TEMP: 'relative' },
+        { DATABASE_ADMIN_URL: '' },
+      ]) {
+        expect((await context.run('none', overrides)).exitCode).toBe(2)
+        expect(await context.calls()).toEqual([])
+        expect(await readdir(context.runner)).toEqual(['caller-data'])
+      }
+    })
+  },
+  fixtureTestBudgetMs
+)
 
 async function fixture(operation) {
   const fixtureId = crypto.randomUUID()
@@ -238,7 +267,7 @@ async function fixture(operation) {
           stderr: 'pipe',
         })
         await writeFile(ledger, JSON.stringify({ ...planned, pid: child.pid, state: 'running' }))
-        const timer = setTimeout(() => child.kill(), 5_000)
+        const timer = setTimeout(() => child.kill(), runWatchdogMs)
         try {
           const [exitCode, stdout, stderr] = await Promise.all([
             child.exited,
