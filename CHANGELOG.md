@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.91.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.91.2...workspace-v1.91.3) (2026-10-10)
+
+
+### Bug Fixes
+
+* **control-api:** settle completed lead attempt reservations exactly once ([#1068](https://github.com/adea-ai/control-plane/issues/1068)) ([2036405](https://github.com/adea-ai/control-plane/commit/2036405a90161ac23d49fb2bbced9bb640a27031))
+
 ## [1.91.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.91.1...workspace-v1.91.2) (2026-10-10)
 
 
