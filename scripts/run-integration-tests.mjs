@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
+import { runWithPullBackoff } from './docker-pull-backoff.mjs'
 import {
   integrationFileArguments,
   parseIntegrationShard,
@@ -36,6 +37,27 @@ function run(command, arguments_, options = {}) {
     throw new Error(`${command} exited with status ${String(result.status)}`)
   }
   return result.stdout ?? ''
+}
+
+// Starting the database pulls `postgres` from Docker Hub, which rate-limits
+// anonymous pulls from shared runners. Output is captured so the rate-limit
+// signature can be recognized; it is echoed once the attempt settles.
+async function composeUpPostgres() {
+  const result = await runWithPullBackoff(() =>
+    spawnSync('docker', ['compose', 'up', '-d', '--wait', 'postgres'], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      stdio: 'pipe',
+      env: runnerEnvironment,
+      timeout: 90_000,
+    })
+  )
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
+  if (result.error) throw result.error
+  if (result.status !== 0) {
+    throw new Error(`docker exited with status ${String(result.status)}`)
+  }
 }
 
 async function waitForPostgres() {
@@ -140,7 +162,7 @@ try {
         console.log('Starting integration PostgreSQL in the caller-owned project.')
       }
       startupAttempted = true
-      run('docker', ['compose', 'up', '-d', '--wait', 'postgres'])
+      await composeUpPostgres()
     }
   }
   if (!remoteDatabase) await waitForPostgres()

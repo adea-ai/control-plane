@@ -50,7 +50,7 @@
     },
     "apps/control-api": {
       "name": "@control-plane/control-api",
-      "version": "1.27.0",
+      "version": "1.27.1",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -125,7 +125,7 @@
     },
     "apps/local-control-plane": {
       "name": "@control-plane/local-control-plane",
-      "version": "1.30.0",
+      "version": "1.31.0",
       "dependencies": {
         "@control-plane/acp-adapter": "workspace:*",
         "@control-plane/bootstrap": "workspace:*",
@@ -213,7 +213,7 @@
     },
     "apps/workflow-worker": {
       "name": "@control-plane/workflow-worker",
-      "version": "1.15.0",
+      "version": "1.16.0",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -466,7 +466,7 @@
     },
     "packages/pi-durable-adapter": {
       "name": "@control-plane/pi-durable-adapter",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/domain": "workspace:*",
@@ -504,7 +504,7 @@
     },
     "packages/profile-adapters": {
       "name": "@control-plane/profile-adapters",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "dependencies": {
         "@control-plane/deployment": "workspace:*",
         "@control-plane/orchestration": "workspace:*",
@@ -615,7 +615,7 @@
     },
     "packages/telemetry": {
       "name": "@control-plane/telemetry",
-      "version": "1.5.6",
+      "version": "1.6.0",
       "devDependencies": {
         "@opentelemetry/api": "1.9.1",
         "@opentelemetry/sdk-metrics": "2.12.0",
@@ -691,7 +691,7 @@
     "esbuild": "0.28.2",
     "fastify": "5.12.5",
     "sharp": "0.35.5",
-    "undici": "7.29.1",
+    "undici": "8.11.2",
   },
   "packages": {
     "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.129.0", "", { "dependencies": { "json-schema-to-ts": "^3.1.1", "standardwebhooks": "^1.0.0" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-MH7LB20kNpGLUpPTe2OG5XvL/KhX8HUO9XyBaFjgFk6TLS4Xjt0VPIuMKywe7POKKPslX+QxSlVok9e+8kG5Nw=="],
@@ -1610,7 +1610,7 @@
 
     "uint8array-extras": ["uint8array-extras@1.5.0", "", {}, "sha512-rvKSBiC5zqCCiDZ9kAOszZcDvdAHwwIKJG33Ykj43OKcWsnmcBRL09YTU4nOeHZ8Y2a7l1MgTd08SBe9A8Qj6A=="],
 
-    "undici": ["undici@7.29.1", "", {}, "sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q=="],
+    "undici": ["undici@8.11.2", "", {}, "sha512-u4UB2/IrKdU6lFxumHmmo1a3fCQO5tzQllRorfoRS63txhrB7xTpSn1PftwC4qEHkOaqP95fCWW4lJzwErwzhQ=="],
 
     "undici-types": ["undici-types@8.9.0", "", {}, "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg=="],
 

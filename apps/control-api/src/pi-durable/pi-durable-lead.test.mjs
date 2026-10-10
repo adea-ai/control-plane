@@ -696,19 +696,15 @@ describe('composed Pi Durable lead HTTP endpoints', () => {
       expect(state.requests).toHaveLength(1)
     }))
 
-  test('cancel rechecks authority before child stop and retries after a lost acknowledgement', () => {
-    let adapterCancellationRetained = false
+  test('cancel rechecks authority and never cascades to child stops', () => {
     let revokeAfterCancel = true
     const calls = []
-    let loseFirstAck = true
+    // The spy stays configured precisely so any child-cancel call would
+    // fail the zero-call assertions below. Ordinary lead-stop must not
+    // cancel child jobs; explicit cascade lives outside this path.
     const delegationService = {
       async cancelChildren(input) {
-        expect(adapterCancellationRetained).toBe(true)
         calls.push(structuredClone(input))
-        if (loseFirstAck) {
-          loseFirstAck = false
-          throw new Error('simulated lost child-stop acknowledgement')
-        }
       },
     }
     return fixture(
@@ -733,7 +729,6 @@ describe('composed Pi Durable lead HTTP endpoints', () => {
           expect(
             context.adapter.journal.get(args[0].handleId).detail.cancellationIntent
           ).toBeDefined()
-          adapterCancellationRetained = true
           if (revokeAfterCancel) {
             revokeAfterCancel = false
             context.state.revoked = true
@@ -744,24 +739,14 @@ describe('composed Pi Durable lead HTTP endpoints', () => {
         expect(revoked.statusCode).toBe(403)
         expect(calls).toEqual([])
         context.state.revoked = false
-        const interrupted = await inject('cancel', cancel)
-        expect(interrupted.statusCode).toBe(503)
-        expect(interrupted.body).not.toContain('simulated lost child-stop acknowledgement')
+        const stopped = await inject('cancel', cancel)
+        expect(stopped.statusCode).toBe(202)
+        expect(stopped.json().data.state).toBe('cancelled')
+        expect(calls).toEqual([])
         await close()
         await open()
-        const replayedCancel = context.adapter.cancel.bind(context.adapter)
-        context.adapter.cancel = async (...args) => {
-          const result = await replayedCancel(...args)
-          expect(
-            context.adapter.journal.get(args[0].handleId).detail.cancellationIntent
-          ).toBeDefined()
-          return result
-        }
         expect((await inject('cancel', cancel)).json().data.state).toBe('cancelled')
-        expect(calls).toEqual([
-          { parentExecutionId: id('exe'), cancelledAt: at },
-          { parentExecutionId: id('exe'), cancelledAt: at },
-        ])
+        expect(calls).toEqual([])
       },
       { delegationService }
     )
