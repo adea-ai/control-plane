@@ -18,6 +18,10 @@ export const secretCanarySinks = [
   'checkpoints',
   'model_context',
   'public_api',
+  'pi_durable_admissions',
+  'pi_durable_progress',
+  'pi_durable_sessions',
+  'pi_lead_preparations',
 ]
 
 export const secretCanaryEvidence = [
@@ -55,6 +59,26 @@ export const secretCanaryEvidence = [
     'public_api',
     'apps/control-api/src/application.test.mjs',
     'keeps a secret canary out of public API responses and request logs'
+  ),
+  canary(
+    'pi_durable_admissions',
+    'packages/pi-durable-adapter/src/journal-secret-canary.test.mjs',
+    'keeps a secret canary out of Pi durable admission rows'
+  ),
+  canary(
+    'pi_durable_progress',
+    'packages/pi-durable-adapter/src/journal-secret-canary.test.mjs',
+    'keeps a secret canary out of Pi durable progress rows'
+  ),
+  canary(
+    'pi_durable_sessions',
+    'packages/pi-durable-adapter/src/journal-secret-canary.test.mjs',
+    'keeps a secret canary out of Pi durable session rows'
+  ),
+  canary(
+    'pi_lead_preparations',
+    'apps/control-api/src/pi-durable/lead-preparation.test.mjs',
+    'keeps a secret canary out of Pi lead preparation rows through every failure path'
   ),
 ]
 

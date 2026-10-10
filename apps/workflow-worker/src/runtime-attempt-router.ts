@@ -8,7 +8,7 @@ import type { RuntimeConnectionDiscoveryReadModel } from '@control-plane/contrac
 import type { Execution, ExecutionAttempt } from '@control-plane/domain'
 import type { ExecutionPlan } from '@control-plane/execution-plan'
 import { availableRuntimesFromDiscovery } from '@control-plane/contracts'
-import { DecisionResolutionDeniedError, resolveRuntimeHarness } from '@control-plane/policy'
+import { selectRuntimesExposingHarness } from '@control-plane/policy'
 import { RuntimeCapabilitySchema, evaluateCapabilities } from '@control-plane/runtime-sdk'
 import type { RuntimeAttemptRouter } from './cloud-execution-activities.js'
 
@@ -23,10 +23,11 @@ export interface RuntimeDiscoveryAttemptRouterOptions {
   readonly discovery: RuntimeDiscoveryReadPort
   readonly now?: () => string
   /**
-   * Optional harness pin (M12/#670 path 1): when set, the selected runtime
-   * must expose this harness id, otherwise the attempt fails closed with the
-   * decision layer's HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME denial. No pin
-   * means no behavior change.
+   * Optional accepted harness (#670 path 1, #678): when set, only candidates
+   * whose discovered harness ids contain this exact id are eligible, applied
+   * before ranking. If none qualify the attempt fails closed with
+   * NO_COMPATIBLE_RUNTIME; there is no fallback to another harness or runtime.
+   * No pin means no behavior change.
    */
   readonly pinnedHarnessId?: string
 }
@@ -61,10 +62,17 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
       workspaceId: input.execution.correlation.workspaceId,
       projectId: scope.projectId,
     })
-    const candidates = discovered
-      .map((connection) => candidate(connection, input.executionPlan, evaluatedAt))
-      .filter((value) => value !== undefined)
-      .toSorted(compareCandidates)
+    // Accepted-harness hard filter (#678) runs on the eligible set BEFORE
+    // ranking: only candidates exposing the exact pinned harness id survive.
+    // An empty set with a pin is a typed NO_COMPATIBLE_RUNTIME denial.
+    const eligible = selectRuntimesExposingHarness(
+      discovered
+        .map((connection) => candidate(connection, input.executionPlan, evaluatedAt))
+        .filter((value) => value !== undefined)
+        .map((value) => ({ ...value, harnessIds: harnessIdsOf(value.connection) })),
+      this.#pinnedHarnessId
+    )
+    const candidates = eligible.toSorted(compareCandidates)
     const selected = candidates[0]
     if (selected === undefined) throw new Error('WORKFLOW_RUNTIME_UNAVAILABLE')
     // TDD-A377: an offline or revoked local location is never silently replaced by a remote runtime.
@@ -73,17 +81,6 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
       discovered.some((connection) => fencedLocalRuntime(connection, input.executionPlan))
     ) {
       throw new Error('WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK')
-    }
-    if (this.#pinnedHarnessId !== undefined) {
-      // Decision-layer validation (#670 path 1): the chosen runtime must
-      // expose the pinned harness; denial fails the attempt closed.
-      const available = availableRuntimesFromDiscovery(discovered).find(
-        (runtime) => runtime.runtimeDefinitionId === selected.connection.runtimeDefinitionId
-      )
-      if (available === undefined) {
-        throw new DecisionResolutionDeniedError('HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME')
-      }
-      resolveRuntimeHarness(available, this.#pinnedHarnessId)
     }
     const inputDigest = digest({
       executionId: input.execution.executionId,
@@ -96,6 +93,9 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
         allowedFamilies: [...input.executionPlan.constraints.runtime.allowedFamilies].toSorted(),
         allowedLocations: [...input.executionPlan.constraints.runtime.allowedLocations].toSorted(),
       },
+      // Pinned attempts bind the accepted harness into the evidence; unpinned
+      // digests are unchanged.
+      ...(this.#pinnedHarnessId === undefined ? {} : { acceptedHarnessId: this.#pinnedHarnessId }),
       candidates: candidates.map(({ connection, degraded }) => ({
         runtimeConnectionId: connection.runtimeConnectionId,
         runtimeDefinitionId: connection.runtimeDefinitionId,
@@ -122,7 +122,10 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
         decisionDigest,
         selectedRank: 1,
         candidateCount: candidates.length,
-        reasonCodes: [selected.degraded ? 'RUNTIME_SELECTED_DEGRADED' : 'RUNTIME_SELECTED'],
+        reasonCodes: [
+          selected.degraded ? 'RUNTIME_SELECTED_DEGRADED' : 'RUNTIME_SELECTED',
+          ...(this.#pinnedHarnessId === undefined ? [] : ['HARNESS_PINNED']),
+        ],
       },
     }
   }
@@ -182,8 +185,15 @@ function candidate(
   }
 }
 
+// Exact identity. The former managed-pi -> pi alias had no canonical mapping
+// behind it (the managed driver identifies as managed-pi end to end), so it is
+// removed rather than preserved.
 function runtimeFamilyAllowed(family: string, allowed: readonly string[]): boolean {
-  return allowed.includes(family) || (family === 'managed-pi' && allowed.includes('pi'))
+  return allowed.includes(family)
+}
+
+function harnessIdsOf(connection: RuntimeConnectionDiscoveryReadModel): readonly string[] {
+  return availableRuntimesFromDiscovery([connection])[0]?.harnessIds ?? []
 }
 
 function isRemoteLocation(connection: RuntimeConnectionDiscoveryReadModel): boolean {
