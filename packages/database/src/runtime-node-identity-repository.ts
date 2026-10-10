@@ -49,6 +49,12 @@ export type RuntimeNodeIssuedCredentialInput = Omit<
   readonly consumedAt?: null
 }
 
+/** Audited actor for a revocation. Omitted fields use the connected role and the credential's workspace. */
+export interface RuntimeNodeCredentialRevocationActor {
+  readonly workspaceId?: string
+  readonly principalRef?: string
+}
+
 export type RuntimeNodeCredentialConsumeResult =
   | 'consumed'
   | 'replayed'
@@ -344,47 +350,57 @@ export class PostgresRuntimeNodeIdentityRepository {
     }
   }
 
+  /**
+   * Revokes one credential through the migration-owned `revoke_runtime_node_credential` function.
+   * The application role holds EXECUTE on that function and no table write privilege, so this is
+   * the only revocation path it can use. Each applied, replayed, or workspace-refused outcome is
+   * recorded in the audit table by the function. A workspace-refused or unknown credential raises
+   * RUNTIME_NODE_IDENTITY_CREDENTIAL_NOT_FOUND without revealing which case applied.
+   */
   async revokeCredential(
     credentialIdInput: string,
-    nowInput: Date | string
+    nowInput: Date | string,
+    actorInput: RuntimeNodeCredentialRevocationActor = {}
   ): Promise<RuntimeNodeIssuedCredentialRecord> {
     const credentialId = parseCredentialId(credentialIdInput)
     const now = parseTimestamp(nowInput)
-    return this.database.transaction(async (tx) => {
-      const [current] = await tx
-        .select()
-        .from(runtimeNodeIssuedCredentials)
-        .where(eq(runtimeNodeIssuedCredentials.credentialId, credentialId))
-        .limit(1)
-      if (!current) fail('RUNTIME_NODE_IDENTITY_CREDENTIAL_NOT_FOUND')
-      const parsed = parseIssuedCredentialRow(current)
-      if (parsed.revokedAt !== null) return parsed
-      if (parsed.revocationVersion >= MAX_SAFE_VERSION)
-        fail('RUNTIME_NODE_IDENTITY_VERSION_EXHAUSTED')
+    const principalRef =
+      actorInput.principalRef === undefined ? null : parsePrincipalRef(actorInput.principalRef)
+    // Workspace is immutable per credential, so reading it first cannot race a binding change.
+    const workspaceId =
+      actorInput.workspaceId === undefined
+        ? ((await this.getIssuedCredential(credentialId))?.workspaceId ??
+          fail('RUNTIME_NODE_IDENTITY_CREDENTIAL_NOT_FOUND'))
+        : parseWorkspaceId(actorInput.workspaceId)
 
-      const [revoked] = await tx
-        .update(runtimeNodeIssuedCredentials)
-        .set({ revocationVersion: parsed.revocationVersion + 1, revokedAt: now })
-        .where(
-          and(
-            eq(runtimeNodeIssuedCredentials.credentialId, credentialId),
-            isNull(runtimeNodeIssuedCredentials.revokedAt)
-          )
+    let outcome: string | undefined
+    try {
+      const [row] = await this.database.execute(sql`
+        select result_outcome as outcome
+        from public.revoke_runtime_node_credential(
+          ${credentialId}::varchar,
+          ${workspaceId}::varchar,
+          ${principalRef}::varchar,
+          ${now.toISOString()}::timestamptz
         )
-        .returning()
-      if (revoked) {
-        await tx.execute(sql`select pg_notify(${REVOCATION_CHANNEL}, ${credentialId})`)
-        return parseIssuedCredentialRow(revoked)
+      `)
+      outcome = typeof row?.['outcome'] === 'string' ? row['outcome'] : undefined
+    } catch (error) {
+      if (postgresErrorMessage(error) === 'RUNTIME_NODE_IDENTITY_VERSION_EXHAUSTED') {
+        fail('RUNTIME_NODE_IDENTITY_VERSION_EXHAUSTED')
       }
+      throw error
+    }
+    if (outcome === 'not_found' || outcome === 'workspace_refused') {
+      fail('RUNTIME_NODE_IDENTITY_CREDENTIAL_NOT_FOUND')
+    }
+    if (outcome !== 'applied' && outcome !== 'replayed') fail('RUNTIME_NODE_IDENTITY_DATA_CORRUPT')
 
-      const [latest] = await tx
-        .select()
-        .from(runtimeNodeIssuedCredentials)
-        .where(eq(runtimeNodeIssuedCredentials.credentialId, credentialId))
-        .limit(1)
-      if (!latest) fail('RUNTIME_NODE_IDENTITY_CREDENTIAL_NOT_FOUND')
-      return parseIssuedCredentialRow(latest)
-    })
+    const revoked = await this.getIssuedCredential(credentialId)
+    if (revoked === undefined || revoked.revokedAt === null) {
+      fail('RUNTIME_NODE_IDENTITY_DATA_CORRUPT')
+    }
+    return revoked
   }
 
   async subscribeRevocations(
@@ -683,6 +699,23 @@ async function lockIdentity(
   await tx.execute(
     sql`select pg_advisory_xact_lock(hashtextextended(${`runtime-node-${kind}:${id}`}, 0))`
   )
+}
+
+function postgresErrorMessage(error: unknown): string | undefined {
+  let current: unknown = error
+  for (let depth = 0; depth < 4 && typeof current === 'object' && current !== null; depth += 1) {
+    const message = Reflect.get(current, 'message')
+    if (typeof message === 'string' && message.startsWith('RUNTIME_NODE_')) return message
+    current = Reflect.get(current, 'cause')
+  }
+  return undefined
+}
+
+function parsePrincipalRef(value: string): string {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 256) {
+    fail('RUNTIME_NODE_IDENTITY_INVALID_INPUT')
+  }
+  return value
 }
 
 function postgresErrorCode(error: unknown): string | undefined {

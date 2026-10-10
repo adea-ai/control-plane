@@ -121,6 +121,7 @@ export const INTEGRATION_SHARDS = [
         files: [
           './tests/memory-process-loss.integration.test.mjs',
           './tests/acp-remote-device-postgres.integration.test.mjs',
+          './tests/runtime-node-credential-revocation.integration.test.mjs',
         ],
       },
       {

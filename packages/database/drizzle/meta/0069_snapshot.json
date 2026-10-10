@@ -1,6 +1,6 @@
 {
-  "id": "98a8f780-8624-430f-89ee-8f3f0eee270c",
-  "prevId": "3fc5b238-ea72-4929-9ddc-26cf99b58447",
+  "id": "3fc5b238-ea72-4929-9ddc-26cf99b58447",
+  "prevId": "1f61626b-1376-4cc8-b361-a5d67f955c86",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4445,54 +4445,6 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.persistence_records": {
-      "name": "persistence_records",
-      "schema": "",
-      "columns": {
-        "namespace": {
-          "name": "namespace",
-          "type": "varchar(128)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "id": {
-          "name": "id",
-          "type": "varchar(512)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "revision": {
-          "name": "revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "value": {
-          "name": "value",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "persistence_records_scope_pk": {
-          "name": "persistence_records_scope_pk",
-          "columns": ["namespace", "id"]
-        }
-      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},

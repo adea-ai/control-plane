@@ -23,6 +23,12 @@ import {
   UnavailableCredentialAdministrationService,
   type CredentialAdministrationService,
 } from './credentials/credential-administration.service.js'
+import { RuntimeNodeCredentialRevocationController } from './runtime-node-credentials/runtime-node-credential-revocation.controller.js'
+import {
+  RUNTIME_NODE_CREDENTIAL_REVOCATION_SERVICE,
+  UnavailableRuntimeNodeCredentialRevocationService,
+  type RuntimeNodeCredentialRevocationService,
+} from './runtime-node-credentials/runtime-node-credential-revocation.service.js'
 import { Module, type DynamicModule } from '@nestjs/common'
 import { PiDurableLeadController } from './pi-durable/pi-durable-lead.controller.js'
 import {
@@ -50,6 +56,12 @@ import {
   UnavailableExecutionCancellationService,
   type ExecutionCancellationService,
 } from './executions/execution-cancellation.controller.js'
+import {
+  AdmissionControlController,
+  ADMISSION_CONTROL_SERVICE,
+  UnavailableAdmissionControlService,
+  type AdmissionControlService,
+} from './executions/admission-control.controller.js'
 import {
   InteractionCommandController,
   INTERACTION_COMMAND_SERVICE,
@@ -147,8 +159,10 @@ export interface AppModuleOptions extends ApiRuntimeBindings {
   readonly graphAdministrationService?: GraphAdministrationService
   readonly workspaceCatalogService?: WorkspaceCatalogService
   readonly credentialAdministrationService?: CredentialAdministrationService
+  readonly runtimeNodeCredentialRevocationService?: RuntimeNodeCredentialRevocationService
   readonly interactionCommandService?: InteractionCommandService
   readonly executionCancellationService?: ExecutionCancellationService
+  readonly admissionControlService?: AdmissionControlService
   readonly executionAcceptanceService?: ExecutionAcceptanceService
   readonly executionValidationService?: ExecutionValidationService
   readonly toolEffectRecoveryService?: ToolEffectRecoveryService
@@ -191,10 +205,12 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       WorkspaceSkillCatalogController,
       WorkspaceAgentProfileCatalogController,
       CredentialAdministrationController,
+      RuntimeNodeCredentialRevocationController,
       ContextPackageResolutionController,
       ExecutionAcceptanceController,
       InteractionCommandController,
       ExecutionCancellationController,
+      AdmissionControlController,
       ExecutionValidationController,
       ToolEffectRecoveryController,
       HealthController,
@@ -238,6 +254,12 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
           new UnavailableCredentialAdministrationService(),
       },
       {
+        provide: RUNTIME_NODE_CREDENTIAL_REVOCATION_SERVICE,
+        useValue:
+          options.runtimeNodeCredentialRevocationService ??
+          new UnavailableRuntimeNodeCredentialRevocationService(),
+      },
+      {
         provide: INTERACTION_COMMAND_SERVICE,
         useValue: options.interactionCommandService ?? new UnavailableInteractionCommandService(),
       },
@@ -245,6 +267,10 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
         provide: EXECUTION_CANCELLATION_SERVICE,
         useValue:
           options.executionCancellationService ?? new UnavailableExecutionCancellationService(),
+      },
+      {
+        provide: ADMISSION_CONTROL_SERVICE,
+        useValue: options.admissionControlService ?? new UnavailableAdmissionControlService(),
       },
       { provide: API_HEALTH, useValue: options.health },
       {

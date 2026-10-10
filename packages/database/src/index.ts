@@ -190,6 +190,7 @@ export {
   PostgresRuntimeNodeIdentityRepository,
   RuntimeNodeIdentityRepositoryError,
   type RuntimeNodeCredentialConsumeResult,
+  type RuntimeNodeCredentialRevocationActor,
   type RuntimeNodeIdentityRepositoryErrorCode,
   type RuntimeNodeIdentityRevocationClient,
   type RuntimeNodeIssuedCredentialInput,

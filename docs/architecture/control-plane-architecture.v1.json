@@ -74,7 +74,7 @@
     {
       "name": "@control-plane/contracts",
       "path": "packages/contracts",
-      "version": "1.19.0",
+      "version": "1.19.1",
       "lockVersion": "1.19.0",
       "kind": "package",
       "private": false,
@@ -89,7 +89,7 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.28.0",
+      "version": "1.29.2",
       "lockVersion": "1.28.0",
       "kind": "application",
       "private": true,
@@ -264,7 +264,7 @@
     {
       "name": "@control-plane/execution-plan",
       "path": "packages/execution-plan",
-      "version": "1.9.0",
+      "version": "1.9.1",
       "lockVersion": "1.9.0",
       "kind": "package",
       "private": true,
@@ -437,7 +437,7 @@
     {
       "name": "@control-plane/model-gateway",
       "path": "packages/model-gateway",
-      "version": "1.5.0",
+      "version": "1.5.1",
       "lockVersion": "1.5.0",
       "kind": "package",
       "private": true,
@@ -519,7 +519,7 @@
     {
       "name": "@control-plane/pi-durable-adapter",
       "path": "packages/pi-durable-adapter",
-      "version": "0.5.0",
+      "version": "0.6.1",
       "lockVersion": "0.5.0",
       "kind": "package",
       "private": true,
@@ -549,7 +549,7 @@
     {
       "name": "@control-plane/policy",
       "path": "packages/policy",
-      "version": "1.4.1",
+      "version": "1.4.2",
       "lockVersion": "1.4.1",
       "kind": "package",
       "private": true,
@@ -656,7 +656,7 @@
     {
       "name": "@control-plane/runtime-gateway",
       "path": "apps/runtime-gateway",
-      "version": "1.7.3",
+      "version": "1.7.4",
       "lockVersion": "1.7.3",
       "kind": "application",
       "private": true,
@@ -700,7 +700,7 @@
     {
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
-      "version": "1.15.0",
+      "version": "1.15.1",
       "lockVersion": "1.15.0",
       "kind": "package",
       "private": false,
@@ -938,7 +938,7 @@
     {
       "name": "@control-plane/workflow-worker",
       "path": "apps/workflow-worker",
-      "version": "1.16.0",
+      "version": "1.16.1",
       "lockVersion": "1.16.0",
       "kind": "application",
       "private": true,
@@ -3164,6 +3164,53 @@
       "openApiHasRequestSchema": true
     },
     {
+      "id": "OP-RUNTIME-NODE-CREDENTIAL-REVOKE",
+      "name": "revokeRuntimeNodeCredential",
+      "operation": "runtime-node-credential.revoke",
+      "method": "POST",
+      "path": "/v1/runtime-node-credentials/revoke",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "service bearer with credential:write scope; authenticated caller binding; principal workspace scope enforced by the shared guard",
+        "service": "RuntimeNodeCredentialRevocationController -> RepositoryRuntimeNodeCredentialRevocationService -> PostgresRuntimeNodeIdentityRepository.revokeCredential -> revoke_runtime_node_credential (SECURITY DEFINER, migration 0069)",
+        "persistence": "runtime_node_issued_credentials revocation_version and revoked_at written only by the function; runtime_node_credential_audit_events appends applied, replayed, and workspace-refused outcomes; pg_notify on runtime_node_credential_revocations_v1",
+        "execution": "row-locked, workspace-bound, idempotent revocation inside the function; gateway channels are invalidated by notification and rechecked durably on every command",
+        "delivery": "metadata-only response: credential ID, node, workspace, revocation version and revoked time; no secret material",
+        "cleanup": "composition-owned connection shutdown; the revocation and its audit row commit in one transaction"
+      },
+      "assessment": "API, SDK and OpenAPI agree. The application role holds EXECUTE on the function and no write privilege on the revocation columns or the audit table (migration 0069, source only). Hosted composition routes through the application role. Local leaves the route explicitly unavailable. The disposable PostgreSQL proof runs the route under the application role and proves gateway invalidation, replay, workspace and caller refusals, audited outcomes, and direct-write denial. No environment is granted and deployed acceptance is not certified.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/runtime-node-credentials/runtime-node-credential-revocation.service.ts"
+        },
+        {
+          "kind": "service",
+          "path": "apps/runtime-gateway/src/authentication.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/runtime-node-credentials/runtime-node-credential-revocation.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "tests/runtime-node-credential-revocation.integration.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Root reviews migration 0069 and its privilege contract before any environment applies it. Then verify deployed hosted revocation from a frozen candidate. No live grant is made by this change."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "runtime-node-credential.revoke",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
       "id": "OP-RUNTIME-LIST",
       "name": "listRuntimes",
       "operation": "runtime.list",
@@ -3274,7 +3321,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:6036c288ce03e2d3038e25ddaff20d3100ba023b052d2f63ff21f30262cdcefa"
+      "sourceDigest": "sha256:6bd56cef0f50263177010fcf01ab37bad3d420ff7a64217df777813febbdb58f"
     },
     {
       "id": "hosted-simple",
@@ -3313,7 +3360,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:824bf02f87e5c4b2fe29800bd669873152effa5f3807f102378d7da6b924d8d9"
+      "sourceDigest": "sha256:31a06098ed2da7f769ae13528fae13dc5f6b8ce65c724ad3ad20e55ccb9ce74b"
     },
     {
       "id": "local",
@@ -3356,7 +3403,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:824bf02f87e5c4b2fe29800bd669873152effa5f3807f102378d7da6b924d8d9"
+      "sourceDigest": "sha256:31a06098ed2da7f769ae13528fae13dc5f6b8ce65c724ad3ad20e55ccb9ce74b"
     }
   ],
   "ownership": [

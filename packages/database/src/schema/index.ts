@@ -108,6 +108,7 @@ export { persistenceRecords } from './persistence-records.js'
 export { retentionHolds } from './retention-holds.js'
 export { runtimeChannelOwnership } from './runtime-channel-ownership.js'
 export {
+  runtimeNodeCredentialAuditEvents,
   runtimeNodeIssuedCredentials,
   runtimeNodeVerificationKeys,
 } from './runtime-node-identity.js'
