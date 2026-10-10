@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.5.0...model-gateway-v1.5.1) (2026-10-10)
+
+
+### Tests
+
+* **models:** qualify confirmed funding at inference boundaries ([#970](https://github.com/adea-ai/control-plane/issues/970)) ([5ee3dbf](https://github.com/adea-ai/control-plane/commit/5ee3dbf06f9a85bcb63ac29bdb13aecfeeac9a4a))
+
 ## [1.5.0](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.4.0...model-gateway-v1.5.0) (2026-10-08)
 
 
