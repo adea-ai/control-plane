@@ -218,6 +218,7 @@ try {
         './tests/memory-process-loss.integration.test.mjs',
         './tests/langgraph-retirement-inventory-pg.integration.test.mjs',
         './tests/profile-recovery-postgres-restore.integration.test.mjs',
+        './tests/profile-recovery-self-hosted-simple.integration.test.mjs',
       ],
       {
         environment: integrationEnvironment,

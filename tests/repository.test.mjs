@@ -241,6 +241,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/langgraph-retirement-inventory-pg.integration.test.mjs',
     'tests/memory-process-loss.integration.test.mjs',
     'tests/profile-recovery-postgres-restore.integration.test.mjs',
+    'tests/profile-recovery-self-hosted-simple.integration.test.mjs',
   ])
   const portabilityManifest = await readJson('packages/profile-portability/package.json')
   assert.match(
