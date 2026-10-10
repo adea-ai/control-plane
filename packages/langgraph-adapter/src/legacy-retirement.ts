@@ -764,6 +764,8 @@ export interface AdmissionEvidence {
   readonly failures: readonly ProofEvidence[]
   /** Explicit operator intent. Nothing in this repository sets it. */
   readonly closureRequested: boolean
+  /** True when the request's execution retains an uncertain effect. Admission is refused until it is reconciled. */
+  readonly retainedUncertainEffect?: boolean
 }
 
 export type AdmissionDecision = {
@@ -800,13 +802,29 @@ export function evaluateLegacyAdmissionGate(evidence: AdmissionEvidence): Admiss
   return { decision: reasons.length === 0 ? 'closure-eligible' : 'open', reasons }
 }
 
-/** New-admission guard: refuses only when eligibility is established and closure was explicitly requested. */
+/**
+ * The admission the guard is asked about. A retained uncertain effect is checked per execution, so one
+ * unreconciled effect cannot be started again while it is retained.
+ */
+export interface LegacyAdmissionRequest {
+  readonly executionId: string
+  readonly storageThreadId: string
+}
+
+/**
+ * New-admission guard. It refuses a request whose execution retains an uncertain effect, whatever the gate says.
+ * Otherwise it refuses only when closure is eligible and was explicitly requested.
+ */
 export function createLegacyAdmissionGuard(
-  evaluate: () => Promise<AdmissionEvidence> | AdmissionEvidence
-): { assertNewAdmissionAllowed(): Promise<void> } {
+  evaluate: (request: LegacyAdmissionRequest) => Promise<AdmissionEvidence> | AdmissionEvidence
+): { assertNewAdmissionAllowed(request: LegacyAdmissionRequest): Promise<void> } {
   return {
-    async assertNewAdmissionAllowed() {
-      const decision = evaluateLegacyAdmissionGate(await evaluate())
+    async assertNewAdmissionAllowed(request) {
+      const evidence = await evaluate(request)
+      if (evidence.retainedUncertainEffect === true) {
+        throw new LegacyRetirementError('LEGACY_ADMISSION_UNCERTAIN_EFFECT_RETAINED')
+      }
+      const decision = evaluateLegacyAdmissionGate(evidence)
       if (decision.decision === 'closure-eligible') {
         throw new LegacyRetirementError('LEGACY_ADMISSION_CLOSED')
       }

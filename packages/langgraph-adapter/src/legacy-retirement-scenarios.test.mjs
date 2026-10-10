@@ -616,6 +616,38 @@ describe('legacy retirement scenarios in disposable state (M16.03, #940)', () =>
     ).resolves.toBeUndefined()
   })
 
+  test('a retained uncertain effect refuses admission for its execution even when the gate would stay open', async () => {
+    const admissionRequest = {
+      executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+      storageThreadId: 'wsp_01JABCDEF0123456789ABCDEFG:exe_01JABCDEF0123456789ABCDEFG:thread-1',
+    }
+    const open = {
+      admissibleGraphs: [],
+      replacements: [],
+      profiles: [],
+      failures: [],
+      closureRequested: false,
+    }
+    await expect(
+      createLegacyAdmissionGuard(() => ({
+        ...open,
+        retainedUncertainEffect: true,
+      })).assertNewAdmissionAllowed(admissionRequest)
+    ).rejects.toMatchObject({ code: 'LEGACY_ADMISSION_UNCERTAIN_EFFECT_RETAINED' })
+    await expect(
+      createLegacyAdmissionGuard(() => ({
+        ...open,
+        retainedUncertainEffect: false,
+      })).assertNewAdmissionAllowed(admissionRequest)
+    ).resolves.toBeUndefined()
+    const evaluated = []
+    await createLegacyAdmissionGuard((seen) => {
+      evaluated.push(seen)
+      return open
+    }).assertNewAdmissionAllowed(admissionRequest)
+    expect(evaluated).toEqual([admissionRequest])
+  })
+
   test('the graph route marker matches the controller decorator path and version', async () => {
     const source = await readFile(
       new URL(

@@ -119,7 +119,12 @@ export class HostedServerGraphRuntime {
         ...(options.now === undefined ? {} : { now: options.now }),
       }),
       resumeFence: legacyFences,
-      admissionGuard: createLegacyAdmissionGuard(() => UNOBSERVED_LEGACY_ADMISSION_EVIDENCE),
+      // A retained uncertain effect on the requested execution refuses admission until it is reconciled.
+      admissionGuard: createLegacyAdmissionGuard(async ({ executionId }) => ({
+        ...UNOBSERVED_LEGACY_ADMISSION_EVIDENCE,
+        retainedUncertainEffect:
+          (await executions.getExecution(executionId))?.state === 'reconciliation_required',
+      })),
       authorizeDefinitionAndInput: (definition) =>
         isHostedGraphDefinition(definition, this.operations.toolPin),
       compilerVersion: COMPATIBILITY.compilerVersion,

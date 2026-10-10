@@ -27,7 +27,12 @@ export interface DeclarativeGraphAssemblyOptions {
   /** Required: the composition states how legacy resume and continue are fenced. */
   readonly resumeFence: { assertResumeAllowed(storageThreadId: string): Promise<void> }
   /** Required: the composition states how new legacy admissions are gated. */
-  readonly admissionGuard: { assertNewAdmissionAllowed(): Promise<void> }
+  readonly admissionGuard: {
+    assertNewAdmissionAllowed(request: {
+      readonly executionId: string
+      readonly storageThreadId: string
+    }): Promise<void>
+  }
   /** Additional server policy for catalog-owned definitions and inputs. */
   readonly authorizeDefinitionAndInput?: (
     definition: Parameters<
