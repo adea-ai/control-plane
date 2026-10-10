@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.16.1](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.16.0...workflow-worker-v1.16.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **harness:** exact harness routing, managed-pi identity, and certification keys (partial [#678](https://github.com/adea-ai/control-plane/issues/678)) ([#1050](https://github.com/adea-ai/control-plane/issues/1050)) ([64748e4](https://github.com/adea-ai/control-plane/commit/64748e464c4f3dbcab4673116158c1f78ca4fdb2))
+
+## [1.16.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.15.0...workflow-worker-v1.16.0) (2026-10-09)
+
+
+### Features
+
+* **telemetry:** correlate runtime telemetry and measure operations ([#1036](https://github.com/adea-ai/control-plane/issues/1036)) ([f59b114](https://github.com/adea-ai/control-plane/commit/f59b1145966868519fc372b0932e47e48183f454))
+
 ## [1.15.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.14.0...workflow-worker-v1.15.0) (2026-10-08)
 
 

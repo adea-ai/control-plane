@@ -158,6 +158,10 @@
       "release-type": "node",
       "package-name": "@control-plane/pi-cloudflare-host"
     },
+    "packages/pi-durable-adapter": {
+      "release-type": "node",
+      "package-name": "@control-plane/pi-durable-adapter"
+    },
     "packages/policy": {
       "release-type": "node",
       "package-name": "@control-plane/policy"
@@ -165,6 +169,10 @@
     "packages/production-readiness": {
       "release-type": "node",
       "package-name": "@control-plane/production-readiness"
+    },
+    "packages/profile-adapters": {
+      "release-type": "node",
+      "package-name": "@control-plane/profile-adapters"
     },
     "packages/profile-portability": {
       "release-type": "node",
@@ -174,6 +182,10 @@
       "release-type": "node",
       "package-name": "@control-plane/remote-control-relay"
     },
+    "packages/restate-runtime": {
+      "release-type": "node",
+      "package-name": "@control-plane/restate-runtime"
+    },
     "packages/runtime-gateway-protocol": {
       "release-type": "node",
       "package-name": "@control-plane/runtime-gateway-protocol"
@@ -181,10 +193,6 @@
     "packages/runtime-sdk": {
       "release-type": "node",
       "package-name": "@control-plane/runtime-sdk"
-    },
-    "packages/restate-runtime": {
-      "release-type": "node",
-      "package-name": "@control-plane/restate-runtime"
     },
     "packages/sandbox": {
       "release-type": "node",

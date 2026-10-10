@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/workspace",
-  "version": "1.79.0",
+  "version": "1.91.2",
   "private": true,
   "workspaces": [
     "apps/*",
@@ -85,16 +85,21 @@
     "@control-plane/model-gateway": "workspace:*",
     "@control-plane/object-store": "workspace:*",
     "@control-plane/orchestration": "workspace:*",
+    "@control-plane/pi-durable-adapter": "workspace:*",
+    "@control-plane/policy": "workspace:*",
     "@control-plane/production-readiness": "workspace:*",
+    "@control-plane/profile-adapters": "workspace:*",
     "@control-plane/profile-portability": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
     "@control-plane/sandbox": "workspace:*",
     "@control-plane/sdk": "workspace:*",
     "@control-plane/secrets": "workspace:*",
     "@control-plane/sqlite-persistence": "workspace:*",
+    "@control-plane/tool-execution": "workspace:*",
     "@control-plane/usage-ledger": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
     "@control-plane/workflow-worker": "workspace:*",
+    "@earendil-works/pi-ai": "1.1.0",
     "@langchain/langgraph": "1.4.20",
     "@types/node": "^26.6.4",
     "acorn": "8.19.0",
@@ -102,6 +107,7 @@
     "oxfmt": "^0.72.0",
     "oxlint": "^1.86.0",
     "railway": "3.13.0",
+    "reflect-metadata": "0.2.2",
     "turbo": "^2.11.7",
     "typescript": "^7.0.2"
   },
@@ -109,7 +115,7 @@
     "esbuild": "0.28.2",
     "fastify": "5.12.5",
     "sharp": "0.35.5",
-    "undici": "7.29.1"
+    "undici": "8.11.2"
   },
   "engines": {
     "bun": ">=1.4.0 <2",

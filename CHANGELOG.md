@@ -1,5 +1,188 @@
 # Changelog
 
+## [1.91.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.91.1...workspace-v1.91.2) (2026-10-10)
+
+
+### Tests
+
+* **control-api:** prove persisted approvals survive physical restart ([b1b1667](https://github.com/adea-ai/control-plane/commit/b1b16670a7e081127aec31d039293176f2567dff))
+* **control-api:** prove persisted approvals survive physical restart ([#932](https://github.com/adea-ai/control-plane/issues/932)) ([#1062](https://github.com/adea-ai/control-plane/issues/1062)) ([b1b1667](https://github.com/adea-ai/control-plane/commit/b1b16670a7e081127aec31d039293176f2567dff))
+* **pi-durable:** register secret canaries for journal and lead-preparation sinks ([#1059](https://github.com/adea-ai/control-plane/issues/1059)) ([b5bec50](https://github.com/adea-ai/control-plane/commit/b5bec5075ef0fa0e99f3e368961479883a5f5842))
+
+## [1.91.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.91.0...workspace-v1.91.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **harness:** exact harness routing, managed-pi identity, and certification keys (partial [#678](https://github.com/adea-ai/control-plane/issues/678)) ([#1050](https://github.com/adea-ai/control-plane/issues/1050)) ([64748e4](https://github.com/adea-ai/control-plane/commit/64748e464c4f3dbcab4673116158c1f78ca4fdb2))
+
+## [1.91.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.90.1...workspace-v1.91.0) (2026-10-10)
+
+
+### Features
+
+* issue-932-management-current-authority ([#1043](https://github.com/adea-ai/control-plane/issues/1043)) ([3118a7c](https://github.com/adea-ai/control-plane/commit/3118a7c9f5d177a3fdce2de8ced7fbf353d91e43))
+
+
+### Tests
+
+* **models:** qualify confirmed funding at inference boundaries ([#970](https://github.com/adea-ai/control-plane/issues/970)) ([5ee3dbf](https://github.com/adea-ai/control-plane/commit/5ee3dbf06f9a85bcb63ac29bdb13aecfeeac9a4a))
+
+## [1.90.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.90.0...workspace-v1.90.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **ci:** back off Docker Hub rate-limited integration pulls ([#1054](https://github.com/adea-ai/control-plane/issues/1054)) ([6b6bfba](https://github.com/adea-ai/control-plane/commit/6b6bfba28293fd8f140767ca4dd96d8908e4b2e8))
+
+## [1.90.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.89.1...workspace-v1.90.0) (2026-10-09)
+
+
+### Features
+
+* **pi:** 935 cancel-intent persistence, attempt fencing, and target-bound observation ([#1045](https://github.com/adea-ai/control-plane/issues/1045)) ([1208729](https://github.com/adea-ai/control-plane/commit/12087297deac41190f52f629d70e40bdb8d50d01))
+
+## [1.89.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.89.0...workspace-v1.89.1) (2026-10-09)
+
+
+### Maintenance
+
+* **deps:** update dependency undici to v8 ([#986](https://github.com/adea-ai/control-plane/issues/986)) ([b8290b5](https://github.com/adea-ai/control-plane/commit/b8290b533e0ce4cee80cf980d35162a53a5cff55))
+
+## [1.89.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.88.0...workspace-v1.89.0) (2026-10-09)
+
+
+### Features
+
+* **telemetry:** correlate runtime telemetry and measure operations ([#1036](https://github.com/adea-ai/control-plane/issues/1036)) ([f59b114](https://github.com/adea-ai/control-plane/commit/f59b1145966868519fc372b0932e47e48183f454))
+
+## [1.88.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.87.0...workspace-v1.88.0) (2026-10-09)
+
+
+### Features
+
+* **profile-adapters:** add profile composition boundaries ([#1033](https://github.com/adea-ai/control-plane/issues/1033)) ([bc41666](https://github.com/adea-ai/control-plane/commit/bc41666a60c7d3b5cf23556fcc609b6e01c0aaab))
+
+
+### Bug Fixes
+
+* **pi:** fence cancellation by inference generation ([#1031](https://github.com/adea-ai/control-plane/issues/1031)) ([f735d7e](https://github.com/adea-ai/control-plane/commit/f735d7eae4f6b909c53a7bb4b6b4f8ef1769c9b7))
+
+## [1.87.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.86.2...workspace-v1.87.0) (2026-10-09)
+
+
+### Features
+
+* add explicit Pi role model selection and proof ([#1016](https://github.com/adea-ai/control-plane/issues/1016)) ([b61426b](https://github.com/adea-ai/control-plane/commit/b61426bce2d5b29964fe13806a149c330d3d085e))
+* CP [#941](https://github.com/adea-ai/control-plane/issues/941) runtime ownership/layer replacement map and baseline tooling ([#1032](https://github.com/adea-ai/control-plane/issues/1032)) ([f1a696f](https://github.com/adea-ai/control-plane/commit/f1a696fb953aacfd53a03e59adfd4c04f350a9a4))
+* **pi-durable:** add canonical current tool authority ([#932](https://github.com/adea-ai/control-plane/issues/932)) ([#1038](https://github.com/adea-ai/control-plane/issues/1038)) ([398a902](https://github.com/adea-ai/control-plane/commit/398a902071f94627a88f4f16384b909e7f1d224b))
+
+## [1.86.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.86.1...workspace-v1.86.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* use authenticated gh for local requirements-ledger checks ([#1035](https://github.com/adea-ai/control-plane/issues/1035)) ([2a0785f](https://github.com/adea-ai/control-plane/commit/2a0785ff1c07890e306332b05d6e5ed7a368e699))
+
+## [1.86.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.86.0...workspace-v1.86.1) (2026-10-09)
+
+
+### Maintenance
+
+* **code-foundry:** upgrade runtime to v1.47.1 ([9471284](https://github.com/adea-ai/control-plane/commit/947128425f48adf1d949bb150d16fbac9706eaa9))
+* **code-foundry:** upgrade to v1.47.1 ([#1002](https://github.com/adea-ai/control-plane/issues/1002)) ([9471284](https://github.com/adea-ai/control-plane/commit/947128425f48adf1d949bb150d16fbac9706eaa9))
+
+## [1.86.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.85.1...workspace-v1.86.0) (2026-10-09)
+
+
+### Features
+
+* add report-only replacement compatibility validator ([#990](https://github.com/adea-ai/control-plane/issues/990)) ([f8d26e0](https://github.com/adea-ai/control-plane/commit/f8d26e0904e181d458435142cba23c01ee47bd2b))
+* compose production Pi lead model and publication authority ([#996](https://github.com/adea-ai/control-plane/issues/996)) ([1332100](https://github.com/adea-ai/control-plane/commit/13321009f6e9d7984a8774df8818e1b775c582ea))
+* **local:** read-only stuck-job inspection operator command and telemetry view ([#974](https://github.com/adea-ai/control-plane/issues/974)) ([337f2d6](https://github.com/adea-ai/control-plane/commit/337f2d632e7f450be560d30809a3d1773dfeaa25))
+* **pi-cloudflare:** preflight pinned native task definitions ([#1000](https://github.com/adea-ai/control-plane/issues/1000)) ([ff72007](https://github.com/adea-ai/control-plane/commit/ff72007e6e013a4dcf1a42f0dbb02f0c86ea92ed))
+* **scripts:** add read-only langgraph retirement inventory ([#975](https://github.com/adea-ai/control-plane/issues/975)) ([81b42e7](https://github.com/adea-ai/control-plane/commit/81b42e79a23d4adc9dcb5dd6cf380bcf3b7472d0))
+
+
+### Bug Fixes
+
+* **ci:** quiet shellcheck in the release token diagnostic ([#999](https://github.com/adea-ai/control-plane/issues/999)) ([db66999](https://github.com/adea-ai/control-plane/commit/db66999237dbe7abb3e3da860a247be8f5b01937))
+* **pi:** fence continuation retention on current child journal ([#1007](https://github.com/adea-ai/control-plane/issues/1007)) ([b237e7a](https://github.com/adea-ai/control-plane/commit/b237e7a034a0687bd5f1ed7489c7225085e8b17d))
+* **requirements:** fetch complete GitHub issue inventory ([#1005](https://github.com/adea-ai/control-plane/issues/1005)) ([ecf65d2](https://github.com/adea-ai/control-plane/commit/ecf65d26adb093f1c30b0c9068939bc46ad6c308))
+
+
+### Tests
+
+* **pi:** distinguish recovery denial and ownership evidence ([#993](https://github.com/adea-ai/control-plane/issues/993)) ([1fad0ca](https://github.com/adea-ai/control-plane/commit/1fad0ca4cfcc39b40a2a24012141653a800c8fa7))
+* specify unfinished Pi child process recovery proofs ([#979](https://github.com/adea-ai/control-plane/issues/979)) ([6b82ccd](https://github.com/adea-ai/control-plane/commit/6b82ccd677e69eca14d765ac77d9d273df228d42))
+
+## [1.85.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.85.0...workspace-v1.85.1) (2026-10-08)
+
+
+### Tests
+
+* **pi:** expose child bootstrap boundary failures ([#987](https://github.com/adea-ai/control-plane/issues/987)) ([6950a1d](https://github.com/adea-ai/control-plane/commit/6950a1d38759c3b8ed03c679f70995883d44055a))
+
+
+### Maintenance
+
+* **config:** build before the local commit gate ([ecd93b6](https://github.com/adea-ai/control-plane/commit/ecd93b6b6742f05fc05084b870c3f2312633f543))
+* pre-commit-build ([#982](https://github.com/adea-ai/control-plane/issues/982)) ([ecd93b6](https://github.com/adea-ai/control-plane/commit/ecd93b6b6742f05fc05084b870c3f2312633f543))
+
+## [1.85.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.84.1...workspace-v1.85.0) (2026-10-08)
+
+
+### Features
+
+* pi-child-continuation ([#981](https://github.com/adea-ai/control-plane/issues/981)) ([a9d8228](https://github.com/adea-ai/control-plane/commit/a9d8228d70ee6eb6234204c24c9b46dc2fc38d7a))
+
+## [1.84.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.84.0...workspace-v1.84.1) (2026-10-08)
+
+
+### Tests
+
+* compose stored model selections with prepared lead host ([#983](https://github.com/adea-ai/control-plane/issues/983)) ([357f41c](https://github.com/adea-ai/control-plane/commit/357f41c32331788cf5a3d6bf05ef4044e17fb383))
+
+## [1.84.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.83.0...workspace-v1.84.0) (2026-10-08)
+
+
+### Features
+
+* **pi-cloudflare:** add canonical read-only session binding ([#985](https://github.com/adea-ai/control-plane/issues/985)) ([e35b1fc](https://github.com/adea-ai/control-plane/commit/e35b1fcf62ffe5accbe97e49a049365d42267706))
+
+
+### Tests
+
+* keep Pi interruption worker alive until signalled ([#984](https://github.com/adea-ai/control-plane/issues/984)) ([e5a224a](https://github.com/adea-ai/control-plane/commit/e5a224ab60fa98dfad629186bcc23727c9fcc612))
+
+## [1.83.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.82.0...workspace-v1.83.0) (2026-10-08)
+
+
+### Features
+
+* compose partial Cloudflare runtime adapter ([#977](https://github.com/adea-ai/control-plane/issues/977)) ([cd26e7f](https://github.com/adea-ai/control-plane/commit/cd26e7f55065e39998b633c78ec518747d777d1c))
+
+## [1.82.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.81.0...workspace-v1.82.0) (2026-10-08)
+
+
+### Features
+
+* **pi-durable:** add persistent governed Node runtime and funded lead admission ([#949](https://github.com/adea-ai/control-plane/issues/949)) ([2ad205f](https://github.com/adea-ai/control-plane/commit/2ad205f783c09a0cc7e208d5c799d6c18636500a))
+
+## [1.81.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.80.0...workspace-v1.81.0) (2026-10-08)
+
+
+### Features
+
+* **runtime:** reconcile interrupted Cloudflare Pi effects ([#971](https://github.com/adea-ai/control-plane/issues/971)) ([b0d6b8a](https://github.com/adea-ai/control-plane/commit/b0d6b8aa921bddeef5366ead44efbb0cd92b4b39))
+
+## [1.80.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.79.0...workspace-v1.80.0) (2026-10-08)
+
+
+### Features
+
+* retain governed Pi child admission and report-back ([#929](https://github.com/adea-ai/control-plane/issues/929)) ([06efbc3](https://github.com/adea-ai/control-plane/commit/06efbc3b8d7246d1a2b0f3978bcfd44d13ac8205))
+
 ## [1.79.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.78.0...workspace-v1.79.0) (2026-10-08)
 
 

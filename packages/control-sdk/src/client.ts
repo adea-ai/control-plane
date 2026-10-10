@@ -1,4 +1,20 @@
 import type {
+  PiDurableLeadPrepareRequest,
+  PiDurableLeadPrepareResponse,
+  PiDurableLeadLookupRequest,
+  PiDurableLeadLookupResponse,
+  PiDurableLeadDispatchRequest,
+  PiDurableLeadDispatchResponse,
+  PiDurableLeadStatusRequest,
+  PiDurableLeadStatusResponse,
+  PiDurableLeadProgressRequest,
+  PiDurableLeadProgressResponse,
+  PiDurableLeadCancelRequest,
+  PiDurableLeadCancelResponse,
+} from '@control-plane/runtime-sdk'
+import type {
+  PiLeadPublicationRequest,
+  PiLeadPublicationResponse,
   ModelSelectionFundingRequest,
   ModelSelectionFundingResponse,
   ModelConnectionCreateRequest,
@@ -192,6 +208,9 @@ export class ControlPlaneClient {
   ): Promise<ModelSelectionFundingResponse> {
     return this.#request(ControlApiOperations.getModelSelectionFunding, input)
   }
+  getPiDurableLeadPublication(input: PiLeadPublicationRequest): Promise<PiLeadPublicationResponse> {
+    return this.#request(ControlApiOperations.getPiDurableLeadPublication, input)
+  }
 
   /** Sends the secret once; the response carries metadata only. */
   createCredential(input: CredentialCreateRequest): Promise<CredentialResponse> {
@@ -384,6 +403,54 @@ export class ControlPlaneClient {
     input: MarketplaceInstallationUninstallRequest
   ): Promise<MarketplaceInstallationUninstallResponse> {
     return this.#request(ControlApiOperations.marketplaceInstallationUninstall, input)
+  }
+
+  async preparePiDurableLead(
+    input: PiDurableLeadPrepareRequest
+  ): Promise<PiDurableLeadPrepareResponse> {
+    const request = ControlApiOperations.preparePiDurableLead.requestSchema.parse(input)
+    const response = await this.#request(ControlApiOperations.preparePiDurableLead, request)
+    if (
+      response.data.intentId !== request.payload.intentId ||
+      response.data.funding.workspaceId !== request.workspaceId
+    ) {
+      throw invalidResponse(request.requestId, 200)
+    }
+    return response
+  }
+
+  dispatchPiDurableLead(
+    input: PiDurableLeadDispatchRequest
+  ): Promise<PiDurableLeadDispatchResponse> {
+    return this.#request(ControlApiOperations.dispatchPiDurableLead, input)
+  }
+
+  getPiDurableLeadStatus(input: PiDurableLeadStatusRequest): Promise<PiDurableLeadStatusResponse> {
+    return this.#request(ControlApiOperations.getPiDurableLeadStatus, input)
+  }
+
+  async lookupPiDurableLead(
+    input: PiDurableLeadLookupRequest
+  ): Promise<PiDurableLeadLookupResponse> {
+    const request = ControlApiOperations.lookupPiDurableLead.requestSchema.parse(input)
+    const response = await this.#request(ControlApiOperations.lookupPiDurableLead, request)
+    if (
+      response.data.intentId !== request.parameters.intentId ||
+      response.data.workspaceId !== request.workspaceId
+    ) {
+      throw invalidResponse(request.requestId, 200)
+    }
+    return response
+  }
+
+  getPiDurableLeadProgress(
+    input: PiDurableLeadProgressRequest
+  ): Promise<PiDurableLeadProgressResponse> {
+    return this.#request(ControlApiOperations.getPiDurableLeadProgress, input)
+  }
+
+  cancelPiDurableLead(input: PiDurableLeadCancelRequest): Promise<PiDurableLeadCancelResponse> {
+    return this.#request(ControlApiOperations.cancelPiDurableLead, input)
   }
 
   async #request<RequestInput, RequestOutput, ResponseOutput>(

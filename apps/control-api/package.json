@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/control-api",
-  "version": "1.23.0",
+  "version": "1.29.1",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -27,7 +27,10 @@
     "@control-plane/memory-writeback": "workspace:*",
     "@control-plane/model-gateway": "workspace:*",
     "@control-plane/orchestration": "workspace:*",
+    "@control-plane/pi-durable-adapter": "workspace:*",
+    "@control-plane/runtime-sdk": "workspace:*",
     "@control-plane/telemetry": "workspace:*",
+    "@control-plane/tool-execution": "workspace:*",
     "@control-plane/usage-ledger": "workspace:*",
     "@fastify/helmet": "13.1.1",
     "@nestjs/common": "12.1.2",
@@ -40,11 +43,15 @@
     "drizzle-orm": "0.45.3",
     "fastify": "5.12.5",
     "reflect-metadata": "0.2.2",
-    "rxjs": "7.8.2"
+    "rxjs": "7.8.2",
+    "zod": "4.6.5"
   },
   "devDependencies": {
+    "@control-plane/sdk": "workspace:*",
     "@control-plane/sqlite-persistence": "workspace:*",
-    "@control-plane/testing": "workspace:*"
+    "@control-plane/testing": "workspace:*",
+    "@control-plane/workflow-worker": "workspace:*",
+    "@earendil-works/pi-ai": "1.1.0"
   },
   "engines": {
     "node": "24.21.0"

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.30.0](https://github.com/adea-ai/control-plane/compare/domain-v1.29.0...domain-v1.30.0) (2026-10-09)
+
+
+### Features
+
+* add report-only replacement compatibility validator ([#990](https://github.com/adea-ai/control-plane/issues/990)) ([f8d26e0](https://github.com/adea-ai/control-plane/commit/f8d26e0904e181d458435142cba23c01ee47bd2b))
+
+## [1.29.0](https://github.com/adea-ai/control-plane/compare/domain-v1.28.0...domain-v1.29.0) (2026-10-08)
+
+
+### Features
+
+* retain governed Pi child admission and report-back ([#929](https://github.com/adea-ai/control-plane/issues/929)) ([06efbc3](https://github.com/adea-ai/control-plane/commit/06efbc3b8d7246d1a2b0f3978bcfd44d13ac8205))
+
 ## [1.28.0](https://github.com/adea-ai/control-plane/compare/domain-v1.27.0...domain-v1.28.0) (2026-10-08)
 
 

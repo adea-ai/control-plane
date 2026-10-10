@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/local-control-plane",
-  "version": "1.29.0",
+  "version": "1.31.0",
   "private": true,
   "files": [
     "dist"
@@ -24,6 +24,7 @@
     "@control-plane/control-api": "workspace:*",
     "@control-plane/deployment": "workspace:*",
     "@control-plane/domain": "workspace:*",
+    "@control-plane/events": "workspace:*",
     "@control-plane/execution-plan": "workspace:*",
     "@control-plane/langgraph-adapter": "workspace:*",
     "@control-plane/managed-pi-adapter": "workspace:*",

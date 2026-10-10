@@ -1,0 +1,38 @@
+{
+  "name": "@control-plane/profile-adapters",
+  "version": "1.1.0",
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "browser": false,
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "node": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "oxlint src",
+    "test": "bun test src/*.test.mjs"
+  },
+  "dependencies": {
+    "@control-plane/deployment": "workspace:*",
+    "@control-plane/orchestration": "workspace:*",
+    "@control-plane/runtime-sdk": "workspace:*",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@control-plane/domain": "workspace:*",
+    "@control-plane/managed-pi-adapter": "workspace:*",
+    "@control-plane/pi-durable-adapter": "workspace:*"
+  },
+  "engines": {
+    "bun": ">=1.4.0 <2",
+    "node": "24.21.0"
+  }
+}
