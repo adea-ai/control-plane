@@ -1,11 +1,13 @@
 // Governed publisher regression (#973 helper branch): shared.settleUsage must bind every
-// child report to ITS OWN real ledger entry sequence, redeliveries must reuse the original
-// sequence (never ordering an old report as new), and a missing sequence lookup must fail
-// closed instead of silently omitting publicationSequence. Real composition only: the lead
-// runs, the governed child settles through createPiDurableUsageAuthority over the durable
-// usage ledger, and the fixture's canonical settleModelRequest wrapper (installed before the
-// authority exists; the authority calls options.ledger.settleModelRequest dynamically) records
-// each settle's sequence. No sequence-only fakes, no scheduler changes.
+// child report to ITS OWN real ledger entry sequence, an OLD settle released after a NEWER
+// one must never roll the publication watermark back, a replay of a genuinely older request
+// with its original captured arguments must mint no second ledger entry and no projection
+// rollback, and a missing sequence lookup must fail closed instead of silently omitting
+// publicationSequence. Real composition only: the lead runs, the governed child settles
+// through createPiDurableUsageAuthority over the durable usage ledger, and the fixture's
+// canonical settleModelRequest wrapper (installed before the authority exists; the authority
+// calls options.ledger.settleModelRequest dynamically) records each settle's sequence. No
+// sequence-only fakes, no scheduler changes.
 import { describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -24,11 +26,31 @@ async function fixture(run, options) {
   }
 }
 
+const FIRST_KEY = 'governed-publisher-regression-request-1'
 const SECOND_KEY = 'governed-publisher-regression-request-2'
+const FIRST_USAGE = { inputTokens: 3, outputTokens: 2, durationMs: 900 }
+const SECOND_USAGE = { inputTokens: 1, outputTokens: 1, durationMs: 900 }
+
+/** Highest observed publication watermark across the durable cost-state snapshot. */
+function watermarkOf(childUsage) {
+  let found = 0
+  const walk = (node) => {
+    if (node === null || typeof node !== 'object') return
+    for (const [key, value] of Object.entries(node)) {
+      if (key === 'highestPublication' && typeof value === 'number') {
+        found = Math.max(found, value)
+      } else {
+        walk(value)
+      }
+    }
+  }
+  walk(JSON.parse(JSON.stringify(childUsage.snapshot())))
+  return found
+}
 
 describe('governed publisher report ordering', () => {
   test(
-    'two distinct real request/source ids each order by their own ledger entry, redelivery keeps the original sequence, and a missing lookup fails closed',
+    'an old settle released after a newer one keeps the newer watermark, each report uses its own ledger sequence, replay mints no entry, and a missing lookup fails closed',
     () =>
       fixture(
         async (f) => {
@@ -38,8 +60,8 @@ describe('governed publisher report ordering', () => {
             childExecutionId: f.ids.childExecutionId,
             childAttemptId: f.ids.childAttemptId,
           }
-          // Real composition run: lead then governed child; the child's first settlement
-          // flows through shared.settleUsage with its real request/source identity.
+          // Real composition run: lead then governed child; the child's settlement flows
+          // through shared.settleUsage with its real request/source identity.
           const leadHandle = await f.leadRuntime.adapter.start(f.leadRequest)
           await f.leadRuntime.adapter.drain()
           expect((await f.leadRuntime.adapter.status(leadHandle)).state).toBe('completed')
@@ -50,83 +72,106 @@ describe('governed publisher report ordering', () => {
 
           const first = f.childUsage.status(usageIdentity)
           expect(first.costState).toBe('settled')
-          const source1 = first.reported.accounting.sourceId
+          const bridgeSource = first.reported.accounting.sourceId
 
-          // A SECOND real request/source id: scope() hashes (budget, admission, key), so a
-          // distinct key on the same real child authority is a distinct real source.
-          // The REAL authority the governed bridge settled with (captured by the fixture),
-          // plus a real authorize/reserve for the second distinct request key.
+          // The REAL authority the governed bridge settled with (captured by the fixture).
           const authority = f.shared.lastSettle.authority
-          await f.shared.authorizeInference(authority, SECOND_KEY)
-          const settled2 = await f.shared.settleUsage(
-            authority,
-            SECOND_KEY,
-            { inputTokens: 1, outputTokens: 1, durationMs: 900 },
-            {}
-          )
-          expect(settled2.accounting.costExact).toBe(true)
-          const source2 = settled2.accounting.sourceId
-          expect(source2).not.toBe(source1)
-          expect(f.childUsage.status(usageIdentity).costState).toBe('settled')
-
-          // (a) Each report is bound to ITS OWN actual ledger entry sequence.
-          const ledgerEntries = await f.ledger.entries(f.ids.workspaceId, f.ids.childExecutionId)
-          const realSequences = new Map()
-          for (const entry of ledgerEntries) {
-            if (entry.kind === 'model_usage') {
-              // The ledger canonicalizes entry.source.idempotencyKey (`usage:<digest>`),
-              // so the real entry is matched by its preserved sourceId identity.
-              realSequences.set(`${entry.source.sourceId}:settle`, entry.sequence)
+          const sequencesOf = async () => {
+            const entries = await f.ledger.entries(f.ids.workspaceId, f.ids.childExecutionId)
+            const bySource = new Map()
+            for (const entry of entries) {
+              if (entry.kind === 'model_usage') {
+                bySource.set(entry.source.sourceId, entry)
+              }
             }
+            return bySource
           }
-          const sequence1 = f.settleSequenceByIdempotency.get(`${source1}:settle`)
-          const sequence2 = f.settleSequenceByIdempotency.get(`${source2}:settle`)
-          expect(sequence1).toBe(realSequences.get(`${source1}:settle`))
-          expect(sequence2).toBe(realSequences.get(`${source2}:settle`))
-          expect(sequence1).toBeDefined()
-          expect(sequence2).toBeDefined()
-          expect(sequence2).not.toBe(sequence1)
 
-          // (b) Old redelivery must not order as new: redelivering the second request
-          // returns the retained canonical entry, keeps the ORIGINAL sequence, and mints
-          // no second ledger entry for that identity.
-          const redelivered = await f.shared.settleUsage(
-            authority,
-            SECOND_KEY,
-            { inputTokens: 1, outputTokens: 1, durationMs: 900 },
-            {}
+          // --- Hold the FIRST real settle after its ledger record, before its sequence
+          // --- lookup, then let a SECOND real settle complete, then release the first.
+          await f.shared.authorizeInference(authority, FIRST_KEY)
+          await f.shared.authorizeInference(authority, SECOND_KEY)
+
+          let reachedFirst
+          const parked = new Promise((resolve) => {
+            reachedFirst = resolve
+          })
+          let releaseFirst
+          const released = new Promise((resolve) => {
+            releaseFirst = resolve
+          })
+          let holding = true
+          f.shared.beforeSequenceLookup = async () => {
+            if (!holding) return
+            holding = false
+            reachedFirst()
+            await released
+          }
+          const firstPending = f.shared.settleUsage(authority, FIRST_KEY, FIRST_USAGE, {})
+          // The first settle has now recorded its ledger entry (settleModelRequest returned
+          // and the wrapper captured its sequence) and is parked before its lookup/report.
+          await parked
+
+          const settled2 = await f.shared.settleUsage(authority, SECOND_KEY, SECOND_USAGE, {})
+          // Release the held FIRST settle: its report arrives after the newer one.
+          releaseFirst()
+          const settled1 = await firstPending
+
+          // Both real sources are distinct and each map sequence equals its OWN actual
+          // ledger entry sequence (the ledger canonicalizes entry idempotency keys, so the
+          // entry is matched by its preserved sourceId).
+          const entriesBySource = await sequencesOf()
+          const source2 = settled2.accounting.sourceId
+          const seq1 = f.settleSequenceByIdempotency.get(`${settled1.accounting.sourceId}:settle`)
+          const seq2 = f.settleSequenceByIdempotency.get(`${source2}:settle`)
+          expect(settled1.accounting.sourceId).not.toBe(source2)
+          expect(seq1).toBe(entriesBySource.get(settled1.accounting.sourceId)?.sequence)
+          expect(seq2).toBe(entriesBySource.get(source2)?.sequence)
+          expect(seq2).toBeGreaterThan(seq1)
+
+          // Watermark: the NEWER (second) publication set it while the first was parked,
+          // and releasing the older first settle afterwards must NOT roll it back.
+          expect(watermarkOf(f.childUsage)).toBe(seq2)
+
+          // --- Replay the genuinely older request with its ORIGINAL captured arguments
+          // --- after the newer request: retained entry (no second ledger entry) and no
+          // --- projection rollback.
+          const replayed1 = await f.shared.settleUsage(authority, FIRST_KEY, FIRST_USAGE, {})
+          expect(replayed1.accounting.sourceId).toBe(settled1.accounting.sourceId)
+          expect(f.settleSequenceByIdempotency.get(`${settled1.accounting.sourceId}:settle`)).toBe(
+            seq1
           )
-          expect(redelivered.accounting.sourceId).toBe(source2)
-          expect(f.settleSequenceByIdempotency.get(`${source2}:settle`)).toBe(sequence2)
-          const settleEntriesForSecond = (
-            await f.ledger.entries(f.ids.workspaceId, f.ids.childExecutionId)
-          ).filter((entry) => entry.kind === 'model_usage' && entry.source.sourceId === source2)
-          expect(settleEntriesForSecond).toHaveLength(1)
-          expect(settleEntriesForSecond[0].sequence).toBe(sequence2)
+          const entriesAfterReplay = await sequencesOf()
+          expect(entriesAfterReplay.get(settled1.accounting.sourceId)?.sequence).toBe(seq1)
+          expect(
+            (await f.ledger.entries(f.ids.workspaceId, f.ids.childExecutionId)).filter(
+              (entry) =>
+                entry.kind === 'model_usage' &&
+                entry.source.sourceId === settled1.accounting.sourceId
+            )
+          ).toHaveLength(1)
+          expect(watermarkOf(f.childUsage)).toBe(seq2)
+          // The bridge's own earlier report also kept its distinct actual sequence.
+          expect(seq1).not.toBe(f.settleSequenceByIdempotency.get(`${bridgeSource}:settle`))
+          expect(entriesBySource.get(bridgeSource)).toBeDefined()
 
-          // (c) Missing lookup fails closed: drop this process's observed sequence (a cold
-          // publisher map — the settle itself already happened) and redeliver. The report
-          // must refuse with the fail-closed error instead of silently omitting
-          // publicationSequence.
+          // --- Missing lookup fails closed: drop this process's observed sequence (a cold
+          // --- publisher map — the settle itself already happened) and redeliver. The
+          // --- report must refuse instead of silently omitting publicationSequence.
           f.shared.beforeSequenceLookup = () => {
             f.settleSequenceByIdempotency.delete(`${source2}:settle`)
           }
           try {
             await expect(
-              f.shared.settleUsage(
-                authority,
-                SECOND_KEY,
-                { inputTokens: 1, outputTokens: 1, durationMs: 900 },
-                {}
-              )
+              f.shared.settleUsage(authority, SECOND_KEY, SECOND_USAGE, {})
             ).rejects.toThrow(`PUBLICATION_SEQUENCE_MISSING:${source2}:settle`)
           } finally {
             f.shared.beforeSequenceLookup = undefined
           }
-          // Fail closed leaves the projection where it stood: still settled, not republished.
           expect(f.childUsage.status(usageIdentity).costState).toBe('settled')
+          expect(watermarkOf(f.childUsage)).toBe(seq2)
           // Restore the observed sequence so the fixture closes cleanly with real state.
-          f.settleSequenceByIdempotency.set(`${source2}:settle`, sequence2)
+          f.settleSequenceByIdempotency.set(`${source2}:settle`, seq2)
         },
         {
           transactionalChildAdmission: true,
