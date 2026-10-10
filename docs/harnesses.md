@@ -7,15 +7,15 @@ permissions. Each harness is a pluggable implementation.
 
 ## The seams
 
-| seam                 | where                                                       | contract                                                                                                                                                          |
-| -------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Adapter surface      | `packages/runtime-sdk`                                      | implement `RuntimeAdapter` (`inspect`/`start`/`progress`/`cancel`/sessions); the gateway protocol lives in `packages/runtime-gateway-protocol`                    |
-| Protocol integration | `packages/acp-adapter`                                      | Any Agent-Client-Protocol-speaking harness connects through a launched executable. This requires no Control Plane code changes.                                   |
-| Native integration   | `packages/managed-pi-adapter`                               | the Pi implementation of the same adapter surface                                                                                                                 |
-| Selection            | `packages/policy` decision layer                            | `HarnessIdSchema` is a free-form kebab-case id; a runtime exposes up to 16 `harnessIds`; resolution is explicit pin → policy default → first exposed, fail-closed |
-| Marketplace          | control-api                                                 | `harness` is a free-form profile dimension validated against the requested harness                                                                                |
-| Discovery            | `packages/contracts/runtime-discovery`                      | runtime inventory records the harness version; attempt routing selects by capabilities and scope, never by harness identity                                       |
-| Certifications       | `docs/runtime-compatibility/runtime-certifications.v1.json` | rows keyed by `runtimeFamily` (today: `pi`, `acp`) with per-harness version pins                                                                                  |
+| seam                 | where                                                       | contract                                                                                                                                                                                                                                                       |
+| -------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Adapter surface      | `packages/runtime-sdk`                                      | implement `RuntimeAdapter` (`inspect`/`start`/`progress`/`cancel`/sessions); the gateway protocol lives in `packages/runtime-gateway-protocol`                                                                                                                 |
+| Protocol integration | `packages/acp-adapter`                                      | Any Agent-Client-Protocol-speaking harness connects through a launched executable. This requires no Control Plane code changes.                                                                                                                                |
+| Native integration   | `packages/managed-pi-adapter`                               | the Pi implementation of the same adapter surface                                                                                                                                                                                                              |
+| Selection            | `packages/policy` decision layer; production router         | `HarnessIdSchema` is a free-form kebab-case id; a runtime exposes up to 16 `harnessIds`; an accepted harness pin is a hard candidate filter (exact id) before ranking; decision-layer resolution is explicit pin → policy default → first exposed, fail-closed |
+| Marketplace          | control-api                                                 | `harness` is a free-form profile dimension validated against the requested harness                                                                                                                                                                             |
+| Discovery            | `packages/contracts/runtime-discovery`                      | runtime inventory records the harness version; discovery advertises `harnessIds: [family]`; attempt routing selects by capabilities, scope, and an accepted harness id matched exactly                                                                         |
+| Certifications       | `docs/runtime-compatibility/runtime-certifications.v1.json` | rows keyed by `runtimeFamily` (today: `pi`, `acp`) with per-harness version pins                                                                                                                                                                               |
 
 Pi integrations are wired in the relevant composition roots. Local constructs
 the managed Pi runtime in `apps/local-control-plane/src/managed-pi-runtime.ts`.
@@ -28,9 +28,8 @@ composition packages keep those implementations behind the runtime contracts.
    an ACP-speaking executable and reuse `acp-adapter`.
 2. Register the runtime family in the certification registry with version
    pins and verified capabilities.
-3. Expose the new `harnessId` from runtime discovery; the decision layer
-   resolves it like any other (pin it per model/task, or set it as the
-   policy default).
+3. Expose the new `harnessId` from runtime discovery (the discovered family
+   id). Production routing matches an accepted harness pin against it exactly.
 4. Point the relevant composition root at the new adapter.
 
 ## Model and harness selection are independent
@@ -56,16 +55,30 @@ coupling, and neither ever substitutes for the other:
   location must match the qualification evidence. A mismatch denies with
   `INCOMPATIBLE_HARNESS` or `INCOMPATIBLE_LOCATION`; it never selects another
   target.
-- Pending (Pi-owned, not yet changed): `apps/workflow-worker/src/runtime-attempt-router.ts`
-  still applies the pin after selection and still contains the `managed-pi` → `pi`
-  family alias (`runtimeFamilyAllowed`). Until that router change is approved, the
-  production attempt path does not yet meet this policy.
+- Production routing: `RuntimeDiscoveryAttemptRouter`
+  (`apps/workflow-worker/src/runtime-attempt-router.ts`) applies an accepted
+  harness pin as a hard filter over the eligible candidates before ranking. The
+  cloud composition constructs it in `remote` runtime mode, and the hosted
+  control-plane composition constructs it with its `pinnedHarnessId` option.
+  Discovery advertises `harnessIds: [family]` (`availableRuntimesFromDiscovery`),
+  so a runtime exposes exactly its discovered family id. Pinned attempts bind
+  `acceptedHarnessId` into the routing input digest and add the reason code
+  `HARNESS_PINNED`; unpinned digests are unchanged. When no eligible candidate
+  exposes the pin, the attempt fails closed with `NO_COMPATIBLE_RUNTIME`.
+- The managed Pi remote command accepts only discovered family `managed-pi`
+  (`MANAGED_PI_DRIVER_FAMILY`, `apps/workflow-worker/src/managed-pi-remote-command.ts`)
+  and refuses `pi`.
 
 ## Known limits
 
-- The decision-layer harness selection is substrate: runtime discovery does
-  not yet populate `harnessIds`, so live per-model harness routing waits on
-  that wiring (#74 / M12).
+- The managed Pi remote command receives no accepted-harness id. It enforces
+  driver identity by discovered family only; the pin is enforced at routing.
+- `resolveDecisionLayer` has no production caller yet. Production harness
+  filtering happens in the router above.
+- The managed Pi certification row is keyed `runtimeFamily: pi`
+  (`docs/runtime-compatibility/runtime-certifications.v1.json`). Compatibility
+  matching is exact on `runtimeFamily`, so no row matches the `managed-pi`
+  family. Not changed here.
 - Runtime discovery records one harness version per node. Revisit this model if
   a node hosts several harnesses concurrently.
 - Canonical-JSON sites that persist harness-adjacent digests are tracked in
