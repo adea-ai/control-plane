@@ -883,6 +883,61 @@ test('reconcile leaves a run to the live process that owns it', async () => {
   }
 })
 
+test('a claim handed to a run that fails validation is released and cannot wedge later recovery', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-reconcile-validation-release-'))
+  let adapter
+  let handle
+  let stored
+  let corrupt = true
+  const setup = fixture(directory, {
+    reconcileInference: async () => {
+      if (corrupt) {
+        corrupt = false
+        // Corrupt the stored admission after reconcile has validated it and before its claim, so
+        // reconcile's validation of the run it is about to start fails while it holds the claim.
+        const row = adapter.journal.database
+          .prepare('SELECT body FROM pi_admissions WHERE handle_id=?')
+          .get(handle.handleId)
+        stored = row.body
+        const record = JSON.parse(row.body)
+        record.admission.providerDigest = 'sha256:invalid'
+        adapter.journal.database
+          .prepare('UPDATE pi_admissions SET body=? WHERE handle_id=?')
+          .run(JSON.stringify(record), handle.handleId)
+      }
+      return 'safe_to_resume'
+    },
+  })
+  adapter = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    handle = await adapter.start(setup.request)
+    await adapter.drain()
+    const prior = adapter.journal.get(handle.handleId)
+    adapter.journal.update(handle.handleId, prior.epoch, {
+      state: 'running',
+      detail: { ...prior.detail, result: undefined, ownerPid: undefined, ownerEpoch: undefined },
+    })
+    // The corrupted admission fails reconcile's validation of the run it is about to start, so
+    // reconcile rejects and the claim it holds must be given back before the error propagates.
+    await expect(adapter.reconcile(handle)).rejects.toThrow('PI_JOURNAL_AUTHORITY_INVALID')
+    await adapter.drain()
+    const failed = adapter.journal.get(handle.handleId)
+    expect(failed.state).toBe('running')
+    expect(failed.detail.ownerPid).toBeUndefined()
+    expect(failed.detail.ownerEpoch).toBeUndefined()
+    adapter.journal.database
+      .prepare('UPDATE pi_admissions SET body=? WHERE handle_id=?')
+      .run(stored, handle.handleId)
+    await adapter.reconcile(handle)
+    await adapter.drain()
+    expect(adapter.journal.get(handle.handleId).state).toBe('completed')
+    expect(adapter.journal.get(handle.handleId).detail.ownerPid).toBeUndefined()
+  } finally {
+    await adapter.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('shutdown fences start paused at every asynchronous admission boundary', async () => {
   for (const boundary of ['resolveAdmission', 'assertAuthority', 'resolveProvider']) {
     const directory = mkdtempSync(join(tmpdir(), 'pi-close-admission-'))

@@ -730,8 +730,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         if (isOwnerContention(error)) return this.status(handle)
         throw error
       }
-      const claimed = this.journal.get(record.handleId)
       try {
+        const claimed = this.journal.get(record.handleId)
         if (safe === 'safe_to_resume') {
           const resumable = this.journal.update(record.handleId, owned, {
             detail: {
@@ -744,6 +744,9 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               reasonCode: undefined,
             },
           })
+          // Validate the admission the run will read before handing it the claim, so a failure is
+          // raised here and gives the claim back instead of failing unobserved inside the run.
+          this.#stored(resumable)
           this.#schedule(resumable, owned)
         } else {
           this.journal.update(record.handleId, owned, {
@@ -799,8 +802,10 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   }
 
   async #run(record: JournalRecord, owned?: number): Promise<void> {
-    const authority = this.#stored(record)
-    const plan = assertExecutionPlanIntegrity(authority.request.executionPlan)
+    const { authority, plan } = this.#releasingClaimOnFailure(record.handleId, owned, () => {
+      const stored = this.#stored(record)
+      return { authority: stored, plan: assertExecutionPlanIntegrity(stored.request.executionPlan) }
+    })
     const nativeAdmissions = new Map<string, DurableToolCallRequest>()
     let epoch: number
     try {
@@ -1424,6 +1429,17 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       return this.journal.claim(record.handleId, record)
     } catch {
       fail('PI_RUNTIME_STATE_CONFLICT', 'conflict')
+    }
+  }
+
+  // A claim handed in by reconcile is given back if the run fails before it starts. The release
+  // matches this claim's own epoch and pid, so a newer owner's fence is never cleared.
+  #releasingClaimOnFailure<T>(handleId: string, owned: number | undefined, operation: () => T): T {
+    try {
+      return operation()
+    } catch (error) {
+      if (owned !== undefined) this.journal.releaseProcess(handleId, owned)
+      throw error
     }
   }
 
