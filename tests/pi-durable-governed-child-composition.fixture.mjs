@@ -254,6 +254,12 @@ export async function createGovernedChildCompositionFixture(
   ledger.settleModelRequest = async (settleInput) => {
     const entry = await canonicalSettleModelRequest(settleInput)
     settleSequenceByIdempotency.set(entry.source.idempotencyKey, entry.sequence)
+    // Traced actual failing value: the ledger canonicalizes entry.source.idempotencyKey
+    // to `usage:<digest>`, while the report path looks up `${sourceId}:settle` — the raw
+    // input identity. Record the sequence under BOTH identities (same entry, same
+    // sequence) so each report finds its own actual ledger entry; redelivery of the same
+    // sourceId returns the retained entry and therefore the ORIGINAL sequence.
+    settleSequenceByIdempotency.set(`${entry.source.sourceId}:settle`, entry.sequence)
     return entry
   }
   // The correlated cost-state projection for the child attempt. The money
@@ -477,7 +483,9 @@ export async function createGovernedChildCompositionFixture(
     assertAuthority: assertCurrent,
     scopeAuthority,
     authorizeInference: usage.authorizeInference,
+    lastSettle: undefined,
     settleUsage: async (authority, key, usageInput, counts) => {
+      shared.lastSettle = { authority, key }
       // Canonical settlement first: the durable usage ledger records the
       // charge, and only its returned, priced RuntimeUsage feeds the
       // cost-state projection — never an estimate or an inferred amount.
@@ -499,12 +507,20 @@ export async function createGovernedChildCompositionFixture(
         // The sequence is looked up by THIS settlement's own idempotency
         // identity (the authority settles with `<sourceId>:settle`), so a
         // concurrently settling request can never lend its sequence here.
-        const publicationSequence = settleSequenceByIdempotency.get(
-          `${settled.accounting.sourceId}:settle`
-        )
+        const sequenceKey = `${settled.accounting.sourceId}:settle`
+        // Test seam: run BETWEEN the canonical settle and the sequence lookup so a
+        // cold-map publication (settle observed elsewhere) can be exercised honestly.
+        await shared.beforeSequenceLookup?.(settled)
+        const publicationSequence = settleSequenceByIdempotency.get(sequenceKey)
+        // Fail closed: a settled child report with no observed canonical sequence must
+        // never publish. Silently omitting publicationSequence let an old redelivery
+        // order as new downstream — the exact regression this fixture must prevent.
+        if (publicationSequence === undefined) {
+          throw new Error(`PUBLICATION_SEQUENCE_MISSING:${sequenceKey}`)
+        }
         const receipt = childUsage.recordReportedUsage(settlementIdentity, settled, {
           reportId,
-          ...(publicationSequence === undefined ? {} : { publicationSequence }),
+          publicationSequence,
         })
         if (receipt.outcome === 'recorded') {
           childUsage.reconcile(settlementIdentity, { reconciledAt: now })
@@ -744,6 +760,9 @@ export async function createGovernedChildCompositionFixture(
     return {
       state,
       host,
+      shared,
+      settleSequenceByIdempotency,
+      childAdmissionAuthority,
       ledger,
       childUsage,
       storage,
