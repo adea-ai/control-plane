@@ -218,14 +218,17 @@ describe.skipIf(!enabled)(
     )
 
     test(
-      'the application role cannot revoke, issue, or register identity records under migrations-only grants',
+      'the application role cannot write identity records directly and revokes only through the audited function',
       async () => {
         const nodeId = `rnr_${ulid26()}`
         const workspaceId = `wsp_${ulid26()}`
         const key = await registerKey(nodeId, workspaceId)
         const credential = await issueCredential(key, { channelGeneration: 1 })
+        // Direct writes are refused: the application role holds no UPDATE on the revocation columns.
         await expectPermissionDenied(
-          applicationIdentity.revokeCredential(credential.credentialId, now)
+          isolated.application.execute(
+            sql`update public.runtime_node_issued_credentials set revoked_at = now() where credential_id = ${credential.credentialId}`
+          )
         )
         const pair = makeKeyPair()
         await expectPermissionDenied(
@@ -238,6 +241,17 @@ describe.skipIf(!enabled)(
             status: 'active',
           })
         )
+        // The only revocation the application role holds is the audited function, which records one row.
+        const revoked = await applicationIdentity.revokeCredential(credential.credentialId, now)
+        expect(revoked.revokedAt).not.toBeNull()
+        const audit = await isolated.withMigrationDatabase((database) =>
+          database.execute(
+            sql`select action, outcome from public.runtime_node_credential_audit_events where credential_id = ${credential.credentialId}`
+          )
+        )
+        expect(audit.map(({ action, outcome }) => ({ action, outcome }))).toEqual([
+          { action: 'revoke', outcome: 'applied' },
+        ])
         expect(await unconsumed(credential.credentialId)).toBe(true)
       },
       integrationTestTimeout(60_000)
