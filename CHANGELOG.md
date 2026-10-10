@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.92.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.91.4...workspace-v1.92.0) (2026-10-10)
+
+
+### Features
+
+* m18-01-3-fence-v2-consumer ([#1066](https://github.com/adea-ai/control-plane/issues/1066)) ([c97e91d](https://github.com/adea-ai/control-plane/commit/c97e91d40570d85076796709fc8304909afe4fcb))
+* **operations:** audited admission controls, stuck-job inspection, retirement gates ([#1052](https://github.com/adea-ai/control-plane/issues/1052)) ([7451dec](https://github.com/adea-ai/control-plane/commit/7451dec27386f0ebde2edebbb2e01b670ccb44c0))
+
 ## [1.91.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.91.3...workspace-v1.91.4) (2026-10-10)
 
 
