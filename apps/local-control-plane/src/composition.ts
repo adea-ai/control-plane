@@ -51,6 +51,7 @@ import {
   SqliteExecutionCancellationRepository,
   SqliteExecutionEventRepository,
   SqlitePersistenceProvider,
+  type RuntimeNodeCredentialFenceAuthorityPort,
   SqliteDurableUsageStore,
   SqliteReconciliationEffects,
   SqliteReconciliationSource,
@@ -227,6 +228,11 @@ export interface LocalControlPlaneCompositionOptions {
    * in-memory test seam. Absent constructs no secure route (behavior unchanged).
    */
   readonly secureAcpRemoteRoute?: Omit<PersistentSecureAcpDeviceEndpointOptions, 'provider'>
+  /**
+   * Host-injected credential authority for runtime-command fences (same source the gateway
+   * authenticator trusts). Absent keeps the fail-closed default.
+   */
+  readonly runtimeCommandCredentialAuthority?: RuntimeNodeCredentialFenceAuthorityPort
   readonly runtimeTransport?: LocalRuntimeTransport
   readonly runtimeFactory?: (input: {
     readonly catalog: LocalControlApiComposition['catalog']
@@ -431,7 +437,8 @@ export class LocalControlPlaneComposition {
       options.catalogApprovalPolicy,
       graphRuntime?.authority,
       memoryWriteback,
-      consistencyMetrics
+      consistencyMetrics,
+      options.runtimeCommandCredentialAuthority
     )
     this.#initializeGraphRuntime =
       graphRuntime === undefined ? undefined : () => graphRuntime.initialize(controlApi)

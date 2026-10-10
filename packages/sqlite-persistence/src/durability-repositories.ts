@@ -678,6 +678,27 @@ export class SqliteReconciliationCheckpointRepository implements ReconciliationC
 }
 
 /** Mirrors the PG port's InventoryCredentialFenceInvalidError (same wire code). */
+/** Structural authority for credential revocation checks (runtime-node identity port shape). */
+export interface RuntimeNodeCredentialFenceAuthorityPort {
+  isRevoked(credentialId: string, revocationVersion?: number): Promise<boolean>
+}
+
+/**
+ * Builds the credential-fence validator from the SAME runtime-node credential authority the
+ * channel authenticator trusts; the validator receives the LIVE in-transaction handle so durable
+ * authorities can read within the fenced transaction. Consumes no credentials and creates none.
+ */
+export function createRuntimeNodeCredentialFenceValidator(
+  authority: RuntimeNodeCredentialFenceAuthorityPort
+) {
+  return async (transaction: PersistenceTransaction, fence: CredentialRevocationFence) => {
+    void transaction
+    if (await authority.isRevoked(fence.credentialId, fence.revocationVersion)) {
+      throw new SqliteRuntimeCommandCredentialFenceInvalidError()
+    }
+  }
+}
+
 export class SqliteRuntimeCommandCredentialFenceInvalidError extends Error {
   readonly code = 'INVENTORY_CREDENTIAL_FENCE_INVALID' as const
 

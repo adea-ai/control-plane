@@ -12,7 +12,6 @@ import {
   type RuntimeNodeIdentityRevocationClient,
 } from '@control-plane/database'
 import {
-  type CredentialRevocationFence,
   ContextCommandGrantAuthority,
   ContextProviderAdministration,
   type ContextCommandGrantRepository,
@@ -30,14 +29,14 @@ import {
   type DatabaseCredentials,
   type RawEnvironment,
 } from '@control-plane/config'
-import type { ObjectStore, PersistenceTransaction } from '@control-plane/deployment'
+import type { ObjectStore } from '@control-plane/deployment'
 import {
   SqliteContextCommandGrantRepository,
   SqliteContextCommandRepository,
   SqliteContextProviderRegistrationRepository,
   SqlitePersistenceProvider,
   SqliteRuntimeChannelSequenceRepository,
-  SqliteRuntimeCommandCredentialFenceInvalidError,
+  createRuntimeNodeCredentialFenceValidator,
   SqliteRuntimeCommandRepository,
 } from '@control-plane/sqlite-persistence'
 import type { RuntimeChannelSequenceRepository } from '@control-plane/runtime-sdk'
@@ -230,11 +229,7 @@ export interface RuntimeGatewayComposition {
 export function createRuntimeCommandCredentialFenceValidator(
   authority: RuntimeNodeIdentityGatewayPort
 ) {
-  return async (transaction: PersistenceTransaction, fence: CredentialRevocationFence) => {
-    void transaction
-    const revoked = await authority.isRevoked(fence.credentialId, fence.revocationVersion)
-    if (revoked) throw new SqliteRuntimeCommandCredentialFenceInvalidError()
-  }
+  return createRuntimeNodeCredentialFenceValidator(authority)
 }
 
 /**

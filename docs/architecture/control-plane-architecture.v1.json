@@ -3313,7 +3313,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:890eac2bc1798ce0ea5a4b63aedfa47050e46c0d1eb1a472e5b6cc4f1b67950b"
+      "sourceDigest": "sha256:824bf02f87e5c4b2fe29800bd669873152effa5f3807f102378d7da6b924d8d9"
     },
     {
       "id": "local",
@@ -3356,7 +3356,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:890eac2bc1798ce0ea5a4b63aedfa47050e46c0d1eb1a472e5b6cc4f1b67950b"
+      "sourceDigest": "sha256:824bf02f87e5c4b2fe29800bd669873152effa5f3807f102378d7da6b924d8d9"
     }
   ],
   "ownership": [
