@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.6.1...pi-durable-adapter-v0.7.0) (2026-10-10)
+
+
+### Features
+
+* **operations:** audited admission controls, stuck-job inspection, retirement gates ([#1052](https://github.com/adea-ai/control-plane/issues/1052)) ([7451dec](https://github.com/adea-ai/control-plane/commit/7451dec27386f0ebde2edebbb2e01b670ccb44c0))
+
 ## [0.6.1](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.6.0...pi-durable-adapter-v0.6.1) (2026-10-10)
 
 
