@@ -169,6 +169,22 @@ try {
     run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1', '--log-order=stream'], {
       environment: integrationEnvironment,
     })
+    // The test:integration task builds only each package's dependencies (^build),
+    // so a package that is consumed by root-level files but has no dependent
+    // integration task has no dist/ output. Package exports resolve to dist/,
+    // so build the consumed package explicitly before those root-level files run.
+    run(
+      'bun',
+      [
+        'x',
+        'turbo',
+        'run',
+        'build',
+        '--filter=@control-plane/profile-portability',
+        '--concurrency=1',
+      ],
+      { environment: integrationEnvironment }
+    )
     // Repository-owned scenarios span composition roots without importing
     // repository fixtures from inside an application package.
     run(
