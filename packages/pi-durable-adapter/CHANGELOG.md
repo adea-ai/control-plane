@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.6.0...pi-durable-adapter-v0.6.1) (2026-10-10)
+
+
+### Tests
+
+* **pi-durable:** register secret canaries for journal and lead-preparation sinks ([#1059](https://github.com/adea-ai/control-plane/issues/1059)) ([b5bec50](https://github.com/adea-ai/control-plane/commit/b5bec5075ef0fa0e99f3e368961479883a5f5842))
+
 ## [0.6.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.5.0...pi-durable-adapter-v0.6.0) (2026-10-10)
 
 

@@ -495,7 +495,7 @@ function runtimeConnection(overrides = {}) {
   return {
     runtimeConnectionId: ids.runtimeConnectionId,
     runtimeDefinitionId: ids.runtimeDefinitionId,
-    family: 'pi',
+    family: 'managed-pi',
     connectionType: 'managed_local',
     location: 'local_device',
     status: 'available',
@@ -529,3 +529,42 @@ function runtimeConnection(overrides = {}) {
     ...overrides,
   }
 }
+
+describe('managed Pi command identity (#678)', () => {
+  test('a durable pi runtime is refused and is never commanded as the managed driver', async () => {
+    const contextPackage = composeProviderContextPackage(
+      contextPackageSerializationFixtures.futurePi,
+      {
+        callerContextRefs: [],
+        localProjectGrantRefs: ['grant:runtime-node:test'],
+        contributions: [],
+      }
+    )
+    const plan = {
+      ...createExecutionPlanTestFixture({ runtimeFamilies: ['pi', 'managed-pi'] }),
+      contextPackage: {
+        contextPackageId: contextPackage.contextPackageId,
+        contentDigest: contextPackage.contentDigest,
+        schemaVersion: contextPackage.schemaVersion,
+        compilerVersion: contextPackage.compiler.version,
+      },
+    }
+    const factory = new ManagedPiRemoteCommandFactory({
+      contextPackages: { get: async () => contextPackage },
+      runtimeDiscovery: {
+        getRuntimeConnection: async () => runtimeConnection({ family: 'pi' }),
+      },
+      executions: { getExecution: async () => undefined },
+      interactions: { get: async () => undefined },
+      now: () => new Date('2026-08-25T12:00:00.000Z'),
+    })
+    await expect(
+      factory.createExecute({
+        executionId: ids.executionId,
+        attempt: attempt(),
+        executionPlan: plan,
+        effectKey: 'workflow:execution-lifecycle-v1:dispatch',
+      })
+    ).rejects.toThrow('REMOTE_RUNTIME_CONNECTION_INELIGIBLE')
+  })
+})

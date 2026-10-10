@@ -28,7 +28,7 @@ describe('runtime discovery attempt routing', () => {
       },
       now: () => '2026-08-28T12:00:00.000Z',
     })
-    const plan = createExecutionPlanTestFixture()
+    const plan = createExecutionPlanTestFixture({ runtimeFamilies: ['pi', 'managed-pi'] })
 
     const selected = await router.resolve({ execution: execution(plan), executionPlan: plan })
 
@@ -102,7 +102,7 @@ describe('runtime discovery attempt routing', () => {
     })
     await expect(
       denying.resolve({ execution: execution(plan), executionPlan: plan })
-    ).rejects.toMatchObject({ code: 'HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME' })
+    ).rejects.toMatchObject({ code: 'NO_COMPATIBLE_RUNTIME' })
 
     const accepting = new RuntimeDiscoveryAttemptRouter({
       discovery: {
@@ -113,6 +113,115 @@ describe('runtime discovery attempt routing', () => {
     })
     const selected = await accepting.resolve({ execution: execution(plan), executionPlan: plan })
     expect(selected.runtimeDefinitionId).toBeDefined()
+  })
+})
+
+describe('accepted harness hard filter before ranking (#678)', () => {
+  const now = () => '2026-08-28T12:00:00.000Z'
+  // Ranking is non-degraded first, then ascending runtimeConnectionId, so the
+  // wrong-harness connection below is the first candidate by rank.
+  const wrongFirst = () =>
+    runtimeConnection('rtc_01JABCDEF0123456789ABCDEFA', {
+      family: 'managed-pi',
+      access: {
+        localProjectGrant: { required: false, state: 'not_required' },
+        entitlement: { state: 'allowed' },
+      },
+    })
+  const laterCorrect = () =>
+    runtimeConnection('rtc_01JABCDEF0123456789ABCDEFB', {
+      family: 'pi',
+      access: {
+        localProjectGrant: { required: false, state: 'not_required' },
+        entitlement: { state: 'allowed' },
+      },
+    })
+  const routerFor = (connections, pinnedHarnessId) =>
+    new RuntimeDiscoveryAttemptRouter({
+      discovery: { listRuntimeConnections: async () => connections },
+      pinnedHarnessId,
+      now,
+    })
+
+  test('the wrong-harness first candidate is skipped; the later correct-harness candidate is chosen', async () => {
+    const plan = createExecutionPlanTestFixture({ runtimeFamilies: ['pi', 'managed-pi'] })
+    const selected = await routerFor([wrongFirst(), laterCorrect()], 'pi').resolve({
+      execution: execution(plan),
+      executionPlan: plan,
+    })
+    expect(selected.runtimeConnectionId).toBe('rtc_01JABCDEF0123456789ABCDEFB')
+    expect(selected.routingDecision.candidateCount).toBe(1)
+    expect(selected.routingDecision.reasonCodes).toEqual(['RUNTIME_SELECTED', 'HARNESS_PINNED'])
+  })
+
+  test('without a pin the same discovery ranks the first candidate, so the pin changes the outcome', async () => {
+    const plan = createExecutionPlanTestFixture({ runtimeFamilies: ['pi', 'managed-pi'] })
+    const selected = await routerFor([wrongFirst(), laterCorrect()], undefined).resolve({
+      execution: execution(plan),
+      executionPlan: plan,
+    })
+    expect(selected.runtimeConnectionId).toBe('rtc_01JABCDEF0123456789ABCDEFA')
+    expect(selected.routingDecision.candidateCount).toBe(2)
+    expect(selected.routingDecision.reasonCodes).toEqual(['RUNTIME_SELECTED'])
+  })
+
+  test('the accepted harness is bound into the routing input digest', async () => {
+    const plan = createExecutionPlanTestFixture({ runtimeFamilies: ['pi', 'managed-pi'] })
+    const connections = [wrongFirst(), laterCorrect()]
+    const pinned = await routerFor(connections, 'pi').resolve({
+      execution: execution(plan),
+      executionPlan: plan,
+    })
+    const unpinned = await routerFor(connections, undefined).resolve({
+      execution: execution(plan),
+      executionPlan: plan,
+    })
+    expect(pinned.routingDecision.inputDigest).not.toBe(unpinned.routingDecision.inputDigest)
+  })
+
+  test('no candidate exposes the accepted harness: fail closed, never the compliant other harness', async () => {
+    const plan = createExecutionPlanTestFixture({ runtimeFamilies: ['pi', 'managed-pi'] })
+    await expect(
+      routerFor([wrongFirst(), laterCorrect()], 'acp').resolve({
+        execution: execution(plan),
+        executionPlan: plan,
+      })
+    ).rejects.toMatchObject({ code: 'NO_COMPATIBLE_RUNTIME' })
+  })
+
+  test('a pin satisfied only by a runtime lacking a capability is not selected', async () => {
+    const plan = createExecutionPlanTestFixture({ runtimeFamilies: ['pi', 'managed-pi'] })
+    const lacking = runtimeConnection('rtc_01JABCDEF0123456789ABCDEFA', {
+      family: 'acp',
+      capabilities: ['filesystem.read'],
+      capabilityDetails: [{ name: 'filesystem.read', support: 'supported' }],
+      access: {
+        localProjectGrant: { required: false, state: 'not_required' },
+        entitlement: { state: 'allowed' },
+      },
+    })
+    await expect(
+      routerFor([lacking], 'acp').resolve({ execution: execution(plan), executionPlan: plan })
+    ).rejects.toMatchObject({ code: 'NO_COMPATIBLE_RUNTIME' })
+  })
+
+  test('exact family identity: a plan allowing only pi does not select a managed-pi runtime', async () => {
+    const plan = createExecutionPlanTestFixture({ runtimeFamilies: ['pi'] })
+    await expect(
+      routerFor([wrongFirst()], undefined).resolve({
+        execution: execution(plan),
+        executionPlan: plan,
+      })
+    ).rejects.toThrow('WORKFLOW_RUNTIME_UNAVAILABLE')
+  })
+
+  test('exact family identity: a plan allowing managed-pi selects the managed-pi runtime', async () => {
+    const plan = createExecutionPlanTestFixture({ runtimeFamilies: ['managed-pi'] })
+    const selected = await routerFor([wrongFirst()], 'managed-pi').resolve({
+      execution: execution(plan),
+      executionPlan: plan,
+    })
+    expect(selected.runtimeConnectionId).toBe('rtc_01JABCDEF0123456789ABCDEFA')
   })
 })
 

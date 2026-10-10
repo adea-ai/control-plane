@@ -559,6 +559,24 @@ describe('Runtime Gateway inventory ingestion', () => {
     )
   })
 
+  test('managed-pi inventory projects its exact family and never the durable pi family', async () => {
+    const fixture = createFixture()
+    const managed = { ...driver(runtimeA), driverFamily: 'managed-pi' }
+    const result = await fixture.service.ingest(inventory(1, [managed]), source(), 'online')
+
+    expect(result).toMatchObject({ outcome: 'applied', updated: [{ health: 'healthy' }] })
+    expect(fixture.projections.runtimeConnections).toHaveLength(1)
+    expect(fixture.projections.runtimeConnections[0].model).toMatchObject({
+      family: 'managed-pi',
+      // Compatibility comes from the health report. The certification registry
+      // is not consulted on this path (see docs/harnesses.md).
+      compatibility: { state: 'compatible' },
+    })
+    expect(fixture.projections.runtimeConnections.map(({ model }) => model.family)).not.toContain(
+      'pi'
+    )
+  })
+
   test('applies snapshots idempotently while keeping node and runtime health separate', async () => {
     const fixture = createFixture()
     const unhealthy = inventory(1, [driver(runtimeA, 'unavailable')])

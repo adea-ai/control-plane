@@ -105,7 +105,7 @@ describe('M6 runtime adapters acceptance', () => {
     expect(automatic.decision.selected.runtimeConnectionId).toBe(pi.runtimeConnectionId)
     expect(preferredHosted).toMatchObject({
       runtimeConnectionId: hosted.runtimeConnectionId,
-      family: 'pi',
+      family: 'managed-pi',
       status: { state: 'completed', result: { outcome: 'completed' } },
     })
     const hostedInspection = automatic.inspected.find(

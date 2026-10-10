@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.91.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.91.3...workspace-v1.91.4) (2026-10-10)
+
+
+### Tests
+
+* qualify Pi child report-back after physical store reopen ([#967](https://github.com/adea-ai/control-plane/issues/967)) ([64e1133](https://github.com/adea-ai/control-plane/commit/64e113319743506a915f04b3a4fffc4b4a43ae3d))
+
+## [1.91.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.91.2...workspace-v1.91.3) (2026-10-10)
+
+
+### Bug Fixes
+
+* **control-api:** settle completed lead attempt reservations exactly once ([#1068](https://github.com/adea-ai/control-plane/issues/1068)) ([2036405](https://github.com/adea-ai/control-plane/commit/2036405a90161ac23d49fb2bbced9bb640a27031))
+
+## [1.91.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.91.1...workspace-v1.91.2) (2026-10-10)
+
+
+### Tests
+
+* **control-api:** prove persisted approvals survive physical restart ([b1b1667](https://github.com/adea-ai/control-plane/commit/b1b16670a7e081127aec31d039293176f2567dff))
+* **control-api:** prove persisted approvals survive physical restart ([#932](https://github.com/adea-ai/control-plane/issues/932)) ([#1062](https://github.com/adea-ai/control-plane/issues/1062)) ([b1b1667](https://github.com/adea-ai/control-plane/commit/b1b16670a7e081127aec31d039293176f2567dff))
+* **pi-durable:** register secret canaries for journal and lead-preparation sinks ([#1059](https://github.com/adea-ai/control-plane/issues/1059)) ([b5bec50](https://github.com/adea-ai/control-plane/commit/b5bec5075ef0fa0e99f3e368961479883a5f5842))
+
+## [1.91.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.91.0...workspace-v1.91.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **harness:** exact harness routing, managed-pi identity, and certification keys (partial [#678](https://github.com/adea-ai/control-plane/issues/678)) ([#1050](https://github.com/adea-ai/control-plane/issues/1050)) ([64748e4](https://github.com/adea-ai/control-plane/commit/64748e464c4f3dbcab4673116158c1f78ca4fdb2))
+
 ## [1.91.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.90.1...workspace-v1.91.0) (2026-10-10)
 
 
