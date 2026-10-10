@@ -63,6 +63,7 @@
         "@control-plane/execution-plan": "workspace:*",
         "@control-plane/memory-writeback": "workspace:*",
         "@control-plane/model-gateway": "workspace:*",
+        "@control-plane/object-store": "workspace:*",
         "@control-plane/orchestration": "workspace:*",
         "@control-plane/pi-durable-adapter": "workspace:*",
         "@control-plane/runtime-sdk": "workspace:*",
