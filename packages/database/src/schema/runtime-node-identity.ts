@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 import {
   bigint,
+  bigserial,
   check,
   foreignKey,
   index,
@@ -97,6 +98,41 @@ export const runtimeNodeIssuedCredentials = pgTable(
           and ${table.revocationVersion} = (${table.claims} ->> 'revocationVersion')::bigint)
         or (${table.revokedAt} is not null
           and ${table.revocationVersion} = (${table.claims} ->> 'revocationVersion')::bigint + 1)`
+    ),
+  ]
+)
+
+/**
+ * Append-only audit trail for hosted RuntimeNode credential revocation outcomes. Rows are written
+ * only by the revocation function (owned by the migration role); the application role has no
+ * privilege on this table. Identifiers and bounded codes only; no credential material.
+ */
+export const runtimeNodeCredentialAuditEvents = pgTable(
+  'runtime_node_credential_audit_events',
+  {
+    sequence: bigserial('sequence', { mode: 'number' }).primaryKey(),
+    action: varchar('action', { length: 32 }).notNull(),
+    outcome: varchar('outcome', { length: 32 }).notNull(),
+    credentialId: varchar('credential_id', { length: 128 }).notNull(),
+    nodeId: varchar('node_id', { length: 30 }),
+    workspaceId: varchar('workspace_id', { length: 30 }).notNull(),
+    revocationVersion: bigint('revocation_version', { mode: 'number' }),
+    principalRef: varchar('principal_ref', { length: 256 }).notNull(),
+    at: timestamp('at', { mode: 'date', withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('runtime_node_credential_audit_events_workspace_index').on(
+      table.workspaceId,
+      table.sequence
+    ),
+    index('runtime_node_credential_audit_events_credential_index').on(
+      table.credentialId,
+      table.sequence
+    ),
+    check('runtime_node_credential_audit_events_action_check', sql`${table.action} = 'revoke'`),
+    check(
+      'runtime_node_credential_audit_events_outcome_check',
+      sql`${table.outcome} in ('applied', 'replayed', 'workspace_refused')`
     ),
   ]
 )
