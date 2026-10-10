@@ -182,12 +182,102 @@ function validatedMarker(input: unknown): LeadIntentMarker {
   }
 }
 
+/**
+ * Write-once record of the admission an ordinary, successfully authorized canonical admission
+ * produced for one marker: the exact projected admissionDigest, the canonical startRequest hash
+ * and the projected deadline, bound to marker, execution, attempt, plan pin, authority revision,
+ * scope and audience. `bindingDigest` self-digests the record so raw edits are refused on read.
+ */
+const AdmissionBindingRecordSchema = z
+  .object({
+    schemaVersion: z.literal('pi-lead-admission-binding/v1'),
+    intentId: z.uuid(),
+    workspaceId: IdentifierSchemas.workspaceId,
+    evidenceDigest: Digest,
+    executionId: IdentifierSchemas.executionId,
+    attemptId: IdentifierSchemas.attemptId,
+    planPin: ExecutionPlanPinSchema,
+    authorityRevision: z.number().int().positive(),
+    scopeRef: Ref,
+    allowedPrincipalIds: z.array(ServicePrincipalSchema.shape.principalId).min(1).max(64),
+    admissionDigest: Digest,
+    startDigest: Digest,
+    deadlineAt: z.iso.datetime(),
+    bindingDigest: Digest,
+  })
+  .strict()
+export type LeadAdmissionBinding = z.output<typeof AdmissionBindingRecordSchema>
+
+function validatedAdmissionBinding(input: unknown): LeadAdmissionBinding {
+  const result = AdmissionBindingRecordSchema.safeParse(input)
+  if (!result.success) conflict()
+  const { bindingDigest, ...record } = result.data
+  const audience = record.allowedPrincipalIds
+  if (
+    bindingDigest !== hash(record) ||
+    hash(audience) !== hash(audience.toSorted()) ||
+    new Set(audience).size !== audience.length
+  )
+    conflict()
+  return result.data
+}
+
+/** Builds the binding from the admission this call just authorized; refuses any mismatch. */
+function admissionBindingFor(
+  marker: LeadIntentMarker,
+  admission: PiDurableLeadAdmission
+): LeadAdmissionBinding {
+  const audience = [...marker.intent.allowedPrincipalIds].toSorted()
+  if (
+    admission.intentId !== marker.intentId ||
+    admission.workspaceId !== marker.workspaceId ||
+    admission.admittedAttempt.executionId !== marker.intent.executionId ||
+    admission.admittedAttempt.attemptId !== marker.intent.attemptId ||
+    hash([...admission.allowedPrincipalIds].toSorted()) !== hash(audience)
+  )
+    conflict()
+  const record = {
+    schemaVersion: 'pi-lead-admission-binding/v1' as const,
+    intentId: marker.intentId,
+    workspaceId: marker.workspaceId,
+    evidenceDigest: marker.evidenceDigest,
+    executionId: marker.intent.executionId,
+    attemptId: marker.intent.attemptId,
+    planPin: marker.planPin,
+    authorityRevision: marker.intent.authorityRevision,
+    scopeRef: marker.intent.scopeRef,
+    allowedPrincipalIds: audience,
+    admissionDigest: admission.admissionDigest,
+    startDigest: hash(admission.startRequest),
+    deadlineAt: admission.deadlineAt,
+  }
+  return validatedAdmissionBinding({ ...record, bindingDigest: hash(record) })
+}
+
+/** The retained binding must agree with the retained marker on every identity and revision field. */
+function admissionBindingMatchesMarker(
+  binding: LeadAdmissionBinding,
+  marker: LeadIntentMarker
+): boolean {
+  return (
+    binding.intentId === marker.intentId &&
+    binding.workspaceId === marker.workspaceId &&
+    binding.evidenceDigest === marker.evidenceDigest &&
+    binding.executionId === marker.intent.executionId &&
+    binding.attemptId === marker.intent.attemptId &&
+    hash(binding.planPin) === hash(marker.planPin) &&
+    binding.authorityRevision === marker.intent.authorityRevision &&
+    binding.scopeRef === marker.intent.scopeRef &&
+    hash(binding.allowedPrincipalIds) === hash([...marker.intent.allowedPrincipalIds].toSorted())
+  )
+}
+
 /** Immutable intent/plan marker precedes acceptance; only completion state may advance. */
 export class SqlitePiDurableLeadIntentStore implements CanonicalLeadIntentReader {
   #preparationCursor = ''
   constructor(readonly database: DatabaseSync) {
     database.exec(
-      'CREATE TABLE IF NOT EXISTS pi_lead_intent_admissions (intent_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, attempt_id TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, state TEXT NOT NULL, record TEXT NOT NULL); CREATE TABLE IF NOT EXISTS pi_lead_intent_budgets (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL)'
+      'CREATE TABLE IF NOT EXISTS pi_lead_intent_admissions (intent_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, attempt_id TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, state TEXT NOT NULL, record TEXT NOT NULL); CREATE TABLE IF NOT EXISTS pi_lead_intent_budgets (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL); CREATE TABLE IF NOT EXISTS pi_lead_intent_admission_bindings (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL)'
     )
   }
   marker(intentId: string): LeadIntentMarker | undefined {
@@ -259,6 +349,37 @@ export class SqlitePiDurableLeadIntentStore implements CanonicalLeadIntentReader
     return row
       ? RuntimeAttemptBudgetAuthoritySchema.parse(JSON.parse(String(row['record'])))
       : undefined
+  }
+  /**
+   * Write-once admission binding. An identical replay is a no-op; any other record for the same
+   * intent conflicts and nothing is overwritten.
+   */
+  bindAdmission(binding: LeadAdmissionBinding): void {
+    const value = validatedAdmissionBinding(binding)
+    this.database
+      .prepare('INSERT OR IGNORE INTO pi_lead_intent_admission_bindings VALUES (?, ?)')
+      .run(value.intentId, JSON.stringify(value))
+    if (hash(this.admissionBinding(value.intentId)) !== hash(value)) conflict()
+  }
+  /** Retained admission binding, self-digest checked. Absent for legacy or unbound records. */
+  admissionBinding(intentId: string): LeadAdmissionBinding | undefined {
+    const row = this.database
+      .prepare(
+        'SELECT intent_id, record FROM pi_lead_intent_admission_bindings WHERE intent_id = ?'
+      )
+      .get(intentId)
+    if (!row) return undefined
+    const raw = row['record']
+    if (typeof raw !== 'string' || raw.length > 65536) conflict()
+    let input: unknown
+    try {
+      input = JSON.parse(raw)
+    } catch {
+      conflict()
+    }
+    const stored = validatedAdmissionBinding(input)
+    if (stored.intentId !== intentId || stored.intentId !== row['intent_id']) conflict()
+    return stored
   }
   expiredPreparations(at: string): readonly LeadIntentMarker[] {
     const rows = this.database
@@ -446,6 +567,8 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
           throw new PiDurableLeadError('PI_LEAD_WORKSPACE_SCOPE_UNSUPPORTED')
       } else if (!principal.projectIds.includes(evidence.projectId!)) denied()
       let marker = this.store.marker(input.intentId)
+      // True only when this call authorizes the admission itself (marker becomes ready here).
+      let admissionAuthorized = false
       if (
         marker &&
         (input.operation === undefined ||
@@ -616,13 +739,14 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
         await this.options.checkpoint?.('after_budget')
         this.#assertPreparationLive(marker)
         this.store.complete(marker)
+        admissionAuthorized = true
         await this.options.checkpoint?.('after_mapping')
         this.#assertPreparationLive(marker)
       }
       marker = this.store.marker(input.intentId)
       if (!marker || hash({ evidence, planPin: marker.planPin }) !== marker.evidenceDigest)
         conflict()
-      return project(
+      const admission = project(
         await this.canonicalAuthority.get(
           input.intentId,
           input.workspaceId,
@@ -636,6 +760,10 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
         marker.intent,
         marker.preparationDeadlineAt
       )
+      // Retained once, from the admission this call authorized. Reads of an already-ready marker
+      // never write, so records admitted before this binding existed are never backfilled.
+      if (admissionAuthorized) this.store.bindAdmission(admissionBindingFor(marker, admission))
+      return admission
     })
   }
 
@@ -940,6 +1068,10 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
           hash([...facts.allowedPrincipalIds].toSorted()))
     )
       conflict()
+    // Read only after the current marker/revision/scope/actor checks above. A binding that
+    // disagrees with the retained marker is a conflict; a missing binding stays absent (legacy).
+    const binding = marker ? this.store.admissionBinding(marker.intentId) : undefined
+    if (marker && binding && !admissionBindingMatchesMarker(binding, marker)) conflict()
     return Object.freeze({
       schemaVersion: 'pi-lead-fenced/v1',
       kind: 'fenced',
@@ -957,8 +1089,8 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
         scopeRef: facts.scopeRef,
         allowedPrincipalIds: [...facts.allowedPrincipalIds],
       }),
-      // Retained execution/plan bindings from the marker only; receipt-bound admission
-      // facts (admissionDigest, startDigest, deadlineAt) are never retained here.
+      // Execution/plan bindings come from the marker. Admission facts come only from the
+      // retained binding (absent for legacy records, which the service then fails closed on).
       retained: marker
         ? Object.freeze({
             intentId: marker.intentId,
@@ -968,6 +1100,13 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
             allowedPrincipalIds: Object.freeze([...marker.intent.allowedPrincipalIds]),
             executionPlanId: marker.planPin.executionPlanId,
             executionPlanDigest: marker.planPin.contentDigest,
+            ...(binding
+              ? {
+                  admissionDigest: binding.admissionDigest,
+                  startDigest: binding.startDigest,
+                  deadlineAt: binding.deadlineAt,
+                }
+              : {}),
           })
         : undefined,
     })

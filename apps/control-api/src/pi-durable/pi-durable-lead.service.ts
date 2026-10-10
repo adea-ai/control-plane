@@ -112,7 +112,7 @@ export interface PiDurableLeadFencedResult {
         readonly allowedPrincipalIds: readonly string[]
         readonly executionPlanId: string
         readonly executionPlanDigest: string
-        /** Receipt-bound admission facts. Only the canonical admission can supply them. */
+        /** Receipt-bound admission facts, from the retained admission binding. Absent for legacy records. */
         readonly admissionDigest?: string
         readonly startDigest?: string
         readonly deadlineAt?: string
@@ -123,8 +123,8 @@ export interface PiDurableLeadFencedResult {
 const FENCED_ADMISSION_BINDINGS = ['admissionDigest', 'startDigest', 'deadlineAt'] as const
 
 /**
- * Receipt-bound admission facts that the retained fence cannot re-prove. The fenced path
- * fails closed while this is non-empty; it never recreates the admission to fill them.
+ * Receipt-bound admission facts the retained fence cannot re-prove (no retained binding). The
+ * fenced path fails closed while this is non-empty; it never recreates the admission to fill them.
  */
 export function fencedReceiptGaps(fenced: PiDurableLeadFencedResult): readonly string[] {
   return FENCED_ADMISSION_BINDINGS.filter((field) => fenced.retained?.[field] === undefined)

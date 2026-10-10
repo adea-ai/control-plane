@@ -1,8 +1,10 @@
 import { test, expect } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import { VersionedCatalog, ExecutionLifecycleService } from '@control-plane/domain'
 import {
   ExecutionPlanCompiler,
@@ -21,12 +23,19 @@ import { SqliteVersionedCatalogRepository } from '@control-plane/sqlite-persiste
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import { DurableRuntimeBudgetAdmission } from '@control-plane/workflow-worker'
 import { NodePiDurableLeadAdmission, deterministicPiLeadIntentIds } from './node-admission.ts'
+import {
+  DurablePiDurableLeadService,
+  SqlitePiDurableLeadReceiptStore,
+} from './pi-durable-lead.service.ts'
 import { createUnusedPiLeadAllocationReleaser } from './unused-lead-allocation.ts'
 
 const at = '2026-10-08T00:00:00.000Z'
 const expiresAt = '2026-10-08T01:00:00.000Z'
 const intentId = 'f643a115-617d-4bae-8d52-cfe458c0b8ac'
-async function fixture(operation, { explicitProjectScope = false } = {}) {
+async function fixture(
+  operation,
+  { explicitProjectScope = false, canonicalActorPrincipalId = 'product:original-sender' } = {}
+) {
   const directory = await mkdtemp(join(tmpdir(), 'pi-node-admission-'))
   const path = join(directory, 'node.sqlite')
   let provider, database
@@ -87,7 +96,7 @@ async function fixture(operation, { explicitProjectScope = false } = {}) {
       messageRef: 'message:one',
       authorityRevision: 1,
       principalRef: 'lead:one',
-      ...(explicitProjectScope ? { canonicalActorPrincipalId: 'product:original-sender' } : {}),
+      ...(explicitProjectScope ? { canonicalActorPrincipalId } : {}),
       scopeRef: 'channel:one',
       expiresAt,
       allowedPrincipalIds: ['svc_adea'],
@@ -116,16 +125,20 @@ async function fixture(operation, { explicitProjectScope = false } = {}) {
         },
         principalActive: true,
         grantActive: true,
-        allowedPrincipalIds: ['product:original-sender', 'svc_pi-admission'],
+        allowedPrincipalIds: [canonicalActorPrincipalId, 'svc_pi-admission'],
         expiresAt,
         projectWorkspaceId: plan.correlation.workspaceId,
       }),
     }
+    // A presented product body (e.g. a rollback fence) replaces the ordinary evidence read.
+    let fenceBody
     const options = (overrides) => ({
       database,
       product: {
-        readCurrent: async (input) =>
-          input.intentId === intentId ? structuredClone(evidence) : undefined,
+        readCurrent: async (input) => {
+          if (fenceBody !== undefined) return structuredClone(fenceBody)
+          return input.intentId === intentId ? structuredClone(evidence) : undefined
+        },
       },
       resolvePlan: async () => plan,
       plans: repositories.plans,
@@ -173,6 +186,9 @@ async function fixture(operation, { explicitProjectScope = false } = {}) {
       },
       setEvidence: (change) => {
         evidence = change === undefined ? undefined : { ...evidence, ...change }
+      },
+      setFenceBody: (body) => {
+        fenceBody = body
       },
       get database() {
         return database
@@ -836,3 +852,319 @@ test('workspace-only product evidence requires explicit project scope before any
     })
   }
 })
+
+// M18.01.3 retained admission binding. Real ordinary admission and dispatch over disposable SQLite,
+// then a v2 fence presented after the durable store reopens. Stub adapter only at the runtime edge.
+const fencedScope = {
+  explicitProjectScope: true,
+  canonicalActorPrincipalId: 'user:2b1a7e26-8c3f-4f4f-9a1e-77d19b7d5e11',
+}
+const digestOf = (value) =>
+  `sha256:${createHash('sha256')
+    .update(canonicalJsonStringify(value) ?? 'null')
+    .digest('hex')}`
+const effects = (calls) => ({
+  start: calls.start.length,
+  status: calls.status.length,
+  progress: calls.progress.length,
+  cancel: calls.cancel.length,
+})
+const envelope = (setup, operation, payload, idempotencyKey) => ({
+  caller: { servicePrincipalId: 'svc_adea' },
+  contractVersion: { major: 1, minor: 0 },
+  requestId: 'req_01JABCDEF0123456789ABCDEFG',
+  workspaceId: setup.plan.correlation.workspaceId,
+  correlation: { traceId: 'trc_01JABCDEF0123456789ABCDEFG' },
+  commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+  idempotencyKey,
+  payloadHash: createHash('sha256').update(canonicalJsonStringify(payload)).digest('hex'),
+  operation,
+  issuedAt: at,
+  payload,
+})
+const readEnvelope = (setup, operation, parameters) => ({
+  caller: { servicePrincipalId: 'svc_adea' },
+  contractVersion: { major: 1, minor: 0 },
+  requestId: 'req_01JABCDEF0123456789ABCDEFG',
+  workspaceId: setup.plan.correlation.workspaceId,
+  correlation: { traceId: 'trc_01JABCDEF0123456789ABCDEFG' },
+  operation,
+  requestedAt: at,
+  parameters,
+})
+/** A v2 fence built from the retained marker's own revision, scope, audience and canonical actor. */
+function fenceBodyFrom(bridge) {
+  const marker = bridge.store.marker(intentId)
+  return {
+    schemaVersion: 'pi-lead-intent-fence/v2',
+    intentId,
+    workspaceId: marker.workspaceId,
+    dispatchPermitted: false,
+    rollbackFence: {
+      fencedAt: at,
+      reason: 'operator_intervention',
+      actor: { kind: 'operator', operatorId: 'ops.lead' },
+    },
+    authorityRevision: marker.intent.authorityRevision,
+    canonicalActorPrincipalId: marker.intent.canonicalActorPrincipalId,
+    scopeRef: marker.intent.scopeRef,
+    allowedPrincipalIds: [...marker.intent.allowedPrincipalIds],
+  }
+}
+/** Ordinary admission through the real service dispatch, with a recording adapter stub. */
+async function admitAndDispatch(setup) {
+  const handle = {
+    handleId: 'hEC01JABCDEF0123456789ABCDEFGH',
+    attemptId: setup.ids.attemptId,
+    externalSessionId: 'ses_01JABCDEF0123456789ABCDEFG',
+    startedAt: at,
+  }
+  const calls = { start: [], status: [], progress: [], cancel: [] }
+  const adapter = {
+    start: async (request) => {
+      calls.start.push(request)
+      return handle
+    },
+    status: async (observed) => {
+      calls.status.push(observed)
+      return { handle: observed, state: 'running', observedAt: at }
+    },
+    progress: async function* (observed) {
+      calls.progress.push(observed)
+      yield { handleId: observed.handleId, sequence: 1, occurredAt: at, type: 'status', data: {} }
+    },
+    cancel: async (observed, options) => {
+      calls.cancel.push({ handle: observed, options })
+      return { handle: observed, state: 'cancelling', observedAt: at }
+    },
+  }
+  const receipts = new SqlitePiDurableLeadReceiptStore(setup.database)
+  const service = new DurablePiDurableLeadService({
+    authority: setup.bridge,
+    receipts,
+    adapter,
+    now: () => at,
+  })
+  const response = await service.dispatch(
+    envelope(setup, 'pi-durable.lead.dispatch', { intentId }, 'transport:dispatch'),
+    setup.principal
+  )
+  return { adapter, calls, receipts, handle, dispatchId: response.data.dispatchId }
+}
+
+test('ordinary admission retains a binding that survives reopen: a v2 fence observes and cancels the original handle, and prepare or dispatch never run', async () =>
+  fixture(async (setup) => {
+    const { adapter, calls, receipts, handle, dispatchId } = await admitAndDispatch(setup)
+    const receipt = await receipts.get(dispatchId)
+    // The retained binding is exactly the admission the dispatched receipt was built from.
+    expect(setup.bridge.store.admissionBinding(intentId)).toMatchObject({
+      executionId: receipt.executionId,
+      attemptId: receipt.attemptId,
+      admissionDigest: receipt.admissionDigest,
+      startDigest: receipt.startDigest,
+      deadlineAt: receipt.deadlineAt,
+    })
+    const binding = setup.bridge.store.admissionBinding(intentId)
+
+    // The durable store closes and reopens before the fence is presented.
+    const reopened = await setup.reopen()
+    const reopenedReceipts = new SqlitePiDurableLeadReceiptStore(setup.database)
+    const service = new DurablePiDurableLeadService({
+      authority: reopened,
+      receipts: reopenedReceipts,
+      adapter,
+      now: () => at,
+    })
+    expect(reopened.store.admissionBinding(intentId)).toEqual(binding)
+    setup.setFenceBody(fenceBodyFrom(reopened))
+
+    const dispatched = effects(calls)
+    const status = await service.status(
+      readEnvelope(setup, 'pi-durable.lead.status', { dispatchId }),
+      setup.principal
+    )
+    expect(status.data).toMatchObject({
+      dispatchId,
+      state: 'running',
+      runtimeSessionId: handle.externalSessionId,
+    })
+    const progress = await service.progress(
+      readEnvelope(setup, 'pi-durable.lead.progress', { dispatchId }),
+      setup.principal
+    )
+    expect(progress.data.events).toHaveLength(1)
+    const cancelled = await service.cancel(
+      envelope(setup, 'pi-durable.lead.cancel', { dispatchId }, 'transport:cancel-original'),
+      setup.principal
+    )
+    expect(cancelled.data.state).toBe('cancelling')
+    // Every effect reached the original retained handle; nothing started.
+    expect(calls.status.at(-1)).toEqual(handle)
+    expect(calls.progress.at(-1)).toEqual(handle)
+    expect(calls.cancel.at(-1)).toMatchObject({
+      handle,
+      options: { idempotencyKey: 'transport:cancel-original' },
+    })
+    const observed = effects(calls)
+    expect(observed).toEqual({
+      start: dispatched.start,
+      status: dispatched.status + 1,
+      progress: dispatched.progress + 1,
+      cancel: dispatched.cancel + 1,
+    })
+    expect(await reopenedReceipts.get(dispatchId)).toEqual(receipt)
+
+    // Under the fence nothing is prepared, dispatched or admitted again.
+    const counts = await setup.counts()
+    await expect(
+      reopened.resolveIntent({
+        workspaceId: setup.plan.correlation.workspaceId,
+        intentId,
+        principal: setup.principal,
+        operation: 'prepare',
+      })
+    ).rejects.toThrow('PI_LEAD_UNAVAILABLE')
+    await expect(
+      service.dispatch(
+        envelope(setup, 'pi-durable.lead.dispatch', { intentId }, 'transport:dispatch-fenced'),
+        setup.principal
+      )
+    ).rejects.toThrow('PI_LEAD_UNAVAILABLE')
+    expect(effects(calls)).toEqual(observed)
+    expect(await setup.counts()).toEqual(counts)
+
+    // A principal outside the retained audience is refused before any read of the fence.
+    await expect(
+      reopened.resolveIntent({
+        workspaceId: setup.plan.correlation.workspaceId,
+        intentId,
+        principal: { ...setup.principal, principalId: 'svc_pi-admission' },
+        operation: 'cancel',
+      })
+    ).rejects.toThrow('PI_LEAD_SCOPE_REJECTED')
+  }, fencedScope))
+
+test('tampered admission binding refuses fenced observation and cancel before any adapter effect', async () =>
+  fixture(async (setup) => {
+    const { adapter, calls, dispatchId } = await admitAndDispatch(setup)
+    const reopened = await setup.reopen()
+    const service = new DurablePiDurableLeadService({
+      authority: reopened,
+      receipts: new SqlitePiDurableLeadReceiptStore(setup.database),
+      adapter,
+      now: () => at,
+    })
+    setup.setFenceBody(fenceBodyFrom(reopened))
+    // A raw edit leaves the record's self-digest stale.
+    setup.database
+      .prepare(
+        "UPDATE pi_lead_intent_admission_bindings SET record = json_set(record, '$.admissionDigest', ?) WHERE intent_id = ?"
+      )
+      .run(digestOf('forged-admission'), intentId)
+    const before = effects(calls)
+    await expect(
+      service.status(readEnvelope(setup, 'pi-durable.lead.status', { dispatchId }), setup.principal)
+    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+    await expect(
+      service.cancel(
+        envelope(setup, 'pi-durable.lead.cancel', { dispatchId }, 'transport:cancel-tampered'),
+        setup.principal
+      )
+    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+    expect(effects(calls)).toEqual(before)
+  }, fencedScope))
+
+test('tampered receipt admission digest refuses fenced observation and cancel before any adapter effect', async () =>
+  fixture(async (setup) => {
+    const { adapter, calls, dispatchId } = await admitAndDispatch(setup)
+    const reopened = await setup.reopen()
+    const service = new DurablePiDurableLeadService({
+      authority: reopened,
+      receipts: new SqlitePiDurableLeadReceiptStore(setup.database),
+      adapter,
+      now: () => at,
+    })
+    setup.setFenceBody(fenceBodyFrom(reopened))
+    // The binding stays intact; only the receipt is edited, so the receipt-to-binding check refuses.
+    setup.database
+      .prepare(
+        "UPDATE pi_lead_receipts SET record = json_set(record, '$.admissionDigest', ?) WHERE dispatch_id = ?"
+      )
+      .run(digestOf('forged-receipt'), dispatchId)
+    const before = effects(calls)
+    await expect(
+      service.status(readEnvelope(setup, 'pi-durable.lead.status', { dispatchId }), setup.principal)
+    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+    await expect(
+      service.cancel(
+        envelope(setup, 'pi-durable.lead.cancel', { dispatchId }, 'transport:cancel-forged'),
+        setup.principal
+      )
+    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+    expect(effects(calls)).toEqual(before)
+  }, fencedScope))
+
+test('a record without an admission binding stays unavailable and is never backfilled by ordinary reads', async () =>
+  fixture(async (setup) => {
+    const { adapter, calls, dispatchId } = await admitAndDispatch(setup)
+    setup.database
+      .prepare('DELETE FROM pi_lead_intent_admission_bindings WHERE intent_id = ?')
+      .run(intentId)
+    const reopened = await setup.reopen()
+    const service = new DurablePiDurableLeadService({
+      authority: reopened,
+      receipts: new SqlitePiDurableLeadReceiptStore(setup.database),
+      adapter,
+      now: () => at,
+    })
+    setup.setFenceBody(fenceBodyFrom(reopened))
+    const before = effects(calls)
+    await expect(
+      service.status(readEnvelope(setup, 'pi-durable.lead.status', { dispatchId }), setup.principal)
+    ).rejects.toThrow('PI_LEAD_UNAVAILABLE')
+    await expect(
+      service.progress(
+        readEnvelope(setup, 'pi-durable.lead.progress', { dispatchId }),
+        setup.principal
+      )
+    ).rejects.toThrow('PI_LEAD_UNAVAILABLE')
+    await expect(
+      service.cancel(
+        envelope(setup, 'pi-durable.lead.cancel', { dispatchId }, 'transport:cancel-legacy'),
+        setup.principal
+      )
+    ).rejects.toThrow('PI_LEAD_UNAVAILABLE')
+    expect(effects(calls)).toEqual(before)
+
+    // An ordinary read of the already-ready marker writes no binding.
+    setup.setFenceBody(undefined)
+    await reopened.resolveIntent({
+      workspaceId: setup.plan.correlation.workspaceId,
+      intentId,
+      principal: setup.principal,
+      operation: 'dispatch',
+    })
+    expect(reopened.store.admissionBinding(intentId)).toBeUndefined()
+    expect(
+      setup.database
+        .prepare('SELECT COUNT(*) AS count FROM pi_lead_intent_admission_bindings')
+        .get().count
+    ).toBe(0)
+  }, fencedScope))
+
+test('admission binding is write-once: an identical replay is a no-op and a conflicting record is refused without overwrite', async () =>
+  fixture(async (setup) => {
+    await admitAndDispatch(setup)
+    const binding = setup.bridge.store.admissionBinding(intentId)
+    setup.bridge.store.bindAdmission(binding)
+    expect(setup.bridge.store.admissionBinding(intentId)).toEqual(binding)
+
+    // A fully re-digested record with a different admission digest still conflicts.
+    const record = { ...binding }
+    delete record.bindingDigest
+    const conflicting = { ...record, admissionDigest: digestOf('conflicting-admission') }
+    expect(() =>
+      setup.bridge.store.bindAdmission({ ...conflicting, bindingDigest: digestOf(conflicting) })
+    ).toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+    expect(setup.bridge.store.admissionBinding(intentId)).toEqual(binding)
+  }, fencedScope))

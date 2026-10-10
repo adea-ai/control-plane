@@ -443,7 +443,7 @@ test('assertCurrent: v2 status passes only against matching retained revision/sc
   }
 })
 
-test('v2 fenced result carries only marker-retained execution/plan bindings, never an admission digest', async () => {
+test('v2 fenced result without an admission binding carries marker execution/plan bindings and no admission digest', async () => {
   const { authority, cleanup } = await harness(fenceV2())
   try {
     bindRetainedMarker(authority)
