@@ -32,6 +32,7 @@ import { ProductionLeadProductEvidenceSchema } from './production-lead-product.j
  */
 
 type Pin = { executionPlanId: string; contentDigest: string }
+type ChildPlan = ReturnType<typeof assertExecutionPlanIntegrity>
 type ProductReader = {
   readCurrent(input: {
     schemaVersion: 'pi-lead-intent/v1'
@@ -43,6 +44,19 @@ type ProductReader = {
 type IntentReader = {
   getByAttempt(attemptId: string): Promise<unknown | undefined>
   marker(intentId: string): unknown | undefined
+}
+
+/** Retained child lineage shared by admission, model binding and runtime start. */
+export interface ProductionChildRecord {
+  readonly current: z.output<typeof ProductionChildBudgetCurrentSchema>
+  readonly plan: ChildPlan
+  /** The governed delegation objective is the child's prompt; it is never caller-supplied. */
+  readonly objective: string
+  /** Retained lead intent's principal and scope references, from the verified product evidence. */
+  readonly principalRef: string
+  readonly scopeRef: string
+  /** Audience of the retained lead intent; a model reader must be a member. */
+  readonly allowedPrincipalIds: readonly string[]
 }
 
 const LiveExecution = new Set(['accepted', 'queued', 'starting', 'running', 'awaiting_input'])
@@ -150,14 +164,14 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
     // The marker actor is the transport principal. The audience check below decides whether it may read.
     const reader = marker.actorPrincipalId
     if (!intent.allowedPrincipalIds.includes(reader)) deny()
-    const evidence = ProductionLeadProductEvidenceSchema.parse(
-      await options.product.readCurrent({
-        schemaVersion: 'pi-lead-intent/v1',
-        intentId: intent.intentId,
-        workspaceId: intent.workspaceId,
-        principalId: reader,
-      })
-    )
+    const current = await options.product.readCurrent({
+      schemaVersion: 'pi-lead-intent/v1',
+      intentId: intent.intentId,
+      workspaceId: intent.workspaceId,
+      principalId: reader,
+    })
+    if (!current) deny()
+    const evidence = ProductionLeadProductEvidenceSchema.parse(current)
     if (
       evidence.workspaceId !== intent.workspaceId ||
       evidence.intentId !== intent.intentId ||
@@ -172,6 +186,9 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
       workspaceId: intent.workspaceId,
       canonicalActorPrincipalId: intent.canonicalActorPrincipalId,
       productReaderPrincipalId: reader,
+      principalRef: evidence.principalRef,
+      scopeRef: evidence.scopeRef,
+      allowedPrincipalIds: [...intent.allowedPrincipalIds],
       authorityRevision: intent.authorityRevision,
       expiresAt:
         Date.parse(evidence.expiresAt) < Date.parse(intent.expiresAt)
@@ -186,7 +203,9 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
     toolCallId: string,
     expected: { executionId: string; attemptId: string; workspaceId: string }
   ) {
-    const call = ToolCallSchema.parse(await options.toolCalls.get(toolCallId))
+    const retained = await options.toolCalls.get(toolCallId)
+    if (!retained) deny()
+    const call = ToolCallSchema.parse(retained)
     if (
       call.toolCallId !== toolCallId ||
       call.executionId !== expected.executionId ||
@@ -204,6 +223,85 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
     const second = await read()
     if (!sameJson(first, second)) throw new Error('PI_CHILD_MODEL_AUTHORITY_CHANGED')
     return second
+  }
+
+  /** The child's retained delegation, its plan and the admitted parent call. Every field is server-read. */
+  async function record(
+    executionId: string,
+    attemptId: string,
+    plan: ChildPlan
+  ): Promise<ProductionChildRecord> {
+    const delegation = await options.delegations.findByChild(executionId)
+    const parentPin = plan.parentExecutionPlan
+    if (
+      !delegation ||
+      !parentPin ||
+      !LiveDelegation.has(delegation.state) ||
+      delegation.childAttemptId !== attemptId ||
+      !delegation.parentAttemptId ||
+      !delegation.admittedToolCallId ||
+      delegation.childExecutionPlanId !== plan.executionPlanId ||
+      delegation.childExecutionPlanDigest !== plan.contentDigest ||
+      delegation.parentExecutionPlanId !== parentPin.executionPlanId ||
+      delegation.parentExecutionPlanDigest !== parentPin.contentDigest
+    )
+      deny()
+    const actor = await parent({
+      executionId: delegation.parentExecutionId,
+      attemptId: delegation.parentAttemptId,
+      plan: { executionPlanId: parentPin.executionPlanId, contentDigest: parentPin.contentDigest },
+    })
+    if (actor.workspaceId !== plan.correlation.workspaceId) deny()
+    await assertAdmittedCall(delegation.admittedToolCallId, {
+      executionId: delegation.parentExecutionId,
+      attemptId: delegation.parentAttemptId,
+      workspaceId: actor.workspaceId,
+    })
+    return {
+      current: ProductionChildBudgetCurrentSchema.parse({
+        workspaceId: actor.workspaceId,
+        parentIntentId: actor.intentId,
+        childRequestId: plan.correlation.requestId,
+        executionId,
+        attemptId,
+        executionPlanId: plan.executionPlanId,
+        executionPlanDigest: plan.contentDigest,
+        parentExecutionPlanId: parentPin.executionPlanId,
+        parentExecutionPlanDigest: parentPin.contentDigest,
+        canonicalActorPrincipalId: actor.canonicalActorPrincipalId,
+        productReaderPrincipalId: actor.productReaderPrincipalId,
+        authorityRevision: actor.authorityRevision,
+        expiresAt: actor.expiresAt,
+        ...(actor.requestedSelection ? { requestedSelection: actor.requestedSelection } : {}),
+      }),
+      plan,
+      objective: delegation.objective,
+      principalRef: actor.principalRef,
+      scopeRef: actor.scopeRef,
+      allowedPrincipalIds: actor.allowedPrincipalIds,
+    }
+  }
+
+  /** Runtime start presents a plan and attempt; the retained delegation must bind both. */
+  async function runtimeRecord(input: unknown): Promise<ProductionChildRecord> {
+    const start: RuntimeStartRequest = RuntimeStartRequestSchema.parse(input)
+    const plan = assertExecutionPlanIntegrity(start.executionPlan)
+    return record(start.executionId ?? deny(), start.attemptId, plan)
+  }
+
+  /** Model binding needs only the child identity; its plan comes from the retained delegation. */
+  async function storedRecord(
+    executionId: string,
+    attemptId: string
+  ): Promise<ProductionChildRecord> {
+    const delegation = await options.delegations.findByChild(executionId)
+    if (!delegation) deny()
+    const stored = await options.plans.get({
+      executionPlanId: delegation.childExecutionPlanId,
+      contentDigest: delegation.childExecutionPlanDigest,
+    })
+    if (!stored) deny()
+    return record(executionId, attemptId, assertExecutionPlanIntegrity(stored))
   }
 
   return {
@@ -247,55 +345,11 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
     },
     /** Runtime start: the retained child delegation must bind the presented child plan and attempt. */
     readRuntime(input: unknown) {
-      return stable(async () => {
-        const start: RuntimeStartRequest = RuntimeStartRequestSchema.parse(input)
-        const plan = assertExecutionPlanIntegrity(start.executionPlan)
-        if (!plan.parentExecutionPlan) deny()
-        const executionId = start.executionId ?? deny()
-        const delegation = await options.delegations.findByChild(executionId)
-        if (
-          !delegation ||
-          !LiveDelegation.has(delegation.state) ||
-          delegation.childAttemptId !== start.attemptId ||
-          !delegation.parentAttemptId ||
-          !delegation.admittedToolCallId ||
-          delegation.childExecutionPlanId !== plan.executionPlanId ||
-          delegation.childExecutionPlanDigest !== plan.contentDigest ||
-          delegation.parentExecutionPlanId !== plan.parentExecutionPlan.executionPlanId ||
-          delegation.parentExecutionPlanDigest !== plan.parentExecutionPlan.contentDigest
-        )
-          deny()
-        const actor = await parent({
-          executionId: delegation.parentExecutionId,
-          attemptId: delegation.parentAttemptId,
-          plan: {
-            executionPlanId: plan.parentExecutionPlan.executionPlanId,
-            contentDigest: plan.parentExecutionPlan.contentDigest,
-          },
-        })
-        if (actor.workspaceId !== plan.correlation.workspaceId) deny()
-        await assertAdmittedCall(delegation.admittedToolCallId, {
-          executionId: delegation.parentExecutionId,
-          attemptId: delegation.parentAttemptId,
-          workspaceId: actor.workspaceId,
-        })
-        return ProductionChildBudgetCurrentSchema.parse({
-          workspaceId: actor.workspaceId,
-          parentIntentId: actor.intentId,
-          childRequestId: plan.correlation.requestId,
-          executionId: start.executionId,
-          attemptId: start.attemptId,
-          executionPlanId: plan.executionPlanId,
-          executionPlanDigest: plan.contentDigest,
-          parentExecutionPlanId: plan.parentExecutionPlan.executionPlanId,
-          parentExecutionPlanDigest: plan.parentExecutionPlan.contentDigest,
-          canonicalActorPrincipalId: actor.canonicalActorPrincipalId,
-          productReaderPrincipalId: actor.productReaderPrincipalId,
-          authorityRevision: actor.authorityRevision,
-          expiresAt: actor.expiresAt,
-          ...(actor.requestedSelection ? { requestedSelection: actor.requestedSelection } : {}),
-        })
-      })
+      return stable(async () => (await runtimeRecord(input)).current)
+    },
+    /** Server-owned child lineage for model binding and funding; callers supply identifiers only. */
+    readRecord(input: { executionId: string; attemptId: string }) {
+      return stable(() => storedRecord(input.executionId, input.attemptId))
     },
   }
 }

@@ -188,13 +188,6 @@ function childrenFactory() {
       now: () => at,
     }
     return {
-      authority: {
-        admit: async () => {
-          throw new Error('CHILD_RUNTIME_NOT_EXPECTED')
-        },
-        assertCurrent: async () => {},
-      },
-      forgetCanonicalModels: () => {},
       tools: { service, interactions },
       delegation: {
         records: delegationRecords,
@@ -243,12 +236,6 @@ function childrenFactory() {
         }
       },
       modelAuthority: {
-        forExecution: async () => {
-          throw new Error('CHILD_MODEL_NOT_EXPECTED')
-        },
-        readRecordedDecision: async () => {
-          throw new Error('CHILD_MODEL_NOT_EXPECTED')
-        },
         leasePrincipalRef,
         modelAlias: 'reasoning.standard',
       },

@@ -2,6 +2,7 @@ import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import type { DelegationService } from '@control-plane/orchestration'
 import { createProductionChildModelAuthority } from './production-child-model-authority.js'
 import { createProductionChildCurrent } from './production-child-current.js'
+import { createProductionChildModelHost } from './production-child-model-host.js'
 import { mkdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -10,7 +11,6 @@ import {
   createProductionChildDelegation,
   type ProductionChildDelegationOptions,
 } from './production-child-delegation.js'
-import type { DurableExecutionAuthority } from '@control-plane/pi-durable-adapter'
 import { RecordedModelFundingDecisionSchema } from '@control-plane/model-gateway'
 import { createPiExecutionBoundModelComposition } from '@control-plane/pi-durable-adapter'
 import { createCurrentModelConnectionComposition } from './current-model-composition.js'
@@ -66,12 +66,6 @@ export interface ProductionPiLeadCompositionOptions {
   readonly modelAlias: string
   /** Separate canonical child admission and confirmed provider/spending authority. Never lead fallback. */
   readonly children?: {
-    /** The server composes current child authority; callers cannot supply readCurrent. */
-    readonly authority: Omit<
-      Parameters<typeof createProductionChildModelAuthority>[0],
-      'product' | 'readCurrent'
-    >
-    readonly forgetCanonicalModels: (authority: DurableExecutionAuthority) => void
     /** Server-only retained tool bindings; never derived from an HTTP/request payload. */
     readonly tools: Pick<CreatePiDurableCurrentToolAuthorityOptions, 'service' | 'interactions'>
     readonly delegation: Omit<
@@ -81,9 +75,10 @@ export interface ProductionPiLeadCompositionOptions {
     readonly createGovernedDelegateChild: (
       service: DelegationService
     ) => NonNullable<NodePiDurableLeadCompositionOptions['governedDelegateChild']>
-    readonly modelAuthority: Omit<
+    /** Lease and alias only: child admission, funding and facades are composed by the server. */
+    readonly modelAuthority: Pick<
       Parameters<typeof createPiExecutionBoundModelComposition>[0],
-      'ledger'
+      'leasePrincipalRef' | 'modelAlias' | 'maximumRetainedFacades'
     >
     readonly runtime: Required<
       Pick<NodePiDurableLeadCompositionOptions, 'childProgress' | 'consumeParentInbox'>
@@ -121,12 +116,7 @@ export async function createProductionPiLeadComposition(
   if (
     children !== undefined &&
     (!children ||
-      typeof children.authority?.admit !== 'function' ||
-      typeof children.authority?.assertCurrent !== 'function' ||
-      typeof children.forgetCanonicalModels !== 'function' ||
       typeof children.createGovernedDelegateChild !== 'function' ||
-      typeof children.modelAuthority?.forExecution !== 'function' ||
-      typeof children.modelAuthority?.readRecordedDecision !== 'function' ||
       !children.modelAuthority?.leasePrincipalRef ||
       !children.modelAuthority?.modelAlias ||
       typeof children.delegation?.records?.insert !== 'function' ||
@@ -189,6 +179,22 @@ export async function createProductionPiLeadComposition(
           ...(options.admission.now ? { now: options.admission.now } : {}),
         })
       : undefined
+    const childHost =
+      children && childCurrent
+        ? createProductionChildModelHost({
+            current: childCurrent,
+            product,
+            selections: metadata.selections,
+            fundingDirectory: options.fundingDirectory,
+            database: fundingDatabase,
+            leasePrincipalRef: children.modelAuthority.leasePrincipalRef,
+            modelAlias: children.modelAuthority.modelAlias,
+            ...(children.modelAuthority.maximumRetainedFacades !== undefined
+              ? { maximumRetainedFacades: children.modelAuthority.maximumRetainedFacades }
+              : {}),
+            ...(options.admission.now ? { now: options.admission.now } : {}),
+          })
+        : undefined
     const childDelegation =
       children && childCurrent
         ? createProductionChildDelegation({
@@ -289,27 +295,31 @@ export async function createProductionPiLeadComposition(
       selections: metadata.selections,
     })
     const childAuthority =
-      options.children && childCurrent
+      childCurrent && childHost
         ? createProductionChildModelAuthority({
-            ...options.children.authority,
             product,
             readCurrent: childCurrent.readRuntime,
+            admit: childHost.admit,
+            assertCurrent: childHost.assertCurrent,
           })
         : undefined
-    const childModels = options.children
-      ? createPiExecutionBoundModelComposition({
-          ...options.children.modelAuthority,
-          ledger: options.ledger,
-        })
-      : undefined
+    const childModels =
+      children && childHost
+        ? createPiExecutionBoundModelComposition({
+            ...children.modelAuthority,
+            forExecution: childHost.forExecution,
+            readRecordedDecision: childHost.readRecordedDecision,
+            ledger: options.ledger,
+          })
+        : undefined
     const childRetention =
-      options.children && childModels
+      children && childModels && childHost
         ? createProductionChildModelRetention({
             executions: options.admission.executions,
             ledger: options.ledger,
-            maximum: options.children.modelAuthority.maximumRetainedFacades ?? 256,
+            maximum: children.modelAuthority.maximumRetainedFacades ?? 256,
             forgetNative: childModels.forgetTerminalExecution,
-            forgetCanonical: options.children.forgetCanonicalModels,
+            forgetCanonical: childHost.forgetTerminalExecution,
           })
         : undefined
     const collectModels = async () => {
@@ -422,6 +432,10 @@ export async function createProductionPiLeadComposition(
       piDurableLeadService: installed.service,
       /** Read-only server-owned child authority (no caller input); used by composition proofs. */
       ...(childCurrent ? { childAuthorityCurrent: childCurrent } : {}),
+      /** The exact child authority port the adapter consumes; read-only proof surface. */
+      ...(childAuthority ? { childAuthority } : {}),
+      /** Server-derived child binding for a retained attempt; never a credential or spend grant. */
+      ...(childHost ? { childModelBinding: childHost.bindingFor } : {}),
       publicationService,
       ...(piDurableCurrentToolAuthority ? { piDurableCurrentToolAuthority } : {}),
       modelConnectionService: new ConfiguredModelConnectionService(
