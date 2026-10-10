@@ -2,7 +2,11 @@ import { executionScopeFieldsFromRow } from './execution-scope.js'
 import { executionScopesEqual, executionScopeCanNarrow } from '@control-plane/domain'
 import { isDeepStrictEqual } from 'node:util'
 import { assertContextPackageIntegrity } from '@control-plane/context'
-import { compareCodePointOrder } from '@control-plane/contracts'
+import {
+  canonicalJsonStringify,
+  compareCodePointOrder,
+  IdentifierSchemas,
+} from '@control-plane/contracts'
 import {
   assertExecutionPlanIntegrity,
   assertExecutionPlanDerivedFrom,
@@ -10,20 +14,262 @@ import {
 } from '@control-plane/execution-plan'
 import { and, eq, or } from 'drizzle-orm'
 import {
+  ChildAdmissionAllocationError,
+  assertChildAdmissionReceiptMatches,
   DelegationRecordSchema,
+  type ChildAdmissionAllocator,
   type DelegationRecord,
   type DelegationRepository,
 } from '@control-plane/orchestration'
+import { ExecutionAttemptSchema, ExecutionSchema } from '@control-plane/domain'
+import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import type { ControlPlaneDatabase } from './connection.js'
+import { createPgChildAdmissionReader } from './child-admission-reader.js'
 import { contextPackages } from './schema/context-packages.js'
 import { delegations } from './schema/delegations.js'
 import { executionPlans } from './schema/execution-plans.js'
-import { executions } from './schema/executions.js'
+import { executionAttempts, executions } from './schema/executions.js'
+import { PostgresDurableUsageStore } from './usage-store.js'
+import { fromExecutionRow, toAttemptRow, toExecutionRow } from './execution-repository.js'
 
 const REFERENCE_INTEGRITY_ERROR = 'DELEGATION_REFERENCE_INTEGRITY_ERROR'
 
-export class PostgresDelegationRepository implements DelegationRepository {
+export class PostgresDelegationRepository implements DelegationRepository, ChildAdmissionAllocator {
   constructor(readonly database: ControlPlaneDatabase) {}
+
+  async allocate(input: Parameters<ChildAdmissionAllocator['allocate']>[0]): Promise<boolean> {
+    const execution = ExecutionSchema.parse(input.execution)
+    const attempt = ExecutionAttemptSchema.parse(input.attempt)
+    const record = DelegationRecordSchema.parse(input.delegation)
+    const request = input.request
+    const receipt = assertChildAdmissionReceiptMatches(
+      request,
+      input.receipt,
+      new Date().toISOString()
+    )
+    if (
+      execution.executionId !== request.childExecutionId ||
+      execution.latestAttemptId !== request.childAttemptId ||
+      execution.attemptCount !== attempt.sequence ||
+      attempt.attemptId !== request.childAttemptId ||
+      attempt.executionId !== request.childExecutionId ||
+      execution.state !== 'queued' ||
+      execution.version !== 2 ||
+      execution.queuedAt !== request.childDispatch.dispatchedAt ||
+      attempt.sequence !== 1 ||
+      attempt.state !== 'queued' ||
+      attempt.version !== 1 ||
+      attempt.queuedAt !== request.childDispatch.dispatchedAt ||
+      canonicalJsonStringify(attempt.runtime) !==
+        canonicalJsonStringify(request.childDispatch.runtime) ||
+      execution.parentExecutionId !== request.parentExecutionId ||
+      record.delegationId !== request.delegationId ||
+      record.parentExecutionId !== request.parentExecutionId ||
+      record.parentAttemptId !== request.parentAttemptId ||
+      record.admittedToolCallId !== request.admittedToolCallId ||
+      record.childExecutionId !== request.childExecutionId ||
+      record.childAttemptId !== undefined ||
+      canonicalJsonStringify(record.pendingDispatch) !==
+        canonicalJsonStringify(request.childDispatch) ||
+      record.inputDigest !== request.childRequestDigest ||
+      execution.executionPlan.executionPlanId !== request.childPlan.executionPlanId ||
+      execution.executionPlan.contentDigest !== request.childPlan.contentDigest ||
+      execution.correlation.workspaceId !== request.workspaceId ||
+      receipt.selectionRef.length === 0
+    ) {
+      throw new ChildAdmissionAllocationError('CHILD_ADMISSION_DENIED')
+    }
+
+    return this.database.transaction(async (transaction) => {
+      // The parent lock serializes sibling count/depth checks with all other
+      // child allocations for this parent.
+      const [parentRow] = await transaction
+        .select()
+        .from(executions)
+        .where(eq(executions.executionId, request.parentExecutionId))
+        .for('update')
+        .limit(1)
+      if (!parentRow) throw new ChildAdmissionAllocationError('CHILD_ADMISSION_DENIED')
+      const parent = fromExecutionRow(parentRow)
+      if (
+        parent.version !== request.parentExecutionVersion ||
+        parent.latestAttemptId !== request.parentAttemptId ||
+        parent.correlation.workspaceId !== request.workspaceId ||
+        parent.executionPlan.executionPlanId !== request.parentPlan.executionPlanId ||
+        parent.executionPlan.contentDigest !== request.parentPlan.contentDigest ||
+        parent.executionPlan.schemaVersion !== request.parentPlan.schemaVersion ||
+        !['running', 'awaiting_input'].includes(parent.state)
+      ) {
+        throw new ChildAdmissionAllocationError('CHILD_ADMISSION_DENIED')
+      }
+      const [parentAttempt] = await transaction
+        .select({
+          attemptId: executionAttempts.attemptId,
+          executionId: executionAttempts.executionId,
+          sequence: executionAttempts.sequence,
+          state: executionAttempts.state,
+        })
+        .from(executionAttempts)
+        .where(
+          and(
+            eq(executionAttempts.attemptId, request.parentAttemptId),
+            eq(executionAttempts.executionId, request.parentExecutionId)
+          )
+        )
+        .for('update')
+        .limit(1)
+      if (
+        !parentAttempt ||
+        parentAttempt.executionId !== request.parentExecutionId ||
+        parentAttempt.sequence !== parent.attemptCount ||
+        !['running', 'awaiting_input'].includes(parentAttempt.state)
+      ) {
+        throw new ChildAdmissionAllocationError('CHILD_ADMISSION_DENIED')
+      }
+
+      const [existingAllocation] = await transaction
+        .select({ delegationId: delegations.delegationId })
+        .from(delegations)
+        .where(
+          or(
+            eq(delegations.delegationId, request.delegationId),
+            eq(delegations.childExecutionId, request.childExecutionId)
+          )
+        )
+        .limit(1)
+      if (existingAllocation) return false
+
+      const [parentPlanRow] = await transaction
+        .select()
+        .from(executionPlans)
+        .where(eq(executionPlans.executionPlanId, request.parentPlan.executionPlanId))
+        .for('update')
+        .limit(1)
+      const parentPlan = parentPlanRow && assertExecutionPlanIntegrity(parentPlanRow.plan)
+      if (
+        !parentPlan ||
+        parentPlan.contentDigest !== request.parentPlan.contentDigest ||
+        parentPlan.schemaVersion !== request.parentPlan.schemaVersion
+      ) {
+        throw new ChildAdmissionAllocationError('CHILD_ADMISSION_DENIED')
+      }
+
+      const [childPlanRow] = await transaction
+        .select()
+        .from(executionPlans)
+        .where(eq(executionPlans.executionPlanId, request.childPlan.executionPlanId))
+        .for('update')
+        .limit(1)
+      const childPlan = childPlanRow && assertExecutionPlanIntegrity(childPlanRow.plan)
+      if (
+        !childPlan ||
+        childPlan.contentDigest !== request.childPlan.contentDigest ||
+        childPlan.schemaVersion !== request.childPlan.schemaVersion
+      ) {
+        throw new ChildAdmissionAllocationError('CHILD_ADMISSION_DENIED')
+      }
+
+      const siblings = await transaction
+        .select({ state: delegations.state })
+        .from(delegations)
+        .where(eq(delegations.parentExecutionId, request.parentExecutionId))
+      if (siblings.length >= parentPlan.constraints.limits.childExecutions.maximumTotal) {
+        throw new ChildAdmissionAllocationError('DELEGATION_LIMIT_EXCEEDED')
+      }
+      const activeStates = new Set([
+        'requested',
+        'dispatched',
+        'running',
+        'awaiting_input',
+        'manual_intervention',
+      ])
+      if (
+        siblings.filter(({ state }) => activeStates.has(state)).length >=
+        parentPlan.constraints.limits.concurrency.maximumParallel
+      ) {
+        throw new ChildAdmissionAllocationError('DELEGATION_CONCURRENCY_LIMIT_EXCEEDED')
+      }
+      let depth = 0
+      let cursor: string = String(request.parentExecutionId)
+      const ancestry = new Set<string>([cursor])
+      while (true) {
+        const cursorId = IdentifierSchemas.executionId.parse(cursor)
+        const [ancestor] = await transaction
+          .select({ parentExecutionId: delegations.parentExecutionId })
+          .from(delegations)
+          .where(eq(delegations.childExecutionId, cursorId))
+          .limit(1)
+        if (!ancestor) break
+        const ancestorParentId = String(ancestor.parentExecutionId)
+        if (ancestry.has(ancestorParentId)) {
+          throw new ChildAdmissionAllocationError('CHILD_ADMISSION_DENIED')
+        }
+        ancestry.add(ancestorParentId)
+        cursor = ancestorParentId
+        depth += 1
+      }
+      if (depth >= parentPlan.constraints.limits.childExecutions.maximumDepth) {
+        throw new ChildAdmissionAllocationError('DELEGATION_DEPTH_EXCEEDED')
+      }
+
+      // Re-read actor, audience, role selection, and readiness after canonical
+      // lineage/limits are locked and before the first execution/budget write.
+      // Every canonical read in this authority recheck goes through this transaction's reader, which closes
+      // when the recheck returns. No read uses the pool while the allocation transaction is open.
+      const reader = createPgChildAdmissionReader(transaction, request.workspaceId)
+      try {
+        await input.assertCurrent(reader)
+      } finally {
+        reader.close()
+      }
+      assertChildAdmissionReceiptMatches(request, receipt, new Date().toISOString())
+
+      const [existingExecution] = await transaction
+        .select({ executionId: executions.executionId })
+        .from(executions)
+        .where(eq(executions.executionId, execution.executionId))
+        .limit(1)
+      if (existingExecution) return false
+      const insertedExecution = await transaction
+        .insert(executions)
+        .values(toExecutionRow(execution))
+        .onConflictDoNothing()
+        .returning({ executionId: executions.executionId })
+      if (insertedExecution.length !== 1) return false
+      const insertedAttempt = await transaction
+        .insert(executionAttempts)
+        .values(toAttemptRow(attempt))
+        .onConflictDoNothing()
+        .returning({ attemptId: executionAttempts.attemptId })
+      if (insertedAttempt.length !== 1)
+        throw new ChildAdmissionAllocationError('CHILD_ADMISSION_DENIED')
+
+      // Verify canonical context/plan ancestry before the transaction can
+      // commit execution, attempt, budget, or delegation records.
+      await lockAndVerifyReferences(transaction, record)
+      await PostgresDurableUsageStore.withTransaction(transaction, request.workspaceId, (store) =>
+        new DurableUsageLedger({ store, now: () => request.acceptedAt }).openBudget({
+          workspaceId: request.workspaceId,
+          executionId: execution.executionId,
+          parentExecutionId: request.parentExecutionId,
+          currency: childPlan.constraints.limits.budget.currency,
+          maximumMicrounits: childPlan.constraints.limits.budget.maximumMicrounits,
+          maximumTokens: childPlan.constraints.limits.tokens.maximumTotal,
+          source: {
+            sourceId: `child-budget:${record.delegationId}`,
+            idempotencyKey: `child-budget-open:${record.delegationId}`,
+          },
+        })
+      )
+      const insertedDelegation = await transaction
+        .insert(delegations)
+        .values(toRow(record))
+        .onConflictDoNothing()
+        .returning({ delegationId: delegations.delegationId })
+      if (insertedDelegation.length !== 1) throw new Error(REFERENCE_INTEGRITY_ERROR)
+      return true
+    })
+  }
 
   async insert(recordInput: DelegationRecord): Promise<boolean> {
     const record = DelegationRecordSchema.parse(recordInput)
@@ -396,6 +642,8 @@ function sameImmutableDelegation(left: DelegationRecord, right: DelegationRecord
     left.delegationId === right.delegationId &&
     left.delegationGroupId === right.delegationGroupId &&
     left.parentExecutionId === right.parentExecutionId &&
+    left.parentAttemptId === right.parentAttemptId &&
+    left.admittedToolCallId === right.admittedToolCallId &&
     left.childExecutionId === right.childExecutionId &&
     left.parentExecutionPlanId === right.parentExecutionPlanId &&
     left.parentExecutionPlanDigest === right.parentExecutionPlanDigest &&

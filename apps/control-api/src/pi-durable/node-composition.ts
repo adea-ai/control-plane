@@ -21,6 +21,7 @@ import type { PiDurableChildProgressScanner } from './child-progress-scanner.js'
 import { SqlitePiLeadRunningLifecycle } from './lead-running-lifecycle.js'
 import { SqlitePiLeadTerminalSettlement } from './lead-terminal-settlement.js'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
+import type { DelegationService } from '@control-plane/orchestration'
 
 export interface NodePiDurableLeadCompositionOptions {
   readonly onAdapterReady?: NodePiDurableCompositionOptions['onAdapterReady']
@@ -35,6 +36,8 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly onParentInboxWake?: NodePiDurableCompositionOptions['onParentInboxWake']
   readonly tools?: NodePiDurableCompositionOptions['tools']
   readonly governedDelegateChild?: NodePiDurableCompositionOptions['governedDelegateChild']
+  /** The same canonical service used by child admission/progress. */
+  readonly delegationService?: Pick<DelegationService, 'cancelChildren'>
   /** A child must independently reload its canonical lineage, selection and authority. */
   readonly childAuthority?: Pick<
     NodePiDurableCompositionOptions,
@@ -59,7 +62,8 @@ export async function createNodePiDurableLeadComposition(
     (!options.childAuthority ||
       !options.childProgress ||
       !options.parentInbox ||
-      !options.consumeParentInbox)
+      !options.consumeParentInbox ||
+      !options.delegationService)
   )
     throw new Error('PI_CHILD_COMPOSITION_REQUIRED')
   const recoveryIntervalMs = options.periodicRecoveryIntervalMs ?? 30_000
@@ -148,6 +152,7 @@ export async function createNodePiDurableLeadComposition(
       receipts: new SqlitePiDurableLeadReceiptStore(database),
       findRuntimeHandle: (request) => runtime!.adapter.findExistingHandle(request),
       ...(preparations ? { preparations } : {}),
+      ...(options.delegationService ? { delegationService: options.delegationService } : {}),
       ...(options.admission.now ? { now: options.admission.now } : {}),
     })
     // Created last: after every awaited step and the service, nothing can throw before the return, so a
