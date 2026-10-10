@@ -1257,3 +1257,59 @@ test('a conflicting binding found at publication rolls the ready transition back
     await expect(setup.resolve(reopened)).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
     expect(readyAndBindings(setup.database)).toEqual({ state: 'pending', bindings: 1 })
   }, fencedScope))
+
+const deferred = () => {
+  let resolve
+  const promise = new Promise((settle) => {
+    resolve = settle
+  })
+  return { promise, resolve }
+}
+
+test('public canonical reads never expose a pending intent, even while its own projection is held inside an await', async () =>
+  fixture(async (setup) => {
+    const entered = deferred()
+    const released = deferred()
+    const real = setup.options().budgetAdmission
+    let bridge
+    // Only the projection reserves after this pending marker's budget is bound; creation reserves before that.
+    const gated = {
+      reserve: async (input) => {
+        if (
+          bridge?.store.findBudget(intentId) &&
+          bridge.store.marker(intentId)?.state === 'pending'
+        ) {
+          entered.resolve()
+          await released.promise
+        }
+        return real.reserve(input)
+      },
+    }
+    bridge = new NodePiDurableLeadAdmission(setup.options({ budgetAdmission: gated }))
+    const admitting = setup.resolve(bridge).then(
+      (value) => value,
+      (error) => error
+    )
+    let admitted
+    try {
+      await entered.promise
+
+      // A concurrent caller on the same store and authority sees no pending canonical intent.
+      expect(await bridge.store.get(intentId)).toBeUndefined()
+      expect(await bridge.store.getByAttempt(setup.ids.attemptId)).toBeUndefined()
+      await expect(
+        bridge.canonicalAuthority.get(
+          intentId,
+          setup.plan.correlation.workspaceId,
+          setup.principal.principalId,
+          'read'
+        )
+      ).rejects.toThrow()
+    } finally {
+      // Always release and settle the held admission so teardown never races an open transaction.
+      released.resolve()
+      admitted = await admitting
+    }
+    expect(admitted).toMatchObject({ admittedAttempt: { attemptId: setup.ids.attemptId } })
+    expect(await bridge.store.get(intentId)).toMatchObject({ intentId })
+  }, fencedScope))

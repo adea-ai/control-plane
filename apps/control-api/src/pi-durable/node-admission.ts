@@ -275,7 +275,6 @@ function admissionBindingMatchesMarker(
 /** Immutable intent/plan marker precedes acceptance; only completion state may advance. */
 export class SqlitePiDurableLeadIntentStore implements CanonicalLeadIntentReader {
   #preparationCursor = ''
-  readonly #projecting = new Set<string>()
   constructor(readonly database: DatabaseSync) {
     database.exec(
       'CREATE TABLE IF NOT EXISTS pi_lead_intent_admissions (intent_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, attempt_id TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, state TEXT NOT NULL, record TEXT NOT NULL); CREATE TABLE IF NOT EXISTS pi_lead_intent_budgets (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL); CREATE TABLE IF NOT EXISTS pi_lead_intent_admission_bindings (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL)'
@@ -422,41 +421,30 @@ export class SqlitePiDurableLeadIntentStore implements CanonicalLeadIntentReader
           "UPDATE pi_lead_intent_admissions SET state = 'ready' WHERE intent_id = ? AND digest = ? AND state = 'pending'"
         )
         .run(marker.intentId, marker.evidenceDigest).changes
-      if (changed !== 1) conflict()
+      if (changed !== 1) {
+        // Replay: the same admission already published. Its binding must already be durable, so a
+        // ready marker without one (a legacy record) is refused, never backfilled here.
+        if (this.marker(marker.intentId)?.state !== 'ready') conflict()
+        if (this.admissionBinding(marker.intentId) === undefined) conflict()
+      }
       this.bindAdmission(binding)
-      if (this.marker(marker.intentId)?.state !== 'ready') conflict()
       this.database.exec('COMMIT')
     } catch (error) {
       this.database.exec('ROLLBACK')
       throw error
     }
   }
-  /** Runs one admitting projection while its own pending marker reads as canonical. */
-  async projecting<Value>(intentId: string, operation: () => Promise<Value>): Promise<Value> {
-    this.#projecting.add(intentId)
-    try {
-      return await operation()
-    } finally {
-      this.#projecting.delete(intentId)
-    }
-  }
-  isProjecting(intentId: string): boolean {
-    return this.#projecting.has(intentId)
-  }
   async get(intentId: string): Promise<CanonicalLeadIntent | undefined> {
     const marker = this.marker(intentId)
-    return marker && (marker.state === 'ready' || this.isProjecting(intentId))
-      ? structuredClone(marker.intent)
-      : undefined
+    return marker?.state === 'ready' ? structuredClone(marker.intent) : undefined
   }
   async getByAttempt(attemptId: string): Promise<CanonicalLeadIntent | undefined> {
     const row = this.database
-      .prepare('SELECT intent_id, state FROM pi_lead_intent_admissions WHERE attempt_id = ?')
+      .prepare(
+        "SELECT intent_id FROM pi_lead_intent_admissions WHERE attempt_id = ? AND state = 'ready'"
+      )
       .get(attemptId)
-    const intentId = row ? String(row['intent_id']) : undefined
-    return intentId !== undefined && (row?.['state'] === 'ready' || this.isProjecting(intentId))
-      ? this.get(intentId)
-      : undefined
+    return row ? this.get(String(row['intent_id'])) : undefined
   }
 }
 
@@ -515,16 +503,28 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     this.#now = options.now ?? (() => new Date().toISOString())
     ServicePrincipalSchema.shape.principalId.parse(options.admissionPrincipalId)
     this.store = new SqlitePiDurableLeadIntentStore(options.database)
-    this.canonicalAuthority = new CanonicalPiDurableAuthority({
-      intents: this.store,
+    this.canonicalAuthority = this.#canonicalAuthority()
+  }
+
+  /**
+   * Canonical authority over the shared store. Public reads see ready intents only. An admission's own
+   * projection gets a private authority that can also read exactly its one pending marker.
+   */
+  #canonicalAuthority(pending?: LeadIntentMarker): CanonicalPiDurableAuthority {
+    const options = this.options
+    return new CanonicalPiDurableAuthority({
+      intents: pending ? this.#pendingReader(pending) : this.store,
       executions: options.executions,
       plans: options.plans,
       now: this.#now,
       messages: {
         readCurrent: async (intent) => {
           const marker = this.store.marker(intent.intentId)
-          if (!marker || (marker.state !== 'ready' && !this.store.isProjecting(intent.intentId)))
-            conflict()
+          const ownPending =
+            pending !== undefined &&
+            marker?.state === 'pending' &&
+            marker.intentId === pending.intentId
+          if (!marker || (marker.state !== 'ready' && !ownPending)) conflict()
           await this.#validateCurrentPlan(marker)
           const evidence = await this.#evidence(
             intent.workspaceId,
@@ -557,6 +557,18 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
         },
       },
     })
+  }
+
+  /** Reads one admission's own pending marker. The shared store never hands it out. */
+  #pendingReader(pending: LeadIntentMarker): CanonicalLeadIntentReader {
+    return {
+      get: async (intentId) =>
+        intentId === pending.intentId ? structuredClone(pending.intent) : this.store.get(intentId),
+      getByAttempt: async (attemptId) =>
+        attemptId === pending.intent.attemptId
+          ? structuredClone(pending.intent)
+          : this.store.getByAttempt(attemptId),
+    }
   }
 
   async resolveIntent(input: {
@@ -775,16 +787,15 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
         this.store.bindBudget(evidence.intentId, budget)
         await this.options.checkpoint?.('after_budget')
         this.#assertPreparationLive(marker)
-        // Projection reads this still-pending marker. Ready and its exact binding then commit in one
-        // transaction, so a crash can leave only a pending marker (no binding) or both.
+        // Projection reads this still-pending marker through this call's private authority only. Ready
+        // and its exact binding then commit in one transaction, so a crash can leave only a pending
+        // marker (no binding) or both.
         authorized = project(
-          await this.store.projecting(marker.intentId, () =>
-            this.canonicalAuthority.get(
-              input.intentId,
-              input.workspaceId,
-              principal.principalId,
-              'inference'
-            )
+          await this.#canonicalAuthority(marker).get(
+            input.intentId,
+            input.workspaceId,
+            principal.principalId,
+            'inference'
           ),
           marker.intent,
           marker.preparationDeadlineAt
