@@ -102,6 +102,22 @@ test('cert 2.5.8: sidebar disclosure rows and drag strips meet the 24px target m
     page.getByRole('complementary', { name: 'Shared developer utilities' })
   ).toBeVisible()
 
+  // The left utility slot is collapsed on first run (#1168), so its drag strip
+  // exists only after the owner opens the slot. Assert the collapsed state, then
+  // open it from the keyboard with its toolbar control; a click would be a no-op
+  // or a collapse if the slot were already open.
+  const leftToggle = page.getByRole('button', { name: 'Expand left utility sidebar' })
+  const leftStrip = page.getByRole('separator', { name: 'Resize left utility pane' })
+  await expect(leftToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(leftStrip).toHaveCount(0)
+  await leftToggle.focus()
+  await page.keyboard.press('Enter')
+  await expect(leftStrip).toHaveCount(1)
+  // The toolbar control relabels to "Collapse" once the slot is open.
+  await expect(
+    page.getByRole('button', { name: 'Collapse left utility sidebar', exact: true })
+  ).toHaveAttribute('aria-expanded', 'true')
+
   const strips = [
     { label: 'Resize workspace navigation', axis: 'width' as const },
     { label: 'Resize left utility pane', axis: 'width' as const },
@@ -283,6 +299,12 @@ test('cert dialogs: the settings tab pattern and help-center focus restore hold 
     await userSettings.focus()
     await page.keyboard.press('Enter')
     await expect(page.getByRole('menu')).toBeVisible()
+    // The menu takes focus for itself a moment after it opens, on its first
+    // enabled item. Wait for that focus before the test moves it: a focus set
+    // earlier is overwritten, and Enter then activates the item the menu chose.
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.getAttribute('role')))
+      .toBe('menuitem')
   }
 
   // Settings: tabs pattern.

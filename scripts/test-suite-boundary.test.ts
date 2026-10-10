@@ -40,8 +40,14 @@ describe('test suite boundaries', () => {
     expect(integrationRunner).toContain('DATABASE_MIGRATION_URL')
     expect(integrationRunner).toContain("spawnSync('docker'")
     expect(integrationRunner).toContain("'compose'")
-    expect(integrationRunner).toContain("'tests'")
-    expect(integrationRunner).toContain("'integration'")
+    // The package and route-flow locations live in the inventory module the runner imports.
+    const integrationInventory = readFileSync(
+      resolve(root, 'scripts/integration-inventory.mjs'),
+      'utf8'
+    )
+    expect(integrationRunner).toContain("from './integration-inventory.mjs'")
+    expect(integrationInventory).toContain("'tests', 'integration'")
+    expect(integrationInventory).toContain("'apps', 'web', 'test', 'integration'")
     expect(packageJson.scripts['test:e2e']).toContain('playwright')
     // The Dev View chunk budget is a documented-raise ratchet, not a silent
     // dial: the check script carries the raise rationale, and this pin makes
@@ -102,6 +108,55 @@ describe('test suite boundaries', () => {
         expect(product!.args).toContain('--shard')
         expect(product!.args).toContain(`${index}/${total}`)
       }
+    }
+  })
+
+  test('keeps the cross-product session journeys (#1223) in the normal E2E shard', () => {
+    const runner = readFileSync(resolve(root, 'scripts/e2e-playwright.mjs'), 'utf8').replace(
+      "import { spawnSync } from 'node:child_process'",
+      ''
+    )
+    const calls: { command: string; args: string[] }[] = []
+    runInNewContext(runner, {
+      spawnSync: (command: string, args: string[]) => {
+        calls.push({ command, args })
+        return { status: 0 }
+      },
+      process: { env: {} },
+      console,
+    })
+    const journeys = calls.find(
+      ({ command, args }) =>
+        command === 'playwright' && args.includes('apps/web/e2e/chat-continuity.spec.ts')
+    )
+    expect(journeys).toBeDefined()
+    expect(journeys!.args).toContain('apps/web/e2e/workspace-project-placement.spec.ts')
+  })
+
+  test('keeps the workspace creation-draft browser specs in the normal E2E shard exactly once', () => {
+    const runner = readFileSync(resolve(root, 'scripts/e2e-playwright.mjs'), 'utf8').replace(
+      "import { spawnSync } from 'node:child_process'",
+      ''
+    )
+    const calls: { command: string; args: string[] }[] = []
+    runInNewContext(runner, {
+      spawnSync: (command: string, args: string[]) => {
+        calls.push({ command, args })
+        return { status: 0 }
+      },
+      process: { env: {} },
+      console,
+    })
+    const suite = calls.find(
+      ({ command, args }) =>
+        command === 'playwright' && args.includes('apps/web/e2e/workspace-nav.spec.ts')
+    )
+    expect(suite).toBeDefined()
+    for (const spec of [
+      'apps/web/e2e/workspace-nav.spec.ts',
+      'apps/web/e2e/workspace-creation-owner.spec.ts',
+    ]) {
+      expect(suite!.args.filter((arg) => arg === spec)).toHaveLength(1)
     }
   })
 
@@ -182,6 +237,14 @@ describe('test suite boundaries', () => {
     expect(neonWorkflow).toContain('bun run test:integration')
     expect(neonWorkflow).not.toContain('packages/db test:integration')
     expect(neonWorkflow).not.toContain('packages/auth test:integration')
+  })
+
+  test('partitions the integration inventory explicitly instead of delegating to Bun --shard', () => {
+    const runner = readFileSync(resolve(root, 'scripts/test-integration.mjs'), 'utf8')
+    expect(runner).toContain("from './integration-inventory.mjs'")
+    expect(runner).not.toContain('--shard=')
+    expect(runner).toContain('...plan.packageFiles')
+    expect(runner).toContain('plan.routeFiles.length > 0')
   })
 
   test('builds desktop releases entirely on GitHub-hosted runners', () => {

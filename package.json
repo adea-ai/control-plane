@@ -22,6 +22,7 @@
     "test:integration": "bun scripts/test-integration.mjs",
     "typecheck": "turbo run typecheck",
     "db:health": "node scripts/database-health.mjs",
+    "evidence:manifest": "node scripts/evidence-manifest.mjs",
     "relay:purge": "bun run --cwd packages/types build && bun scripts/purge-relay-ciphertext.ts",
     "test:e2e": "bun scripts/e2e-setup.mjs && bun scripts/e2e-playwright.mjs",
     "test:e2e:dev-view-terminal": "bun scripts/e2e-setup.mjs && PLAYWRIGHT_HEADLESS=1 playwright test --config=playwright.config.ts apps/web/e2e/dev-view-terminal.spec.ts apps/web/e2e/dev-view-runtime-terminal.spec.ts",

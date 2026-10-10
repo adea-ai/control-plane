@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import type { AccountDirectoryApiClient } from '@adea-ai/api-client/account-directory'
 import type {
+  AccountConversationInboxEntry,
   AccountDirectoryAgent,
   AccountDirectoryPageInput,
 } from '@adea-ai/types/account-directory'
@@ -22,7 +23,7 @@ import { QueryClient } from '@tanstack/solid-query'
 import { createRoot, createSignal } from 'solid-js'
 import { isServer as isServerSolid } from 'solid-js/web'
 
-import { createAccountDirectoryPages } from '../src/lib/account-directory'
+import { createAccountDirectoryPages, createAccountInboxPages } from '../src/lib/account-directory'
 
 const tick = () => new Promise<void>((done) => setTimeout(done, 0))
 
@@ -68,6 +69,33 @@ function mountPages(
       ...(baseInput ? { baseInput } : {}),
       queryClient,
     }),
+  }))
+  return { queryClient, dispose: mounted.rootDispose, pages: mounted.pages }
+}
+
+/** The inbox half of the account-wide seam: conversations instead of agents. */
+function pagedInboxClient(pages: AccountConversationInboxEntry[][]) {
+  const calls: AccountDirectoryPageInput[] = []
+  const client = {
+    accountConversationInbox: async (input: AccountDirectoryPageInput) => {
+      calls.push(input)
+      const index = input.after === undefined ? 0 : Number(input.after)
+      const conversations = pages[index] ?? []
+      return index + 1 < pages.length
+        ? { conversations, nextCursor: String(index + 1) }
+        : { conversations }
+    },
+  } as unknown as AccountDirectoryApiClient
+  return { client, calls }
+}
+
+function mountInboxPages(client: AccountDirectoryApiClient) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const mounted = createRoot((rootDispose) => ({
+    rootDispose,
+    pages: createAccountInboxPages(client, { queryClient }),
   }))
   return { queryClient, dispose: mounted.rootDispose, pages: mounted.pages }
 }
@@ -260,6 +288,47 @@ if (isServer) {
       await tick()
       expect(mounted.pages.error()).toBeUndefined()
       expect(mounted.pages.rows().map(({ id }) => id)).toEqual(['a1', 'a2'])
+    } finally {
+      mounted.dispose()
+      mounted.queryClient.clear()
+    }
+  })
+
+  test('an empty directory first page settles exhausted with no rows and no load-more request', async () => {
+    const { client, calls } = pagedDirectoryClient([[]])
+    const mounted = mountPages(client)
+    try {
+      await tick()
+      await tick()
+      expect(mounted.pages.rows()).toEqual([])
+      expect(mounted.pages.isLoading()).toBe(false)
+      expect(mounted.pages.error()).toBeUndefined()
+      expect(mounted.pages.exhausted()).toBe(true)
+      expect(mounted.pages.canLoadMore()).toBe(false)
+      mounted.pages.loadMore()
+      await tick()
+      // The empty walk is complete: no cursor exists, so nothing is requested.
+      expect(calls).toEqual([{ limit: 25 }])
+      expect(mounted.pages.rows()).toEqual([])
+    } finally {
+      mounted.dispose()
+      mounted.queryClient.clear()
+    }
+  })
+
+  test('an empty inbox first page settles exhausted with no rows and no load-more request', async () => {
+    const { client, calls } = pagedInboxClient([[]])
+    const mounted = mountInboxPages(client)
+    try {
+      await tick()
+      await tick()
+      expect(mounted.pages.rows()).toEqual([])
+      expect(mounted.pages.error()).toBeUndefined()
+      expect(mounted.pages.exhausted()).toBe(true)
+      expect(mounted.pages.canLoadMore()).toBe(false)
+      mounted.pages.loadMore()
+      await tick()
+      expect(calls).toEqual([{ limit: 25 }])
     } finally {
       mounted.dispose()
       mounted.queryClient.clear()

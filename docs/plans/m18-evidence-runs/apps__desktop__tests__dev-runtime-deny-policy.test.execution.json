@@ -1,0 +1,16 @@
+{
+  "schema": "adea.evidence.execution.v1",
+  "repository": "adea",
+  "sourceSha": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "executedAtHead": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "file": "apps/desktop/tests/dev-runtime-deny-policy.test.ts",
+  "command": "bun test apps/desktop/tests/dev-runtime-deny-policy.test.ts --reporter=junit --reporter-outfile=junit.xml",
+  "exitCode": 0,
+  "status": "passed",
+  "summary": {
+    "pass": 5,
+    "fail": 0
+  },
+  "ids": ["A38"],
+  "junit": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"bun test\" tests=\"5\" assertions=\"28\" failures=\"0\" skipped=\"0\" time=\"0.015023\">\n  <testsuite name=\"apps/desktop/tests/dev-runtime-deny-policy.test.ts\" file=\"apps/desktop/tests/dev-runtime-deny-policy.test.ts\" tests=\"5\" assertions=\"28\" failures=\"0\" skipped=\"0\" time=\"0.00211\">\n    <testcase name=\"private key material is denied by name, in any directory\" classname=\"\" time=\"0.000222\" file=\"apps/desktop/tests/dev-runtime-deny-policy.test.ts\" line=\"12\" assertions=\"6\" />\n    <testcase name=\"public and non-secret neighbours stay readable\" classname=\"\" time=\"0.000058\" file=\"apps/desktop/tests/dev-runtime-deny-policy.test.ts\" line=\"21\" assertions=\"7\" />\n    <testcase name=\"credential stores are denied anywhere in the tree, not only under $HOME\" classname=\"\" time=\"0.000052\" file=\"apps/desktop/tests/dev-runtime-deny-policy.test.ts\" line=\"34\" assertions=\"8\" />\n    <testcase name=\"protected roots refuse exactly themselves and their descendants\" classname=\"\" time=\"0.000051\" file=\"apps/desktop/tests/dev-runtime-deny-policy.test.ts\" line=\"46\" assertions=\"4\" />\n    <testcase name=\"a rule names itself so a refusal can explain what it refused\" classname=\"\" time=\"0.000034\" file=\"apps/desktop/tests/dev-runtime-deny-policy.test.ts\" line=\"58\" assertions=\"3\" />\n  </testsuite>\n</testsuites>\n"
+}

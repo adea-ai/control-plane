@@ -1,16 +1,26 @@
 import { createApiClient } from '@adea-ai/api-client'
 import { AlertTriangle, X } from 'lucide-solid'
-import { createEffect, createSignal, lazy, on, onCleanup, Show, Suspense, type JSX } from 'solid-js'
+import {
+  createEffect,
+  createSignal,
+  lazy,
+  on,
+  onCleanup,
+  Show,
+  Suspense,
+  type ComponentProps,
+  type JSX,
+} from 'solid-js'
 import { settledData, usePrefetchChannelMessages } from '@adea-ai/data'
 import { cn } from '@adea-ai/app-ui/lib/utils'
 import { useWorkspaceState, workspaceStore } from '@adea-ai/state'
 
-import { AgentRoster } from './agent-roster'
 import { ArtifactDetail } from './artifact-detail'
 import { ConversationSurface } from './conversation-surface'
 import { TaskBoard } from './task-board'
 import type { DevProjectFlow } from './create-project-flow'
 import { useWorkspaceController } from './use-workspace-controller'
+import type { WorkspaceCreationContext } from '@adea-ai/workspace-nav/workspace-nav'
 import { WorkspaceNavSidebar, type WorkspaceNavHost } from './workspace-nav-sidebar'
 import { WorkspaceError, WorkspaceSkeleton } from './workspace-states'
 import type { SearchResult } from './workspace-utility-dialogs'
@@ -28,6 +38,25 @@ const CreateGroupDialog = lazy(() =>
 const ProjectCreateDialog = lazy(() =>
   import('./create-workspace-dialogs').then((module) => ({ default: module.ProjectCreateDialog }))
 )
+// The lead status is off the chat route's static graph: it loads when the Agents
+// surface opens, and the chat route budget measures only static imports.
+const WorkspaceLeadStatus = lazy(() =>
+  import('./workspace-lead-status').then((module) => ({
+    default: module.WorkspaceLeadStatus,
+  }))
+)
+// The Agents roster is off the chat route's static graph too: it loads when the
+// Agents surface opens. The wrapper keeps the call site and its props unchanged.
+const LazyAgentRoster = lazy(() =>
+  import('./agent-roster').then((module) => ({ default: module.AgentRoster }))
+)
+function AgentRoster(props: ComponentProps<typeof LazyAgentRoster>) {
+  return (
+    <Suspense fallback={null}>
+      <LazyAgentRoster {...props} />
+    </Suspense>
+  )
+}
 const ModalDialog = lazy(() =>
   import('@adea-ai/ui/components/ui/modal-dialog').then((module) => ({
     default: module.ModalDialog,
@@ -68,6 +97,8 @@ export type WorkspaceDeepLink = Readonly<{
 }>
 
 export function ConventionalWorkspaceShell(props: {
+  /** The signed-in owner for the sidebar's creation draft; absent for guests and unknown identities. */
+  creationContext?: WorkspaceCreationContext
   /** Router-backed deep link state. Reactive, so links apply on SPA navigation. */
   deepLink?: () => WorkspaceDeepLink
   /** Shared archived-session affordance at the end of the common sidebar. */
@@ -437,6 +468,7 @@ export function ConventionalWorkspaceShell(props: {
               <WorkspaceNavSidebar
                 view="chat"
                 client={controller.client}
+                creationContext={props.creationContext}
                 activeWorkspace={controller.activeWorkspace}
                 host={workspaceHost()}
                 archiveAction={props.archiveAction}
@@ -510,10 +542,16 @@ export function ConventionalWorkspaceShell(props: {
                   </ActionButton>
                 </section>
               </Show>
+              {/* Only a query that failed with no data may replace the
+                  surface. A background refetch that fails keeps its data
+                  (`isRefetchError`) and must leave the rendered board,
+                  conversation and agents in place. */}
               <Show
-                when={!controller.workspaceQueries.find(({ isError }) => isError)}
+                when={!controller.workspaceQueries.find(({ isLoadingError }) => isLoadingError)}
                 fallback={(() => {
-                  const queryError = controller.workspaceQueries.find(({ isError }) => isError)!
+                  const queryError = controller.workspaceQueries.find(
+                    ({ isLoadingError }) => isLoadingError
+                  )!
                   return (
                     <WorkspaceError
                       error={queryError.error}
@@ -561,6 +599,18 @@ export function ConventionalWorkspaceShell(props: {
                           }
                         >
                           <AgentRoster
+                            leadStatus={
+                              <Suspense
+                                fallback={<p role="status">Checking the workspace lead…</p>}
+                              >
+                                <WorkspaceLeadStatus
+                                  client={controller.client}
+                                  workspaceId={controller.workspaceId!}
+                                  agents={controller.agents}
+                                  onProvisioned={() => void controller.refreshAgents()}
+                                />
+                              </Suspense>
+                            }
                             agents={controller.agents}
                             busy={controller.createAgentBusy || controller.agentBusy}
                             onArchive={controller.agentActions.archive}

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 
 import type {
   ArtifactLocation,
+  ArtifactReferenceEvidence,
   ArtifactSummary,
   PrincipalRef,
   UserPrincipalRef,
@@ -19,6 +20,7 @@ import type { JsonObject } from './schema'
 import { appendWorkspaceEvent } from './transactions'
 
 type Database = AgentHqDatabase | AgentHqTransaction
+const ARTIFACT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 type ArtifactRow = typeof artifacts.$inferSelect
 type ArtifactAvailability = ArtifactRow['availability']
 type ArtifactRetentionPolicy = ArtifactRow['retentionPolicy']
@@ -417,6 +419,46 @@ export async function getArtifactForUser(
     )
     .limit(1)
   return row ? summary(row.artifact) : null
+}
+
+/**
+ * Read the identity facts a cross-workspace artifact-reference gate needs,
+ * without user-scope access. The audience workspace holds no membership in
+ * the source workspace, so retrieval evidence is read by identity after the
+ * caller resolved the reference; the policy still decides, and only the
+ * projected identity fields cross this boundary — never filename, location or
+ * provenance.
+ */
+export async function readArtifactReferenceEvidenceById(
+  database: Database,
+  workspaceId: string,
+  artifactId: string
+): Promise<ArtifactReferenceEvidence | null> {
+  // Identity lookups fail closed on non-UUID ids: a URL or arbitrary locator
+  // presented as an artifact id finds no evidence and never reaches SQL.
+  if (!ARTIFACT_ID.test(artifactId) || !ARTIFACT_ID.test(workspaceId)) return null
+  const [row] = await database
+    .select()
+    .from(artifacts)
+    .where(
+      and(
+        eq(artifacts.id, artifactId),
+        eq(artifacts.workspaceId, workspaceId),
+        eq(artifacts.deletionState, 'active')
+      )
+    )
+    .limit(1)
+  if (!row) return null
+  const projected = summary(row)
+  return Object.freeze({
+    availability: projected.availability,
+    checksumSha256: projected.checksumSha256,
+    deletionState: projected.deletionState,
+    id: projected.id,
+    sensitivity: projected.sensitivity,
+    version: projected.version,
+    workspaceId: projected.workspaceId,
+  })
 }
 
 async function requireArtifact(

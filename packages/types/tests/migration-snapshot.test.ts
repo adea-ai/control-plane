@@ -158,6 +158,88 @@ function validRecord(family: (typeof migrationSnapshotFamilies)[number]): Migrat
         ownerUserId: 'user-1',
         workspaceId: 'wsp-1',
       }
+    case 'artifactReferenceGrants':
+      return {
+        artifactId: 'art-1',
+        audienceWorkspaceId: 'wsp-2',
+        checksumSha256: 'a'.repeat(64),
+        expiresAt: null,
+        family: 'artifactReferenceGrants',
+        grantId: 'grant-1',
+        revoked: false,
+        revision: 1,
+        sourceWorkspaceId: 'wsp-1',
+        version: 1,
+      }
+    case 'contentReplicas':
+      return {
+        availability: 'available',
+        contentRefId: 'cref-1',
+        deleted: false,
+        digestSha256: 'b'.repeat(64),
+        family: 'contentReplicas',
+        replicaId: 'rep-1',
+        replicaKind: 'cloud_safe',
+        revision: 1,
+        schemaVersion: 1,
+        workspaceId: 'wsp-1',
+      }
+    case 'leadTurnRuntime':
+      return {
+        attemptId: 'att-1',
+        cancelRequested: false,
+        executionId: 'exe-1',
+        family: 'leadTurnRuntime',
+        intentId: 'intent-1',
+        publishedMessageId: null,
+        runtimeSessionId: 'sess-1',
+        state: 'prepared',
+      }
+    case 'nativeSessions':
+      return {
+        accountId: 'acct-1',
+        activeHarnessRunId: null,
+        agentProfileId: 'prf-1',
+        agentProfileVersion: 1,
+        archived: false,
+        family: 'nativeSessions',
+        generation: 1,
+        harnessInstallationId: null,
+        lifecycle: 'ready',
+        projectId: 'prj-1',
+        runtimeNodeId: 'node-1',
+        sessionRef: 'session-1',
+        version: 1,
+        workspaceId: 'wsp-1',
+        worktreeId: 'wt-1',
+      }
+    case 'runtimeNodes':
+      return {
+        family: 'runtimeNodes',
+        kind: 'local_device',
+        pairingState: 'paired',
+        platform: 'darwin',
+        revoked: false,
+        runtimeNodeId: 'node-1',
+        softwareVersion: '1.0.0',
+        workspaceId: 'wsp-1',
+      }
+    case 'taskSubmissions':
+      return {
+        agentId: 'agent-1',
+        ciphertextPurged: false,
+        family: 'taskSubmissions',
+        locationKind: 'local_device',
+        profileId: 'prf-1',
+        profileRevision: 1,
+        profileVersion: 'pfv-1',
+        runtimeNodeId: 'node-1',
+        state: 'prepared',
+        submissionId: 'sub-1',
+        taskId: 'task-1',
+        taskVersion: 1,
+        workspaceId: 'wsp-1',
+      }
   }
 }
 
@@ -206,23 +288,28 @@ describe('migration snapshot contract constants', () => {
   })
 
   test('every record family a migration must inventory is present, sorted and unique', () => {
-    expect(migrationSnapshotFamilies.length).toBe(16)
+    expect(migrationSnapshotFamilies.length).toBe(22)
     expect(isSorted([...migrationSnapshotFamilies])).toBe(true)
     expect(new Set(migrationSnapshotFamilies).size).toBe(migrationSnapshotFamilies.length)
     for (const family of [
       'agents',
+      'artifactReferenceGrants',
       'channelParticipants',
       'channels',
       'contentRefs',
+      'contentReplicas',
       'events',
       'executionAttempts',
       'identityBindings',
       'invitations',
+      'leadTurnRuntime',
       'memberships',
       'messages',
       'projectMembers',
       'projects',
       'readState',
+      'runtimeNodes',
+      'taskSubmissions',
       'tasks',
       'temporarySessions',
       'workspaces',
@@ -316,6 +403,9 @@ describe('migration snapshot record validation', () => {
       [withField(validRecord('temporarySessions'), 'claimed', null), 'claimed'],
       [withField(validRecord('contentRefs'), 'digestSha256', 'not-a-digest'), 'digestSha256'],
       [withField(validRecord('contentRefs'), 'revision', -1), 'revision'],
+      [withoutField(validRecord('artifactReferenceGrants'), 'expiresAt'), 'expiresAt'],
+      [withField(validRecord('artifactReferenceGrants'), 'expiresAt', 'not-a-date'), 'expiresAt'],
+      [withField(validRecord('artifactReferenceGrants'), 'expiresAt', 42), 'expiresAt'],
       [withField(validRecord('agents'), 'projectId', 7), 'projectId'],
       [withField(validRecord('executionAttempts'), 'attempt', 0), 'attempt'],
       [withoutField(validRecord('invitations'), 'state'), 'state'],

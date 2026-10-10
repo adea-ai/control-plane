@@ -136,7 +136,7 @@ PLAYWRIGHT_HEADLESS=1 bun run test:e2e
 ```
 
 CI delegates general validation to the shared Code Foundry workflow. The
-separate Neon workflow runs integration tests against an isolated branch.
+separate Neon workflow runs the integration inventory as two shards, each against its own isolated branch, behind one required `Migrate Neon Branch` check.
 Package unit tests fan out through Turborepo.
 
 `bun run test:unit` includes an 80% line-and-function coverage gate for the

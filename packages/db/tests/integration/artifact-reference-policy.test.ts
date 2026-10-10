@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { eq } from 'drizzle-orm'
+import { inArray } from 'drizzle-orm'
 
 import {
   authorizeArtifactReferencePublication,
@@ -97,18 +97,19 @@ describe.skipIf(!connectionUrl)('Artifact reference evidence and gates', () => {
   })
 
   async function cleanup() {
-    for (const workspaceId of workspaceIds) {
-      await connection.db.delete(artifacts).where(eq(artifacts.workspaceId, workspaceId))
+    // One statement per table for the whole batch, children before parents.
+    if (workspaceIds.length) {
+      await connection.db.delete(artifacts).where(inArray(artifacts.workspaceId, workspaceIds))
       await connection.db
         .delete(workspaceMemberships)
-        .where(eq(workspaceMemberships.workspaceId, workspaceId))
-      await connection.db.delete(workspaces).where(eq(workspaces.id, workspaceId))
+        .where(inArray(workspaceMemberships.workspaceId, workspaceIds))
+      await connection.db.delete(workspaces).where(inArray(workspaces.id, workspaceIds))
     }
-    for (const userId of userIds) {
+    if (userIds.length) {
       await connection.db
         .delete(temporaryUserSessions)
-        .where(eq(temporaryUserSessions.userId, userId))
-      await connection.db.delete(users).where(eq(users.id, userId))
+        .where(inArray(temporaryUserSessions.userId, userIds))
+      await connection.db.delete(users).where(inArray(users.id, userIds))
     }
     workspaceIds.length = 0
     userIds.length = 0

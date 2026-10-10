@@ -37,33 +37,63 @@ const IDENTITY = {
 // ─── Domain resolution ───────────────────────────────────────────────────────
 
 describe('resolveMigrationSnapshotCaptureDomains', () => {
-  test('without a request every supported family is captured', () => {
+  test('without a request every database-capturable family is captured and native sessions stay unsupported', () => {
     const domains = resolveMigrationSnapshotCaptureDomains(undefined)
     expect(domains.map((domain) => domain.domain)).toEqual(
       [...MIGRATION_SNAPSHOT_CAPTURE_SUPPORTED_FAMILIES].toSorted()
     )
-    expect(domains).toEqual(
-      domains.map(() => expect.objectContaining({ status: 'captured', unknownReason: null }))
-    )
+    for (const domain of domains) {
+      if (domain.domain === 'nativeSessions') {
+        // Runtime-owned: without an injected source the domain is unknown, not
+        // a captured empty section.
+        expect(domain).toEqual({
+          domain: 'nativeSessions',
+          status: 'unknown',
+          unknownReason: 'unsupported_family',
+        })
+        continue
+      }
+      expect(domain).toMatchObject({ status: 'captured', unknownReason: null })
+    }
   })
 
   test('a name outside the snapshot contract is unrecognized, not captured', () => {
-    const domains = resolveMigrationSnapshotCaptureDomains(['workspaces', 'runtimeNodes'])
+    const domains = resolveMigrationSnapshotCaptureDomains(['workspaces', 'runtimeSessions'])
     expect(domains).toEqual([
-      { domain: 'runtimeNodes', status: 'unknown', unknownReason: 'unrecognized_domain' },
+      { domain: 'runtimeSessions', status: 'unknown', unknownReason: 'unrecognized_domain' },
       { domain: 'workspaces', status: 'captured', unknownReason: null },
     ])
   })
 
-  test('every contract family name resolves to captured today', () => {
-    const domains = resolveMigrationSnapshotCaptureDomains(migrationSnapshotFamilies)
-    for (const family of migrationSnapshotFamilies) {
+  test('every database-capturable family resolves to captured and native sessions stay explicitly unsupported without a source', () => {
+    const domains = resolveMigrationSnapshotCaptureDomains([
+      ...migrationSnapshotFamilies,
+      'nativeSessions',
+    ])
+    for (const family of MIGRATION_SNAPSHOT_CAPTURE_SUPPORTED_FAMILIES.filter(
+      (candidate) => candidate !== 'nativeSessions'
+    )) {
       expect(domains).toContainEqual({
         domain: family,
         status: 'captured',
         unknownReason: null,
       })
     }
+    expect(domains).toContainEqual({
+      domain: 'nativeSessions',
+      status: 'unknown',
+      unknownReason: 'unsupported_family',
+    })
+  })
+
+  test('a wired runtime inventory source makes native sessions capturable', () => {
+    const domains = resolveMigrationSnapshotCaptureDomains(['nativeSessions'], {
+      nativeSessionInventory: {
+        authorizedScopes: [{ accountId: 'acct-1', runtimeNodeId: 'node-1', workspaceId: 'wsp-1' }],
+        listRuntimeSessions: async () => ({ items: [] }),
+      },
+    })
+    expect(domains).toEqual([{ domain: 'nativeSessions', status: 'captured', unknownReason: null }])
   })
 
   test('duplicate requests collapse to one status and stay sorted', () => {

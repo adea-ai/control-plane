@@ -74,9 +74,9 @@ describe.skipIf(!connectionUrl)('read state unread counts', () => {
         .where(inArray(workspaceMemberships.workspaceId, workspaceIds))
       await db.delete(workspaces).where(inArray(workspaces.id, workspaceIds))
     }
-    for (const userId of userIds) {
-      await db.delete(temporaryUserSessions).where(eq(temporaryUserSessions.userId, userId))
-      await db.delete(users).where(eq(users.id, userId))
+    if (userIds.length) {
+      await db.delete(temporaryUserSessions).where(inArray(temporaryUserSessions.userId, userIds))
+      await db.delete(users).where(inArray(users.id, userIds))
     }
     await connection.close()
   })

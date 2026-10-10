@@ -1,19 +1,18 @@
 import { describe, expect, test } from 'bun:test'
-import postgres from 'postgres'
+import { directFixtureUrl, withFixtureSession } from '../fixtures/fixture-session'
 
 const connectionUrl = process.env.DATABASE_URL
 
 describe.skipIf(!connectionUrl)('lead/topic additive migration', () => {
   test('preserves legacy identities, archived bodies, original audiences and read frontiers', async () => {
-    const client = postgres(connectionUrl!, { max: 1 })
-    const fixtureSchema = 'pg_temp'
-    const namespace = client(fixtureSchema)
-    const workspaceId = crypto.randomUUID()
-    const agentId = crypto.randomUUID()
-    const channelId = crypto.randomUUID()
-    const archivedChannelId = crypto.randomUUID()
-    const senderId = crypto.randomUUID()
-    try {
+    await withFixtureSession(directFixtureUrl(), async (client) => {
+      const fixtureSchema = 'pg_temp'
+      const namespace = client(fixtureSchema)
+      const workspaceId = crypto.randomUUID()
+      const agentId = crypto.randomUUID()
+      const channelId = crypto.randomUUID()
+      const archivedChannelId = crypto.randomUUID()
+      const senderId = crypto.randomUUID()
       // The hosted runtime role has TEMP but deliberately lacks database CREATE.
       // Session-local fixtures exercise the actual migration without schema grants.
       await client`create temporary table agents (like app.agents including defaults)`
@@ -42,20 +41,18 @@ describe.skipIf(!connectionUrl)('lead/topic additive migration', () => {
       expect(
         await client`select id from ${namespace}.channels where lifecycle_state='active'`
       ).toHaveLength(3)
-    } finally {
-      await client.end()
-    }
 
-    async function snapshot() {
-      return {
-        agents:
-          await client`select id,control_plane_agent_id,workspace_id,name,profile_id,profile_version,lifecycle_state,created_at,updated_at from ${namespace}.agents order by id`,
-        channels:
-          await client`select id,workspace_id,agent_id,title,visibility,lifecycle_state,idempotency_key,version,created_at,updated_at from ${namespace}.channels order by id`,
-        messages: await client`select * from ${namespace}.messages order by id`,
-        participants: await client`select * from ${namespace}.channel_participants order by id`,
-        reads: await client`select * from ${namespace}.channel_read_states order by id`,
+      async function snapshot() {
+        return {
+          agents:
+            await client`select id,control_plane_agent_id,workspace_id,name,profile_id,profile_version,lifecycle_state,created_at,updated_at from ${namespace}.agents order by id`,
+          channels:
+            await client`select id,workspace_id,agent_id,title,visibility,lifecycle_state,idempotency_key,version,created_at,updated_at from ${namespace}.channels order by id`,
+          messages: await client`select * from ${namespace}.messages order by id`,
+          participants: await client`select * from ${namespace}.channel_participants order by id`,
+          reads: await client`select * from ${namespace}.channel_read_states order by id`,
+        }
       }
-    }
+    })
   })
 })

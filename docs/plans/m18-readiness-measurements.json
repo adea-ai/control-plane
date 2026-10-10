@@ -1,0 +1,2397 @@
+{
+  "schemaVersion": 1,
+  "issue": 1224,
+  "inventorySha256": "3a3aaaa0f7bb167319e00a6f08d6730574f3d45d6dad9b4bdd915eae2dcda269",
+  "revisions": {
+    "main": "449568904e99718cf52e63fadad6dac58db7e277",
+    "pr-1227": "065590ae673ad44b958cb297e79eb086118549d7",
+    "pr-1228": "8e2fa11dcc2b19ef55e6def3953649f1189325eb",
+    "pr-1229": "c1c02f907cf4cf57a4250737c6bbc98c560661c3",
+    "pr-1230": "379475c3b53d816b9baaabdbd331ecdfe5e9af65",
+    "pr-1232": "ab555698c1cc099f7dba0ad7113169ce1bdded59",
+    "pr-1237": "472977e18f4dcecd975845c11a6ef45f4da3cffd",
+    "pr-1241": "4b584cc044ceeccd7952e79940aadcfbef17dbb3",
+    "pr-1243": "eca30d0ed95d28b7d5b026bfeeace1b362a5f052",
+    "pr-1244": "b45181d58b0e1883c0b180caec2a2866e1a3dee4",
+    "pr-1245": "782814ad0ce50e325451c332e09a60efcbdae301"
+  },
+  "evidenceRevisions": [
+    "065590ae673ad44b958cb297e79eb086118549d7",
+    "117742e6474e5edd8868c5d7b4c943cdce41f9bf",
+    "292c6de6e12312a0d23da8d1c90c1d410c41d286",
+    "34a3eaad69b6f2d671fd802bfe21bb629e7609ff",
+    "379475c3b53d816b9baaabdbd331ecdfe5e9af65",
+    "449568904e99718cf52e63fadad6dac58db7e277",
+    "472977e18f4dcecd975845c11a6ef45f4da3cffd",
+    "4b584cc044ceeccd7952e79940aadcfbef17dbb3",
+    "782814ad0ce50e325451c332e09a60efcbdae301",
+    "8e2fa11dcc2b19ef55e6def3953649f1189325eb",
+    "9fb30c495ca9a4d7e680c24746924cc264e93203",
+    "ab555698c1cc099f7dba0ad7113169ce1bdded59",
+    "b45181d58b0e1883c0b180caec2a2866e1a3dee4",
+    "c1c02f907cf4cf57a4250737c6bbc98c560661c3",
+    "eca30d0ed95d28b7d5b026bfeeace1b362a5f052"
+  ],
+  "probes": [
+    "metric-identifiers",
+    "budget-reservation",
+    "operator-controls",
+    "feature-flags",
+    "rollback-code",
+    "retention-gate",
+    "export-residency",
+    "redaction-tests",
+    "reduced-motion-tests",
+    "model-call-guard-tests",
+    "langgraph-references",
+    "rollout-runbooks"
+  ],
+  "results": [
+    {
+      "id": "ACC-01",
+      "category": "accessibility",
+      "kind": "axe",
+      "revision": "292c6de6e12312a0d23da8d1c90c1d410c41d286",
+      "atMain": false,
+      "command": "bun scripts/audit-a11y-dev-view.mjs --base-url http://127.0.0.1:3217 --artifact artifacts/a11y/axe-dev-view.json --strict",
+      "exitCode": 0,
+      "status": "not-run",
+      "reason": "measured at 292c6de6e12312a0d23da8d1c90c1d410c41d286, not at --main 449568904e99718cf52e63fadad6dac58db7e277",
+      "observed": {
+        "status": "pass",
+        "totals": {
+          "critical": 0,
+          "serious": 0,
+          "moderate": 0,
+          "minor": 0
+        },
+        "surfaces": [
+          {
+            "surface": "chat",
+            "violationRules": 0,
+            "counts": {
+              "critical": 0,
+              "serious": 0,
+              "moderate": 0,
+              "minor": 0
+            }
+          },
+          {
+            "surface": "dev-view-terminal",
+            "violationRules": 0,
+            "counts": {
+              "critical": 0,
+              "serious": 0,
+              "moderate": 0,
+              "minor": 0
+            }
+          },
+          {
+            "surface": "dev-view-narrow-320",
+            "violationRules": 0,
+            "counts": {
+              "critical": 0,
+              "serious": 0,
+              "moderate": 0,
+              "minor": 0
+            }
+          },
+          {
+            "surface": "settings/account-and-app",
+            "violationRules": 0,
+            "counts": {
+              "critical": 0,
+              "serious": 0,
+              "moderate": 0,
+              "minor": 0
+            }
+          },
+          {
+            "surface": "settings/appearance",
+            "violationRules": 0,
+            "counts": {
+              "critical": 0,
+              "serious": 0,
+              "moderate": 0,
+              "minor": 0
+            }
+          },
+          {
+            "surface": "settings/agents",
+            "violationRules": 0,
+            "counts": {
+              "critical": 0,
+              "serious": 0,
+              "moderate": 0,
+              "minor": 0
+            }
+          },
+          {
+            "surface": "settings/input-and-notifications",
+            "violationRules": 0,
+            "counts": {
+              "critical": 0,
+              "serious": 0,
+              "moderate": 0,
+              "minor": 0
+            }
+          },
+          {
+            "surface": "settings/privacy-and-data",
+            "violationRules": 0,
+            "counts": {
+              "critical": 0,
+              "serious": 0,
+              "moderate": 0,
+              "minor": 0
+            }
+          },
+          {
+            "surface": "settings/integrations-and-capabilities",
+            "violationRules": 0,
+            "counts": {
+              "critical": 0,
+              "serious": 0,
+              "moderate": 0,
+              "minor": 0
+            }
+          },
+          {
+            "surface": "settings/permissions",
+            "violationRules": 0,
+            "counts": {
+              "critical": 0,
+              "serious": 0,
+              "moderate": 0,
+              "minor": 0
+            }
+          }
+        ]
+      },
+      "recorded": {
+        "revision": "9fb30c495ca9a4d7e680c24746924cc264e93203",
+        "atMain": false,
+        "command": "bun scripts/audit-a11y-dev-view.mjs --base-url http://127.0.0.1:3217 --artifact artifacts/a11y/axe-dev-view.json --strict",
+        "exitCode": 124,
+        "status": "blocked",
+        "reason": "The axe audit needs the Dev View dev server. On this host the Vite dev server reported ready only after 344,152 ms, the first HTTP request got no response for 580 s, and the process was gone afterwards. No surface was scanned."
+      }
+    },
+    {
+      "id": "ACC-02",
+      "category": "accessibility",
+      "kind": "e2e",
+      "revision": "292c6de6e12312a0d23da8d1c90c1d410c41d286",
+      "atMain": false,
+      "command": "PERF_BASE_URL=http://127.0.0.1:3217 PLAYWRIGHT_HEADLESS=1 bunx playwright test --config=playwright.config.ts apps/web/e2e/dev-view-a11y-certification.spec.ts",
+      "exitCode": 1,
+      "status": "not-run",
+      "reason": "measured at 292c6de6e12312a0d23da8d1c90c1d410c41d286, not at --main 449568904e99718cf52e63fadad6dac58db7e277",
+      "observed": {
+        "status": "fail",
+        "reason": "11 of 12 keyboard certification tests pass. Test cert 2.5.8 fails: getByRole(\"separator\", { name: \"Resize left utility pane\" }) is not attached after clicking \"Expand utility sidebar\" and waiting for \"Shared developer utilities\". Whether this is a regression or a stale precondition is not decided here.",
+        "passed": 11,
+        "failed": 1
+      }
+    },
+    {
+      "id": "ACC-03",
+      "category": "accessibility",
+      "kind": "presence",
+      "status": "present",
+      "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+      "atMain": true,
+      "main": [
+        {
+          "probe": "reduced-motion-tests",
+          "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+          "count": 12,
+          "files": [
+            "apps/web/e2e/appearance.spec.ts",
+            "apps/web/e2e/conventional-workspace.spec.ts",
+            "apps/web/e2e/dev-view.spec.ts",
+            "apps/web/e2e/runtime-inventory.spec.ts",
+            "apps/web/e2e/workspace-loading.spec.ts",
+            "packages/dev-view/src/permissions/permissions-pane.css",
+            "packages/dev-view/src/source-control-app/source-control-app.css",
+            "packages/dev-view/tests/appearance-cancel-reopen.test.ts",
+            "packages/ui/src/styles/base.css",
+            "packages/ui/src/styles/conventional-workspace.css"
+          ]
+        }
+      ],
+      "candidates": [
+        {
+          "pr": 1227,
+          "probes": [
+            {
+              "probe": "reduced-motion-tests",
+              "revision": "065590ae673ad44b958cb297e79eb086118549d7",
+              "count": 12,
+              "files": [
+                "apps/web/e2e/appearance.spec.ts",
+                "apps/web/e2e/conventional-workspace.spec.ts",
+                "apps/web/e2e/dev-view.spec.ts",
+                "apps/web/e2e/runtime-inventory.spec.ts",
+                "apps/web/e2e/workspace-loading.spec.ts",
+                "packages/dev-view/src/permissions/permissions-pane.css",
+                "packages/dev-view/src/source-control-app/source-control-app.css",
+                "packages/dev-view/tests/appearance-cancel-reopen.test.ts",
+                "packages/ui/src/styles/base.css",
+                "packages/ui/src/styles/conventional-workspace.css"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1228,
+          "probes": [
+            {
+              "probe": "reduced-motion-tests",
+              "revision": "8e2fa11dcc2b19ef55e6def3953649f1189325eb",
+              "count": 15,
+              "files": [
+                "apps/web/e2e/appearance.spec.ts",
+                "apps/web/e2e/conventional-workspace.spec.ts",
+                "apps/web/e2e/dev-view.spec.ts",
+                "apps/web/e2e/direct-session-handoff.spec.ts",
+                "apps/web/e2e/runtime-inventory.spec.ts",
+                "apps/web/e2e/workspace-loading.spec.ts",
+                "packages/dev-view/src/chat/chat.css",
+                "packages/dev-view/src/chat/handoff-controls.tsx",
+                "packages/dev-view/src/permissions/permissions-pane.css",
+                "packages/dev-view/src/source-control-app/source-control-app.css"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1229,
+          "probes": [
+            {
+              "probe": "reduced-motion-tests",
+              "revision": "c1c02f907cf4cf57a4250737c6bbc98c560661c3",
+              "count": 12,
+              "files": [
+                "apps/web/e2e/appearance.spec.ts",
+                "apps/web/e2e/conventional-workspace.spec.ts",
+                "apps/web/e2e/dev-view.spec.ts",
+                "apps/web/e2e/runtime-inventory.spec.ts",
+                "apps/web/e2e/workspace-loading.spec.ts",
+                "packages/dev-view/src/permissions/permissions-pane.css",
+                "packages/dev-view/src/source-control-app/source-control-app.css",
+                "packages/dev-view/tests/appearance-cancel-reopen.test.ts",
+                "packages/ui/src/styles/base.css",
+                "packages/ui/src/styles/conventional-workspace.css"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1230,
+          "probes": [
+            {
+              "probe": "reduced-motion-tests",
+              "revision": "379475c3b53d816b9baaabdbd331ecdfe5e9af65",
+              "count": 12,
+              "files": [
+                "apps/web/e2e/appearance.spec.ts",
+                "apps/web/e2e/conventional-workspace.spec.ts",
+                "apps/web/e2e/dev-view.spec.ts",
+                "apps/web/e2e/runtime-inventory.spec.ts",
+                "apps/web/e2e/workspace-loading.spec.ts",
+                "packages/dev-view/src/permissions/permissions-pane.css",
+                "packages/dev-view/src/source-control-app/source-control-app.css",
+                "packages/dev-view/tests/appearance-cancel-reopen.test.ts",
+                "packages/ui/src/styles/base.css",
+                "packages/ui/src/styles/conventional-workspace.css"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1232,
+          "probes": [
+            {
+              "probe": "reduced-motion-tests",
+              "revision": "ab555698c1cc099f7dba0ad7113169ce1bdded59",
+              "count": 12,
+              "files": [
+                "apps/web/e2e/appearance.spec.ts",
+                "apps/web/e2e/conventional-workspace.spec.ts",
+                "apps/web/e2e/dev-view.spec.ts",
+                "apps/web/e2e/runtime-inventory.spec.ts",
+                "apps/web/e2e/workspace-loading.spec.ts",
+                "packages/dev-view/src/permissions/permissions-pane.css",
+                "packages/dev-view/src/source-control-app/source-control-app.css",
+                "packages/dev-view/tests/appearance-cancel-reopen.test.ts",
+                "packages/ui/src/styles/base.css",
+                "packages/ui/src/styles/conventional-workspace.css"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1237,
+          "probes": [
+            {
+              "probe": "reduced-motion-tests",
+              "revision": "472977e18f4dcecd975845c11a6ef45f4da3cffd",
+              "count": 12,
+              "files": [
+                "apps/web/e2e/appearance.spec.ts",
+                "apps/web/e2e/conventional-workspace.spec.ts",
+                "apps/web/e2e/dev-view.spec.ts",
+                "apps/web/e2e/runtime-inventory.spec.ts",
+                "apps/web/e2e/workspace-loading.spec.ts",
+                "packages/dev-view/src/permissions/permissions-pane.css",
+                "packages/dev-view/src/source-control-app/source-control-app.css",
+                "packages/dev-view/tests/appearance-cancel-reopen.test.ts",
+                "packages/ui/src/styles/base.css",
+                "packages/ui/src/styles/conventional-workspace.css"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1241,
+          "probes": [
+            {
+              "probe": "reduced-motion-tests",
+              "revision": "4b584cc044ceeccd7952e79940aadcfbef17dbb3",
+              "count": 12,
+              "files": [
+                "apps/web/e2e/appearance.spec.ts",
+                "apps/web/e2e/conventional-workspace.spec.ts",
+                "apps/web/e2e/dev-view.spec.ts",
+                "apps/web/e2e/runtime-inventory.spec.ts",
+                "apps/web/e2e/workspace-loading.spec.ts",
+                "packages/dev-view/src/permissions/permissions-pane.css",
+                "packages/dev-view/src/source-control-app/source-control-app.css",
+                "packages/dev-view/tests/appearance-cancel-reopen.test.ts",
+                "packages/ui/src/styles/base.css",
+                "packages/ui/src/styles/conventional-workspace.css"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1243,
+          "probes": [
+            {
+              "probe": "reduced-motion-tests",
+              "revision": "eca30d0ed95d28b7d5b026bfeeace1b362a5f052",
+              "count": 12,
+              "files": [
+                "apps/web/e2e/appearance.spec.ts",
+                "apps/web/e2e/conventional-workspace.spec.ts",
+                "apps/web/e2e/dev-view.spec.ts",
+                "apps/web/e2e/runtime-inventory.spec.ts",
+                "apps/web/e2e/workspace-loading.spec.ts",
+                "packages/dev-view/src/permissions/permissions-pane.css",
+                "packages/dev-view/src/source-control-app/source-control-app.css",
+                "packages/dev-view/tests/appearance-cancel-reopen.test.ts",
+                "packages/ui/src/styles/base.css",
+                "packages/ui/src/styles/conventional-workspace.css"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1244,
+          "probes": [
+            {
+              "probe": "reduced-motion-tests",
+              "revision": "b45181d58b0e1883c0b180caec2a2866e1a3dee4",
+              "count": 12,
+              "files": [
+                "apps/web/e2e/appearance.spec.ts",
+                "apps/web/e2e/conventional-workspace.spec.ts",
+                "apps/web/e2e/dev-view.spec.ts",
+                "apps/web/e2e/runtime-inventory.spec.ts",
+                "apps/web/e2e/workspace-loading.spec.ts",
+                "packages/dev-view/src/permissions/permissions-pane.css",
+                "packages/dev-view/src/source-control-app/source-control-app.css",
+                "packages/dev-view/tests/appearance-cancel-reopen.test.ts",
+                "packages/ui/src/styles/base.css",
+                "packages/ui/src/styles/conventional-workspace.css"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1245,
+          "probes": [
+            {
+              "probe": "reduced-motion-tests",
+              "revision": "782814ad0ce50e325451c332e09a60efcbdae301",
+              "count": 12,
+              "files": [
+                "apps/web/e2e/appearance.spec.ts",
+                "apps/web/e2e/conventional-workspace.spec.ts",
+                "apps/web/e2e/dev-view.spec.ts",
+                "apps/web/e2e/runtime-inventory.spec.ts",
+                "apps/web/e2e/workspace-loading.spec.ts",
+                "packages/dev-view/src/permissions/permissions-pane.css",
+                "packages/dev-view/src/source-control-app/source-control-app.css",
+                "packages/dev-view/tests/appearance-cancel-reopen.test.ts",
+                "packages/ui/src/styles/base.css",
+                "packages/ui/src/styles/conventional-workspace.css"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ACC-04",
+      "category": "accessibility",
+      "kind": "not-measured",
+      "status": "not-measured",
+      "reason": "No automated rule checks color-only status. Needs rendered-state review of each status surface."
+    },
+    {
+      "id": "ACC-05",
+      "category": "accessibility",
+      "kind": "unit",
+      "revision": "117742e6474e5edd8868c5d7b4c943cdce41f9bf",
+      "atMain": false,
+      "command": "bun test packages/ui/tests/appearance.test.ts packages/ui/tests/canonical-theme-adapter.test.ts",
+      "exitCode": 0,
+      "status": "not-run",
+      "reason": "measured at 117742e6474e5edd8868c5d7b4c943cdce41f9bf, not at --main 449568904e99718cf52e63fadad6dac58db7e277",
+      "observed": {
+        "status": "partial",
+        "scopeLimit": "covers presets and editor roles only; does not scan every rendered text pair",
+        "pass": 67,
+        "fail": 0,
+        "seconds": 0.2
+      }
+    },
+    {
+      "id": "ACC-06",
+      "category": "accessibility",
+      "kind": "unavailable",
+      "status": "unavailable",
+      "reason": "Requires a person operating a screen reader on the target build. An agent cannot produce this evidence."
+    },
+    {
+      "id": "ACC-07",
+      "category": "accessibility",
+      "kind": "not-measured",
+      "status": "not-measured",
+      "reason": "Those flows are not on main; they exist only on open candidate branches owned by their child issues. Not scanned in this PR."
+    },
+    {
+      "id": "PERF-01",
+      "category": "performance",
+      "kind": "bundle",
+      "revision": "34a3eaad69b6f2d671fd802bfe21bb629e7609ff",
+      "atMain": false,
+      "command": "bun run --cwd apps/web start:check-bundle",
+      "exitCode": 0,
+      "status": "not-run",
+      "reason": "measured at 34a3eaad69b6f2d671fd802bfe21bb629e7609ff, not at --main 449568904e99718cf52e63fadad6dac58db7e277",
+      "observed": {
+        "status": "pass",
+        "keys": [
+          {
+            "key": "total",
+            "status": "pass",
+            "checks": {
+              "rawBytes": {
+                "measured": 3051665,
+                "limit": 3112000
+              },
+              "gzipBytes": {
+                "measured": 928997,
+                "limit": 948224
+              },
+              "fileCount": {
+                "measured": 159,
+                "limit": 162
+              }
+            },
+            "headroom": {
+              "rawBytes": 60335,
+              "gzipBytes": 19227,
+              "fileCount": 3
+            },
+            "failing": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "PERF-02",
+      "category": "performance",
+      "kind": "bundle",
+      "revision": "34a3eaad69b6f2d671fd802bfe21bb629e7609ff",
+      "atMain": false,
+      "command": "bun run --cwd apps/web start:check-bundle",
+      "exitCode": 0,
+      "status": "not-run",
+      "reason": "measured at 34a3eaad69b6f2d671fd802bfe21bb629e7609ff, not at --main 449568904e99718cf52e63fadad6dac58db7e277",
+      "observed": {
+        "status": "pass",
+        "keys": [
+          {
+            "key": "startup",
+            "status": "pass",
+            "checks": {
+              "rawBytes": {
+                "measured": 750719,
+                "limit": 765952
+              },
+              "gzipBytes": {
+                "measured": 244484,
+                "limit": 250880
+              }
+            },
+            "headroom": {
+              "rawBytes": 15233,
+              "gzipBytes": 6396
+            },
+            "failing": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "PERF-03",
+      "category": "performance",
+      "kind": "bundle",
+      "revision": "34a3eaad69b6f2d671fd802bfe21bb629e7609ff",
+      "atMain": false,
+      "command": "bun run --cwd apps/web start:check-bundle",
+      "exitCode": 0,
+      "status": "not-run",
+      "reason": "measured at 34a3eaad69b6f2d671fd802bfe21bb629e7609ff, not at --main 449568904e99718cf52e63fadad6dac58db7e277",
+      "observed": {
+        "status": "pass",
+        "keys": [
+          {
+            "key": "views.virtual",
+            "status": "pass",
+            "checks": {
+              "rawBytes": {
+                "measured": 115655,
+                "limit": 118784
+              },
+              "gzipBytes": {
+                "measured": 38920,
+                "limit": 39900
+              }
+            },
+            "headroom": {
+              "rawBytes": 3129,
+              "gzipBytes": 980
+            },
+            "failing": []
+          },
+          {
+            "key": "views.chat",
+            "status": "pass",
+            "checks": {
+              "rawBytes": {
+                "measured": 307720,
+                "limit": 310272
+              },
+              "gzipBytes": {
+                "measured": 102304,
+                "limit": 104448
+              }
+            },
+            "headroom": {
+              "rawBytes": 2552,
+              "gzipBytes": 2144
+            },
+            "failing": []
+          },
+          {
+            "key": "views.appLibrary",
+            "status": "pass",
+            "checks": {
+              "rawBytes": {
+                "measured": 11398,
+                "limit": 13312
+              },
+              "gzipBytes": {
+                "measured": 4668,
+                "limit": 5120
+              }
+            },
+            "headroom": {
+              "rawBytes": 1914,
+              "gzipBytes": 452
+            },
+            "failing": []
+          },
+          {
+            "key": "views.devShell",
+            "status": "pass",
+            "checks": {
+              "rawBytes": {
+                "measured": 335298,
+                "limit": 343040
+              },
+              "gzipBytes": {
+                "measured": 90761,
+                "limit": 107520
+              }
+            },
+            "headroom": {
+              "rawBytes": 7742,
+              "gzipBytes": 16759
+            },
+            "failing": []
+          },
+          {
+            "key": "views.devUtilityPanes",
+            "status": "pass",
+            "checks": {
+              "rawBytes": {
+                "measured": 165518,
+                "limit": 180224
+              },
+              "gzipBytes": {
+                "measured": 56106,
+                "limit": 62464
+              }
+            },
+            "headroom": {
+              "rawBytes": 14706,
+              "gzipBytes": 6358
+            },
+            "failing": []
+          },
+          {
+            "key": "views.devTerminal",
+            "status": "pass",
+            "checks": {
+              "rawBytes": {
+                "measured": 911140,
+                "limit": 930816
+              },
+              "gzipBytes": {
+                "measured": 238865,
+                "limit": 244736
+              }
+            },
+            "headroom": {
+              "rawBytes": 19676,
+              "gzipBytes": 5871
+            },
+            "failing": []
+          },
+          {
+            "key": "views.devEditor",
+            "status": "pass",
+            "checks": {
+              "rawBytes": {
+                "measured": 696285,
+                "limit": 711680
+              },
+              "gzipBytes": {
+                "measured": 200037,
+                "limit": 215040
+              }
+            },
+            "headroom": {
+              "rawBytes": 15395,
+              "gzipBytes": 15003
+            },
+            "failing": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "PERF-04",
+      "category": "performance",
+      "kind": "not-measured",
+      "status": "not-measured",
+      "reason": "Needs a built Cloudflare Worker and the pinned Chromium run. Not executed in this PR; the last recorded baseline is 2026-09-23 (docs/evidence/m15-301-perf-baseline-2026-09-23.md)."
+    },
+    {
+      "id": "PERF-05",
+      "category": "performance",
+      "kind": "recorded-run",
+      "revision": "9fb30c495ca9a4d7e680c24746924cc264e93203",
+      "atMain": false,
+      "command": "bun run --cwd apps/web build",
+      "exitCode": 0,
+      "status": "measured",
+      "seconds": 192,
+      "detail": "One cold full build on this host: cf-typegen, sync-assets, vite build, check-ui-sources. ADR-0010 cites about 7 s for the same unit; this run does not support that figure."
+    },
+    {
+      "id": "PERF-06",
+      "category": "performance",
+      "kind": "unavailable",
+      "status": "unavailable",
+      "reason": "Thresholds are proposed and unapproved, the representative load is undefined, and no admission benchmark exists on main. Measuring a lab build would not establish the target."
+    },
+    {
+      "id": "PERF-07",
+      "category": "performance",
+      "kind": "not-measured",
+      "status": "not-measured",
+      "reason": "Not executed in this PR; requires the dev-runtime harness."
+    },
+    {
+      "id": "PERF-08",
+      "category": "performance",
+      "kind": "unavailable",
+      "status": "unavailable",
+      "reason": "Requires a packaged desktop build (Electrobun, bundled CEF) on the release host. Not produced in this PR."
+    },
+    {
+      "id": "COST-01",
+      "category": "cost",
+      "kind": "unit",
+      "revision": "117742e6474e5edd8868c5d7b4c943cdce41f9bf",
+      "atMain": false,
+      "command": "bun test apps/web/test/agent-profile-availability.test.ts",
+      "exitCode": 0,
+      "status": "not-run",
+      "reason": "measured at 117742e6474e5edd8868c5d7b4c943cdce41f9bf, not at --main 449568904e99718cf52e63fadad6dac58db7e277",
+      "observed": {
+        "status": "partial",
+        "scopeLimit": "covers the structural-lead setup path only. Workspace creation, browse, reconnect, transcript open and direct-session start have no zero-call test on main (manifest gap for REQ-005).",
+        "pass": 8,
+        "fail": 0,
+        "seconds": 5.1
+      }
+    },
+    {
+      "id": "COST-02",
+      "category": "cost",
+      "kind": "not-measured",
+      "status": "not-measured",
+      "reason": "Eligibility and picker behavior are in open candidate branches (for example PR #1238 and #1229), not on main."
+    },
+    {
+      "id": "COST-03",
+      "category": "cost",
+      "kind": "presence",
+      "status": "absent",
+      "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+      "atMain": true,
+      "main": [
+        {
+          "probe": "budget-reservation",
+          "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+          "count": 0,
+          "files": []
+        }
+      ],
+      "candidates": [
+        {
+          "pr": 1227,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "065590ae673ad44b958cb297e79eb086118549d7",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1228,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "8e2fa11dcc2b19ef55e6def3953649f1189325eb",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1229,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "c1c02f907cf4cf57a4250737c6bbc98c560661c3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1230,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "379475c3b53d816b9baaabdbd331ecdfe5e9af65",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1232,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "ab555698c1cc099f7dba0ad7113169ce1bdded59",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1237,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "472977e18f4dcecd975845c11a6ef45f4da3cffd",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1241,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "4b584cc044ceeccd7952e79940aadcfbef17dbb3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1243,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "eca30d0ed95d28b7d5b026bfeeace1b362a5f052",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1244,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "b45181d58b0e1883c0b180caec2a2866e1a3dee4",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1245,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "782814ad0ce50e325451c332e09a60efcbdae301",
+              "count": 0,
+              "files": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "COST-04",
+      "category": "cost",
+      "kind": "presence",
+      "status": "absent",
+      "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+      "atMain": true,
+      "main": [
+        {
+          "probe": "budget-reservation",
+          "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+          "count": 0,
+          "files": []
+        }
+      ],
+      "candidates": [
+        {
+          "pr": 1227,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "065590ae673ad44b958cb297e79eb086118549d7",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1228,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "8e2fa11dcc2b19ef55e6def3953649f1189325eb",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1229,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "c1c02f907cf4cf57a4250737c6bbc98c560661c3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1230,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "379475c3b53d816b9baaabdbd331ecdfe5e9af65",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1232,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "ab555698c1cc099f7dba0ad7113169ce1bdded59",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1237,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "472977e18f4dcecd975845c11a6ef45f4da3cffd",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1241,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "4b584cc044ceeccd7952e79940aadcfbef17dbb3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1243,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "eca30d0ed95d28b7d5b026bfeeace1b362a5f052",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1244,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "b45181d58b0e1883c0b180caec2a2866e1a3dee4",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1245,
+          "probes": [
+            {
+              "probe": "budget-reservation",
+              "revision": "782814ad0ce50e325451c332e09a60efcbdae301",
+              "count": 0,
+              "files": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "COST-05",
+      "category": "cost",
+      "kind": "unavailable",
+      "status": "unavailable",
+      "reason": "No representative workload exists and no metering data is accessible from this repository or session."
+    },
+    {
+      "id": "COST-06",
+      "category": "cost",
+      "kind": "unavailable",
+      "status": "unavailable",
+      "reason": "Requires billing exports from Cloudflare, Neon, Railway and model providers for the rollout window. None are accessible to this repository or session. No cost is estimated or inferred here."
+    },
+    {
+      "id": "COST-07",
+      "category": "cost",
+      "kind": "presence",
+      "status": "absent",
+      "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+      "atMain": true,
+      "main": [
+        {
+          "probe": "langgraph-references",
+          "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+          "count": 0,
+          "files": []
+        }
+      ],
+      "candidates": [
+        {
+          "pr": 1227,
+          "probes": [
+            {
+              "probe": "langgraph-references",
+              "revision": "065590ae673ad44b958cb297e79eb086118549d7",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1228,
+          "probes": [
+            {
+              "probe": "langgraph-references",
+              "revision": "8e2fa11dcc2b19ef55e6def3953649f1189325eb",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1229,
+          "probes": [
+            {
+              "probe": "langgraph-references",
+              "revision": "c1c02f907cf4cf57a4250737c6bbc98c560661c3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1230,
+          "probes": [
+            {
+              "probe": "langgraph-references",
+              "revision": "379475c3b53d816b9baaabdbd331ecdfe5e9af65",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1232,
+          "probes": [
+            {
+              "probe": "langgraph-references",
+              "revision": "ab555698c1cc099f7dba0ad7113169ce1bdded59",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1237,
+          "probes": [
+            {
+              "probe": "langgraph-references",
+              "revision": "472977e18f4dcecd975845c11a6ef45f4da3cffd",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1241,
+          "probes": [
+            {
+              "probe": "langgraph-references",
+              "revision": "4b584cc044ceeccd7952e79940aadcfbef17dbb3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1243,
+          "probes": [
+            {
+              "probe": "langgraph-references",
+              "revision": "eca30d0ed95d28b7d5b026bfeeace1b362a5f052",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1244,
+          "probes": [
+            {
+              "probe": "langgraph-references",
+              "revision": "b45181d58b0e1883c0b180caec2a2866e1a3dee4",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1245,
+          "probes": [
+            {
+              "probe": "langgraph-references",
+              "revision": "782814ad0ce50e325451c332e09a60efcbdae301",
+              "count": 0,
+              "files": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "COST-08",
+      "category": "cost",
+      "kind": "not-claimed",
+      "status": "not-claimed",
+      "reason": "Per-request enforcement is absent on main (COST-03 probe), so no hard spend limit is claimed."
+    },
+    {
+      "id": "OPS-01",
+      "category": "operations",
+      "kind": "presence",
+      "status": "present",
+      "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+      "atMain": true,
+      "main": [
+        {
+          "probe": "redaction-tests",
+          "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+          "count": 25,
+          "files": [
+            "apps/desktop/tests/dev-runtime-browser-registrar.test.ts",
+            "apps/desktop/tests/dev-runtime-browser.test.ts",
+            "apps/desktop/tests/dev-runtime-computeruse.test.ts",
+            "apps/desktop/tests/dev-runtime-discovery.test.ts",
+            "apps/desktop/tests/dev-runtime-git-provider.test.ts",
+            "apps/desktop/tests/dev-runtime-github-provider.test.ts",
+            "apps/desktop/tests/dev-runtime-machine-resources.test.ts",
+            "apps/desktop/tests/dev-runtime-resource-adapters.test.ts",
+            "apps/desktop/tests/live/github-live-pass.ts",
+            "apps/desktop/tests/managed-clone.test.ts"
+          ]
+        }
+      ],
+      "candidates": [
+        {
+          "pr": 1227,
+          "probes": [
+            {
+              "probe": "redaction-tests",
+              "revision": "065590ae673ad44b958cb297e79eb086118549d7",
+              "count": 25,
+              "files": [
+                "apps/desktop/tests/dev-runtime-browser-registrar.test.ts",
+                "apps/desktop/tests/dev-runtime-browser.test.ts",
+                "apps/desktop/tests/dev-runtime-computeruse.test.ts",
+                "apps/desktop/tests/dev-runtime-discovery.test.ts",
+                "apps/desktop/tests/dev-runtime-git-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-github-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-machine-resources.test.ts",
+                "apps/desktop/tests/dev-runtime-resource-adapters.test.ts",
+                "apps/desktop/tests/live/github-live-pass.ts",
+                "apps/desktop/tests/managed-clone.test.ts"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1228,
+          "probes": [
+            {
+              "probe": "redaction-tests",
+              "revision": "8e2fa11dcc2b19ef55e6def3953649f1189325eb",
+              "count": 25,
+              "files": [
+                "apps/desktop/tests/dev-runtime-browser-registrar.test.ts",
+                "apps/desktop/tests/dev-runtime-browser.test.ts",
+                "apps/desktop/tests/dev-runtime-computeruse.test.ts",
+                "apps/desktop/tests/dev-runtime-discovery.test.ts",
+                "apps/desktop/tests/dev-runtime-git-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-github-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-machine-resources.test.ts",
+                "apps/desktop/tests/dev-runtime-resource-adapters.test.ts",
+                "apps/desktop/tests/live/github-live-pass.ts",
+                "apps/desktop/tests/managed-clone.test.ts"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1229,
+          "probes": [
+            {
+              "probe": "redaction-tests",
+              "revision": "c1c02f907cf4cf57a4250737c6bbc98c560661c3",
+              "count": 25,
+              "files": [
+                "apps/desktop/tests/dev-runtime-browser-registrar.test.ts",
+                "apps/desktop/tests/dev-runtime-browser.test.ts",
+                "apps/desktop/tests/dev-runtime-computeruse.test.ts",
+                "apps/desktop/tests/dev-runtime-discovery.test.ts",
+                "apps/desktop/tests/dev-runtime-git-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-github-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-machine-resources.test.ts",
+                "apps/desktop/tests/dev-runtime-resource-adapters.test.ts",
+                "apps/desktop/tests/live/github-live-pass.ts",
+                "apps/desktop/tests/managed-clone.test.ts"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1230,
+          "probes": [
+            {
+              "probe": "redaction-tests",
+              "revision": "379475c3b53d816b9baaabdbd331ecdfe5e9af65",
+              "count": 25,
+              "files": [
+                "apps/desktop/tests/dev-runtime-browser-registrar.test.ts",
+                "apps/desktop/tests/dev-runtime-browser.test.ts",
+                "apps/desktop/tests/dev-runtime-computeruse.test.ts",
+                "apps/desktop/tests/dev-runtime-discovery.test.ts",
+                "apps/desktop/tests/dev-runtime-git-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-github-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-machine-resources.test.ts",
+                "apps/desktop/tests/dev-runtime-resource-adapters.test.ts",
+                "apps/desktop/tests/live/github-live-pass.ts",
+                "apps/desktop/tests/managed-clone.test.ts"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1232,
+          "probes": [
+            {
+              "probe": "redaction-tests",
+              "revision": "ab555698c1cc099f7dba0ad7113169ce1bdded59",
+              "count": 25,
+              "files": [
+                "apps/desktop/tests/dev-runtime-browser-registrar.test.ts",
+                "apps/desktop/tests/dev-runtime-browser.test.ts",
+                "apps/desktop/tests/dev-runtime-computeruse.test.ts",
+                "apps/desktop/tests/dev-runtime-discovery.test.ts",
+                "apps/desktop/tests/dev-runtime-git-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-github-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-machine-resources.test.ts",
+                "apps/desktop/tests/dev-runtime-resource-adapters.test.ts",
+                "apps/desktop/tests/live/github-live-pass.ts",
+                "apps/desktop/tests/managed-clone.test.ts"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1237,
+          "probes": [
+            {
+              "probe": "redaction-tests",
+              "revision": "472977e18f4dcecd975845c11a6ef45f4da3cffd",
+              "count": 25,
+              "files": [
+                "apps/desktop/tests/dev-runtime-browser-registrar.test.ts",
+                "apps/desktop/tests/dev-runtime-browser.test.ts",
+                "apps/desktop/tests/dev-runtime-computeruse.test.ts",
+                "apps/desktop/tests/dev-runtime-discovery.test.ts",
+                "apps/desktop/tests/dev-runtime-git-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-github-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-machine-resources.test.ts",
+                "apps/desktop/tests/dev-runtime-resource-adapters.test.ts",
+                "apps/desktop/tests/live/github-live-pass.ts",
+                "apps/desktop/tests/managed-clone.test.ts"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1241,
+          "probes": [
+            {
+              "probe": "redaction-tests",
+              "revision": "4b584cc044ceeccd7952e79940aadcfbef17dbb3",
+              "count": 25,
+              "files": [
+                "apps/desktop/tests/dev-runtime-browser-registrar.test.ts",
+                "apps/desktop/tests/dev-runtime-browser.test.ts",
+                "apps/desktop/tests/dev-runtime-computeruse.test.ts",
+                "apps/desktop/tests/dev-runtime-discovery.test.ts",
+                "apps/desktop/tests/dev-runtime-git-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-github-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-machine-resources.test.ts",
+                "apps/desktop/tests/dev-runtime-resource-adapters.test.ts",
+                "apps/desktop/tests/live/github-live-pass.ts",
+                "apps/desktop/tests/managed-clone.test.ts"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1243,
+          "probes": [
+            {
+              "probe": "redaction-tests",
+              "revision": "eca30d0ed95d28b7d5b026bfeeace1b362a5f052",
+              "count": 25,
+              "files": [
+                "apps/desktop/tests/dev-runtime-browser-registrar.test.ts",
+                "apps/desktop/tests/dev-runtime-browser.test.ts",
+                "apps/desktop/tests/dev-runtime-computeruse.test.ts",
+                "apps/desktop/tests/dev-runtime-discovery.test.ts",
+                "apps/desktop/tests/dev-runtime-git-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-github-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-machine-resources.test.ts",
+                "apps/desktop/tests/dev-runtime-resource-adapters.test.ts",
+                "apps/desktop/tests/live/github-live-pass.ts",
+                "apps/desktop/tests/managed-clone.test.ts"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1244,
+          "probes": [
+            {
+              "probe": "redaction-tests",
+              "revision": "b45181d58b0e1883c0b180caec2a2866e1a3dee4",
+              "count": 25,
+              "files": [
+                "apps/desktop/tests/dev-runtime-browser-registrar.test.ts",
+                "apps/desktop/tests/dev-runtime-browser.test.ts",
+                "apps/desktop/tests/dev-runtime-computeruse.test.ts",
+                "apps/desktop/tests/dev-runtime-discovery.test.ts",
+                "apps/desktop/tests/dev-runtime-git-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-github-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-machine-resources.test.ts",
+                "apps/desktop/tests/dev-runtime-resource-adapters.test.ts",
+                "apps/desktop/tests/live/github-live-pass.ts",
+                "apps/desktop/tests/managed-clone.test.ts"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1245,
+          "probes": [
+            {
+              "probe": "redaction-tests",
+              "revision": "782814ad0ce50e325451c332e09a60efcbdae301",
+              "count": 26,
+              "files": [
+                "apps/desktop/tests/dev-runtime-browser-registrar.test.ts",
+                "apps/desktop/tests/dev-runtime-browser.test.ts",
+                "apps/desktop/tests/dev-runtime-computeruse.test.ts",
+                "apps/desktop/tests/dev-runtime-discovery.test.ts",
+                "apps/desktop/tests/dev-runtime-git-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-github-provider.test.ts",
+                "apps/desktop/tests/dev-runtime-machine-resources.test.ts",
+                "apps/desktop/tests/dev-runtime-resource-adapters.test.ts",
+                "apps/desktop/tests/live/github-live-pass.ts",
+                "apps/desktop/tests/managed-clone.test.ts"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "OPS-02",
+      "category": "operations",
+      "kind": "presence",
+      "status": "absent",
+      "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+      "atMain": true,
+      "main": [
+        {
+          "probe": "metric-identifiers",
+          "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+          "count": 0,
+          "files": []
+        }
+      ],
+      "candidates": [
+        {
+          "pr": 1227,
+          "probes": [
+            {
+              "probe": "metric-identifiers",
+              "revision": "065590ae673ad44b958cb297e79eb086118549d7",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1228,
+          "probes": [
+            {
+              "probe": "metric-identifiers",
+              "revision": "8e2fa11dcc2b19ef55e6def3953649f1189325eb",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1229,
+          "probes": [
+            {
+              "probe": "metric-identifiers",
+              "revision": "c1c02f907cf4cf57a4250737c6bbc98c560661c3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1230,
+          "probes": [
+            {
+              "probe": "metric-identifiers",
+              "revision": "379475c3b53d816b9baaabdbd331ecdfe5e9af65",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1232,
+          "probes": [
+            {
+              "probe": "metric-identifiers",
+              "revision": "ab555698c1cc099f7dba0ad7113169ce1bdded59",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1237,
+          "probes": [
+            {
+              "probe": "metric-identifiers",
+              "revision": "472977e18f4dcecd975845c11a6ef45f4da3cffd",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1241,
+          "probes": [
+            {
+              "probe": "metric-identifiers",
+              "revision": "4b584cc044ceeccd7952e79940aadcfbef17dbb3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1243,
+          "probes": [
+            {
+              "probe": "metric-identifiers",
+              "revision": "eca30d0ed95d28b7d5b026bfeeace1b362a5f052",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1244,
+          "probes": [
+            {
+              "probe": "metric-identifiers",
+              "revision": "b45181d58b0e1883c0b180caec2a2866e1a3dee4",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1245,
+          "probes": [
+            {
+              "probe": "metric-identifiers",
+              "revision": "782814ad0ce50e325451c332e09a60efcbdae301",
+              "count": 0,
+              "files": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "OPS-03",
+      "category": "operations",
+      "kind": "presence",
+      "status": "absent",
+      "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+      "atMain": true,
+      "main": [
+        {
+          "probe": "operator-controls",
+          "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+          "count": 0,
+          "files": []
+        }
+      ],
+      "candidates": [
+        {
+          "pr": 1227,
+          "probes": [
+            {
+              "probe": "operator-controls",
+              "revision": "065590ae673ad44b958cb297e79eb086118549d7",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1228,
+          "probes": [
+            {
+              "probe": "operator-controls",
+              "revision": "8e2fa11dcc2b19ef55e6def3953649f1189325eb",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1229,
+          "probes": [
+            {
+              "probe": "operator-controls",
+              "revision": "c1c02f907cf4cf57a4250737c6bbc98c560661c3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1230,
+          "probes": [
+            {
+              "probe": "operator-controls",
+              "revision": "379475c3b53d816b9baaabdbd331ecdfe5e9af65",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1232,
+          "probes": [
+            {
+              "probe": "operator-controls",
+              "revision": "ab555698c1cc099f7dba0ad7113169ce1bdded59",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1237,
+          "probes": [
+            {
+              "probe": "operator-controls",
+              "revision": "472977e18f4dcecd975845c11a6ef45f4da3cffd",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1241,
+          "probes": [
+            {
+              "probe": "operator-controls",
+              "revision": "4b584cc044ceeccd7952e79940aadcfbef17dbb3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1243,
+          "probes": [
+            {
+              "probe": "operator-controls",
+              "revision": "eca30d0ed95d28b7d5b026bfeeace1b362a5f052",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1244,
+          "probes": [
+            {
+              "probe": "operator-controls",
+              "revision": "b45181d58b0e1883c0b180caec2a2866e1a3dee4",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1245,
+          "probes": [
+            {
+              "probe": "operator-controls",
+              "revision": "782814ad0ce50e325451c332e09a60efcbdae301",
+              "count": 0,
+              "files": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "OPS-04",
+      "category": "operations",
+      "kind": "presence",
+      "status": "absent",
+      "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+      "atMain": true,
+      "main": [
+        {
+          "probe": "feature-flags",
+          "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+          "count": 0,
+          "files": []
+        }
+      ],
+      "candidates": [
+        {
+          "pr": 1227,
+          "probes": [
+            {
+              "probe": "feature-flags",
+              "revision": "065590ae673ad44b958cb297e79eb086118549d7",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1228,
+          "probes": [
+            {
+              "probe": "feature-flags",
+              "revision": "8e2fa11dcc2b19ef55e6def3953649f1189325eb",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1229,
+          "probes": [
+            {
+              "probe": "feature-flags",
+              "revision": "c1c02f907cf4cf57a4250737c6bbc98c560661c3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1230,
+          "probes": [
+            {
+              "probe": "feature-flags",
+              "revision": "379475c3b53d816b9baaabdbd331ecdfe5e9af65",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1232,
+          "probes": [
+            {
+              "probe": "feature-flags",
+              "revision": "ab555698c1cc099f7dba0ad7113169ce1bdded59",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1237,
+          "probes": [
+            {
+              "probe": "feature-flags",
+              "revision": "472977e18f4dcecd975845c11a6ef45f4da3cffd",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1241,
+          "probes": [
+            {
+              "probe": "feature-flags",
+              "revision": "4b584cc044ceeccd7952e79940aadcfbef17dbb3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1243,
+          "probes": [
+            {
+              "probe": "feature-flags",
+              "revision": "eca30d0ed95d28b7d5b026bfeeace1b362a5f052",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1244,
+          "probes": [
+            {
+              "probe": "feature-flags",
+              "revision": "b45181d58b0e1883c0b180caec2a2866e1a3dee4",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1245,
+          "probes": [
+            {
+              "probe": "feature-flags",
+              "revision": "782814ad0ce50e325451c332e09a60efcbdae301",
+              "count": 0,
+              "files": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "OPS-05",
+      "category": "operations",
+      "kind": "presence",
+      "status": "absent",
+      "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+      "atMain": true,
+      "main": [
+        {
+          "probe": "rollback-code",
+          "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+          "count": 0,
+          "files": []
+        }
+      ],
+      "candidates": [
+        {
+          "pr": 1227,
+          "probes": [
+            {
+              "probe": "rollback-code",
+              "revision": "065590ae673ad44b958cb297e79eb086118549d7",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1228,
+          "probes": [
+            {
+              "probe": "rollback-code",
+              "revision": "8e2fa11dcc2b19ef55e6def3953649f1189325eb",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1229,
+          "probes": [
+            {
+              "probe": "rollback-code",
+              "revision": "c1c02f907cf4cf57a4250737c6bbc98c560661c3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1230,
+          "probes": [
+            {
+              "probe": "rollback-code",
+              "revision": "379475c3b53d816b9baaabdbd331ecdfe5e9af65",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1232,
+          "probes": [
+            {
+              "probe": "rollback-code",
+              "revision": "ab555698c1cc099f7dba0ad7113169ce1bdded59",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1237,
+          "probes": [
+            {
+              "probe": "rollback-code",
+              "revision": "472977e18f4dcecd975845c11a6ef45f4da3cffd",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1241,
+          "probes": [
+            {
+              "probe": "rollback-code",
+              "revision": "4b584cc044ceeccd7952e79940aadcfbef17dbb3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1243,
+          "probes": [
+            {
+              "probe": "rollback-code",
+              "revision": "eca30d0ed95d28b7d5b026bfeeace1b362a5f052",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1244,
+          "probes": [
+            {
+              "probe": "rollback-code",
+              "revision": "b45181d58b0e1883c0b180caec2a2866e1a3dee4",
+              "count": 3,
+              "files": [
+                "apps/web/src/server/lead-product-reader.ts",
+                "packages/db/src/lead-turn-rollback.ts",
+                "packages/db/src/schema/lead-turns.ts"
+              ]
+            }
+          ]
+        },
+        {
+          "pr": 1245,
+          "probes": [
+            {
+              "probe": "rollback-code",
+              "revision": "782814ad0ce50e325451c332e09a60efcbdae301",
+              "count": 0,
+              "files": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "OPS-06",
+      "category": "operations",
+      "kind": "not-measured",
+      "status": "not-measured",
+      "reason": "Fencing and rollback rehearsal are on open candidate branches (issues #1220 and #1222), not on main."
+    },
+    {
+      "id": "OPS-07",
+      "category": "operations",
+      "kind": "unit",
+      "revision": "117742e6474e5edd8868c5d7b4c943cdce41f9bf",
+      "atMain": false,
+      "command": "bun test packages/db/tests/unit/migration-snapshot-comparator.test.ts",
+      "exitCode": 0,
+      "status": "not-run",
+      "reason": "measured at 117742e6474e5edd8868c5d7b4c943cdce41f9bf, not at --main 449568904e99718cf52e63fadad6dac58db7e277",
+      "observed": {
+        "status": "partial",
+        "scopeLimit": "Runs the comparator unit tests only. Per-store migration reports are not exercised by this measurement.",
+        "pass": 60,
+        "fail": 0,
+        "seconds": 0.1
+      }
+    },
+    {
+      "id": "OPS-08",
+      "category": "operations",
+      "kind": "presence",
+      "status": "absent",
+      "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+      "atMain": true,
+      "main": [
+        {
+          "probe": "retention-gate",
+          "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+          "count": 0,
+          "files": []
+        }
+      ],
+      "candidates": [
+        {
+          "pr": 1227,
+          "probes": [
+            {
+              "probe": "retention-gate",
+              "revision": "065590ae673ad44b958cb297e79eb086118549d7",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1228,
+          "probes": [
+            {
+              "probe": "retention-gate",
+              "revision": "8e2fa11dcc2b19ef55e6def3953649f1189325eb",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1229,
+          "probes": [
+            {
+              "probe": "retention-gate",
+              "revision": "c1c02f907cf4cf57a4250737c6bbc98c560661c3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1230,
+          "probes": [
+            {
+              "probe": "retention-gate",
+              "revision": "379475c3b53d816b9baaabdbd331ecdfe5e9af65",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1232,
+          "probes": [
+            {
+              "probe": "retention-gate",
+              "revision": "ab555698c1cc099f7dba0ad7113169ce1bdded59",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1237,
+          "probes": [
+            {
+              "probe": "retention-gate",
+              "revision": "472977e18f4dcecd975845c11a6ef45f4da3cffd",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1241,
+          "probes": [
+            {
+              "probe": "retention-gate",
+              "revision": "4b584cc044ceeccd7952e79940aadcfbef17dbb3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1243,
+          "probes": [
+            {
+              "probe": "retention-gate",
+              "revision": "eca30d0ed95d28b7d5b026bfeeace1b362a5f052",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1244,
+          "probes": [
+            {
+              "probe": "retention-gate",
+              "revision": "b45181d58b0e1883c0b180caec2a2866e1a3dee4",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1245,
+          "probes": [
+            {
+              "probe": "retention-gate",
+              "revision": "782814ad0ce50e325451c332e09a60efcbdae301",
+              "count": 0,
+              "files": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "OPS-09",
+      "category": "operations",
+      "kind": "presence",
+      "status": "absent",
+      "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+      "atMain": true,
+      "main": [
+        {
+          "probe": "export-residency",
+          "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+          "count": 0,
+          "files": []
+        }
+      ],
+      "candidates": [
+        {
+          "pr": 1227,
+          "probes": [
+            {
+              "probe": "export-residency",
+              "revision": "065590ae673ad44b958cb297e79eb086118549d7",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1228,
+          "probes": [
+            {
+              "probe": "export-residency",
+              "revision": "8e2fa11dcc2b19ef55e6def3953649f1189325eb",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1229,
+          "probes": [
+            {
+              "probe": "export-residency",
+              "revision": "c1c02f907cf4cf57a4250737c6bbc98c560661c3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1230,
+          "probes": [
+            {
+              "probe": "export-residency",
+              "revision": "379475c3b53d816b9baaabdbd331ecdfe5e9af65",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1232,
+          "probes": [
+            {
+              "probe": "export-residency",
+              "revision": "ab555698c1cc099f7dba0ad7113169ce1bdded59",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1237,
+          "probes": [
+            {
+              "probe": "export-residency",
+              "revision": "472977e18f4dcecd975845c11a6ef45f4da3cffd",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1241,
+          "probes": [
+            {
+              "probe": "export-residency",
+              "revision": "4b584cc044ceeccd7952e79940aadcfbef17dbb3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1243,
+          "probes": [
+            {
+              "probe": "export-residency",
+              "revision": "eca30d0ed95d28b7d5b026bfeeace1b362a5f052",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1244,
+          "probes": [
+            {
+              "probe": "export-residency",
+              "revision": "b45181d58b0e1883c0b180caec2a2866e1a3dee4",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1245,
+          "probes": [
+            {
+              "probe": "export-residency",
+              "revision": "782814ad0ce50e325451c332e09a60efcbdae301",
+              "count": 1,
+              "files": ["packages/types/src/portable-export.ts"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "OPS-10",
+      "category": "operations",
+      "kind": "presence",
+      "status": "absent",
+      "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+      "atMain": true,
+      "main": [
+        {
+          "probe": "rollout-runbooks",
+          "revision": "449568904e99718cf52e63fadad6dac58db7e277",
+          "count": 0,
+          "files": []
+        }
+      ],
+      "candidates": [
+        {
+          "pr": 1227,
+          "probes": [
+            {
+              "probe": "rollout-runbooks",
+              "revision": "065590ae673ad44b958cb297e79eb086118549d7",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1228,
+          "probes": [
+            {
+              "probe": "rollout-runbooks",
+              "revision": "8e2fa11dcc2b19ef55e6def3953649f1189325eb",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1229,
+          "probes": [
+            {
+              "probe": "rollout-runbooks",
+              "revision": "c1c02f907cf4cf57a4250737c6bbc98c560661c3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1230,
+          "probes": [
+            {
+              "probe": "rollout-runbooks",
+              "revision": "379475c3b53d816b9baaabdbd331ecdfe5e9af65",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1232,
+          "probes": [
+            {
+              "probe": "rollout-runbooks",
+              "revision": "ab555698c1cc099f7dba0ad7113169ce1bdded59",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1237,
+          "probes": [
+            {
+              "probe": "rollout-runbooks",
+              "revision": "472977e18f4dcecd975845c11a6ef45f4da3cffd",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1241,
+          "probes": [
+            {
+              "probe": "rollout-runbooks",
+              "revision": "4b584cc044ceeccd7952e79940aadcfbef17dbb3",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1243,
+          "probes": [
+            {
+              "probe": "rollout-runbooks",
+              "revision": "eca30d0ed95d28b7d5b026bfeeace1b362a5f052",
+              "count": 0,
+              "files": []
+            }
+          ]
+        },
+        {
+          "pr": 1244,
+          "probes": [
+            {
+              "probe": "rollout-runbooks",
+              "revision": "b45181d58b0e1883c0b180caec2a2866e1a3dee4",
+              "count": 1,
+              "files": ["docs/evidence/m18-01-3-rollback-fencing.md"]
+            }
+          ]
+        },
+        {
+          "pr": 1245,
+          "probes": [
+            {
+              "probe": "rollout-runbooks",
+              "revision": "782814ad0ce50e325451c332e09a60efcbdae301",
+              "count": 0,
+              "files": []
+            }
+          ]
+        }
+      ],
+      "recorded": {
+        "revision": "9fb30c495ca9a4d7e680c24746924cc264e93203",
+        "atMain": false,
+        "command": "node scripts/check-docs.mjs",
+        "exitCode": 0,
+        "status": "measured",
+        "detail": "Docs boundary check passes on main. No rollout or rollback runbook exists under docs/ (see the rollout-runbooks probe)."
+      }
+    },
+    {
+      "id": "OPS-11",
+      "category": "operations",
+      "kind": "unavailable",
+      "status": "unavailable",
+      "reason": "Requires the owner to use the candidate. No agent can produce this evidence."
+    },
+    {
+      "id": "OPS-12",
+      "category": "operations",
+      "kind": "unavailable",
+      "status": "unavailable",
+      "reason": "No packaging, deployment or release is authorized for this leaf. Root decides whether to request one."
+    },
+    {
+      "id": "OPS-13",
+      "category": "operations",
+      "kind": "unavailable",
+      "status": "unavailable",
+      "reason": "The objectives are not decided. No production data exists to set them."
+    },
+    {
+      "id": "OPS-14",
+      "category": "operations",
+      "kind": "unavailable",
+      "status": "unavailable",
+      "reason": "No production traffic or cohort is available to this repository or session. The cohort is chosen during implementation per the TDD."
+    },
+    {
+      "id": "OPS-15",
+      "category": "operations",
+      "kind": "not-claimed",
+      "status": "not-claimed",
+      "reason": "Unresolved gates above (ACC-06, ACC-07, COST-05, COST-06, OPS-06, OPS-11 to OPS-14) prevent any readiness claim."
+    }
+  ]
+}

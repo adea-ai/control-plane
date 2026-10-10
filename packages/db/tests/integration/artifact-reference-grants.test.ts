@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 
 import {
   readCurrentArtifactReferenceGrant,
@@ -106,21 +106,23 @@ describe.skipIf(!connectionUrl)('Artifact reference grant store', () => {
   })
 
   async function cleanup() {
-    for (const workspaceId of workspaceIds) {
+    // One statement per table for the whole batch, children before parents, so every
+    // row the per-workspace loop deleted is still deleted in the same foreign-key order.
+    if (workspaceIds.length) {
       await connection.db
         .delete(artifactReferenceGrants)
-        .where(eq(artifactReferenceGrants.sourceWorkspaceId, workspaceId))
-      await connection.db.delete(artifacts).where(eq(artifacts.workspaceId, workspaceId))
+        .where(inArray(artifactReferenceGrants.sourceWorkspaceId, workspaceIds))
+      await connection.db.delete(artifacts).where(inArray(artifacts.workspaceId, workspaceIds))
       await connection.db
         .delete(workspaceMemberships)
-        .where(eq(workspaceMemberships.workspaceId, workspaceId))
-      await connection.db.delete(workspaces).where(eq(workspaces.id, workspaceId))
+        .where(inArray(workspaceMemberships.workspaceId, workspaceIds))
+      await connection.db.delete(workspaces).where(inArray(workspaces.id, workspaceIds))
     }
-    for (const userId of userIds) {
+    if (userIds.length) {
       await connection.db
         .delete(temporaryUserSessions)
-        .where(eq(temporaryUserSessions.userId, userId))
-      await connection.db.delete(users).where(eq(users.id, userId))
+        .where(inArray(temporaryUserSessions.userId, userIds))
+      await connection.db.delete(users).where(inArray(users.id, userIds))
     }
     workspaceIds.length = 0
     userIds.length = 0

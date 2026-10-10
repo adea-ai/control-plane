@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 
 import { createDatabase, type DatabaseConnection } from '../../src/connection'
 import { createTemporaryUserSession } from '../../src/identity'
@@ -43,20 +43,21 @@ describe.skipIf(!connectionUrl)('Agent edit revisions', () => {
   }
 
   async function cleanup(workspaceIds: string[], userIds: string[]) {
-    for (const workspaceId of workspaceIds) {
-      await connection.db.delete(agents).where(eq(agents.workspaceId, workspaceId))
-      await connection.db.delete(channels).where(eq(channels.workspaceId, workspaceId))
-      await connection.db.delete(projects).where(eq(projects.workspaceId, workspaceId))
+    // One statement per table for the whole batch, children before parents.
+    if (workspaceIds.length) {
+      await connection.db.delete(agents).where(inArray(agents.workspaceId, workspaceIds))
+      await connection.db.delete(channels).where(inArray(channels.workspaceId, workspaceIds))
+      await connection.db.delete(projects).where(inArray(projects.workspaceId, workspaceIds))
       await connection.db
         .delete(workspaceMemberships)
-        .where(eq(workspaceMemberships.workspaceId, workspaceId))
-      await connection.db.delete(workspaces).where(eq(workspaces.id, workspaceId))
+        .where(inArray(workspaceMemberships.workspaceId, workspaceIds))
+      await connection.db.delete(workspaces).where(inArray(workspaces.id, workspaceIds))
     }
-    for (const userId of userIds) {
+    if (userIds.length) {
       await connection.db
         .delete(temporaryUserSessions)
-        .where(eq(temporaryUserSessions.userId, userId))
-      await connection.db.delete(users).where(eq(users.id, userId))
+        .where(inArray(temporaryUserSessions.userId, userIds))
+      await connection.db.delete(users).where(inArray(users.id, userIds))
     }
   }
 

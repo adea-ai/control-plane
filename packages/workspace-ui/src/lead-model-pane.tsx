@@ -16,6 +16,8 @@ import { EmptyDescription } from '@adea-ai/ui/components/ui/empty'
 import { createMemo, createSignal, For, Show } from 'solid-js'
 import { createClientRequestId } from './request-id'
 import { projectModelReadiness } from './lead-model-state'
+import { markWorkspaceLeadChanged } from './workspace-lead-revision'
+import { WorkspaceLeadStatus } from './workspace-lead-status'
 
 const roles: readonly { role: ApiModelRole; label: string }[] = [
   { role: 'lead', label: 'Workspace lead' },
@@ -80,6 +82,8 @@ function LeadModelContent(props: { client: AgentHqApiClient; workspaceId: string
     setNotice(undefined)
     try {
       await operation()
+      // Marked even if this pane was disposed mid-request: the change is real.
+      markWorkspaceLeadChanged(workspaceId)
       if (workspaceId === props.workspaceId) setNotice(message)
     } catch {
       if (workspaceId === props.workspaceId)
@@ -110,6 +114,8 @@ function LeadModelContent(props: { client: AgentHqApiClient; workspaceId: string
         [role]: choice,
         idempotencyKey: createClientRequestId(),
       })
+      // Marked even if this pane was disposed mid-save: the default is persisted.
+      markWorkspaceLeadChanged(workspaceId)
       if (workspaceId === props.workspaceId)
         setNotice(
           'Model default saved. Readiness and payer authorization are checked for each turn.'
@@ -137,6 +143,7 @@ function LeadModelContent(props: { client: AgentHqApiClient; workspaceId: string
       description="Set separate defaults for the workspace lead, delegated agents and direct sessions. Credentials are managed in Connections; connector credentials alone do not establish model readiness."
       bodyLayout="content"
     >
+      <WorkspaceLeadStatus client={props.client} workspaceId={props.workspaceId} />
       <div class="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
@@ -144,6 +151,7 @@ function LeadModelContent(props: { client: AgentHqApiClient; workspaceId: string
           disabled={connections.isFetching || defaults.isFetching}
           onClick={() => {
             setNotice(undefined)
+            markWorkspaceLeadChanged(props.workspaceId)
             void connections.refetch()
             void defaults.refetch()
           }}

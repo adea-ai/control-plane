@@ -3,7 +3,16 @@ import { Button } from '@adea-ai/ui/components/ui/button'
 import { Input } from '@adea-ai/ui/components/ui/input'
 import { Label } from '@adea-ai/ui/components/ui/label'
 
-export function WorkspaceEmpty(props: { onCreate(name: string): Promise<void> }) {
+import {
+  describeWorkspaceCreationContext,
+  type WorkspaceCreationContext,
+} from '@adea-ai/workspace-nav/workspace-nav'
+
+export function WorkspaceEmpty(props: {
+  onCreate(name: string): Promise<void>
+  /** Owner/placement facts when the host knows them; unknown labels render honestly. */
+  creationContext?: WorkspaceCreationContext
+}) {
   const [name, setName] = createSignal('')
   const [pending, setPending] = createSignal(false)
   const [error, setError] = createSignal('')
@@ -26,6 +35,7 @@ export function WorkspaceEmpty(props: { onCreate(name: string): Promise<void> })
     >
       <h1>No workspaces yet</h1>
       <p>Create a workspace to start fresh.</p>
+      <p>{describeWorkspaceCreationContext(props.creationContext)}</p>
       <Label for="empty-new-workspace">New workspace name</Label>
       <Input
         id="empty-new-workspace"

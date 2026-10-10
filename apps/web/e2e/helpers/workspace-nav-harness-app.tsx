@@ -30,6 +30,12 @@ render(
     <TooltipProvider openDelay={200} closeDelay={300} skipDelayDuration={300}>
       <div class="flex w-64 flex-col p-2">
         <WorkspaceNav
+          creationContext={(() => {
+            // Test-only owner feed (?owner=): proves a known label reaches
+            // the draft row through the host call-site chain.
+            const owner = new URLSearchParams(window.location.search).get('owner')
+            return owner === null ? undefined : { ownerLabel: owner }
+          })()}
           tree={tree()}
           view="dev"
           groupBy={groupBy()}

@@ -177,6 +177,166 @@ const attemptIn = (workspaceId: string): MigrationSnapshotRecord => ({
   workspaceId,
 })
 
+/** A document with every family present; the given records fill one family. */
+const documentWithFamily = (
+  records: MigrationSnapshotRecord[],
+  family: MigrationSnapshotFamily,
+  snapshotId: string
+): MigrationSnapshotDocument => {
+  const sections: MigrationSnapshotSections = {}
+  for (const candidate of migrationSnapshotFamilies) {
+    sections[candidate] = candidate === family ? section(records) : section([])
+  }
+  return doc(sections, snapshotId)
+}
+
+const leadTurnRuntime = (
+  overrides: Partial<Extract<MigrationSnapshotRecord, { family: 'leadTurnRuntime' }>> = {}
+): MigrationSnapshotRecord => ({
+  attemptId: 'att-1',
+  cancelRequested: false,
+  executionId: 'exe-1',
+  family: 'leadTurnRuntime',
+  intentId: 'intent-1',
+  publishedMessageId: null,
+  runtimeSessionId: null,
+  state: 'prepared',
+  ...overrides,
+})
+
+const runtimeNode = (
+  overrides: Partial<Extract<MigrationSnapshotRecord, { family: 'runtimeNodes' }>> = {}
+): MigrationSnapshotRecord => ({
+  family: 'runtimeNodes',
+  kind: 'remote_host',
+  pairingState: 'paired',
+  platform: 'darwin',
+  revoked: false,
+  runtimeNodeId: 'node-1',
+  softwareVersion: '1.0.0',
+  workspaceId: 'wsp-1',
+  ...overrides,
+})
+
+const submission = (
+  overrides: Partial<Extract<MigrationSnapshotRecord, { family: 'taskSubmissions' }>> = {}
+): MigrationSnapshotRecord => ({
+  agentId: 'agent-1',
+  ciphertextPurged: false,
+  family: 'taskSubmissions',
+  locationKind: 'remote_host',
+  profileId: 'prf-1',
+  profileRevision: 1,
+  profileVersion: 'pfv-1',
+  runtimeNodeId: 'node-1',
+  state: 'pending_delivery',
+  submissionId: 'sub-1',
+  taskId: 'task-1',
+  taskVersion: 1,
+  workspaceId: 'wsp-1',
+  ...overrides,
+})
+
+const grant = (
+  overrides: Partial<Extract<MigrationSnapshotRecord, { family: 'artifactReferenceGrants' }>> = {}
+): MigrationSnapshotRecord => ({
+  artifactId: 'art-1',
+  audienceWorkspaceId: 'wsp-2',
+  checksumSha256: 'a'.repeat(64),
+  expiresAt: null,
+  family: 'artifactReferenceGrants',
+  grantId: 'grant-1',
+  revision: 1,
+  revoked: false,
+  sourceWorkspaceId: 'wsp-1',
+  version: 1,
+  ...overrides,
+})
+
+/**
+ * One drift mutation per captured field the root review found uncompared.
+ * Every case must be a determinate, non-identical finding on the exact field:
+ * a captured field absent from `FAMILY_COMPARISONS` would compare identical.
+ */
+const FIELD_DRIFT_CASES: ReadonlyArray<{
+  after: MigrationSnapshotRecord
+  before: MigrationSnapshotRecord
+  expectedClass: MigrationSnapshotFinding['findingClass']
+  family: MigrationSnapshotFamily
+  field: string
+}> = [
+  {
+    after: leadTurnRuntime({ runtimeSessionId: 'sess-1' }),
+    before: leadTurnRuntime(),
+    expectedClass: 'remapped_record',
+    family: 'leadTurnRuntime',
+    field: 'runtimeSessionId',
+  },
+  {
+    after: leadTurnRuntime({ publishedMessageId: 'msg-9' }),
+    before: leadTurnRuntime(),
+    expectedClass: 'remapped_record',
+    family: 'leadTurnRuntime',
+    field: 'publishedMessageId',
+  },
+  {
+    after: submission({ profileId: 'prf-2' }),
+    before: submission(),
+    expectedClass: 'remapped_record',
+    family: 'taskSubmissions',
+    field: 'profileId',
+  },
+  {
+    after: submission({ profileVersion: 'pfv-2' }),
+    before: submission(),
+    expectedClass: 'digest_drift',
+    family: 'taskSubmissions',
+    field: 'profileVersion',
+  },
+  {
+    after: submission({ locationKind: 'local_device' }),
+    before: submission(),
+    expectedClass: 'remapped_record',
+    family: 'taskSubmissions',
+    field: 'locationKind',
+  },
+  {
+    after: runtimeNode({ platform: 'linux' }),
+    before: runtimeNode(),
+    expectedClass: 'changed_attribute',
+    family: 'runtimeNodes',
+    field: 'platform',
+  },
+  {
+    after: runtimeNode({ softwareVersion: '2.0.0' }),
+    before: runtimeNode(),
+    expectedClass: 'digest_drift',
+    family: 'runtimeNodes',
+    field: 'softwareVersion',
+  },
+  {
+    after: grant({ expiresAt: '2026-06-01T00:00:00.000Z' }),
+    before: grant(),
+    expectedClass: 'changed_attribute',
+    family: 'artifactReferenceGrants',
+    field: 'expiresAt',
+  },
+  {
+    after: grant(),
+    before: grant({ expiresAt: '2026-06-01T00:00:00.000Z' }),
+    expectedClass: 'changed_attribute',
+    family: 'artifactReferenceGrants',
+    field: 'expiresAt',
+  },
+  {
+    after: grant({ expiresAt: '2027-01-01T00:00:00.000Z' }),
+    before: grant({ expiresAt: '2026-06-01T00:00:00.000Z' }),
+    expectedClass: 'changed_attribute',
+    family: 'artifactReferenceGrants',
+    field: 'expiresAt',
+  },
+]
+
 const allFamilySections = (
   records: MigrationSnapshotRecord[],
   family: MigrationSnapshotFamily
@@ -529,6 +689,94 @@ describe('migration snapshot comparator', () => {
           controlPlaneWorkspaceId: 'wsp_01AAAAAAAAAAAAAAAAAAAAAAAA',
           family: 'workspaces',
           ownerUserId: 'user-1',
+          workspaceId: 'wsp-1',
+        },
+      ]),
+      artifactReferenceGrants: section([
+        {
+          artifactId: 'art-1',
+          audienceWorkspaceId: 'wsp-2',
+          checksumSha256: 'a'.repeat(64),
+          expiresAt: null,
+          family: 'artifactReferenceGrants',
+          grantId: 'grant-1',
+          revoked: false,
+          revision: 1,
+          sourceWorkspaceId: 'wsp-1',
+          version: 1,
+        },
+      ]),
+      contentReplicas: section([
+        {
+          availability: 'available',
+          contentRefId: 'ref-1',
+          deleted: false,
+          digestSha256: 'b'.repeat(64),
+          family: 'contentReplicas',
+          replicaId: 'rep-1',
+          replicaKind: 'cloud_safe',
+          revision: 1,
+          schemaVersion: 1,
+          workspaceId: 'wsp-1',
+        },
+      ]),
+      leadTurnRuntime: section([
+        {
+          attemptId: 'att-1',
+          cancelRequested: false,
+          executionId: 'exe-1',
+          family: 'leadTurnRuntime',
+          intentId: 'intent-1',
+          publishedMessageId: null,
+          runtimeSessionId: 'sess-1',
+          state: 'prepared',
+        },
+      ]),
+      nativeSessions: section([
+        {
+          accountId: 'acct-1',
+          activeHarnessRunId: null,
+          agentProfileId: 'prf-1',
+          agentProfileVersion: 1,
+          archived: false,
+          family: 'nativeSessions',
+          generation: 1,
+          harnessInstallationId: null,
+          lifecycle: 'ready',
+          projectId: 'prj-1',
+          runtimeNodeId: 'node-1',
+          sessionRef: 'session-1',
+          version: 1,
+          workspaceId: 'wsp-1',
+          worktreeId: 'wt-1',
+        },
+      ]),
+      runtimeNodes: section([
+        {
+          family: 'runtimeNodes',
+          kind: 'local_device',
+          pairingState: 'paired',
+          platform: 'darwin',
+          revoked: false,
+          runtimeNodeId: 'node-1',
+          softwareVersion: '1.0.0',
+          workspaceId: 'wsp-1',
+        },
+      ]),
+      taskSubmissions: section([
+        {
+          agentId: 'agent-1',
+          ciphertextPurged: false,
+          family: 'taskSubmissions',
+          locationKind: 'local_device',
+          profileId: 'prf-1',
+          profileRevision: 1,
+          profileVersion: 'pfv-1',
+          runtimeNodeId: 'node-1',
+          state: 'prepared',
+          submissionId: 'sub-1',
+          taskId: 'task-1',
+          taskVersion: 1,
           workspaceId: 'wsp-1',
         },
       ]),
@@ -1396,6 +1644,21 @@ describe('migration snapshot primitive and top-level array intake bounds', () =>
     expect(serialized.includes('9'.repeat(200))).toBe(false)
     expect(serialized.length).toBeLessThan(8_192)
     expect(comparison.verdict).toBe('inconclusive')
+  })
+
+  test.each(FIELD_DRIFT_CASES)('$family.$field drift is never identical', (drift) => {
+    const comparison = compareMigrationSnapshots({
+      after: documentWithFamily([drift.after], drift.family, 'snapshot-after'),
+      before: documentWithFamily([drift.before], drift.family, 'snapshot-before'),
+    })
+    expect(comparison.verdict).not.toBe('identical')
+    expect(comparison.findings).toContainEqual(
+      expect.objectContaining({
+        detail: expect.objectContaining({ field: drift.field }),
+        family: drift.family,
+        findingClass: drift.expectedClass,
+      })
+    )
   })
 })
 

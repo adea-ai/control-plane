@@ -361,6 +361,10 @@ export function DesktopWorkspaceEntry(props: {
                 await client()!.createWorkspace({ idempotencyKey: crypto.randomUUID(), name })
                 await openWorkspace(session())
               }}
+              // The bootstrap account label is the only creator identity
+              // this host holds; absent labels fall back to the generic
+              // owner sentence and unknown placement renders honestly.
+              creationContext={{ ownerLabel: workspaceState()?.accountLabel ?? undefined }}
             />
           </Show>
         }

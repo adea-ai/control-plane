@@ -25,6 +25,15 @@ export {
   type MigrationSnapshotPayloadDigestInconclusiveReason,
 } from './migration-snapshot-capture'
 export {
+  captureNativeSessionSection,
+  NATIVE_SESSION_INVENTORY_PAGE_LIMIT,
+  NativeSessionInventoryError,
+  type NativeSessionInventoryFailure,
+  type NativeSessionInventoryPage,
+  type NativeSessionInventoryScope,
+  type NativeSessionInventorySource,
+} from './native-session-inventory'
+export {
   pullRuntimeNodeCommand,
   pruneRuntimeNodeDeliveryRequests,
   RuntimeNodeDeliveryError,
@@ -48,6 +57,7 @@ export {
   deleteArtifact,
   getArtifactForUser,
   listArtifactsForUser,
+  readArtifactReferenceEvidenceById,
   setArtifactAvailability,
   type ArtifactCreateInput,
 } from './artifacts'
@@ -56,6 +66,11 @@ export {
   authorizeArtifactReferenceRetrieval,
   readArtifactReferenceEvidence,
 } from './artifact-reference-policy'
+export {
+  publishArtifactReference,
+  retrieveArtifactReference,
+  type ArtifactReferenceServiceResult,
+} from './artifact-reference-service'
 export {
   readCurrentArtifactReferenceGrant,
   registerArtifactReferenceGrant,

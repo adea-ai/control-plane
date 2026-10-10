@@ -2,6 +2,11 @@ import type { AgentSummary, ProjectSummary, TaskSummary } from '@adea-ai/types'
 
 import { describeExecutionAttempt } from './execution-location-copy'
 import {
+  captureDialogBackgroundState,
+  hasVisibleModal,
+  restoreDialogBackgroundState,
+} from './dialog-background-state'
+import {
   Archive,
   Bot,
   Check,
@@ -13,7 +18,7 @@ import {
   Send,
   Square,
 } from 'lucide-solid'
-import { createMemo, createSignal, createUniqueId, For, type JSX, Show } from 'solid-js'
+import { createMemo, createSignal, createUniqueId, For, onCleanup, type JSX, Show } from 'solid-js'
 import { Dynamic } from 'solid-js/web'
 
 import {
@@ -193,6 +198,14 @@ const priorityPickerOptions = priorityOptions.map((option) =>
  * actions (Start, Complete…) apply immediately because they are moves, not
  * edits.
  */
+let activeBackgroundLease: (() => void) | undefined
+
+/** Cancels the active post-close background lease (a new owner took over). */
+export function cancelTaskBackgroundLease() {
+  activeBackgroundLease?.()
+  activeBackgroundLease = undefined
+}
+
 export function TaskPanel(props: CreateProps | EditProps) {
   const editing = () => (props.mode === 'edit' ? props : undefined)
   const initial = props.mode === 'edit' ? props.task : undefined
@@ -212,6 +225,120 @@ export function TaskPanel(props: CreateProps | EditProps) {
   const [status, setStatus] = createSignal<string | null>(null)
   const [titleError, setTitleError] = createSignal<string | undefined>()
   const [saving, setSaving] = createSignal(false)
+  // The sheet must close through Kobalte's own lifecycle: the dialog restores
+  // the background's aria-hidden/pointer-events state while it closes, and the
+  // parent unmounts this panel in response to onClose. Unmounting first (the
+  // previous `open` constant + immediate onClose) raced that restoration and
+  // could leave the workspace frame aria-hidden, hiding the board from role
+  // queries while it stayed visually rendered.
+  const [sheetOpen, setSheetOpen] = createSignal(true)
+  const [closePending, setClosePending] = createSignal(false)
+  // Set when this panel unmounts. Kobalte dispatches the close autofocus from
+  // a timer, so after the board has swapped this panel for another task the
+  // stale callback still fires — on a detached content element. It must then
+  // do nothing: the newer panel owns the selection, the background, and focus.
+  let disposed = false
+  const requestClose = () => {
+    if (saving() || closePending()) return
+    setClosePending(true)
+    setSheetOpen(false)
+  }
+  // Capture the frame element and the state this panel found before its modal
+  // hid it, and restore exactly that state once the modal is gone. Kobalte
+  // defers its aria-hidden write with setTimeout → requestAnimationFrame and
+  // never guards that write against disposal, so a write scheduled before
+  // close can land afterwards; this panel-owned repair re-checks on the same
+  // deferral window and on frame attribute mutations, restoring only the state
+  // captured here. The element is captured once: restoration is bound to the
+  // frame the panel actually covered, never to whatever element a later
+  // navigation rendered into the same selector.
+  const frameElement =
+    typeof document === 'undefined'
+      ? undefined
+      : document.querySelector<HTMLElement>('.workspace-frame')
+  const capturedBackground = captureDialogBackgroundState(
+    frameElement,
+    typeof document === 'undefined' ? { style: { pointerEvents: '' } } : document.body
+  )
+  // A panel mounted while another modal was still visible (its own sheet was
+  // mid-close) records that: the hidden state it found is the other modal's
+  // containment, not this frame's baseline, so neither this panel's release
+  // nor any lease built from it may restore the frame back into hiding.
+  const capturedWhileOtherModalOpen =
+    typeof document === 'undefined' ? false : hasVisibleModal(document)
+  // Capture the opener synchronously at panel setup: the dialog's own
+  // auto-focus can otherwise win the race and make the shared restoration
+  // target an element inside the closing content.
+  const restoreFocusTarget =
+    typeof document === 'undefined' || typeof HTMLElement === 'undefined'
+      ? undefined
+      : document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : undefined
+  // One lease owns the frame's post-close restoration at a time, and it is
+  // the earliest close that is still unfinished: a panel mounted while that
+  // lease is alive contributes nothing (the lease's other-modal guard defers
+  // its work while the new modal owns the background and restores the true
+  // pre-open baseline once the last modal closes). Cancelling on mount would
+  // hand the baseline to this panel's capture — which, taken mid-close, saw
+  // the previous modal's hidden state and would write it back after closing.
+  onCleanup(() => {
+    disposed = true
+    if (typeof document === 'undefined' || !capturedBackground) return
+    if (activeBackgroundLease) return
+    let cancelled = false
+    const restore = () => {
+      // Bound to the captured element: a frame replaced by navigation is never
+      // read or written, and losing it ends the lease instead of leaving an
+      // observer behind.
+      if (!frameElement?.isConnected) {
+        cancel()
+        return
+      }
+      restoreDialogBackgroundState({
+        element: frameElement,
+        body: document.body,
+        captured: capturedBackground,
+        capturedWhileOtherModalOpen,
+        hasOtherModal: () => hasVisibleModal(document),
+      })
+    }
+    let observer: MutationObserver | undefined
+    const cancel = () => {
+      cancelled = true
+      observer?.disconnect()
+      if (activeBackgroundLease === cancel) activeBackgroundLease = undefined
+    }
+    if (typeof MutationObserver !== 'undefined' && frameElement) {
+      // The lease is owned by this close until the board (or the frame) is
+      // gone. A write Kobalte scheduled before disposal can land at any later
+      // frame, so it deliberately does not expire on a timer; it only ever
+      // restores the state captured before this panel's modal opened and
+      // skips while a visible modal owns the background. Solid disposes
+      // parent cleanups before child ones (verified: TaskBoard's cancelling
+      // cleanup runs first), so a lease created by this panel's own unmount
+      // is bounded by the frame's lifetime, not by the board's cancel — the
+      // frame-disconnect check above is the guarantee.
+      observer = new MutationObserver(() => {
+        if (!cancelled) restore()
+      })
+      observer.observe(frameElement, {
+        attributes: true,
+        attributeFilter: ['aria-hidden', 'inert'],
+      })
+      // Frame replacement can nest the removal below body, so liveness needs
+      // the subtree, not just body's direct children.
+      observer.observe(document.body, { childList: true, subtree: true })
+    }
+    activeBackgroundLease = cancel
+    // Release the background once on the same deferral boundary Kobalte uses;
+    // later writes are caught by the observers above.
+    setTimeout(() =>
+      requestAnimationFrame(() => {
+        if (!cancelled) restore()
+      })
+    )
+  })
 
   const trimmedTitle = () => title().trim()
   const trimmedObjective = () => objective().trim()
@@ -321,6 +448,7 @@ export function TaskPanel(props: CreateProps | EditProps) {
     setStatus(null)
     if (props.mode === 'create') {
       setSaving(true)
+      let created = false
       try {
         await props.onCreate({
           kind: kind(),
@@ -328,19 +456,25 @@ export function TaskPanel(props: CreateProps | EditProps) {
           priority: priority(),
           title: trimmedTitle(),
         })
+        created = true
       } catch {
         setStatus('The task could not be created. Check the fields and try again.')
       } finally {
         setSaving(false)
       }
+      // Close through the dialog lifecycle so the modal restores the
+      // background before the board unmounts this panel.
+      if (created) requestClose()
       return
     }
     const edit = props
     const writes = pendingWrites(edit)
     let current: TaskSummary = { ...edit.task, version }
-    // Close first: the writes are optimistic, so the board already shows the
-    // result, and keeping the panel up until the server answers only delays it.
-    edit.onClose()
+    // Close through the dialog lifecycle: the writes are optimistic, so the
+    // board already shows the result, but the panel must stay mounted until
+    // the modal has restored the background (a bare onClose unmounts early and
+    // can leave the workspace frame aria-hidden).
+    requestClose()
     try {
       for (const write of writes) {
         await write(current)
@@ -380,14 +514,42 @@ export function TaskPanel(props: CreateProps | EditProps) {
 
   return (
     <Sheet
-      open
+      open={sheetOpen()}
       onOpenChange={(open) => {
-        if (!open && !saving()) props.onClose()
+        if (!open) requestClose()
       }}
     >
       <SheetContent
         side="end"
         closeLabel={props.mode === 'create' ? 'Close new task' : 'Close task'}
+        restoreFocusRef={() => (restoreFocusTarget?.isConnected ? restoreFocusTarget : undefined)}
+        onCloseAutoFocus={(event) => {
+          // Kobalte has finished closing the dialog and restored the background.
+          // A stale dispatch after the board swapped this panel for another
+          // task must not run: it would clear the newer panel's selection.
+          if (disposed) return
+          if (!closePending()) return
+          setClosePending(false)
+          // Release the captured background before the shared focus
+          // restoration reads it: a lingering aria-hidden would suppress focus
+          // return. The ownership guard excludes this closing dialog and
+          // anything nested inside it (the archive confirmation), so a second
+          // overlay present during the close keeps the background it is
+          // hiding — and keeps focus, since the shared restoration refuses to
+          // move focus while another overlay is up.
+          if (typeof document !== 'undefined') {
+            const content =
+              event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined
+            restoreDialogBackgroundState({
+              element: frameElement?.isConnected ? frameElement : undefined,
+              body: document.body,
+              captured: capturedBackground,
+              capturedWhileOtherModalOpen,
+              hasOtherModal: () => hasVisibleModal(document, content),
+            })
+          }
+          props.onClose()
+        }}
       >
         <SheetHeader>
           <SheetTitle>{props.mode === 'create' ? 'New task' : 'Edit task'}</SheetTitle>
@@ -654,7 +816,7 @@ export function TaskPanel(props: CreateProps | EditProps) {
                       type="button"
                       variant="destructive"
                       onClick={() =>
-                        void runLifecycle(edit().onArchive).then((done) => done && props.onClose())
+                        void runLifecycle(edit().onArchive).then((done) => done && requestClose())
                       }
                     >
                       Archive
@@ -674,7 +836,7 @@ export function TaskPanel(props: CreateProps | EditProps) {
             variant="outline"
             size="sm"
             disabled={saving()}
-            onClick={props.onClose}
+            onClick={requestClose}
           >
             Cancel
           </Button>

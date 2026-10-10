@@ -115,6 +115,9 @@ if (isServer) {
       const workspaces = [{ id: 'workspace-1', name: 'Studio' }] as readonly WorkspaceSummary[]
       expect(accountWorkspaceLabel(workspaces, 'workspace-1')).toBe('Studio')
       expect(accountWorkspaceLabel([], 'workspace-revoked')).toBe('Unavailable workspace')
+      // A deleted workspace among still-visible ones never resolves to another
+      // workspace's name: the lookup is by id and falls back to the placeholder.
+      expect(accountWorkspaceLabel(workspaces, 'workspace-deleted')).toBe('Unavailable workspace')
     })
 
     test('unread models sum top-level and thread counts without inventing unread', () => {

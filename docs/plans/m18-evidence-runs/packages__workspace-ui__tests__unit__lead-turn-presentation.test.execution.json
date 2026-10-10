@@ -1,0 +1,16 @@
+{
+  "schema": "adea.evidence.execution.v1",
+  "repository": "adea",
+  "sourceSha": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "executedAtHead": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "file": "packages/workspace-ui/tests/unit/lead-turn-presentation.test.ts",
+  "command": "bun test packages/workspace-ui/tests/unit/lead-turn-presentation.test.ts --reporter=junit --reporter-outfile=junit.xml",
+  "exitCode": 0,
+  "status": "passed",
+  "summary": {
+    "pass": 3,
+    "fail": 0
+  },
+  "ids": ["REQ-130"],
+  "junit": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"bun test\" tests=\"3\" assertions=\"11\" failures=\"0\" skipped=\"0\" time=\"0.017001\">\n  <testsuite name=\"packages/workspace-ui/tests/unit/lead-turn-presentation.test.ts\" file=\"packages/workspace-ui/tests/unit/lead-turn-presentation.test.ts\" tests=\"3\" assertions=\"11\" failures=\"0\" skipped=\"0\" time=\"0.001888\">\n    <testcase name=\"unavailable reads preserve a last report without presenting setup or a new action\" classname=\"\" time=\"0.000104\" file=\"packages/workspace-ui/tests/unit/lead-turn-presentation.test.ts\" line=\"14\" assertions=\"3\" />\n    <testcase name=\"withheld answer publication preserves completed execution as a separate fact\" classname=\"\" time=\"0.00002\" file=\"packages/workspace-ui/tests/unit/lead-turn-presentation.test.ts\" line=\"23\" assertions=\"3\" />\n    <testcase name=\"setup, preparation expiry and truthful cancellation have distinct labels\" classname=\"\" time=\"0.000026\" file=\"packages/workspace-ui/tests/unit/lead-turn-presentation.test.ts\" line=\"36\" assertions=\"5\" />\n  </testsuite>\n</testsuites>\n"
+}

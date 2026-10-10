@@ -67,7 +67,7 @@ import {
   SIDEBAR_MIN_WIDTH,
   SIDEBAR_WIDTH_STEP,
 } from '@adea-ai/workspace-nav/sidebar-width'
-import { WorkspaceNav } from '@adea-ai/workspace-nav/workspace-nav'
+import { WorkspaceNav, type WorkspaceCreationContext } from '@adea-ai/workspace-nav/workspace-nav'
 
 import { keyedRows } from './keyed-rows'
 import { platformModifierKey } from './keyboard-shortcuts'
@@ -419,6 +419,12 @@ type Props = Readonly<{
   share?: ProjectShareContext
   status?: JSX.Element
   workspaceReady?: boolean
+  /**
+   * Owner/placement facts for the inline draft's context line when the
+   * host knows them; unknown labels render honestly. Forwarded to the
+   * shared nav; no current caller feeds it (no account identity in scope).
+   */
+  creationContext?: WorkspaceCreationContext
 }>
 
 type RenameTarget =
@@ -667,6 +673,7 @@ export function WorkspaceNavSidebar(props: Props) {
     return (
       <WorkspaceNav
         label="Workspaces"
+        creationContext={props.creationContext}
         tree={source().tree}
         adapter={adapter()}
         groupBy={groupBy()}

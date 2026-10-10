@@ -210,6 +210,20 @@ const projects = [
     workspaceId: workspace.id,
   },
 ]
+const workspaceLead = {
+  createdAt: timestamp,
+  id: 'agent-workspace-lead',
+  isWorkspaceLead: true,
+  lifecycleState: 'active' as const,
+  name: 'Workspace lead',
+  presentationMetadata: {},
+  profile: { id: 'workspace-lead-unconfigured', state: 'missing', version: 'unconfigured' },
+  projectId: null,
+  revision: 0,
+  roleSummary: 'Coordinates work in this workspace',
+  updatedAt: timestamp,
+  workspaceId: workspace.id,
+}
 const agents = [
   {
     createdAt: timestamp,
@@ -521,6 +535,13 @@ async function mockWorkspace(page: Page, empty = false) {
     }
     if (url.pathname.endsWith('/projects'))
       return route.fulfill({ contentType: 'application/json', json: empty ? [] : projects })
+    // The lead exists with no approved profile yet, so the Agents status shows the
+    // unconfigured state. The lead is kept out of the roster list below.
+    if (url.pathname.endsWith('/agents/lead'))
+      return route.fulfill({
+        contentType: 'application/json',
+        json: { lead: empty && request.method() === 'GET' ? null : workspaceLead },
+      })
     if (url.pathname.endsWith('/agents'))
       return route.fulfill({ contentType: 'application/json', json: empty ? [] : agents })
     if (url.pathname.endsWith('/tasks'))

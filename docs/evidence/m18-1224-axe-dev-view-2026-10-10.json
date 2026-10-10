@@ -1,0 +1,137 @@
+{
+  "revision": "292c6de6e12312a0d23da8d1c90c1d410c41d286",
+  "command": "bun scripts/audit-a11y-dev-view.mjs --base-url http://127.0.0.1:3217 --artifact artifacts/a11y/axe-dev-view.json --strict",
+  "exitCode": 0,
+  "artifact": {
+    "schemaVersion": 1,
+    "lane": "audit-a11y-dev-view",
+    "issue": "#426/#541",
+    "standard": "WCAG 2.2 AA (automated axe-core coverage; manual assistive-technology audit out of scope)",
+    "tags": ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"],
+    "axeVersion": "4.13.0",
+    "baseUrl": "http://127.0.0.1:3217",
+    "startedAt": "2026-10-10T08:34:45.101Z",
+    "completedAt": "2026-10-10T08:35:03.008Z",
+    "surfaces": [
+      {
+        "surface": "chat",
+        "url": "http://127.0.0.1:3217/?view=chat&scene=home",
+        "counts": {
+          "critical": 0,
+          "serious": 0,
+          "moderate": 0,
+          "minor": 0
+        },
+        "violations": []
+      },
+      {
+        "surface": "dev-view-terminal",
+        "url": "http://127.0.0.1:3217/?view=dev&devE2e=preserved&scene=home&devProject=fixture-adea&devSession=fixture-shell",
+        "counts": {
+          "critical": 0,
+          "serious": 0,
+          "moderate": 0,
+          "minor": 0
+        },
+        "violations": []
+      },
+      {
+        "surface": "dev-view-narrow-320",
+        "url": "http://127.0.0.1:3217/?view=dev&devE2e=preserved&scene=home&devProject=fixture-adea&devSession=fixture-shell",
+        "counts": {
+          "critical": 0,
+          "serious": 0,
+          "moderate": 0,
+          "minor": 0
+        },
+        "violations": []
+      },
+      {
+        "surface": "settings/account-and-app",
+        "url": "http://127.0.0.1:3217/?view=chat&scene=home#settings/account",
+        "counts": {
+          "critical": 0,
+          "serious": 0,
+          "moderate": 0,
+          "minor": 0
+        },
+        "violations": []
+      },
+      {
+        "surface": "settings/appearance",
+        "url": "http://127.0.0.1:3217/?view=chat&scene=home#settings/appearance",
+        "counts": {
+          "critical": 0,
+          "serious": 0,
+          "moderate": 0,
+          "minor": 0
+        },
+        "violations": []
+      },
+      {
+        "surface": "settings/agents",
+        "url": "http://127.0.0.1:3217/?view=chat&scene=home#settings/agents",
+        "counts": {
+          "critical": 0,
+          "serious": 0,
+          "moderate": 0,
+          "minor": 0
+        },
+        "violations": []
+      },
+      {
+        "surface": "settings/input-and-notifications",
+        "url": "http://127.0.0.1:3217/?view=chat&scene=home#settings/input-notifications",
+        "counts": {
+          "critical": 0,
+          "serious": 0,
+          "moderate": 0,
+          "minor": 0
+        },
+        "violations": []
+      },
+      {
+        "surface": "settings/privacy-and-data",
+        "url": "http://127.0.0.1:3217/?view=chat&scene=home#settings/privacy-data",
+        "counts": {
+          "critical": 0,
+          "serious": 0,
+          "moderate": 0,
+          "minor": 0
+        },
+        "violations": []
+      },
+      {
+        "surface": "settings/integrations-and-capabilities",
+        "url": "http://127.0.0.1:3217/?view=chat&scene=home#settings/integrations",
+        "counts": {
+          "critical": 0,
+          "serious": 0,
+          "moderate": 0,
+          "minor": 0
+        },
+        "violations": []
+      },
+      {
+        "surface": "settings/permissions",
+        "url": "http://127.0.0.1:3217/?view=chat&scene=home#settings/permissions",
+        "counts": {
+          "critical": 0,
+          "serious": 0,
+          "moderate": 0,
+          "minor": 0
+        },
+        "violations": []
+      }
+    ],
+    "totals": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    },
+    "violationClasses": [],
+    "strict": true,
+    "blockingViolations": 0
+  }
+}

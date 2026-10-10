@@ -2,7 +2,10 @@ name: Create/Delete Branch for Pull Request
 
 on:
   pull_request:
+    # opened and reopened are deliberately absent: Draft Guard converts ready pull requests to draft
+    # on those events, and heavy validation starts only after an explicit ready_for_review.
     types:
+      - synchronize
       - ready_for_review
       - closed
 
@@ -27,7 +30,7 @@ jobs:
         uses: tj-actions/branch-names@5250492686b253f06fa55861556d1027b067aeb5 # v9.0.2
 
   create_neon_branch:
-    name: Migrate Neon Branch
+    name: Migrate Neon Shard (${{ matrix.shard }}/2)
     needs: setup
     if: >-
       github.event.action == 'opened' ||
@@ -35,6 +38,13 @@ jobs:
       github.event.action == 'synchronize' ||
       github.event.action == 'ready_for_review'
     runs-on: ubuntu-latest
+    # Two static legs, each with its own disposable preview branch and one half of the integration
+    # inventory (ADEA_INTEGRATION_SHARD). The migrate_gate job requires setup and both legs to
+    # succeed, so the required "Migrate Neon Branch" check cannot pass on a partial run.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     # Run 37700345381 verified all 40 migrations, then hit the old 20m
     # limit while the cloud integration suite was still passing. Allow
     # bounded cloud round-trip headroom; retain every test and its deadline.
@@ -50,7 +60,7 @@ jobs:
         uses: neondatabase/create-branch-action@72ed4f69a12b6be9c16aebfad893f6a21e9aba8b # v6.4.0
         with:
           project_id: ${{ vars.NEON_PROJECT_ID }}
-          branch_name: preview/pr-${{ github.event.number }}-${{ needs.setup.outputs.branch }}
+          branch_name: preview/pr-${{ github.event.number }}-${{ needs.setup.outputs.branch }}-s${{ matrix.shard }}
           parent_branch: development
           database: neondb
           api_key: ${{ secrets.NEON_API_KEY }}
@@ -140,11 +150,35 @@ jobs:
           NODE
 
       - name: Verify migrations and transactions
+        env:
+          ADEA_INTEGRATION_SHARD: ${{ matrix.shard }}/2
         run: |
           node scripts/database-health.mjs
           bun run --cwd packages/db db:check
           bun run --cwd packages/db db:verify
           bun run test:integration
+
+  migrate_gate:
+    # Required check "Migrate Neon Branch". It passes only when setup and both shard legs
+    # succeeded; failed, cancelled, skipped, or missing results fail it. Draft and closed events
+    # skip it, as they did before the shards.
+    name: Migrate Neon Branch
+    needs: [setup, create_neon_branch]
+    if: >-
+      always() && github.event.pull_request.draft == false &&
+      (github.event.action == 'opened' || github.event.action == 'reopened' ||
+      github.event.action == 'synchronize' || github.event.action == 'ready_for_review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require setup and both shards to succeed
+        env:
+          SETUP_RESULT: ${{ needs.setup.result }}
+          SHARDS_RESULT: ${{ needs.create_neon_branch.result }}
+        run: |
+          echo "setup=$SETUP_RESULT shards=$SHARDS_RESULT"
+          test "$SETUP_RESULT" = success
+          test "$SHARDS_RESULT" = success
 
   delete_neon_branch:
     name: Delete Neon Branch
@@ -156,10 +190,126 @@ jobs:
         if: github.event.action != 'closed'
         run: echo 'Cleanup runs only when the pull request closes.'
 
-      - name: Delete Neon branch
+      # Idempotent cleanup. neonctl resolves a branch name against the project's branches and
+      # throws "Branch <name> not found" when it is absent, so a name that was never created, or
+      # was already deleted, would fail this job. Resolve the three names first with the same API
+      # key, then delete only the branches that exist, by id.
+      - name: Resolve this pull request's Neon branches
         if: github.event.action == 'closed'
+        id: resolve
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          LEGACY_BRANCH: preview/pr-${{ github.event.number }}-${{ needs.setup.outputs.branch }}
+          SHARD_1_BRANCH: preview/pr-${{ github.event.number }}-${{ needs.setup.outputs.branch }}-s1
+          SHARD_2_BRANCH: preview/pr-${{ github.event.number }}-${{ needs.setup.outputs.branch }}-s2
+        run: |
+          node <<'NODE'
+          const { appendFileSync } = require("node:fs");
+          const {
+            GITHUB_OUTPUT,
+            LEGACY_BRANCH,
+            NEON_API_KEY,
+            NEON_PROJECT_ID,
+            SHARD_1_BRANCH,
+            SHARD_2_BRANCH,
+          } = process.env;
+          if (!GITHUB_OUTPUT || !NEON_API_KEY || !NEON_PROJECT_ID) {
+            throw new Error("Neon cleanup inputs are unavailable");
+          }
+          // Bounded cursor traversal of the project's branch list. A name counts as absent only after
+          // every page has been read to its end; an error, a repeated cursor, a malformed page or the
+          // page bound fails the job instead of reporting absence.
+          const MAX_PAGES = 50;
+          const SAFE_BRANCH_ID = /^br-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+          const wanted = [LEGACY_BRANCH, SHARD_1_BRANCH, SHARD_2_BRANCH];
+          const found = new Map();
+          const seenCursors = new Set();
+          (async () => {
+            let cursor = null;
+            for (let page = 1; ; page += 1) {
+              if (page > MAX_PAGES) {
+                throw new Error(`Listing Neon branches exceeded ${MAX_PAGES} pages; refusing to claim absence`);
+              }
+              const url = new URL(
+                `https://console.neon.tech/api/v2/projects/${encodeURIComponent(NEON_PROJECT_ID)}/branches`,
+              );
+              if (cursor !== null) url.searchParams.set("cursor", cursor);
+              const response = await fetch(url, {
+                headers: { Accept: "application/json", Authorization: `Bearer ${NEON_API_KEY}` },
+              });
+              if (!response.ok) throw new Error(`Listing Neon branches returned ${response.status}`);
+              const body = await response.json();
+              if (!body || typeof body !== "object" || !Array.isArray(body.branches)) {
+                throw new Error("Listing Neon branches returned a malformed page");
+              }
+              for (const branch of body.branches) {
+                if (!branch || typeof branch.name !== "string") {
+                  throw new Error("Listing Neon branches returned a malformed branch entry");
+                }
+                if (!wanted.includes(branch.name)) continue;
+                if (typeof branch.id !== "string" || branch.id === "") {
+                  throw new Error(`Neon branch ${branch.name} has no id`);
+                }
+                // The id is later expanded unquoted into the pinned delete action's shell, so accept only
+                // a Neon branch id: lowercase br- prefix, letters, digits and single hyphens.
+                if (!SAFE_BRANCH_ID.test(branch.id) || branch.id.length > 128) {
+                  throw new Error(`Neon branch ${branch.name} has a malformed id; refusing to use it`);
+                }
+                if (found.has(branch.name) && found.get(branch.name) !== branch.id) {
+                  throw new Error(`Neon branch name ${branch.name} matches more than one branch`);
+                }
+                found.set(branch.name, branch.id);
+              }
+              // Per the Neon OpenAPI, CursorPagination is an object whose optional next string is absent on
+              // the last page. An absent pagination key is also read as a single page. A present pagination
+              // value must be an object, and a present next must be a non-empty string.
+              const pagination = body.pagination;
+              if (pagination !== undefined && (!pagination || typeof pagination !== "object" || Array.isArray(pagination))) {
+                throw new Error("Listing Neon branches returned malformed pagination");
+              }
+              const next = pagination === undefined ? undefined : pagination.next;
+              if (next === undefined) break;
+              if (typeof next !== "string" || next === "") {
+                throw new Error("Listing Neon branches returned a malformed cursor");
+              }
+              if (seenCursors.has(next)) {
+                throw new Error("Listing Neon branches repeated a cursor; refusing to claim absence");
+              }
+              seenCursors.add(next);
+              cursor = next;
+            }
+            const idFor = (name) => found.get(name) ?? "";
+            appendFileSync(
+              GITHUB_OUTPUT,
+              `legacy=${idFor(LEGACY_BRANCH)}\nshard_1=${idFor(SHARD_1_BRANCH)}\nshard_2=${idFor(SHARD_2_BRANCH)}\n`,
+            );
+          })();
+          NODE
+
+      # Delete by id. The action's branch_id input is deprecated in favour of branch, but branch is
+      # resolved by name and interpolated into the action's shell script, so a PR-controlled name
+      # never reaches that script here. neonctl passes a br-* id straight to the delete request.
+      - name: Delete legacy Neon branch
+        if: "!cancelled() && github.event.action == 'closed' && steps.resolve.outputs.legacy != ''"
         uses: neondatabase/delete-branch-action@4468d825d5a88ef4012f1705a82f02ec3072f776 # v3.2.1
         with:
           project_id: ${{ vars.NEON_PROJECT_ID }}
-          branch: preview/pr-${{ github.event.number }}-${{ needs.setup.outputs.branch }}
+          branch_id: ${{ steps.resolve.outputs.legacy }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Delete shard 1 Neon branch
+        if: "!cancelled() && github.event.action == 'closed' && steps.resolve.outputs.shard_1 != ''"
+        uses: neondatabase/delete-branch-action@4468d825d5a88ef4012f1705a82f02ec3072f776 # v3.2.1
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_id: ${{ steps.resolve.outputs.shard_1 }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Delete shard 2 Neon branch
+        if: "!cancelled() && github.event.action == 'closed' && steps.resolve.outputs.shard_2 != ''"
+        uses: neondatabase/delete-branch-action@4468d825d5a88ef4012f1705a82f02ec3072f776 # v3.2.1
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_id: ${{ steps.resolve.outputs.shard_2 }}
           api_key: ${{ secrets.NEON_API_KEY }}

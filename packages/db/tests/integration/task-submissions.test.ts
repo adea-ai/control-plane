@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test'
 import { and, eq, sql } from 'drizzle-orm'
 import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { generateRemoteCommandKeyPair, sealRemoteContent } from '@adea-ai/remote-content'
 
@@ -40,9 +41,21 @@ import {
 } from '../../src/task-submission-retention'
 import { createWorkspaceWithOwner } from '../../src/workspaces'
 
+const repositoryRoot = fileURLToPath(new URL('../../../../', import.meta.url))
+// The purge entry point imports the built @adea-ai/types package. The integration runner builds
+// it once before the suite; a direct run builds it here once per file when it is missing, so each
+// spawned purge runs the script itself instead of rebuilding the package first.
+if (!existsSync(fileURLToPath(new URL('../../../types/dist/index.js', import.meta.url)))) {
+  const build = spawnSync('bun', ['run', '--cwd', 'packages/types', 'build'], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+  })
+  if (build.status !== 0) throw new Error(`packages/types build failed: ${build.stderr}`)
+}
+
 function invokeRetention(input: string[]) {
-  return spawnSync('bun', ['run', 'relay:purge', ...input], {
-    cwd: fileURLToPath(new URL('../../../../', import.meta.url)),
+  return spawnSync('bun', ['scripts/purge-relay-ciphertext.ts', ...input], {
+    cwd: repositoryRoot,
     env: process.env,
     encoding: 'utf8',
     timeout: 15000,

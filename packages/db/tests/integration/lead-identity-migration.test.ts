@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import postgres from 'postgres'
+import { directFixtureUrl, withFixtureSession } from '../fixtures/fixture-session'
 
 // Disposable migration evidence: a realistic pre-0042 shape with two workspaces,
 // custom Agents in every lifecycle state, legacy and reopened lanes, participant-only
@@ -50,8 +50,7 @@ async function expectViolation(promise: Promise<unknown>, code: string, constrai
 
 describe.skipIf(!connectionUrl)('lead identity additive migrations', () => {
   test('preserve audiences, histories, ownership, and custom Agent identity on realistic old-shape data', async () => {
-    const client = postgres(connectionUrl!, { max: 1 })
-    try {
+    await withFixtureSession(directFixtureUrl(), async (client) => {
       // The hosted runtime role has TEMP but not database CREATE; session-local copies keep
       // the reviewed SQL under test without schema grants.
       for (const table of TABLES) {
@@ -602,22 +601,20 @@ describe.skipIf(!connectionUrl)('lead identity additive migrations', () => {
           [ada.id]
         )
       ).toEqual([{ topics: 2 }])
-    } finally {
-      await client.end()
-    }
-
-    async function snapshot(omitted: Readonly<Record<string, readonly string[]>> = {}) {
-      const result: Record<string, Record<string, unknown>[]> = {}
-      for (const table of TABLES) {
-        const rows = await client.unsafe(
-          `select to_jsonb(t) as row from pg_temp.${table} t order by t.id`
-        )
-        result[table] = rows.map((entry) => {
-          const row = typeof entry.row === 'string' ? JSON.parse(entry.row) : (entry.row as object)
-          return omitKeys(row as Record<string, unknown>, omitted[table] ?? [])
-        })
+      async function snapshot(omitted: Readonly<Record<string, readonly string[]>> = {}) {
+        const result: Record<string, Record<string, unknown>[]> = {}
+        for (const table of TABLES) {
+          const rows = await client.unsafe(
+            `select to_jsonb(t) as row from pg_temp.${table} t order by t.id`
+          )
+          result[table] = rows.map((entry) => {
+            const row =
+              typeof entry.row === 'string' ? JSON.parse(entry.row) : (entry.row as object)
+            return omitKeys(row as Record<string, unknown>, omitted[table] ?? [])
+          })
+        }
+        return result
       }
-      return result
-    }
+    })
   })
 })

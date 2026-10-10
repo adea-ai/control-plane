@@ -245,6 +245,14 @@ export function useWorkspaceController(providedClient?: AgentHqApiClient) {
     refreshAfterProjectCreate: async () => {
       await channels.refetch()
     },
+    /**
+     * Refetches the roster's agent list after a write that bypassed the agent
+     * mutations (the workspace lead's provisioning), so the new row reaches the
+     * roster and every consumer of the list without a reload.
+     */
+    refreshAgents: async () => {
+      await agents.refetch()
+    },
     projectActions: {
       update: (projectId: string, update: Readonly<{ iconKey?: string; name?: string }>) =>
         updateProject.mutateAsync({ projectId, update }).then(() => undefined),

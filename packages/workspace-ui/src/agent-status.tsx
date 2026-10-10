@@ -29,7 +29,7 @@ export function agentStatusModel(agent: AgentSummary) {
         ? 'Archived Agent.'
         : configurationError
           ? 'Review configuration.'
-          : agentProfileStateNotice(profile.state),
+          : agentProfileStateNotice(profile),
     }),
     execution: Object.freeze({
       detail: 'Execution activity has not been reported.',

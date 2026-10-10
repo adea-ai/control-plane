@@ -38,7 +38,7 @@ import {
   SIDEBAR_MIN_WIDTH,
   SIDEBAR_WIDTH_STEP,
 } from '@adea-ai/workspace-nav/sidebar-width'
-import { WorkspaceNav } from '@adea-ai/workspace-nav/workspace-nav'
+import { WorkspaceNav, type WorkspaceCreationContext } from '@adea-ai/workspace-nav/workspace-nav'
 import {
   Show,
   Suspense,
@@ -125,6 +125,8 @@ export type DevWorkspaceNavHost = Readonly<{
   globalNav?: DevGlobalNavSlots
   activeWorkspaceId?: string
   activeWorkspaceName?: string
+  /** The signed-in owner for the inline creation draft; absent for guests and unknown identities. */
+  creationContext?: WorkspaceCreationContext
   workspaces?: readonly DevNavWorkspaceInput[]
   /** The active workspace's cloud projects; undefined until the list settles. */
   projects?: readonly DevNavCloudProject[]
@@ -164,6 +166,12 @@ export type DevWorkspaceSidebarProps = Readonly<{
   restoreFocusRef?: () => HTMLElement | undefined
   /** The navigation landmark's name inside the sidebar. */
   navigationLabel?: string
+  /**
+   * Owner/placement facts for the inline draft's context line. Unknown labels
+   * render honestly. Forwarded to the shared nav; an explicit prop wins over
+   * the host's owner, which the web host feeds from the signed-in account.
+   */
+  creationContext?: WorkspaceCreationContext
   /** Dev-only status line above the tree (runtime unavailable). */
   status?: JSX.Element
   /** The archive shelf. */
@@ -700,6 +708,7 @@ export function DevWorkspaceSidebar(props: DevWorkspaceSidebarProps) {
             return (
               <WorkspaceNav
                 label={props.navigationLabel ?? 'Workspaces'}
+                creationContext={props.creationContext ?? props.host?.creationContext}
                 tree={source().tree}
                 adapter={adapter}
                 groupBy={groupBy()}

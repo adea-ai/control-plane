@@ -67,16 +67,25 @@ import {
 
 import type { AgentHqDatabase, AgentHqTransaction } from './connection'
 import {
+  captureNativeSessionSection,
+  type NativeSessionInventorySource,
+} from './native-session-inventory'
+import {
   agents,
+  artifactReferenceGrants,
   authIdentities,
   channelParticipants,
   channels,
   channelReadStates,
   contentRefs,
+  contentReplicas,
+  leadTurnRuntime,
   messages,
   projectMembers,
   projects,
+  runtimeNodes,
   taskExecutionAttempts,
+  taskSubmissions,
   tasks,
   temporaryUserSessions,
   threadReadStates,
@@ -108,6 +117,15 @@ export const MIGRATION_SNAPSHOT_CAPTURE_SUPPORTED_FAMILIES: readonly MigrationSn
   migrationSnapshotFamilies
 
 /**
+ * Domains a migration must account for that this capture cannot inventory from
+ * the database alone: the canonical runtime owns native sessions and serves
+ * them through `dev.session.list` (capability `dev.session.read`). Requesting
+ * one without an injected `nativeSessionInventory` source stays unknown with
+ * reason `unsupported_family` instead of reading as an empty capture.
+ */
+export const MIGRATION_SNAPSHOT_UNSUPPORTED_DOMAINS = ['nativeSessions'] as const
+
+/**
  * Rows fetched per family page. Each page asks for one extra row (the probe)
  * so exhaustion is observed directly; the probe row is never captured.
  */
@@ -117,6 +135,7 @@ export const MIGRATION_SNAPSHOT_CAPTURE_PAGE_SIZE = 500
 export const migrationSnapshotCaptureUnknownReasons = [
   'unrecognized_domain',
   'unsupported_family',
+  'inventory_error',
 ] as const
 
 export type MigrationSnapshotCaptureUnknownReason =
@@ -158,6 +177,14 @@ export type MigrationSnapshotCaptureInput = Readonly<{
    * domain status with a typed reason — never an empty success.
    */
   requestedDomains?: readonly string[]
+  /**
+   * Authoritative runtime session inventory source (the canonical
+   * `dev.session.list` read). When absent, a requested `nativeSessions` domain
+   * stays unknown with `unsupported_family`; when present, the composed read is
+   * captured and a denied, unavailable or invalid read stays unknown with
+   * `inventory_error` — never an empty section.
+   */
+  nativeSessionInventory?: NativeSessionInventorySource
 }>
 
 export type MigrationSnapshotCaptureResult = Readonly<{
@@ -227,9 +254,12 @@ function requireCaptureBound(value: number | undefined): number {
  * Duplicate names collapse to one status.
  */
 export function resolveMigrationSnapshotCaptureDomains(
-  requestedDomains: readonly string[] | undefined
+  requestedDomains: readonly string[] | undefined,
+  options?: Readonly<{ nativeSessionInventory?: NativeSessionInventorySource }>
 ): readonly MigrationSnapshotDomainCaptureStatus[] {
   const supported = new Set<string>(MIGRATION_SNAPSHOT_CAPTURE_SUPPORTED_FAMILIES)
+  const unsupported = new Set<string>(MIGRATION_SNAPSHOT_UNSUPPORTED_DOMAINS)
+  const hasNativeSessionInventory = options?.nativeSessionInventory !== undefined
   const names = requestedDomains ?? [...supported]
   const resolved = new Map<string, MigrationSnapshotDomainCaptureStatus>()
   for (const domain of names) {
@@ -240,15 +270,20 @@ export function resolveMigrationSnapshotCaptureDomains(
     }
     if (resolved.has(domain)) continue
     if (supported.has(domain)) {
+      if (domain === 'nativeSessions' && !hasNativeSessionInventory) {
+        resolved.set(domain, { domain, status: 'unknown', unknownReason: 'unsupported_family' })
+        continue
+      }
       resolved.set(domain, { domain, status: 'captured', unknownReason: null })
       continue
     }
     resolved.set(domain, {
       domain,
       status: 'unknown',
-      unknownReason: isMigrationSnapshotFamily(domain)
-        ? 'unsupported_family'
-        : 'unrecognized_domain',
+      unknownReason:
+        unsupported.has(domain) || isMigrationSnapshotFamily(domain)
+          ? 'unsupported_family'
+          : 'unrecognized_domain',
     })
   }
   return [...resolved.values()].toSorted((left, right) =>
@@ -631,6 +666,18 @@ function stableIdOf(record: MigrationSnapshotRecord): string {
       return record.sessionId
     case 'workspaces':
       return record.workspaceId
+    case 'artifactReferenceGrants':
+      return record.grantId
+    case 'contentReplicas':
+      return record.replicaId
+    case 'leadTurnRuntime':
+      return record.intentId
+    case 'nativeSessions':
+      return record.sessionRef
+    case 'runtimeNodes':
+      return record.runtimeNodeId
+    case 'taskSubmissions':
+      return record.submissionId
   }
 }
 
@@ -1195,6 +1242,171 @@ async function captureFamilySectionByName(
           workspaceId: row.id,
         }),
       })
+    case 'artifactReferenceGrants':
+      return captureFamilySection(transaction, bound, {
+        fetchPage: (offset, rowsBound) =>
+          transaction
+            .select({
+              artifactId: artifactReferenceGrants.artifactId,
+              audienceWorkspaceId: artifactReferenceGrants.audienceWorkspaceId,
+              checksumSha256: artifactReferenceGrants.checksumSha256,
+              expiresAt: artifactReferenceGrants.expiresAt,
+              grantId: artifactReferenceGrants.grantId,
+              revokedAt: artifactReferenceGrants.revokedAt,
+              revision: artifactReferenceGrants.revision,
+              sourceWorkspaceId: artifactReferenceGrants.sourceWorkspaceId,
+              version: artifactReferenceGrants.version,
+            })
+            .from(artifactReferenceGrants)
+            .orderBy(asc(artifactReferenceGrants.grantId))
+            .limit(rowsBound)
+            .offset(offset),
+        toRecord: (row) => ({
+          artifactId: row.artifactId,
+          audienceWorkspaceId: row.audienceWorkspaceId,
+          checksumSha256: row.checksumSha256,
+          expiresAt: row.expiresAt,
+          family: 'artifactReferenceGrants',
+          grantId: row.grantId,
+          revoked: row.revokedAt !== null,
+          revision: row.revision,
+          sourceWorkspaceId: row.sourceWorkspaceId,
+          version: row.version,
+        }),
+      })
+    case 'contentReplicas':
+      return captureFamilySection(transaction, bound, {
+        fetchPage: (offset, rowsBound) =>
+          transaction
+            .select({
+              availability: contentReplicas.availability,
+              contentRefId: contentReplicas.contentRefId,
+              deletedAt: contentReplicas.deletedAt,
+              digestSha256: contentReplicas.digestSha256,
+              id: contentReplicas.id,
+              replicaKind: contentReplicas.replicaKind,
+              revision: contentReplicas.revision,
+              schemaVersion: contentReplicas.schemaVersion,
+              workspaceId: contentReplicas.workspaceId,
+            })
+            .from(contentReplicas)
+            .orderBy(asc(contentReplicas.id))
+            .limit(rowsBound)
+            .offset(offset),
+        toRecord: (row) => ({
+          availability: row.availability,
+          contentRefId: row.contentRefId,
+          deleted: row.deletedAt !== null,
+          digestSha256: row.digestSha256,
+          family: 'contentReplicas',
+          replicaId: row.id,
+          replicaKind: row.replicaKind,
+          revision: row.revision,
+          schemaVersion: row.schemaVersion,
+          workspaceId: row.workspaceId,
+        }),
+      })
+    case 'leadTurnRuntime':
+      return captureFamilySection(transaction, bound, {
+        fetchPage: (offset, rowsBound) =>
+          transaction
+            .select({
+              attemptId: leadTurnRuntime.attemptId,
+              cancelRequestedAt: leadTurnRuntime.cancelRequestedAt,
+              executionId: leadTurnRuntime.executionId,
+              intentId: leadTurnRuntime.intentId,
+              publishedMessageId: leadTurnRuntime.publishedMessageId,
+              runtimeSessionId: leadTurnRuntime.runtimeSessionId,
+              state: leadTurnRuntime.state,
+            })
+            .from(leadTurnRuntime)
+            .orderBy(asc(leadTurnRuntime.intentId))
+            .limit(rowsBound)
+            .offset(offset),
+        toRecord: (row) => ({
+          attemptId: row.attemptId,
+          cancelRequested: row.cancelRequestedAt !== null,
+          executionId: row.executionId,
+          family: 'leadTurnRuntime',
+          intentId: row.intentId,
+          publishedMessageId: row.publishedMessageId,
+          runtimeSessionId: row.runtimeSessionId,
+          state: row.state,
+        }),
+      })
+    case 'nativeSessions':
+      // Composed by `captureNativeSessionSection` outside the database
+      // transaction; `captureDocument` assigns the precomputed section and
+      // never routes this family through the database switch.
+      throw new Error(
+        'nativeSessions is composed from the runtime inventory, not captured from this database'
+      )
+    case 'runtimeNodes':
+      return captureFamilySection(transaction, bound, {
+        fetchPage: (offset, rowsBound) =>
+          transaction
+            .select({
+              id: runtimeNodes.id,
+              kind: runtimeNodes.kind,
+              pairingState: runtimeNodes.pairingState,
+              platform: runtimeNodes.platform,
+              revokedAt: runtimeNodes.revokedAt,
+              softwareVersion: runtimeNodes.softwareVersion,
+              workspaceId: runtimeNodes.workspaceId,
+            })
+            .from(runtimeNodes)
+            .orderBy(asc(runtimeNodes.id))
+            .limit(rowsBound)
+            .offset(offset),
+        toRecord: (row) => ({
+          family: 'runtimeNodes',
+          kind: row.kind,
+          pairingState: row.pairingState,
+          platform: row.platform,
+          revoked: row.revokedAt !== null,
+          runtimeNodeId: row.id,
+          softwareVersion: row.softwareVersion,
+          workspaceId: row.workspaceId,
+        }),
+      })
+    case 'taskSubmissions':
+      return captureFamilySection(transaction, bound, {
+        fetchPage: (offset, rowsBound) =>
+          transaction
+            .select({
+              agentId: taskSubmissions.agentId,
+              ciphertextPurgedAt: taskSubmissions.ciphertextPurgedAt,
+              id: taskSubmissions.id,
+              locationKind: taskSubmissions.locationKind,
+              profileId: taskSubmissions.profileId,
+              profileRevision: taskSubmissions.profileRevision,
+              profileVersion: taskSubmissions.profileVersion,
+              runtimeNodeId: taskSubmissions.runtimeNodeId,
+              state: taskSubmissions.state,
+              taskId: taskSubmissions.taskId,
+              taskVersion: taskSubmissions.taskVersion,
+              workspaceId: taskSubmissions.workspaceId,
+            })
+            .from(taskSubmissions)
+            .orderBy(asc(taskSubmissions.id))
+            .limit(rowsBound)
+            .offset(offset),
+        toRecord: (row) => ({
+          agentId: row.agentId,
+          ciphertextPurged: row.ciphertextPurgedAt !== null,
+          family: 'taskSubmissions',
+          locationKind: row.locationKind,
+          profileId: row.profileId,
+          profileRevision: row.profileRevision,
+          profileVersion: row.profileVersion,
+          runtimeNodeId: row.runtimeNodeId,
+          state: row.state,
+          submissionId: row.id,
+          taskId: row.taskId,
+          taskVersion: row.taskVersion,
+          workspaceId: row.workspaceId,
+        }),
+      })
   }
 }
 
@@ -1203,7 +1415,8 @@ async function captureDocument(
   identity: MigrationSnapshotIdentity,
   domains: readonly MigrationSnapshotDomainCaptureStatus[],
   bound: number,
-  capturedAt: Date
+  capturedAt: Date,
+  nativeSessionSection?: MigrationSnapshotSection
 ): Promise<MigrationSnapshotDocument> {
   const captured = new Set(
     domains.filter((domain) => domain.status === 'captured').map((domain) => domain.domain)
@@ -1213,6 +1426,10 @@ async function captureDocument(
   const sections: Partial<Record<MigrationSnapshotFamily, MigrationSnapshotSection>> = {}
   for (const family of migrationSnapshotFamilies) {
     if (!captured.has(family)) continue
+    if (family === 'nativeSessions') {
+      if (nativeSessionSection) sections[family] = nativeSessionSection
+      continue
+    }
     sections[family] = await captureFamilySectionByName(transaction, family, bound, capturedAt)
   }
   return Object.freeze({
@@ -1230,17 +1447,38 @@ async function captureDocument(
  */
 export async function captureMigrationSnapshotInTransaction(
   transaction: AgentHqTransaction,
-  input: MigrationSnapshotCaptureInput
+  input: MigrationSnapshotCaptureInput,
+  composition?: Readonly<{ nativeSessionSection?: MigrationSnapshotSection }>
 ): Promise<MigrationSnapshotCaptureResult> {
   const identity = requireCaptureIdentity(input.identity)
-  const domains = resolveMigrationSnapshotCaptureDomains(input.requestedDomains)
   const bound = requireCaptureBound(input.limitPerFamily)
+  let domains = resolveMigrationSnapshotCaptureDomains(input.requestedDomains, {
+    nativeSessionInventory: input.nativeSessionInventory,
+  })
+  const nativeSessionSection = composition?.nativeSessionSection
+  if (
+    nativeSessionSection === undefined &&
+    domains.some((domain) => domain.domain === 'nativeSessions' && domain.status === 'captured')
+  ) {
+    // A declared source with no composed read stays an explicit unknown; the
+    // caller must compose the runtime read outside its own transaction.
+    domains = domains.map((domain) =>
+      domain.domain === 'nativeSessions'
+        ? {
+            domain: 'nativeSessions',
+            status: 'unknown' as const,
+            unknownReason: 'inventory_error' as const,
+          }
+        : domain
+    )
+  }
   const document = await captureDocument(
     transaction,
     identity,
     domains,
     bound,
-    input.identity.capturedAt
+    input.identity.capturedAt,
+    nativeSessionSection
   )
   return Object.freeze({ document, domains })
 }
@@ -1261,11 +1499,42 @@ export async function captureMigrationSnapshot(
   input: MigrationSnapshotCaptureInput
 ): Promise<MigrationSnapshotCaptureResult> {
   const identity = requireCaptureIdentity(input.identity)
-  const domains = resolveMigrationSnapshotCaptureDomains(input.requestedDomains)
   const bound = requireCaptureBound(input.limitPerFamily)
+  let domains = resolveMigrationSnapshotCaptureDomains(input.requestedDomains, {
+    nativeSessionInventory: input.nativeSessionInventory,
+  })
+  // The runtime read is composed before the database transaction opens: the
+  // read-only snapshot transaction must not be held open across bridge I/O.
+  let nativeSessionSection: MigrationSnapshotSection | undefined
+  if (
+    domains.some((domain) => domain.domain === 'nativeSessions' && domain.status === 'captured')
+  ) {
+    try {
+      nativeSessionSection = await captureNativeSessionSection(input.nativeSessionInventory!, bound)
+    } catch {
+      // Denied, unavailable or invalid runtime inventory stays an explicit
+      // unknown with no section — never an empty capture.
+      domains = domains.map((domain) =>
+        domain.domain === 'nativeSessions'
+          ? {
+              domain: 'nativeSessions',
+              status: 'unknown' as const,
+              unknownReason: 'inventory_error' as const,
+            }
+          : domain
+      )
+    }
+  }
   const document = await database.transaction(
     (transaction) =>
-      captureDocument(transaction, identity, domains, bound, input.identity.capturedAt),
+      captureDocument(
+        transaction,
+        identity,
+        domains,
+        bound,
+        input.identity.capturedAt,
+        nativeSessionSection
+      ),
     MIGRATION_SNAPSHOT_CAPTURE_TRANSACTION_CONFIG
   )
   return Object.freeze({ document, domains })

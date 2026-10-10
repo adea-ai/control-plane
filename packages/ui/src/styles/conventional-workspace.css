@@ -597,6 +597,11 @@
   margin-top: 0.3rem;
   color: var(--cw-muted);
 }
+/* A surface-level status sits on the same measure as the header it follows. */
+.conventional-surface-status {
+  max-width: 78rem;
+  margin: 0 auto 1.5rem;
+}
 .conventional-agent-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));

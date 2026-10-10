@@ -1,0 +1,16 @@
+{
+  "schema": "adea.evidence.execution.v1",
+  "repository": "adea",
+  "sourceSha": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "executedAtHead": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "file": "apps/web/test/desktop-workspace-deletion.test.ts",
+  "command": "bun test apps/web/test/desktop-workspace-deletion.test.ts --reporter=junit --reporter-outfile=junit.xml",
+  "exitCode": 0,
+  "status": "passed",
+  "summary": {
+    "pass": 6,
+    "fail": 0
+  },
+  "ids": ["A35"],
+  "junit": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"bun test\" tests=\"6\" assertions=\"20\" failures=\"0\" skipped=\"0\" time=\"0.012853\">\n  <testsuite name=\"apps/web/test/desktop-workspace-deletion.test.ts\" file=\"apps/web/test/desktop-workspace-deletion.test.ts\" tests=\"6\" assertions=\"20\" failures=\"0\" skipped=\"0\" time=\"0.003042\">\n    <testcase name=\"retains the cloud root until local cleanup is verified, then finalizes and does not wrap twice\" classname=\"\" time=\"0.000399\" file=\"apps/web/test/desktop-workspace-deletion.test.ts\" line=\"9\" assertions=\"3\" />\n    <testcase name=\"refused preflight cannot prepare or delete cloud data\" classname=\"\" time=\"0.000206\" file=\"apps/web/test/desktop-workspace-deletion.test.ts\" line=\"36\" assertions=\"2\" />\n    <testcase name=\"partial device failure keeps the cloud root; retry completes from the durable receipt\" classname=\"\" time=\"0.000128\" file=\"apps/web/test/desktop-workspace-deletion.test.ts\" line=\"59\" assertions=\"6\" />\n    <testcase name=\"unsupported external cleanup preserves the root and asks the shell to cancel only after cloud proof\" classname=\"\" time=\"0.000073\" file=\"apps/web/test/desktop-workspace-deletion.test.ts\" line=\"96\" assertions=\"2\" />\n    <testcase name=\"server completion refusal cancels fresh preflight without local purge or cloud finalization\" classname=\"\" time=\"0.000082\" file=\"apps/web/test/desktop-workspace-deletion.test.ts\" line=\"121\" assertions=\"3\" />\n    <testcase name=\"restart retry preserves unverified pending receipts and never asks cloud to finalize\" classname=\"\" time=\"0.000171\" file=\"apps/web/test/desktop-workspace-deletion.test.ts\" line=\"158\" assertions=\"4\" />\n  </testsuite>\n</testsuites>\n"
+}

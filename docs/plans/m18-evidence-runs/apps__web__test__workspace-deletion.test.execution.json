@@ -1,0 +1,16 @@
+{
+  "schema": "adea.evidence.execution.v1",
+  "repository": "adea",
+  "sourceSha": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "executedAtHead": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "file": "apps/web/test/workspace-deletion.test.ts",
+  "command": "bun test apps/web/test/workspace-deletion.test.ts --reporter=junit --reporter-outfile=junit.xml",
+  "exitCode": 0,
+  "status": "passed",
+  "summary": {
+    "pass": 3,
+    "fail": 0
+  },
+  "ids": ["A27", "A35"],
+  "junit": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"bun test\" tests=\"3\" assertions=\"15\" failures=\"0\" skipped=\"0\" time=\"0.013545\">\n  <testsuite name=\"apps/web/test/workspace-deletion.test.ts\" file=\"apps/web/test/workspace-deletion.test.ts\" tests=\"3\" assertions=\"15\" failures=\"0\" skipped=\"0\" time=\"0.002078\">\n    <testcase name=\"permanent deletion requires the current name and a positive version\" classname=\"\" time=\"0.000136\" file=\"apps/web/test/workspace-deletion.test.ts\" line=\"13\" assertions=\"9\" />\n    <testcase name=\"rejects cross-site deletion but allows the trusted desktop and same origin\" classname=\"\" time=\"0.00044\" file=\"apps/web/test/workspace-deletion.test.ts\" line=\"31\" assertions=\"4\" />\n    <testcase name=\"only the explicit preparation phase is recognized; unknown phase claims cannot finalize cleanup\" classname=\"\" time=\"0.000015\" file=\"apps/web/test/workspace-deletion.test.ts\" line=\"40\" assertions=\"2\" />\n  </testsuite>\n</testsuites>\n"
+}

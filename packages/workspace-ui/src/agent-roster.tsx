@@ -1,6 +1,6 @@
 import type { AgentSummary, ProjectSummary } from '@adea-ai/types'
 import { Bot, MessageCircle, Pencil, Plus, ShieldAlert, X } from 'lucide-solid'
-import { createMemo, createSignal, For, Show } from 'solid-js'
+import { createMemo, createSignal, For, Show, type JSX } from 'solid-js'
 
 import { AgentStatus } from './agent-status'
 import { agentProfileActionNotice } from './agent-profile-notice'
@@ -34,6 +34,8 @@ export type AgentCustomizationInput = Readonly<{
 }>
 
 type Props = Readonly<{
+  /** Lead setup status, placed inside the directory's padding under the header. */
+  leadStatus?: JSX.Element
   agents: readonly AgentSummary[]
   busy: boolean
   onCreate: (
@@ -80,6 +82,9 @@ export function AgentRoster(props: Props) {
           <Bot aria-hidden="true" />
         </Button>
       </header>
+      <Show when={props.leadStatus}>
+        {(status) => <div class="conventional-surface-status">{status()}</div>}
+      </Show>
       <Show when={creating()}>
         <AgentCreateForm
           busy={props.busy}
@@ -158,7 +163,7 @@ export function AgentRoster(props: Props) {
                       <PropertyValue>{entry.item().profile.state}</PropertyValue>
                     </PropertyList>
                     <Show when={entry.item().profile.state !== 'available'}>
-                      <p>{agentProfileStateNotice(entry.item().profile.state)}</p>
+                      <p>{agentProfileStateNotice(entry.item().profile)}</p>
                     </Show>
                   </div>
                 </CardContent>

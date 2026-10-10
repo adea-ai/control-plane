@@ -171,3 +171,110 @@ test('view navigation is history-traversable with the scene intact', async ({ pa
   await expect(page).toHaveURL(/view=virtual/)
   await expect(page).toHaveURL(/scene=work/)
 })
+
+// A scoped link (channel or task) names a destination inside the target workspace. The
+// shell applies it only against that workspace's own lists and consumes the link after
+// applying it, so the `workspace` param must survive until then. These cases hold the
+// target's lists back: the switch settles first, and the destination is applied only
+// once the target's data lands.
+const homeChannelId = 'selection-home-channel'
+const homeTaskId = 'selection-home-task'
+
+async function holdTargetLists(page: Page, path: 'channels' | 'tasks', body: unknown) {
+  let release!: () => void
+  const released = new Promise<void>((resolve) => (release = resolve))
+  await page.route(`**/api/v1/workspaces/${homeWorkspace.id}/${path}`, async (route) => {
+    await released
+    await route.fulfill({ contentType: 'application/json', json: body })
+  })
+  return () => release()
+}
+
+test('a scoped channel link keeps its workspace guard until the target channels land', async ({
+  page,
+}) => {
+  await mockTwoWorkspaceBootstrap(page)
+  const releaseChannels = await holdTargetLists(page, 'channels', [
+    {
+      createdAt: timestamp,
+      id: homeChannelId,
+      isPrimaryProjectChannel: false,
+      kind: 'group',
+      lifecycleState: 'active',
+      participants: [],
+      sortOrder: 0,
+      title: 'Home channel',
+      updatedAt: timestamp,
+      version: 1,
+      visibility: 'workspace',
+      workspaceId: homeWorkspace.id,
+    },
+  ])
+  const channelLoaded = page.waitForRequest((request) =>
+    request.url().includes(`/channels/${homeChannelId}/messages`)
+  )
+
+  await openWorkspaceNavigation(page, `/?workspace=${homeWorkspace.id}&channel=${homeChannelId}`)
+  // The switch settles while the target channels are held: the guard is still in the URL.
+  await expect(activeWorkspaceHeading(page, 'Home')).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`workspace=${homeWorkspace.id}`))
+  await expect(page).toHaveURL(new RegExp(`channel=${homeChannelId}`))
+
+  releaseChannels()
+  // The destination is applied against the target, then the whole link is consumed.
+  await channelLoaded
+  await expect(page).not.toHaveURL(/channel=|workspace=/)
+})
+
+test('a scoped task link keeps its workspace guard until the target tasks land', async ({
+  page,
+}) => {
+  await mockTwoWorkspaceBootstrap(page)
+  // The shell applies a destination only once the target's channel list is non-empty.
+  await page.route(`**/api/v1/workspaces/${homeWorkspace.id}/channels`, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      json: [
+        {
+          createdAt: timestamp,
+          id: 'selection-home-general',
+          isPrimaryProjectChannel: false,
+          kind: 'group',
+          lifecycleState: 'active',
+          participants: [],
+          sortOrder: 0,
+          title: 'General',
+          updatedAt: timestamp,
+          version: 1,
+          visibility: 'workspace',
+          workspaceId: homeWorkspace.id,
+        },
+      ],
+    })
+  )
+  const releaseTasks = await holdTargetLists(page, 'tasks', [
+    {
+      artifactRefs: [],
+      conversation: {},
+      createdAt: timestamp,
+      creator: { kind: 'user', userId: 'selection-e2e-user' },
+      dependencyIds: [],
+      id: homeTaskId,
+      kind: 'chore',
+      lifecycleState: 'created',
+      priority: 'normal',
+      title: 'Home task',
+      updatedAt: timestamp,
+      version: 1,
+      workspaceId: homeWorkspace.id,
+    },
+  ])
+
+  await openWorkspaceNavigation(page, `/?workspace=${homeWorkspace.id}&task=${homeTaskId}`)
+  await expect(activeWorkspaceHeading(page, 'Home')).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`workspace=${homeWorkspace.id}`))
+  await expect(page).toHaveURL(new RegExp(`task=${homeTaskId}`))
+
+  releaseTasks()
+  await expect(page).not.toHaveURL(/task=|workspace=/, { timeout: 30_000 })
+})

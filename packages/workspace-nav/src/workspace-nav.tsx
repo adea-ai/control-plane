@@ -43,6 +43,7 @@ import {
 } from 'solid-js'
 
 import { createViewAdapter, type NavMenuItemId, type NavView, type ViewAdapter } from './adapters'
+import type { WorkspaceCreationContext } from './workspace-creation-context'
 import {
   emptyWorkspaceHint,
   navGroupModes,
@@ -66,6 +67,9 @@ const WorkspaceDraftRow = lazy(() =>
   loadWorkspaceDraftRow().then((module) => ({ default: module.WorkspaceDraftRow }))
 )
 
+export { describeWorkspaceCreationContext } from './workspace-creation-context'
+export type { WorkspaceCreationContext } from './workspace-creation-context'
+
 export type WorkspaceNavProps = {
   tree: NavTree
   /** The view whose words and menus the tree uses; ignored when `adapter` is set. */
@@ -88,6 +92,13 @@ export type WorkspaceNavProps = {
   onCreatingWorkspaceChange?: (creating: boolean) => void
   /** Inline failure for the controlled draft; the typed name is kept. */
   workspaceDraftError?: string
+  /**
+   * Owner/placement facts for the inline draft's context line when the
+   * host knows them; unknown labels render honestly. No host feeds this
+   * today — the nav carries no account identity — so the row states the
+   * generic owner sentence until one does.
+   */
+  creationContext?: WorkspaceCreationContext
   /** The controlled draft's create request is in flight. */
   workspaceDraftPending?: boolean
   onCreateProject?: (workspaceId: string) => void
@@ -267,6 +278,7 @@ export function WorkspaceNav(props: WorkspaceNavProps) {
               controlled={props.creatingWorkspace !== undefined}
               error={props.workspaceDraftError}
               pending={props.workspaceDraftPending}
+              creationContext={props.creationContext}
               onCreate={(name) => {
                 // A host-owned draft stays open until the host closes it, so a
                 // failure can be shown beside the name the user typed.

@@ -1,6 +1,6 @@
 import type { AgentSummary, ProjectSummary, TaskSummary } from '@adea-ai/types'
 import { Play, Plus, Search, X } from 'lucide-solid'
-import { createMemo, createSignal, Show } from 'solid-js'
+import { createMemo, createSignal, onCleanup, Show } from 'solid-js'
 import { Dynamic } from 'solid-js/web'
 
 import { ActionButton } from '@adea-ai/ui/components/composites/action-button'
@@ -20,7 +20,7 @@ import { keyedRows, type KeyedRow } from './keyed-rows'
 import type { PrivateContentResolver } from './platform'
 import { TaskObjective } from './private-task-objective'
 import { ProjectIcon } from './project-icon'
-import { TaskPanel } from './task-detail'
+import { cancelTaskBackgroundLease, TaskPanel } from './task-detail'
 import {
   kindOption,
   priorityOption,
@@ -67,6 +67,12 @@ type Props = Readonly<{
 }>
 
 export function TaskBoard(props: Props) {
+  // The board releases any post-close background repair when it unmounts.
+  // Solid disposes parent cleanups before child ones, so a lease created by a
+  // panel closing during this same unmount is created after this cancel runs;
+  // that lease is bounded by the frame's own lifetime (it ends when the frame
+  // is replaced), which is what keeps it from outliving the surface.
+  onCleanup(() => cancelTaskBackgroundLease())
   const [creating, setCreating] = createSignal(false)
   const [query, setQuery] = createSignal('')
   const [boardError, setBoardError] = createSignal<string | null>(null)
@@ -300,10 +306,7 @@ export function TaskBoard(props: Props) {
           mode="create"
           onClose={() => setCreating(false)}
           onError={setBoardError}
-          onCreate={async (input) => {
-            await props.onCreate(input)
-            setCreating(false)
-          }}
+          onCreate={props.onCreate}
         />
       </Show>
       {/* Keyed on the task's id, not the task object. The panel's draft is

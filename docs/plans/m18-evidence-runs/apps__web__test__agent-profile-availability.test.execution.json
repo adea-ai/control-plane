@@ -1,0 +1,16 @@
+{
+  "schema": "adea.evidence.execution.v1",
+  "repository": "adea",
+  "sourceSha": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "executedAtHead": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "file": "apps/web/test/agent-profile-availability.test.ts",
+  "command": "bun test apps/web/test/agent-profile-availability.test.ts --reporter=junit --reporter-outfile=junit.xml",
+  "exitCode": 0,
+  "status": "passed",
+  "summary": {
+    "pass": 8,
+    "fail": 0
+  },
+  "ids": ["A34", "REQ-005", "REQ-119"],
+  "junit": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"bun test\" tests=\"8\" assertions=\"42\" failures=\"0\" skipped=\"0\" time=\"5.112959\">\n  <testsuite name=\"apps/web/test/agent-profile-availability.test.ts\" file=\"apps/web/test/agent-profile-availability.test.ts\" tests=\"8\" assertions=\"42\" failures=\"0\" skipped=\"0\" time=\"5.101214\">\n    <testcase name=\"structural lead remains setup-blocked without catalog or model calls\" classname=\"\" time=\"0.000449\" file=\"apps/web/test/agent-profile-availability.test.ts\" line=\"25\" assertions=\"1\" />\n    <testsuite name=\"authoritative exact-pin Agent availability\" file=\"apps/web/test/agent-profile-availability.test.ts\" line=\"142\" tests=\"7\" assertions=\"41\" failures=\"0\" skipped=\"0\" time=\"5.04\">\n      <testcase name=\"checks a shared pin once, preserves every identity/revision and drops private metadata\" classname=\"authoritative exact-pin Agent availability\" time=\"0.005522\" file=\"apps/web/test/agent-profile-availability.test.ts\" line=\"143\" assertions=\"6\" />\n      <testcase name=\"projects exact lifecycle/approval/compatibility refusals without changing the pin\" classname=\"authoritative exact-pin Agent availability\" time=\"0.004132\" file=\"apps/web/test/agent-profile-availability.test.ts\" line=\"156\" assertions=\"22\" />\n      <testcase name=\"a legacy/malformed reference is blocked without calling the catalog\" classname=\"authoritative exact-pin Agent availability\" time=\"0.00009\" file=\"apps/web/test/agent-profile-availability.test.ts\" line=\"180\" assertions=\"2\" />\n      <testcase name=\"limits distinct pins and concurrency; unchecked pins never inherit available\" classname=\"authoritative exact-pin Agent availability\" time=\"0.007684\" file=\"apps/web/test/agent-profile-availability.test.ts\" line=\"190\" assertions=\"4\" />\n      <testcase name=\"request cancellation bounds scope work and ignores a late result\" classname=\"authoritative exact-pin Agent availability\" time=\"0.012309\" file=\"apps/web/test/agent-profile-availability.test.ts\" line=\"212\" assertions=\"3\" />\n      <testcase name=\"empty inventory never calls scope or catalog\" classname=\"authoritative exact-pin Agent availability\" time=\"0.000139\" file=\"apps/web/test/agent-profile-availability.test.ts\" line=\"243\" assertions=\"2\" />\n      <testcase name=\"the overall deadline returns unavailable even while scope resolution is stalled\" classname=\"authoritative exact-pin Agent availability\" time=\"5.012471\" file=\"apps/web/test/agent-profile-availability.test.ts\" line=\"249\" assertions=\"2\" />\n    </testsuite>\n  </testsuite>\n</testsuites>\n"
+}

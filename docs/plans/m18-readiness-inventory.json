@@ -1,0 +1,622 @@
+{
+  "schemaVersion": 1,
+  "issue": 1224,
+  "parent": 1183,
+  "milestone": "M18 — Pi Durable Migration & Cross-Product Acceptance",
+  "sources": {
+    "prd": {
+      "title": "01 - Agent HQ PRD",
+      "location": "https://docs.google.com/document/d/1gv4WEkH2Fko1Vj2WXrkLye_CqrpTEUmMvNZsg1R5K0Q/edit",
+      "readVia": "Google Docs read_doc, 2026-10-10 (Pi Durable scope, sections 1, 4-9, 14, 21)"
+    },
+    "tdd": {
+      "title": "Agent HQ TDD",
+      "location": "https://docs.google.com/document/d/1QwKfYCXagfmNNQ3NkaHrigGZWuPzEokwCigoz4q0KFY/edit",
+      "readVia": "Google Docs read_doc, 2026-10-10 (sections 16-18, 20 and Measurable success criteria)"
+    },
+    "adr0010": {
+      "title": "Performance Budgets and Go/No-Go Gates",
+      "location": "docs/decisions/0010-performance-budgets-and-gates.md"
+    },
+    "issue1224": {
+      "title": "#1224 M18.03.3 — Complete release readiness and rollout evidence",
+      "location": "https://github.com/adea-ai/adea/issues/1224"
+    }
+  },
+  "candidatePullRequests": [
+    1209, 1227, 1228, 1229, 1230, 1232, 1236, 1237, 1238, 1241, 1243, 1244, 1245
+  ],
+  "excludedPullRequests": {
+    "1240": "reserved for an external owner (fix/task-board-accessibility-1239); not read or measured here",
+    "1242": "dependency update (renovate), not an M18 readiness leaf",
+    "1246": "merged into main (34a3eaad); measured as part of main, not as a candidate"
+  },
+  "probes": {
+    "metric-identifiers": {
+      "description": "Identifiers for the REQ 153 instrumentation list (admission latency, human-message wait, queue depth, stuck tasks, reconciliation age, duplicate suppression, model usage, storage growth), searched in product source only. Identifier presence does not prove the metric is emitted.",
+      "pattern": "admission_latency|admissionLatency|human_message_wait|first_response|queue_depth|child_concurrency|stuck_task|unacknowledged|approval_age|reconciliation_age|duplicate_suppress|storage_growth",
+      "paths": [
+        "apps/web/src",
+        "apps/desktop/shell/src",
+        "packages/api-client/src",
+        "packages/data/src",
+        "packages/db/src",
+        "packages/dev-view/src",
+        "packages/types/src",
+        "packages/workspace-ui/src"
+      ],
+      "ignoreCase": false
+    },
+    "budget-reservation": {
+      "description": "Transactional budget reservation or settlement identifiers (REQ 150-151).",
+      "pattern": "reserveBudget|reserve_budget|budgetReservation|budget_reservation|settledCost|settled_cost|reconciledCost|reconciled_cost",
+      "paths": [
+        "apps/web/src",
+        "apps/desktop/shell/src",
+        "packages/api-client/src",
+        "packages/data/src",
+        "packages/db/src",
+        "packages/dev-view/src",
+        "packages/types/src",
+        "packages/workspace-ui/src"
+      ],
+      "ignoreCase": false
+    },
+    "operator-controls": {
+      "description": "Operator intervention identifiers: stop admissions, fence attempts, revoke grants, reconcile (REQ 154).",
+      "pattern": "fenceAttempt|fence_attempt|stopAdmissions|stop_admissions|revokeGrant|revoke_grant|reconcileJob|reconcile_job",
+      "paths": [
+        "apps/web/src",
+        "apps/desktop/shell/src",
+        "packages/api-client/src",
+        "packages/data/src",
+        "packages/db/src",
+        "packages/dev-view/src",
+        "packages/types/src",
+        "packages/workspace-ui/src"
+      ],
+      "ignoreCase": false
+    },
+    "feature-flags": {
+      "description": "Feature-flag or profile and backend admission routing identifiers in product source (TDD section 18 rollout sequence).",
+      "pattern": "featureFlag|feature_flag|admissionRouting|admission_routing|backendAdmission",
+      "paths": [
+        "apps/web/src",
+        "apps/desktop/shell/src",
+        "packages/api-client/src",
+        "packages/data/src",
+        "packages/db/src",
+        "packages/dev-view/src",
+        "packages/types/src",
+        "packages/workspace-ui/src"
+      ],
+      "ignoreCase": false
+    },
+    "rollback-code": {
+      "description": "Rollback routing or cohort identifiers in product source (REQ 175-176). Generic transaction rollback is excluded by the pattern.",
+      "pattern": "rollbackRoute|rollback_route|rollbackAdmission|rollback_admission|rollbackCohort|rollback_cohort|rollbackFlag|routeToPrevious",
+      "paths": [
+        "apps/web/src",
+        "apps/desktop/shell/src",
+        "packages/api-client/src",
+        "packages/data/src",
+        "packages/db/src",
+        "packages/dev-view/src",
+        "packages/types/src",
+        "packages/workspace-ui/src"
+      ],
+      "ignoreCase": false
+    },
+    "retention-gate": {
+      "description": "Trusted cleanup gate identifiers in product source (REQ 045, A35).",
+      "pattern": "cleanupGate|cleanup_gate|trustedCleanup|trusted_cleanup",
+      "paths": [
+        "apps/web/src",
+        "apps/desktop/shell/src",
+        "packages/api-client/src",
+        "packages/data/src",
+        "packages/db/src",
+        "packages/dev-view/src",
+        "packages/types/src",
+        "packages/workspace-ui/src"
+      ],
+      "ignoreCase": false
+    },
+    "export-residency": {
+      "description": "Portable authorized export identifiers (A27, A36).",
+      "pattern": "portableExport|portable_export|exportWorkspace|export_workspace",
+      "paths": [
+        "apps/web/src",
+        "apps/desktop/shell/src",
+        "packages/api-client/src",
+        "packages/data/src",
+        "packages/db/src",
+        "packages/dev-view/src",
+        "packages/types/src",
+        "packages/workspace-ui/src"
+      ],
+      "ignoreCase": false
+    },
+    "redaction-tests": {
+      "description": "Test files that exercise redaction of secrets or private payloads (REQ 152).",
+      "pattern": "redact",
+      "paths": ["apps", "packages", "scripts"],
+      "ignoreCase": true,
+      "testFilesOnly": true
+    },
+    "reduced-motion-tests": {
+      "description": "Test files that emulate reduced motion (REQ 136).",
+      "pattern": "reducedMotion|reduced-motion|prefers-reduced-motion",
+      "paths": ["apps/web/e2e", "apps/web/test", "packages"],
+      "ignoreCase": false
+    },
+    "model-call-guard-tests": {
+      "description": "Test files that assert no provider or model call happens on a path (REQ 005, A10, A12).",
+      "pattern": "Unexpected provider call|Unexpected model|model calls|without catalog or model",
+      "paths": ["apps/web/test", "apps/web/e2e", "packages"],
+      "ignoreCase": false,
+      "testFilesOnly": true
+    },
+    "langgraph-references": {
+      "description": "LangGraph references that must leave the target architecture (TDD section 17). A count of references, not a percentage claim.",
+      "pattern": "langgraph|@langchain",
+      "paths": ["apps", "packages", "scripts", "package.json"],
+      "ignoreCase": true
+    },
+    "rollout-runbooks": {
+      "description": "Rollout or rollback runbook documents under docs/ (issue #1224 acceptance 2).",
+      "pathPattern": "rollback|rollout|runbook",
+      "paths": ["docs"]
+    }
+  },
+  "criteria": [
+    {
+      "id": "ACC-01",
+      "category": "accessibility",
+      "source": "TDD section 20, A25; PRD REQ 136; TDD Measurable success criteria (Accessibility)",
+      "criterion": "Changed flows meet the recorded accessibility acceptance scope for keyboard, screen reader, zoom and reduced motion; release-blocking accessibility defects are zero.",
+      "threshold": "zero serious or critical axe findings on the scanned surfaces (strict audit contract)",
+      "method": {
+        "kind": "axe",
+        "command": "bun scripts/audit-a11y-dev-view.mjs --base-url http://127.0.0.1:3123 --artifact artifacts/a11y/axe-dev-view.json --strict",
+        "scope": "chat workspace, Dev View, narrow Dev View, Settings tabs (existing M12 audit surfaces)",
+        "limit": "Pi Durable changed flows (Agents directory, Conversations inbox, group creation, job approval and cancel) are not on main and are not scanned here"
+      }
+    },
+    {
+      "id": "ACC-02",
+      "category": "accessibility",
+      "source": "PRD REQ 135; TDD section 20, A25",
+      "criterion": "Keyboard users can reach primary surfaces, operate controls, return focus after dialogs, and receive accessible status announcements.",
+      "threshold": "existing keyboard and focus certification passes",
+      "method": {
+        "kind": "e2e",
+        "command": "PLAYWRIGHT_HEADLESS=1 bunx playwright test --config=playwright.config.ts apps/web/e2e/dev-view-a11y-certification.spec.ts",
+        "precondition": "scripts/e2e-setup.mjs (docker compose Postgres on 127.0.0.1:55432)"
+      }
+    },
+    {
+      "id": "ACC-03",
+      "category": "accessibility",
+      "source": "PRD REQ 136 (text zoom, reduced motion, contrast, keyboard traversal, screen-reader order)",
+      "criterion": "Text zoom, reduced motion, contrast, keyboard traversal and screen-reader order are tested on changed flows.",
+      "threshold": "tests exist for each named check on main",
+      "method": {
+        "kind": "presence",
+        "probes": ["reduced-motion-tests"]
+      }
+    },
+    {
+      "id": "ACC-04",
+      "category": "accessibility",
+      "source": "PRD REQ 136",
+      "criterion": "Color is never the sole status indicator.",
+      "threshold": "none stated",
+      "method": {
+        "kind": "not-measured",
+        "reason": "No automated rule checks color-only status. Needs rendered-state review of each status surface."
+      }
+    },
+    {
+      "id": "ACC-05",
+      "category": "accessibility",
+      "source": "PRD REQ 136 (contrast); appearance presets and canonical editor roles",
+      "criterion": "Interaction and text contrast meet WCAG thresholds for appearance presets and canonical theme editor roles.",
+      "threshold": "primary vs background >= 3:1; onPrimary vs strong >= 4.5:1; editor roles >= 4.5:1",
+      "method": {
+        "kind": "unit",
+        "files": [
+          "packages/ui/tests/appearance.test.ts",
+          "packages/ui/tests/canonical-theme-adapter.test.ts"
+        ],
+        "command": "bun test packages/ui/tests/appearance.test.ts packages/ui/tests/canonical-theme-adapter.test.ts",
+        "limit": "covers presets and editor roles only; does not scan every rendered text pair"
+      }
+    },
+    {
+      "id": "ACC-06",
+      "category": "accessibility",
+      "source": "M12 #541 manual certification (docs/evidence/m12-541-manual-a11y-certification-2026-10-06.md, residuals)",
+      "criterion": "Human-operated screen-reader pass (VoiceOver, NVDA or Orca) on required flows.",
+      "threshold": "owner or tester sign-off",
+      "method": {
+        "kind": "unavailable",
+        "reason": "Requires a person operating a screen reader on the target build. An agent cannot produce this evidence."
+      }
+    },
+    {
+      "id": "ACC-07",
+      "category": "accessibility",
+      "source": "PRD REQ 135-136; TDD section 20, A25",
+      "criterion": "Pi Durable changed flows (Agents directory, Conversations inbox, group creation, job approval and cancel) pass keyboard and AT checks.",
+      "threshold": "zero release-blocking defects on those flows",
+      "method": {
+        "kind": "not-measured",
+        "reason": "Those flows are not on main; they exist only on open candidate branches owned by their child issues. Not scanned in this PR."
+      }
+    },
+    {
+      "id": "PERF-01",
+      "category": "performance",
+      "source": "scripts/client-bundle-budgets.mjs CLIENT_BUNDLE_BUDGETS.total (code is newer than ADR-0010's table)",
+      "criterion": "All emitted client JavaScript stays within the aggregate raw, gzip and file-count ceilings.",
+      "threshold": "raw <= 3,112,000 B; gzip <= 926 KiB; files <= 162",
+      "method": {
+        "kind": "bundle",
+        "command": "bun run --cwd apps/web build && bun run --cwd apps/web start:check-bundle",
+        "keys": ["total"]
+      }
+    },
+    {
+      "id": "PERF-02",
+      "category": "performance",
+      "source": "CLIENT_BUNDLE_BUDGETS.startup; ADR-0010 gate 1 (startup graph)",
+      "criterion": "The workspace startup static graph stays within its ceiling.",
+      "threshold": "raw <= 748 KiB; gzip <= 245 KiB",
+      "method": {
+        "kind": "bundle",
+        "command": "bun run --cwd apps/web build && bun run --cwd apps/web start:check-bundle",
+        "keys": ["startup"]
+      }
+    },
+    {
+      "id": "PERF-03",
+      "category": "performance",
+      "source": "CLIENT_BUNDLE_BUDGETS.views (incremental per route); ADR-0010 gate 1",
+      "criterion": "Each lazy route stays within its own incremental ceiling, so growth is attributed to its owner.",
+      "threshold": "per-route raw and gzip ceilings in CLIENT_BUNDLE_BUDGETS.views",
+      "method": {
+        "kind": "bundle",
+        "command": "bun run --cwd apps/web build && bun run --cwd apps/web start:check-bundle",
+        "keys": [
+          "views.virtual",
+          "views.chat",
+          "views.appLibrary",
+          "views.devShell",
+          "views.devUtilityPanes",
+          "views.devTerminal",
+          "views.devEditor"
+        ]
+      }
+    },
+    {
+      "id": "PERF-04",
+      "category": "performance",
+      "source": "ADR-0010 web budgets table: local TTFB p50, LCP, CLS, interaction proxy (scripts/measure-web-performance.mjs)",
+      "criterion": "Local TTFB p50 <= 300 ms; LCP <= 4,000 ms; CLS <= 0.15; worst scripted interaction (INP proxy) <= 500 ms.",
+      "threshold": "as stated",
+      "method": {
+        "kind": "not-measured",
+        "command": "bun run test:performance:web",
+        "reason": "Needs a built Cloudflare Worker and the pinned Chromium run. Not executed in this PR; the last recorded baseline is 2026-09-23 (docs/evidence/m15-301-perf-baseline-2026-09-23.md)."
+      }
+    },
+    {
+      "id": "PERF-05",
+      "category": "performance",
+      "source": "ADR-0010 gate 2 (a full rebuild is the cost unit)",
+      "criterion": "Build cost is measured as a full rebuild, never a cache hit. ADR-0010 cites a 7 s rebuild.",
+      "threshold": "recorded, not a gate",
+      "method": {
+        "kind": "recorded-run",
+        "command": "bun run --cwd apps/web build",
+        "evidence": "docs/evidence/m18-1224-readiness-2026-10-10.md"
+      }
+    },
+    {
+      "id": "PERF-06",
+      "category": "performance",
+      "source": "TDD Measurable success criteria (Responsiveness); PRD section 21 'Performance targets and capacity' (approval pending)",
+      "criterion": "Durable message or job admission p95 <= 1 s; scheduling an eligible new human turn p95 <= 2 s under the agreed representative load, excluding provider generation time.",
+      "threshold": "proposed; FOUNDATIONS approval of load and thresholds pending",
+      "method": {
+        "kind": "unavailable",
+        "reason": "Thresholds are proposed and unapproved, the representative load is undefined, and no admission benchmark exists on main. Measuring a lab build would not establish the target."
+      }
+    },
+    {
+      "id": "PERF-07",
+      "category": "performance",
+      "source": "ADR-0010 'Enforced by' column (Dev Runtime budgets in docs/specs/dev-runtime.md)",
+      "criterion": "Dev Runtime budgets: chat and dev graph purity, terminal input-to-paint, 1,000-row virtualization.",
+      "threshold": "as stated in the dev-runtime spec",
+      "method": {
+        "kind": "not-measured",
+        "command": "bun run test:performance:dev-runtime",
+        "reason": "Not executed in this PR; requires the dev-runtime harness."
+      }
+    },
+    {
+      "id": "PERF-08",
+      "category": "performance",
+      "source": "ADR-0010 desktop row (artifact size and idle RSS are the comparable numbers)",
+      "criterion": "Desktop shell artifact size and idle RSS are recorded for the candidate.",
+      "threshold": "recorded, no enforced limit in ADR-0010",
+      "method": {
+        "kind": "unavailable",
+        "reason": "Requires a packaged desktop build (Electrobun, bundled CEF) on the release host. Not produced in this PR."
+      }
+    },
+    {
+      "id": "COST-01",
+      "category": "cost",
+      "source": "PRD REQ 005; TDD A10, A12; TDD Measurable success criteria (Direct-path independence)",
+      "criterion": "No model run is required to create a workspace, browse status, reconnect, open a transcript, change a view or start a direct session. Verified by traces: zero lead-model invocations on those paths.",
+      "threshold": "zero lead-model invocations on the listed paths",
+      "method": {
+        "kind": "unit",
+        "files": ["apps/web/test/agent-profile-availability.test.ts"],
+        "command": "bun test apps/web/test/agent-profile-availability.test.ts",
+        "limit": "covers the structural-lead setup path only. Workspace creation, browse, reconnect, transcript open and direct-session start have no zero-call test on main (manifest gap for REQ-005)."
+      }
+    },
+    {
+      "id": "COST-02",
+      "category": "cost",
+      "source": "TDD A34, A39, A40; PRD REQ 051, 059",
+      "criterion": "Setup is blocked before inference when a model, connection, funding or quota is not eligible; no silent provider or account fallback.",
+      "threshold": "zero inference before eligibility",
+      "method": {
+        "kind": "not-measured",
+        "reason": "Eligibility and picker behavior are in open candidate branches (for example PR #1238 and #1229), not on main."
+      }
+    },
+    {
+      "id": "COST-03",
+      "category": "cost",
+      "source": "TDD section 16, REQ 150 (transactional reservation; per-request enforcement before any hard-limit claim)",
+      "criterion": "Admission reserves budget transactionally and binds it to job, attempt and workspace.",
+      "threshold": "present and tested",
+      "method": {
+        "kind": "presence",
+        "probes": ["budget-reservation"]
+      }
+    },
+    {
+      "id": "COST-04",
+      "category": "cost",
+      "source": "TDD section 16, REQ 151 (estimate, reserved, reported, reconciled and settled cost kept distinct)",
+      "criterion": "Cost states are differentiated and unknown cost is shown as unknown.",
+      "threshold": "present and tested",
+      "method": {
+        "kind": "presence",
+        "probes": ["budget-reservation"]
+      }
+    },
+    {
+      "id": "COST-05",
+      "category": "cost",
+      "source": "TDD section 16, REQ 155; PRD section 21 'Performance targets and capacity'",
+      "criterion": "Active-object time, storage writes and size, and optional service consumption are measured under representative workloads.",
+      "threshold": "measured, not assumed",
+      "method": {
+        "kind": "unavailable",
+        "reason": "No representative workload exists and no metering data is accessible from this repository or session."
+      }
+    },
+    {
+      "id": "COST-06",
+      "category": "cost",
+      "source": "TDD section 17 (provider cost, Agent HQ credits and native subscription usage kept separate); TDD section 16 REQ 151",
+      "criterion": "Provider invoices and infrastructure bills are reconciled to product usage for the rollout window.",
+      "threshold": "reconciled to invoices",
+      "method": {
+        "kind": "unavailable",
+        "reason": "Requires billing exports from Cloudflare, Neon, Railway and model providers for the rollout window. None are accessible to this repository or session. No cost is estimated or inferred here."
+      }
+    },
+    {
+      "id": "COST-07",
+      "category": "cost",
+      "source": "TDD Measurable success criteria (Simplification); TDD section 17 REQ 155 business case",
+      "criterion": "Removed packages, service roots and deployment steps are recorded against the pre-migration inventory. No percentage cost claim without measurement.",
+      "threshold": "recorded counts; no percentage claim",
+      "method": {
+        "kind": "presence",
+        "probes": ["langgraph-references"]
+      }
+    },
+    {
+      "id": "COST-08",
+      "category": "cost",
+      "source": "TDD section 20 Measurable success criteria; TDD section 16 REQ 150",
+      "criterion": "Hard spend-limit claims are made only after per-request enforcement covers model retries, compaction, summaries, cache refresh and ambiguous requests.",
+      "threshold": "no hard-limit claim without enforcement",
+      "method": {
+        "kind": "not-claimed",
+        "reason": "Per-request enforcement is absent on main (COST-03 probe), so no hard spend limit is claimed."
+      }
+    },
+    {
+      "id": "OPS-01",
+      "category": "operations",
+      "source": "TDD section 16, REQ 152 (correlated IDs; logs exclude secrets and private payloads)",
+      "criterion": "Correlated IDs are recorded and default logs exclude secrets and private payloads.",
+      "threshold": "redaction behavior is tested",
+      "method": {
+        "kind": "presence",
+        "probes": ["redaction-tests"]
+      }
+    },
+    {
+      "id": "OPS-02",
+      "category": "operations",
+      "source": "TDD section 16, REQ 153; TDD section 18 Metrics",
+      "criterion": "Admission latency, human-message wait, first response, queue depth, child concurrency, retries, stuck tasks, unacknowledged events, approval age, reconciliation age, duplicate suppression, model usage and storage growth are instrumented.",
+      "threshold": "each metric emitted and tested",
+      "method": {
+        "kind": "presence",
+        "probes": ["metric-identifiers"]
+      }
+    },
+    {
+      "id": "OPS-03",
+      "category": "operations",
+      "source": "TDD section 16, REQ 154 (stop admissions, inspect stuck jobs, revoke grants, fence attempts, reconcile)",
+      "criterion": "Operator controls exist, are attributed and audited.",
+      "threshold": "each control present and tested",
+      "method": {
+        "kind": "presence",
+        "probes": ["operator-controls"]
+      }
+    },
+    {
+      "id": "OPS-04",
+      "category": "operations",
+      "source": "TDD section 18 Rollout sequence (feature flags and profile/backend admission routing)",
+      "criterion": "Rollout uses feature flags and profile or backend admission routing for each cohort stage.",
+      "threshold": "mechanism present and tested",
+      "method": {
+        "kind": "presence",
+        "probes": ["feature-flags"]
+      }
+    },
+    {
+      "id": "OPS-05",
+      "category": "operations",
+      "source": "TDD section 18 Rollback, REQ 175 (route new admissions back; retain compatible readers)",
+      "criterion": "Before a cohort is enabled, routing new admissions back to the previous supported path is tested, with new runtime state exportable.",
+      "threshold": "rollback routing tested for each cohort",
+      "method": {
+        "kind": "presence",
+        "probes": ["rollback-code"]
+      }
+    },
+    {
+      "id": "OPS-06",
+      "category": "operations",
+      "source": "TDD section 18, REQ 176; TDD section 20, A31 (rollback with active new and old work, uncertain effects)",
+      "criterion": "One fenced owner per attempt; uncertain effects are reconciled before resume or restart.",
+      "threshold": "A31 test passes",
+      "method": {
+        "kind": "not-measured",
+        "reason": "Fencing and rollback rehearsal are on open candidate branches (issues #1220 and #1222), not on main."
+      }
+    },
+    {
+      "id": "OPS-07",
+      "category": "operations",
+      "source": "TDD section 18, REQ 170 and 174 (before and after comparison by IDs, counts, digests and audiences)",
+      "criterion": "A migration report compares before and after IDs, counts, digests and audiences, and includes negative tests.",
+      "threshold": "comparator unit tests pass",
+      "method": {
+        "kind": "unit",
+        "files": ["packages/db/tests/unit/migration-snapshot-comparator.test.ts"],
+        "command": "bun test packages/db/tests/unit/migration-snapshot-comparator.test.ts",
+        "limit": "Runs the comparator unit tests only. Per-store migration reports are not exercised by this measurement."
+      }
+    },
+    {
+      "id": "OPS-08",
+      "category": "operations",
+      "source": "PRD REQ 045; TDD section 20, A35 (permanent deletion gated on trusted cleanup)",
+      "criterion": "Permanent deletion fails closed until trusted cleanup verifies every required store.",
+      "threshold": "A35 test passes on both human and lead paths",
+      "method": {
+        "kind": "presence",
+        "probes": ["retention-gate"]
+      }
+    },
+    {
+      "id": "OPS-09",
+      "category": "operations",
+      "source": "TDD section 20, A27, A36 (portable authorized export; residency)",
+      "criterion": "Authorized portable export and residency checks pass without credentials or private-audience leakage.",
+      "threshold": "A27 and A36 tests pass",
+      "method": {
+        "kind": "presence",
+        "probes": ["export-residency"]
+      }
+    },
+    {
+      "id": "OPS-10",
+      "category": "operations",
+      "source": "Issue #1224 acceptance 2 (canonical Docs and operator guidance, rollout, rollback)",
+      "criterion": "Canonical Docs and operator guidance for rollout and rollback exist and their links resolve.",
+      "threshold": "runbook documents present; docs boundary check passes",
+      "method": {
+        "kind": "presence",
+        "probes": ["rollout-runbooks"],
+        "also": {
+          "command": "node scripts/check-docs.mjs",
+          "kind": "unit"
+        }
+      }
+    },
+    {
+      "id": "OPS-11",
+      "category": "operations",
+      "source": "Issue #1224 acceptance 1 (required owner daily-driver evidence); TDD section 20 (owner daily-driver journeys)",
+      "criterion": "Required owner daily-driver journeys are completed and recorded.",
+      "threshold": "owner sign-off",
+      "method": {
+        "kind": "unavailable",
+        "reason": "Requires the owner to use the candidate. No agent can produce this evidence."
+      }
+    },
+    {
+      "id": "OPS-12",
+      "category": "operations",
+      "source": "TDD section 20 (exact compatible packaged and deployed candidates); PRD section 21 release evidence",
+      "criterion": "Packaged and deployed candidate evidence for the exact head.",
+      "threshold": "exact candidate identity recorded",
+      "method": {
+        "kind": "unavailable",
+        "reason": "No packaging, deployment or release is authorized for this leaf. Root decides whether to request one."
+      }
+    },
+    {
+      "id": "OPS-13",
+      "category": "operations",
+      "source": "PRD section 21 'Retention and recovery objectives' (decision pending); TDD Measurable success criteria (Recovery SLOs)",
+      "criterion": "Per-data-class retention periods and per-profile RPO and RTO are chosen; detection and recovery SLOs are set from profile tests before default rollout.",
+      "threshold": "decided and recorded",
+      "method": {
+        "kind": "unavailable",
+        "reason": "The objectives are not decided. No production data exists to set them."
+      }
+    },
+    {
+      "id": "OPS-14",
+      "category": "operations",
+      "source": "TDD section 18 Rollout sequence (cohort composition and observation window)",
+      "criterion": "Canary and cohort observation windows are chosen and observed on production traffic.",
+      "threshold": "observation recorded per stage",
+      "method": {
+        "kind": "unavailable",
+        "reason": "No production traffic or cohort is available to this repository or session. The cohort is chosen during implementation per the TDD."
+      }
+    },
+    {
+      "id": "OPS-15",
+      "category": "operations",
+      "source": "Issue #1224 scope ('disclose unresolved gates'; 'no full-readiness certification')",
+      "criterion": "Full release readiness is certified.",
+      "threshold": "none; this leaf does not certify readiness",
+      "method": {
+        "kind": "not-claimed",
+        "reason": "Unresolved gates above (ACC-06, ACC-07, COST-05, COST-06, OPS-06, OPS-11 to OPS-14) prevent any readiness claim."
+      }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "schema": "adea.evidence.execution.v1",
+  "repository": "adea",
+  "sourceSha": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "executedAtHead": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "file": "apps/web/test/account-directory-pages.test.ts",
+  "command": "bun test --conditions=browser apps/web/test/account-directory-pages.test.ts --reporter=junit --reporter-outfile=junit.xml",
+  "exitCode": 0,
+  "status": "passed",
+  "summary": {
+    "pass": 8,
+    "fail": 0
+  },
+  "ids": ["REQ-130", "A04"],
+  "junit": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"bun test\" tests=\"8\" assertions=\"44\" failures=\"0\" skipped=\"0\" time=\"0.179178\">\n  <testsuite name=\"apps/web/test/account-directory-pages.test.ts\" file=\"apps/web/test/account-directory-pages.test.ts\" tests=\"8\" assertions=\"44\" failures=\"0\" skipped=\"0\" time=\"0.126239\">\n    <testcase name=\"the first page is bounded and load-more requests exactly the returned cursor\" classname=\"\" time=\"0.014109\" file=\"apps/web/test/account-directory-pages.test.ts\" line=\"133\" assertions=\"10\" />\n    <testcase name=\"changing the walk input restarts from the first page under the new key\" classname=\"\" time=\"0.01936\" file=\"apps/web/test/account-directory-pages.test.ts\" line=\"166\" assertions=\"11\" />\n    <testcase name=\"a doubled load-more request cannot append the same cursor page twice\" classname=\"\" time=\"0.007005\" file=\"apps/web/test/account-directory-pages.test.ts\" line=\"218\" assertions=\"2\" />\n    <testcase name=\"rows stay deduplicated when the server repeats an id across pages\" classname=\"\" time=\"0.006698\" file=\"apps/web/test/account-directory-pages.test.ts\" line=\"239\" assertions=\"1\" />\n    <testcase name=\"a failed cursor page surfaces its error, stops load-more, and refresh recovers\" classname=\"\" time=\"0.011197\" file=\"apps/web/test/account-directory-pages.test.ts\" line=\"259\" assertions=\"4\" />\n    <testcase name=\"an empty directory first page settles exhausted with no rows and no load-more request\" classname=\"\" time=\"0.004028\" file=\"apps/web/test/account-directory-pages.test.ts\" line=\"297\" assertions=\"7\" />\n    <testcase name=\"an empty inbox first page settles exhausted with no rows and no load-more request\" classname=\"\" time=\"0.004237\" file=\"apps/web/test/account-directory-pages.test.ts\" line=\"319\" assertions=\"5\" />\n    <testcase name=\"loaded pages are independent of the selected workspace and its cache release\" classname=\"\" time=\"0.00973\" file=\"apps/web/test/account-directory-pages.test.ts\" line=\"338\" assertions=\"4\" />\n  </testsuite>\n</testsuites>\n"
+}

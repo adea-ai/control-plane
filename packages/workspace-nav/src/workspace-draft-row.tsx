@@ -4,17 +4,26 @@ import { Input } from '@adea-ai/ui/components/ui/input'
 import { Text } from '@adea-ai/ui/components/ui/typography'
 import { Show, createEffect, createSignal, createUniqueId, on, onMount } from 'solid-js'
 
+import {
+  describeWorkspaceCreationContext,
+  type WorkspaceCreationContext,
+} from './workspace-creation-context'
+
 /**
  * Inline workspace creation: Enter creates, Escape cancels, and leaving the
  * field creates when a name was typed and cancels when it is empty. The mark
- * previews the initials the new workspace will get. A host-controlled draft
- * stays mounted after Enter: a failure shows beside the kept name, Enter
- * retries, and leaving the field no longer resubmits until the name changes.
+ * previews the workspace box tile (a new workspace gets the approved box
+ * logo, not initials). The context line states owner, initial audience, and
+ * placement from existing contracts only. A host-controlled draft stays
+ * mounted after Enter: a failure shows beside the kept name, Enter retries,
+ * and leaving the field no longer resubmits until the name changes.
  */
 export function WorkspaceDraftRow(props: {
   controlled: boolean
   error?: string
   pending?: boolean
+  /** Owner/placement facts when the host knows them; unknown labels render honestly. */
+  creationContext?: WorkspaceCreationContext
   onCreate: (name: string) => void
   onCancel: () => void
 }) {
@@ -22,6 +31,7 @@ export function WorkspaceDraftRow(props: {
   const uniqueId = createUniqueId()
   const errorId = `workspace-nav-draft-error-${uniqueId}`
   const hintId = `workspace-nav-draft-hint-${uniqueId}`
+  const contextId = `workspace-nav-draft-context-${uniqueId}`
   let input: HTMLInputElement | undefined
   let settled = false
   let submittedName: string | undefined
@@ -67,7 +77,9 @@ export function WorkspaceDraftRow(props: {
           }}
           aria-label="New workspace name"
           aria-invalid={props.error ? true : undefined}
-          aria-describedby={props.error ? `${errorId} ${hintId}` : hintId}
+          aria-describedby={
+            props.error ? `${errorId} ${hintId} ${contextId}` : `${hintId} ${contextId}`
+          }
           aria-busy={props.pending ? true : undefined}
           placeholder="New workspace name"
           value={name()}
@@ -91,6 +103,9 @@ export function WorkspaceDraftRow(props: {
       </div>
       <Text variant="caption" tone="muted" id={hintId} class="ms-7">
         Enter to create · Esc to cancel
+      </Text>
+      <Text variant="caption" tone="muted" id={contextId} class="ms-7">
+        {describeWorkspaceCreationContext(props.creationContext)}
       </Text>
       <Show when={props.error}>
         {(message) => (

@@ -27,6 +27,8 @@ const DEV_PROJECT_ICON_KEY = 'engineering'
 export type DevWorkspaceNavHostOptions = Readonly<{
   client: AgentHqApiClient
   activeWorkspace: Accessor<WorkspaceSummary | undefined>
+  /** The signed-in owner's facts for the creation draft; undefined for guests and unknown identities. */
+  creationContext?: Accessor<NonNullable<DevWorkspaceNavHost['creationContext']> | undefined>
   /**
    * Whether a Dev sidebar is rendered. The host lives at the navigation level
    * for every view, so its cloud queries subscribe only while a sidebar reads
@@ -105,6 +107,9 @@ export function createDevWorkspaceNavHost(
     },
     get activeWorkspaceName() {
       return options.activeWorkspace()?.name
+    },
+    get creationContext() {
+      return options.creationContext?.()
     },
     get workspaces() {
       return workspaces()

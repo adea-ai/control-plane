@@ -115,6 +115,13 @@ function capture(connection: DatabaseConnection, snapshotId: string, limitPerFam
   return captureMigrationSnapshot(connection.db, {
     ...(limitPerFamily === undefined ? {} : { limitPerFamily }),
     identity: captureIdentity(snapshotId),
+    // The runtime-owned session inventory is composed from an injected source.
+    // This fixture declares an authoritative zero so every contract family is
+    // present; the domains lane proves real mapping and failure handling.
+    nativeSessionInventory: {
+      authorizedScopes: [{ accountId: 'acct-1', runtimeNodeId: 'node-1', workspaceId: 'wsp-1' }],
+      listRuntimeSessions: async () => ({ items: [] }),
+    },
   })
 }
 
@@ -309,8 +316,9 @@ describe.skipIf(!provisioningUrl)('migration snapshot capture', () => {
       // the exact same bytes.
       expect(JSON.stringify(first.document)).toBe(JSON.stringify(second.document))
 
-      // Completeness: every supported family is a present, untruncated
-      // section — a proven inventory, not an absence.
+      // Completeness: every contract family is a present, untruncated section
+      // — a proven inventory, not an absence. Native sessions come from the
+      // injected runtime inventory source declared above.
       for (const family of migrationSnapshotFamilies) {
         const section = first.document.sections[family]
         expect(section).toBeDefined()
@@ -729,11 +737,11 @@ describe.skipIf(!provisioningUrl)('migration snapshot capture', () => {
   test('an unsupported requested domain stays unknown with a typed reason', async () => {
     const result = await captureMigrationSnapshot(connection.db, {
       identity: captureIdentity('snapshot-partial'),
-      requestedDomains: ['workspaces', 'runtimeNodes'],
+      requestedDomains: ['workspaces', 'nativeSessions'],
     })
 
     expect(result.domains).toEqual([
-      { domain: 'runtimeNodes', status: 'unknown', unknownReason: 'unrecognized_domain' },
+      { domain: 'nativeSessions', status: 'unknown', unknownReason: 'unsupported_family' },
       { domain: 'workspaces', status: 'captured', unknownReason: null },
     ])
     // Only the supported, requested family has a section; the unsupported one

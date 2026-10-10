@@ -66,6 +66,11 @@ It preserves the staged 0041 schema and all legacy identities, history and audie
 Apply it before the new lead/topic API callers; a designation or canonical message
 is not model readiness or execution acceptance.
 
+The opt-in [installed SDK / production-factory consumer proof](../../docs/guides/pi-production-factory-consumer-proof.md)
+uses a reviewed CP checkout and actual public candidate packages with an owned restricted
+PG database. Its preflight regressions are in the normal DB unit inventory; the connected
+fixture requires explicit verified inputs and never substitutes a mocked SDK or live config.
+
 Migration 0045 adds the Agent `revision` that presentation and placement edits check before
 writing; see the [lead identity evidence](../../docs/evidence/m11-workspace-lead-identity.md).
 It is additive with a default of zero. Apply it before callers that send `expectedRevision`:

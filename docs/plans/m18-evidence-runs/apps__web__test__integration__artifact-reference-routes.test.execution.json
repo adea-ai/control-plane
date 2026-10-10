@@ -1,0 +1,16 @@
+{
+  "schema": "adea.evidence.execution.v1",
+  "repository": "adea",
+  "sourceSha": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "executedAtHead": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "file": "apps/web/test/integration/artifact-reference-routes.test.ts",
+  "command": "bun test --conditions=react-server --timeout 120000 apps/web/test/integration/artifact-reference-routes.test.ts --reporter=junit --reporter-outfile=junit.xml",
+  "exitCode": 0,
+  "status": "passed",
+  "summary": {
+    "pass": 8,
+    "fail": 0
+  },
+  "ids": ["A09"],
+  "junit": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"bun test\" tests=\"8\" assertions=\"29\" failures=\"0\" skipped=\"0\" time=\"0.750869\">\n  <testsuite name=\"apps/web/test/integration/artifact-reference-routes.test.ts\" file=\"apps/web/test/integration/artifact-reference-routes.test.ts\" tests=\"8\" assertions=\"29\" failures=\"0\" skipped=\"0\" time=\"0.737553\">\n    <testsuite name=\"artifact-reference routes\" file=\"apps/web/test/integration/artifact-reference-routes.test.ts\" line=\"72\" tests=\"8\" assertions=\"29\" failures=\"0\" skipped=\"0\" time=\"0.57\">\n      <testcase name=\"an authorized route flow publishes and retrieves without leaking a locator\" classname=\"artifact-reference routes\" time=\"0.092203\" file=\"apps/web/test/integration/artifact-reference-routes.test.ts\" line=\"202\" assertions=\"8\" />\n      <testcase name=\"revocation is re-read at the route for both publication and retrieval\" classname=\"artifact-reference routes\" time=\"0.054419\" file=\"apps/web/test/integration/artifact-reference-routes.test.ts\" line=\"238\" assertions=\"4\" />\n      <testcase name=\"a workspace outside the registered audience is denied\" classname=\"artifact-reference routes\" time=\"0.036943\" file=\"apps/web/test/integration/artifact-reference-routes.test.ts\" line=\"274\" assertions=\"2\" />\n      <testcase name=\"a locator or URL possession alone never grants access\" classname=\"artifact-reference routes\" time=\"0.041521\" file=\"apps/web/test/integration/artifact-reference-routes.test.ts\" line=\"300\" assertions=\"4\" />\n      <testcase name=\"another workspace target cannot be published through this source route\" classname=\"artifact-reference routes\" time=\"0.041329\" file=\"apps/web/test/integration/artifact-reference-routes.test.ts\" line=\"347\" assertions=\"2\" />\n      <testcase name=\"source membership without project visibility cannot publish the artifact\" classname=\"artifact-reference routes\" time=\"0.110782\" file=\"apps/web/test/integration/artifact-reference-routes.test.ts\" line=\"373\" assertions=\"5\" />\n      <testcase name=\"unknown or duplicated query fields are rejected by the identity contract\" classname=\"artifact-reference routes\" time=\"0.059283\" file=\"apps/web/test/integration/artifact-reference-routes.test.ts\" line=\"431\" assertions=\"2\" />\n      <testcase name=\"workspace authorization still gates the route before the store is read\" classname=\"artifact-reference routes\" time=\"0.137669\" file=\"apps/web/test/integration/artifact-reference-routes.test.ts\" line=\"482\" assertions=\"2\" />\n    </testsuite>\n  </testsuite>\n</testsuites>\n"
+}

@@ -1,8 +1,8 @@
 import { expect, test, type Page } from '@playwright/test'
 import { resolve } from 'node:path'
 
-async function openHarness(page: Page) {
-  const path = '/__workspace-nav'
+async function openHarness(page: Page, query = '') {
+  const path = `/__workspace-nav${query}`
   await page.route('**' + path, (route) =>
     route.fulfill({
       contentType: 'text/html',
@@ -59,6 +59,20 @@ test('inline workspace create commits on Enter and cancels on Escape', async ({ 
   await page.getByRole('textbox', { name: 'New workspace name' }).blur()
   await expect(page.getByRole('textbox', { name: 'New workspace name' })).toHaveCount(0)
   await expect(events(page).getByText(/^create-workspace:/)).toHaveCount(2)
+})
+
+test('the draft context names a known owner and stays honest unknown', async ({ page }) => {
+  // Known identity reaches the row through the host call-site chain.
+  await openHarness(page, '?owner=Acme')
+  await nav(page).getByRole('button', { name: 'New workspace', exact: true }).click()
+  await expect(nav(page).getByText('Owned by Acme · Only you · Location unknown')).toBeVisible()
+
+  // Without a fed label the same row falls back without inventing identity.
+  await openHarness(page)
+  await nav(page).getByRole('button', { name: 'New workspace', exact: true }).click()
+  await expect(
+    nav(page).getByText("You'll be the owner · Only you · Location unknown")
+  ).toBeVisible()
 })
 
 test('group-by switches between project, status and recent renderings', async ({ page }) => {

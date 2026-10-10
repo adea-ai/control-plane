@@ -1,0 +1,16 @@
+{
+  "schema": "adea.evidence.execution.v1",
+  "repository": "adea",
+  "sourceSha": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "executedAtHead": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "file": "packages/data/tests/unit/mutations-audience.test.ts",
+  "command": "bun test packages/data/tests/unit/mutations-audience.test.ts --reporter=junit --reporter-outfile=junit.xml",
+  "exitCode": 0,
+  "status": "passed",
+  "summary": {
+    "pass": 2,
+    "fail": 0
+  },
+  "ids": ["A23"],
+  "junit": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"bun test\" tests=\"2\" assertions=\"3\" failures=\"0\" skipped=\"0\" time=\"0.036242\">\n  <testsuite name=\"packages/data/tests/unit/mutations-audience.test.ts\" file=\"packages/data/tests/unit/mutations-audience.test.ts\" tests=\"2\" assertions=\"3\" failures=\"0\" skipped=\"0\" time=\"0.024138\">\n    <testcase name=\"an accepted message response arriving after audience revocation cannot restore its body\" classname=\"\" time=\"0.001327\" file=\"packages/data/tests/unit/mutations-audience.test.ts\" line=\"26\" assertions=\"1\" />\n    <testcase name=\"late channel and read-state mutations cannot recreate revoked cache entries\" classname=\"\" time=\"0.000328\" file=\"packages/data/tests/unit/mutations-audience.test.ts\" line=\"49\" assertions=\"2\" />\n  </testsuite>\n</testsuites>\n"
+}

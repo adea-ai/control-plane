@@ -1,0 +1,16 @@
+{
+  "schema": "adea.evidence.execution.v1",
+  "repository": "adea",
+  "sourceSha": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "executedAtHead": "e8b75daa5cc996a4c0d84489a3885535c3045a2f",
+  "file": "apps/desktop/tests/workspace-local-data.test.ts",
+  "command": "bun test apps/desktop/tests/workspace-local-data.test.ts --reporter=junit --reporter-outfile=junit.xml",
+  "exitCode": 0,
+  "status": "passed",
+  "summary": {
+    "pass": 6,
+    "fail": 0
+  },
+  "ids": ["A27", "A38", "REQ-059"],
+  "junit": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"bun test\" tests=\"6\" assertions=\"20\" failures=\"0\" skipped=\"0\" time=\"0.036889\">\n  <testsuite name=\"apps/desktop/tests/workspace-local-data.test.ts\" file=\"apps/desktop/tests/workspace-local-data.test.ts\" tests=\"6\" assertions=\"20\" failures=\"0\" skipped=\"0\" time=\"0.027984\">\n    <testsuite name=\"workspace device data ownership\" file=\"apps/desktop/tests/workspace-local-data.test.ts\" line=\"56\" tests=\"3\" assertions=\"12\" failures=\"0\" skipped=\"0\" time=\"0.01\">\n      <testcase name=\"purges only the workspace and its registry records, leaves sibling and reusable data, and retries\" classname=\"workspace device data ownership\" time=\"0.008831\" file=\"apps/desktop/tests/workspace-local-data.test.ts\" line=\"57\" assertions=\"7\" />\n      <testcase name=\"rejects a ciphertext symlink before touching memory or an outside file\" classname=\"workspace device data ownership\" time=\"0.001671\" file=\"apps/desktop/tests/workspace-local-data.test.ts\" line=\"95\" assertions=\"3\" />\n      <testcase name=\"rejects another authority scope for the same workspace instead of claiming full cleanup\" classname=\"workspace device data ownership\" time=\"0.001446\" file=\"apps/desktop/tests/workspace-local-data.test.ts\" line=\"107\" assertions=\"2\" />\n    </testsuite>\n    <testcase name=\"detaches reverse account-profile links but preserves reusable credentials and sibling bindings\" classname=\"\" time=\"0.003042\" file=\"apps/desktop/tests/workspace-local-data.test.ts\" line=\"124\" assertions=\"2\" />\n    <testcase name=\"retains a failed managed-clone recovery record and does not purge unrelated data\" classname=\"\" time=\"0.001714\" file=\"apps/desktop/tests/workspace-local-data.test.ts\" line=\"153\" assertions=\"3\" />\n    <testcase name=\"refuses an unindexed ciphertext and a symlinked parent before physical cleanup\" classname=\"\" time=\"0.001196\" file=\"apps/desktop/tests/workspace-local-data.test.ts\" line=\"164\" assertions=\"3\" />\n  </testsuite>\n</testsuites>\n"
+}
