@@ -316,6 +316,14 @@ test('actual production composition uses the canonical Pi tool authority and sha
     expect(parent.latestAttemptId).toBeTruthy()
     expect(parent.state).toBe('running')
     const parentAttemptId = parent.latestAttemptId
+    // Target-bound observation through the REAL production composition: the
+    // installed adapter's runtime session is exactly what dispatch reports as
+    // the observed target (server-owned session + plan task), proving the
+    // composition invokes the adapter for observation rather than relying on
+    // an isolated policy mock.
+    expect(dispatch.observedTarget).toBeDefined()
+    expect(dispatch.observedTarget.sessionId).toBe(dispatch.runtimeSessionId)
+    expect(typeof dispatch.observedTarget.taskId).toBe('string')
     host.state.parentExecutionId = dispatch.executionId
     const childExecutionId = id('exe', childSuffix)
     const childAttemptId = id('att', childSuffix)
