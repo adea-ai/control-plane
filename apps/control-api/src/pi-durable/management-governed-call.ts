@@ -1,6 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite'
 
-import { managementCanonicalRequestDigest } from './management-decision-issuer.js'
+import {
+  managementCanonicalRequest,
+  managementCanonicalRequestDigest,
+} from './management-decision-issuer.js'
 
 /**
  * Durable governed management caller (#932 / CP1043).
@@ -172,6 +175,10 @@ function deepFreeze<T>(value: T): T {
  */
 function parseManagementCallRequest(value: unknown): PiDurableManagementCallRequest | null {
   if (!isPlainRecord(value)) return null
+  // Bound depth and encoded bytes BEFORE any clone or freeze: the canonical
+  // traversal is depth- and byte-budgeted and returns null for cycles,
+  // oversize input or non-JSON values, so nothing large is materialized twice.
+  if (managementCanonicalRequest(value) === null) return null
   const { approval, idempotencyKey, input, operation, workspaceId } = value
   if (typeof operation !== 'string' || operation.length === 0 || operation.length > 128) return null
   if (typeof workspaceId !== 'string' || workspaceId.length === 0 || workspaceId.length > 128)
@@ -184,7 +191,13 @@ function parseManagementCallRequest(value: unknown): PiDurableManagementCallRequ
     return null
   if (!isPlainRecord(input)) return null
   if (approval !== undefined && !isPlainRecord(approval)) return null
-  return deepFreeze(structuredClone(value))
+  // Retain one immutable snapshot; a clone failure (for example an exotic
+  // value that survived traversal) still fails closed.
+  try {
+    return deepFreeze(structuredClone(value))
+  } catch {
+    return null
+  }
 }
 
 function identityKey(request: PiDurableManagementCallRequest): string {

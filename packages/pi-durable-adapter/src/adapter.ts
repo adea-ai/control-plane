@@ -130,7 +130,6 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       'session.history',
       'model.select',
       ...(this.#options.governedDelegateChild ? ['execution.child'] : []),
-      ...(this.#options.governedManagementCall ? ['management.call'] : []),
       ...(this.#options.scopeAuthority ? ['execution.scope.workspace.v1'] : []),
     ].map((name) => ({ name, support: 'supported' as const }))
     const parsed = RuntimeAdapterInspectionSchema.parse({
