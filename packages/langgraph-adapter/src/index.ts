@@ -1048,3 +1048,16 @@ export * from './execution-event-publisher.js'
 export * from './managed-runtime.js'
 export * from './postgres-checkpointer.js'
 export * from './sqlite-checkpointer.js'
+export {
+  buildLegacyOperatorStatus,
+  claimLegacyDrainFence,
+  createLegacyAdmissionGuard,
+  createLegacyResumeFence,
+  evaluateLegacyAdmissionGate,
+  planLegacyDrain,
+  readLegacyRemainder,
+  releaseLegacyDrainFence,
+  type AdmissionEvidence,
+  type LegacyDrainFenceClaim,
+  type LegacyOperatorStatus,
+} from './legacy-retirement.js'
