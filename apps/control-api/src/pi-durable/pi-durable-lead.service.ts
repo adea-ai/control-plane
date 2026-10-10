@@ -112,7 +112,10 @@ export interface PiDurableLeadFencedResult {
         readonly allowedPrincipalIds: readonly string[]
         readonly executionPlanId: string
         readonly executionPlanDigest: string
-        /** Receipt-bound admission facts, from the retained admission binding. Absent for legacy records. */
+        /**
+         * Receipt-bound admission facts, from the retained admission binding.
+         * Absent for legacy records.
+         */
         readonly admissionDigest?: string
         readonly startDigest?: string
         readonly deadlineAt?: string

@@ -1033,7 +1033,7 @@ test('ordinary admission retains a binding that survives reopen: a v2 fence obse
     expect(effects(calls)).toEqual(observed)
     expect(await setup.counts()).toEqual(counts)
 
-    // A principal outside the retained audience is refused before any read of the fence.
+    // A principal outside the fence's audience is refused by the fenced audience check.
     await expect(
       reopened.resolveIntent({
         workspaceId: setup.plan.correlation.workspaceId,
