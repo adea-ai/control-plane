@@ -211,12 +211,56 @@ test('unrecognized statuses and unverifiable flags become unknown, never observe
   expect(status.sections.checkpoints).toEqual({
     status: 'unknown',
     reasons: ['STATUS_UNRECOGNIZED'],
+    requiredCounts: 'not-read',
   })
-  expect(status.sections.executions).toEqual({ status: 'unknown', reasons: ['FLAGS_UNVERIFIED'] })
+  expect(status.sections.executions).toEqual({
+    status: 'unknown',
+    reasons: ['FLAGS_UNVERIFIED'],
+    requiredCounts: 'not-read',
+  })
   expect(status.remainder.threads).toBeNull()
   expect(status.remainder.executions).toBeNull()
   expect(status.exact).toBe(false)
   expect(status.zero.established).toBe(false)
+})
+
+test('an observed section with missing or invalid required counts is non-exact, keeps those counts unknown, and never establishes zero', () => {
+  const missing = buildLegacyInventoryStatus(
+    manifest({
+      scope: 'deployed-dsn',
+      executions: section(OBSERVED, { total: 2, byState: { running: 1, completed: 1 } }),
+    })
+  )
+  expect(missing.sections.executions).toEqual({
+    status: INCOMPLETE,
+    reasons: ['EXECUTIONS_REQUIRED_COUNTS_MISSING'],
+    requiredCounts: 'missing',
+  })
+  expect(missing.exact).toBe(false)
+  expect(missing.exactReasons).toEqual(['EXECUTIONS_REQUIRED_COUNTS_MISSING'])
+  expect(missing.remainder.inFlightExecutions).toBeNull()
+  expect(missing.blockers).toEqual({})
+  expect(missing.zero.established).toBe(false)
+  expect(missing.zero.reasons).toEqual(
+    expect.arrayContaining(['EXECUTIONS_REQUIRED_COUNTS_MISSING', 'READ_INCOMPLETE'])
+  )
+
+  const invalid = buildLegacyInventoryStatus(
+    manifest({
+      scope: 'deployed-dsn',
+      checkpoints: section(OBSERVED, { ...cleanCheckpoints().counts, writeRows: '4' }),
+    })
+  )
+  expect(invalid.sections.checkpoints).toEqual({
+    status: INCOMPLETE,
+    reasons: ['CHECKPOINTS_REQUIRED_COUNTS_INVALID'],
+    requiredCounts: 'invalid',
+  })
+  expect(invalid.exact).toBe(false)
+  expect(invalid.exactReasons).toEqual(['CHECKPOINTS_REQUIRED_COUNTS_INVALID'])
+  expect(invalid.remainder.writes).toBeNull()
+  expect(invalid.remainder.checkpoints).toBe(0)
+  expect(invalid.zero.established).toBe(false)
 })
 
 test('stale sources stay stale, keep their counts, and are never exact', () => {

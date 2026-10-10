@@ -4,7 +4,7 @@
 // legacy remainder vocabulary. It reuses the collector's manifest contract and the reviewed script's
 // encodings, and it contacts no store. A legacy count is reported only where the collector measures the
 // same thing, and every other legacy field is listed under `unmapped`. A count is null whenever its source
-// was not read. Unknown, inaccessible, incomplete, stale and un-attested states are preserved.
+// was not read or its count is missing or invalid. Unknown, inaccessible, incomplete, stale and un-attested states are preserved.
 //
 // This adapter never establishes zero. It takes no attestation, so no manifest here can support zero. The
 // collector's own un-attested claim is reported as `collectorClaim` and is never presented as zero.
@@ -71,6 +71,21 @@ const RETAINED_DEPENDENCIES = Object.freeze([
   'LangGraph checkpoint saver composition',
 ])
 
+// Required counts are the fields the remainder reports for a section. A readable section that lacks one of
+// them, or holds one that is not a non-negative integer, is incomplete: those counts stay unknown, and the
+// section is not exact. A missing count is never filled in as zero.
+const REQUIRED_COUNTS = Object.freeze({
+  executions: Object.freeze(['total', 'inFlight', 'byState']),
+  checkpoints: Object.freeze([
+    'checkpointRows',
+    'writeRows',
+    'distinctThreads',
+    'unclassifiedThreads',
+    'threadsOnInFlightExecutions',
+    'threadsOnUnknownExecutions',
+  ]),
+})
+
 export class LegacyInventoryStatusError extends Error {
   constructor(code) {
     super(code)
@@ -113,6 +128,7 @@ const codeReasons = (reasons) =>
 const unverifiedSection = (reasons) => ({
   status: OBSERVATION_STATUS.UNKNOWN,
   reasons: codeReasons(reasons),
+  requiredCounts: 'not-read',
   counts: {},
   truncated: false,
   malformedRecords: 0,
@@ -120,7 +136,26 @@ const unverifiedSection = (reasons) => ({
 
 // A section whose status or flags cannot be verified is unknown. An observed section that was truncated or
 // had malformed records is incomplete, as the collector itself would report it.
-function normalizeSection(raw) {
+const isCountMap = (value) =>
+  isObject(value) && Object.values(value).every((item) => integerOrNull(item) !== null)
+
+// 'verified' only when every required count is present and valid for a readable section.
+function requiredCountsOf(name, counts, status) {
+  if (REQUIRED_COUNTS[name] === undefined) return 'not-required'
+  if (!READABLE.has(status)) return 'not-read'
+  let missing = false
+  for (const key of REQUIRED_COUNTS[name]) {
+    const value = counts[key]
+    if (value === undefined) missing = true
+    else if (key === 'byState' ? !isCountMap(value) : integerOrNull(value) === null)
+      return 'invalid'
+  }
+  return missing ? 'missing' : 'verified'
+}
+
+// A section whose status or flags cannot be verified is unknown. An observed section that was truncated or
+// had malformed records, or that lacks a required count, is incomplete, as the collector itself would report it.
+function normalizeSection(name, raw) {
   if (!isObject(raw)) return unverifiedSection(['SECTION_MISSING'])
   const reasons = Array.isArray(raw.reasons) ? raw.reasons : []
   if (!STATUSES.has(raw.status)) return unverifiedSection([...reasons, 'STATUS_UNRECOGNIZED'])
@@ -128,14 +163,38 @@ function normalizeSection(raw) {
     return unverifiedSection([...reasons, 'FLAGS_UNVERIFIED'])
   }
   const counts = isObject(raw.counts) ? raw.counts : {}
-  const demoted = FULLY_READ.has(raw.status) && (raw.truncated || raw.malformedRecords > 0)
+  const requiredCounts = requiredCountsOf(name, counts, raw.status)
+  const countsBroken = requiredCounts === 'missing' || requiredCounts === 'invalid'
+  const demoted =
+    countsBroken || (FULLY_READ.has(raw.status) && (raw.truncated || raw.malformedRecords > 0))
+  const extra = countsBroken
+    ? [`${name.toUpperCase()}_REQUIRED_COUNTS_${requiredCounts.toUpperCase()}`]
+    : demoted
+      ? ['TRUNCATED_OR_MALFORMED']
+      : []
   return {
     status: demoted ? OBSERVATION_STATUS.INCOMPLETE : raw.status,
-    reasons: codeReasons(demoted ? [...reasons, 'TRUNCATED_OR_MALFORMED'] : reasons),
+    reasons: codeReasons([...reasons, ...extra]),
+    requiredCounts,
     counts,
     truncated: raw.truncated,
     malformedRecords: raw.malformedRecords,
   }
+}
+
+// Why the required sections do not support exact counts. Empty when both were read in full.
+function exactReasonsOf(sections) {
+  const reasons = []
+  for (const name of ['executions', 'checkpoints']) {
+    const section = sections[name]
+    if (fullyRead(section)) continue
+    reasons.push(
+      section.requiredCounts === 'missing' || section.requiredCounts === 'invalid'
+        ? `${name.toUpperCase()}_REQUIRED_COUNTS_${section.requiredCounts.toUpperCase()}`
+        : `${name.toUpperCase()}_${section.status.toUpperCase()}`
+    )
+  }
+  return reasons.toSorted()
 }
 
 const fullyRead = (section) =>
@@ -185,7 +244,7 @@ function blockersOf(remainder) {
 }
 
 // Zero is never established by this adapter. The reasons say why, in the scope's own terms.
-function zeroOf(scope, sections, exact, blockers) {
+function zeroOf(scope, sections, exact, exactReasons, blockers) {
   const reasons = new Set([ZERO_REASON_BY_SCOPE[scope]])
   if (!exact) reasons.add('READ_INCOMPLETE')
   for (const name of SECTION_NAMES) {
@@ -193,6 +252,7 @@ function zeroOf(scope, sections, exact, blockers) {
       reasons.add(`${name.toUpperCase()}_${sections[name].status.toUpperCase()}`)
     }
   }
+  for (const code of exactReasons) reasons.add(code)
   for (const code of Object.keys(blockers)) reasons.add(code)
   return { established: false, attested: false, reasons: [...reasons].toSorted() }
 }
@@ -214,9 +274,10 @@ export function buildLegacyInventoryStatus(manifest) {
   validateManifest(manifest)
   const scope = manifest.observationScope
   const sections = Object.fromEntries(
-    SECTION_NAMES.map((name) => [name, normalizeSection(manifest.sections[name])])
+    SECTION_NAMES.map((name) => [name, normalizeSection(name, manifest.sections[name])])
   )
-  const exact = fullyRead(sections.executions) && fullyRead(sections.checkpoints)
+  const exactReasons = exactReasonsOf(sections)
+  const exact = exactReasons.length === 0
   const remainder = remainderOf(sections)
   const blockers = blockersOf(remainder)
   const epistemics = manifest.epistemics
@@ -238,15 +299,20 @@ export function buildLegacyInventoryStatus(manifest) {
     },
     observation: observationOf(sections, exact),
     exact,
+    exactReasons,
     sections: Object.fromEntries(
       SECTION_NAMES.map((name) => [
         name,
-        { status: sections[name].status, reasons: sections[name].reasons },
+        {
+          status: sections[name].status,
+          reasons: sections[name].reasons,
+          requiredCounts: sections[name].requiredCounts,
+        },
       ])
     ),
     remainder,
     blockers,
-    zero: zeroOf(scope, sections, exact, blockers),
+    zero: zeroOf(scope, sections, exact, exactReasons, blockers),
     retainedWork: {
       classification: RETAINED_CLASSES.has(epistemics.retainedWorkClassification)
         ? epistemics.retainedWorkClassification
