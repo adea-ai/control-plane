@@ -162,6 +162,8 @@ const ReconciliationCheckpointViewSchema = z.object({
  * scan-completeness flag so a budget-stopped namespace can never be read as a
  * confident zero; unavailable operations carry only their typed reason.
  */
+const CompleteScanCount = z.number().int().nonnegative().nullable()
+
 const ControlsViewSchema = z
   .object({
     /**
@@ -183,18 +185,19 @@ const ControlsViewSchema = z
       /** False when the sequence namespace walk stopped at a budget. */
       scanComplete: z.boolean(),
       nodes: z.array(ChannelGenerationNodeViewSchema).max(MAX_LISTED_CHANNEL_NODES),
-      unlistedNodeCount: z.number().int().nonnegative(),
-      /** In-scope job nodes with no reserved generation recorded in this store. */
-      unresolvedNodeCount: z.number().int().nonnegative(),
+      /** Null unless the scan is complete: a budget-stopped walk never yields a count. */
+      unlistedNodeCount: CompleteScanCount,
+      /** In-scope job nodes with no reserved generation recorded in this store; null unless complete. */
+      unresolvedNodeCount: CompleteScanCount,
     }),
     cancellation: z.object({
       status: z.literal('connected'),
       reason: z.null(),
       scanComplete: z.boolean(),
-      receiptCount: z.number().int().nonnegative(),
-      acceptedCount: z.number().int().nonnegative(),
+      receiptCount: CompleteScanCount,
+      acceptedCount: CompleteScanCount,
       listed: z.array(CancellationReceiptViewSchema).max(MAX_LISTED_CANCELLATION_RECEIPTS),
-      unlistedCount: z.number().int().nonnegative(),
+      unlistedCount: CompleteScanCount,
     }),
     reconciliation: z.object({
       status: z.literal('connected'),
@@ -206,12 +209,42 @@ const ControlsViewSchema = z
         at: NullableTimestamp,
         ageMs: NullableInt,
       }),
-      checkpointCount: z.number().int().nonnegative(),
+      checkpointCount: CompleteScanCount,
       listed: z.array(ReconciliationCheckpointViewSchema).max(MAX_LISTED_CHECKPOINTS),
-      unlistedCount: z.number().int().nonnegative(),
+      unlistedCount: CompleteScanCount,
     }),
   })
   .strict()
+  // A count is present exactly when the scan that produces it completed. The listed
+  // records are always truthful lower bounds; only counts can mislead under a budget.
+  .superRefine((controls, context) => {
+    const require = (complete: boolean, path: string[], values: (number | null)[]) => {
+      for (const value of values) {
+        if ((value === null) === complete) {
+          context.addIssue({
+            code: 'custom',
+            message: complete
+              ? 'A complete scan must report its counts'
+              : 'An incomplete scan must not report a count',
+            path,
+          })
+        }
+      }
+    }
+    require(controls.channelGeneration.scanComplete, ['channelGeneration'], [
+      controls.channelGeneration.unlistedNodeCount,
+      controls.channelGeneration.unresolvedNodeCount,
+    ])
+    require(controls.cancellation.scanComplete, ['cancellation'], [
+      controls.cancellation.receiptCount,
+      controls.cancellation.acceptedCount,
+      controls.cancellation.unlistedCount,
+    ])
+    require(controls.reconciliation.scanComplete, ['reconciliation'], [
+      controls.reconciliation.checkpointCount,
+      controls.reconciliation.unlistedCount,
+    ])
+  })
 
 export const LocalStuckJobInspectionOptionsSchema = z
   .object({
@@ -1377,17 +1410,19 @@ export function inspectStuckJobs(
         reason: null,
         scanComplete: !sequenceWalk.incomplete,
         nodes: generationNodes,
-        unlistedNodeCount: unlistedGenerationNodes,
-        unresolvedNodeCount: unresolvedGenerationNodes,
+        unlistedNodeCount: sequenceWalk.incomplete ? null : unlistedGenerationNodes,
+        unresolvedNodeCount: sequenceWalk.incomplete ? null : unresolvedGenerationNodes,
       },
       cancellation: {
         status: 'connected',
         reason: null,
         scanComplete: !receiptWalk.incomplete,
-        receiptCount: executionReceipts.length,
-        acceptedCount: acceptedReceiptCount,
+        receiptCount: receiptWalk.incomplete ? null : executionReceipts.length,
+        acceptedCount: receiptWalk.incomplete ? null : acceptedReceiptCount,
         listed: listedReceipts,
-        unlistedCount: Math.max(0, executionReceipts.length - listedReceipts.length),
+        unlistedCount: receiptWalk.incomplete
+          ? null
+          : Math.max(0, executionReceipts.length - listedReceipts.length),
       },
       reconciliation: {
         status: 'connected',
@@ -1398,9 +1433,11 @@ export function inspectStuckJobs(
           at: reconciliationMarkAt,
           ageMs: ageMs(reconciliationMarkAt ?? undefined, nowMs),
         },
-        checkpointCount: executionCheckpoints.length,
+        checkpointCount: checkpointWalk.incomplete ? null : executionCheckpoints.length,
         listed: listedCheckpoints,
-        unlistedCount: Math.max(0, executionCheckpoints.length - listedCheckpoints.length),
+        unlistedCount: checkpointWalk.incomplete
+          ? null
+          : Math.max(0, executionCheckpoints.length - listedCheckpoints.length),
       },
     }
 

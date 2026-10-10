@@ -99,6 +99,12 @@ incomplete scan means every count and candidate list in the report is a lower bo
 never presents a truncated correlation as confident, and an empty result is never produced by
 truncation silently.
 
+Per-execution control views follow the same rule. A control walk (channel-generation sequences,
+cancellation receipts or reconciliation checkpoints) that stopped early reports `scanComplete: false`
+and sets its counts (`unresolvedNodeCount`, `unlistedNodeCount`, `receiptCount`, `acceptedCount`,
+`checkpointCount`, `unlistedCount`) to `null`: a budget-stopped walk never yields a confident count.
+Listed records in those views remain truthful lower bounds.
+
 Results are additionally bounded: at most `--limit` executions (default 20, maximum 100), ordered
 oldest-evidence first with `summary.selected.remainingStuckCandidates` reporting the rest; job and
 pending interaction lists are capped per execution; malformed records are counted in

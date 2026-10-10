@@ -78,6 +78,13 @@ export function admissionOutcomeNamespace(workspaceId: string): string {
 
 /** Bounded page size for workspace-scoped outcome scans (store limit is 128). */
 const OUTCOME_SCAN_PAGE = 128
+/**
+ * Raw outcome rows one trail read may examine. The outcome namespace is append-only
+ * and grows with every stop and resume command, so an unbounded trail scan would
+ * make every operator read cost the whole history. A read that exhausts this budget
+ * before proving the trail complete returns an explicit `incomplete` result.
+ */
+export const MAX_OUTCOME_SCAN_ROWS = 10_000
 /** The stored executions namespace; a job's scope is resolved through its execution reference. */
 export const WORKFLOW_EXECUTIONS_NAMESPACE = 'executions'
 
@@ -321,31 +328,69 @@ export async function getWorkflowAdmissionStop(
   return provider.transaction((transaction) => readStopStateView(transaction, parsed))
 }
 
-/** Bounded recent outcome trail for one workspace, oldest first. */
-export async function listWorkflowAdmissionOutcomes(
+/** Explicit result of a bounded outcome-trail read. */
+export type AdmissionOutcomeTrail =
+  | {
+      readonly status: 'complete'
+      /** The newest `limit` outcomes, oldest first. */
+      readonly records: AdmissionControlOutcomeRecord[]
+      readonly scannedRows: number
+    }
+  | {
+      /** The row budget was spent before the namespace was proven exhausted. */
+      readonly status: 'incomplete'
+      readonly reason: 'row_budget_reached'
+      /** Never a partial window: an incomplete trail names no records as its answer. */
+      readonly records: readonly []
+      readonly scannedRows: number
+      readonly rowBudget: number
+    }
+
+/**
+ * Reads the recent outcome trail for one workspace with an explicit row budget.
+ * It pages only this workspace's namespace and never reads an unbounded number of
+ * rows: a budget-exhausted read is returned as `incomplete`, never as an empty or
+ * silently narrowed trail. A corrupt record in this trail still fails closed.
+ */
+export async function readWorkflowAdmissionOutcomeTrail(
   provider: PersistenceProvider,
   scope: AdmissionStopScope,
-  limit = 100
-): Promise<AdmissionControlOutcomeRecord[]> {
+  options: { readonly limit?: number; readonly maxRows?: number } = {}
+): Promise<AdmissionOutcomeTrail> {
   const parsed = AdmissionStopScopeSchema.parse(scope)
+  const limit = options.limit ?? 100
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+    throw new Error('ADMISSION_CONTROL_LIMIT_INVALID')
+  }
+  const rowBudget = options.maxRows ?? MAX_OUTCOME_SCAN_ROWS
+  if (!Number.isSafeInteger(rowBudget) || rowBudget < 1 || rowBudget > MAX_OUTCOME_SCAN_ROWS) {
     throw new Error('ADMISSION_CONTROL_LIMIT_INVALID')
   }
   const namespace = admissionOutcomeNamespace(parsed.workspaceId)
   const order = (left: AdmissionControlOutcomeRecord, right: AdmissionControlOutcomeRecord) =>
     compareCodePointOrder(left.at, right.at) ||
     compareCodePointOrder(left.commandId, right.commandId)
-  return provider.transaction(async (transaction) => {
-    // Page through this workspace's namespace only, keeping just the newest
-    // `limit` records in memory. A corrupt record in this trail fails closed here;
-    // corrupt records of other workspaces are never read.
+  return provider.transaction(async (transaction): Promise<AdmissionOutcomeTrail> => {
     let window: AdmissionControlOutcomeRecord[] = []
     let afterId: string | undefined
+    let scannedRows = 0
     for (;;) {
+      const remaining = rowBudget - scannedRows
+      if (remaining <= 0) {
+        return {
+          status: 'incomplete',
+          reason: 'row_budget_reached',
+          records: [],
+          scannedRows,
+          rowBudget,
+        }
+      }
+      const requested = Math.min(OUTCOME_SCAN_PAGE, remaining)
       const page = await transaction.scan(namespace, {
         ...(afterId === undefined ? {} : { afterId }),
-        limit: OUTCOME_SCAN_PAGE,
+        limit: requested,
       })
+      scannedRows += page.length
       const decoded = page.map((row) => {
         const outcome = decodeOutcomeRecord(row)
         if (outcome.scope.workspaceId !== parsed.workspaceId) {
@@ -354,11 +399,25 @@ export async function listWorkflowAdmissionOutcomes(
         return outcome
       })
       window = [...window, ...decoded].toSorted(order).slice(-limit)
-      if (page.length < OUTCOME_SCAN_PAGE) break
+      if (page.length < requested) return { status: 'complete', records: window, scannedRows }
       afterId = page[page.length - 1]?.id
     }
-    return window
   })
+}
+
+/**
+ * Bounded recent outcome trail for one workspace, oldest first. Throws
+ * `ADMISSION_CONTROL_TRAIL_INCOMPLETE` when the row budget is exhausted, so a
+ * caller can never mistake an unproven trail for a complete one.
+ */
+export async function listWorkflowAdmissionOutcomes(
+  provider: PersistenceProvider,
+  scope: AdmissionStopScope,
+  limit = 100
+): Promise<AdmissionControlOutcomeRecord[]> {
+  const trail = await readWorkflowAdmissionOutcomeTrail(provider, scope, { limit })
+  if (trail.status !== 'complete') throw new Error('ADMISSION_CONTROL_TRAIL_INCOMPLETE')
+  return trail.records
 }
 
 /**

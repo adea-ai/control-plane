@@ -19,6 +19,10 @@ import {
  * `operator-admission-controls` commits in the same transaction as the state
  * change, so duplicates and replays are successful, idempotent results.
  *
+ * Audit time is the SERVER clock (`now`), stamped here and nowhere else. The
+ * caller's `issuedAt` is client-declared metadata: it never becomes the audit or
+ * stop-state time, so a caller cannot backdate or future-date an operator action.
+ *
  * Enforcement lives on the embedded workflow queue (the `beforeEnqueue` gate
  * composed in `composition.ts`). A composition whose durable execution mode
  * does not route new-job admission through that queue must report the control
@@ -28,13 +32,17 @@ import {
 export class LocalAdmissionControlService implements AdmissionControlService {
   readonly #persistence: PersistenceProvider
   readonly #enforcement: 'embedded-queue' | 'unavailable'
+  readonly #now: () => string
 
   constructor(options: {
     readonly persistence: PersistenceProvider
     readonly enforcement?: 'embedded-queue' | 'unavailable'
+    /** Server clock used for every audit timestamp. Defaults to the host wall clock. */
+    readonly now?: () => string
   }) {
     this.#persistence = options.persistence
     this.#enforcement = options.enforcement ?? 'embedded-queue'
+    this.#now = options.now ?? (() => new Date().toISOString())
   }
 
   stop(
@@ -67,7 +75,8 @@ export class LocalAdmissionControlService implements AdmissionControlService {
       commandId: input.commandId,
       reasonClass: input.payload.reasonClass,
       ...(input.payload.reason === undefined ? {} : { reason: input.payload.reason }),
-      at: input.issuedAt,
+      // Server clock: the caller's issuedAt is never the audit time.
+      at: this.#now(),
     })
     // The HTTP scope is always a workspace, so the typed global-scope
     // unavailable can never be reached here; failing loudly keeps it that way.

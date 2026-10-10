@@ -1408,6 +1408,29 @@ test('reports incomplete scans instead of confidently narrow results', async () 
   expect(report.executions).toHaveLength(2)
 })
 
+test('a budget-stopped control walk reports null counts, never a confident count', async () => {
+  // Reproduces the incomplete-count defect: an unresolved or receipt count computed
+  // from a truncated walk must not look like a complete answer.
+  const report = await inspect({ maxScanMatches: 2, limit: 100 })
+  const incomplete = new Set(report.summary.incompleteScans.map((scan) => scan.namespace))
+  // Precondition: this budget really stops a control namespace walk, so the assertions below are not vacuous.
+  expect(incomplete.has('runtime-channel-sequences')).toBe(true)
+  expect(report.executions.length).toBeGreaterThan(0)
+  for (const execution of report.executions) {
+    const { channelGeneration, cancellation, reconciliation } = execution.controls
+    expect(channelGeneration.scanComplete).toBe(!incomplete.has('runtime-channel-sequences'))
+    expect(cancellation.scanComplete).toBe(!incomplete.has('execution-cancellation-receipts'))
+    expect(reconciliation.scanComplete).toBe(!incomplete.has('reconciliation-checkpoints'))
+    expect(channelGeneration.unresolvedNodeCount === null).toBe(!channelGeneration.scanComplete)
+    expect(channelGeneration.unlistedNodeCount === null).toBe(!channelGeneration.scanComplete)
+    expect(cancellation.receiptCount === null).toBe(!cancellation.scanComplete)
+    expect(cancellation.acceptedCount === null).toBe(!cancellation.scanComplete)
+    expect(cancellation.unlistedCount === null).toBe(!cancellation.scanComplete)
+    expect(reconciliation.checkpointCount === null).toBe(!reconciliation.scanComplete)
+    expect(reconciliation.unlistedCount === null).toBe(!reconciliation.scanComplete)
+  }
+})
+
 async function runCli(arguments_, timeoutMs = 10000) {
   const ledger = process.env['CONTROL_PLANE_LOCAL_RESOURCE_LEDGER']
   if (ledger)
