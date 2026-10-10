@@ -4,6 +4,7 @@ import {
   IdentifierSchemas,
 } from '@control-plane/contracts'
 import type { PersistenceProvider, PersistenceTransaction } from '@control-plane/deployment'
+import { createSqliteChildAdmissionReader } from './child-admission-reader.js'
 import { ExecutionAttemptSchema, ExecutionSchema } from '@control-plane/domain'
 import { assertExecutionPlanDerivedFrom } from '@control-plane/execution-plan'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
@@ -164,7 +165,14 @@ export class SqliteDelegationRepository implements DelegationRepository, ChildAd
       // The shared SQLite transaction serializes authority recheck, parent
       // lineage/limit reads, execution creation, budget reservation, and the
       // delegation evidence write. No allocation record survives a denial.
-      await input.assertCurrent()
+      // Every canonical read in this authority recheck goes through this transaction's reader, which closes
+      // when the recheck returns. No read re-enters the provider while the allocation transaction is open.
+      const reader = createSqliteChildAdmissionReader(tx, request.workspaceId)
+      try {
+        await input.assertCurrent(reader)
+      } finally {
+        reader.close()
+      }
       assertChildAdmissionReceiptMatches(request, input.receipt, new Date().toISOString())
       await tx.put({ namespace: 'executions', id: childExecutionId, value: json(execution) })
       await tx.put({

@@ -677,10 +677,11 @@ export class DelegationService {
           execution: queuedExecution,
           attempt,
           delegation: record,
-          assertCurrent: () =>
+          assertCurrent: (reader) =>
             this.#childAdmission!.assertCurrent(
               structuredClone(childAdmission!.request),
-              structuredClone(childAdmission!.receipt)
+              structuredClone(childAdmission!.receipt),
+              reader
             ),
         })
       } catch (error) {

@@ -218,13 +218,7 @@ export class PostgresToolCallRepository implements ToolCallRepository {
   }
 
   async get(toolCallIdInput: string): Promise<ToolCall | undefined> {
-    const toolCallId = ToolCallSchema.shape.toolCallId.parse(toolCallIdInput)
-    const [row] = await this.database
-      .select()
-      .from(toolCalls)
-      .where(this.#callScope(toolCallId))
-      .limit(1)
-    return row === undefined ? undefined : parseCallRow(row)
+    return readToolCallRow(this.database, this.#workspaceId, toolCallIdInput)
   }
 
   async getByIdempotencyKey(
@@ -360,6 +354,21 @@ function parseVersionRow(row: typeof toolVersions.$inferSelect): ToolVersion {
     throw new Error('POSTGRES_TOOL_VERSION_CORRUPT')
   }
   return version
+}
+
+/** Canonical tool-call read through a database or a transaction; the repository and transaction-bound readers share it. */
+export async function readToolCallRow(
+  reader: Pick<ControlPlaneDatabase, 'select'>,
+  workspaceId: string,
+  toolCallIdInput: string
+): Promise<ToolCall | undefined> {
+  const toolCallId = ToolCallSchema.shape.toolCallId.parse(toolCallIdInput)
+  const [row] = await reader
+    .select()
+    .from(toolCalls)
+    .where(and(eq(toolCalls.workspaceId, workspaceId), eq(toolCalls.toolCallId, toolCallId)))
+    .limit(1)
+  return row === undefined ? undefined : parseCallRow(row)
 }
 
 function parseCallRow(row: typeof toolCalls.$inferSelect): ToolCall {

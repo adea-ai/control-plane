@@ -14,6 +14,7 @@ import {
 } from '@control-plane/execution-plan'
 import {
   ChildAdmissionRequestSchema,
+  type ChildAdmissionReader,
   type DelegationRepository,
 } from '@control-plane/orchestration'
 import { RuntimeStartRequestSchema, type RuntimeStartRequest } from '@control-plane/runtime-sdk'
@@ -123,15 +124,21 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
     return at
   }
 
+  /** Non-transactional canonical reads for lineage outside an allocation fence. */
+  const repositoryReader: ChildAdmissionReader = {
+    getExecution: (executionId) => options.executions.getExecution(executionId),
+    getAttempt: (attemptId) => options.executions.getAttempt(attemptId),
+    getToolCall: (toolCallId) => options.toolCalls.get(toolCallId),
+  }
+
   /** The retained parent: execution, attempt, lead intent, ready marker, audience and selection. */
-  async function parent(input: { executionId: string; attemptId: string; plan: Pin }) {
+  async function parent(
+    input: { executionId: string; attemptId: string; plan: Pin },
+    canonical: ChildAdmissionReader = repositoryReader
+  ) {
     const at = nowMs()
-    const execution = ExecutionSchema.parse(
-      await options.executions.getExecution(input.executionId)
-    )
-    const attempt = ExecutionAttemptSchema.parse(
-      await options.executions.getAttempt(input.attemptId)
-    )
+    const execution = ExecutionSchema.parse(await canonical.getExecution(input.executionId))
+    const attempt = ExecutionAttemptSchema.parse(await canonical.getAttempt(input.attemptId))
     if (
       !LiveExecution.has(execution.state) ||
       !LiveAttempt.has(attempt.state) ||
@@ -201,9 +208,10 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
   /** The admitted parent tool call must be the delegate operation, owned by that parent attempt. */
   async function assertAdmittedCall(
     toolCallId: string,
-    expected: { executionId: string; attemptId: string; workspaceId: string }
+    expected: { executionId: string; attemptId: string; workspaceId: string },
+    reader: ChildAdmissionReader = repositoryReader
   ) {
-    const retained = await options.toolCalls.get(toolCallId)
+    const retained = await reader.getToolCall(toolCallId)
     if (!retained) deny()
     const call = ToolCallSchema.parse(retained)
     if (
@@ -306,25 +314,32 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
 
   return {
     /** Admission preflight: the child record does not exist yet, so identity comes from the server-built request. */
-    readAdmission(input: unknown) {
+    readAdmission(input: unknown, reader: ChildAdmissionReader = repositoryReader) {
       return stable(async () => {
         const request = ChildAdmissionRequestSchema.parse(input)
-        const actor = await parent({
-          executionId: request.parentExecutionId,
-          attemptId: request.parentAttemptId,
-          plan: request.parentPlan,
-        })
+        const actor = await parent(
+          {
+            executionId: request.parentExecutionId,
+            attemptId: request.parentAttemptId,
+            plan: request.parentPlan,
+          },
+          reader
+        )
         if (
           actor.workspaceId !== request.workspaceId ||
           actor.intentId !== request.parentIntentId ||
           actor.canonicalActorPrincipalId !== request.originalActorPrincipalId
         )
           deny()
-        await assertAdmittedCall(request.admittedToolCallId, {
-          executionId: request.parentExecutionId,
-          attemptId: request.parentAttemptId,
-          workspaceId: request.workspaceId,
-        })
+        await assertAdmittedCall(
+          request.admittedToolCallId,
+          {
+            executionId: request.parentExecutionId,
+            attemptId: request.parentAttemptId,
+            workspaceId: request.workspaceId,
+          },
+          reader
+        )
         return ProductionChildBudgetCurrentSchema.parse({
           workspaceId: actor.workspaceId,
           parentIntentId: actor.intentId,

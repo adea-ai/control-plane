@@ -256,14 +256,9 @@ export class SqliteToolCallRepository implements ToolCallRepository {
   }
 
   async get(toolCallIdInput: string): Promise<ToolCall | undefined> {
-    const toolCallId = ToolCallSchema.shape.toolCallId.parse(toolCallIdInput)
-    const id = callRecordId(this.#workspaceId, toolCallId)
-    return this.provider.transaction(async (transaction) => {
-      const record = await transaction.get(this.#callsNamespace, id)
-      return record === undefined
-        ? undefined
-        : readStoredCall(record.value, record.id, this.#workspaceId, toolCallId)
-    })
+    return this.provider.transaction((transaction) =>
+      readToolCallIn(transaction, this.#workspaceId, toolCallIdInput)
+    )
   }
 
   async getByIdempotencyKey(
@@ -371,6 +366,22 @@ function scopedNamespace(namespace: string, workspaceId: string): string {
 
 function versionId(workspaceId: string, toolVersionId: string): string {
   return recordId(canonicalJsonStringify([workspaceId, toolVersionId]) ?? 'null')
+}
+
+/** Canonical tool-call read inside a transaction; the repository and transaction-bound readers share it. */
+export async function readToolCallIn(
+  transaction: PersistenceTransaction,
+  workspaceId: string,
+  toolCallIdInput: string
+): Promise<ToolCall | undefined> {
+  const toolCallId = ToolCallSchema.shape.toolCallId.parse(toolCallIdInput)
+  const record = await transaction.get(
+    scopedNamespace(namespaces.calls, workspaceId),
+    callRecordId(workspaceId, toolCallId)
+  )
+  return record === undefined
+    ? undefined
+    : readStoredCall(record.value, record.id, workspaceId, toolCallId)
 }
 
 function callRecordId(workspaceId: string, toolCallId: string): string {

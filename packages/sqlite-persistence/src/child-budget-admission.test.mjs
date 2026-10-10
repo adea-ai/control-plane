@@ -17,6 +17,7 @@ import { SqliteContextPackageRepository } from './repositories-extra.ts'
 import { SqliteExecutionPlanRepository } from './repositories.ts'
 import { SqliteExecutionRepository } from './repositories.ts'
 import { SqlitePersistenceProvider } from './provider.ts'
+import { createSqliteChildAdmissionReader } from './child-admission-reader.ts'
 import { SqliteDurableUsageStore } from './usage-store.ts'
 
 const digest = (character) => `sha256:${character.repeat(64)}`
@@ -476,6 +477,188 @@ test('child budget exhaustion rolls back the child execution and delegation in t
         tx.getBudget(child.childIds.childExecutionId)
       )
     ).resolves.toBeUndefined()
+  } finally {
+    await f.close()
+  }
+})
+
+const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
+test('child authority reads go through the allocation transaction reader and match the repositories', async () => {
+  const f = await fixture()
+  try {
+    const child = await f.childAdmission()
+    const parentBefore = await child.executionRepository.getExecution(
+      child.request.parentExecutionId
+    )
+    const attemptBefore = await child.executionRepository.getAttempt(child.request.parentAttemptId)
+    let observed
+    await expect(
+      child.allocator.allocate({
+        request: child.request,
+        receipt: child.receipt,
+        execution: child.childExecution,
+        attempt: child.childAttempt,
+        delegation: child.delegation,
+        assertCurrent: async (reader) => {
+          observed = {
+            execution: await reader.getExecution(child.request.parentExecutionId),
+            attempt: await reader.getAttempt(child.request.parentAttemptId),
+            toolCall: await reader.getToolCall(child.request.admittedToolCallId),
+          }
+        },
+      })
+    ).resolves.toBe(true)
+    expect(observed.execution).toEqual(parentBefore)
+    expect(observed.attempt).toEqual(attemptBefore)
+    expect(observed.toolCall).toBeUndefined()
+    expect(
+      await child.executionRepository.getExecution(child.childIds.childExecutionId)
+    ).toBeDefined()
+  } finally {
+    await f.close()
+  }
+})
+
+test('an unrelated reader stays outside an open child allocation fence until it commits', async () => {
+  const f = await fixture()
+  try {
+    const child = await f.childAdmission()
+    let fenceEntered
+    const entered = new Promise((resolve) => (fenceEntered = resolve))
+    let release
+    const parked = new Promise((resolve) => (release = resolve))
+    const allocation = child.allocator.allocate({
+      request: child.request,
+      receipt: child.receipt,
+      execution: child.childExecution,
+      attempt: child.childAttempt,
+      delegation: child.delegation,
+      assertCurrent: async (reader) => {
+        await reader.getExecution(child.request.parentExecutionId)
+        fenceEntered()
+        await parked
+      },
+    })
+    await entered
+    let unrelatedSettled = false
+    const unrelated = child.executionRepository
+      .getExecution(child.childIds.childExecutionId)
+      .then((value) => {
+        unrelatedSettled = true
+        return value
+      })
+    await pause(25)
+    expect(unrelatedSettled).toBe(false)
+    release()
+    await expect(allocation).resolves.toBe(true)
+    expect(await unrelated).toBeDefined()
+  } finally {
+    await f.close()
+  }
+})
+
+test('a refused child fence leaves no canonical rows after restart', async () => {
+  const f = await fixture()
+  try {
+    const child = await f.childAdmission()
+    await expect(
+      child.allocator.allocate({
+        request: child.request,
+        receipt: child.receipt,
+        execution: child.childExecution,
+        attempt: child.childAttempt,
+        delegation: child.delegation,
+        assertCurrent: async (reader) => {
+          await reader.getExecution(child.request.parentExecutionId)
+          throw new Error('revoked child audience')
+        },
+      })
+    ).rejects.toThrow('revoked child audience')
+    await f.provider.close()
+    const reopened = new SqlitePersistenceProvider({ path: join(f.directory, 'state.sqlite') })
+    await reopened.migrate()
+    try {
+      expect(
+        await new SqliteExecutionRepository(reopened).getExecution(child.childIds.childExecutionId)
+      ).toBeUndefined()
+      expect(
+        await new SqliteExecutionRepository(reopened).getAttempt(child.request.childAttemptId)
+      ).toBeUndefined()
+      expect(
+        await new SqliteDelegationRepository(reopened).get(child.childIds.delegationId)
+      ).toBeUndefined()
+    } finally {
+      await reopened.close()
+    }
+  } finally {
+    await rm(f.directory, { recursive: true, force: true })
+  }
+})
+
+test('a committed child allocation and its transaction-bound reads survive restart', async () => {
+  const f = await fixture()
+  try {
+    const child = await f.childAdmission()
+    await expect(
+      child.allocator.allocate({
+        request: child.request,
+        receipt: child.receipt,
+        execution: child.childExecution,
+        attempt: child.childAttempt,
+        delegation: child.delegation,
+        assertCurrent: async () => {},
+      })
+    ).resolves.toBe(true)
+    await f.provider.close()
+    const reopened = new SqlitePersistenceProvider({ path: join(f.directory, 'state.sqlite') })
+    await reopened.migrate()
+    try {
+      const persisted = await new SqliteExecutionRepository(reopened).getExecution(
+        child.childIds.childExecutionId
+      )
+      expect(persisted).toBeDefined()
+      expect(
+        await new SqliteDelegationRepository(reopened).findByChild(child.childIds.childExecutionId)
+      ).toMatchObject({ delegationId: child.childIds.delegationId })
+      const seen = await reopened.transaction(async (transaction) => {
+        const reader = createSqliteChildAdmissionReader(transaction, ids.workspaceId)
+        try {
+          return await reader.getExecution(child.childIds.childExecutionId)
+        } finally {
+          reader.close()
+        }
+      })
+      expect(seen).toEqual(persisted)
+    } finally {
+      await reopened.close()
+    }
+  } finally {
+    await rm(f.directory, { recursive: true, force: true })
+  }
+})
+
+test('a child authority reader is unusable after its fence returns', async () => {
+  const f = await fixture()
+  try {
+    const child = await f.childAdmission()
+    let captured
+    await child.allocator.allocate({
+      request: child.request,
+      receipt: child.receipt,
+      execution: child.childExecution,
+      attempt: child.childAttempt,
+      delegation: child.delegation,
+      assertCurrent: async (reader) => {
+        captured = reader
+      },
+    })
+    await expect(captured.getExecution(child.request.parentExecutionId)).rejects.toThrow(
+      'CHILD_ADMISSION_READER_CLOSED'
+    )
+    await expect(captured.getToolCall(child.request.admittedToolCallId)).rejects.toThrow(
+      'CHILD_ADMISSION_READER_CLOSED'
+    )
   } finally {
     await f.close()
   }

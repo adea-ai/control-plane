@@ -1,6 +1,7 @@
 import type {
   ChildAdmissionAllocator,
   ChildAdmissionAuthority,
+  ChildAdmissionReader,
   ChildAdmissionRequest,
   DelegationEvent,
   DelegationEventPublisher,
@@ -27,7 +28,10 @@ export interface ProductionChildDelegationOptions {
   readonly scopeAdmission: DelegationScopeAdmission
   readonly product: ProductAuthority
   /** Server-current canonical child request, actor, audience and selection references. */
-  readonly readCurrent: (request: ChildAdmissionRequest) => Promise<unknown>
+  readonly readCurrent: (
+    request: ChildAdmissionRequest,
+    reader?: ChildAdmissionReader
+  ) => Promise<unknown>
   readonly now?: () => string
   /** Optional advisory wake. It runs only after the durable inbox publish resolves. */
   readonly onEventRetained?: (event: DelegationEvent) => Promise<void>

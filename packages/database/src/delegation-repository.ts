@@ -24,6 +24,7 @@ import {
 import { ExecutionAttemptSchema, ExecutionSchema } from '@control-plane/domain'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import type { ControlPlaneDatabase } from './connection.js'
+import { createPgChildAdmissionReader } from './child-admission-reader.js'
 import { contextPackages } from './schema/context-packages.js'
 import { delegations } from './schema/delegations.js'
 import { executionPlans } from './schema/execution-plans.js'
@@ -213,7 +214,14 @@ export class PostgresDelegationRepository implements DelegationRepository, Child
 
       // Re-read actor, audience, role selection, and readiness after canonical
       // lineage/limits are locked and before the first execution/budget write.
-      await input.assertCurrent()
+      // Every canonical read in this authority recheck goes through this transaction's reader, which closes
+      // when the recheck returns. No read uses the pool while the allocation transaction is open.
+      const reader = createPgChildAdmissionReader(transaction, request.workspaceId)
+      try {
+        await input.assertCurrent(reader)
+      } finally {
+        reader.close()
+      }
       assertChildAdmissionReceiptMatches(request, receipt, new Date().toISOString())
 
       const [existingExecution] = await transaction

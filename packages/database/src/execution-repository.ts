@@ -583,12 +583,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
   }
 
   async getExecution(executionId: string): Promise<Execution | undefined> {
-    const [row] = await this.database
-      .select()
-      .from(executions)
-      .where(eq(executions.executionId, executionId))
-      .limit(1)
-    return row ? fromExecutionRow(row) : undefined
+    return readExecutionRow(this.database, executionId)
   }
 
   async compareAndSetExecution(expectedVersion: number, execution: Execution): Promise<boolean> {
@@ -675,12 +670,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
   }
 
   async getAttempt(attemptId: string): Promise<ExecutionAttempt | undefined> {
-    const [row] = await this.database
-      .select()
-      .from(executionAttempts)
-      .where(eq(executionAttempts.attemptId, attemptId))
-      .limit(1)
-    return row ? fromAttemptRow(row) : undefined
+    return readAttemptRow(this.database, attemptId)
   }
 
   async listAttempts(executionId: string): Promise<readonly ExecutionAttempt[]> {
@@ -751,6 +741,32 @@ export function toExecutionUpdate(execution: Execution): Partial<typeof executio
     terminalResultRef: execution.terminalResultRef ?? null,
     ...toMutableTimestampRow(execution),
   }
+}
+
+/** Canonical execution read through a database or a transaction; the repository and transaction-bound readers share it. */
+export async function readExecutionRow(
+  reader: Pick<ControlPlaneDatabase, 'select'>,
+  executionId: string
+): Promise<Execution | undefined> {
+  const [row] = await reader
+    .select()
+    .from(executions)
+    .where(eq(executions.executionId, executionId))
+    .limit(1)
+  return row ? fromExecutionRow(row) : undefined
+}
+
+/** Canonical attempt read through a database or a transaction; the repository and transaction-bound readers share it. */
+export async function readAttemptRow(
+  reader: Pick<ControlPlaneDatabase, 'select'>,
+  attemptId: string
+): Promise<ExecutionAttempt | undefined> {
+  const [row] = await reader
+    .select()
+    .from(executionAttempts)
+    .where(eq(executionAttempts.attemptId, attemptId))
+    .limit(1)
+  return row ? fromAttemptRow(row) : undefined
 }
 
 export function fromExecutionRow(row: ExecutionRow): Execution {
