@@ -55,12 +55,13 @@ function ownedBy(journal, handleId, ownerPid) {
 test('reconcile does not fence a live owner whose retained send hold is not yet visible', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-reconcile-live-owner-'))
   const owner = startIdleProcess()
+  let reopened
   try {
     const { options, request } = fixture(directory)
     const handle = await persistedUnknownRecord(options, request)
     const decisions = []
     // The absent hold is the stale observation: the live owner has not reserved yet.
-    const reopened = new PiDurableRuntimeAdapter({
+    reopened = new PiDurableRuntimeAdapter({
       ...options,
       reconcileInference: async () => {
         decisions.push(reopened.journal.get(handle.handleId).epoch)
@@ -80,20 +81,25 @@ test('reconcile does not fence a live owner whose retained send hold is not yet 
     expect(status.state).toBe('unknown')
     expect(reopened.journal.events(handle.handleId, 0).length).toBe(eventsBefore)
     expect(decisions.length).toBeLessThanOrEqual(1)
-    await reopened.close()
   } finally {
+    // Close the reopened adapter even when an assertion above failed, and
+    // await only the child this test owns so its handle cannot leak into the
+    // next test after a failed assertion.
+    await reopened?.close()
     owner.kill('SIGKILL')
+    await new Promise((resolve) => owner.once('exit', resolve))
     rmSync(directory, { recursive: true, force: true })
   }
 })
 
 test('reconcile confirms a safe verdict under the claimed epoch of a dead owner', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-reconcile-dead-owner-'))
+  let reopened
   try {
     const { options, request } = fixture(directory)
     const handle = await persistedUnknownRecord(options, request)
     const decisions = []
-    const reopened = new PiDurableRuntimeAdapter({
+    reopened = new PiDurableRuntimeAdapter({
       ...options,
       reconcileInference: async () => {
         decisions.push(reopened.journal.get(handle.handleId).epoch)
@@ -109,8 +115,10 @@ test('reconcile confirms a safe verdict under the claimed epoch of a dead owner'
     expect(decisions).toEqual([before.epoch, before.epoch + 1])
     expect(reopened.journal.get(handle.handleId).epoch).toBe(before.epoch + 1)
     expect(status.state).toBe('unknown')
-    await reopened.close()
   } finally {
+    // Close the reopened adapter even when an assertion above failed. This
+    // test owns no lingering child (deadProcessId already reaps its own).
+    await reopened?.close()
     rmSync(directory, { recursive: true, force: true })
   }
 })
