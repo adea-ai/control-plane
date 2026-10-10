@@ -12,6 +12,7 @@ import {
   createRuntimeNodeCredentialFenceValidator,
 } from '@control-plane/sqlite-persistence'
 import { LocalControlApiComposition } from './local-api-composition.ts'
+import { LocalControlPlaneComposition } from './composition.ts'
 
 const ISSUED_AT = '2026-05-01T10:00:00.000Z'
 const NODE_ID = 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAV'
@@ -244,5 +245,40 @@ describe('Local all-in-one credential authority for runtime-command fences', () 
       ).rejects.toThrow('INVENTORY_CREDENTIAL_FENCE_INVALID')
       void first
     })
+  })
+
+  test('the production host composition wires the injected authority end-to-end', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'local-host-composition-'))
+    const authority = fixtureAuthority()
+    const composition = new LocalControlPlaneComposition({
+      dataDirectory: directory,
+      runtimeCommandCredentialAuthority: authority,
+    })
+    try {
+      await composition.persistence.migrate()
+      const first = queuedRecord('cmd_01ARZ3NDEKTSV4RRFFQ69G5FBA')
+      await composition.runtimeCommands.create(first)
+      // Positive through the REAL production host composition.
+      expect(
+        await composition.runtimeCommands.compareAndSet(1, acknowledgedFrom(first), FENCE)
+      ).toBe(true)
+      // Revoked: rejected with unchanged row through the same composition.
+      authority.revoked.add(FENCE.credentialId)
+      const second = queuedRecord('cmd_01ARZ3NDEKTSV4RRFFQ69G5FB1')
+      await composition.runtimeCommands.create(second)
+      await expect(
+        composition.runtimeCommands.compareAndSet(1, acknowledgedFrom(second), {
+          ...FENCE,
+          revocationVersion: 2,
+        })
+      ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
+      expect(await composition.runtimeCommands.get(second.commandId)).toMatchObject({
+        status: 'queued',
+        version: 1,
+      })
+    } finally {
+      await composition.close()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 })
