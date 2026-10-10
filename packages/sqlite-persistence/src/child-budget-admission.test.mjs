@@ -661,3 +661,166 @@ test('retry keeps the identical sibling cap and budget ceiling for the next admi
     await f.close()
   }
 })
+
+// --- Admission/allocator integration regressions: interruption, restart,
+// duplicate request, and cancellation exercised against the real SQLite
+// provider and allocator (not in-memory doubles). ---
+
+async function reopenStore(directory) {
+  const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
+  await provider.migrate()
+  return {
+    provider,
+    executions: new SqliteExecutionRepository(provider),
+    delegations: new SqliteDelegationRepository(provider),
+    usageStore: new SqliteDurableUsageStore(provider),
+    lifecycle: new ExecutionLifecycleService(new SqliteExecutionRepository(provider)),
+  }
+}
+
+test('an admission interrupted before the budget reservation leaves no allocation after a store restart', async () => {
+  const f = await fixture()
+  let restarted
+  try {
+    const admitted = await f.childAdmission()
+    // The current-authority check runs inside the allocation transaction before
+    // the budget reservation can commit, so this is a before-reservation
+    // interruption: nothing may survive it.
+    await expect(
+      admitted.allocator.allocate({
+        request: admitted.request,
+        receipt: admitted.receipt,
+        execution: admitted.childExecution,
+        attempt: admitted.childAttempt,
+        delegation: admitted.delegation,
+        assertCurrent: async () => {
+          throw new Error('AUTHORITY_INTERRUPTED_BEFORE_RESERVATION')
+        },
+      })
+    ).rejects.toThrow('AUTHORITY_INTERRUPTED_BEFORE_RESERVATION')
+
+    await f.provider.close()
+    restarted = await reopenStore(f.directory)
+    expect(
+      await restarted.executions.getExecution(admitted.childIds.childExecutionId)
+    ).toBeUndefined()
+    expect(await restarted.executions.getAttempt(admitted.request.childAttemptId)).toBeUndefined()
+    expect(await restarted.delegations.get(admitted.childIds.delegationId)).toBeUndefined()
+    await expect(
+      restarted.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(admitted.childIds.childExecutionId)
+      )
+    ).resolves.toBeUndefined()
+    const parentBudget = await restarted.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(ids.parentExecutionId)
+    )
+    expect(parentBudget?.reservations).toEqual([])
+  } finally {
+    await restarted?.provider.close()
+    await rm(f.directory, { recursive: true, force: true })
+  }
+})
+
+test('a restarted store still denies a duplicate admission request and keeps exactly one allocation', async () => {
+  const f = await fixture()
+  let restarted
+  try {
+    const admitted = await f.childAdmission()
+    expect(
+      await admitted.allocator.allocate({
+        request: admitted.request,
+        receipt: admitted.receipt,
+        execution: admitted.childExecution,
+        attempt: admitted.childAttempt,
+        delegation: admitted.delegation,
+        assertCurrent: async () => undefined,
+      })
+    ).toBe(true)
+
+    await f.provider.close()
+    restarted = await reopenStore(f.directory)
+    const persisted = await restarted.delegations.get(admitted.childIds.delegationId)
+    expect(persisted.childExecutionId).toBe(admitted.childIds.childExecutionId)
+
+    // The identical request re-submitted after a restart is a duplicate: the
+    // allocator must refuse it and keep the single persisted allocation.
+    const duplicate = await restarted.delegations.allocate({
+      request: admitted.request,
+      receipt: admitted.receipt,
+      execution: admitted.childExecution,
+      attempt: admitted.childAttempt,
+      delegation: admitted.delegation,
+      assertCurrent: async () => undefined,
+    })
+    expect(duplicate).toBe(false)
+    expect(await restarted.delegations.get(admitted.childIds.delegationId)).toEqual(persisted)
+    expect(
+      await restarted.executions.getExecution(admitted.childIds.childExecutionId)
+    ).toBeDefined()
+    const parentBudget = await restarted.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(ids.parentExecutionId)
+    )
+    expect(parentBudget.reservations).toHaveLength(1)
+  } finally {
+    await restarted?.provider.close()
+    await rm(f.directory, { recursive: true, force: true })
+  }
+})
+
+test('cancelling an admitted child persists consistently across a store restart', async () => {
+  const f = await fixture()
+  let restarted
+  try {
+    const admitted = await f.childAdmission()
+    expect(
+      await admitted.allocator.allocate({
+        request: admitted.request,
+        receipt: admitted.receipt,
+        execution: admitted.childExecution,
+        attempt: admitted.childAttempt,
+        delegation: admitted.delegation,
+        assertCurrent: async () => undefined,
+      })
+    ).toBe(true)
+
+    // Cancel the admitted child through the canonical lifecycle.
+    const lifecycle = new ExecutionLifecycleService(admitted.executionRepository)
+    const childExecution = await admitted.executionRepository.getExecution(
+      admitted.childIds.childExecutionId
+    )
+    await lifecycle.transitionAttempt({
+      attemptId: admitted.request.childAttemptId,
+      expectedVersion: 1,
+      to: 'cancelled',
+      transitionedAt: '2026-10-09T12:05:00.000Z',
+    })
+    await lifecycle.transitionExecution({
+      executionId: admitted.childIds.childExecutionId,
+      expectedVersion: childExecution.version,
+      to: 'cancelled',
+      transitionedAt: '2026-10-09T12:05:00.000Z',
+    })
+
+    await f.provider.close()
+    restarted = await reopenStore(f.directory)
+    const cancelledExecution = await restarted.executions.getExecution(
+      admitted.childIds.childExecutionId
+    )
+    expect(cancelledExecution.state).toBe('cancelled')
+    const cancelledAttempt = await restarted.executions.getAttempt(admitted.request.childAttemptId)
+    expect(cancelledAttempt.state).toBe('cancelled')
+    // Cancellation must not mint or lose admission evidence across the restart.
+    expect(await restarted.delegations.get(admitted.childIds.delegationId)).toBeDefined()
+    const childBudget = await restarted.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(admitted.childIds.childExecutionId)
+    )
+    expect(childBudget).toBeDefined()
+    const parentBudget = await restarted.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(ids.parentExecutionId)
+    )
+    expect(parentBudget.reservations).toHaveLength(1)
+  } finally {
+    await restarted?.provider.close()
+    await rm(f.directory, { recursive: true, force: true })
+  }
+})
