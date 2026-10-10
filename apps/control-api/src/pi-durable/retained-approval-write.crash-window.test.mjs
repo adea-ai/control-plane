@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -34,20 +34,26 @@ const approvalResponse = {
   respondedAt: '2026-10-08T12:05:00.000Z',
 }
 
-async function withState(run) {
-  const directory = await mkdtemp(join(tmpdir(), 'pi-retained-crash-window-'))
-  try {
-    const f = await fixture()
-    await seedDatabase(join(directory, 'state.sqlite'), f)
-    return await run(directory, f)
-  } finally {
-    await rm(directory, { recursive: true, force: true })
-  }
-}
-
-// Owned-child deadline. A child still running at the deadline is stopped by this test, and the
-// caller gets this diagnostic instead of an exit code.
+// Owned-child bounds. A child still running at the deadline is stopped through its own handle, and
+// every cleanup wait is bounded by CHILD_CLEANUP_MS.
 const CHILD_DEADLINE_MS = 30_000
+const CHILD_CLEANUP_MS = 10_000
+// Written into a state directory when an owned child's exit could not be confirmed.
+const UNCONFIRMED = 'owned-child-unconfirmed.json'
+
+// Settles to the promise's outcome, or to { state: 'pending' } once ms elapse. It never rejects and
+// clears its timer, so a timed-out wait leaves no dangling timer behind.
+function settledWithin(promise, ms) {
+  let timer
+  const pending = new Promise((resolve) => {
+    timer = setTimeout(resolve, ms, { state: 'pending' })
+  })
+  const settled = promise.then(
+    (value) => ({ state: 'fulfilled', value }),
+    (reason) => ({ state: 'rejected', reason })
+  )
+  return Promise.race([settled, pending]).finally(() => clearTimeout(timer))
+}
 
 class ChildDeadlineError extends Error {
   constructor(scenario, deadlineMs, exit) {
@@ -61,11 +67,32 @@ class ChildDeadlineError extends Error {
   }
 }
 
-// Runs one owned child and returns its exit code, stderr, and last stdout line. The finally block
-// stops this child only if it is still alive, then awaits its exit and output, so the caller can
-// remove the directory afterwards. No other process is inspected or signalled.
-async function runChild(directory, scenario, { deadlineMs = CHILD_DEADLINE_MS } = {}) {
-  const spawned = Bun.spawn([process.execPath, child, directory, scenario], {
+class ChildCleanupError extends Error {
+  constructor(directory, { scenario, cleanupMs }, options) {
+    super(
+      `crash-window child "${scenario}" was not confirmed exited within ${cleanupMs} ms after SIGKILL; its state directory is preserved at ${directory}`,
+      options
+    )
+    this.name = 'ChildCleanupError'
+    this.code = 'CHILD_CLEANUP_UNCONFIRMED'
+    this.directory = directory
+    this.scenario = scenario
+  }
+}
+
+// Runs one owned child and returns its exit code, stderr, and last stdout line. The child is stopped
+// through this handle only, and only while it is alive. Each cleanup wait is bounded: if the exit is
+// not confirmed, the state directory is marked for preservation and ChildCleanupError is thrown.
+async function runChild(
+  directory,
+  scenario,
+  {
+    deadlineMs = CHILD_DEADLINE_MS,
+    cleanupMs = CHILD_CLEANUP_MS,
+    launch = (command, options) => Bun.spawn(command, options),
+  } = {}
+) {
+  const spawned = launch([process.execPath, child, directory, scenario], {
     stdout: 'pipe',
     stderr: 'pipe',
   })
@@ -74,28 +101,59 @@ async function runChild(directory, scenario, { deadlineMs = CHILD_DEADLINE_MS } 
     new Response(spawned.stderr).text(),
     spawned.exited,
   ])
-  const expired = Symbol('expired')
-  let timer
-  const deadline = new Promise((resolve) => {
-    timer = setTimeout(resolve, deadlineMs, expired)
+  const first = await settledWithin(output, deadlineMs)
+  if (first.state === 'fulfilled') {
+    const [stdout, stderr, code] = first.value
+    const line = stdout.trim().split('\n').at(-1)
+    return { code, stderr, result: line ? JSON.parse(line) : undefined }
+  }
+  if (spawned.exitCode === null && spawned.signalCode === null) spawned.kill('SIGKILL')
+  const exit = await settledWithin(spawned.exited, cleanupMs)
+  if (exit.state !== 'fulfilled') {
+    await writeFile(
+      join(directory, UNCONFIRMED),
+      JSON.stringify({ scenario, deadlineMs, cleanupMs })
+    )
+    throw new ChildCleanupError(
+      directory,
+      { scenario, cleanupMs },
+      first.state === 'rejected' ? { cause: first.reason } : undefined
+    )
+  }
+  const drained = await settledWithin(output, cleanupMs)
+  if (first.state === 'rejected') throw first.reason
+  throw new ChildDeadlineError(scenario, deadlineMs, {
+    exitCode: spawned.exitCode,
+    signalCode: spawned.signalCode,
+    outputDrained: drained.state === 'fulfilled',
   })
-  let finished
+}
+
+// Runs one test body over a fresh state directory. The directory is removed afterwards, except when
+// an owned child's exit was not confirmed: then it is kept for inspection, and the failure is reported
+// as ChildCleanupError even if the body swallowed it.
+async function withState(run) {
+  const directory = await mkdtemp(join(tmpdir(), 'pi-retained-crash-window-'))
+  let failure
+  let value
   try {
-    finished = await Promise.race([output, deadline])
-  } finally {
-    clearTimeout(timer)
-    if (spawned.exitCode === null && spawned.signalCode === null) spawned.kill('SIGKILL')
-    await output.catch(() => undefined)
+    const f = await fixture()
+    await seedDatabase(join(directory, 'state.sqlite'), f)
+    value = await run(directory, f)
+  } catch (error) {
+    failure = { error }
   }
-  if (finished === expired) {
-    throw new ChildDeadlineError(scenario, deadlineMs, {
-      exitCode: spawned.exitCode,
-      signalCode: spawned.signalCode,
-    })
+  const unconfirmed = await readFile(join(directory, UNCONFIRMED), 'utf8').then(
+    (text) => JSON.parse(text),
+    () => undefined
+  )
+  if (unconfirmed) {
+    if (failure?.error instanceof ChildCleanupError) throw failure.error
+    throw new ChildCleanupError(directory, unconfirmed, failure && { cause: failure.error })
   }
-  const [stdout, stderr, code] = finished
-  const line = stdout.trim().split('\n').at(-1)
-  return { code, stderr, result: line ? JSON.parse(line) : undefined }
+  await rm(directory, { recursive: true, force: true })
+  if (failure) throw failure.error
+  return value
 }
 
 async function respond(directory, f) {
@@ -210,7 +268,53 @@ test(
       expect(error).toBeInstanceOf(ChildDeadlineError)
       expect(error).toMatchObject({ code: 'CHILD_DEADLINE_EXCEEDED', scenario: 'hang' })
       // Stopped by signal and awaited before the helper threw: no exit code was produced.
-      expect(error.exit).toEqual({ exitCode: null, signalCode: 'SIGKILL' })
+      expect(error.exit).toMatchObject({ exitCode: null, signalCode: 'SIGKILL' })
     }),
   30_000
 )
+
+// Test-only launcher whose child never reports an exit or closes its output, so only the cleanup
+// bound can end the wait. No real process is started.
+function unexitingLaunch() {
+  const silent = () => new ReadableStream({ start() {} })
+  return {
+    pid: 0,
+    stdout: silent(),
+    stderr: silent(),
+    exited: new Promise(() => {}),
+    exitCode: null,
+    signalCode: null,
+    kill: () => true,
+  }
+}
+
+test('a child whose exit is not confirmed within the cleanup bound fails as a cleanup error and keeps its state directory', async () => {
+  let preserved
+  const error = await withState((directory) => {
+    preserved = directory
+    return runChild(directory, 'hang', {
+      deadlineMs: 50,
+      cleanupMs: 50,
+      launch: unexitingLaunch,
+    })
+  }).then(
+    () => undefined,
+    (caught) => caught
+  )
+  try {
+    expect(error).toBeInstanceOf(ChildCleanupError)
+    expect(error).toMatchObject({
+      code: 'CHILD_CLEANUP_UNCONFIRMED',
+      directory: preserved,
+      scenario: 'hang',
+    })
+    // The directory survived withState, and its marker records the unconfirmed exit.
+    expect(JSON.parse(await readFile(join(preserved, UNCONFIRMED), 'utf8'))).toMatchObject({
+      scenario: 'hang',
+      cleanupMs: 50,
+    })
+  } finally {
+    // No real process was started, so the test removes the directory it preserved.
+    if (preserved) await rm(preserved, { recursive: true, force: true })
+  }
+}, 30_000)
