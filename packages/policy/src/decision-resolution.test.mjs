@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test'
+import { availableRuntimesFromDiscovery } from '@control-plane/contracts'
 import {
   DecisionResolutionDeniedError,
   resolveDecisionLayer,
   resolveRuntimeHarness,
+  selectRuntimesExposingHarness,
 } from './index.ts'
 
 const ids = {
@@ -240,6 +242,208 @@ describe('decision-layer resolution (#558)', () => {
   })
 })
 
+describe('model and harness selection are independent (no silent substitution)', () => {
+  const pinnedModel = { modelId: 'pi/sol-1' }
+
+  test('a model pin leaves harness resolution and its trace unchanged', () => {
+    const without = resolveDecisionLayer(baseRequest(), {})
+    const withModel = resolveDecisionLayer(
+      { ...baseRequest(), explicitPins: { model: pinnedModel } },
+      {}
+    )
+    expect(withModel.resolution.harness).toEqual(without.resolution.harness)
+    expect(withModel.trace.harness).toEqual(without.trace.harness)
+    expect(withModel.resolution.model).toEqual(pinnedModel)
+  })
+
+  test('a harness pin leaves model resolution and its trace unchanged', () => {
+    const policy = { model: { modelId: 'pi/sol-1' } }
+    const without = resolveDecisionLayer(baseRequest(), policy)
+    const withHarness = resolveDecisionLayer(
+      { ...baseRequest(), explicitPins: { harness: { harnessId: 'claude-code' } } },
+      policy
+    )
+    expect(withHarness.resolution.harness).toEqual({ harnessId: 'claude-code' })
+    expect(withHarness.resolution.model).toEqual(without.resolution.model)
+    expect(withHarness.trace.model).toEqual(without.trace.model)
+  })
+
+  test('a policy default model is not re-bound when a different harness is selected', () => {
+    const resolution = resolveDecisionLayer(
+      { ...baseRequest(), profileDefaults: { harness: { harnessId: 'claude-code' } } },
+      { model: pinnedModel }
+    )
+    expect(resolution.resolution.harness.harnessId).toBe('claude-code')
+    expect(resolution.resolution.model).toEqual(pinnedModel)
+    expect(resolution.trace.model.source).toBe('policy-default')
+  })
+
+  test('withheld model access does not alter the selected harness', () => {
+    const unentitled = {
+      ...baseRequest(),
+      entitlements: { modelAccess: 'none', grantedCapabilityNames: ['shell.exec'] },
+      explicitPins: { harness: { harnessId: 'claude-code' } },
+    }
+    const resolution = resolveDecisionLayer(unentitled, {})
+    expect(resolution.resolution.harness).toEqual({ harnessId: 'claude-code' })
+    expect(resolution.resolution.model).toEqual({ withheld: 'MODEL_ACCESS_NOT_ENTITLED' })
+  })
+
+  test('an entitled model pin never rescues an unexposed harness pin', () => {
+    expectDenied('NO_COMPATIBLE_RUNTIME', () =>
+      resolveDecisionLayer(
+        {
+          ...baseRequest(),
+          explicitPins: { harness: { harnessId: 'acp' }, model: pinnedModel },
+        },
+        { model: { modelId: 'pi/other' } }
+      )
+    )
+  })
+
+  test('an unexposed harness pin denies at any precedence layer instead of using the first exposed harness', () => {
+    expectDenied('NO_COMPATIBLE_RUNTIME', () =>
+      resolveDecisionLayer(
+        { ...baseRequest(), projectDefaults: { harness: { harnessId: 'acp' } } },
+        { model: pinnedModel }
+      )
+    )
+    expectDenied('NO_COMPATIBLE_RUNTIME', () =>
+      resolveDecisionLayer(
+        { ...baseRequest(), profileDefaults: { harness: { harnessId: 'acp' } } },
+        { model: pinnedModel }
+      )
+    )
+  })
+
+  test('a harness pin selects the runtime that exposes it when no runtime is pinned', () => {
+    const request = {
+      ...baseRequest(),
+      availableRuntimes: [
+        {
+          runtimeDefinitionId: ids.runtimeLocal,
+          kind: 'local',
+          transport: 'direct-local',
+          harnessIds: ['managed-pi'],
+          capabilities: ['shell.exec'],
+        },
+        {
+          runtimeDefinitionId: ids.runtimeRemote,
+          kind: 'self-hosted',
+          transport: 'remote-gateway',
+          harnessIds: ['managed-pi', 'acp'],
+          capabilities: ['shell.exec'],
+        },
+      ],
+      explicitPins: { harness: { harnessId: 'acp' } },
+    }
+    const resolution = resolveDecisionLayer(request, {})
+    expect(resolution.resolution.runtime.runtimeDefinitionId).toBe(ids.runtimeRemote)
+    expect(resolution.resolution.harness).toEqual({ harnessId: 'acp' })
+    expect(resolution.trace.harness.source).toBe('explicit-pin')
+    expect(resolution.trace.runtime.source).toBe('policy-default')
+  })
+
+  test('a harness pin is not satisfied by a runtime lacking required capabilities', () => {
+    const request = {
+      ...baseRequest(),
+      requiredCapabilities: ['shell.exec', 'fs.read'],
+      availableRuntimes: [
+        {
+          runtimeDefinitionId: ids.runtimeLocal,
+          kind: 'local',
+          transport: 'direct-local',
+          harnessIds: ['managed-pi'],
+          capabilities: ['shell.exec', 'fs.read'],
+        },
+        {
+          runtimeDefinitionId: ids.runtimeRemote,
+          kind: 'self-hosted',
+          transport: 'remote-gateway',
+          harnessIds: ['acp'],
+          capabilities: ['shell.exec'],
+        },
+      ],
+      explicitPins: { harness: { harnessId: 'acp' } },
+    }
+    expectDenied('NO_COMPATIBLE_RUNTIME', () => resolveDecisionLayer(request, {}))
+  })
+})
+
+describe('production discovery consumer: exact harness identity, no alias', () => {
+  const discovered = (runtimeDefinitionId, family, overrides = {}) => ({
+    runtimeDefinitionId,
+    family,
+    connectionType: 'managed_local',
+    location: 'local_device',
+    status: 'available',
+    connection: { status: 'connected', health: 'healthy', availability: 'healthy' },
+    freshness: { state: 'fresh', observedAt: '2026-09-22T12:00:00.000Z' },
+    versions: { adapter: '1.0.0', driver: '1.0.0', harness: '0.52.1' },
+    capabilities: ['shell.exec'],
+    capabilityDetails: [],
+    ...overrides,
+  })
+  const managedPiLocal = discovered(ids.runtimeLocal, 'managed-pi')
+  const acpRemote = discovered(ids.runtimeRemote, 'acp', {
+    connectionType: 'external_local',
+    location: 'agent_hq_cloud',
+  })
+  const request = (models, pins = {}) => ({
+    ...baseRequest(),
+    availableRuntimes: availableRuntimesFromDiscovery(models),
+    explicitPins: pins,
+  })
+
+  test('a pinned harness selects the discovered runtime that exposes that exact id', () => {
+    const resolution = resolveDecisionLayer(
+      request([managedPiLocal, acpRemote], { harness: { harnessId: 'acp' } }),
+      {}
+    )
+    expect(resolution.resolution.runtime.runtimeDefinitionId).toBe(ids.runtimeRemote)
+    expect(resolution.resolution.harness).toEqual({ harnessId: 'acp' })
+  })
+
+  test('a managed-pi runtime is not satisfied by a pin for pi (no alias)', () => {
+    expectDenied('NO_COMPATIBLE_RUNTIME', () =>
+      resolveDecisionLayer(request([managedPiLocal], { harness: { harnessId: 'pi' } }), {})
+    )
+  })
+
+  test('a managed-pi runtime is selected only by its exact id', () => {
+    const resolution = resolveDecisionLayer(
+      request([managedPiLocal], { harness: { harnessId: 'managed-pi' } }),
+      {}
+    )
+    expect(resolution.resolution.harness).toEqual({ harnessId: 'managed-pi' })
+  })
+
+  test('without any harness pin, the hard filter is inert and never denies with NO_COMPATIBLE_RUNTIME', () => {
+    const resolution = resolveDecisionLayer(request([managedPiLocal, acpRemote]), {})
+    expect(resolution.resolution.runtime.runtimeDefinitionId).toBe(ids.runtimeLocal)
+    expect(resolution.resolution.harness).toEqual({ harnessId: 'managed-pi' })
+    expect(resolution.diagnostics).not.toContain('NO_COMPATIBLE_RUNTIME')
+  })
+
+  test('unavailable or revoked discovered runtimes are never hard-filter candidates', () => {
+    const resolution = resolveDecisionLayer(
+      request([discovered(ids.runtimeLocal, 'acp', { status: 'unavailable' }), acpRemote], {
+        harness: { harnessId: 'acp' },
+      }),
+      {}
+    )
+    expect(resolution.resolution.runtime.runtimeDefinitionId).toBe(ids.runtimeRemote)
+    expectDenied('NO_COMPATIBLE_RUNTIME', () =>
+      resolveDecisionLayer(
+        request([discovered(ids.runtimeLocal, 'acp', { status: 'revoked' })], {
+          harness: { harnessId: 'acp' },
+        }),
+        {}
+      )
+    )
+  })
+})
+
 describe('narrow runtime harness resolution', () => {
   const piRuntime = {
     runtimeDefinitionId: 'rtd_01JABCDEF0123456789ABCDEFG',
@@ -271,5 +475,43 @@ describe('narrow runtime harness resolution', () => {
     expect(() => resolveRuntimeHarness({ ...piRuntime, harnessIds: [] })).toThrow(
       DecisionResolutionDeniedError
     )
+  })
+})
+
+describe('selectRuntimesExposingHarness (production router hard filter, #678)', () => {
+  const runtime = (id, harnessIds) => ({
+    runtimeDefinitionId: id,
+    kind: 'local',
+    transport: 'remote-gateway',
+    harnessIds,
+    capabilities: ['shell.exec'],
+  })
+  const first = runtime(ids.runtimeLocal, ['managed-pi'])
+  const second = runtime(ids.runtimeRemote, ['acp'])
+  const third = runtime('rtd_01JABCDEF0123456789CCCDEFG', ['acp', 'managed-pi'])
+
+  test('first candidate has the wrong harness; the later eligible candidate is the only one kept', () => {
+    const eligible = selectRuntimesExposingHarness([first, second], 'acp')
+    expect(eligible).toEqual([second])
+    // Ranking then runs on the filtered list only, so the wrong-harness first candidate cannot win.
+    expect(eligible[0].runtimeDefinitionId).toBe(ids.runtimeRemote)
+  })
+
+  test('keeps every exposing candidate in original order before ranking', () => {
+    expect(selectRuntimesExposingHarness([first, second, third], 'acp')).toEqual([second, third])
+  })
+
+  test('no candidate exposes the accepted harness: typed denial, never another runtime', () => {
+    expectDenied('NO_COMPATIBLE_RUNTIME', () =>
+      selectRuntimesExposingHarness([first, second], 'claude-code')
+    )
+  })
+
+  test('exact identity: a pin for pi does not select a managed-pi runtime', () => {
+    expectDenied('NO_COMPATIBLE_RUNTIME', () => selectRuntimesExposingHarness([first], 'pi'))
+  })
+
+  test('without a pin the candidate list passes through unchanged', () => {
+    expect(selectRuntimesExposingHarness([first, second])).toEqual([first, second])
   })
 })

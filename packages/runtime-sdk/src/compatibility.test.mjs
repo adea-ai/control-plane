@@ -34,7 +34,14 @@ describe('runtime compatibility certification', () => {
       parsed.certifications
         .map(({ runtimeFamily, versions }) => `${runtimeFamily}:${versions.protocol}`)
         .toSorted()
-    ).toEqual(['acp:1.5.0', 'acp:1.6.0', 'acp:1.7.0', 'pi:1.5.0', 'pi:1.6.0', 'pi:1.7.0'])
+    ).toEqual([
+      'acp:1.5.0',
+      'acp:1.6.0',
+      'acp:1.7.0',
+      'managed-pi:1.5.0',
+      'managed-pi:1.6.0',
+      'managed-pi:1.7.0',
+    ])
     for (const certification of parsed.certifications) {
       expect(certification.classification).toBe('supported')
       expect(certification.verifiedCapabilities.length).toBeGreaterThan(0)
@@ -53,12 +60,12 @@ describe('runtime compatibility certification', () => {
   test('certifies only an exact version and platform combination', async () => {
     const supported = applyRuntimeCompatibilityCertification({
       matrix: await matrix(),
-      runtimeFamily: 'pi',
+      runtimeFamily: 'managed-pi',
       connection: connection(),
     })
     const upgraded = applyRuntimeCompatibilityCertification({
       matrix: await matrix(),
-      runtimeFamily: 'pi',
+      runtimeFamily: 'managed-pi',
       connection: connection({ adapterVersion: '1.0.1' }),
     })
     const decision = evaluateRuntimeEligibility(eligibilityInput(upgraded))
@@ -84,7 +91,7 @@ describe('runtime compatibility certification', () => {
   test('does not retain capability claims beyond passing certification evidence', async () => {
     const certified = applyRuntimeCompatibilityCertification({
       matrix: await matrix(),
-      runtimeFamily: 'pi',
+      runtimeFamily: 'managed-pi',
       connection: connection({
         capabilities: [
           ...connection().capabilities,
@@ -94,7 +101,7 @@ describe('runtime compatibility certification', () => {
     })
     const missing = applyRuntimeCompatibilityCertification({
       matrix: await matrix(),
-      runtimeFamily: 'pi',
+      runtimeFamily: 'managed-pi',
       connection: connection({ capabilities: [{ name: 'stream.output', support: 'supported' }] }),
     })
 
@@ -149,7 +156,7 @@ describe('runtime compatibility certification', () => {
     })
     const model = projectRuntimeConnectionDiscovery({
       connection: incompatible,
-      family: 'pi',
+      family: 'managed-pi',
       node: {
         runtimeNodeRefId: 'rnr_01JABCDEF0123456789ABCDEFG',
         authority: 'agent_hq',
@@ -166,6 +173,34 @@ describe('runtime compatibility certification', () => {
     expect(model.compatibility.limitations).toEqual(
       expect.arrayContaining(['CERTIFICATION_INCOMPATIBLE'])
     )
+  })
+
+  test('exact managed-pi family qualifies the managed driver against its certification row', async () => {
+    const certified = applyRuntimeCompatibilityCertification({
+      matrix: await matrix(),
+      runtimeFamily: 'managed-pi',
+      connection: connection(),
+    })
+
+    expect(certified).toMatchObject({ compatibilityState: 'compatible', status: 'connected' })
+    expect(certified.limitations).not.toContain('COMPATIBILITY_UNTESTED')
+    expect(evaluateRuntimeEligibility(eligibilityInput(certified))).toMatchObject({
+      eligible: true,
+    })
+  })
+
+  test('a durable pi connection cannot inherit the managed-pi certification', async () => {
+    // `pi` is the durable Pi family, a different driver. No certification row
+    // covers it, so the managed row must not qualify it by name similarity.
+    const durable = applyRuntimeCompatibilityCertification({
+      matrix: await matrix(),
+      runtimeFamily: 'pi',
+      connection: connection(),
+    })
+
+    expect(durable).toMatchObject({ compatibilityState: 'untested', health: 'degraded' })
+    expect(durable.limitations).toContain('COMPATIBILITY_UNTESTED')
+    expect(durable.compatibilityState).not.toBe('compatible')
   })
 })
 
@@ -219,10 +254,10 @@ function eligibilityInput(candidate) {
       contentDigest: `sha256:${'a'.repeat(64)}`,
       runtimeRequirements: [{ capability: 'stream.output', necessity: 'required' }],
     },
-    candidate: { family: 'pi', nodeStatus: 'online', connection: candidate },
+    candidate: { family: 'managed-pi', nodeStatus: 'online', connection: candidate },
     policy: {
       snapshot: { policyId: 'certification', version: 1, digest: `sha256:${'b'.repeat(64)}` },
-      allowedFamilies: ['pi'],
+      allowedFamilies: ['managed-pi'],
       allowedLocations: ['local_device'],
       deniedRuntimeConnectionIds: [],
       requireVerifiedCapabilities: true,

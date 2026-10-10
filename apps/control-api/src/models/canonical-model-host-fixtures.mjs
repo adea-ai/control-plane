@@ -134,6 +134,7 @@ export async function fixture() {
     reader,
     executions,
     lifecycle,
+    context,
     plan,
     intent,
     scopeInputs,

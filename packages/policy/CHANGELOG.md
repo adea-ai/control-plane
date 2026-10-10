@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/adea-ai/control-plane/compare/policy-v1.4.1...policy-v1.4.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* **harness:** exact harness routing, managed-pi identity, and certification keys (partial [#678](https://github.com/adea-ai/control-plane/issues/678)) ([#1050](https://github.com/adea-ai/control-plane/issues/1050)) ([64748e4](https://github.com/adea-ai/control-plane/commit/64748e464c4f3dbcab4673116158c1f78ca4fdb2))
+
 ## [1.4.1](https://github.com/adea-ai/control-plane/compare/policy-v1.4.0...policy-v1.4.1) (2026-10-01)
 
 

@@ -2536,7 +2536,7 @@
         {
           "kind": "test",
           "path": "scripts/m9-evidence-matrices.mjs",
-          "scope": "Secret-canary sink matrix (logs, traces, events, errors, checkpoints, model_context, public_api) — every sink bound to a named test; executed by bun run test:secret-canaries."
+          "scope": "Secret-canary sink matrix (logs, traces, events, errors, checkpoints, model_context, public_api, pi_durable_admissions, pi_durable_progress, pi_durable_sessions, pi_lead_preparations) — every sink bound to a named test; executed by bun run test:secret-canaries."
         },
         {
           "kind": "test",

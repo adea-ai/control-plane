@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.29.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.29.1...control-api-v1.29.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* **control-api:** settle completed lead attempt reservations exactly once ([#1068](https://github.com/adea-ai/control-plane/issues/1068)) ([2036405](https://github.com/adea-ai/control-plane/commit/2036405a90161ac23d49fb2bbced9bb640a27031))
+
+## [1.29.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.29.0...control-api-v1.29.1) (2026-10-10)
+
+
+### Tests
+
+* **control-api:** prove persisted approvals survive physical restart ([b1b1667](https://github.com/adea-ai/control-plane/commit/b1b16670a7e081127aec31d039293176f2567dff))
+* **control-api:** prove persisted approvals survive physical restart ([#932](https://github.com/adea-ai/control-plane/issues/932)) ([#1062](https://github.com/adea-ai/control-plane/issues/1062)) ([b1b1667](https://github.com/adea-ai/control-plane/commit/b1b16670a7e081127aec31d039293176f2567dff))
+* **pi-durable:** register secret canaries for journal and lead-preparation sinks ([#1059](https://github.com/adea-ai/control-plane/issues/1059)) ([b5bec50](https://github.com/adea-ai/control-plane/commit/b5bec5075ef0fa0e99f3e368961479883a5f5842))
+
+## [1.29.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.28.0...control-api-v1.29.0) (2026-10-10)
+
+
+### Features
+
+* issue-932-management-current-authority ([#1043](https://github.com/adea-ai/control-plane/issues/1043)) ([3118a7c](https://github.com/adea-ai/control-plane/commit/3118a7c9f5d177a3fdce2de8ced7fbf353d91e43))
+
+
+### Tests
+
+* **models:** qualify confirmed funding at inference boundaries ([#970](https://github.com/adea-ai/control-plane/issues/970)) ([5ee3dbf](https://github.com/adea-ai/control-plane/commit/5ee3dbf06f9a85bcb63ac29bdb13aecfeeac9a4a))
+
 ## [1.28.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.27.1...control-api-v1.28.0) (2026-10-09)
 
 
