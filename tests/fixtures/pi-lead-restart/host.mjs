@@ -50,12 +50,27 @@ if (mode === 'initial') {
     ownerPid: record.detail.ownerPid,
     inferencePending: record.detail.inferencePending ?? false,
   }))
+  // A duplicate submission with the original idempotency key after restart. It must not reach the
+  // model or admit a second run; the production service answers however it answers, and we report it.
+  let duplicate
+  try {
+    const replayed = await opened.composition.service.dispatch(
+      dispatchEnvelope('pi-durable.lead.dispatch', { intentId }, 'restart-proof:dispatch'),
+      principal
+    )
+    duplicate = { ok: true, dispatchId: replayed.data?.dispatchId ?? null }
+  } catch (error) {
+    duplicate = { ok: false, code: error?.code ?? error?.message ?? 'UNKNOWN' }
+  }
   emit('REPORT', {
     records,
     recoveryBlocked: opened.composition.recoveryBlocked,
     requests: model.counts.requests,
     streams: model.counts.streamsStarted,
     resolvePlanCalls: opened.resolvePlanCalls,
+    duplicate,
+    requestsAfterDuplicate: model.counts.requests,
+    journalAfterDuplicate: opened.composition.adapter.journal.list().length,
   })
   await opened.close()
   model.stop()

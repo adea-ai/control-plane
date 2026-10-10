@@ -69,6 +69,11 @@ test('a SIGKILLed Pi lead run is adopted by a restarted composition with no rese
     expect(report.recoveryBlocked).toEqual([])
     expect(record.state).toBe('unknown')
     expect(record.inferencePending).toBe(true)
+
+    // A duplicate submission after restart reaches neither the model nor a second run.
+    expect(report.requestsAfterDuplicate).toBe(0)
+    expect(report.journalAfterDuplicate).toBe(report.records.length)
+    expect(report.duplicate).toEqual({ ok: true, dispatchId: held.dispatchId })
   } finally {
     if (initial && initial.exitCode === null && initial.signalCode === null) initial.kill('SIGKILL')
     if (recovery && recovery.exitCode === null && recovery.signalCode === null)
