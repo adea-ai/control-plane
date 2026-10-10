@@ -11,7 +11,7 @@ import { z } from 'zod'
 // Bounded legacy LangGraph reader, drain plan, handoff fences and new-admission gate (M16.03, #940).
 // Everything here is repository-side and inert by default: nothing shuts down, deletes, converts or
 // reconciles work. A disposable store can never establish zero live work; zero requires a
-// deployed-dsn attestation and complete reads.
+// deployed-dsn attestation, complete reads, and no unparseable retained records.
 
 export const LEGACY_CHECKPOINT_NAMESPACE = 'langgraph-checkpoints-v1'
 export const LEGACY_EXECUTION_NAMESPACE = 'executions'
@@ -19,6 +19,9 @@ export const LEGACY_EXECUTION_PLAN_NAMESPACE = 'execution-plans'
 export const LEGACY_DRAIN_FENCE_NAMESPACE = 'langgraph-legacy-drain-fences'
 export const LEGACY_SAVER_OWNER = 'legacy-langgraph-saver'
 export const TYPED_REPLACEMENT_OWNER = 'typed-replacement'
+export const LEGACY_STATUS_SCHEMA = 'langgraph-legacy-operator-status/v1'
+/** Maximum work items included in an operator status; the total is always reported. */
+export const LEGACY_STATUS_ITEM_LIMIT = 25
 
 /** Repository-side version and deprecation marker for the public graph routes. Changes no HTTP behavior. */
 export const LEGACY_GRAPH_API = Object.freeze({
@@ -52,6 +55,7 @@ export type ThreadClassification =
   | 'orphaned'
   | 'unclassified'
   | 'unknown'
+export type PlanVerification = 'verified' | 'unverified' | 'absent'
 
 export interface VerifiedPlanIdentity {
   readonly executionPlanId: string
@@ -80,6 +84,7 @@ export interface LegacyWorkItem {
   readonly executionId?: string
   readonly executionState?: string
   readonly classification: ThreadClassification
+  readonly planVerification: PlanVerification
   readonly graph?: GraphReference
   readonly blockers: readonly string[]
 }
@@ -100,10 +105,13 @@ export interface LegacyRemainder {
     readonly checkpoints: number
     readonly writes: number
     readonly unparseableCheckpointRecords: number
+    readonly unsupportedVersionCheckpointRecords: number
     readonly executions: number
     readonly inFlightExecutions: number
     readonly malformedExecutions: number
     readonly plans: number
+    readonly unparseablePlans: number
+    readonly plansUnverified: number
     readonly byClassification: Readonly<Record<ThreadClassification, number>>
   }
   readonly items: readonly LegacyWorkItem[]
@@ -153,6 +161,8 @@ const CheckpointRowSchema = z
     kind: z.enum(['checkpoint', 'write']),
   })
   .passthrough()
+
+const VersionProbeSchema = z.object({ version: z.unknown() }).passthrough()
 
 const ExecutionRowSchema = z
   .object({
@@ -294,6 +304,7 @@ function classifyThread(
  * Bounded, read-only observation of retained legacy LangGraph work. Each namespace is read in pages
  * up to a fixed budget. Incomplete reads report lower bounds, and a zero claim is never made from them.
  * Non-terminal executions without a checkpoint thread are reported too, so no live work is hidden.
+ * Unparseable or unsupported-version checkpoint records block a zero claim: they cannot be ruled out as live work.
  */
 export async function readLegacyRemainder(
   provider: PersistenceProvider,
@@ -311,11 +322,16 @@ export async function readLegacyRemainder(
     let checkpoints = 0
     let writes = 0
     let unparseableCheckpointRecords = 0
+    let unsupportedVersionCheckpointRecords = 0
     const threadKeys = new Map<string, { scope: string; thread: string }>()
     for (const record of checkpointScan.records) {
       const parsed = CheckpointRowSchema.safeParse(record.value)
       if (!parsed.success) {
         unparseableCheckpointRecords += 1
+        const probe = VersionProbeSchema.safeParse(record.value)
+        if (probe.success && probe.data.version !== undefined && probe.data.version !== 1) {
+          unsupportedVersionCheckpointRecords += 1
+        }
         continue
       }
       const { scope, thread, kind } = parsed.data
@@ -352,15 +368,39 @@ export async function readLegacyRemainder(
     }
 
     const verifiedPlans = new Map<string, VerifiedPlanIdentity | undefined>()
+    let unparseablePlans = 0
+    let plansUnverified = 0
     for (const record of planScan.records) {
       const identity = PlanIdentitySchema.safeParse(record.value)
-      if (!identity.success) continue
+      if (!identity.success) {
+        unparseablePlans += 1
+        continue
+      }
       const planId = identity.data.executionPlanId
       try {
         verifiedPlans.set(planId, verifyPlan(record.value))
       } catch {
         verifiedPlans.set(planId, undefined)
+        plansUnverified += 1
       }
+    }
+
+    // Graph identity is trusted only when a verified plan matches the execution's exact pin.
+    const identityOf = (
+      pin: ExecutionObservation['pin']
+    ): { planVerification: PlanVerification; graph?: GraphReference } => {
+      if (pin === undefined || !verifiedPlans.has(pin.executionPlanId)) {
+        return { planVerification: 'absent' }
+      }
+      const verified = verifiedPlans.get(pin.executionPlanId)
+      const matches =
+        verified !== undefined &&
+        verified.executionPlanId === pin.executionPlanId &&
+        verified.contentDigest === pin.contentDigest
+      if (!matches) return { planVerification: 'unverified' }
+      return verified.graph === undefined
+        ? { planVerification: 'verified' }
+        : { planVerification: 'verified', graph: verified.graph }
     }
 
     const executionsComplete = executionScan.complete
@@ -378,15 +418,7 @@ export async function readLegacyRemainder(
       const classified = classifyThread(thread, executions, executionsComplete)
       byClassification[classified.classification] += 1
       if (classified.executionId !== undefined) threadExecutionIds.add(classified.executionId)
-      const pin = classified.execution?.pin
-      const verified = pin === undefined ? undefined : verifiedPlans.get(pin.executionPlanId)
-      const graph =
-        verified !== undefined &&
-        pin !== undefined &&
-        verified.executionPlanId === pin.executionPlanId &&
-        verified.contentDigest === pin.contentDigest
-          ? verified.graph
-          : undefined
+      const identity = identityOf(classified.execution?.pin)
       items.push({
         kind: 'checkpoint-thread',
         identity: thread,
@@ -397,7 +429,8 @@ export async function readLegacyRemainder(
           ? {}
           : { executionState: classified.execution.state }),
         classification: classified.classification,
-        ...(graph === undefined ? {} : { graph }),
+        planVerification: identity.planVerification,
+        ...(identity.graph === undefined ? {} : { graph: identity.graph }),
         blockers: classified.blockers,
       })
     }
@@ -411,6 +444,7 @@ export async function readLegacyRemainder(
       const classification: ThreadClassification = uncertain ? 'uncertain-effect' : 'in-flight'
       byClassification[classification] += 1
       executionOnly += 1
+      const identity = identityOf(execution.pin)
       items.push({
         kind: 'execution-only',
         identity: `execution:${executionId}`,
@@ -418,6 +452,8 @@ export async function readLegacyRemainder(
         executionState: execution.state,
         ...(execution.workspaceId === undefined ? {} : { workspaceId: execution.workspaceId }),
         classification,
+        planVerification: identity.planVerification,
+        ...(identity.graph === undefined ? {} : { graph: identity.graph }),
         blockers: [uncertain ? 'UNCERTAIN_EFFECT_UNRECONCILED' : 'IN_FLIGHT_WORK'],
       })
     }
@@ -435,6 +471,9 @@ export async function readLegacyRemainder(
     if (threadCount > 0) zeroReasons.push('RETAINED_THREADS_PRESENT')
     if (inFlightExecutions > 0) zeroReasons.push('IN_FLIGHT_EXECUTIONS_PRESENT')
     if (malformedExecutions > 0) zeroReasons.push('MALFORMED_EXECUTION_RECORDS_PRESENT')
+    if (unparseableCheckpointRecords > 0) {
+      zeroReasons.push('UNPARSEABLE_CHECKPOINT_RECORDS_PRESENT')
+    }
 
     return {
       observationScope: options.observationScope,
@@ -451,10 +490,13 @@ export async function readLegacyRemainder(
         checkpoints,
         writes,
         unparseableCheckpointRecords,
+        unsupportedVersionCheckpointRecords,
         executions: executionScan.records.length,
         inFlightExecutions,
         malformedExecutions,
         plans: planScan.records.length,
+        unparseablePlans,
+        plansUnverified,
         byClassification,
       },
       items,
@@ -485,10 +527,27 @@ function proofFor(graph: GraphReference, proofs: readonly ProofEvidence[]): bool
   )
 }
 
+/** A graph is covered only by an evidence-equivalent replacement with proven profile and failure evidence. */
+function coveredFor(
+  graph: GraphReference,
+  evidence: {
+    readonly replacements: readonly ReplacementEvidence[]
+    readonly profiles: readonly ProofEvidence[]
+    readonly failures: readonly ProofEvidence[]
+  }
+): boolean {
+  return (
+    replacementFor(graph, evidence.replacements)?.outcome === 'evidence-equivalent' &&
+    proofFor(graph, evidence.profiles) &&
+    proofFor(graph, evidence.failures)
+  )
+}
+
 /**
  * Per-item owner selection and handoff blockers. Owner stays with the legacy saver unless an
  * evidence-equivalent replacement exists for the item's exact graph and its profile and failure
- * evidence is proven. Any blocker, incomplete read, or non-terminal work retains dependencies.
+ * evidence is proven. Removal additionally requires coverage of every admissible graph, so a zero
+ * count alone never satisfies it. Dependencies stay retained until the removal condition is satisfied.
  */
 export function planLegacyDrain(
   remainder: LegacyRemainder,
@@ -496,16 +555,20 @@ export function planLegacyDrain(
     readonly replacements?: readonly ReplacementEvidence[]
     readonly profiles?: readonly ProofEvidence[]
     readonly failures?: readonly ProofEvidence[]
+    readonly admissibleGraphs?: readonly GraphReference[]
   } = {}
 ): LegacyDrainPlan {
   const replacements = evidence.replacements ?? []
   const profiles = evidence.profiles ?? []
   const failures = evidence.failures ?? []
+  const admissibleGraphs = evidence.admissibleGraphs ?? []
   const items: DrainItemPlan[] = remainder.items.map((item) => {
     const ownerReasons: string[] = []
     let selectedOwner: DrainItemPlan['selectedOwner'] = LEGACY_SAVER_OWNER
     if (item.graph === undefined) {
-      ownerReasons.push('GRAPH_IDENTITY_UNKNOWN')
+      ownerReasons.push(
+        item.planVerification === 'unverified' ? 'PLAN_UNVERIFIED' : 'GRAPH_IDENTITY_UNKNOWN'
+      )
     } else {
       const replacement = replacementFor(item.graph, replacements)
       if (replacement === undefined) ownerReasons.push('NO_COMPATIBLE_REPLACEMENT_EVIDENCE')
@@ -531,25 +594,29 @@ export function planLegacyDrain(
       handoffEligible: blockers.length === 0 && selectedOwner === TYPED_REPLACEMENT_OWNER,
     }
   })
-  const unresolved =
-    remainder.observation !== 'observed' ||
-    items.some((item) => item.blockers.length > 0 || item.selectedOwner === LEGACY_SAVER_OWNER)
   const handoffEligible =
     items.length > 0 &&
     remainder.observation === 'observed' &&
     items.every((item) => item.handoffEligible)
+  const coverage = { replacements, profiles, failures }
+  const admissibleCovered =
+    admissibleGraphs.length > 0 && admissibleGraphs.every((graph) => coveredFor(graph, coverage))
+  const satisfied =
+    remainder.zero.established && admissibleCovered && items.every((item) => item.handoffEligible)
   const removalReasons = [...remainder.zero.reasons]
+  if (admissibleGraphs.length === 0) removalReasons.push('NO_ADMISSIBLE_GRAPHS_OBSERVED')
+  else if (!admissibleCovered) removalReasons.push('ADMISSIBLE_GRAPHS_NOT_COVERED')
   if (items.some((item) => item.selectedOwner === LEGACY_SAVER_OWNER)) {
     removalReasons.push('LEGACY_OWNER_RETAINED')
   }
-  const satisfied = remainder.zero.established && items.every((item) => item.handoffEligible)
   return {
     observation: remainder.observation,
     items,
     handoffEligible,
-    retainedDependencies: unresolved
-      ? ['langgraph-checkpoints-v1 namespace', 'LangGraph checkpoint saver composition']
-      : [],
+    // The namespace and saver composition stay until removal holds, not merely until handoff is possible.
+    retainedDependencies: satisfied
+      ? []
+      : ['langgraph-checkpoints-v1 namespace', 'LangGraph checkpoint saver composition'],
     removal: {
       condition: LEGACY_GRAPH_API.removalCondition,
       satisfied,
@@ -645,15 +712,17 @@ export interface AdmissionEvidence {
   readonly closureRequested: boolean
 }
 
+export type AdmissionDecision = {
+  readonly decision: 'open' | 'closure-eligible'
+  readonly reasons: readonly string[]
+}
+
 /**
  * Decides whether closing new legacy admissions is eligible. The default is open, and eligibility
  * requires deployed-dsn zero, evidence for every admissible graph, and an explicit closure request.
  * It performs no action.
  */
-export function evaluateLegacyAdmissionGate(evidence: AdmissionEvidence): {
-  readonly decision: 'open' | 'closure-eligible'
-  readonly reasons: readonly string[]
-} {
+export function evaluateLegacyAdmissionGate(evidence: AdmissionEvidence): AdmissionDecision {
   const reasons: string[] = []
   if (evidence.remainder.observationScope !== 'deployed-dsn') {
     reasons.push('REMAINING_NOT_DEPLOYED_SCOPE')
@@ -683,6 +752,108 @@ export function createLegacyAdmissionGuard(
       if (decision.decision === 'closure-eligible') {
         throw new LegacyRetirementError('LEGACY_ADMISSION_CLOSED')
       }
+    },
+  }
+}
+
+export interface LegacyOperatorStatusEntry {
+  readonly identity: string
+  readonly kind: LegacyWorkItem['kind']
+  readonly classification: ThreadClassification
+  readonly executionState?: string
+  readonly planVerification: PlanVerification
+  readonly selectedOwner: DrainItemPlan['selectedOwner']
+  readonly ownerReasons: readonly string[]
+  readonly blockers: readonly string[]
+}
+
+export interface LegacyOperatorStatus {
+  readonly schema: typeof LEGACY_STATUS_SCHEMA
+  readonly api: { readonly path: string; readonly version: string; readonly lifecycle: string }
+  readonly scope: ObservationScope
+  /** False when a read was truncated or any retained record could not be parsed or verified. */
+  readonly readComplete: boolean
+  readonly exact: boolean
+  readonly zero: LegacyRemainder['zero']
+  readonly counts: LegacyRemainder['counts']
+  readonly blockers: Readonly<Record<string, number>>
+  readonly owners: Readonly<Record<string, number>>
+  readonly retainedDependencies: readonly string[]
+  readonly removal: LegacyDrainPlan['removal']
+  readonly admission?: AdmissionDecision
+  readonly items: {
+    readonly total: number
+    readonly shown: number
+    readonly truncated: boolean
+    readonly entries: readonly LegacyOperatorStatusEntry[]
+  }
+}
+
+function compareIdentity(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+/**
+ * Bounded operator status: counts, blocker and owner tallies, removal and admission decisions, and at
+ * most LEGACY_STATUS_ITEM_LIMIT work items in identity order. It contains no store paths or record payloads.
+ */
+export function buildLegacyOperatorStatus(input: {
+  readonly remainder: LegacyRemainder
+  readonly plan: LegacyDrainPlan
+  readonly admission?: AdmissionDecision
+}): LegacyOperatorStatus {
+  const { remainder, plan } = input
+  if (plan.items.length !== remainder.items.length) {
+    throw new LegacyRetirementError('LEGACY_STATUS_PLAN_MISMATCH')
+  }
+  const blockers: Record<string, number> = {}
+  const owners: Record<string, number> = {}
+  for (const item of plan.items) {
+    owners[item.selectedOwner] = (owners[item.selectedOwner] ?? 0) + 1
+    for (const blocker of item.blockers) blockers[blocker] = (blockers[blocker] ?? 0) + 1
+  }
+  // The plan is derived from this remainder, so its items align by position. A mismatch is refused, never guessed.
+  const entries: LegacyOperatorStatusEntry[] = remainder.items
+    .map((item, index) => {
+      const decision = plan.items[index]
+      if (decision === undefined || decision.identity !== item.identity) {
+        throw new LegacyRetirementError('LEGACY_STATUS_PLAN_MISMATCH')
+      }
+      return {
+        identity: item.identity,
+        kind: item.kind,
+        classification: item.classification,
+        ...(item.executionState === undefined ? {} : { executionState: item.executionState }),
+        planVerification: item.planVerification,
+        selectedOwner: decision.selectedOwner,
+        ownerReasons: decision.ownerReasons,
+        blockers: decision.blockers,
+      }
+    })
+    .toSorted((left, right) => compareIdentity(left.identity, right.identity))
+  const shown = entries.slice(0, LEGACY_STATUS_ITEM_LIMIT)
+  return {
+    schema: LEGACY_STATUS_SCHEMA,
+    api: {
+      path: LEGACY_GRAPH_API.path,
+      version: LEGACY_GRAPH_API.version,
+      lifecycle: LEGACY_GRAPH_API.lifecycle,
+    },
+    scope: remainder.observationScope,
+    readComplete: remainder.observation === 'observed',
+    exact: remainder.exact,
+    zero: remainder.zero,
+    counts: remainder.counts,
+    blockers,
+    owners,
+    retainedDependencies: plan.retainedDependencies,
+    removal: plan.removal,
+    ...(input.admission === undefined ? {} : { admission: input.admission }),
+    items: {
+      total: entries.length,
+      shown: shown.length,
+      truncated: entries.length > shown.length,
+      entries: shown,
     },
   }
 }

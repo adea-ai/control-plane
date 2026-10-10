@@ -1,15 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { readFile, rm } from 'node:fs/promises'
 import { emptyCheckpoint } from '@langchain/langgraph'
-import { GraphNodeEffectUnconfirmedError } from '@control-plane/orchestration'
-import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
-import {
-  LangGraphOrchestrationAdapter,
-  LangGraphSqliteCheckpointSaver,
-  deterministicInterruptGraph,
-} from './index.ts'
+import { LangGraphSqliteCheckpointSaver } from './index.ts'
 import {
   LEGACY_CHECKPOINT_NAMESPACE,
   LEGACY_EXECUTION_NAMESPACE,
@@ -23,89 +15,20 @@ import {
   readLegacyRemainder,
   releaseLegacyDrainFence,
 } from './legacy-retirement.ts'
+import {
+  adapterFor,
+  disposable,
+  disposableStore,
+  metadata,
+  reopen,
+  request,
+  resumeInput,
+  scope,
+  storageThread,
+  writeExecution,
+} from './legacy-retirement.fixture.mjs'
 
 // Disposable local stores only. Nothing here reads, writes or shuts down a deployed store.
-const request = {
-  executionId: 'exe_01JABCDEF0123456789ABCDEFG',
-  attemptId: 'att_01JABCDEF0123456789ABCDEFG',
-  workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
-  workflowId: 'wfl_01JABCDEF0123456789ABCDEFG',
-  graph: {
-    graphDefinitionId: 'deterministic-interrupt',
-    graphVersion: '1.0.0',
-    contentDigest: `sha256:${'b'.repeat(64)}`,
-  },
-  threadId: 'thread-legacy-1',
-  input: { objective: 'drain legacy work' },
-  idempotencyKey: 'legacy:segment:1',
-}
-const storageThread = `${request.workspaceId}:${request.executionId}:${request.threadId}`
-const metadata = { source: 'input', step: 0, parents: {} }
-const scope = 'managed-graphs'
-const disposable = { observationScope: 'disposable-local-store' }
-
-async function disposableStore() {
-  const directory = await mkdtemp(join(tmpdir(), 'legacy-retirement-'))
-  const path = join(directory, 'state.sqlite')
-  const provider = new SqlitePersistenceProvider({ path })
-  await provider.migrate()
-  return { directory, path, provider }
-}
-
-async function reopen(path) {
-  const provider = new SqlitePersistenceProvider({ path })
-  await provider.migrate()
-  return provider
-}
-
-function adapterFor(provider, { calls = [], failOn, resumeFence, admissionGuard } = {}) {
-  return new LangGraphOrchestrationAdapter({
-    graphs: [deterministicInterruptGraph(request.graph)],
-    checkpointer: new LangGraphSqliteCheckpointSaver(provider, scope),
-    operations: {
-      async invoke(operation) {
-        calls.push(operation.name)
-        if (operation.name === failOn) throw new GraphNodeEffectUnconfirmedError()
-        return { value: operation.name }
-      },
-      async cancel() {
-        return true
-      },
-    },
-    events: { async publish() {} },
-    now: () => '2026-10-10T12:00:00.000Z',
-    ...(resumeFence === undefined ? {} : { resumeFence }),
-    ...(admissionGuard === undefined ? {} : { admissionGuard }),
-  })
-}
-
-function resumeInput(checkpointId) {
-  return {
-    executionId: request.executionId,
-    attemptId: request.attemptId,
-    workspaceId: request.workspaceId,
-    workflowId: request.workflowId,
-    graph: request.graph,
-    threadId: request.threadId,
-    checkpointId,
-    response: { action: 'approve' },
-    idempotencyKey: 'legacy:segment:resume:1',
-  }
-}
-
-// Mirrors the control plane's execution state writes; the reader consumes the same record shape.
-async function writeExecution(provider, state, executionId = request.executionId) {
-  await provider.transaction(async (tx) => {
-    const existing = await tx.get(LEGACY_EXECUTION_NAMESPACE, executionId)
-    await tx.put({
-      namespace: LEGACY_EXECUTION_NAMESPACE,
-      id: executionId,
-      ...(existing === undefined ? {} : { expectedRevision: existing.revision }),
-      value: { executionId, state, correlation: { workspaceId: request.workspaceId } },
-    })
-  })
-}
-
 describe('legacy LangGraph retirement controls (M16.03, #940)', () => {
   test('version and deprecation markers match exactly the public graph routes', async () => {
     const source = await readFile(
@@ -425,7 +348,10 @@ describe('legacy LangGraph retirement controls (M16.03, #940)', () => {
         blockers: [],
       })
       expect(ready.handoffEligible).toBe(true)
-      expect(ready.retainedDependencies).toEqual([])
+      expect(ready.retainedDependencies).toEqual([
+        'langgraph-checkpoints-v1 namespace',
+        'LangGraph checkpoint saver composition',
+      ])
       // Disposable scope can never satisfy the removal condition, even with eligible handoff.
       expect(ready.removal.satisfied).toBe(false)
     } finally {
