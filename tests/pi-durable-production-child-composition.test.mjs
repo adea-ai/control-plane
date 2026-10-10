@@ -166,6 +166,7 @@ function childrenFactory() {
     })
     state.toolService = service
     const delegationRecords = new SqliteDelegationRepository(persistence)
+    state.delegationRecords = delegationRecords
     const lifecycle = new ExecutionLifecycleService(repositories.executions)
     const events = {
       async publish(event, key) {
@@ -188,7 +189,6 @@ function childrenFactory() {
     }
     return {
       authority: {
-        readCurrent: async () => undefined,
         admit: async () => {
           throw new Error('CHILD_RUNTIME_NOT_EXPECTED')
         },
@@ -202,7 +202,6 @@ function childrenFactory() {
         plans: repositories.plans,
         events,
         scopeAdmission,
-        readCurrent: async () => undefined,
       },
       createGovernedDelegateChild(delegationService) {
         state.governedDelegationService = delegationService
@@ -383,6 +382,51 @@ test('actual production composition uses the canonical Pi tool authority and sha
     expect(host.state.toolAuthorizationCalls).toBe(1)
     expect(host.state.toolExecutorCalls).toBe(0)
     expect(host.state.physicalSends).toBe(1)
+
+    // Adversarial current authority: the parent's delegate-child call was rejected by canonical
+    // effect authority. The server-owned child resolver, reading the real retained stores, must
+    // refuse a governed child admitted under that call. This asserts the resolver's own denial,
+    // not a limit or precondition failure in the delegation service.
+    const refusedSuffix = '01JCCCDEF0123456789ABCDEFG'
+    const refused = await host.composition.childAuthorityCurrent
+      .readAdmission({
+        workspaceId: host.workspaceId,
+        parentIntentId: intentId,
+        parentExecutionId: dispatch.executionId,
+        parentAttemptId,
+        parentExecutionVersion: parent.version,
+        parentPlan: {
+          executionPlanId: parentPlan.executionPlanId,
+          contentDigest: parentPlan.contentDigest,
+          schemaVersion: parentPlan.schemaVersion,
+        },
+        admittedToolCallId: host.state.toolCallId,
+        delegationId: id('dlg', refusedSuffix),
+        childRequestId: id('req', refusedSuffix),
+        childExecutionId: id('exe', refusedSuffix),
+        childAttemptId: id('att', refusedSuffix),
+        childDispatch: {
+          delegationId: id('dlg', refusedSuffix),
+          childAttemptId: id('att', refusedSuffix),
+          runtime: { runtimeConnectionId: id('rtc', refusedSuffix) },
+          dispatchedAt: host.at,
+        },
+        childPlan: {
+          executionPlanId: id('pln', refusedSuffix),
+          contentDigest: `sha256:${'a'.repeat(64)}`,
+          schemaVersion: parentPlan.schemaVersion,
+        },
+        role: 'researcher',
+        profileVersionId: parentPlan.profile.profileVersionId,
+        originalActorPrincipalId: host.actorPrincipalId,
+        childRequestDigest: `sha256:${'b'.repeat(64)}`,
+        acceptedAt: host.at,
+      })
+      .then(
+        () => undefined,
+        (error) => error
+      )
+    expect(refused?.message).toBe('PI_CHILD_MODEL_AUTHORITY_DENIED')
 
     const cancelCommand = host.command('pi-durable.lead.cancel', {
       dispatchId: dispatch.dispatchId,
