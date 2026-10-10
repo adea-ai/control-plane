@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto'
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 import { loadDatabaseCredentials } from '@control-plane/config'
 import {
   PostgresRuntimeChannelOwnershipRepository,
@@ -55,6 +59,21 @@ function sha256Base64url(value) {
   return createHash('sha256').update(value).digest('base64url')
 }
 
+// The predecessor chain is the candidate chain without its last journal entry, which is the candidate.
+async function predecessorMigrationFolder() {
+  const directory = await mkdtemp(join(tmpdir(), 'control-plane-gateway-predecessor-'))
+  const source = fileURLToPath(new URL('../../../packages/database/drizzle', import.meta.url))
+  await cp(source, directory, { recursive: true })
+  const journalPath = join(directory, 'meta', '_journal.json')
+  const journal = JSON.parse(await readFile(journalPath, 'utf8'))
+  const candidate = journal.entries.at(-1)
+  journal.entries = journal.entries.slice(0, -1)
+  await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`)
+  await rm(join(directory, `${candidate.tag}.sql`))
+  await rm(join(directory, 'meta', `${String(candidate.idx).padStart(4, '0')}_snapshot.json`))
+  return directory
+}
+
 describe.skipIf(!enabled)(
   'PostgreSQL credential binding through the production upgrade path',
   () => {
@@ -62,6 +81,7 @@ describe.skipIf(!enabled)(
     let validator
     let applicationIdentity
     let coordination
+    let predecessorDirectory
 
     beforeAll(async () => {
       isolated = await createIsolatedTestDatabase({
@@ -69,7 +89,22 @@ describe.skipIf(!enabled)(
         application: loadDatabaseCredentials(process.env, 'application'),
         migration: loadDatabaseCredentials(process.env, 'migration'),
       })
-      await isolated.migrate()
+      // Production-shaped: the predecessor chain is upgraded in place, and the application role holds
+      // only migration-declared grants plus the ownership DML the existing claim path requires.
+      predecessorDirectory = await predecessorMigrationFolder()
+      await isolated.migrate({
+        migrationsFolder: predecessorDirectory,
+        applicationGrants: 'migrations-only',
+      })
+      await isolated.migrate({ applicationGrants: 'migrations-only' })
+      const applicationRole = new URL(loadDatabaseCredentials(process.env, 'application').url)
+        .username
+      if (!/^[a-z_][a-z0-9_]*$/.test(applicationRole)) throw new Error('UNEXPECTED_ROLE_NAME')
+      await isolated.withMigrationDatabase((database) =>
+        database.$client.unsafe(
+          `grant select, insert, update on table public.runtime_channel_ownership to ${applicationRole}`
+        )
+      )
       applicationIdentity = new PostgresRuntimeNodeIdentityRepository(isolated.application)
       validator = new PostgresRuntimeNodeIdentityValidationPort(
         applicationIdentity,
@@ -81,6 +116,8 @@ describe.skipIf(!enabled)(
     }, integrationTestTimeout(60_000))
 
     afterAll(async () => {
+      if (predecessorDirectory !== undefined)
+        await rm(predecessorDirectory, { recursive: true, force: true })
       await isolated?.dispose()
     })
 

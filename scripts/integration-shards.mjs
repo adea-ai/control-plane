@@ -75,6 +75,7 @@ export const INTEGRATION_SHARDS = [
           'src/tool-repositories.integration.test.mjs',
           'src/runtime-node-identity-repository.integration.test.mjs',
           'src/runtime-node-credential-binding.integration.test.mjs',
+          'src/runtime-node-credential-restricted.integration.test.mjs',
           'src/delegation-reference.integration.test.mjs',
           'src/admission-rollout-admin.integration.test.mjs',
           'src/graph-definition-repository.integration.test.mjs',
