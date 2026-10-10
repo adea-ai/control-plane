@@ -23,10 +23,12 @@ import {
 import {
   CredentialVault,
   CredentialVaultError,
+  NeonEncryptedSecretProvider,
   createCredentialId,
   type CredentialCommandScope,
   type CredentialMetadata,
   type CredentialVaultRepository,
+  type EncryptedSecretStore,
 } from '@control-plane/credential-vault'
 
 export const CREDENTIAL_ADMINISTRATION_SERVICE = Symbol('CREDENTIAL_ADMINISTRATION_SERVICE')
@@ -363,5 +365,41 @@ function unavailable(): never {
   throw new ServiceUnavailableException({
     code: 'CREDENTIAL_VAULT_NOT_CONFIGURED',
     message: 'Credential vault is not configured',
+  })
+}
+
+export interface CredentialAdministrationComposition {
+  /** Durable metadata, lease, audit and receipt repository (for example SQLite or Postgres). */
+  readonly repository: CredentialVaultRepository
+  /** Durable ciphertext store; it only ever sees ciphertext and key references. */
+  readonly secretStore: EncryptedSecretStore
+  /** Operator-configured AES-256-GCM key. This factory never generates or stores one. */
+  readonly encryptionKey: string
+  readonly keyReference: string
+  readonly secretPrefix: string
+}
+
+/**
+ * Composes the existing vault-backed credential administration over a caller-supplied durable
+ * repository and secret store. An invalid key fails closed at construction, before any request
+ * is served. Nothing is generated, provisioned, or replaced by a default key.
+ */
+export function createCredentialAdministrationService(
+  options: CredentialAdministrationComposition
+): VaultCredentialAdministrationService {
+  let provider: NeonEncryptedSecretProvider
+  try {
+    provider = new NeonEncryptedSecretProvider({
+      store: options.secretStore,
+      encryptionKey: options.encryptionKey,
+      keyReference: options.keyReference,
+      secretPrefix: options.secretPrefix,
+    })
+  } catch {
+    throw new Error('CREDENTIAL_ENCRYPTION_KEY_INVALID')
+  }
+  return new VaultCredentialAdministrationService({
+    vault: new CredentialVault({ provider, repository: options.repository }),
+    receipts: options.repository,
   })
 }

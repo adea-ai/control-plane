@@ -44,6 +44,7 @@ import type { ExecutionValidationService } from './executions/execution-validati
 import type { ExecutionAcceptanceService } from './executions/execution-acceptance.service.js'
 import type { InteractionCommandService } from './executions/interaction-command.controller.js'
 import type { ExecutionCancellationService } from './executions/execution-cancellation.controller.js'
+import type { AdmissionControlService } from './executions/admission-control.controller.js'
 import type { RuntimeDiscoveryRepository } from './runtime-discovery/runtime-discovery.repository.js'
 import type { ProfileResolutionService } from './queries/profile-resolution.service.js'
 import type { ProjectStateResolutionService } from './queries/project-state-resolution.service.js'
@@ -68,6 +69,7 @@ export interface ControlApiStartOptions {
   readonly credentialAdministrationService?: CredentialAdministrationService
   readonly interactionCommandService?: InteractionCommandService
   readonly executionCancellationService?: ExecutionCancellationService
+  readonly admissionControlService?: AdmissionControlService
   readonly memoryWriteback?: MemoryWriteApplicationConfiguration
   readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly cwd?: string
@@ -196,6 +198,9 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
           : { credentialAdministrationService }),
         ...(interactionCommandService === undefined ? {} : { interactionCommandService }),
         ...(executionCancellationService === undefined ? {} : { executionCancellationService }),
+        ...(options.admissionControlService === undefined
+          ? {}
+          : { admissionControlService: options.admissionControlService }),
         ...(executionAcceptanceService === undefined ? {} : { executionAcceptanceService }),
         ...(executionValidationService === undefined ? {} : { executionValidationService }),
         health,
@@ -230,6 +235,17 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
 }
 
 export { createControlApiApplication, createOpenApiDocument } from './application.js'
+export {
+  createCredentialAdministrationService,
+  type CredentialAdministrationComposition,
+  VaultCredentialAdministrationService,
+} from './credentials/credential-administration.service.js'
+export {
+  RepositoryRuntimeNodeCredentialRevocationService,
+  UnavailableRuntimeNodeCredentialRevocationService,
+  type RuntimeNodeCredentialRevocationRepository,
+  type RuntimeNodeCredentialRevocationService,
+} from './runtime-node-credentials/runtime-node-credential-revocation.service.js'
 export { createManagedCloudControlApiComposition } from './cloud-composition.js'
 export {
   DurableExecutionAcceptanceService,
@@ -240,6 +256,7 @@ export {
   type ExecutionWorkflowDispatcher,
 } from './executions/execution-acceptance.service.js'
 export { DurableExecutionValidationService } from './executions/execution-validation.service.js'
+export type { AdmissionControlService } from './executions/admission-control.controller.js'
 export {
   RepositoryProfileResolutionService,
   type ProfileResolutionService,
@@ -270,6 +287,11 @@ export {
 export { GithubReleaseVerifier } from './marketplace/github-release-verifier.js'
 export { MarketplaceRegistryService } from './marketplace/registry.js'
 export type { ServiceAuthenticator } from './auth/service-authentication.js'
+export {
+  ConfiguredCredentialRevocationChecker,
+  Ed25519ServiceCredentialVerifier,
+  PolicyServiceAuthenticator,
+} from './auth/service-authentication.js'
 export {
   createPrivateApiAuthentication,
   type PrivateApiAuthentication,

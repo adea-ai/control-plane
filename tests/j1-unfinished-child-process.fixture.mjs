@@ -114,15 +114,6 @@ export function assertJ1ConcurrentRecovery(snapshots) {
 // a write still in progress, or a record truncated by a killed writer, so they are not
 // evidence yet and are skipped; the next poll reads them once complete. Every complete
 // line must still parse: a malformed complete record throws and is never skipped.
-function parseProcessEvidenceRecords(text) {
-  const completeLength = text.lastIndexOf('\n') + 1
-  return text
-    .slice(0, completeLength)
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => JSON.parse(line))
-}
-
 export async function createUnfinishedChildProcessHarness(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'j1-unfinished-child-'))
   const children = new Set()
@@ -144,9 +135,15 @@ export async function createUnfinishedChildProcessHarness(options = {}) {
   }
   async function evidence() {
     try {
-      return parseProcessEvidenceRecords(
-        await readFile(join(directory, 'process-evidence.jsonl'), 'utf8')
-      )
+      // Each record is appended as one newline-terminated write. A read that lands
+      // mid-append sees an unterminated tail, which is not a record yet: leave it for
+      // the next poll instead of failing the wait.
+      const text = await readFile(join(directory, 'process-evidence.jsonl'), 'utf8')
+      return text
+        .slice(0, text.lastIndexOf('\n') + 1)
+        .split('\n')
+        .filter(Boolean)
+        .map(JSON.parse)
     } catch (error) {
       if (error.code === 'ENOENT') return []
       throw error
