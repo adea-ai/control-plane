@@ -710,38 +710,63 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       ['running', 'unknown'].includes(record.state)
     ) {
       const activeInference = readActiveInference(record)
-      const safe = activeInference
-        ? await this.#options.reconcileInference(authority, activeInference.inferenceKey)
-        : await this.#options.reconcileInference(authority, turnKey(record))
+      const observe = () =>
+        activeInference
+          ? this.#options.reconcileInference(authority, activeInference.inferenceKey)
+          : this.#options.reconcileInference(authority, turnKey(record))
+      const preliminary = await observe()
       await this.#authority(authority)
       this.#assertOpen()
-      const current = this.journal.get(record.handleId)
-      if (current.epoch !== record.epoch || current.state !== record.state)
+      const admitted = this.journal.get(record.handleId)
+      if (admitted.epoch !== record.epoch || admitted.state !== record.state)
         return this.status(handle)
-      if (safe === 'safe_to_resume') {
-        const epoch = this.#claim(current)
-        const resumable = this.journal.update(record.handleId, epoch, {
-          detail: {
-            ...record.detail,
-            inferenceTrackingVersion: 1,
-            engineRunStarted: false,
-            activeInference: undefined,
-            inferencePending: false,
-            observedAt: this.#now(),
-            reasonCode: undefined,
-          },
-        })
-        this.#schedule(resumable)
-      } else {
-        const epoch = this.#claim(record)
-        this.journal.update(record.handleId, epoch, {
-          state: 'unknown',
-          detail: {
-            ...record.detail,
-            observedAt: this.#now(),
-            reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
-          },
-        })
+      // Ownership before the final verdict. claimProcess refuses a live owner, which may still be
+      // between its journal markers and its reservation, where the retained hold is not yet visible.
+      // A claim that succeeds is handed to the run it schedules, so no other process can take the
+      // record between the verdict and the run start.
+      let epoch: number
+      try {
+        epoch = this.journal.claimProcess(record.handleId, record)
+      } catch {
+        return this.status(handle)
+      }
+      let handedOff = false
+      try {
+        const claimed = this.journal.get(record.handleId)
+        // A safe verdict authorizes a physical send, so it is confirmed under the claimed epoch.
+        const safe = preliminary === 'safe_to_resume' ? await observe() : preliminary
+        await this.#authority(authority)
+        this.#assertOpen()
+        const current = this.journal.get(record.handleId)
+        if (current.epoch !== epoch || current.state !== record.state) return this.status(handle)
+        if (safe === 'safe_to_resume') {
+          // An in-process run admitted during the awaits keeps its own claim; never strand ours.
+          if (this.#active.has(record.handleId)) return this.status(handle)
+          const resumable = this.journal.update(record.handleId, epoch, {
+            detail: {
+              ...claimed.detail,
+              inferenceTrackingVersion: 1,
+              engineRunStarted: false,
+              activeInference: undefined,
+              inferencePending: false,
+              observedAt: this.#now(),
+              reasonCode: undefined,
+            },
+          })
+          handedOff = true
+          this.#schedule(resumable, epoch)
+        } else {
+          this.journal.update(record.handleId, epoch, {
+            state: 'unknown',
+            detail: {
+              ...claimed.detail,
+              observedAt: this.#now(),
+              reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
+            },
+          })
+        }
+      } finally {
+        if (!handedOff) this.journal.releaseProcess(record.handleId, epoch)
       }
     } else if (record.state === 'starting') this.#schedule(record)
     return this.status(handle)
@@ -769,22 +794,27 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     return this.#closePromise
   }
 
-  #schedule(record: JournalRecord): void {
+  #schedule(record: JournalRecord, claimedEpoch?: number): void {
     this.#assertOpen()
     if (this.#active.has(record.handleId)) return
-    const work = this.#run(record).finally(() => this.#active.delete(record.handleId))
+    const work = this.#run(record, claimedEpoch).finally(() => this.#active.delete(record.handleId))
     this.#active.set(record.handleId, work)
   }
 
-  async #run(record: JournalRecord): Promise<void> {
+  async #run(record: JournalRecord, claimedEpoch?: number): Promise<void> {
     const authority = this.#stored(record)
     const plan = assertExecutionPlanIntegrity(authority.request.executionPlan)
     const nativeAdmissions = new Map<string, DurableToolCallRequest>()
     let epoch: number
-    try {
-      epoch = this.journal.claimProcess(record.handleId, record)
-    } catch {
-      return
+    if (claimedEpoch !== undefined) {
+      // Reconciliation already claimed this process's ownership for exactly this run.
+      epoch = claimedEpoch
+    } else {
+      try {
+        epoch = this.journal.claimProcess(record.handleId, record)
+      } catch {
+        return
+      }
     }
     let lease: NodeSessionLease
     try {
