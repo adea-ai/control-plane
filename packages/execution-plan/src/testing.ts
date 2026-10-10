@@ -9,6 +9,7 @@ export interface ExecutionPlanTestFixtureOptions {
   readonly contextPackage?: ContextPackage
   readonly profileCapabilityRequirements?: readonly RuntimeCapabilityName[]
   readonly skillRequiredCapabilities?: readonly RuntimeCapabilityName[]
+  readonly runtimeFamilies?: readonly string[]
 }
 
 export function createExecutionPlanTestFixture(
@@ -32,6 +33,11 @@ export function createExecutionPlanTestFixtureInputs(
     skillVersionId: 'skv_01JABCDEF0123456789ABCDEFG',
   }
   const constraints = structuredClone(executionConstraintFixtures.write)
+  if (options.runtimeFamilies !== undefined) {
+    constraints.runtime.allowedFamilies = [
+      ...options.runtimeFamilies,
+    ] as typeof constraints.runtime.allowedFamilies
+  }
   return {
     correlation: {
       workspaceId: ids.workspaceId,
