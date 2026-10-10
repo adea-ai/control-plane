@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
 import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
-import { PostgresRuntimeChannelOwnershipRepository } from '../packages/database/src/runtime-channel-ownership-repository.ts'
 import { evaluateRuntimeEligibility } from '../packages/runtime-sdk/src/eligibility.ts'
 import { WorkflowJobStore } from '../packages/workflow-runtime/src/embedded-job-store.ts'
 
@@ -18,14 +17,17 @@ import { WorkflowJobStore } from '../packages/workflow-runtime/src/embedded-job-
  * - packages/profile-adapters/src/index.test.mjs
  * and are not repeated here.
  *
- * This file adds the rollback-input binding and reconnect/generation fencing
+ * This file adds the rollback-input binding and reconnect-eligibility fencing
  * that no package test pins:
  * - `WorkflowJobStore` rollback continuation admission binds the parent's exact
  *   input and checkpoint (`WORKFLOW_RECOVERY_PARENT_*`).
  * - `evaluateRuntimeEligibility` reconnect revalidation for reconnecting,
  *   expired, revoked-grant, missing-grant, and expired-snapshot candidates.
- * - `PostgresRuntimeChannelOwnershipRepository` target-generation fencing,
- *   driven through the repository's fake-transaction seam (no Postgres).
+ * Channel-generation fencing is not driven here. Its acceptance evidence is the
+ * real PostgreSQL proof in `packages/database/src/integration.test.mjs`, which
+ * drives the canonical repository and inventory unit of work over separate
+ * physical sessions (`fences a superseded channel owner across physical reconnects
+ * and admits one inventory effect per generation`).
  *
  * Deterministic: disposable temp directories only, no network, no Pi, no
  * production recovery, no Postgres instance.
@@ -281,112 +283,5 @@ describe('evaluateRuntimeEligibility reconnect revalidation (packages/runtime-sd
     )
     expect(staleSnapshot.eligible).toBe(false)
     expect(reasonCodes(staleSnapshot)).toContain('CAPABILITY_SNAPSHOT_STALE')
-  })
-})
-
-describe('PostgresRuntimeChannelOwnershipRepository target-generation fencing (packages/database)', () => {
-  const nodeId = 'rnr_01DRZ3NDEKTSV4RRFFQ69G5FAV'
-  const workspaceId = 'wsp_01DRZ3NDEKTSV4RRFFQ69G5FAV'
-  const credentialFence = { credentialId: 'rgc_01DRZ3NDEKTSV4RRFFQ69G5FAV', revocationVersion: 1 }
-
-  function record(generation, overrides = {}) {
-    return {
-      nodeId,
-      workspaceId,
-      gatewayInstanceId: `gateway-gen-${generation}`,
-      connectionId: `connection-gen-${generation}`,
-      channelGeneration: generation,
-      protocolVersion: { major: 1, minor: 6 },
-      connectedAt: '2026-10-09T12:00:00.000Z',
-      lastHeartbeatAt: '2026-10-09T12:00:00.000Z',
-      ...overrides,
-    }
-  }
-
-  /** Same fake-transaction seam the repository's own unit test drives. */
-  function ownershipDatabase(current, fenceValid = true) {
-    const writes = []
-    const transaction = {
-      execute: async () => [{ valid: fenceValid }],
-      select: () => ({
-        from() {
-          return this
-        },
-        where() {
-          return this
-        },
-        async limit() {
-          return current === undefined ? [] : [current]
-        },
-      }),
-      insert: () => ({
-        values(value) {
-          writes.push({ kind: 'insert', value })
-          return { async onConflictDoUpdate() {} }
-        },
-      }),
-      update: () => ({
-        set(value) {
-          writes.push({ kind: 'update', value })
-          return { async where() {} }
-        },
-      }),
-    }
-    return { writes, database: { transaction: (operation) => operation(transaction) } }
-  }
-
-  function currentRow(generation) {
-    const owned = record(generation)
-    return { nodeId, workspaceId, generation, active: true, record: owned }
-  }
-
-  test('a claim at or below the current channel generation is rejected; only a newer generation reconnects', async () => {
-    const repository = (current) =>
-      new PostgresRuntimeChannelOwnershipRepository(ownershipDatabase(current).database)
-
-    const sameGeneration = await repository(currentRow(2)).claim(record(2), credentialFence)
-    expect(sameGeneration.accepted).toBe(false)
-    expect(sameGeneration.previous.channelGeneration).toBe(2)
-
-    const staleGeneration = await repository(currentRow(2)).claim(record(1), credentialFence)
-    expect(staleGeneration.accepted).toBe(false)
-
-    // The reconnecting owner must present a strictly newer generation.
-    const live = ownershipDatabase(currentRow(2))
-    const reconnect = await new PostgresRuntimeChannelOwnershipRepository(live.database).claim(
-      record(3),
-      credentialFence
-    )
-    expect(reconnect).toMatchObject({ accepted: true })
-    expect(reconnect.previous.channelGeneration).toBe(2)
-    expect(live.writes).toEqual([
-      { kind: 'insert', value: expect.objectContaining({ generation: 3 }) },
-    ])
-
-    // A foreign workspace can never take the channel over, whatever generation it claims.
-    await expect(
-      repository(currentRow(2)).claim(
-        record(9, { workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV' }),
-        credentialFence
-      )
-    ).rejects.toThrow('RUNTIME_CHANNEL_WORKSPACE_MISMATCH')
-  })
-
-  test('a superseded channel owner cannot heartbeat; only the current generation heartbeats', async () => {
-    const staleRepository = new PostgresRuntimeChannelOwnershipRepository(
-      ownershipDatabase(currentRow(3)).database
-    )
-    expect(
-      await staleRepository.heartbeat(record(2, { lastHeartbeatAt: '2026-10-09T12:00:01.000Z' }))
-    ).toBe(false)
-
-    const live = ownershipDatabase(currentRow(3))
-    expect(
-      await new PostgresRuntimeChannelOwnershipRepository(live.database).heartbeat(
-        record(3, { lastHeartbeatAt: '2026-10-09T12:00:01.000Z' }),
-        credentialFence
-      )
-    ).toBe(true)
-    expect(live.writes).toHaveLength(1)
   })
 })

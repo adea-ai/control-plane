@@ -74,10 +74,12 @@ function foundationCaseNames() {
   )
   expect(suites).toEqual(['PostgreSQL persistence foundation'])
   expect(new Set(names).size).toBe(names.length)
-  expect(names).toHaveLength(65)
+  expect(names).toHaveLength(66)
   // Freeze the reviewed names from 6bc3d941; changed inventory needs rebalancing review.
+  // Reviewed 66th case: the physical-reconnect channel-generation proof. It lands in shard 1
+  // (38 of 45 allowed); shard 2 is unchanged.
   expect(createHash('sha256').update(JSON.stringify(names.toSorted())).digest('hex')).toBe(
-    'f3136477ef9f1044fa8dd65529df09b4cc7fefd9eae7e2383c38be4536d3fc46'
+    '506f60dbc95e5d7b461214382e28a239cf042f711f3718240ef6da32a638205a'
   )
   cachedFoundationNames = Object.freeze(names)
   return cachedFoundationNames
@@ -221,7 +223,7 @@ describe('integration shard partition', () => {
     for (const [index, slice] of slices.entries()) {
       expect(slice.pattern).toBeDefined()
       const assigned = names.filter((name) => new RegExp(slice.pattern).test(name))
-      expect(assigned).toHaveLength([37, 28][index])
+      expect(assigned).toHaveLength([38, 28][index])
       expect(assigned.length).toBeLessThanOrEqual(45)
     }
   })
