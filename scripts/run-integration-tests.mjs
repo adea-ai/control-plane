@@ -201,6 +201,7 @@ try {
         remoteDatabase ? '120000' : '30000',
         './tests/memory-process-loss.integration.test.mjs',
         './tests/langgraph-retirement-inventory-pg.integration.test.mjs',
+        './tests/runtime-node-credential-revocation.integration.test.mjs',
       ],
       {
         environment: integrationEnvironment,

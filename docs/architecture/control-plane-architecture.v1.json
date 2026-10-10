@@ -3164,6 +3164,53 @@
       "openApiHasRequestSchema": true
     },
     {
+      "id": "OP-RUNTIME-NODE-CREDENTIAL-REVOKE",
+      "name": "revokeRuntimeNodeCredential",
+      "operation": "runtime-node-credential.revoke",
+      "method": "POST",
+      "path": "/v1/runtime-node-credentials/revoke",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "service bearer with credential:write scope; authenticated caller binding; principal workspace scope enforced by the shared guard",
+        "service": "RuntimeNodeCredentialRevocationController -> RepositoryRuntimeNodeCredentialRevocationService -> PostgresRuntimeNodeIdentityRepository.revokeCredential",
+        "persistence": "runtime_node_issued_credentials revocation_version and revoked_at, with pg_notify on runtime_node_credential_revocations_v1",
+        "execution": "workspace-bound lookup, then the existing idempotent revocation; gateway channels are invalidated by notification and rechecked durably on every command",
+        "delivery": "metadata-only response: credential ID, node, workspace, revocation version and revoked time; no secret material",
+        "cleanup": "composition-owned connection shutdown; the revocation is one transaction and leaves no partial state"
+      },
+      "assessment": "API, SDK and OpenAPI agree. Hosted composes the route over the application role, which migration 0054 grants SELECT and UPDATE(consumed_at) only, so the database refuses revocation (SQLSTATE 42501) and the route fails closed with RUNTIME_NODE_CREDENTIAL_REVOCATION_NOT_PERMITTED. Local leaves it explicitly unavailable. The disposable PostgreSQL proof runs revocation under the migration role and proves gateway channel invalidation, replay and refusals. Deployed acceptance is not certified and no database grant is made.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/runtime-node-credentials/runtime-node-credential-revocation.service.ts"
+        },
+        {
+          "kind": "service",
+          "path": "apps/runtime-gateway/src/authentication.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/runtime-node-credentials/runtime-node-credential-revocation.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "tests/runtime-node-credential-revocation.integration.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Hosted runtime-node revocation: root decides the application role write path (a reviewed column grant or definer function) before deployed verification from a frozen candidate. The route fails closed until then."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "runtime-node-credential.revoke",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
       "id": "OP-RUNTIME-LIST",
       "name": "listRuntimes",
       "operation": "runtime.list",
@@ -3274,7 +3321,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:6036c288ce03e2d3038e25ddaff20d3100ba023b052d2f63ff21f30262cdcefa"
+      "sourceDigest": "sha256:6bd56cef0f50263177010fcf01ab37bad3d420ff7a64217df777813febbdb58f"
     },
     {
       "id": "hosted-simple",

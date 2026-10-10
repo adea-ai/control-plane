@@ -23,6 +23,12 @@ import {
   UnavailableCredentialAdministrationService,
   type CredentialAdministrationService,
 } from './credentials/credential-administration.service.js'
+import { RuntimeNodeCredentialRevocationController } from './runtime-node-credentials/runtime-node-credential-revocation.controller.js'
+import {
+  RUNTIME_NODE_CREDENTIAL_REVOCATION_SERVICE,
+  UnavailableRuntimeNodeCredentialRevocationService,
+  type RuntimeNodeCredentialRevocationService,
+} from './runtime-node-credentials/runtime-node-credential-revocation.service.js'
 import { Module, type DynamicModule } from '@nestjs/common'
 import { PiDurableLeadController } from './pi-durable/pi-durable-lead.controller.js'
 import {
@@ -153,6 +159,7 @@ export interface AppModuleOptions extends ApiRuntimeBindings {
   readonly graphAdministrationService?: GraphAdministrationService
   readonly workspaceCatalogService?: WorkspaceCatalogService
   readonly credentialAdministrationService?: CredentialAdministrationService
+  readonly runtimeNodeCredentialRevocationService?: RuntimeNodeCredentialRevocationService
   readonly interactionCommandService?: InteractionCommandService
   readonly executionCancellationService?: ExecutionCancellationService
   readonly admissionControlService?: AdmissionControlService
@@ -198,6 +205,7 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       WorkspaceSkillCatalogController,
       WorkspaceAgentProfileCatalogController,
       CredentialAdministrationController,
+      RuntimeNodeCredentialRevocationController,
       ContextPackageResolutionController,
       ExecutionAcceptanceController,
       InteractionCommandController,
@@ -244,6 +252,12 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
         useValue:
           options.credentialAdministrationService ??
           new UnavailableCredentialAdministrationService(),
+      },
+      {
+        provide: RUNTIME_NODE_CREDENTIAL_REVOCATION_SERVICE,
+        useValue:
+          options.runtimeNodeCredentialRevocationService ??
+          new UnavailableRuntimeNodeCredentialRevocationService(),
       },
       {
         provide: INTERACTION_COMMAND_SERVICE,

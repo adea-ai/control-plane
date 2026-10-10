@@ -36,6 +36,8 @@ import {
   CredentialResponseSchema,
   CredentialRevokeRequestSchema,
   CredentialRotateRequestSchema,
+  RuntimeNodeCredentialRevocationResponseSchema,
+  RuntimeNodeCredentialRevokeRequestSchema,
   GraphDefinitionPublishRequestSchema,
   GraphDefinitionDeprecationRequestSchema,
   GraphDefinitionRevocationRequestSchema,
@@ -191,6 +193,13 @@ export const ControlApiOperations = Object.freeze({
     path: '/v1/credentials/list',
     requestSchema: CredentialListRequestSchema,
     responseSchema: CredentialListResponseSchema,
+  },
+  revokeRuntimeNodeCredential: {
+    operation: 'runtime-node-credential.revoke',
+    method: 'POST',
+    path: '/v1/runtime-node-credentials/revoke',
+    requestSchema: RuntimeNodeCredentialRevokeRequestSchema,
+    responseSchema: RuntimeNodeCredentialRevocationResponseSchema,
   },
   publishGraph: {
     operation: 'graph.publish',

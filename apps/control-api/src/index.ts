@@ -239,6 +239,12 @@ export {
   type CredentialAdministrationComposition,
   VaultCredentialAdministrationService,
 } from './credentials/credential-administration.service.js'
+export {
+  RepositoryRuntimeNodeCredentialRevocationService,
+  UnavailableRuntimeNodeCredentialRevocationService,
+  type RuntimeNodeCredentialRevocationRepository,
+  type RuntimeNodeCredentialRevocationService,
+} from './runtime-node-credentials/runtime-node-credential-revocation.service.js'
 export { createManagedCloudControlApiComposition } from './cloud-composition.js'
 export {
   DurableExecutionAcceptanceService,

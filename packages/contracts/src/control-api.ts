@@ -313,6 +313,41 @@ export type CredentialListRequest = z.input<typeof CredentialListRequestSchema>
 export type CredentialResponse = z.output<typeof CredentialResponseSchema>
 export type CredentialListResponse = z.output<typeof CredentialListResponseSchema>
 
+// Hosted RuntimeNode credential revocation. Shares the connector credential scope
+// (`credential:write`) and envelope workspace binding; the credential ID is the
+// RuntimeNode `rgc_` identifier, which is distinct from connector credential IDs.
+const RuntimeNodeCredentialIdSchema = z
+  .string()
+  .min(8)
+  .max(128)
+  .regex(/^rgc_[A-Za-z0-9_-]+$/)
+export const RuntimeNodeCredentialRevokeRequestSchema = CredentialCommandContextSchema.extend({
+  operation: z.literal('runtime-node-credential.revoke'),
+  issuedAt: TimestampSchema,
+  payload: z.object({ credentialId: RuntimeNodeCredentialIdSchema }).strict(),
+}).strict()
+export const RuntimeNodeCredentialRevocationResponseSchema = successResponse(
+  z
+    .object({
+      credential: z
+        .object({
+          credentialId: RuntimeNodeCredentialIdSchema,
+          nodeId: z.string().regex(/^rnr_[0-9A-HJKMNP-TV-Z]{26}$/),
+          workspaceId: IdentifierSchemas.workspaceId,
+          revocationVersion: z.number().int().positive(),
+          revokedAt: TimestampSchema,
+        })
+        .strict(),
+    })
+    .strict()
+)
+export type RuntimeNodeCredentialRevokeRequest = z.input<
+  typeof RuntimeNodeCredentialRevokeRequestSchema
+>
+export type RuntimeNodeCredentialRevocationResponse = z.output<
+  typeof RuntimeNodeCredentialRevocationResponseSchema
+>
+
 export const ProjectStateResolutionRequestSchema = RequestContextSchema.extend({
   operation: z.literal('project-state.resolve'),
   requestedAt: TimestampSchema,
