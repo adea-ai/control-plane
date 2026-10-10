@@ -1,34 +1,16 @@
 import { expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { canonicalJsonStringify } from '@control-plane/contracts'
-import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import { RuntimeAdapterError } from '@control-plane/runtime-sdk'
 import { PiDurableRuntimeAdapter } from './adapter.ts'
+import { authoritativeDenial } from './authority-outcome.ts'
 import { createNodePiDurableRuntime } from './composition.ts'
-import { writeRecoverySourceOverride } from './recovery-races.fixture.mjs'
+import { at, fixture, result, writeRecoverySourceOverride } from './recovery-races.fixture.mjs'
 
-const at = '2026-10-08T00:00:00.000Z'
 const interactionId = 'int_01JABCDEF0123456789ABCDEFG'
-const result = {
-  text: 'Scripted race result',
-  submissionId: 'race-result',
-  usage: { inputTokens: 3, outputTokens: 4, durationMs: 2 },
-  inferences: [
-    {
-      inferenceId: 'pi-generation:1',
-      usage: {
-        inputTokens: 3,
-        outputTokens: 4,
-        durationMs: 2,
-        cachedInputTokens: 0,
-        reasoningTokens: 0,
-      },
-    },
-  ],
-}
-
 function deferred() {
   let resolve, reject
   const promise = new Promise((yes, no) => {
@@ -36,77 +18,6 @@ function deferred() {
     reject = no
   })
   return { promise, resolve, reject }
-}
-
-// Fake engines intentionally isolate scheduler races; no provider verification is claimed.
-function fixture(directory, overrides = {}) {
-  const plan = createExecutionPlanTestFixture({
-    profileCapabilityRequirements: [],
-    skillRequiredCapabilities: [],
-  })
-  const executionId = 'exe_01JABCDEF0123456789ABCDEFG'
-  const attemptId = 'att_01JABCDEF0123456789ABCDEFG'
-  const request = {
-    executionId,
-    attemptId,
-    idempotencyKey: 'race:start:one',
-    executionPlan: plan,
-    attemptBudget: {
-      schemaVersion: 1,
-      workspaceId: plan.correlation.workspaceId,
-      executionId,
-      attemptId,
-      executionPlanId: plan.executionPlanId,
-      executionPlanDigest: plan.contentDigest,
-      reservationKey: `runtime-attempt:${attemptId}`,
-      currency: 'USD',
-      maximumMicrounits: 10000,
-      maximumTokens: 100,
-    },
-  }
-  const admission = {
-    schemaVersion: 'pi-durable-admission/v1',
-    prompt: 'Canonical race input',
-    selection: { selectionRef: `msel_${'a'.repeat(32)}`, selectionRevision: 1 },
-    authority: {
-      revision: 1,
-      principalRef: 'principal:one',
-      scopeRef: 'scope:one',
-      expiresAt: '2027-01-01T00:00:00.000Z',
-    },
-  }
-  const options = {
-    directory,
-    now: () => at,
-    resolveAdmission: async () => admission,
-    assertAuthority: async () => {},
-    resolveProvider: async () => ({
-      selectionRef: admission.selection.selectionRef,
-      selectionRevision: 1,
-      workspaceId: plan.correlation.workspaceId,
-      provider: 'scripted',
-      providerModel: 'race-model',
-      location: 'remote_host',
-      harness: 'pi_durable',
-      harnessVersion: '1.1.0',
-      providerBinding: 'pi_durable_models',
-      withModels: async (use) => use({}),
-    }),
-    authorizeInference: async () => ({
-      maxOutputTokens: 10,
-      maximumInputTokens: 64,
-      assertActive: async () => {},
-    }),
-    settleUsage: async (_authority, _key, usage) => usage,
-    reconcileInference: async () => 'unresolved',
-    engineFactory: async () => ({
-      run: async () => result,
-      close: async () => {},
-      cancel: async () => {},
-    }),
-    ...overrides,
-  }
-  return { request, options }
 }
 
 test.each(['running', 'unknown', 'cancelling'])(
@@ -692,7 +603,7 @@ test('composition startup isolates revoked retained work and recovers the next v
       assertAuthority: async (authority) => {
         authorities.push(authority.request.attemptId)
         if (authority.request.attemptId === revoked.attemptId)
-          throw new Error('secret-revoked-grant')
+          throw authoritativeDenial(new Error('PI_CANONICAL_AUTHORITY_REJECTED'))
       },
       reconcileInference: async () => 'safe_to_resume',
       engineFactory: async () => {
@@ -713,8 +624,12 @@ test('composition startup isolates revoked retained work and recovers the next v
     expect(runtime.recoveryBlocked).toEqual([
       { handleId: revoked.handleId, code: 'PI_RECOVERY_AUTHORITY_BLOCKED' },
     ])
-    expect(JSON.stringify(runtime.recoveryBlocked)).not.toContain('secret-revoked-grant')
-    expect(runtime.adapter.journal.get(revoked.handleId).state).toBe('running')
+    // The declared denial is persisted under its own claim: marker set, epoch advanced once.
+    const persisted = runtime.adapter.journal.get(revoked.handleId)
+    expect(persisted.detail.recoveryBlocked).toBe('PI_RECOVERY_AUTHORITY_BLOCKED')
+    expect(persisted.epoch).toBe(revoked.epoch + 2)
+    expect(persisted.detail.ownerPid).toBeUndefined()
+    expect(persisted.state).toBe('running')
     expect(runtime.adapter.journal.get(valid.handleId).state).toBe('completed')
     expect((await runtime.adapter.inspect()).health).toBe('healthy')
     expect((await runtime.adapter.status(first)).handle).toEqual(first)
@@ -834,12 +749,21 @@ test('a stale safe reconciliation cannot create an engine after concurrent cance
     const cancel = { idempotencyKey: 'cancel:reconcile-race', requestedAt: at }
     expect((await adapter.cancel(handle, cancel)).state).toBe('cancelled')
     const cancelled = adapter.journal.get(handle.handleId)
+    // The stale reconciliation held this process's durable owner claim while it probed, so the
+    // cancelled snapshot carries those owner fields. The claim is released; nothing else changes.
+    expect(cancelled.detail.ownerPid).toBe(process.pid)
     safe.resolve('safe_to_resume')
     expect((await recovery).state).toBe('cancelled')
     await adapter.drain()
     expect({ engines, sends }).toEqual({ engines: 0, sends: 0 })
     const retained = adapter.journal.get(handle.handleId)
-    expect(retained).toEqual(cancelled)
+    const {
+      ownerPid: _pid,
+      ownerEpoch: _epoch,
+      ownerClaimId: _claim,
+      ...cancelledDetail
+    } = cancelled.detail
+    expect(retained).toEqual({ ...cancelled, detail: cancelledDetail })
     expect(retained.detail.ownerPid).toBeUndefined()
     expect(retained.detail.ownerEpoch).toBeUndefined()
     expect((await adapter.cancel(handle, cancel)).state).toBe('cancelled')
@@ -1080,3 +1004,455 @@ test('concurrent close shares one drain and store close while admitted inference
     rmSync(directory, { recursive: true, force: true })
   }
 }, 10000)
+
+test('a recovery contender behind a live owner observes without authority, probe, or mutation', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-live-owner-observe-'))
+  const setup = fixture(directory)
+  const seed = new PiDurableRuntimeAdapter(setup.options)
+  let observer
+  try {
+    const handle = await seed.start(setup.request)
+    await seed.drain()
+    const stored = seed.journal.get(handle.handleId)
+    seed.journal.update(handle.handleId, stored.epoch, {
+      state: 'running',
+      detail: { inferencePending: true, ownerPid: process.ppid, ownerEpoch: stored.epoch },
+    })
+    await seed.close()
+    let authorityCalls = 0
+    let probes = 0
+    observer = new PiDurableRuntimeAdapter({
+      ...setup.options,
+      assertAuthority: async () => {
+        authorityCalls += 1
+        throw new Error('secret-revoked-grant')
+      },
+      reconcileInference: async () => {
+        probes += 1
+        return 'safe_to_resume'
+      },
+    })
+    const before = observer.journal.get(handle.handleId)
+    expect((await observer.reconcile(handle)).state).toBe('running')
+    expect({ authorityCalls, probes }).toEqual({ authorityCalls: 0, probes: 0 })
+    expect(observer.journal.get(handle.handleId)).toEqual(before)
+  } finally {
+    await observer?.close()
+    await seed.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('composition startup does not classify a contended retained record as revoked', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-live-owner-startup-'))
+  const setup = fixture(directory)
+  const seed = new PiDurableRuntimeAdapter(setup.options)
+  let runtime
+  try {
+    const handle = await seed.start(setup.request)
+    await seed.drain()
+    const stored = seed.journal.get(handle.handleId)
+    seed.journal.update(handle.handleId, stored.epoch, {
+      state: 'running',
+      detail: { inferencePending: true, ownerPid: process.ppid, ownerEpoch: stored.epoch },
+    })
+    await seed.close()
+    let engines = 0
+    let sends = 0
+    runtime = await createNodePiDurableRuntime({
+      ...setup.options,
+      assertAuthority: async () => {
+        throw new Error('secret-revoked-grant')
+      },
+      reconcileInference: async () => 'safe_to_resume',
+      engineFactory: async () => {
+        engines += 1
+        return {
+          run: async () => {
+            sends += 1
+            return result
+          },
+          close: async () => {},
+          cancel: async () => {},
+        }
+      },
+    })
+    expect(runtime.recoveryBlocked).toEqual([])
+    const retained = runtime.adapter.journal.get(handle.handleId)
+    expect(retained.state).toBe('running')
+    expect(retained.detail.recoveryBlocked).toBeUndefined()
+    expect({ engines, sends }).toEqual({ engines: 0, sends: 0 })
+  } finally {
+    if (runtime) await runtime.close()
+    else await seed.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('an unclassified recovery failure is fenced for this start, releases its claim, and persists no revocation', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-unclassified-recovery-'))
+  const setup = fixture(directory)
+  const seed = new PiDurableRuntimeAdapter(setup.options)
+  let runtime
+  try {
+    const handle = await seed.start(setup.request)
+    await seed.drain()
+    const stored = seed.journal.get(handle.handleId)
+    seed.journal.update(handle.handleId, stored.epoch, {
+      state: 'running',
+      detail: { inferencePending: true },
+    })
+    await seed.close()
+    runtime = await createNodePiDurableRuntime({
+      ...setup.options,
+      reconcileInference: async () => {
+        throw new Error('PROBE_UNAVAILABLE')
+      },
+    })
+    expect(runtime.recoveryBlocked).toEqual([
+      { handleId: handle.handleId, code: 'PI_RECOVERY_UNCLASSIFIED' },
+    ])
+    const retained = runtime.adapter.journal.get(handle.handleId)
+    expect(retained.state).toBe('running')
+    expect(retained.detail.recoveryBlocked).toBeUndefined()
+    expect(retained.detail.ownerPid).toBeUndefined()
+  } finally {
+    if (runtime) await runtime.close()
+    else await seed.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a concurrent epoch change while recovery probes is a stale result, never a revocation', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-stale-cas-probe-'))
+  const setup = fixture(directory)
+  const seed = new PiDurableRuntimeAdapter(setup.options)
+  let adapter
+  try {
+    const handle = await seed.start(setup.request)
+    await seed.drain()
+    const stored = seed.journal.get(handle.handleId)
+    seed.journal.update(handle.handleId, stored.epoch, {
+      state: 'running',
+      detail: { inferencePending: true },
+    })
+    await seed.close()
+    let engines = 0
+    let sends = 0
+    let concurrentEpoch
+    adapter = new PiDurableRuntimeAdapter({
+      ...setup.options,
+      reconcileInference: async () => {
+        // A concurrent command writer advances the epoch while this recovery is probing.
+        const current = adapter.journal.get(handle.handleId)
+        concurrentEpoch = adapter.journal.claim(handle.handleId, current)
+        return 'safe_to_resume'
+      },
+      engineFactory: async () => {
+        engines += 1
+        return {
+          run: async () => {
+            sends += 1
+            return result
+          },
+          close: async () => {},
+          cancel: async () => {},
+        }
+      },
+    })
+    // The stale recovery observes the newer record and returns it; it neither throws nor resumes.
+    expect((await adapter.reconcile(handle)).state).toBe('running')
+    await adapter.drain()
+    expect({ engines, sends }).toEqual({ engines: 0, sends: 0 })
+    const retained = adapter.journal.get(handle.handleId)
+    expect(retained.epoch).toBe(concurrentEpoch)
+    expect(retained.detail.ownerPid).toBeUndefined()
+    expect(retained.detail.recoveryBlocked).toBeUndefined()
+  } finally {
+    await adapter?.close()
+    await seed.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a recovery run whose Pi store lease is held elsewhere is reconcilable, not ownerless and running', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-lease-unavailable-'))
+  const setup = fixture(directory)
+  const seed = new PiDurableRuntimeAdapter(setup.options)
+  let adapter
+  try {
+    const handle = await seed.start(setup.request)
+    await seed.drain()
+    const stored = seed.journal.get(handle.handleId)
+    seed.journal.update(handle.handleId, stored.epoch, {
+      state: 'running',
+      detail: { inferencePending: true },
+    })
+    const externalSessionId = stored.admission.handle.externalSessionId
+    await seed.close()
+    // Another live process (this test's parent) holds the Pi store lease for the session.
+    const ownersDirectory = join(directory, 'owners')
+    mkdirSync(ownersDirectory, { recursive: true })
+    const leasePath = join(
+      ownersDirectory,
+      `${createHash('sha256').update(externalSessionId).digest('hex')}.owner`
+    )
+    writeFileSync(leasePath, JSON.stringify({ pid: process.ppid, identity: 'other-process' }))
+    let engines = 0
+    let sends = 0
+    const engineFactory = async () => {
+      engines += 1
+      return {
+        run: async () => {
+          sends += 1
+          return result
+        },
+        close: async () => {},
+        cancel: async () => {},
+      }
+    }
+    adapter = new PiDurableRuntimeAdapter({
+      ...setup.options,
+      reconcileInference: async () => 'safe_to_resume',
+      engineFactory,
+    })
+    await adapter.reconcile(handle)
+    await adapter.drain()
+    expect({ engines, sends }).toEqual({ engines: 0, sends: 0 })
+    const stranded = adapter.journal.get(handle.handleId)
+    expect(stranded.state).toBe('unknown')
+    expect(stranded.detail.reasonCode).toBe('PI_SESSION_LEASE_UNAVAILABLE')
+    expect(stranded.detail.ownerPid).toBeUndefined()
+    // Once the other process releases its lease, reconciliation resumes this same record.
+    rmSync(leasePath)
+    await adapter.reconcile(handle)
+    await adapter.drain()
+    expect(adapter.journal.get(handle.handleId).state).toBe('completed')
+    expect({ engines, sends }).toEqual({ engines: 1, sends: 1 })
+  } finally {
+    await adapter?.close()
+    await seed.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test.each([
+  [
+    'typed unavailable',
+    () =>
+      new RuntimeAdapterError({
+        code: 'PI_AUTHORITY_UNAVAILABLE',
+        classification: 'unavailable',
+        message: 'PI_AUTHORITY_UNAVAILABLE',
+        retryable: true,
+      }),
+    'PI_RECOVERY_UNAVAILABLE',
+  ],
+  [
+    'untyped transport',
+    () => new Error('connect ECONNRESET secret-transport-token'),
+    'PI_RECOVERY_UNCLASSIFIED',
+  ],
+])(
+  'a transient %s authority failure fences this start, persists no revocation, and resumes on healthy startup',
+  async (_label, failure, code) => {
+    const directory = mkdtempSync(join(tmpdir(), 'pi-transient-authority-'))
+    const setup = fixture(directory)
+    const seed = new PiDurableRuntimeAdapter(setup.options)
+    let runtime, healthy
+    try {
+      const handle = await seed.start(setup.request)
+      await seed.drain()
+      const stored = seed.journal.get(handle.handleId)
+      seed.journal.update(handle.handleId, stored.epoch, {
+        state: 'running',
+        detail: { inferencePending: true },
+      })
+      const retained = seed.journal.get(handle.handleId)
+      await seed.close()
+      runtime = await createNodePiDurableRuntime({
+        ...setup.options,
+        assertAuthority: async () => {
+          throw failure()
+        },
+        reconcileInference: async () => 'safe_to_resume',
+      })
+      expect(runtime.recoveryBlocked).toEqual([{ handleId: handle.handleId, code }])
+      // The undone claim leaves the retained record exactly as it was: no marker, no owner.
+      expect(runtime.adapter.journal.get(handle.handleId)).toEqual(retained)
+      expect(JSON.stringify(runtime.recoveryBlocked)).not.toContain('secret-transport-token')
+      await runtime.close()
+      runtime = undefined
+      healthy = await createNodePiDurableRuntime({
+        ...setup.options,
+        reconcileInference: async () => 'safe_to_resume',
+      })
+      await healthy.adapter.drain()
+      expect(healthy.recoveryBlocked).toEqual([])
+      expect(healthy.adapter.journal.get(handle.handleId).state).toBe('completed')
+    } finally {
+      await runtime?.close()
+      await healthy?.close()
+      await seed.close().catch(() => {})
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }
+)
+
+test('a denied recovery persists its fence before a newer owner claims, and the newer owner keeps its record', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-release-to-catch-'))
+  const setup = fixture(directory)
+  const seed = new PiDurableRuntimeAdapter(setup.options)
+  let runtime, newerOwner
+  try {
+    const handle = await seed.start(setup.request)
+    await seed.drain()
+    const stored = seed.journal.get(handle.handleId)
+    seed.journal.update(handle.handleId, stored.epoch, {
+      state: 'running',
+      detail: { inferencePending: true },
+    })
+    await seed.close()
+    runtime = await createNodePiDurableRuntime({
+      ...setup.options,
+      assertAuthority: async () => {
+        throw authoritativeDenial(new Error('PI_CANONICAL_AUTHORITY_REJECTED'))
+      },
+      reconcileInference: async () => 'safe_to_resume',
+      onAdapterReady: (adapter) => {
+        const reconcile = adapter.reconcile.bind(adapter)
+        adapter.reconcile = async (target) => {
+          try {
+            return await reconcile(target)
+          } catch (error) {
+            // The denied claim is already released. A second live owner claims the record
+            // before composition observes the denial.
+            const current = adapter.journal.get(target.handleId)
+            const epoch = adapter.journal.claim(target.handleId, {
+              epoch: current.epoch,
+              state: current.state,
+            })
+            adapter.journal.update(target.handleId, epoch, {
+              detail: { ...current.detail, ownerPid: process.ppid, ownerEpoch: epoch },
+            })
+            newerOwner = adapter.journal.get(target.handleId)
+            throw error
+          }
+        }
+      },
+    })
+    // Retained E, denied claim E+1, denial release E+2, newer owner claim E+3.
+    expect(newerOwner.epoch).toBe(stored.epoch + 3)
+    expect(newerOwner.detail.ownerPid).toBe(process.ppid)
+    expect(runtime.recoveryBlocked).toEqual([
+      { handleId: handle.handleId, code: 'PI_RECOVERY_AUTHORITY_BLOCKED' },
+    ])
+    expect(runtime.adapter.journal.get(handle.handleId)).toEqual(newerOwner)
+    expect(newerOwner.detail.recoveryBlocked).toBe('PI_RECOVERY_AUTHORITY_BLOCKED')
+    expect(() => runtime.adapter.journal.assertOwner(handle.handleId, stored.epoch + 1)).toThrow(
+      'STALE_OWNER'
+    )
+  } finally {
+    await runtime?.close()
+    await seed.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a denial superseded while its check is pending is reported in memory and never written onto the newer epoch', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-superseded-denial-'))
+  const setup = fixture(directory)
+  const seed = new PiDurableRuntimeAdapter(setup.options)
+  let runtime, adapter
+  try {
+    const handle = await seed.start(setup.request)
+    await seed.drain()
+    const stored = seed.journal.get(handle.handleId)
+    seed.journal.update(handle.handleId, stored.epoch, {
+      state: 'running',
+      detail: { inferencePending: true },
+    })
+    await seed.close()
+    runtime = await createNodePiDurableRuntime({
+      ...setup.options,
+      onAdapterReady: (ready) => {
+        adapter = ready
+      },
+      assertAuthority: async () => {
+        // A public command supersedes the held recovery claim while its authority check is pending.
+        const current = adapter.journal.get(handle.handleId)
+        adapter.journal.claim(handle.handleId, { epoch: current.epoch, state: current.state })
+        throw authoritativeDenial(new Error('PI_CANONICAL_AUTHORITY_REJECTED'))
+      },
+      reconcileInference: async () => 'safe_to_resume',
+    })
+    expect(runtime.recoveryBlocked).toEqual([
+      { handleId: handle.handleId, code: 'PI_RECOVERY_AUTHORITY_BLOCKED' },
+    ])
+    // Claim E+1 was superseded at E+2: the denial writes no marker and no owner fields.
+    const superseded = runtime.adapter.journal.get(handle.handleId)
+    expect(superseded.epoch).toBe(stored.epoch + 2)
+    expect(superseded.detail.recoveryBlocked).toBeUndefined()
+    expect(superseded.detail.ownerPid).toBeUndefined()
+  } finally {
+    await runtime?.close()
+    await seed.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test.each([
+  ['assertAuthority', 'PI_CANONICAL_AUTHORITY_REJECTED'],
+  ['reconcileInference', 'PI_CHILD_CONTINUATION_REJECTED'],
+])(
+  'a denial code string thrown by %s is a caller-supplied failure: it persists no revocation and resumes on a healthy startup',
+  async (port, code) => {
+    const directory = mkdtempSync(join(tmpdir(), 'pi-forged-denial-'))
+    const setup = fixture(directory)
+    const seed = new PiDurableRuntimeAdapter(setup.options)
+    let runtime, healthy
+    try {
+      const handle = await seed.start(setup.request)
+      await seed.drain()
+      const stored = seed.journal.get(handle.handleId)
+      seed.journal.update(handle.handleId, stored.epoch, {
+        state: 'running',
+        detail: { inferencePending: true },
+      })
+      const retained = seed.journal.get(handle.handleId)
+      await seed.close()
+      runtime = await createNodePiDurableRuntime({
+        ...setup.options,
+        ...(port === 'assertAuthority'
+          ? {
+              assertAuthority: async () => {
+                throw new Error(code)
+              },
+            }
+          : {
+              reconcileInference: async () => {
+                throw new Error(code)
+              },
+            }),
+      })
+      expect(runtime.recoveryBlocked).toEqual([
+        { handleId: retained.handleId, code: 'PI_RECOVERY_UNCLASSIFIED' },
+      ])
+      expect(runtime.adapter.journal.get(retained.handleId)).toEqual(retained)
+      await runtime.close()
+      runtime = undefined
+      healthy = await createNodePiDurableRuntime({
+        ...setup.options,
+        reconcileInference: async () => 'safe_to_resume',
+      })
+      await healthy.adapter.drain()
+      expect(healthy.recoveryBlocked).toEqual([])
+      expect(healthy.adapter.journal.get(retained.handleId).state).toBe('completed')
+    } finally {
+      await runtime?.close()
+      await healthy?.close()
+      await seed.close().catch(() => {})
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }
+)

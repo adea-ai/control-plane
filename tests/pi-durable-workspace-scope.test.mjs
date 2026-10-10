@@ -162,7 +162,12 @@ test('revoked scope denies actual SQLite reopen reconcile and session resume wit
     await expect(
       reopened.session({ operation: 'resume', sessionId: handle.externalSessionId })
     ).rejects.toThrow('PI_AUTHORITY_REJECTED')
-    expect(reopened.journal.get(handle.handleId)).toEqual(retained)
+    // The denied claim persists its marker and advances the epoch once; resume takes no claim.
+    expect(reopened.journal.get(handle.handleId)).toEqual({
+      ...retained,
+      epoch: retained.epoch + 2,
+      detail: { ...retained.detail, recoveryBlocked: 'PI_RECOVERY_AUTHORITY_BLOCKED' },
+    })
     expect(sends).toBe(1)
   })
 })

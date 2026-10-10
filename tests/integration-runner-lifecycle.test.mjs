@@ -141,7 +141,8 @@ describe('integration runner resource ownership', () => {
     const result = executeRunner(remoteTarget)
     expect(result.status).toBe(0)
     expect(result.calls.filter(({ program }) => program === 'docker')).toEqual([])
-    expect(result.calls.filter(({ program }) => program === 'bun')).toHaveLength(3)
+    // turbo integration, the consumed-package build, root-level files, and the cloud drill.
+    expect(result.calls.filter(({ program }) => program === 'bun')).toHaveLength(4)
   })
 
   test('remote configuration rejection does not contact Docker', () => {
@@ -185,6 +186,21 @@ describe('integration runner resource ownership', () => {
     expect(first.status).toBe(0)
     expect(second.status).toBe(0)
     expect(startedProject(first)).not.toBe(startedProject(second))
+  })
+
+  test('root-level integration files run only after their consumed workspace package is built', () => {
+    const result = executeRunner()
+    expect(result.status).toBe(0)
+    const bunCalls = result.calls.filter(({ program }) => program === 'bun')
+    const build = bunCalls.findIndex(
+      ({ args }) =>
+        args.includes('build') && args.includes('--filter=@control-plane/profile-portability')
+    )
+    const rootFile = bunCalls.findIndex(({ args }) =>
+      args.includes('./tests/profile-recovery-postgres-restore.integration.test.mjs')
+    )
+    expect(build).toBeGreaterThanOrEqual(0)
+    expect(rootFile).toBeGreaterThan(build)
   })
 
   for (const [label, overrides] of [

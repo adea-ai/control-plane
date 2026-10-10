@@ -1,11 +1,22 @@
 import type { PolicyControlledToolExecutionService } from '@control-plane/tool-execution'
 import type { DelegationEvent } from '@control-plane/orchestration'
-import { PiDurableRuntimeAdapter } from './adapter.js'
+import {
+  isRecoveryAuthorityDenial,
+  isRecoveryUnavailable,
+  PiDurableRuntimeAdapter,
+} from './adapter.js'
 import type {
   PiDurableRuntimeOptions,
   PiDurableGovernedDelegateChildCompiler,
 } from './contracts.js'
 import { PiDurableEffectGate, SqliteDurableEffectGateStore } from './effect-gate.js'
+
+/** Codes reported for a retained record that recovery did not resume in this start. A declared
+ * denial is also persisted by the adapter, under the recovery claim that observed it. */
+export type RecoveryBlockCode =
+  | 'PI_RECOVERY_AUTHORITY_BLOCKED'
+  | 'PI_RECOVERY_UNAVAILABLE'
+  | 'PI_RECOVERY_UNCLASSIFIED'
 
 export interface NodePiDurableCompositionOptions extends Omit<
   PiDurableRuntimeOptions,
@@ -52,7 +63,7 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
   })
 
   async function recover(): Promise<void> {
-    const blocked: Array<{ handleId: string; code: 'PI_RECOVERY_AUTHORITY_BLOCKED' }> = []
+    const blocked: Array<{ handleId: string; code: RecoveryBlockCode }> = []
     if (options.parentInbox && options.consumeParentInbox) {
       await options.consumeParentInbox(await options.parentInbox.list())
       try {
@@ -67,22 +78,21 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
       if (['starting', 'running', 'unknown', 'cancelling'].includes(record.state)) {
         try {
           await adapter.reconcile(handle)
-        } catch {
-          blocked.push({ handleId: record.handleId, code: 'PI_RECOVERY_AUTHORITY_BLOCKED' })
-          try {
-            adapter.journal.update(record.handleId, record.epoch, {
-              detail: { ...record.detail, recoveryBlocked: 'PI_RECOVERY_AUTHORITY_BLOCKED' },
-            })
-          } catch {
-            /* A newer owner keeps its record. */
-          }
+        } catch (error) {
+          // The adapter persisted any declared denial under the claim it held; this start only
+          // reports. Unavailable and unclassified failures fence this start and persist nothing.
+          if (isRecoveryAuthorityDenial(error))
+            blocked.push({ handleId: record.handleId, code: 'PI_RECOVERY_AUTHORITY_BLOCKED' })
+          else if (isRecoveryUnavailable(error))
+            blocked.push({ handleId: record.handleId, code: 'PI_RECOVERY_UNAVAILABLE' })
+          else blocked.push({ handleId: record.handleId, code: 'PI_RECOVERY_UNCLASSIFIED' })
         }
       }
     }
     recoveryBlocked = blocked
   }
 
-  let recoveryBlocked: readonly { handleId: string; code: 'PI_RECOVERY_AUTHORITY_BLOCKED' }[] = []
+  let recoveryBlocked: readonly { handleId: string; code: RecoveryBlockCode }[] = []
 
   try {
     effects = options.tools

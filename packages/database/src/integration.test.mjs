@@ -10,6 +10,9 @@ import { rejects } from 'node:assert/strict'
 import { performance } from 'node:perf_hooks'
 import { fileURLToPath } from 'node:url'
 import { loadDatabaseCredentials } from '@control-plane/config'
+import postgres from 'postgres'
+import { drizzle } from 'drizzle-orm/postgres-js'
+import * as databaseSchema from './schema/index.ts'
 import { ControlApiFixtures } from '@control-plane/contracts'
 import { RuntimeNodeCredentialClaimsSchema } from '@control-plane/runtime-gateway-protocol'
 import {
@@ -1983,6 +1986,177 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(await restarted.claim({ ...second, channelGeneration: 3 }, credentialFence)).toEqual({
       accepted: true,
     })
+  })
+
+  test('fences a superseded channel owner across physical reconnects and admits one inventory effect per generation', async () => {
+    await isolated.migrate()
+    const channelIdentity = makeRuntimeInventoryCredentialFixtures(
+      'rnr_01DRZ3NDEKTSV4RRFFQ69G5FAV',
+      'wsp_01DRZ3NDEKTSV4RRFFQ69G5FAV'
+    )
+    const channelCredential = channelIdentity.credentials[0]
+    await isolated.withMigrationDatabase(async (database) => {
+      const writer = new PostgresRuntimeNodeIdentityRepository(database)
+      await writer.registerVerificationKey(channelIdentity.key)
+      await writer.insertIssuedCredential(channelCredential)
+    })
+    expect(
+      await new PostgresRuntimeNodeIdentityRepository(isolated.application).consumeCredential(
+        channelCredential.credentialId,
+        channelCredential.revocationVersion,
+        new Date()
+      )
+    ).toBe('consumed')
+    const credentialFence = {
+      credentialId: channelCredential.credentialId,
+      revocationVersion: channelCredential.revocationVersion,
+    }
+    const nodeId = 'rnr_01DRZ3NDEKTSV4RRFFQ69G5FAV'
+    const workspaceId = 'wsp_01DRZ3NDEKTSV4RRFFQ69G5FAV'
+    const policy = {
+      adapterMajor: 1,
+      driverMajor: 1,
+      harnessMajor: 1,
+      protocolMajor: 1,
+      healthTtlMs: 60_000,
+      maximumCapabilityTtlMs: 60_000,
+    }
+    const ownerRecord = (gatewayInstanceId, channelGeneration) => ({
+      nodeId,
+      workspaceId,
+      gatewayInstanceId,
+      connectionId: `connection-${gatewayInstanceId}`,
+      channelGeneration,
+      protocolVersion: { major: 1, minor: 6 },
+      connectedAt: '2026-09-08T10:00:00.000Z',
+      lastHeartbeatAt: '2026-09-08T10:00:00.000Z',
+    })
+    const checkpoint = (revision) => ({
+      workspaceId,
+      runtimeNodeRefId: nodeId,
+      snapshotVersion: revision,
+      snapshotDigest: `sha256:${String(revision).padStart(64, '0')}`,
+      observedAt: '2026-09-08T10:00:00.000Z',
+      activeRuntimeRefs: [],
+      revision,
+    })
+    const applicationUrl = new URL(loadDatabaseCredentials(process.env, 'application').url)
+    applicationUrl.pathname = `/${isolated.name}`
+    const administrationUrl = loadDatabaseCredentials(process.env, 'administration').url
+    // Each owner is its own physical PostgreSQL session, authenticated as the application role.
+    const opened = []
+    const open = () => {
+      const client = postgres(applicationUrl.toString(), { max: 1, prepare: false })
+      const database = drizzle(client, { schema: databaseSchema })
+      const owner = {
+        client,
+        repository: new PostgresRuntimeChannelOwnershipRepository(database),
+        unit: new PostgresRuntimeInventoryUnitOfWork(database, policy),
+      }
+      opened.push(owner)
+      return owner
+    }
+    const backendPid = async (client) => (await client`select pg_backend_pid() as pid`)[0].pid
+    // Server-side termination of one physical session, as a network drop would leave it.
+    const dropPhysicalSession = async (client) => {
+      const pid = await backendPid(client)
+      const administration = postgres(administrationUrl, { max: 1, prepare: false })
+      try {
+        await administration`select pg_terminate_backend(${pid})`
+      } finally {
+        await administration.end({ timeout: 5 })
+      }
+      await client.end({ timeout: 5 }).catch(() => {})
+      return pid
+    }
+    // Every inventory effect runs through the canonical unit of work; the spy records entry into it.
+    const effects = []
+    const applyEffect = (owner, record, expectedRevision, revision) =>
+      owner.unit.run(
+        { workspaceId, runtimeNodeRefId: nodeId, credentialFence, channel: record },
+        async (ports) => {
+          effects.push(revision)
+          return ports.checkpoints.compareAndSet(expectedRevision, checkpoint(revision))
+        }
+      )
+    try {
+      const first = open()
+      const second = open()
+      expect(await backendPid(first.client)).not.toBe(await backendPid(second.client))
+
+      // Two owners compete for generation 1 over separate physical sessions.
+      const firstRecord = ownerRecord('gateway-a', 1)
+      const secondRecord = ownerRecord('gateway-b', 1)
+      const [firstClaim, secondClaim] = await Promise.all([
+        first.repository.claim(firstRecord, credentialFence),
+        second.repository.claim(secondRecord, credentialFence),
+      ])
+      expect([firstClaim.accepted, secondClaim.accepted].filter(Boolean)).toHaveLength(1)
+      const winner = firstClaim.accepted
+        ? { owner: first, record: firstRecord }
+        : { owner: second, record: secondRecord }
+      const loser = firstClaim.accepted
+        ? { owner: second, record: secondRecord }
+        : { owner: first, record: firstRecord }
+
+      // Only the current owner's effect runs; the losing owner is refused before the effect.
+      await expect(applyEffect(loser.owner, loser.record, undefined, 1)).rejects.toThrow(
+        'INVENTORY_CHANNEL_STALE'
+      )
+      expect(await applyEffect(winner.owner, winner.record, undefined, 1)).toBe(true)
+      expect(effects).toEqual([1])
+
+      // The losing owner advances the channel to generation 2 and then writes exactly once.
+      const advanced = { ...loser.record, channelGeneration: 2 }
+      expect(await loser.owner.repository.claim(advanced, credentialFence)).toEqual({
+        accepted: true,
+        previous: winner.record,
+      })
+
+      // The winner's physical session drops. After reopening, its generation-1 authority is stale.
+      const droppedPid = await dropPhysicalSession(winner.owner.client)
+      const reopened = open()
+      expect(await backendPid(reopened.client)).not.toBe(droppedPid)
+      expect(
+        await reopened.repository.heartbeat(
+          { ...winner.record, lastHeartbeatAt: '2026-09-08T10:00:20.000Z' },
+          credentialFence
+        )
+      ).toBe(false)
+      expect(await reopened.repository.release(winner.record)).toBe(false)
+      expect(await reopened.repository.claim(winner.record, credentialFence)).toEqual({
+        accepted: false,
+        previous: advanced,
+      })
+      await expect(applyEffect(reopened, winner.record, 1, 2)).rejects.toThrow(
+        'INVENTORY_CHANNEL_STALE'
+      )
+      expect(effects).toEqual([1])
+
+      // Generation 2 is the only live authority, so its effect is admitted once.
+      expect(await applyEffect(loser.owner, advanced, 1, 2)).toBe(true)
+      expect(effects).toEqual([1, 2])
+
+      // The stale owner reconnects again and retries. Neither retry reaches the effect.
+      await dropPhysicalSession(reopened.client)
+      const reopenedAgain = open()
+      await expect(applyEffect(reopenedAgain, winner.record, 1, 2)).rejects.toThrow(
+        'INVENTORY_CHANNEL_STALE'
+      )
+      await expect(applyEffect(reopenedAgain, winner.record, 2, 3)).rejects.toThrow(
+        'INVENTORY_CHANNEL_STALE'
+      )
+      expect(effects).toEqual([1, 2])
+      expect(await loser.owner.repository.lookup(nodeId)).toEqual(advanced)
+      expect(
+        await loser.owner.unit.run(
+          { workspaceId, runtimeNodeRefId: nodeId, credentialFence, channel: advanced },
+          async (ports) => ports.checkpoints.get(nodeId)
+        )
+      ).toMatchObject({ revision: 2, snapshotVersion: 2 })
+    } finally {
+      for (const owner of opened) await owner.client.end({ timeout: 5 }).catch(() => {})
+    }
   })
 
   test(
