@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -31,6 +32,52 @@ const OWNERSHIP_STATES: readonly string[] = [
   'cancelling',
   'unknown',
 ]
+
+/** The fields that make up a process ownership claim. Only claimProcess writes them, and only a
+ * release that matches the claim clears them. */
+const OWNER_FIELDS = ['ownerPid', 'ownerEpoch', 'ownerClaimId'] as const
+
+/** A process ownership claim. `epoch` is the command epoch the claim produced; command writes and
+ * assertOwner check it, and it moves on later command writes. `ownerPid`, `ownerEpoch` and
+ * `claimId` are the claim's own fence, stored with the owner fields. They never follow the command
+ * epoch, and `claimId` is unique per claim: a transient release restores the command epoch, so a
+ * later claim can reuse an epoch number, and the id is what tells the two claims apart. */
+export interface ProcessClaim {
+  readonly epoch: number
+  readonly ownerPid: number
+  readonly ownerEpoch: number
+  readonly claimId: string
+}
+
+function holdsClaim(record: JournalRecord, claim: ProcessClaim): boolean {
+  return (
+    record.detail['ownerPid'] === claim.ownerPid &&
+    record.detail['ownerEpoch'] === claim.ownerEpoch &&
+    record.detail['ownerClaimId'] === claim.claimId
+  )
+}
+
+function clearOwner(detail: Record<string, unknown>): Record<string, unknown> {
+  return { ...detail, ownerPid: undefined, ownerEpoch: undefined, ownerClaimId: undefined }
+}
+
+/** A detail write carries a snapshot that may predate a claim or outlive its release. While a
+ * claim is stored, its owner fields come from the store, so no write can erase or replace them.
+ * With no stored claim, a snapshot that still carries a claim id was taken under a claim that has
+ * since been released, so none of its owner fields may come back. */
+function guardOwner(
+  detail: Record<string, unknown>,
+  stored: Record<string, unknown>
+): Record<string, unknown> {
+  if (stored['ownerClaimId'] !== undefined) {
+    const guarded = { ...detail }
+    for (const field of OWNER_FIELDS) guarded[field] = stored[field]
+    return guarded
+  }
+  if (detail['ownerClaimId'] === undefined) return detail
+  const { ownerPid: _pid, ownerEpoch: _epoch, ownerClaimId: _claim, ...rest } = detail
+  return rest
+}
 
 /** One synchronous transaction commits state and its replay cursor together. */
 export class SqliteDurableJournal {
@@ -131,7 +178,12 @@ export class SqliteDurableJournal {
         throw new Error('STALE_STATE')
       const mutation = operation(current)
       if (!mutation) return current
-      const next = { ...current, ...mutation.change, epoch: current.epoch + 1 }
+      const next = {
+        ...current,
+        ...mutation.change,
+        detail: guardOwner(mutation.change.detail ?? current.detail, current.detail),
+        epoch: current.epoch + 1,
+      }
       this.save(next)
       if (mutation.event)
         for (const event of Array.isArray(mutation.event) ? mutation.event : [mutation.event])
@@ -140,8 +192,9 @@ export class SqliteDurableJournal {
     })
   }
 
-  /** Serialize local process ownership before touching the native Pi store or lock file. */
-  claimProcess(handleId: string, expected?: { epoch: number; state: string }): number {
+  /** Serialize local process ownership before touching the native Pi store or lock file. The
+   * returned claim is the only token that can release this ownership. */
+  claimProcess(handleId: string, expected?: { epoch: number; state: string }): ProcessClaim {
     return this.transaction(() => {
       const record = this.get(handleId)
       if (
@@ -160,28 +213,45 @@ export class SqliteDurableJournal {
         }
       }
       const epoch = record.epoch + 1
+      const claim: ProcessClaim = {
+        epoch,
+        ownerPid: process.pid,
+        ownerEpoch: epoch,
+        claimId: randomUUID(),
+      }
       this.save({
         ...record,
         epoch,
-        detail: { ...record.detail, ownerPid: process.pid, ownerEpoch: epoch },
+        detail: {
+          ...record.detail,
+          ownerPid: claim.ownerPid,
+          ownerEpoch: claim.ownerEpoch,
+          ownerClaimId: claim.claimId,
+        },
       })
-      return epoch
+      return claim
     })
   }
 
+  /** Whether this claim still owns the record. The check reads the claim's own fence, so a later
+   * command epoch bump does not revoke it. */
+  holdsProcessClaim(handleId: string, claim: ProcessClaim): boolean {
+    return holdsClaim(this.get(handleId), claim)
+  }
+
   /** Undoes a recovery claim that reached no decision (a transient authority failure, or a
-   * shutdown interrupting it): clears this process's owner fields and restores the predecessor
-   * epoch only while the claimed epoch is still current. Restoring is safe here because the
-   * claimant has returned and no writer still holds that token. A declared denial must use
-   * releaseRecoveryDenial instead, so its fence is never reissued. */
-  releaseRecoveryClaim(handleId: string, epoch: number): void {
+   * shutdown interrupting it): clears the owner fields that hold this claim and restores the
+   * predecessor epoch only while the claimed epoch is still current. Restoring is safe because a
+   * later claim gets its own claim id, so a delayed release still holding this token cannot match
+   * it. A declared denial must use releaseRecoveryDenial instead, so its fence is never reissued. */
+  releaseRecoveryClaim(handleId: string, claim: ProcessClaim): void {
     this.transaction(() => {
       const record = this.get(handleId)
-      if (record.detail['ownerPid'] !== process.pid || record.detail['ownerEpoch'] !== epoch) return
+      if (!holdsClaim(record, claim)) return
       this.save({
         ...record,
-        epoch: record.epoch === epoch ? epoch - 1 : record.epoch,
-        detail: { ...record.detail, ownerPid: undefined, ownerEpoch: undefined },
+        epoch: record.epoch === claim.epoch ? claim.epoch - 1 : record.epoch,
+        detail: clearOwner(record.detail),
       })
     })
   }
@@ -189,35 +259,32 @@ export class SqliteDurableJournal {
   /** Ends a recovery claim with a declared authority denial. The marker and the epoch advance are
    * written only while the expected claim is still current, and the epoch moves forward rather
    * than back, so the denied attempt's token is never accepted again. A superseded claim writes
-   * no marker and leaves the newer epoch alone; it clears only its own owner fields. */
-  releaseRecoveryDenial(handleId: string, epoch: number, recoveryBlocked: string): void {
+   * no marker and leaves the newer epoch alone; it clears only the owner fields of this claim. */
+  releaseRecoveryDenial(handleId: string, claim: ProcessClaim, recoveryBlocked: string): void {
     this.transaction(() => {
       const record = this.get(handleId)
-      if (record.detail['ownerPid'] !== process.pid || record.detail['ownerEpoch'] !== epoch) return
-      const held = record.epoch === epoch
+      if (!holdsClaim(record, claim)) return
+      const held = record.epoch === claim.epoch
       this.save({
         ...record,
-        epoch: held ? epoch + 1 : record.epoch,
+        epoch: held ? claim.epoch + 1 : record.epoch,
         detail: {
-          ...record.detail,
-          ownerPid: undefined,
-          ownerEpoch: undefined,
+          ...clearOwner(record.detail),
           ...(held ? { recoveryBlocked } : {}),
         },
       })
     })
   }
 
-  /** Clears this process's owner claim. Same-process holders are serialized by claimProcess,
-   * so a later command epoch bump cannot orphan the pid that is still recorded here. */
-  releaseProcess(handleId: string, _epoch?: number): void {
+  /** Clears the owner fields only while they still hold this claim. Two adapters in one process
+   * share a pid, so the pid alone never identifies an owner. A late release from an earlier claim
+   * matches nothing once a later claim holds the record, and a command epoch bump does not stop
+   * the claim's own owner from releasing it. */
+  releaseProcess(handleId: string, claim: ProcessClaim): void {
     this.transaction(() => {
       const record = this.get(handleId)
-      if (record.detail['ownerPid'] === process.pid)
-        this.save({
-          ...record,
-          detail: { ...record.detail, ownerPid: undefined, ownerEpoch: undefined },
-        })
+      if (!holdsClaim(record, claim)) return
+      this.save({ ...record, detail: clearOwner(record.detail) })
     })
   }
 
@@ -233,7 +300,12 @@ export class SqliteDurableJournal {
   ): JournalRecord {
     return this.transaction(() => {
       this.assertOwner(handleId, epoch)
-      const next = { ...this.get(handleId), ...change }
+      const stored = this.get(handleId)
+      const next = {
+        ...stored,
+        ...change,
+        detail: guardOwner(change.detail ?? stored.detail, stored.detail),
+      }
       this.save(next)
       if (event)
         for (const item of Array.isArray(event) ? event : [event])

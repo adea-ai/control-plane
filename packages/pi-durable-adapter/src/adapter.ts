@@ -38,7 +38,7 @@ import {
   type DurablePiEngine,
   type PiDurableRuntimeOptions,
 } from './contracts.js'
-import { SqliteDurableJournal, type JournalRecord } from './journal.js'
+import { SqliteDurableJournal, type JournalRecord, type ProcessClaim } from './journal.js'
 import { createPiDurableEngine, PiDurableEngineToolBlockedError } from './pi-engine.js'
 import { NodeSessionLease } from './lease.js'
 import { DurableToolCallRequestSchema, type DurableToolCallRequest } from '@control-plane/tool-sdk'
@@ -109,7 +109,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   readonly #options: PiDurableRuntimeOptions
   readonly #active = new Map<string, Promise<void>>()
   // Recovery claims this process holds and has not handed to a run; shutdown undoes them.
-  readonly #recoveryClaims = new Map<string, number>()
+  readonly #recoveryClaims = new Map<string, ProcessClaim>()
   readonly #engines = new Map<string, DurablePiEngine>()
   readonly #now: () => string
   #closed = false
@@ -650,7 +650,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       // Ownership is the only gate for recovery decisions. A live owner in another process
       // (or this one) keeps the record; this caller observes and never resumes or re-sends.
       const claim = this.#claimRecovery(record)
-      if ('epoch' in claim) return this.#reconcileClaimed(handle, claim.epoch)
+      if ('claim' in claim) return this.#reconcileClaimed(handle, claim.claim)
       if (claim.reason === 'stale' && resamples < RECOVERY_RESAMPLE_LIMIT) {
         resamples += 1
         continue
@@ -677,10 +677,10 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     return record.state === 'running' || record.state === 'unknown'
   }
 
-  #claimRecovery(record: JournalRecord): { epoch: number } | { reason: 'live' | 'stale' } {
+  #claimRecovery(record: JournalRecord): { claim: ProcessClaim } | { reason: 'live' | 'stale' } {
     this.#assertOpen()
     try {
-      return { epoch: this.journal.claimProcess(record.handleId, record) }
+      return { claim: this.journal.claimProcess(record.handleId, record) }
     } catch (error) {
       const code = error instanceof Error ? error.message : ''
       if (code === 'PI_SESSION_OWNER_ACTIVE') return { reason: 'live' }
@@ -695,12 +695,13 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
    * it was; a decided claim is released normally. */
   async #reconcileClaimed(
     handle: RuntimeExecutionHandle,
-    epoch: number
+    claim: ProcessClaim
   ): Promise<RuntimeExecutionStatus> {
+    const epoch = claim.epoch
     let handedOff = false
     let decided = false
     let denied = false
-    this.#recoveryClaims.set(handle.handleId, epoch)
+    this.#recoveryClaims.set(handle.handleId, claim)
     try {
       const claimed = this.journal.get(handle.handleId)
       if (claimed.epoch !== epoch) return this.status(handle)
@@ -767,7 +768,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           { state: 'starting', detail: { ...claimed.detail, observedAt: this.#now() } },
           { type: 'status', data: { state: 'starting' }, at: this.#now() }
         )
-        handedOff = this.#schedule(next, epoch)
+        handedOff = this.#schedule(next, claim)
       } else {
         const activeInference = readActiveInference(claimed)
         const safe = activeInference
@@ -790,7 +791,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               reasonCode: undefined,
             },
           })
-          handedOff = this.#schedule(resumable, epoch)
+          handedOff = this.#schedule(resumable, claim)
         } else {
           this.journal.update(handle.handleId, epoch, {
             state: 'unknown',
@@ -811,9 +812,9 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       // A closed journal cannot be written; close() already undid this claim.
       if (!handedOff && !this.#closed) {
         if (denied)
-          this.journal.releaseRecoveryDenial(handle.handleId, epoch, RECOVERY_AUTHORITY_BLOCKED)
-        else if (decided) this.journal.releaseProcess(handle.handleId)
-        else this.journal.releaseRecoveryClaim(handle.handleId, epoch)
+          this.journal.releaseRecoveryDenial(handle.handleId, claim, RECOVERY_AUTHORITY_BLOCKED)
+        else if (decided) this.journal.releaseProcess(handle.handleId, claim)
+        else this.journal.releaseRecoveryClaim(handle.handleId, claim)
       }
     }
   }
@@ -841,9 +842,9 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         [...this.#engines.values()].map((engine) => Promise.resolve().then(() => engine.close()))
       )
       this.#engines.clear()
-      for (const [handleId, epoch] of this.#recoveryClaims) {
+      for (const [handleId, claim] of this.#recoveryClaims) {
         try {
-          this.journal.releaseRecoveryClaim(handleId, epoch)
+          this.journal.releaseRecoveryClaim(handleId, claim)
         } catch {
           /* The owner pid still ends with this process; a restart may claim it. */
         }
@@ -858,46 +859,55 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   }
 
   /** Ends a claim this process holds without driving the record. A record still marked as
-   * starting or running is left in the reconcilable unknown state, never ownerless and running. */
-  #abandonClaim(handleId: string, epoch: number, reasonCode: string): void {
+   * starting or running is left in the reconcilable unknown state, never ownerless and running.
+   * Nothing is written for a claim that no longer holds the record. */
+  #abandonClaim(handleId: string, claim: ProcessClaim, reasonCode: string): void {
     try {
       const current = this.journal.get(handleId)
-      if (current.epoch === epoch && ['starting', 'running'].includes(current.state))
-        this.journal.update(handleId, epoch, {
+      if (
+        this.journal.holdsProcessClaim(handleId, claim) &&
+        current.epoch === claim.epoch &&
+        ['starting', 'running'].includes(current.state)
+      )
+        this.journal.update(handleId, claim.epoch, {
           state: 'unknown',
           detail: { ...current.detail, observedAt: this.#now(), reasonCode },
         })
     } catch {
       /* A newer owner keeps its record. */
     }
-    this.journal.releaseProcess(handleId)
+    this.journal.releaseProcess(handleId, claim)
   }
 
-  /** Starts a run. A `heldEpoch` hands over a claim the caller already holds in this process. */
-  #schedule(record: JournalRecord, heldEpoch?: number): boolean {
+  /** Starts a run. A `heldClaim` hands over a claim the caller already holds in this process.
+   * #run owns that claim from the handover on and ends it exactly once. */
+  #schedule(record: JournalRecord, heldClaim?: ProcessClaim): boolean {
     this.#assertOpen()
     if (this.#active.has(record.handleId)) return false
-    const work = this.#run(record, heldEpoch)
-      .catch((error: unknown) => {
-        if (heldEpoch !== undefined && !this.#closed)
-          this.#abandonClaim(record.handleId, heldEpoch, 'PI_RUN_ABORTED_BEFORE_DRIVE')
-        throw error
-      })
-      .finally(() => this.#active.delete(record.handleId))
+    const work = this.#run(record, heldClaim).finally(() => this.#active.delete(record.handleId))
     this.#active.set(record.handleId, work)
     return true
   }
 
-  async #run(record: JournalRecord, heldEpoch?: number): Promise<void> {
-    const authority = this.#stored(record)
-    const plan = assertExecutionPlanIntegrity(authority.request.executionPlan)
-    const nativeAdmissions = new Map<string, DurableToolCallRequest>()
-    let epoch: number
+  async #run(record: JournalRecord, heldClaim?: ProcessClaim): Promise<void> {
+    let authority: StoredAdmission
+    let plan: ReturnType<typeof assertExecutionPlanIntegrity>
     try {
-      epoch = heldEpoch ?? this.journal.claimProcess(record.handleId, record)
+      authority = this.#stored(record)
+      plan = assertExecutionPlanIntegrity(authority.request.executionPlan)
+    } catch (error) {
+      if (heldClaim !== undefined && !this.#closed)
+        this.#abandonClaim(record.handleId, heldClaim, 'PI_RUN_ABORTED_BEFORE_DRIVE')
+      throw error
+    }
+    const nativeAdmissions = new Map<string, DurableToolCallRequest>()
+    let claim: ProcessClaim
+    try {
+      claim = heldClaim ?? this.journal.claimProcess(record.handleId, record)
     } catch {
       return
     }
+    const epoch = claim.epoch
     let lease: NodeSessionLease
     try {
       lease = new NodeSessionLease(
@@ -905,7 +915,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         authority.handle.externalSessionId!
       )
     } catch {
-      this.#abandonClaim(record.handleId, epoch, 'PI_SESSION_LEASE_UNAVAILABLE')
+      this.#abandonClaim(record.handleId, claim, 'PI_SESSION_LEASE_UNAVAILABLE')
       return // A live owner is responsible; do not fence it or open its Pi store.
     }
     const assertCurrent = async () => {
@@ -1080,8 +1090,6 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           state: 'running',
           detail: {
             ...record.detail,
-            ownerPid: process.pid,
-            ownerEpoch: epoch,
             observedAt: runningAt,
             inferenceTrackingVersion: 1,
             engineRunStarted: false,
@@ -1211,8 +1219,6 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             activeInference: undefined,
             inferenceTrackingVersion: 1,
             engineRunStarted: false,
-            ownerPid: process.pid,
-            ownerEpoch: epoch,
             inferencePending: false,
             observedAt: this.#now(),
             result: { outcome: 'completed', output: { text: result.text }, usage, artifacts: [] },
@@ -1323,15 +1329,32 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         /* A replacement owner retains the journal. */
       }
     } finally {
-      const engine = this.#engines.get(record.handleId)
-      try {
-        if (engine) await engine.close()
-      } finally {
-        this.#engines.delete(record.handleId)
-        lease.release()
-        this.journal.releaseProcess(record.handleId, epoch)
-      }
+      await this.#finishRun(record, claim, lease)
     }
+  }
+
+  /** Ends a run's claim exactly once. A failed engine close still releases the claim, marks an
+   * undecided record reconcilable, and only then reports the close failure to the caller. */
+  async #finishRun(
+    record: JournalRecord,
+    claim: ProcessClaim,
+    lease: NodeSessionLease
+  ): Promise<void> {
+    const engine = this.#engines.get(record.handleId)
+    let closeFailure: { readonly error: unknown } | undefined
+    try {
+      if (engine) await engine.close()
+    } catch (error) {
+      closeFailure = { error }
+    }
+    this.#engines.delete(record.handleId)
+    try {
+      lease.release()
+    } finally {
+      if (closeFailure === undefined) this.journal.releaseProcess(record.handleId, claim)
+      else this.#abandonClaim(record.handleId, claim, 'PI_RUN_ABORTED_BEFORE_DRIVE')
+    }
+    if (closeFailure !== undefined) throw closeFailure.error
   }
 
   async #retainInferences(

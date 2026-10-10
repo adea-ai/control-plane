@@ -38,7 +38,15 @@ const oldOwnerFailures = [
 const transientProbes = oldOwnerFailures.slice(1)
 
 function withoutOwner(record) {
-  return { ...record, detail: { ...record.detail, ownerPid: undefined, ownerEpoch: undefined } }
+  return {
+    ...record,
+    detail: {
+      ...record.detail,
+      ownerPid: undefined,
+      ownerEpoch: undefined,
+      ownerClaimId: undefined,
+    },
+  }
 }
 
 /** Retains one running execution the way an interrupted owner leaves it. */
@@ -242,10 +250,20 @@ test.each(oldOwnerFailures)(
         assertAuthority: async () => {
           if (raced) return
           raced = true
+          // The old owner's claim is released first, as a delayed cleanup would be, so the
+          // competitor takes the record serially. Its owner fields are then written the way a
+          // process holding the claim would write them.
           const current = adapter.journal.get(handle.handleId)
-          const epoch = adapter.journal.claim(handle.handleId, current)
+          adapter.journal.releaseProcess(handle.handleId, {
+            epoch: current.epoch,
+            ownerPid: current.detail.ownerPid,
+            ownerEpoch: current.detail.ownerEpoch,
+            claimId: current.detail.ownerClaimId,
+          })
+          const released = adapter.journal.get(handle.handleId)
+          const epoch = adapter.journal.claim(handle.handleId, released)
           adapter.journal.update(handle.handleId, epoch, {
-            detail: { ...current.detail, ownerPid: process.ppid, ownerEpoch: epoch },
+            detail: { ...released.detail, ownerPid: process.ppid, ownerEpoch: epoch },
           })
           competitor = adapter.journal.get(handle.handleId)
           throw failure()

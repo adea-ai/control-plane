@@ -757,7 +757,12 @@ test('a stale safe reconciliation cannot create an engine after concurrent cance
     await adapter.drain()
     expect({ engines, sends }).toEqual({ engines: 0, sends: 0 })
     const retained = adapter.journal.get(handle.handleId)
-    const { ownerPid: _pid, ownerEpoch: _epoch, ...cancelledDetail } = cancelled.detail
+    const {
+      ownerPid: _pid,
+      ownerEpoch: _epoch,
+      ownerClaimId: _claim,
+      ...cancelledDetail
+    } = cancelled.detail
     expect(retained).toEqual({ ...cancelled, detail: cancelledDetail })
     expect(retained.detail.ownerPid).toBeUndefined()
     expect(retained.detail.ownerEpoch).toBeUndefined()
