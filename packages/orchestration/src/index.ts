@@ -267,8 +267,12 @@ export function createGraphEvent(input: unknown): GraphEvent {
 
 export * from './graph-catalog.js'
 export * from './delegation.js'
+export * from './child-admission.js'
 export * from './delegation-runtime.js'
 export * from './delegation-tool-admission.js'
 export * from './parallel-delegation.js'
+export * from './child-progress-evidence.js'
+export * from './child-progress-lead-feed.js'
+export * from './child-usage-outcomes.js'
 
 export const packageName = 'orchestration'

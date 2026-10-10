@@ -1,10 +1,18 @@
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
+import type { DelegationService } from '@control-plane/orchestration'
 import { createProductionChildModelAuthority } from './production-child-model-authority.js'
 import { mkdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { createProductionChildModelRetention } from './production-child-model-retention.js'
-import type { DurableExecutionAuthority } from '@control-plane/pi-durable-adapter'
+import {
+  createProductionChildDelegation,
+  type ProductionChildDelegationOptions,
+} from './production-child-delegation.js'
+import type {
+  DurableExecutionAuthority,
+  PiDurableGovernedManagementCallCompiler,
+} from '@control-plane/pi-durable-adapter'
 import { RecordedModelFundingDecisionSchema } from '@control-plane/model-gateway'
 import { createPiExecutionBoundModelComposition } from '@control-plane/pi-durable-adapter'
 import { createCurrentModelConnectionComposition } from './current-model-composition.js'
@@ -25,6 +33,12 @@ import {
   createPiDurableCurrentToolAuthority,
   type CreatePiDurableCurrentToolAuthorityOptions,
 } from '../pi-durable/current-tool-authority.js'
+import {
+  createPiDurableGovernedManagementCall,
+  SqlitePiDurableManagementCallStore,
+  type PiDurableManagementCallAuthority,
+  type PiDurableManagementCallerOptions,
+} from '../pi-durable/management-governed-call.js'
 import {
   PiLeadPublicationService,
   type PiLeadPublicationPorts,
@@ -59,21 +73,74 @@ export interface ProductionPiLeadCompositionOptions {
   readonly leasePrincipalRef: string
   readonly modelAlias: string
   /** Separate canonical child admission and confirmed provider/spending authority. Never lead fallback. */
+  /** Host-built issuer + Adea transport; the launcher supplies the exact tool-call compiler. */
+  readonly governedManagementCall?: NodePiDurableLeadCompositionOptions['governedManagementCall']
+  /**
+   * Host-built issuer, Adea transport and target mapping (DeepSeek1215
+   * canonical factories). The composition supplies only the retained gate
+   * store on the runtime journal database and the management current-tool
+   * authority; it never derives decision contents or transport policy.
+   * Mutually exclusive with `governedManagementCall`.
+   */
+  readonly managementCall?: Pick<
+    PiDurableManagementCallerOptions,
+    'issue' | 'callAdea' | 'resolveTargetId' | 'requiresApproval'
+  > & {
+    /**
+     * Exact-call prepare from the host tool registry — the launcher's
+     * `hostPrepareManagementRequest` (CP PR1043 comment 6076653246). The
+     * host owns registry truth (tool ids, grant, policy snapshot, requested
+     * time); this composition only assembles the compiler around it.
+     */
+    readonly prepare: PiDurableGovernedManagementCallCompiler['prepare']
+  }
   readonly children?: {
     readonly authority: Omit<Parameters<typeof createProductionChildModelAuthority>[0], 'product'>
     readonly forgetCanonicalModels: (authority: DurableExecutionAuthority) => void
+    /** Server-only retained tool bindings; never derived from an HTTP/request payload. */
+    readonly tools: Pick<CreatePiDurableCurrentToolAuthorityOptions, 'service' | 'interactions'>
+    readonly delegation: Omit<
+      ProductionChildDelegationOptions,
+      'product' | 'now' | 'onEventRetained'
+    >
+    readonly createGovernedDelegateChild: (
+      service: DelegationService
+    ) => NonNullable<NodePiDurableLeadCompositionOptions['governedDelegateChild']>
     readonly modelAuthority: Omit<
       Parameters<typeof createPiExecutionBoundModelComposition>[0],
       'ledger'
     >
     readonly runtime: Required<
-      Pick<
-        NodePiDurableLeadCompositionOptions,
-        'governedDelegateChild' | 'childProgress' | 'parentInbox' | 'consumeParentInbox'
-      >
+      Pick<NodePiDurableLeadCompositionOptions, 'childProgress' | 'consumeParentInbox'>
     > &
-      Pick<NodePiDurableLeadCompositionOptions, 'onParentInboxWake' | 'tools'>
+      Pick<NodePiDurableLeadCompositionOptions, 'onParentInboxWake'>
   }
+}
+
+/**
+ * Builds the governed management caller over the retained
+ * `pi_management_call_gates` store colocated on the runtime journal
+ * database. Issuer, transport and target mapping are host-built ingredients
+ * from the DeepSeek1215 canonical factories (CP PR1043 comment 6076488885);
+ * this builder never derives decision contents, digest identity or transport
+ * policy itself.
+ */
+export function createProductionGovernedManagementCall(options: {
+  readonly authority: PiDurableManagementCallAuthority
+  readonly database: DatabaseSync
+  readonly call: Pick<
+    PiDurableManagementCallerOptions,
+    'issue' | 'callAdea' | 'resolveTargetId' | 'requiresApproval'
+  >
+}): ReturnType<typeof createPiDurableGovernedManagementCall> {
+  return createPiDurableGovernedManagementCall({
+    authority: options.authority,
+    store: new SqlitePiDurableManagementCallStore(options.database),
+    issue: options.call.issue,
+    callAdea: options.call.callAdea,
+    resolveTargetId: options.call.resolveTargetId,
+    ...(options.call.requiresApproval ? { requiresApproval: options.call.requiresApproval } : {}),
+  })
 }
 
 /** Actual opt-in production composition. No fixture, secret discovery, environment provider,
@@ -109,21 +176,49 @@ export async function createProductionPiLeadComposition(
       typeof children.authority?.admit !== 'function' ||
       typeof children.authority?.assertCurrent !== 'function' ||
       typeof children.forgetCanonicalModels !== 'function' ||
+      typeof children.createGovernedDelegateChild !== 'function' ||
       typeof children.modelAuthority?.forExecution !== 'function' ||
       typeof children.modelAuthority?.readRecordedDecision !== 'function' ||
       !children.modelAuthority?.leasePrincipalRef ||
       !children.modelAuthority?.modelAlias ||
-      typeof children.runtime?.governedDelegateChild?.prepare !== 'function' ||
+      typeof children.delegation?.records?.insert !== 'function' ||
+      typeof children.delegation?.records?.get !== 'function' ||
+      typeof children.delegation?.records?.findByChild !== 'function' ||
+      typeof children.delegation?.records?.listByParent !== 'function' ||
+      typeof children.delegation?.records?.compareAndSet !== 'function' ||
+      typeof children.delegation?.records?.allocate !== 'function' ||
+      typeof children.delegation?.lifecycle?.getExecution !== 'function' ||
+      typeof children.delegation?.plans?.get !== 'function' ||
+      typeof children.delegation?.events?.publish !== 'function' ||
+      typeof children.delegation?.events?.list !== 'function' ||
+      typeof children.delegation?.scopeAdmission?.resolveCallerPrincipalId !== 'function' ||
+      typeof children.delegation?.scopeAdmission?.now !== 'function' ||
+      !children.delegation?.scopeAdmission?.authority ||
+      typeof children.delegation?.readCurrent !== 'function' ||
       typeof children.runtime?.childProgress?.scan !== 'function' ||
-      typeof children.runtime?.parentInbox?.list !== 'function' ||
       typeof children.runtime?.consumeParentInbox !== 'function' ||
-      typeof children.runtime?.tools?.service?.execute !== 'function' ||
-      typeof children.runtime?.tools?.assertAuthority !== 'function')
+      typeof children.tools?.service?.execute !== 'function' ||
+      typeof children.tools?.interactions?.get !== 'function')
   )
     throw new Error('PI_PRODUCTION_CHILD_BINDING_REQUIRED')
+  if (options.managementCall !== undefined) {
+    if (options.governedManagementCall !== undefined)
+      throw new Error('PI_PRODUCTION_BINDING_REQUIRED')
+    if (!options.managementAuthority) throw new Error('PI_PRODUCTION_BINDING_REQUIRED')
+    if (
+      typeof options.managementCall.issue !== 'function' ||
+      typeof options.managementCall.callAdea !== 'function' ||
+      typeof options.managementCall.resolveTargetId !== 'function' ||
+      typeof options.managementCall.prepare !== 'function' ||
+      (options.managementCall.requiresApproval !== undefined &&
+        typeof options.managementCall.requiresApproval !== 'function')
+    )
+      throw new Error('PI_PRODUCTION_BINDING_REQUIRED')
+  }
   mkdirSync(options.directory, { recursive: true, mode: 0o700 })
   let fundingDatabase: DatabaseSync | undefined
   let intentDatabase: DatabaseSync | undefined
+  let managementJournalDatabase: DatabaseSync | undefined
   let runtime: Awaited<ReturnType<typeof createNodePiDurableLeadComposition>> | undefined
   const runtimeBinding = createProductionRuntimeBinding()
   let retentionTimer: ReturnType<typeof setInterval> | undefined
@@ -131,7 +226,11 @@ export async function createProductionPiLeadComposition(
     try {
       intentDatabase?.close()
     } finally {
-      fundingDatabase?.close()
+      try {
+        fundingDatabase?.close()
+      } finally {
+        managementJournalDatabase?.close()
+      }
     }
   }
   try {
@@ -141,6 +240,18 @@ export async function createProductionPiLeadComposition(
     intentDatabase = new DatabaseSync(join(options.directory, 'lead-admission.sqlite'))
     fundingDatabase.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL')
     intentDatabase.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL')
+    if (options.managementCall !== undefined) {
+      // Retained management-gate records colocate with the runtime journal
+      // family (authority.sqlite, the durable runtime/effect state's file).
+      // The adapter opens its own connection to that file when the runtime is
+      // created; SQLite's file-level atomicity keeps the retained single-claim
+      // contract across both connections, matching this file's existing
+      // dedicated-connection pattern for lead-admission.sqlite.
+      managementJournalDatabase = new DatabaseSync(join(options.directory, 'authority.sqlite'), {
+        timeout: 5000,
+      })
+      managementJournalDatabase.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL')
+    }
     const metadata = createCurrentModelConnectionComposition(options.modelConnections)
     const product = createProductionLeadProductAuthority({
       database: fundingDatabase,
@@ -150,6 +261,20 @@ export async function createProductionPiLeadComposition(
       target: options.readiness.target,
       ...(options.admission.now ? { now: options.admission.now } : {}),
     })
+    const childDelegation = children
+      ? createProductionChildDelegation({
+          ...children.delegation,
+          product,
+          ...(options.admission.now ? { now: options.admission.now } : {}),
+          ...(children.runtime.onParentInboxWake
+            ? { onEventRetained: async () => children.runtime.onParentInboxWake?.() }
+            : {}),
+        })
+      : undefined
+    const governedDelegateChild =
+      children && childDelegation
+        ? children.createGovernedDelegateChild(childDelegation.service)
+        : undefined
     const intents = new SqlitePiDurableLeadIntentStore(intentDatabase)
     const canonical = createCanonicalModelHostComposition({
       canonical: {
@@ -172,6 +297,24 @@ export async function createProductionPiLeadComposition(
       database: fundingDatabase,
       ...(options.admission.now ? { now: options.admission.now } : {}),
     })
+    // Child tool gate (CP1041/1018 wiring): the governed child tool service
+    // asserts through the canonical current-tool authority built from the
+    // server-owned children tool registry.
+    const currentToolAuthority = children
+      ? createPiDurableCurrentToolAuthority({
+          currentExecutionAuthority: canonical.executionAuthority,
+          intents,
+          executions: options.admission.executions,
+          plans: options.admission.plans,
+          service: children.tools.service,
+          interactions: children.tools.interactions,
+          ...(options.admission.now ? { now: options.admission.now } : {}),
+        })
+      : undefined
+    // Management current authority (DeepSeek1215 receipt fc42c7dd lineage,
+    // integrated under MiMo sole-writer ownership of this file): host-governed
+    // management tool service/interactions, returned for the launcher's
+    // governed management call.
     const piDurableCurrentToolAuthority = options.managementAuthority
       ? createPiDurableCurrentToolAuthority({
           currentExecutionAuthority: canonical.executionAuthority,
@@ -183,6 +326,29 @@ export async function createProductionPiLeadComposition(
           ...(options.admission.now ? { now: options.admission.now } : {}),
         })
       : undefined
+    // Governed management call: canonical caller + retained gate store on the
+    // runtime journal database. Issuer, Adea transport and target mapping are
+    // host-built ingredients (DeepSeek1215 factories); this composition only
+    // supplies the durable store and the management current-tool authority.
+    const managementCaller =
+      options.managementCall && piDurableCurrentToolAuthority && managementJournalDatabase
+        ? createProductionGovernedManagementCall({
+            authority: { assertCurrent: piDurableCurrentToolAuthority.assertCurrent },
+            database: managementJournalDatabase,
+            call: options.managementCall,
+          })
+        : undefined
+    // Compiler shape per the reviewed relay: host prepare (exact-call,
+    // deterministic idempotency derived from the retained native source by
+    // the launcher) plus the retained caller's execute.
+    const builtManagementCall: PiDurableGovernedManagementCallCompiler | undefined =
+      managementCaller && options.managementCall
+        ? {
+            prepare: options.managementCall.prepare,
+            execute: async (request) => managementCaller.execute(request),
+          }
+        : undefined
+    const managementPort = options.governedManagementCall ?? builtManagementCall
     let retention: ReturnType<typeof createProductionFacadeRetention> | undefined
     const native = createPiExecutionBoundModelComposition({
       forExecution: (binding) => {
@@ -254,8 +420,23 @@ export async function createProductionPiLeadComposition(
       return childModels
     }
     runtime = await createNodePiDurableLeadComposition({
-      ...(options.children && childAuthority
-        ? { ...options.children.runtime, childAuthority }
+      ...(managementPort ? { governedManagementCall: managementPort } : {}),
+      ...(options.children &&
+      childAuthority &&
+      currentToolAuthority &&
+      childDelegation &&
+      governedDelegateChild
+        ? {
+            ...options.children.runtime,
+            parentInbox: options.children.delegation.events,
+            childAuthority,
+            governedDelegateChild,
+            delegationService: childDelegation.service,
+            tools: {
+              service: options.children.tools.service,
+              assertAuthority: currentToolAuthority.assertCurrent,
+            },
+          }
         : {}),
       onAdapterReady: runtimeBinding.onAdapterReady,
       directory: options.directory,
@@ -338,6 +519,7 @@ export async function createProductionPiLeadComposition(
       piDurableLeadService: installed.service,
       publicationService,
       ...(piDurableCurrentToolAuthority ? { piDurableCurrentToolAuthority } : {}),
+      ...(managementPort ? { governedManagementCall: managementPort } : {}),
       modelConnectionService: new ConfiguredModelConnectionService(
         metadata.selections,
         metadata.administration,

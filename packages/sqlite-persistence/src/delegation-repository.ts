@@ -4,15 +4,20 @@ import {
   IdentifierSchemas,
 } from '@control-plane/contracts'
 import type { PersistenceProvider, PersistenceTransaction } from '@control-plane/deployment'
-import { ExecutionSchema } from '@control-plane/domain'
+import { ExecutionAttemptSchema, ExecutionSchema } from '@control-plane/domain'
 import { assertExecutionPlanDerivedFrom } from '@control-plane/execution-plan'
+import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
+  ChildAdmissionAllocationError,
+  assertChildAdmissionReceiptMatches,
   DelegationRecordSchema,
+  type ChildAdmissionAllocator,
   type DelegationRecord,
   type DelegationRepository,
 } from '@control-plane/orchestration'
 import { json, recordId } from './record-storage.js'
 import { assertSqliteStoredPlanReference } from './repositories.js'
+import { SqliteDurableUsageStore } from './usage-store.js'
 
 const namespace = 'delegations'
 const childIndex = 'delegation-by-child'
@@ -34,8 +39,165 @@ const immutable = (record: DelegationRecord) =>
   Object.fromEntries(Object.entries(record).filter(([key]) => !mutable.has(key)))
 
 /** Canonical delegation state, including recovery intent, shares the execution store. */
-export class SqliteDelegationRepository implements DelegationRepository {
+export class SqliteDelegationRepository implements DelegationRepository, ChildAdmissionAllocator {
   constructor(readonly provider: PersistenceProvider) {}
+
+  async allocate(input: Parameters<ChildAdmissionAllocator['allocate']>[0]): Promise<boolean> {
+    const execution = ExecutionSchema.parse(input.execution)
+    const attempt = ExecutionAttemptSchema.parse(input.attempt)
+    const record = DelegationRecordSchema.parse(input.delegation)
+    const request = input.request
+    assertChildAdmissionReceiptMatches(request, input.receipt, new Date().toISOString())
+    if (
+      execution.executionId !== request.childExecutionId ||
+      execution.latestAttemptId !== request.childAttemptId ||
+      execution.attemptCount !== attempt.sequence ||
+      attempt.attemptId !== request.childAttemptId ||
+      attempt.executionId !== request.childExecutionId ||
+      execution.state !== 'queued' ||
+      execution.version !== 2 ||
+      execution.queuedAt !== request.childDispatch.dispatchedAt ||
+      attempt.sequence !== 1 ||
+      attempt.state !== 'queued' ||
+      attempt.version !== 1 ||
+      attempt.queuedAt !== request.childDispatch.dispatchedAt ||
+      canonicalJsonStringify(attempt.runtime) !==
+        canonicalJsonStringify(request.childDispatch.runtime) ||
+      execution.parentExecutionId !== request.parentExecutionId ||
+      record.delegationId !== request.delegationId ||
+      record.parentExecutionId !== request.parentExecutionId ||
+      record.parentAttemptId !== request.parentAttemptId ||
+      record.admittedToolCallId !== request.admittedToolCallId ||
+      record.childExecutionId !== request.childExecutionId ||
+      record.childAttemptId !== undefined ||
+      canonicalJsonStringify(record.pendingDispatch) !==
+        canonicalJsonStringify(request.childDispatch) ||
+      record.inputDigest !== request.childRequestDigest ||
+      execution.executionPlan.executionPlanId !== request.childPlan.executionPlanId ||
+      execution.executionPlan.contentDigest !== request.childPlan.contentDigest ||
+      execution.correlation.workspaceId !== request.workspaceId
+    ) {
+      throw new ChildAdmissionAllocationError('CHILD_ADMISSION_DENIED')
+    }
+
+    return this.provider.transaction(async (tx) => {
+      const delegationId = recordId(record.delegationId)
+      const childExecutionId = recordId(record.childExecutionId)
+      if (
+        (await tx.get(namespace, delegationId)) ||
+        (await tx.get(childIndex, childExecutionId)) ||
+        (await tx.get('executions', childExecutionId)) ||
+        (await tx.get('execution-attempts', recordId(attempt.attemptId)))
+      )
+        return false
+
+      const parentStored = await tx.get('executions', recordId(request.parentExecutionId))
+      const parentParsed = ExecutionSchema.safeParse(parentStored?.value)
+      if (
+        !parentParsed.success ||
+        parentParsed.data.version !== request.parentExecutionVersion ||
+        parentParsed.data.latestAttemptId !== request.parentAttemptId ||
+        parentParsed.data.correlation.workspaceId !== request.workspaceId ||
+        parentParsed.data.executionPlan.executionPlanId !== request.parentPlan.executionPlanId ||
+        parentParsed.data.executionPlan.contentDigest !== request.parentPlan.contentDigest ||
+        parentParsed.data.executionPlan.schemaVersion !== request.parentPlan.schemaVersion ||
+        !['running', 'awaiting_input'].includes(parentParsed.data.state)
+      ) {
+        throw new ChildAdmissionAllocationError('CHILD_ADMISSION_DENIED')
+      }
+      const parentAttempt = await tx.get('execution-attempts', recordId(request.parentAttemptId))
+      const parsedParentAttempt = ExecutionAttemptSchema.safeParse(parentAttempt?.value)
+      if (
+        !parsedParentAttempt.success ||
+        parsedParentAttempt.data.executionId !== request.parentExecutionId ||
+        parsedParentAttempt.data.attemptId !== request.parentAttemptId ||
+        parsedParentAttempt.data.sequence !== parentParsed.data.attemptCount ||
+        !['running', 'awaiting_input'].includes(parsedParentAttempt.data.state)
+      ) {
+        throw new ChildAdmissionAllocationError('CHILD_ADMISSION_DENIED')
+      }
+
+      const parentPlan = await assertSqliteStoredPlanReference(tx, request.parentPlan)
+      const childPlan = await assertSqliteStoredPlanReference(tx, request.childPlan)
+      const siblings = (await tx.list(namespace))
+        .map((row) => DelegationRecordSchema.parse(row.value))
+        .filter((candidate) => candidate.parentExecutionId === request.parentExecutionId)
+      if (siblings.length >= parentPlan.constraints.limits.childExecutions.maximumTotal) {
+        throw new ChildAdmissionAllocationError('DELEGATION_LIMIT_EXCEEDED')
+      }
+      const activeStates = new Set([
+        'requested',
+        'dispatched',
+        'running',
+        'awaiting_input',
+        'manual_intervention',
+      ])
+      if (
+        siblings.filter(({ state }) => activeStates.has(state)).length >=
+        parentPlan.constraints.limits.concurrency.maximumParallel
+      ) {
+        throw new ChildAdmissionAllocationError('DELEGATION_CONCURRENCY_LIMIT_EXCEEDED')
+      }
+      let depth = 0
+      let cursor = request.parentExecutionId
+      const ancestry = new Set([cursor])
+      while (true) {
+        const child = await tx.get(childIndex, recordId(cursor))
+        if (!child) break
+        const ancestorId = IdentifierSchemas.delegationId.parse(
+          (child.value as { delegationId?: unknown }).delegationId
+        )
+        const ancestorRow = await tx.get(namespace, recordId(ancestorId))
+        if (!ancestorRow) throw new Error('DELEGATION_STORAGE_SCOPE_MISMATCH')
+        const ancestor = DelegationRecordSchema.parse(ancestorRow.value)
+        if (ancestry.has(ancestor.parentExecutionId)) {
+          throw new ChildAdmissionAllocationError('CHILD_ADMISSION_DENIED')
+        }
+        ancestry.add(ancestor.parentExecutionId)
+        cursor = ancestor.parentExecutionId
+        depth += 1
+      }
+      if (depth >= parentPlan.constraints.limits.childExecutions.maximumDepth) {
+        throw new ChildAdmissionAllocationError('DELEGATION_DEPTH_EXCEEDED')
+      }
+
+      // The shared SQLite transaction serializes authority recheck, parent
+      // lineage/limit reads, execution creation, budget reservation, and the
+      // delegation evidence write. No allocation record survives a denial.
+      await input.assertCurrent()
+      assertChildAdmissionReceiptMatches(request, input.receipt, new Date().toISOString())
+      await tx.put({ namespace: 'executions', id: childExecutionId, value: json(execution) })
+      await tx.put({
+        namespace: 'execution-attempts',
+        id: recordId(attempt.attemptId),
+        value: json(attempt),
+      })
+      // Any reference or plan ancestry failure rolls these staged rows back
+      // with the transaction before a budget reservation can commit.
+      await assertReferences(tx, record)
+      await SqliteDurableUsageStore.withTransaction(tx, request.workspaceId, (store) =>
+        new DurableUsageLedger({ store, now: () => request.acceptedAt }).openBudget({
+          workspaceId: request.workspaceId,
+          executionId: execution.executionId,
+          parentExecutionId: request.parentExecutionId,
+          currency: childPlan.constraints.limits.budget.currency,
+          maximumMicrounits: childPlan.constraints.limits.budget.maximumMicrounits,
+          maximumTokens: childPlan.constraints.limits.tokens.maximumTotal,
+          source: {
+            sourceId: `child-budget:${record.delegationId}`,
+            idempotencyKey: `child-budget-open:${record.delegationId}`,
+          },
+        })
+      )
+      await tx.put({ namespace, id: delegationId, value: json(record) })
+      await tx.put({
+        namespace: childIndex,
+        id: childExecutionId,
+        value: { delegationId: record.delegationId },
+      })
+      return true
+    })
+  }
 
   async insert(input: DelegationRecord): Promise<boolean> {
     const record = DelegationRecordSchema.parse(input)

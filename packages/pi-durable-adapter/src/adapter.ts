@@ -713,27 +713,40 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       // advance the epoch past its ownerEpoch and reject that owner's own commits.
       if (this.#hasLiveForeignOwner(this.journal.get(record.handleId))) return this.status(handle)
       const activeInference = readActiveInference(record)
-      const safe = activeInference
-        ? await this.#options.reconcileInference(authority, activeInference.inferenceKey)
-        : await this.#options.reconcileInference(authority, turnKey(record))
+      const observe = () =>
+        activeInference
+          ? this.#options.reconcileInference(authority, activeInference.inferenceKey)
+          : this.#options.reconcileInference(authority, turnKey(record))
+      const preliminary = await observe()
       await this.#authority(authority)
       this.#assertOpen()
-      const current = this.journal.get(record.handleId)
-      if (current.epoch !== record.epoch || current.state !== record.state)
+      const admitted = this.journal.get(record.handleId)
+      if (admitted.epoch !== record.epoch || admitted.state !== record.state)
         return this.status(handle)
-      // Claim only after the probe settles. The claim checks liveness and advances the epoch in
-      // one transaction, so a reconciler that loses the race reads the winner's live owner.
-      let owned: number
+      // Ownership before the final verdict. claimProcess refuses a live owner, which may still be
+      // between its journal markers and its reservation, where the retained hold is not yet visible.
+      // A claim that succeeds is handed to the run it schedules, so no other process can take the
+      // record between the verdict and the run start.
+      let epoch: number
       try {
-        owned = this.journal.claimProcess(record.handleId, current)
+        epoch = this.journal.claimProcess(record.handleId, record)
       } catch (error) {
         if (isOwnerContention(error)) return this.status(handle)
         throw error
       }
+      let handedOff = false
       try {
         const claimed = this.journal.get(record.handleId)
+        // A safe verdict authorizes a physical send, so it is confirmed under the claimed epoch.
+        const safe = preliminary === 'safe_to_resume' ? await observe() : preliminary
+        await this.#authority(authority)
+        this.#assertOpen()
+        const current = this.journal.get(record.handleId)
+        if (current.epoch !== epoch || current.state !== record.state) return this.status(handle)
         if (safe === 'safe_to_resume') {
-          const resumable = this.journal.update(record.handleId, owned, {
+          // An in-process run admitted during the awaits keeps its own claim; never strand ours.
+          if (this.#active.has(record.handleId)) return this.status(handle)
+          const resumable = this.journal.update(record.handleId, epoch, {
             detail: {
               ...claimed.detail,
               inferenceTrackingVersion: 1,
@@ -747,9 +760,10 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           // Validate the admission the run will read before handing it the claim, so a failure is
           // raised here and gives the claim back instead of failing unobserved inside the run.
           this.#stored(resumable)
-          this.#schedule(resumable, owned)
+          handedOff = true
+          this.#schedule(resumable, epoch)
         } else {
-          this.journal.update(record.handleId, owned, {
+          this.journal.update(record.handleId, epoch, {
             state: 'unknown',
             detail: {
               ...claimed.detail,
@@ -757,12 +771,9 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
             },
           })
-          this.journal.releaseProcess(record.handleId, owned)
         }
-      } catch (error) {
-        // No run has started with this claim when the write or schedule fails, so release it.
-        this.journal.releaseProcess(record.handleId, owned)
-        throw error
+      } finally {
+        if (!handedOff) this.journal.releaseProcess(record.handleId, epoch)
       }
     } else if (record.state === 'starting') this.#schedule(record)
     return this.status(handle)

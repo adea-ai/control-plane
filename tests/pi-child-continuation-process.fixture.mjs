@@ -262,7 +262,7 @@ const pin = (plan) => ({
   contentDigest: plan.contentDigest,
   schemaVersion: plan.schemaVersion,
 })
-const actor = 'user:original-canonical-actor'
+const actor = 'user:11111111-1111-4111-8111-111111111111'
 
 export async function continuationPorts(directory, journal, canonicalProvider) {
   const sqlite = await import('@control-plane/sqlite-persistence')
@@ -524,6 +524,12 @@ export async function initialWorker(directory, mode, baseUrl) {
   const heartbeat = setInterval(() => {}, 1000)
   try {
     f = await createGovernedChildCompositionFixture(directory, {
+      // Canonical transactional child admission (CP1041): the default
+      // non-transactional path has no admission ports, so the lead's
+      // delegate_child turn dies before completion ('unknown' status) and the
+      // worker exits before any evidence can be retained.
+      transactionalChildAdmission: true,
+      canonicalActorPrincipalId: actor,
       childRuntimeFactory: async (options, { canonicalProvider }) => {
         ports = await continuationPorts(
           directory,
