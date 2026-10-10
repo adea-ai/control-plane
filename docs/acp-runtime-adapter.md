@@ -96,6 +96,16 @@ from `start()` via `compositionOptions`. The route record (public keys, ids, val
 explicit host-supplied composition input — no ambient credential or key material — and the
 in-memory default remains test-only.
 
+**Fenced-settlement scope (evidence closing the credential-authority gap):** the only production
+callers that pass a credential fence into a runtime-command settlement are the gateway deliveries
+(`apps/runtime-gateway/src/runtime-command-delivery.ts:356` and
+`context-command-delivery.ts:412`), and the gateway profile is wired for the authority
+(`runtimeNodeCredentialAuthority`, fail-closed when absent). The Local all-in-one has ZERO fenced
+settlement callers (verified by repository search), so its fail-closed default is unreachable in
+production Local today: no Local path ever settles a fenced ACK/result. The
+`runtimeCommandCredentialAuthority` seam on the Local composition is forward-compatible only; a
+credential source is required solely when a fenced settlement caller is added to the Local profile.
+
 **Hosted PostgreSQL durable state:** the Hosted `hosted-server` profile qualifies the same
 `PersistenceProvider` contract through `PostgresPersistenceProvider`
 (`packages/profile-portability/src/postgres-persistence-provider.ts`) over the new

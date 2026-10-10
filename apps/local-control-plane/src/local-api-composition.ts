@@ -105,7 +105,12 @@ export class LocalControlApiComposition {
     graphs?: ExecutionGraphAuthority,
     memoryWriteback?: MemoryWriteApplicationConfiguration,
     memoryWriteMetrics?: MemoryWriteDecisionMetrics,
-    /** Host-injected credential authority for runtime-command fences; absent = fail-closed. */
+    /**
+     * Host-injected credential authority for runtime-command fences; absent = fail-closed.
+     * Forward-compatibility only: the Local all-in-one has no fenced settlement callers today
+     * (gateway deliveries are the only production fence source), so this default is unreachable
+     * in production Local until such a caller is added.
+     */
     runtimeCommandCredentialAuthority?: RuntimeNodeCredentialFenceAuthorityPort
   ) {
     const dispatcher: LocalWorkflowDispatcher =
