@@ -551,18 +551,12 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       })
     )
     verifyRuntimeHandle(receipt, status.handle)
+    // Ordinary lead-stop ends here: it never cascades to child jobs.
+    // Child cancellation is a separately explicit authorized operation
+    // (delegationService.cancelChildren, invoked directly with its own
+    // authorization), never a lead-stop side effect — so independent
+    // child work survives a normal parent stop by construction.
     await this.options.authority.assertCurrent(admission, principal, 'cancel')
-    // Durable child cancellation on a lead cancel: bind the cascade to the
-    // canonical parent admission (never a payload ID) and fence it behind the
-    // current-authority check above, so a late or duplicate cancel cannot
-    // double-cancel. Preserves the contract that cancelling the lead durably
-    // requests child cancellation with attempt fencing.
-    if (this.options.delegationService) {
-      await this.options.delegationService.cancelChildren({
-        parentExecutionId: admission.admittedAttempt.executionId,
-        cancelledAt: request.issuedAt,
-      })
-    }
     return PiDurableLeadCancelResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
