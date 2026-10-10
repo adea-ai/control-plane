@@ -275,6 +275,7 @@ function admissionBindingMatchesMarker(
 /** Immutable intent/plan marker precedes acceptance; only completion state may advance. */
 export class SqlitePiDurableLeadIntentStore implements CanonicalLeadIntentReader {
   #preparationCursor = ''
+  readonly #projecting = new Set<string>()
   constructor(readonly database: DatabaseSync) {
     database.exec(
       'CREATE TABLE IF NOT EXISTS pi_lead_intent_admissions (intent_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, attempt_id TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, state TEXT NOT NULL, record TEXT NOT NULL); CREATE TABLE IF NOT EXISTS pi_lead_intent_budgets (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL); CREATE TABLE IF NOT EXISTS pi_lead_intent_admission_bindings (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL)'
@@ -407,26 +408,55 @@ export class SqlitePiDurableLeadIntentStore implements CanonicalLeadIntentReader
       .run(marker.intentId, marker.evidenceDigest).changes
     if (changed !== 1 && this.marker(marker.intentId)?.state !== 'released') conflict()
   }
-  complete(marker: LeadIntentMarker): void {
+  /**
+   * Ready transition and exact binding publication in one SQLite transaction: the pending marker
+   * becomes ready only together with its binding. A failure rolls both back. Ready markers without a
+   * binding row are therefore legacy records only, never the product of an interrupted admission.
+   */
+  publishReady(marker: LeadIntentMarker, binding: LeadAdmissionBinding): void {
     this.budget(marker.intentId)
-    this.database
-      .prepare(
-        "UPDATE pi_lead_intent_admissions SET state = 'ready' WHERE intent_id = ? AND digest = ? AND state = 'pending'"
-      )
-      .run(marker.intentId, marker.evidenceDigest)
-    if (this.marker(marker.intentId)?.state !== 'ready') conflict()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const changed = this.database
+        .prepare(
+          "UPDATE pi_lead_intent_admissions SET state = 'ready' WHERE intent_id = ? AND digest = ? AND state = 'pending'"
+        )
+        .run(marker.intentId, marker.evidenceDigest).changes
+      if (changed !== 1) conflict()
+      this.bindAdmission(binding)
+      if (this.marker(marker.intentId)?.state !== 'ready') conflict()
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+  /** Runs one admitting projection while its own pending marker reads as canonical. */
+  async projecting<Value>(intentId: string, operation: () => Promise<Value>): Promise<Value> {
+    this.#projecting.add(intentId)
+    try {
+      return await operation()
+    } finally {
+      this.#projecting.delete(intentId)
+    }
+  }
+  isProjecting(intentId: string): boolean {
+    return this.#projecting.has(intentId)
   }
   async get(intentId: string): Promise<CanonicalLeadIntent | undefined> {
     const marker = this.marker(intentId)
-    return marker?.state === 'ready' ? structuredClone(marker.intent) : undefined
+    return marker && (marker.state === 'ready' || this.isProjecting(intentId))
+      ? structuredClone(marker.intent)
+      : undefined
   }
   async getByAttempt(attemptId: string): Promise<CanonicalLeadIntent | undefined> {
     const row = this.database
-      .prepare(
-        "SELECT intent_id FROM pi_lead_intent_admissions WHERE attempt_id = ? AND state = 'ready'"
-      )
+      .prepare('SELECT intent_id, state FROM pi_lead_intent_admissions WHERE attempt_id = ?')
       .get(attemptId)
-    return row ? this.get(String(row['intent_id'])) : undefined
+    const intentId = row ? String(row['intent_id']) : undefined
+    return intentId !== undefined && (row?.['state'] === 'ready' || this.isProjecting(intentId))
+      ? this.get(intentId)
+      : undefined
   }
 }
 
@@ -466,7 +496,13 @@ export interface NodePiDurableLeadAdmissionOptions {
   }) => Promise<void>
   readonly now?: () => string
   readonly checkpoint?: (
-    boundary: 'after_marker' | 'after_accept' | 'after_attempt' | 'after_budget' | 'after_mapping'
+    boundary:
+      | 'after_marker'
+      | 'after_accept'
+      | 'after_attempt'
+      | 'after_budget'
+      | 'before_publish'
+      | 'after_mapping'
   ) => void | Promise<void>
 }
 
@@ -487,7 +523,8 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       messages: {
         readCurrent: async (intent) => {
           const marker = this.store.marker(intent.intentId)
-          if (!marker || marker.state !== 'ready') conflict()
+          if (!marker || (marker.state !== 'ready' && !this.store.isProjecting(intent.intentId)))
+            conflict()
           await this.#validateCurrentPlan(marker)
           const evidence = await this.#evidence(
             intent.workspaceId,
@@ -567,8 +604,8 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
           throw new PiDurableLeadError('PI_LEAD_WORKSPACE_SCOPE_UNSUPPORTED')
       } else if (!principal.projectIds.includes(evidence.projectId!)) denied()
       let marker = this.store.marker(input.intentId)
-      // True only when this call authorizes the admission itself (marker becomes ready here).
-      let admissionAuthorized = false
+      // Set only when this call authorizes the admission itself (marker becomes ready here).
+      let authorized: PiDurableLeadAdmission | undefined
       if (
         marker &&
         (input.operation === undefined ||
@@ -738,15 +775,31 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
         this.store.bindBudget(evidence.intentId, budget)
         await this.options.checkpoint?.('after_budget')
         this.#assertPreparationLive(marker)
-        this.store.complete(marker)
-        admissionAuthorized = true
+        // Projection reads this still-pending marker. Ready and its exact binding then commit in one
+        // transaction, so a crash can leave only a pending marker (no binding) or both.
+        authorized = project(
+          await this.store.projecting(marker.intentId, () =>
+            this.canonicalAuthority.get(
+              input.intentId,
+              input.workspaceId,
+              principal.principalId,
+              'inference'
+            )
+          ),
+          marker.intent,
+          marker.preparationDeadlineAt
+        )
+        await this.options.checkpoint?.('before_publish')
+        this.#assertPreparationLive(marker)
+        this.store.publishReady(marker, admissionBindingFor(marker, authorized))
         await this.options.checkpoint?.('after_mapping')
         this.#assertPreparationLive(marker)
       }
       marker = this.store.marker(input.intentId)
       if (!marker || hash({ evidence, planPin: marker.planPin }) !== marker.evidenceDigest)
         conflict()
-      const admission = project(
+      if (authorized) return authorized
+      return project(
         await this.canonicalAuthority.get(
           input.intentId,
           input.workspaceId,
@@ -760,10 +813,6 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
         marker.intent,
         marker.preparationDeadlineAt
       )
-      // Retained once, from the admission this call authorized. Reads of an already-ready marker
-      // never write, so records admitted before this binding existed are never backfilled.
-      if (admissionAuthorized) this.store.bindAdmission(admissionBindingFor(marker, admission))
-      return admission
     })
   }
 

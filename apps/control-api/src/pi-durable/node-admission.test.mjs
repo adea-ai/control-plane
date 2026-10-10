@@ -1168,3 +1168,92 @@ test('admission binding is write-once: an identical replay is a no-op and a conf
     ).toThrow('PI_LEAD_AUTHORITY_CONFLICT')
     expect(setup.bridge.store.admissionBinding(intentId)).toEqual(binding)
   }, fencedScope))
+
+// Crash boundaries of the ordinary admission that authorizes a marker. A simulated crash throws at a
+// checkpoint, then the durable SQLite store reopens. Invariant at every boundary: the marker is ready
+// if and only if its admission binding is durably published.
+const admissionCrashPoints = [
+  'after_marker',
+  'after_accept',
+  'after_attempt',
+  'after_budget',
+  'before_publish',
+  'after_mapping',
+]
+const readyAndBindings = (database) => ({
+  state: database
+    .prepare('SELECT state FROM pi_lead_intent_admissions WHERE intent_id = ?')
+    .get(intentId)?.state,
+  bindings: database
+    .prepare('SELECT COUNT(*) AS count FROM pi_lead_intent_admission_bindings WHERE intent_id = ?')
+    .get(intentId).count,
+})
+
+test('a crash at any admission boundary leaves ready and binding both durable or both absent, and a retry publishes the binding', async () => {
+  const report = []
+  for (const point of admissionCrashPoints) {
+    await fixture(async (setup) => {
+      const crashing = new NodePiDurableLeadAdmission(
+        setup.options({
+          checkpoint: async (name) => {
+            if (name === point) throw new Error(`CRASH_${point}`)
+          },
+        })
+      )
+      const outcome = await setup.resolve(crashing).then(
+        () => 'resolved',
+        (error) => error.message
+      )
+      const crashed = readyAndBindings(setup.database)
+      const reopened = await setup.reopen()
+      const admission = await setup.resolve(reopened)
+      const healed = readyAndBindings(setup.database)
+      setup.setFenceBody(fenceBodyFrom(reopened))
+      const observed = await reopened.resolveIntent({
+        workspaceId: setup.plan.correlation.workspaceId,
+        intentId,
+        principal: setup.principal,
+        operation: 'status',
+      })
+      setup.setFenceBody(undefined)
+      report.push({
+        point,
+        outcome,
+        atomic: (crashed.state === 'ready') === (crashed.bindings === 1),
+        healed: `${healed.state}/${healed.bindings}`,
+        bindingMatches:
+          reopened.store.admissionBinding(intentId)?.admissionDigest === admission.admissionDigest,
+        fencedAdmission: observed.retained?.admissionDigest === admission.admissionDigest,
+      })
+    }, fencedScope)
+  }
+  expect(report).toEqual(
+    admissionCrashPoints.map((point) => ({
+      point,
+      outcome: 'PI_LEAD_UNAVAILABLE',
+      atomic: true,
+      healed: 'ready/1',
+      bindingMatches: true,
+      fencedAdmission: true,
+    }))
+  )
+})
+
+test('a conflicting binding found at publication rolls the ready transition back so the marker stays pending', async () =>
+  fixture(async (setup) => {
+    const crashing = new NodePiDurableLeadAdmission(
+      setup.options({
+        checkpoint: async (name) => {
+          if (name === 'before_publish') throw new Error('CRASH_before_publish')
+        },
+      })
+    )
+    await expect(setup.resolve(crashing)).rejects.toThrow('PI_LEAD_UNAVAILABLE')
+    // A divergent record for the same intent exists before publication: it must refuse, not overwrite.
+    setup.database
+      .prepare('INSERT INTO pi_lead_intent_admission_bindings VALUES (?, ?)')
+      .run(intentId, JSON.stringify({ schemaVersion: 'divergent' }))
+    const reopened = await setup.reopen()
+    await expect(setup.resolve(reopened)).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+    expect(readyAndBindings(setup.database)).toEqual({ state: 'pending', bindings: 1 })
+  }, fencedScope))
