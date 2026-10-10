@@ -530,3 +530,62 @@ describe('child usage ledger durable snapshot', () => {
     expect(() => new ChildUsageLedger().restore(duplicated)).toThrow(ChildUsageLedgerError)
   })
 })
+
+describe('bounded report-horizon ordering', () => {
+  const reportIdFor = (index) => `usage:report:${index}`
+  const settleLatest = (ledger, identity) => {
+    ledger.reconcile(identity, { reconciledAt: at(1_000) })
+    ledger.settle(identity, {
+      currency: 'USD',
+      settledMicrounits: 18_000,
+      settledAt: at(2_000),
+      settlementRef: 'settlement:run:latest',
+    })
+  }
+
+  test('an evicted report id cannot replay over newer reconciliation and settlement', () => {
+    const ledger = new ChildUsageLedger({ maximumTrackedReportIds: 16 })
+    const identity = identityA()
+    // Retain more distinct reports than the bounded horizon so report 1 and
+    // its superseded fingerprint both leave the dedup windows.
+    for (let index = 1; index <= 18; index += 1) {
+      ledger.recordReportedUsage(identity, reportedUsage(index * 1_000), {
+        reportId: reportIdFor(index),
+      })
+    }
+    settleLatest(ledger, identity)
+    expect(ledger.status(identity).costState).toBe('settled')
+
+    // Replaying the evicted report 1 must be stale — never a fresh recording
+    // that clears the newer reconciliation and settlement.
+    const replay = ledger.recordReportedUsage(identity, reportedUsage(1_000), {
+      reportId: reportIdFor(1),
+    })
+    expect(replay.outcome).toBe('stale_report')
+    const after = ledger.status(identity)
+    expect(after.costState).toBe('settled')
+    expect(after.reconciled).toBeDefined()
+    expect(after.settled?.settlementRef).toBe('settlement:run:latest')
+  })
+
+  test('the eviction horizon stays ordered across a snapshot restore', () => {
+    const ledger = new ChildUsageLedger({ maximumTrackedReportIds: 16 })
+    const identity = identityA()
+    for (let index = 1; index <= 18; index += 1) {
+      ledger.recordReportedUsage(identity, reportedUsage(index * 1_000), {
+        reportId: reportIdFor(index),
+      })
+    }
+    settleLatest(ledger, identity)
+
+    const restored = new ChildUsageLedger({ maximumTrackedReportIds: 16 })
+    restored.restore(ledger.snapshot())
+    const replay = restored.recordReportedUsage(identity, reportedUsage(1_000), {
+      reportId: reportIdFor(1),
+    })
+    expect(replay.outcome).toBe('stale_report')
+    const after = restored.status(identity)
+    expect(after.reconciled).toBeDefined()
+    expect(after.settled?.settlementRef).toBe('settlement:run:latest')
+  })
+})
