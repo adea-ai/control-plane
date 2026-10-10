@@ -899,8 +899,13 @@ export class SecureAcpDeviceEndpoint {
         return raced ?? { kind: 'denial', reason: 'state_unavailable' }
       }
       this.#highestGeneration = Math.max(this.#highestGeneration, header.channelGeneration)
-      // Final current-authority fence immediately before the effect, after every await above: route
-      // fence, window, and generation are all re-read at this boundary.
+      // Final pre-effect boundary: a fresh durable fence read, with no await between its completion and
+      // the dispatch call below. A revocation, supersession, expiry, or broken clock that the read
+      // observes dispatches nothing and is recorded as the outcome. A failed read is not an authority
+      // decision, so it is not recorded: the claim stays unrecorded, and a later delivery that reaches the
+      // ledger reads it as outcome_uncertain. A commit landing after the read's snapshot is not observed.
+      const refused = await this.#refreshFence()
+      if (refused !== undefined) return { kind: 'denial', reason: refused }
       const fencedBeforeEffect = this.#commandFenceReason(header)
       if (fencedBeforeEffect !== undefined) {
         const recorded: AcpRemoteDeviceOutcome = { kind: 'denial', reason: fencedBeforeEffect }

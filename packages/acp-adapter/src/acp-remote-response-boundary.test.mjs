@@ -1,7 +1,8 @@
 // Response authorization boundary for the secure ACP device route. A device reply (exchange, cached
 // replay, or signed denial) is authorized by the last durable fence read that completes before the
-// endpoint returns its bytes. Each ordering below is fixed by a read plan rather than by timing, so
-// every case is deterministic.
+// endpoint returns its bytes. The pre-dispatch boundary applies the same rule to the executor: a
+// durable read after a successful claim decides whether dispatch happens at all. Each ordering below
+// is fixed by a read plan rather than by timing, so every case is deterministic.
 import { describe, expect, test } from 'bun:test'
 import { ACP_REMOTE_SUITE, canonicalJson, utf8 } from './acp-remote-crypto.ts'
 import { InMemoryAcpRemoteDeviceStateStore } from './acp-remote-device-state.ts'
@@ -16,11 +17,12 @@ import {
 
 const RUNTIME_SESSION = 'runtime.session'
 const RETURN_KEY_ID = 'ret_000000000000000000000000000000f1'
+const RETRY_RETURN_KEY_ID = 'ret_000000000000000000000000000000f2'
 const REVOKED_AT = '2026-08-25T12:00:10.000Z'
 const INVENTORY_WARM = 'inv_0123456789abcdef0123456789abcdef'
 
-/** Seals a runtime command as the controller does for one delivery under a fixed return key. */
-function sealFor(fixture, command) {
+/** Seals a runtime command as the controller does for one delivery under the given return key. */
+function sealFor(fixture, command, returnKeyId = RETURN_KEY_ID) {
   return sealRawCommand({
     route: fixture.route,
     signingKey: fixture.keys.controllerSigning,
@@ -36,7 +38,7 @@ function sealFor(fixture, command) {
       channelGeneration: command.channelGeneration,
       controllerKeyId: fixture.route.controllerKeyId,
       recipientKeyId: fixture.route.deviceEncryptionKeyId,
-      returnKeyId: RETURN_KEY_ID,
+      returnKeyId,
       returnPublicKey: fixture.keys.otherRecipient.publicKey,
     },
     plaintext: utf8(canonicalJson(command)),
@@ -108,12 +110,25 @@ async function boundaryRoute() {
   return { fixture, planned, device, peer }
 }
 
+/** Records each executor dispatch, so a physical effect is observable at the executor boundary. */
+function recordDispatches(fixture) {
+  const dispatched = []
+  const dispatch = fixture.executor.dispatch.bind(fixture.executor)
+  fixture.executor.dispatch = (command) => {
+    dispatched.push(command.commandId)
+    return dispatch(command)
+  }
+  return dispatched
+}
+
 describe('response authorization boundary: the last durable read before bytes return', () => {
   test('a peer revocation committed after sealing and before the final read refuses the sealed reply', async () => {
     const { fixture, planned, device, peer } = await boundaryRoute()
     const sealed = await sealFor(fixture, runtimeCommand({ commandId: commandIds.first }))
-    // A fresh delivery reads the fence three times: claim check, pre-publication check, final check.
+    // A fresh delivery reads the fence four times: claim check, pre-dispatch check, pre-publication
+    // check, final check. The commit lands just before the final check.
     planned.plan(
+      {},
       {},
       {},
       { before: () => peer.applyRevocation(fixture.controller.revoke(REVOKED_AT)) }
@@ -123,7 +138,7 @@ describe('response authorization boundary: the last durable read before bytes re
       kind: 'denial',
       reason: 'device_revoked',
     })
-    expect(planned.readCount()).toBe(3)
+    expect(planned.readCount()).toBe(4)
     expect(planned.unconsumed()).toBe(0)
     // The effect ran once and its outcome stayed recorded; only publication was refused.
     expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
@@ -140,6 +155,7 @@ describe('response authorization boundary: the last durable read before bytes re
     // final read waits for that commit before it takes its snapshot.
     planned.plan(
       {},
+      {},
       {
         after: () => {
           revocation = peer.applyRevocation(fixture.controller.revoke(REVOKED_AT))
@@ -152,7 +168,7 @@ describe('response authorization boundary: the last durable read before bytes re
       kind: 'denial',
       reason: 'device_revoked',
     })
-    expect(planned.readCount()).toBe(3)
+    expect(planned.readCount()).toBe(4)
     expect(planned.unconsumed()).toBe(0)
     expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
   })
@@ -212,5 +228,63 @@ describe('response authorization boundary: the last durable read before bytes re
     expect(replay).toMatchObject({ kind: 'exchange' })
     expect(replay.header.payloadHash).toBe(original.payloadHash)
     expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+  })
+})
+
+describe('pre-dispatch boundary: the last durable read before the executor is called', () => {
+  test('a peer revocation committed after the claim and before the pre-dispatch read dispatches nothing', async () => {
+    const { fixture, planned, device, peer } = await boundaryRoute()
+    const dispatched = recordDispatches(fixture)
+    const sealed = await sealFor(fixture, runtimeCommand({ commandId: commandIds.first }))
+    // Reads: the claim check, then the pre-dispatch check, which runs after the claim has committed.
+    planned.plan({}, { before: () => peer.applyRevocation(fixture.controller.revoke(REVOKED_AT)) })
+
+    expect(await device.handleCommand(sealed)).toMatchObject({
+      kind: 'denial',
+      reason: 'device_revoked',
+    })
+    expect(dispatched).toEqual([])
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(0)
+    expect(planned.readCount()).toBe(3)
+    expect(planned.unconsumed()).toBe(0)
+    // The claim stays recorded, now as the denial the pre-dispatch read observed.
+    expect(await planned.inner.readLedger(commandIds.first)).toMatchObject({
+      outcome: { kind: 'denial', reason: 'device_revoked' },
+    })
+  })
+
+  test('without a peer revocation the claimed command dispatches once, after the pre-dispatch read', async () => {
+    const { fixture, planned, device } = await boundaryRoute()
+    const dispatched = recordDispatches(fixture)
+    const sealed = await sealFor(fixture, runtimeCommand({ commandId: commandIds.first }))
+
+    planned.plan()
+    expect(await device.handleCommand(sealed)).toMatchObject({ kind: 'exchange' })
+    expect(dispatched).toEqual([commandIds.first])
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+    // Reads: claim check, pre-dispatch check, pre-publication check, final check.
+    expect(planned.readCount()).toBe(4)
+  })
+
+  test('a store failure at the pre-dispatch read dispatches nothing and leaves the claim unrecorded', async () => {
+    const { fixture, planned, device } = await boundaryRoute()
+    const dispatched = recordDispatches(fixture)
+    const sealed = await sealFor(fixture, runtimeCommand({ commandId: commandIds.first }))
+    planned.plan({}, { before: () => Promise.reject(new Error('STORE_UNAVAILABLE')) })
+
+    expect(await device.handleCommand(sealed)).toMatchObject({
+      kind: 'denial',
+      reason: 'state_unavailable',
+    })
+    expect(dispatched).toEqual([])
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(0)
+    expect((await planned.inner.readLedger(commandIds.first))?.outcome).toBeUndefined()
+
+    // A later delivery of the same identity, under a new return key, reads the claim as uncertain.
+    const retry = await device.handleCommand(
+      await sealFor(fixture, runtimeCommand({ commandId: commandIds.first }), RETRY_RETURN_KEY_ID)
+    )
+    expect(retry).toMatchObject({ kind: 'denial', reason: 'outcome_uncertain' })
+    expect(dispatched).toEqual([])
   })
 })
