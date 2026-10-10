@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodePiDurableLeadAdmission, deterministicPiLeadIntentIds } from './node-admission.ts'
 import { fencedOperationPolicy, parseLeadProductFence } from '../models/lead-product-fence.ts'
+import { fencedReceiptGaps } from './pi-durable-lead.service.ts'
 
 // M18.01.3 pinned rollback-fence consumer (root-approved v2; Adea #1244 proposal at c75e5a1).
 
@@ -437,6 +438,29 @@ test('assertCurrent: v2 status passes only against matching retained revision/sc
     } finally {
       await stale.cleanup()
     }
+  } finally {
+    await cleanup()
+  }
+})
+
+test('v2 fenced result carries only marker-retained execution/plan bindings, never an admission digest', async () => {
+  const { authority, cleanup } = await harness(fenceV2())
+  try {
+    bindRetainedMarker(authority)
+    const ids = deterministicPiLeadIntentIds(workspaceId, intentId)
+    const result = await authority.resolveIntent({
+      workspaceId,
+      intentId,
+      principal: caller,
+      operation: 'status',
+    })
+    expect(result.retained.executionId).toBe(ids.executionId)
+    expect(result.retained.attemptId).toBe(ids.attemptId)
+    expect(result.retained.allowedPrincipalIds).toEqual(['svc_adea', 'svc_pi-admission'])
+    expect(result.retained.executionPlanId).toBe('pln_01ARZ3NDEKTSV4RRFFQ69G5FAA')
+    expect(result.retained.executionPlanDigest).toBe(`sha256:${'b'.repeat(64)}`)
+    expect(result.retained.admissionDigest).toBeUndefined()
+    expect(fencedReceiptGaps(result)).toEqual(['admissionDigest', 'startDigest', 'deadlineAt'])
   } finally {
     await cleanup()
   }

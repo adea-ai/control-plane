@@ -957,6 +957,19 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
         scopeRef: facts.scopeRef,
         allowedPrincipalIds: [...facts.allowedPrincipalIds],
       }),
+      // Retained execution/plan bindings from the marker only; receipt-bound admission
+      // facts (admissionDigest, startDigest, deadlineAt) are never retained here.
+      retained: marker
+        ? Object.freeze({
+            intentId: marker.intentId,
+            workspaceId: marker.workspaceId,
+            executionId: marker.intent.executionId,
+            attemptId: marker.intent.attemptId,
+            allowedPrincipalIds: Object.freeze([...marker.intent.allowedPrincipalIds]),
+            executionPlanId: marker.planPin.executionPlanId,
+            executionPlanDigest: marker.planPin.contentDigest,
+          })
+        : undefined,
     })
   }
   /** Fenced counterpart of `assertCurrent`: retained revision/scope must match the facts. */
