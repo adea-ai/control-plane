@@ -72,6 +72,7 @@ export const INTEGRATION_SHARDS = [
         package: 'packages/database',
         files: [
           'src/budget-admission.integration.test.mjs',
+          'src/child-budget-admission.integration.test.mjs',
           'src/tool-repositories.integration.test.mjs',
           'src/runtime-node-identity-repository.integration.test.mjs',
           'src/delegation-reference.integration.test.mjs',
