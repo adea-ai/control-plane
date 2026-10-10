@@ -7,93 +7,140 @@ import { fileURLToPath } from 'node:url'
 import { removeHostedComposeFixture } from '../scripts/remove-hosted-compose-fixture.mjs'
 
 const repository = fileURLToPath(new URL('..', import.meta.url))
+// The acceptance script is spawn-bound: one run launches ~65 interpreter
+// instances (docker/curl/node/openssl/sudo/timeout fakes), which costs ~1s on
+// an idle CI runner, ~10s on an idle developer host, and ~16s under smoke lane
+// contention. The watchdog bounds a wedged child, not script speed, so it must
+// sit well above that legitimate runtime and inside the smoke lane's 30s
+// per-test budget.
+const runWatchdogMs = 25_000
+const fixtureTestBudgetMs = 30_000
 
 for (const failure of ['none', 'provision', 'simple-start', 'server-start', 'signal']) {
-  test(`Hosted Compose cleans its own fixture after ${failure}`, async () => {
-    await fixture(async (context) => {
-      const result = await context.run(failure)
-      expect(result.code).toBe(failure === 'none' ? 0 : failure === 'signal' ? 143 : 42)
-      expect(await readdir(context.runnerTemp)).toEqual(['caller-data'])
-      expect(await readFile(context.callerFile, 'utf8')).toBe('caller-owned')
-      const calls = await context.calls()
-      const downs = calls.filter((args) => args.includes('down'))
-      if (failure === 'provision') expect(calls).toHaveLength(0)
-      else {
-        expect(downs.length).toBeGreaterThan(0)
-        expect(downs.at(-1)).toContain('--volumes')
-        expect(downs.at(-1)).toContain('--remove-orphans')
-        expect(downs.at(-1)).toContain('--project-name')
-        expect(downs.at(-1)[downs.at(-1).indexOf('--project-name') + 1]).not.toBe('caller-project')
-        expect(calls.every((args) => args.includes('--project-name'))).toBe(true)
-      }
-    })
-  })
+  test(
+    `Hosted Compose cleans its own fixture after ${failure}`,
+    async () => {
+      await fixture(async (context) => {
+        const result = await context.run(failure)
+        expect(result.code).toBe(failure === 'none' ? 0 : failure === 'signal' ? 143 : 42)
+        expect(await readdir(context.runnerTemp)).toEqual(['caller-data'])
+        expect(await readFile(context.callerFile, 'utf8')).toBe('caller-owned')
+        const calls = await context.calls()
+        const downs = calls.filter((args) => args.includes('down'))
+        if (failure === 'provision') expect(calls).toHaveLength(0)
+        else {
+          expect(downs.length).toBeGreaterThan(0)
+          expect(downs.at(-1)).toContain('--volumes')
+          expect(downs.at(-1)).toContain('--remove-orphans')
+          expect(downs.at(-1)).toContain('--project-name')
+          expect(downs.at(-1)[downs.at(-1).indexOf('--project-name') + 1]).not.toBe(
+            'caller-project'
+          )
+          expect(calls.every((args) => args.includes('--project-name'))).toBe(true)
+        }
+      })
+    },
+    fixtureTestBudgetMs
+  )
 }
 
-test('Hosted Compose reports failed teardown and preserves its fixture for reconciliation', async () => {
-  await fixture(async (context) => {
-    const result = await context.run('cleanup')
-    expect(result.code).toBe(71)
-    expect(result.stderr).toContain('cleanup failed')
-    expect(
-      (await readdir(context.runnerTemp)).filter((name) => name !== 'caller-data')
-    ).toHaveLength(1)
-    expect(await readFile(context.callerFile, 'utf8')).toBe('caller-owned')
-  })
-})
+test(
+  'Hosted Compose reports failed teardown and preserves its fixture for reconciliation',
+  async () => {
+    await fixture(async (context) => {
+      const result = await context.run('cleanup')
+      expect(result.code).toBe(71)
+      expect(result.stderr).toContain('cleanup failed')
+      expect(
+        (await readdir(context.runnerTemp)).filter((name) => name !== 'caller-data')
+      ).toHaveLength(1)
+      expect(await readFile(context.callerFile, 'utf8')).toBe('caller-owned')
+    })
+  },
+  fixtureTestBudgetMs
+)
 
-test('Hosted Compose gives sequential invocations distinct owned projects', async () => {
-  await fixture(async (context) => {
-    expect((await context.run('none')).code).toBe(0)
-    expect((await context.run('none')).code).toBe(0)
-    const projects = new Set(
-      (await context.calls()).map((args) => args[args.indexOf('--project-name') + 1])
-    )
-    expect(projects.size).toBe(2)
-    expect(await readdir(context.runnerTemp)).toEqual(['caller-data'])
-  })
-})
-
-test('startup and teardown failure preserve the original failure and report cleanup', async () => {
-  await fixture(async (context) => {
-    const result = await context.run('simple-start', { FAKE_DOWN_FAILURE: 'true' })
-    expect(result.code).toBe(42)
-    expect(result.stderr).toContain('cleanup failed')
-    expect(result.stderr).toContain('code=71')
-    expect(await readFile(context.callerFile, 'utf8')).toBe('caller-owned')
-  })
-})
-
-test('Hosted Compose rejects an invalid runner root or run identity before creating resources', async () => {
-  await fixture(async (context) => {
-    expect((await context.run('none', { RUNNER_TEMP: 'relative-path' })).code).not.toBe(0)
-    expect((await context.run('none', { GITHUB_RUN_ID: '../unowned' })).code).not.toBe(0)
-    expect(await context.calls()).toEqual([])
-    expect(await readdir(context.runnerTemp)).toEqual(['caller-data'])
-  })
-})
-
-test('fixture removal requires its owner marker and never follows links into caller data', async () => {
-  await fixture(async (context) => {
-    const root = await mkdtemp(join(context.runnerTemp, 'control-plane-m10-compose.'))
-    const project = 'control-plane-m10-12345-1-abcdef'
-    await writeFile(join(root, '.fixture-owner.json'), JSON.stringify({ project }))
-    await symlink(join(context.runnerTemp, 'caller-data'), join(root, 'foreign-link'))
-    await expect(
-      removeHostedComposeFixture(context.runnerTemp, root, 'control-plane-m10-12345-1-f00bad')
-    ).rejects.toThrow('HOSTED_COMPOSE_FIXTURE_OWNER_INVALID')
-    await removeHostedComposeFixture(context.runnerTemp, root, project)
-    expect(await readFile(context.callerFile, 'utf8')).toBe('caller-owned')
-    expect(await readdir(context.runnerTemp)).toEqual(['caller-data'])
-    await expect(
-      removeHostedComposeFixture(
-        context.runnerTemp,
-        join(context.runnerTemp, 'caller-data'),
-        project
+test(
+  'Hosted Compose gives sequential invocations distinct owned projects',
+  async () => {
+    await fixture(async (context) => {
+      expect((await context.run('none')).code).toBe(0)
+      expect((await context.run('none')).code).toBe(0)
+      const projects = new Set(
+        (await context.calls()).map((args) => args[args.indexOf('--project-name') + 1])
       )
-    ).rejects.toThrow('HOSTED_COMPOSE_FIXTURE_SCOPE_INVALID')
-  })
-})
+      expect(projects.size).toBe(2)
+      expect(await readdir(context.runnerTemp)).toEqual(['caller-data'])
+    })
+  },
+  fixtureTestBudgetMs
+)
+
+test(
+  'startup and teardown failure preserve the original failure and report cleanup',
+  async () => {
+    await fixture(async (context) => {
+      const result = await context.run('simple-start', { FAKE_DOWN_FAILURE: 'true' })
+      expect(result.code).toBe(42)
+      expect(result.stderr).toContain('cleanup failed')
+      expect(result.stderr).toContain('code=71')
+      expect(await readFile(context.callerFile, 'utf8')).toBe('caller-owned')
+    })
+  },
+  fixtureTestBudgetMs
+)
+
+test(
+  'Hosted Compose rejects an invalid runner root or run identity before creating resources',
+  async () => {
+    await fixture(async (context) => {
+      expect((await context.run('none', { RUNNER_TEMP: 'relative-path' })).code).not.toBe(0)
+      expect((await context.run('none', { GITHUB_RUN_ID: '../unowned' })).code).not.toBe(0)
+      expect(await context.calls()).toEqual([])
+      expect(await readdir(context.runnerTemp)).toEqual(['caller-data'])
+    })
+  },
+  fixtureTestBudgetMs
+)
+
+test(
+  'watchdog kills a wedged fixture run within its bound',
+  async () => {
+    await fixture(async (context) => {
+      const startedAt = Date.now()
+      const result = await context.run('hang', {}, 500)
+      expect(result.code).toBeNull()
+      expect(Date.now() - startedAt).toBeLessThan(10_000)
+    })
+  },
+  fixtureTestBudgetMs
+)
+
+test(
+  'fixture removal requires its owner marker and never follows links into caller data',
+  async () => {
+    await fixture(async (context) => {
+      const root = await mkdtemp(join(context.runnerTemp, 'control-plane-m10-compose.'))
+      const project = 'control-plane-m10-12345-1-abcdef'
+      await writeFile(join(root, '.fixture-owner.json'), JSON.stringify({ project }))
+      await symlink(join(context.runnerTemp, 'caller-data'), join(root, 'foreign-link'))
+      await expect(
+        removeHostedComposeFixture(context.runnerTemp, root, 'control-plane-m10-12345-1-f00bad')
+      ).rejects.toThrow('HOSTED_COMPOSE_FIXTURE_OWNER_INVALID')
+      await removeHostedComposeFixture(context.runnerTemp, root, project)
+      expect(await readFile(context.callerFile, 'utf8')).toBe('caller-owned')
+      expect(await readdir(context.runnerTemp)).toEqual(['caller-data'])
+      await expect(
+        removeHostedComposeFixture(
+          context.runnerTemp,
+          join(context.runnerTemp, 'caller-data'),
+          project
+        )
+      ).rejects.toThrow('HOSTED_COMPOSE_FIXTURE_SCOPE_INVALID')
+    })
+  },
+  fixtureTestBudgetMs
+)
 
 async function fixture(operation) {
   const directory = await mkdtemp(join(tmpdir(), 'm11-hosted-compose-lifecycle-'))
@@ -114,9 +161,14 @@ async function fixture(operation) {
     }
     await writeFile(callerFile, 'caller-owned')
     const fake = `#!${process.execPath}\n${fakeCommands}`
-    for (const name of ['docker', 'curl', 'node', 'openssl', 'sudo', 'timeout']) {
+    for (const name of ['docker', 'curl', 'node', 'openssl']) {
       await writeFile(join(bin, name), fake, { mode: 0o700 })
     }
+    // timeout and sudo run once per compose call, so they stay interpreter-free
+    // shell exec shims: a script run launches ~65 fakes, and every bun boot is
+    // spawn overhead the watchdog would otherwise have to absorb.
+    await writeFile(join(bin, 'timeout'), timeoutShim, { mode: 0o700 })
+    await writeFile(join(bin, 'sudo'), sudoShim, { mode: 0o700 })
     await operation({
       runnerTemp,
       callerFile,
@@ -132,7 +184,7 @@ async function fixture(operation) {
           throw error
         }
       },
-      run: async (failure, overrides = {}) => {
+      run: async (failure, overrides = {}, runBound = runWatchdogMs) => {
         await writeFile(statePath, '{}')
         const processRecord = join(directory, 'process.json')
         const planned = {
@@ -183,7 +235,7 @@ async function fixture(operation) {
             if (error.code !== 'ESRCH') throw error
           }
         }
-        const timeout = setTimeout(stop, 5000)
+        const timeout = setTimeout(stop, runBound)
         const completion = new Promise((onClose, reject) => {
           child.once('error', reject)
           child.once('close', onClose)
@@ -204,6 +256,32 @@ async function fixture(operation) {
   }
 }
 
+// POSIX-sh doubles for the two wrappers the acceptance script invokes once per
+// compose call. They keep those calls interpreter-free and preserve the
+// original fakes' contract: timeout only ever wraps docker or sudo, sudo only
+// runs the fixture-removal node call, and FAKE_BASH_PID still points at the
+// script shell for the signal failure mode.
+const timeoutShim = `#!/bin/sh
+while :; do
+  case "$1" in
+    --signal=*|--kill-after=*|[0-9]*s) shift ;;
+    *) break ;;
+  esac
+done
+case "$1" in
+  docker|sudo|*/docker|*/sudo) ;;
+  *) echo 'timeout only wraps docker or sudo' >&2; exit 99 ;;
+esac
+export FAKE_BASH_PID="$PPID"
+exec "$@"
+`
+const sudoShim = `#!/bin/sh
+case "$1" in
+  node|*/node) exec "$@" ;;
+  *) exit 0 ;;
+esac
+`
+
 const fakeCommands = String.raw`
 import { readFileSync, writeFileSync, appendFileSync, readdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -213,21 +291,6 @@ const args = process.argv.slice(2)
 const env = process.env
 const state = JSON.parse(readFileSync(env.FAKE_STATE, 'utf8'))
 const save = () => writeFileSync(env.FAKE_STATE, JSON.stringify(state))
-if (command === 'timeout') {
-  const index = args.findIndex(arg => /^\d+s$/.test(arg)) + 1
-  if (!['docker', 'sudo'].includes(args[index])) process.exit(99)
-  const result = spawnSync(join(env.FAKE_ROOT, 'bin', args[index]), args.slice(index + 1), {
-    env: { ...env, FAKE_BASH_PID: String(process.ppid) }, stdio: 'inherit',
-  })
-  process.exit(result.status ?? 99)
-}
-if (command === 'sudo') {
-  if (basename(args[0]) === 'node') {
-    const result = spawnSync(join(env.FAKE_ROOT, 'bin/node'), args.slice(1), { env, stdio: 'inherit' })
-    process.exit(result.status ?? 99)
-  }
-  process.exit(0)
-}
 if (command === 'node') {
   if (args[0]?.endsWith('remove-hosted-compose-fixture.mjs')) {
     const result = spawnSync(process.execPath, [join(env.FAKE_REPOSITORY, 'scripts/remove-hosted-compose-fixture.mjs'), ...args.slice(1)], { env, stdio: 'inherit' })
@@ -245,6 +308,7 @@ if (command === 'openssl') {
 if (command === 'curl') { console.log(state.unhealthy ? '503' : '200'); process.exit(0) }
 appendFileSync(env.FAKE_CALLS, JSON.stringify(args) + '\n')
 if (args.includes('up')) {
+  if (env.FAKE_FAILURE === 'hang') await new Promise(() => {})
   state.unhealthy = false
   if (args.includes('server')) state.server = true
   save()

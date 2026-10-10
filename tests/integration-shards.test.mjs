@@ -259,7 +259,11 @@ describe('PostgreSQL persistence foundation', () => {
               stderr: 'pipe',
             }
           )
-          const timeout = setTimeout(() => child.kill(), 5000)
+          // The child is a full Bun test boot, which costs seconds under smoke
+          // lane contention; the watchdog bounds a wedged child, not Bun's
+          // startup, and leaves one wedged child's budget for the sibling
+          // inside this test's own ceiling.
+          const timeout = setTimeout(() => child.kill(), 20_000)
           let result
           try {
             result = await Promise.all([
@@ -287,7 +291,7 @@ describe('PostgreSQL persistence foundation', () => {
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
-  }, 15_000)
+  }, 30_000)
 
   test('selectIntegrationShard rejects unknown shards and parser accepts run forms', () => {
     expect(() => selectIntegrationShard(99)).toThrow('Unknown integration shard 99')
