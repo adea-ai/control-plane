@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { FilesystemObjectStore } from '@control-plane/object-store'
 import {
   createRetirementEvidenceVerifier,
+  createUnavailableRetirementEvidenceVerifier,
   retirementEvidenceObjectKey,
   signRetirementEvidenceArtifact,
 } from './retirement-evidence-verifier.ts'
@@ -29,6 +30,16 @@ const TARGET_REVISION = 'rev-9'
 const SUPERSEDED_REVISION = 'rev-8'
 const PARITY_DIGEST = `sha256:${'a'.repeat(64)}`
 const FAILURE_DIGEST = `sha256:${'b'.repeat(64)}`
+// Signed execution facts: every case ran and passed, before the attestation time.
+const EXECUTION = {
+  runId: 'run-redundant-shadow-reader-2026-09-30',
+  startedAt: '2026-09-30T00:00:00.000Z',
+  completedAt: '2026-09-30T01:00:00.000Z',
+  casesExpected: 12,
+  casesExecuted: 12,
+  casesPassed: 12,
+  outputDigest: `sha256:${'c'.repeat(64)}`,
+}
 const ATTESTOR = 'svc-evidence-attestor'
 
 const attestorKeys = generateKeyPairSync('ed25519')
@@ -46,7 +57,7 @@ afterEach(async () => {
   }
 })
 
-async function createFixture({ maxArtifactBytes } = {}) {
+async function createFixture({ maxArtifactBytes, maxEvidenceAgeSeconds } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'retirement-evidence-'))
   directories.add(directory)
   const objectStore = new FilesystemObjectStore({
@@ -57,9 +68,21 @@ async function createFixture({ maxArtifactBytes } = {}) {
   const verifier = createRetirementEvidenceVerifier({
     objectStore,
     trustedAttesters: [{ keyId: ATTESTOR, publicKey: attestorPublicKey }],
+    now: () => NOW,
     ...(maxArtifactBytes === undefined ? {} : { maxArtifactBytes }),
+    ...(maxEvidenceAgeSeconds === undefined ? {} : { maxEvidenceAgeSeconds }),
   })
   return { objectStore, verifier }
+}
+
+/** Execution facts that end one hour before the attestation they support. */
+function executionFor(attestedAt) {
+  const completed = Date.parse(attestedAt) - 3_600_000
+  return {
+    ...EXECUTION,
+    startedAt: new Date(completed - 3_600_000).toISOString(),
+    completedAt: new Date(completed).toISOString(),
+  }
 }
 
 /** Stores one signed evidence artifact and returns the handle that declares it. */
@@ -76,6 +99,7 @@ async function storeEvidence(fixture, overrides = {}) {
     attestedAt: ATTESTED_AT,
     ...overrides.content,
   }
+  if (content.execution === undefined) content.execution = executionFor(content.attestedAt)
   const privateKey = overrides.privateKey ?? attestorKeys.privateKey
   const reference = overrides.reference ?? `test-run:${content.dimension}:${content.layerId}`
   const bytes = signRetirementEvidenceArtifact(content, privateKey)
@@ -412,6 +436,7 @@ test('tampered content with a re-declared digest fails the signature, not the di
       dimension: 'parity',
       profileId: TARGET_PROFILE,
       sourceRevision: TARGET_REVISION,
+      execution: EXECUTION,
       completeness: true,
       attestedBy: ATTESTOR,
       attestedAt: ATTESTED_AT,
@@ -559,7 +584,9 @@ test('is deterministic across repeated calls and never reads the wall clock', as
   expect(later.evaluatedAt).toBe('2026-11-15T00:00:00.000Z')
 })
 
-test('the freshness bound widens only by an explicit input, never by default', async () => {
+test('the freshness bound is enforced by the verifier clock and widens only by explicit input', async () => {
+  // The verifier judges the SIGNED attestation time against its own clock, so a
+  // stale artifact is rejected before the gate ever sees it, by default.
   const fixture = await createFixture()
   const parity = await storeEvidence(fixture, {
     content: { attestedAt: STALE_ATTESTED_AT },
@@ -567,15 +594,110 @@ test('the freshness bound widens only by an explicit input, never by default', a
       attestation: { attestedBy: ATTESTOR, attestedAt: STALE_ATTESTED_AT, complete: true },
     },
   })
-  const verified = await verifiedInput(fixture, 'parity', parity)
-  expect(verified.verified).toBe(true)
-  const base = { ...gateInput({ parityEvidence: parity }), parityVerification: verified.fact }
-  expect(evaluateRetirementGate(base).evidence.parity.status).toBe('stale')
-  const widened = evaluateRetirementGate({
-    ...base,
-    maxEvidenceAgeSeconds: DEFAULT_MAX_EVIDENCE_AGE_SECONDS * 2,
+  expect(await verifiedInput(fixture, 'parity', parity)).toEqual({
+    verified: false,
+    code: 'ATTESTATION_STALE',
   })
-  expect(widened.evidence.parity.status).toBe('valid')
+
+  // An explicitly widened verifier bound admits the artifact; the gate then applies
+  // its own bound to the signed time, so staleness is decided on both sides.
+  const widened = DEFAULT_MAX_EVIDENCE_AGE_SECONDS * 2
+  const wide = await createFixture({ maxEvidenceAgeSeconds: widened })
+  const wideParity = await storeEvidence(wide, {
+    content: { attestedAt: STALE_ATTESTED_AT },
+    handle: {
+      attestation: { attestedBy: ATTESTOR, attestedAt: STALE_ATTESTED_AT, complete: true },
+    },
+  })
+  const verified = await verifiedInput(wide, 'parity', wideParity)
+  expect(verified.verified).toBe(true)
+  const base = { ...gateInput({ parityEvidence: wideParity }), parityVerification: verified.fact }
+  expect(evaluateRetirementGate(base).evidence.parity.status).toBe('stale')
+  expect(
+    evaluateRetirementGate({ ...base, maxEvidenceAgeSeconds: widened }).evidence.parity.status
+  ).toBe('valid')
+})
+
+test('a signed attestation older than the verifier bound is rejected even when the handle declares it', async () => {
+  const fixture = await createFixture()
+  // Honest handle declaring the signed stale time: rejected as stale by the verifier clock.
+  const honest = await storeEvidence(fixture, {
+    reference: 'run:signed-stale',
+    content: { attestedAt: STALE_ATTESTED_AT },
+    handle: {
+      attestation: { attestedBy: ATTESTOR, attestedAt: STALE_ATTESTED_AT, complete: true },
+    },
+  })
+  expect((await verifiedInput(fixture, 'parity', honest)).code).toBe('ATTESTATION_STALE')
+  // Handle re-declaring a fresh time over the same stale signature: a mismatch, never a pass.
+  const forged = {
+    ...honest,
+    attestation: { attestedBy: ATTESTOR, attestedAt: NOW, complete: true },
+  }
+  expect((await verifiedInput(fixture, 'parity', forged)).code).toBe('ATTESTATION_MISMATCH')
+})
+
+test('a signed attestation dated after the verifier clock is rejected as in the future', async () => {
+  const fixture = await createFixture()
+  const later = await storeEvidence(fixture, {
+    reference: 'run:signed-future',
+    content: { attestedAt: '2026-10-09T13:00:00.000Z' },
+    handle: {
+      attestation: { attestedBy: ATTESTOR, attestedAt: '2026-10-09T13:00:00.000Z', complete: true },
+    },
+  })
+  expect((await verifiedInput(fixture, 'parity', later)).code).toBe('ATTESTATION_IN_FUTURE')
+})
+
+test('a verified fact cannot authorize a handle whose declared attestor or time differs from the signed artifact', async () => {
+  // Reproduces the F2 defect: the gate used the handle's declared attestation for
+  // freshness and attestor while the verified fact carried the signed values.
+  const fixture = await verifiedGateInput(await createFixture())
+  const forgedParity = {
+    ...fixture.parityEvidence,
+    attestation: { attestedBy: 'svc-forged-attestor', attestedAt: NOW, complete: true },
+  }
+  const decision = evaluateRetirementGate({ ...fixture, parityEvidence: forgedParity })
+  expect(decision.verdict).toBe('blocked')
+  expect(decision.evidence.parity.status).toBe('unverified')
+  expect(decision.evidence.parity.reasons).toContain('PARITY_EVIDENCE_VERIFICATION_MISMATCH')
+  // The honest failure dimension stays verified and echoes its own digest; only the forged parity is withheld.
+  expect(decision.attestedEvidenceDigests).toEqual({
+    parity: null,
+    failure: fixture.failureEvidence.digest,
+  })
+
+  const retimed = {
+    ...fixture.parityEvidence,
+    attestation: { ...fixture.parityEvidence.attestation, attestedAt: NOW },
+  }
+  const retimedDecision = evaluateRetirementGate({ ...fixture, parityEvidence: retimed })
+  expect(retimedDecision.evidence.parity.status).toBe('unverified')
+  expect(retimedDecision.verdict).toBe('blocked')
+})
+
+test('an unavailable verifier authorizes nothing and names the missing authority', async () => {
+  const fixture = await createFixture()
+  const parity = await storeEvidence(fixture)
+  const unavailable = createUnavailableRetirementEvidenceVerifier()
+  const result = await unavailable.verify({
+    layerId: LAYER,
+    dimension: 'parity',
+    targetProfileId: TARGET_PROFILE,
+    targetSourceRevision: TARGET_REVISION,
+    handle: parity,
+  })
+  expect(result).toEqual({ verified: false, code: 'AUTHORITY_UNAVAILABLE' })
+  const decision = evaluateRetirementGate({
+    layerId: LAYER,
+    targetProfileId: TARGET_PROFILE,
+    targetSourceRevision: TARGET_REVISION,
+    parityEvidence: parity,
+    failureEvidence: parity,
+    now: NOW,
+  })
+  expect(decision.verdict).toBe('blocked')
+  expect(decision.retirementClaim.reasons).toContain('RETIREMENT_EVIDENCE_NOT_AUTHENTICATED')
 })
 
 test('rejects malformed gate requests instead of deciding them', () => {

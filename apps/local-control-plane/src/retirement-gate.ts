@@ -1,34 +1,35 @@
 import { z } from 'zod'
 
 /**
- * Fail-closed retirement gate for a redundant-layer retirement (parent #943
- * clause: "Remove redundant layers only after profile parity and failure
- * tests").
+ * Fail-closed decision for a redundant-layer retirement (parent #943 clause:
+ * "Remove redundant layers only after profile parity and failure tests";
+ * child #1029).
  *
- * The gate is a pure, bounded decision over explicitly supplied evidence
- * handles: it reads nothing, fetches nothing, mutates nothing and never
- * executes a retirement. Evidence arrives as explicit handles — references to
- * executed test-run results or evidence artifacts with content digests — and
- * every handle is classified, never trusted.
+ * The gate is a pure, deterministic function of explicitly supplied evidence
+ * handles and of the verified facts produced by the trusted artifact verifier
+ * (`retirement-evidence-verifier.ts`). It reads nothing, fetches nothing,
+ * mutates nothing and never executes a retirement.
+ *
+ * Authority is never structural. A handle's declared reference, digest, profile,
+ * revision, layer and attestation are claims until a verified fact exists for
+ * the same artifact. The verdict is `allowed` only when BOTH dimensions carry a
+ * verified fact whose signed layer, dimension, profile, source revision,
+ * reference, digest, attestor and attestation time agree with the handle and the
+ * gate expectations, and whose signed attestation is current. Freshness and
+ * attestor identity are read from the VERIFIED fact, never from the handle's
+ * declared attestation block; a handle that disagrees with its fact is
+ * `unverified`, however complete it looks.
  *
  * Epistemics (mirroring the retained-work vocabulary of
  * `scripts/langgraph-retirement-inventory.mjs`): missing, malformed, partial,
- * unattested, stale, unsupported-profile or superseded-source evidence is
- * NEVER counted as zero remaining work and NEVER yields a passing gate. The
- * verdict is `blocked` with typed reasons naming exactly which evidence is
- * missing or unusable. Only an explicitly attested, complete, current evidence
- * set for BOTH dimensions yields `allowed`, with the evidence digests echoed
- * for audit. Every evaluation is a deterministic function of its input: the
- * clock is a required argument, so repeated calls with the same input return
- * byte-identical decisions.
+ * unattested, stale, unsupported-profile, superseded-source, wrong-layer or
+ * unverified evidence is never counted as zero remaining work and never yields
+ * an `allowed` verdict.
  *
- * Structure is never authority. A handle's declared reference, digest, profile,
- * revision and attestor are only claims until the trusted artifact verifier
- * (retirement-evidence-verifier.ts) has read the artifact bytes, matched the
- * declared digest, checked the signed content against the actual layer,
- * dimension, profile and source revision, and verified the attester's Ed25519
- * signature. That verifier registers a verified fact here; a structurally
- * identical object literal is not a verified fact and is never accepted.
+ * Trust-boundary note: the `now` input is caller-supplied. The gate is
+ * deterministic in its input, so any composition that exposes it must supply
+ * server time. The signature-time freshness bound that cannot be spoofed by the
+ * caller is enforced by the verifier's own clock at verification time.
  */
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/
@@ -39,11 +40,14 @@ export const RETIREMENT_GATE_SCHEMA_VERSION = 1
 export const DEFAULT_MAX_EVIDENCE_AGE_SECONDS = 2_592_000
 export const MAX_EVIDENCE_AGE_SECONDS = 31_536_000
 
+/** Reason carried by every decision whose evidence lacks a verified fact. */
+export const RETIREMENT_EVIDENCE_NOT_AUTHENTICATED = 'RETIREMENT_EVIDENCE_NOT_AUTHENTICATED'
+
 export const retirementEvidenceDimensionSchema = z.enum(['parity', 'failure'])
 export type RetirementEvidenceDimension = z.output<typeof retirementEvidenceDimensionSchema>
 
 export const retirementEvidenceStatusSchema = z.enum([
-  /** Explicitly attested, complete, current, on-profile, on-revision. */
+  /** Verified, complete, current, on-profile, on-revision and on-layer. */
   'valid',
   /** The handle is absent. */
   'missing',
@@ -59,7 +63,9 @@ export const retirementEvidenceStatusSchema = z.enum([
   'unsupported_profile',
   /** Attested for a source revision that has been superseded. */
   'superseded_source',
-  /** Structurally complete, but not bound to its artifact by the trusted verifier. */
+  /** Declares a layer other than the one whose retirement is being decided. */
+  'wrong_layer',
+  /** Structurally complete, but not bound to its signed artifact by the trusted verifier. */
   'unverified',
 ])
 export type RetirementEvidenceStatus = z.output<typeof retirementEvidenceStatusSchema>
@@ -125,8 +131,8 @@ export const RetirementGateDecisionSchema = z
       .strict(),
     /**
      * Content digests echoed for audit. A digest appears only when that
-     * dimension's evidence is fully valid; blocked gates echo `null` for the
-     * dimensions that did not attest, so an audit trail can never mistake
+     * dimension's evidence is fully verified and valid; blocked gates echo `null`
+     * for the dimensions that did not attest, so an audit trail can never mistake
      * unusable evidence for accepted evidence.
      */
     attestedEvidenceDigests: z
@@ -134,8 +140,8 @@ export const RetirementGateDecisionSchema = z
       .strict(),
     /**
      * The zero-remaining-work claim, in the retained-work epistemics style: a
-     * passing gate asserts profile parity and failure coverage were attested;
-     * every other outcome is explicitly not-claimable with the reasons why.
+     * passing gate asserts profile parity and failure coverage were verified and
+     * attested; every other outcome is explicitly not-claimable with the reasons.
      */
     retirementClaim: z
       .object({
@@ -159,9 +165,21 @@ const STATUS_PRECEDENCE: readonly RetirementEvidenceStatus[] = [
   'stale',
   'unsupported_profile',
   'superseded_source',
+  'wrong_layer',
   'unverified',
   'valid',
 ]
+
+/** The execution facts the attester signed for one evidence artifact. */
+export interface VerifiedRetirementExecution {
+  readonly runId: string
+  readonly startedAt: string
+  readonly completedAt: string
+  readonly casesExpected: number
+  readonly casesExecuted: number
+  readonly casesPassed: number
+  readonly outputDigest: string
+}
 
 /** The facts a trusted verifier binds to one evidence artifact. */
 export interface VerifiedRetirementEvidence {
@@ -173,6 +191,9 @@ export interface VerifiedRetirementEvidence {
   readonly digest: string
   readonly attestedBy: string
   readonly attestedAt: string
+  /** Signed completeness: always `true` for a fact the verifier produced. */
+  readonly complete: true
+  readonly execution: VerifiedRetirementExecution
 }
 
 const verifiedFacts = new WeakSet<object>()
@@ -184,7 +205,7 @@ const verifiedFacts = new WeakSet<object>()
 export function registerVerifiedRetirementEvidence(
   fact: VerifiedRetirementEvidence
 ): Readonly<VerifiedRetirementEvidence> {
-  const frozen = Object.freeze({ ...fact })
+  const frozen = Object.freeze({ ...fact, execution: Object.freeze({ ...fact.execution }) })
   verifiedFacts.add(frozen)
   return frozen
 }
@@ -210,9 +231,20 @@ interface EvidenceExpectations {
   readonly targetSourceRevision: string | undefined
 }
 
+type Freshness = 'current' | 'stale' | 'future' | 'invalid'
+
+/** Judges one attestation timestamp against the evaluation clock and age bound. */
+function freshness(attestedAt: string, nowMs: number, maxAgeMs: number): Freshness {
+  const attestedMs = Date.parse(attestedAt)
+  if (Number.isNaN(attestedMs)) return 'invalid'
+  if (attestedMs > nowMs) return 'future'
+  if (nowMs - attestedMs > maxAgeMs) return 'stale'
+  return 'current'
+}
+
 /**
- * Classifies one evidence handle. Pure: a function of the raw handle value,
- * the gate expectations, the age bound and the evaluation clock.
+ * Classifies one evidence handle against the gate expectations and its verified
+ * fact. Pure. `validDigest` is non-null only when the handle is fully verified.
  */
 function assessEvidence(
   dimension: RetirementEvidenceDimension,
@@ -225,36 +257,29 @@ function assessEvidence(
   const reasons: string[] = []
   const statuses = new Set<RetirementEvidenceStatus>()
   const addStatus = (status: RetirementEvidenceStatus) => {
-    if (!statuses.has(status)) statuses.add(status)
+    statuses.add(status)
+  }
+  const finish = (
+    reference: string | null,
+    declaredDigest: string | null
+  ): { assessment: RetirementEvidenceAssessment; validDigest: string | null } => {
+    const status = STATUS_PRECEDENCE.find((candidate) => statuses.has(candidate)) ?? 'valid'
+    if (status === 'valid') reasons.push(prefix(dimension, 'ATTESTED_COMPLETE_AND_CURRENT'))
+    return {
+      assessment: { dimension, status, reference, declaredDigest, reasons },
+      validDigest: status === 'valid' && declaredDigest !== null ? declaredDigest : null,
+    }
   }
 
   if (raw === undefined || raw === null) {
     addStatus('missing')
     reasons.push(prefix(dimension, 'MISSING'))
-    return {
-      assessment: {
-        dimension,
-        status: 'missing',
-        reference: null,
-        declaredDigest: null,
-        reasons,
-      },
-      validDigest: null,
-    }
+    return finish(null, null)
   }
   if (!isRecord(raw)) {
     addStatus('malformed')
     reasons.push(prefix(dimension, 'MALFORMED'))
-    return {
-      assessment: {
-        dimension,
-        status: 'malformed',
-        reference: null,
-        declaredDigest: null,
-        reasons,
-      },
-      validDigest: null,
-    }
+    return finish(null, null)
   }
 
   const reference = optionalString(raw['reference'])
@@ -277,33 +302,38 @@ function assessEvidence(
     addStatus('partial')
     reasons.push(prefix(dimension, 'SOURCE_REVISION_MISSING'))
   }
+  // The layer is authoritative only through the verified fact; a declared layer is
+  // checked when present, and a different declared layer is `wrong_layer`.
+  const layerId = optionalString(raw['layerId'])
 
   const attestation = isRecord(raw['attestation']) ? raw['attestation'] : undefined
+  const declaredAttestedBy =
+    attestation === undefined ? null : optionalString(attestation['attestedBy'])
+  const declaredAttestedAt =
+    attestation === undefined ? null : optionalString(attestation['attestedAt'])
   if (attestation === undefined) {
     addStatus('unattested')
     reasons.push(prefix(dimension, 'UNATTESTED'))
   } else {
-    const attestedBy = optionalString(attestation['attestedBy'])
-    if (attestedBy === null) {
+    if (declaredAttestedBy === null) {
       addStatus('partial')
       reasons.push(prefix(dimension, 'ATTESTED_BY_MISSING'))
     }
-    const attestedAt = optionalString(attestation['attestedAt'])
-    const attestedMs =
-      attestedAt === null || Number.isNaN(Date.parse(attestedAt)) ? null : Date.parse(attestedAt)
-    if (attestedAt === null || attestedMs === null) {
+    if (declaredAttestedAt === null || Number.isNaN(Date.parse(declaredAttestedAt))) {
       addStatus('partial')
       reasons.push(prefix(dimension, 'ATTESTATION_TIMESTAMP_MISSING_OR_MALFORMED'))
-    } else if (attestedMs > nowMs) {
-      addStatus('malformed')
-      reasons.push(prefix(dimension, 'ATTESTATION_TIMESTAMP_IN_FUTURE'))
-    } else if (nowMs - attestedMs > maxAgeMs) {
-      addStatus('stale')
-      reasons.push(prefix(dimension, 'ATTESTATION_STALE'))
+    } else {
+      const declaredFreshness = freshness(declaredAttestedAt, nowMs, maxAgeMs)
+      if (declaredFreshness === 'future') {
+        addStatus('malformed')
+        reasons.push(prefix(dimension, 'ATTESTATION_TIMESTAMP_IN_FUTURE'))
+      } else if (declaredFreshness === 'stale') {
+        addStatus('stale')
+        reasons.push(prefix(dimension, 'ATTESTATION_STALE'))
+      }
     }
     if (attestation['complete'] !== true) {
-      // Completeness must be explicitly attested; an undeclared or false
-      // completeness is never read as an implicit pass.
+      // Completeness must be explicitly declared; an undeclared or false value is never a pass.
       addStatus('partial')
       reasons.push(prefix(dimension, 'COMPLETENESS_NOT_ATTESTED'))
     }
@@ -323,38 +353,50 @@ function assessEvidence(
     addStatus('superseded_source')
     reasons.push(prefix(dimension, 'SOURCE_SUPERSEDED'))
   }
+  if (layerId !== null && layerId !== expectations.layerId) {
+    addStatus('wrong_layer')
+    reasons.push(prefix(dimension, 'LAYER_MISMATCH'))
+  }
 
-  // Structure alone never authorizes: without a fact bound to this exact
-  // layer, dimension, profile, source revision, reference and digest, the
-  // handle is unverified however complete it looks.
+  // Structure alone never authorizes. Without a verified fact the handle is
+  // unverified however complete it looks.
   if (!isVerifiedRetirementEvidence(verification)) {
     addStatus('unverified')
     reasons.push(prefix(dimension, 'NOT_VERIFIED'))
-  } else if (
+    return finish(reference, declaredDigest)
+  }
+
+  // The fact is the authority. The handle must agree with every field it declares,
+  // including the attestor and time it claims, which the fact carries as signed.
+  if (
     verification.layerId !== expectations.layerId ||
     verification.dimension !== dimension ||
     verification.profileId !== expectations.targetProfileId ||
     verification.sourceRevision !== expectations.targetSourceRevision ||
     verification.reference !== reference ||
-    verification.digest !== declaredDigest
+    verification.digest !== declaredDigest ||
+    declaredAttestedBy !== verification.attestedBy ||
+    declaredAttestedAt !== verification.attestedAt
   ) {
     addStatus('unverified')
     reasons.push(prefix(dimension, 'VERIFICATION_MISMATCH'))
+    return finish(reference, declaredDigest)
   }
 
-  const status = STATUS_PRECEDENCE.find((candidate) => statuses.has(candidate)) ?? 'valid'
-  const valid = status === 'valid'
-  if (valid) reasons.push(prefix(dimension, 'ATTESTED_COMPLETE_AND_CURRENT'))
-  return {
-    assessment: {
-      dimension,
-      status,
-      reference,
-      declaredDigest,
-      reasons,
-    },
-    validDigest: valid && declaredDigest !== null ? declaredDigest : null,
+  // Freshness is judged on the SIGNED attestation time, not the handle's copy.
+  const signedFreshness = freshness(verification.attestedAt, nowMs, maxAgeMs)
+  if (signedFreshness === 'future') {
+    addStatus('malformed')
+    reasons.push(prefix(dimension, 'SIGNED_ATTESTATION_IN_FUTURE'))
+  } else if (signedFreshness === 'stale') {
+    addStatus('stale')
+    reasons.push(prefix(dimension, 'SIGNED_ATTESTATION_STALE'))
   }
+  if (verification.complete !== true) {
+    addStatus('partial')
+    reasons.push(prefix(dimension, 'SIGNED_COMPLETENESS_NOT_ATTESTED'))
+  }
+  return finish(reference, declaredDigest)
 }
 
 /**
@@ -388,6 +430,8 @@ export function evaluateRetirementGate(input: RetirementGateInput): RetirementGa
     nowMs
   )
   const allowed = parity.validDigest !== null && failure.validDigest !== null
+  const unauthenticated =
+    parity.assessment.status === 'unverified' || failure.assessment.status === 'unverified'
   const decision: RetirementGateDecision = {
     schemaVersion: RETIREMENT_GATE_SCHEMA_VERSION,
     gate: 'redundant-layer-retirement',
@@ -398,9 +442,12 @@ export function evaluateRetirementGate(input: RetirementGateInput): RetirementGa
     retirementClaim: {
       claimAllowed: allowed,
       claim: allowed ? 'profile-parity-and-failure-attested' : 'not-claimable',
-      reasons: [...parity.assessment.reasons, ...failure.assessment.reasons].toSorted(
-        (left, right) => (left < right ? -1 : left > right ? 1 : 0)
-      ),
+      reasons: [
+        ...(unauthenticated ? [RETIREMENT_EVIDENCE_NOT_AUTHENTICATED] : []),
+        ...[...parity.assessment.reasons, ...failure.assessment.reasons].toSorted((left, right) =>
+          left < right ? -1 : left > right ? 1 : 0
+        ),
+      ],
     },
     evaluatedAt: parsed.now,
   }

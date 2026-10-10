@@ -3,6 +3,8 @@ import { canonicalJsonStringify } from '@control-plane/contracts'
 import type { ObjectStore } from '@control-plane/deployment'
 import { z } from 'zod'
 import {
+  DEFAULT_MAX_EVIDENCE_AGE_SECONDS,
+  MAX_EVIDENCE_AGE_SECONDS,
   registerVerifiedRetirementEvidence,
   type RetirementEvidenceDimension,
   type VerifiedRetirementEvidence,
@@ -14,11 +16,21 @@ import {
  * Boundary: the evidence object is read from the existing `ObjectStore` port
  * (the same head/get, size-bounded, digest-compared pattern as the runtime
  * command artifact verifier), its bytes must match the handle's declared
- * digest, its signed content must name the actual layer, dimension, profile
- * and source revision under test, and its attestation must be an Ed25519
- * signature by a trusted attester key. No new signature or digest scheme is
- * introduced: Ed25519 verification uses `node:crypto` with the same raw-key
- * shape the control API trusts for service keys, and digests are SHA-256.
+ * digest, and its signed content must bind the actual execution (run identity,
+ * timing, expected/executed/passed case counts and an output digest), the
+ * attestation (attestor and time), the layer, dimension, profile and source
+ * revision under test. The attester's Ed25519 signature covers every field.
+ *
+ * Freshness is decided here, against the verifier's own trusted clock, never
+ * against a caller-declared time: a signed `attestedAt` more than the configured
+ * age bound in the past, or more than a bounded skew in the future, is rejected.
+ * The verified fact carries the signed attestor, time and completeness, so the
+ * gate can bind a handle's declared attestation to what was actually signed.
+ *
+ * Attester keys are injected configuration; this module provisions nothing.
+ * When no attester is configured for a composition, `createUnavailableRetirementEvidenceVerifier`
+ * reports `AUTHORITY_UNAVAILABLE` for every handle. No new signature or digest
+ * scheme is introduced.
  *
  * Failures return a bounded code and never echo provider paths, bytes or keys.
  */
@@ -30,6 +42,22 @@ const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/
 const KEY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/
 const RAW_ED25519_PUBLIC_KEY_PATTERN = /^[A-Za-z0-9_-]{43}$/
 const SIGNATURE_PATTERN = /^[A-Za-z0-9_-]{86}$/
+const MAX_CASES = 100_000
+/** Tolerated clock disagreement between the attester and this verifier. */
+export const RETIREMENT_EVIDENCE_MAX_CLOCK_SKEW_MS = 60_000
+
+/** Actual execution facts the attester signed for this evidence. */
+export const RetirementEvidenceExecutionSchema = z
+  .object({
+    runId: z.string().min(1).max(128),
+    startedAt: z.iso.datetime(),
+    completedAt: z.iso.datetime(),
+    casesExpected: z.number().int().positive().max(MAX_CASES),
+    casesExecuted: z.number().int().nonnegative().max(MAX_CASES),
+    casesPassed: z.number().int().nonnegative().max(MAX_CASES),
+    outputDigest: z.string().regex(DIGEST_PATTERN),
+  })
+  .strict()
 
 /** The signed content of one evidence artifact; `signature` covers every other field. */
 export const RetirementEvidenceArtifactSchema = z
@@ -40,6 +68,7 @@ export const RetirementEvidenceArtifactSchema = z
     dimension: z.enum(['parity', 'failure']),
     profileId: z.string().min(1).max(128),
     sourceRevision: z.string().min(1).max(128),
+    execution: RetirementEvidenceExecutionSchema,
     completeness: z.literal(true),
     attestedBy: z.string().min(1).max(128),
     attestedAt: z.iso.datetime(),
@@ -64,10 +93,15 @@ export type RetirementEvidenceVerification =
         | 'SIZE_INVALID'
         | 'DIGEST_MISMATCH'
         | 'CONTENT_INVALID'
+        | 'EXECUTION_INCOMPLETE'
         | 'ATTESTER_UNTRUSTED'
         | 'SIGNATURE_INVALID'
         | 'ATTESTATION_MISMATCH'
+        | 'ATTESTATION_STALE'
+        | 'ATTESTATION_IN_FUTURE'
+        | 'CLOCK_INVALID'
         | 'BINDING_MISMATCH'
+        | 'AUTHORITY_UNAVAILABLE'
     }
 
 export interface RetirementEvidenceExpectation {
@@ -136,6 +170,10 @@ export interface RetirementEvidenceVerifierOptions {
   readonly objectStore: ObjectStore
   readonly trustedAttesters: readonly TrustedRetirementAttester[]
   readonly maxArtifactBytes?: number
+  /** Trusted verifier clock (server time). Defaults to the host wall clock. */
+  readonly now?: () => string
+  /** Maximum age of a signed attestation at verification time. */
+  readonly maxEvidenceAgeSeconds?: number
 }
 
 export interface RetirementEvidenceVerifier {
@@ -151,6 +189,16 @@ export function createRetirementEvidenceVerifier(
   }
   const keys = trustedKeys(options.trustedAttesters)
   const objectStore = options.objectStore
+  const clock = options.now ?? (() => new Date().toISOString())
+  const maxAgeSeconds = options.maxEvidenceAgeSeconds ?? DEFAULT_MAX_EVIDENCE_AGE_SECONDS
+  if (
+    !Number.isSafeInteger(maxAgeSeconds) ||
+    maxAgeSeconds < 1 ||
+    maxAgeSeconds > MAX_EVIDENCE_AGE_SECONDS
+  ) {
+    throw new Error('RETIREMENT_EVIDENCE_LIMIT_INVALID')
+  }
+  const maxAgeMs = maxAgeSeconds * 1000
 
   return {
     async verify(input) {
@@ -174,7 +222,7 @@ export function createRetirementEvidenceVerifier(
         digest: string
         profileId?: unknown
         sourceRevision?: unknown
-        attestation?: { attestedBy?: unknown; attestedAt?: unknown }
+        attestation?: { attestedBy?: unknown; attestedAt?: unknown; complete?: unknown }
       }
       const key = retirementEvidenceObjectKey(declared.reference)
 
@@ -218,6 +266,19 @@ export function createRetirementEvidenceVerifier(
         return reject('CONTENT_INVALID')
       }
 
+      // Execution must be internally consistent and precede the attestation.
+      const { startedAt, completedAt, casesExpected, casesExecuted, casesPassed } =
+        artifact.execution
+      if (
+        Date.parse(startedAt) > Date.parse(completedAt) ||
+        Date.parse(completedAt) > Date.parse(artifact.attestedAt)
+      ) {
+        return reject('CONTENT_INVALID')
+      }
+      if (casesExecuted !== casesExpected || casesPassed !== casesExecuted) {
+        return reject('EXECUTION_INCOMPLETE')
+      }
+
       const attesterKey = keys.get(artifact.attestedBy)
       if (attesterKey === undefined) return reject('ATTESTER_UNTRUSTED')
       const { signature, ...unsigned } = artifact
@@ -229,14 +290,28 @@ export function createRetirementEvidenceVerifier(
       )
       if (!valid) return reject('SIGNATURE_INVALID')
 
+      // Every attestation and freshness field the handle declares must equal the signed value.
       if (
         declared.attestation?.attestedBy !== artifact.attestedBy ||
         declared.attestation?.attestedAt !== artifact.attestedAt ||
+        declared.attestation?.complete !== true ||
         declared.profileId !== artifact.profileId ||
         declared.sourceRevision !== artifact.sourceRevision
       ) {
         return reject('ATTESTATION_MISMATCH')
       }
+      // Freshness is judged by this verifier's clock against the SIGNED attestation time.
+      const nowMs = Date.parse(clock())
+      if (!Number.isFinite(nowMs)) return reject('CLOCK_INVALID')
+      const attestedMs = Date.parse(artifact.attestedAt)
+      if (
+        attestedMs > nowMs + RETIREMENT_EVIDENCE_MAX_CLOCK_SKEW_MS ||
+        Date.parse(artifact.execution.completedAt) > nowMs + RETIREMENT_EVIDENCE_MAX_CLOCK_SKEW_MS
+      ) {
+        return reject('ATTESTATION_IN_FUTURE')
+      }
+      if (nowMs - attestedMs > maxAgeMs) return reject('ATTESTATION_STALE')
+
       if (
         artifact.layerId !== input.layerId ||
         artifact.dimension !== input.dimension ||
@@ -257,8 +332,33 @@ export function createRetirementEvidenceVerifier(
           digest: declared.digest,
           attestedBy: artifact.attestedBy,
           attestedAt: artifact.attestedAt,
+          complete: true,
+          execution: {
+            runId: artifact.execution.runId,
+            startedAt,
+            completedAt,
+            casesExpected,
+            casesExecuted,
+            casesPassed,
+            outputDigest: artifact.execution.outputDigest,
+          },
         }),
       }
+    },
+  }
+}
+
+/**
+ * The composition-level verifier when no trusted attester is provisioned. Upstream
+ * attester key provisioning and qualification-artifact production are not in this
+ * repository, so a composition without injected keys must report every retirement
+ * evidence handle as `AUTHORITY_UNAVAILABLE` rather than verify anything or raise a
+ * configuration error into a request path.
+ */
+export function createUnavailableRetirementEvidenceVerifier(): RetirementEvidenceVerifier {
+  return {
+    async verify() {
+      return { verified: false, code: 'AUTHORITY_UNAVAILABLE' } as const
     },
   }
 }
