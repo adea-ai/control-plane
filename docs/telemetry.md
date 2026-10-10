@@ -27,3 +27,41 @@ log, span, or Sentry adapter receives them. Sentry 11 is initialized with explic
 Development uses correlated console span events. Staging and production use the OpenTelemetry API
 adapter, which remains a no-op until a deployment registers an SDK/exporter. Tests can inject a
 recording adapter and must not require a live telemetry vendor or DSN.
+
+## Operations measurements
+
+Runtime operations measurement reuses this boundary. `operationalMetrics` catalogs the measurement
+series — `execution.queue.latency`, `execution.human.latency`, `execution.retry.age`,
+`execution.reconciliation.age`, `usage.cost.usd`, `storage.retained.bytes`,
+`storage.rewritten.bytes`, `storage.growth.bytes`, `runtime.active_object.count` and
+`operations.operating_cost.usd` — and `createOperationsMetricEmitter` records
+`OperationsMetricPoint` values through the shared metric adapter with the same fail-open,
+sanitizing behavior as the consistency emitter.
+
+Every operations point is an **observation** — one measurement of a latency, byte size, active
+count or cost — so the emitter writes it with `MetricAdapter.record`, whose OpenTelemetry
+implementation records a histogram observation. Re-measuring re-observes the same series instead
+of accumulating it the way `MetricAdapter.add` (a counter, used by the consistency emitter's
+event counts) would; snapshot sizes, active counts and latency summaries must never reach the
+counter instrument. The signed exception is `storage.growth.bytes`: a snapshot delta that shrinks
+when records are deleted, so it observes through `MetricAdapter.recordGauge` — the non-additive
+Gauge instrument. A histogram drops negative values (the OpenTelemetry SDK warns via `diag` and
+discards the observation), which would silently lose shrinkage.
+
+Label cardinality is bounded by a fixed per-metric contract: unknown label keys are dropped,
+unknown values degrade to `other`, invalid values are skipped, and identifiers (workspace,
+execution, prompt, payload) never become metric labels; workspace scoping lives in the measurement
+report, not in metric series.
+
+Producers must suppress points whose source is degraded rather than emit them as ordinary
+observations: partial or safe-integer-overflowed usage/budget totals hide `usage.cost.usd` and the
+affected `operations.operating_cost.usd` components, truncated or malformed namespaces hide their
+`storage.retained.bytes` / `storage.rewritten.bytes` rows, and `storage.growth.bytes` exists only
+as a true signed delta against a prior complete snapshot — bytes rewritten inside a window are
+reported as `storage.rewritten.bytes` and are never called growth.
+
+The offline [Local/Hosted Simple measurement command](local-operator-measurements.md) computes
+these points together with its correlated, secret-free JSON report; live compositions can record
+the same points through their metric adapter. Non-USD usage cost (and per-kind cost split by
+currency) stays in the JSON report only, because `usage.cost.usd` is USD-denominated by name and
+currencies are never summed together in derived totals.

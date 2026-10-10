@@ -66,6 +66,13 @@ const publicOperations = [
   'model-defaults.set',
   'model-selection.funding.get',
   'model-selection.resolve',
+  'pi-durable.lead.cancel',
+  'pi-durable.lead.dispatch',
+  'pi-durable.lead.lookup',
+  'pi-durable.lead.prepare',
+  'pi-durable.lead.progress',
+  'pi-durable.lead.publication.current',
+  'pi-durable.lead.status',
   'profile.resolve',
   'project-state.initialize',
   'project-state.resolve',
@@ -102,7 +109,7 @@ describe('M11.2 architecture audit', () => {
     const result = await validateArchitectureAudit(audit, { repositoryRoot, discovered })
 
     expect(result.errors).toEqual([])
-    expect(audit.packages).toHaveLength(42)
+    expect(audit.packages).toHaveLength(45)
     // Snapshot versions are informational: Release Please owns version bumps,
     // so the live invariant is workspace-to-manifest consistency, not
     // snapshot-to-manifest equality (which is false on every release PR).

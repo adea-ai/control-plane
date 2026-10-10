@@ -1,0 +1,33 @@
+{
+  "name": "@control-plane/pi-cloudflare-host",
+  "version": "0.6.1",
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "browser": false,
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js",
+      "node": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "oxlint src",
+    "test": "bun test src",
+    "test:emulator": "RUN_CLOUDFLARE_EMULATOR=true bun test src/emulator.test.mjs --timeout 30000"
+  },
+  "dependencies": {
+    "@control-plane/runtime-sdk": "workspace:*",
+    "@earendil-works/chord": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-durable": "1.1.0"
+  },
+  "devDependencies": {
+    "miniflare": "5.20260926.0-alpha"
+  }
+}

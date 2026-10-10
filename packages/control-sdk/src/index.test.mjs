@@ -274,7 +274,7 @@ describe('Control Plane SDK public client', () => {
     ).rejects.toMatchObject({ code: 'INCOMPATIBLE_CONTRACT_VERSION', retryable: false })
   })
 
-  test('publishes only the contracts dependency and stable public entry points', async () => {
+  test('publishes public contracts and runtime SDK dependencies with stable entry points', async () => {
     const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
     const releaseManifest = JSON.parse(
       await readFile(new URL('../../../.release-please-manifest.json', import.meta.url), 'utf8')
@@ -285,9 +285,18 @@ describe('Control Plane SDK public client', () => {
     expect(manifest).toMatchObject({
       name: '@control-plane/sdk',
       license: 'Apache-2.0',
-      dependencies: { '@control-plane/contracts': 'workspace:^' },
+      dependencies: {
+        '@control-plane/contracts': 'workspace:^',
+        '@control-plane/runtime-sdk': 'workspace:^',
+        zod: '4.6.5',
+      },
       publishConfig: { access: 'public', provenance: true },
     })
+    expect(Object.keys(manifest.dependencies).toSorted()).toEqual([
+      '@control-plane/contracts',
+      '@control-plane/runtime-sdk',
+      'zod',
+    ])
     expect(manifest.version).toMatch(/^\d+\.\d+\.\d+$/)
     expect(manifest.version).toBe(releaseManifest['packages/control-sdk'])
     expect(manifest.private).toBeUndefined()

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.19.0](https://github.com/adea-ai/control-plane/compare/contracts-v1.18.0...contracts-v1.19.0) (2026-10-09)
+
+
+### Features
+
+* add explicit Pi role model selection and proof ([#1016](https://github.com/adea-ai/control-plane/issues/1016)) ([b61426b](https://github.com/adea-ai/control-plane/commit/b61426bce2d5b29964fe13806a149c330d3d085e))
+
+## [1.18.0](https://github.com/adea-ai/control-plane/compare/contracts-v1.17.0...contracts-v1.18.0) (2026-10-09)
+
+
+### Features
+
+* compose production Pi lead model and publication authority ([#996](https://github.com/adea-ai/control-plane/issues/996)) ([1332100](https://github.com/adea-ai/control-plane/commit/13321009f6e9d7984a8774df8818e1b775c582ea))
+
 ## [1.17.0](https://github.com/adea-ai/control-plane/compare/contracts-v1.16.0...contracts-v1.17.0) (2026-10-08)
 
 

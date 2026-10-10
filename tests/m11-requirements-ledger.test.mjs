@@ -31,6 +31,13 @@ const canonicalIssue = (number, milestone = 11, changes = {}) => ({
   milestone: { number: milestone, title: 'Roadmap display title can change' },
   ...changes,
 })
+const ghCliOutput = (status, body, headers = {}) =>
+  [
+    `HTTP/2.0 ${status} ${status === 200 ? 'OK' : 'Failure'}`,
+    ...Object.entries(headers).map(([name, value]) => `${name}: ${value}`),
+    '',
+    JSON.stringify(body),
+  ].join('\r\n')
 
 const normativeSources = [
   'Project Index',
@@ -471,6 +478,9 @@ describe('M11.1 requirements ledger', () => {
     const issues = await listGitHubIssues({
       repository: 'owner/repository',
       token: 'test-token',
+      spawnSync: () => {
+        throw new Error('GitHub CLI must not be used when a token and fetch seam are supplied')
+      },
       fetch: async (url, init) => {
         requests.push({ url, init })
         return {
@@ -505,6 +515,430 @@ describe('M11.1 requirements ledger', () => {
       url: 'https://api.github.com/repos/owner/repository/issues?state=all&per_page=100&page=1',
       init: { headers: { authorization: 'Bearer test-token' } },
     })
+  })
+
+  test('uses the authenticated GitHub CLI when no token or fetch seam is available', async () => {
+    const calls = []
+    const priorHost = process.env.GH_HOST
+    const priorCi = process.env.CI
+    const priorGitHubActions = process.env.GITHUB_ACTIONS
+    process.env.GH_HOST = 'github.enterprise.example'
+    delete process.env.CI
+    delete process.env.GITHUB_ACTIONS
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      number: index + 1,
+      title: `Issue ${index + 1}`,
+      state: 'open',
+      html_url: `https://github.com/owner/repository/issues/${index + 1}`,
+    }))
+    const secondPage = [
+      {
+        number: 101,
+        title: 'Cursor issue',
+        state: 'closed',
+        html_url: 'https://github.com/owner/repository/issues/101',
+        closed_at: '2026-10-09T00:00:00Z',
+      },
+    ]
+    let issues
+    try {
+      issues = await listGitHubIssues({
+        repository: 'owner/repository',
+        token: '',
+        spawnSync: (command, args, options) => {
+          calls.push({ command, args, options })
+          const first = calls.length === 1
+          const headers = {}
+          if (first) {
+            headers.Link =
+              '<https://api.github.com/repositories/42/issues?state=all&per_page=100&page=2&after=opaque%3D>; rel="next"'
+          }
+          return {
+            status: 0,
+            stdout: ghCliOutput(200, firstPageOrSecond(first), headers),
+          }
+        },
+      })
+    } finally {
+      if (priorHost === undefined) delete process.env.GH_HOST
+      else process.env.GH_HOST = priorHost
+      if (priorCi === undefined) delete process.env.CI
+      else process.env.CI = priorCi
+      if (priorGitHubActions === undefined) delete process.env.GITHUB_ACTIONS
+      else process.env.GITHUB_ACTIONS = priorGitHubActions
+    }
+
+    function firstPageOrSecond(first) {
+      return first ? firstPage : secondPage
+    }
+
+    expect(issues).toHaveLength(101)
+    expect(issues.at(-1)).toMatchObject({
+      number: 101,
+      state: 'CLOSED',
+      closedAt: '2026-10-09T00:00:00Z',
+    })
+    expect(calls.map(({ command, args }) => [command, args.at(-1)])).toEqual([
+      ['gh', '/repos/owner/repository/issues?state=all&per_page=100&page=1'],
+      ['gh', '/repos/owner/repository/issues?state=all&per_page=100&page=2&after=opaque%3D'],
+    ])
+    expect(calls[0]).toMatchObject({
+      args: [
+        'api',
+        '--include',
+        '--hostname',
+        'github.com',
+        '--header',
+        'Accept: application/vnd.github+json',
+        '--header',
+        'User-Agent: control-plane-requirements-ledger',
+        expect.any(String),
+      ],
+      options: { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 30_000 },
+    })
+  })
+
+  test('uses public REST fetch in tokenless CI without an injected fetch seam', async () => {
+    const priorToken = process.env.GH_TOKEN
+    const priorLegacyToken = process.env.GITHUB_TOKEN
+    const priorCi = process.env.CI
+    const priorGitHubActions = process.env.GITHUB_ACTIONS
+    const priorFetch = globalThis.fetch
+    const requests = []
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      number: index + 1,
+      title: `Issue ${index + 1}`,
+      state: 'open',
+      html_url: `https://github.com/owner/repository/issues/${index + 1}`,
+    }))
+    const secondPage = [
+      {
+        number: 101,
+        title: 'Public CI issue',
+        state: 'open',
+        html_url: 'https://github.com/owner/repository/issues/101',
+      },
+    ]
+    delete process.env.GH_TOKEN
+    delete process.env.GITHUB_TOKEN
+    process.env.CI = 'true'
+    process.env.GITHUB_ACTIONS = 'true'
+    globalThis.fetch = async (url, init) => {
+      const first = requests.length === 0
+      requests.push({ url, init })
+      return {
+        ok: true,
+        headers: new Headers(
+          first
+            ? {
+                Link: '<https://api.github.com/repos/owner/repository/issues?state=all&per_page=100&page=2&after=opaque%3D>; rel="next"',
+              }
+            : {}
+        ),
+        json: async () => (first ? firstPage : secondPage),
+      }
+    }
+
+    let issues
+    try {
+      issues = await listGitHubIssues({
+        repository: 'owner/repository',
+        token: '',
+        spawnSync: () => {
+          throw new Error('GitHub CLI must not be used in tokenless CI')
+        },
+      })
+    } finally {
+      if (priorToken === undefined) delete process.env.GH_TOKEN
+      else process.env.GH_TOKEN = priorToken
+      if (priorLegacyToken === undefined) delete process.env.GITHUB_TOKEN
+      else process.env.GITHUB_TOKEN = priorLegacyToken
+      if (priorCi === undefined) delete process.env.CI
+      else process.env.CI = priorCi
+      if (priorGitHubActions === undefined) delete process.env.GITHUB_ACTIONS
+      else process.env.GITHUB_ACTIONS = priorGitHubActions
+      globalThis.fetch = priorFetch
+    }
+
+    expect(issues).toHaveLength(101)
+    expect(issues.at(-1)).toMatchObject({ number: 101, state: 'OPEN' })
+    expect(requests.map(({ url }) => url)).toEqual([
+      'https://api.github.com/repos/owner/repository/issues?state=all&per_page=100&page=1',
+      'https://api.github.com/repos/owner/repository/issues?state=all&per_page=100&page=2&after=opaque%3D',
+    ])
+    expect(requests.map(({ init }) => init.headers.authorization)).toEqual([undefined, undefined])
+  })
+
+  test('uses the explicit token ahead of environment tokens in CI', async () => {
+    const priorToken = process.env.GH_TOKEN
+    const priorLegacyToken = process.env.GITHUB_TOKEN
+    const priorCi = process.env.CI
+    const priorGitHubActions = process.env.GITHUB_ACTIONS
+    const priorFetch = globalThis.fetch
+    const requests = []
+    process.env.GH_TOKEN = 'environment-gh-token'
+    process.env.GITHUB_TOKEN = 'environment-github-token'
+    process.env.CI = 'true'
+    process.env.GITHUB_ACTIONS = 'true'
+    globalThis.fetch = async (url, init) => {
+      requests.push({ url, init })
+      return { ok: true, headers: new Headers(), json: async () => [] }
+    }
+
+    try {
+      await listGitHubIssues({
+        repository: 'owner/repository',
+        token: 'explicit-test-token',
+        spawnSync: () => {
+          throw new Error('GitHub CLI must not be used when a token is available')
+        },
+      })
+    } finally {
+      if (priorToken === undefined) delete process.env.GH_TOKEN
+      else process.env.GH_TOKEN = priorToken
+      if (priorLegacyToken === undefined) delete process.env.GITHUB_TOKEN
+      else process.env.GITHUB_TOKEN = priorLegacyToken
+      if (priorCi === undefined) delete process.env.CI
+      else process.env.CI = priorCi
+      if (priorGitHubActions === undefined) delete process.env.GITHUB_ACTIONS
+      else process.env.GITHUB_ACTIONS = priorGitHubActions
+      globalThis.fetch = priorFetch
+    }
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0].init.headers.authorization).toBe('Bearer explicit-test-token')
+  })
+
+  test('keeps environment-token requests on the injected fetch path', async () => {
+    const priorToken = process.env.GH_TOKEN
+    const priorLegacyToken = process.env.GITHUB_TOKEN
+    process.env.GH_TOKEN = 'environment-test-token'
+    delete process.env.GITHUB_TOKEN
+    const requests = []
+    try {
+      await listGitHubIssues({
+        fetch: async (_url, init) => {
+          requests.push(init)
+          return { ok: true, headers: new Headers(), json: async () => [] }
+        },
+        spawnSync: () => {
+          throw new Error('GitHub CLI must not be used when an environment token is present')
+        },
+      })
+    } finally {
+      if (priorToken === undefined) delete process.env.GH_TOKEN
+      else process.env.GH_TOKEN = priorToken
+      if (priorLegacyToken === undefined) delete process.env.GITHUB_TOKEN
+      else process.env.GITHUB_TOKEN = priorLegacyToken
+    }
+    expect(requests[0].headers.authorization).toBe('Bearer environment-test-token')
+  })
+
+  test('sanitizes GitHub CLI absence and HTTP failures without falling back anonymously', async () => {
+    const priorCi = process.env.CI
+    const priorGitHubActions = process.env.GITHUB_ACTIONS
+    delete process.env.CI
+    delete process.env.GITHUB_ACTIONS
+    try {
+      const launchError = Object.assign(new Error('Bearer never-print-this'), { code: 'ENOENT' })
+      let absenceMessage = ''
+      try {
+        await listGitHubIssues({
+          token: '',
+          spawnSync: () => ({ error: launchError, status: null, stderr: 'Bearer cli-secret' }),
+        })
+      } catch (error) {
+        absenceMessage = error.message
+      }
+      expect(absenceMessage).toContain('(ENOENT)')
+      expect(absenceMessage).not.toContain('never-print-this')
+      expect(absenceMessage).not.toContain('cli-secret')
+
+      let failureMessage = ''
+      try {
+        await listGitHubIssues({
+          token: '',
+          spawnSync: () => ({
+            status: 1,
+            stdout: ghCliOutput(403, { message: 'Bearer response-secret' }),
+            stderr: 'Bearer stderr-secret',
+          }),
+        })
+      } catch (error) {
+        failureMessage = error.message
+      }
+      expect(failureMessage).toBe('Unable to query GitHub issues (403)')
+      expect(failureMessage).not.toContain('response-secret')
+      expect(failureMessage).not.toContain('stderr-secret')
+    } finally {
+      if (priorCi === undefined) delete process.env.CI
+      else process.env.CI = priorCi
+      if (priorGitHubActions === undefined) delete process.env.GITHUB_ACTIONS
+      else process.env.GITHUB_ACTIONS = priorGitHubActions
+    }
+  })
+
+  test('bounds GitHub CLI requests and sanitizes timeout failures', async () => {
+    const priorCi = process.env.CI
+    const priorGitHubActions = process.env.GITHUB_ACTIONS
+    delete process.env.CI
+    delete process.env.GITHUB_ACTIONS
+    try {
+      const timeoutError = Object.assign(new Error('Bearer timeout-secret'), {
+        code: 'ETIMEDOUT',
+      })
+      let spawnOptions
+      let failureMessage = ''
+      try {
+        await listGitHubIssues({
+          token: '',
+          spawnSync: (_command, _args, options) => {
+            spawnOptions = options
+            return {
+              error: timeoutError,
+              status: null,
+              stderr: 'Bearer stderr-secret',
+            }
+          },
+        })
+      } catch (error) {
+        failureMessage = error.message
+      }
+      expect(spawnOptions.timeout).toBe(30_000)
+      expect(failureMessage).toBe(
+        'Unable to query GitHub issues through authenticated GitHub CLI (ETIMEDOUT)'
+      )
+      expect(failureMessage).not.toContain('timeout-secret')
+      expect(failureMessage).not.toContain('stderr-secret')
+    } finally {
+      if (priorCi === undefined) delete process.env.CI
+      else process.env.CI = priorCi
+      if (priorGitHubActions === undefined) delete process.env.GITHUB_ACTIONS
+      else process.env.GITHUB_ACTIONS = priorGitHubActions
+    }
+  })
+
+  test('follows next pages beyond 1000 mixed issues and pull requests', async () => {
+    const requests = []
+    const issues = await listGitHubIssues({
+      fetch: async (url) => {
+        const page = Number(new URL(url).searchParams.get('page'))
+        requests.push(page)
+        return {
+          ok: true,
+          headers: new Headers(
+            page < 11
+              ? {
+                  link: `<https://api.github.com/repositories/1300192/issues?state=all&per_page=100&page=${page + 1}>; rel="next"`,
+                }
+              : {}
+          ),
+          json: async () =>
+            page === 11
+              ? [4, 3, 2, 1].map((number) => ({ number, title: `Issue ${number}`, state: 'open' }))
+              : Array.from({ length: 100 }, (_, index) => ({
+                  number: page * 100 + index,
+                  title: 'Mixed inventory',
+                  state: 'open',
+                  ...(index % 2 === 0 ? { pull_request: {} } : {}),
+                })),
+        }
+      },
+    })
+    expect(requests).toEqual(Array.from({ length: 11 }, (_, index) => index + 1))
+    expect(issues).toHaveLength(504)
+    expect(issues.slice(-4).map(({ number }) => number)).toEqual([4, 3, 2, 1])
+  })
+
+  test('preserves GitHub next-page cursors on the trusted repository endpoint', async () => {
+    const requests = []
+    await listGitHubIssues({
+      fetch: async (url) => {
+        requests.push(url)
+        return {
+          ok: true,
+          headers: new Headers(
+            requests.length === 1
+              ? {
+                  link: '<https://api.github.com/repositories/1343240225/issues?state=all&per_page=100&page=2&after=opaque%3D>; rel="next"',
+                }
+              : {}
+          ),
+          json: async () => [],
+        }
+      },
+    })
+    expect(requests).toEqual([
+      'https://api.github.com/repos/adea-ai/control-plane/issues?state=all&per_page=100&page=1',
+      'https://api.github.com/repos/adea-ai/control-plane/issues?state=all&per_page=100&page=2&after=opaque%3D',
+    ])
+  })
+
+  test('fails rather than returning a truncated inventory at the defensive bound', async () => {
+    await expect(
+      listGitHubIssues({
+        maxPages: 2,
+        fetch: async (url) => {
+          const page = Number(new URL(url).searchParams.get('page'))
+          return {
+            ok: true,
+            headers: new Headers({
+              link: `<https://api.github.com/repos/adea-ai/control-plane/issues?state=all&per_page=100&page=${page + 1}>; rel="next"`,
+            }),
+            json: async () => [],
+          }
+        },
+      })
+    ).rejects.toThrow('pagination exceeded')
+  })
+
+  test('fails on a later request error instead of returning earlier issues', async () => {
+    await expect(
+      listGitHubIssues({
+        fetch: async (url) => {
+          const page = Number(new URL(url).searchParams.get('page'))
+          return page === 1
+            ? {
+                ok: true,
+                headers: new Headers({
+                  link: '<https://api.github.com/repos/adea-ai/control-plane/issues?state=all&per_page=100&page=2>; rel="next"',
+                }),
+                json: async () => [{ number: 1, title: 'Issue', state: 'open' }],
+              }
+            : { ok: false, status: 403 }
+        },
+      })
+    ).rejects.toThrow('Unable to query GitHub issues (403)')
+  })
+
+  test('rejects redirected or cyclic next-page links', async () => {
+    for (const next of [
+      'https://other.example/issues?page=2',
+      'https://api.github.com/repos/adea-ai/control-plane/issues?state=all&per_page=100&page=1',
+    ]) {
+      await expect(
+        listGitHubIssues({
+          fetch: async () => ({
+            ok: true,
+            headers: new Headers({ link: `<${next}>; rel="next"` }),
+            json: async () => [],
+          }),
+        })
+      ).rejects.toThrow('Invalid GitHub issues next-page link')
+    }
+  })
+
+  test('propagates fetch failures and rejects malformed inventories', async () => {
+    await expect(
+      listGitHubIssues({
+        fetch: async () => {
+          throw new Error('network failed')
+        },
+      })
+    ).rejects.toThrow('network failed')
+    await expect(
+      listGitHubIssues({ fetch: async () => ({ ok: true, json: async () => ({}) }) })
+    ).rejects.toThrow('GitHub issues response was not an array')
   })
 
   test('reports every gap whose live issue is not open in M11', () => {

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.15.0...workflow-worker-v1.16.0) (2026-10-09)
+
+
+### Features
+
+* **telemetry:** correlate runtime telemetry and measure operations ([#1036](https://github.com/adea-ai/control-plane/issues/1036)) ([f59b114](https://github.com/adea-ai/control-plane/commit/f59b1145966868519fc372b0932e47e48183f454))
+
 ## [1.15.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.14.0...workflow-worker-v1.15.0) (2026-10-08)
 
 

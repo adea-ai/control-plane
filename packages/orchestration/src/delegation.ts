@@ -4,6 +4,7 @@ import { compareCodePointOrder } from '@control-plane/contracts'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import {
   ExecutionLifecycleError,
+  previewLifecycleTransition,
   type Execution,
   type ExecutionAttempt,
   type ExecutionLifecycleService,
@@ -11,9 +12,12 @@ import {
 import {
   ExecutionPlanSchema,
   deriveExecutionPlan,
+  deriveExecutionPlanWithAuthority,
+  currentExecutionScopeAllows,
   type ExecutionPlan,
   type ExecutionGraphAuthority,
   type ExecutionPlanRepository,
+  type CurrentExecutionScopeAuthority,
 } from '@control-plane/execution-plan'
 import { z } from 'zod'
 
@@ -34,11 +38,73 @@ export const DelegationPolicySchema = z
   })
   .strict()
 
+export const ChildProgressInputSchema = z
+  .object({
+    delegationId: IdentifierSchemas.delegationId,
+    childAttemptId: IdentifierSchemas.attemptId,
+    state: z.enum(['running', 'awaiting_input', 'completed', 'failed', 'cancelled']),
+    observedAt: TimestampSchema,
+    terminalResultRef: IdentifierSchemas.artifactId.optional(),
+    failure: z
+      .object({
+        classification: z.enum([
+          'validation',
+          'policy',
+          'runtime_unavailable',
+          'runtime_error',
+          'infrastructure',
+          'timeout',
+          'cancelled',
+          'unknown',
+        ]),
+        code: ReferenceSchema,
+        retryable: z.boolean(),
+        fallbackAvailable: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.state === 'completed' && !input.terminalResultRef) {
+      context.addIssue({ code: 'custom', message: 'Completed child requires a result artifact' })
+    }
+    if (input.state === 'failed' && !input.failure) {
+      context.addIssue({ code: 'custom', message: 'Failed child requires failure metadata' })
+    }
+    if (input.state !== 'completed' && input.terminalResultRef) {
+      context.addIssue({ code: 'custom', message: 'Only completed child may have a result' })
+    }
+    if (input.state !== 'failed' && input.failure) {
+      context.addIssue({ code: 'custom', message: 'Only failed child may have failure metadata' })
+    }
+  })
+
+export type ChildProgressInput = z.output<typeof ChildProgressInputSchema>
+
+export const DispatchInputSchema = z
+  .object({
+    delegationId: IdentifierSchemas.delegationId,
+    childAttemptId: IdentifierSchemas.attemptId,
+    runtime: z
+      .object({
+        runtimeConnectionId: IdentifierSchemas.runtimeConnectionId,
+        runtimeDefinitionId: IdentifierSchemas.runtimeDefinitionId.optional(),
+        externalSessionId: IdentifierSchemas.externalSessionId.optional(),
+        runtimeNodeRefId: IdentifierSchemas.runtimeNodeRefId.optional(),
+      })
+      .strict(),
+    dispatchedAt: TimestampSchema,
+  })
+  .strict()
+
 export const DelegationRecordSchema = z
   .object({
     delegationId: IdentifierSchemas.delegationId,
     delegationGroupId: IdentifierSchemas.delegationGroupId.optional(),
     parentExecutionId: IdentifierSchemas.executionId,
+    parentAttemptId: IdentifierSchemas.attemptId.optional(),
+    admittedToolCallId: IdentifierSchemas.toolCallId.optional(),
     childExecutionId: IdentifierSchemas.executionId,
     childAttemptId: IdentifierSchemas.attemptId.optional(),
     parentExecutionPlanId: IdentifierSchemas.executionPlanId,
@@ -70,13 +136,61 @@ export const DelegationRecordSchema = z
     updatedAt: TimestampSchema,
     terminalResultRef: IdentifierSchemas.artifactId.optional(),
     failureCode: ReferenceSchema.optional(),
+    pendingProgress: ChildProgressInputSchema.optional(),
+    pendingDispatch: DispatchInputSchema.optional(),
+    pendingCancellationAt: TimestampSchema.optional(),
+    terminalPublication: z
+      .object({
+        status: z.enum(['pending', 'published']),
+        idempotencyKey: ReferenceSchema,
+        resolution: z.enum(['continue_parent', 'manual_intervention', 'fail_parent']).optional(),
+        reason: z.literal('parent_cancelled').optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((record, context) => {
+    if (record.admittedToolCallId && !record.parentAttemptId)
+      context.addIssue({
+        code: 'custom',
+        message: 'Governed child requires its admitted parent attempt',
+      })
     if (record.parentExecutionId === record.childExecutionId) {
       context.addIssue({ code: 'custom', message: 'Delegation cannot target its parent execution' })
     }
+    if (
+      record.pendingProgress &&
+      (record.pendingProgress.delegationId !== record.delegationId ||
+        record.pendingProgress.childAttemptId !== record.childAttemptId ||
+        !['completed', 'failed', 'cancelled'].includes(record.pendingProgress.state))
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Pending outcome must bind the admitted child attempt',
+      })
+    }
+    if (
+      record.pendingDispatch &&
+      (record.pendingDispatch.delegationId !== record.delegationId || record.state !== 'requested')
+    )
+      context.addIssue({
+        code: 'custom',
+        message: 'Dispatch intent must bind requested delegation',
+      })
     const terminal = ['completed', 'failed', 'cancelled'].includes(record.state)
+    if (
+      record.terminalPublication &&
+      (!terminal ||
+        record.terminalPublication.idempotencyKey !== terminalPublicationKey(record) ||
+        (record.terminalPublication.resolution && record.state !== 'failed') ||
+        (record.terminalPublication.reason && record.state !== 'cancelled'))
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Publication must bind the retained terminal outcome',
+      })
+    }
     if (record.terminalResultRef && record.state !== 'completed') {
       context.addIssue({ code: 'custom', message: 'Only completed delegation may have a result' })
     }
@@ -163,9 +277,46 @@ export interface DelegationEvent {
   readonly details: Readonly<Record<string, unknown>>
 }
 
-export interface DelegationEventPublisher {
-  publish(event: DelegationEvent): Promise<void>
+/** Composition binds one canonical parent. Reads never acknowledge or remove evidence. */
+export interface DelegationParentInbox {
+  list(): Promise<readonly DelegationEvent[]>
 }
+
+export interface DelegationEventPublisher {
+  /** Atomically retain/deduplicate terminal events by this key before acknowledging them. */
+  publish(event: DelegationEvent, idempotencyKey: string): Promise<void>
+}
+
+/** Public delegation evidence contains identifiers and bounded state, never prompt/auth payloads. */
+export const DelegationEventSchema = z
+  .object({
+    type: z.enum([
+      'delegation.requested',
+      'delegation.dispatched',
+      'delegation.progress',
+      'delegation.completed',
+      'delegation.failed',
+      'delegation.cancelled',
+    ]),
+    delegationId: IdentifierSchemas.delegationId,
+    parentExecutionId: IdentifierSchemas.executionId,
+    childExecutionId: IdentifierSchemas.executionId,
+    occurredAt: TimestampSchema,
+    details: z
+      .object({
+        state: DelegationRecordSchema.shape.state.optional(),
+        runtimeConnectionId: IdentifierSchemas.runtimeConnectionId.optional(),
+        childAttemptId: IdentifierSchemas.attemptId.optional(),
+        terminalResultRef: IdentifierSchemas.artifactId.optional(),
+        failureCode: ReferenceSchema.optional(),
+        reason: z.literal('parent_cancelled').optional(),
+        resolution: z
+          .enum(['retry', 'fallback', 'continue_parent', 'manual_intervention', 'fail_parent'])
+          .optional(),
+      })
+      .strict(),
+  })
+  .strict()
 
 export type DelegationErrorCode =
   | 'DELEGATION_NOT_FOUND'
@@ -176,7 +327,9 @@ export type DelegationErrorCode =
   | 'PROFILE_EXPANSION'
   | 'CHILD_DEADLINE_EXPANSION'
   | 'DELEGATION_STATE_CONFLICT'
+  | 'DELEGATION_ATTEMPT_MISMATCH'
   | 'GRAPH_ADMISSION_DENIED'
+  | 'SCOPE_ADMISSION_DENIED'
 
 export class DelegationError extends Error {
   constructor(readonly code: DelegationErrorCode) {
@@ -185,11 +338,13 @@ export class DelegationError extends Error {
   }
 }
 
-const DelegateInputSchema = z
+export const DelegateInputSchema = z
   .object({
     delegationId: IdentifierSchemas.delegationId,
     delegationGroupId: IdentifierSchemas.delegationGroupId.optional(),
     parentExecutionId: IdentifierSchemas.executionId,
+    parentAttemptId: IdentifierSchemas.attemptId.optional(),
+    admittedToolCallId: IdentifierSchemas.toolCallId.optional(),
     childExecutionId: IdentifierSchemas.executionId,
     role: ReferenceSchema,
     profileVersionId: IdentifierSchemas.profileVersionId,
@@ -201,66 +356,27 @@ const DelegateInputSchema = z
     deadlineAt: TimestampSchema.optional(),
   })
   .strict()
-
-const DispatchInputSchema = z
-  .object({
-    delegationId: IdentifierSchemas.delegationId,
-    childAttemptId: IdentifierSchemas.attemptId,
-    runtime: z
-      .object({
-        runtimeConnectionId: IdentifierSchemas.runtimeConnectionId,
-        runtimeDefinitionId: IdentifierSchemas.runtimeDefinitionId.optional(),
-        runtimeNodeRefId: IdentifierSchemas.runtimeNodeRefId.optional(),
-      })
-      .strict(),
-    dispatchedAt: TimestampSchema,
-  })
-  .strict()
-
-const ChildProgressInputSchema = z
-  .object({
-    delegationId: IdentifierSchemas.delegationId,
-    state: z.enum(['running', 'awaiting_input', 'completed', 'failed', 'cancelled']),
-    observedAt: TimestampSchema,
-    terminalResultRef: IdentifierSchemas.artifactId.optional(),
-    failure: z
-      .object({
-        classification: z.enum([
-          'validation',
-          'policy',
-          'runtime_unavailable',
-          'runtime_error',
-          'infrastructure',
-          'timeout',
-          'cancelled',
-          'unknown',
-        ]),
-        code: ReferenceSchema,
-        retryable: z.boolean(),
-        fallbackAvailable: z.boolean().optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict()
   .superRefine((input, context) => {
-    if (input.state === 'completed' && !input.terminalResultRef) {
-      context.addIssue({ code: 'custom', message: 'Completed child requires a result artifact' })
-    }
-    if (input.state === 'failed' && !input.failure) {
-      context.addIssue({ code: 'custom', message: 'Failed child requires failure metadata' })
-    }
-    if (input.state !== 'completed' && input.terminalResultRef) {
-      context.addIssue({ code: 'custom', message: 'Only completed child may have a result' })
-    }
-    if (input.state !== 'failed' && input.failure) {
-      context.addIssue({ code: 'custom', message: 'Only failed child may have failure metadata' })
-    }
+    if (input.admittedToolCallId && !input.parentAttemptId)
+      context.addIssue({
+        code: 'custom',
+        message: 'Governed child requires its admitted parent attempt',
+      })
   })
 
 export type ChildProgressOutcome = {
   readonly record: DelegationRecord
   readonly resolution?: ReturnType<typeof decideDelegationFailure>
+}
+
+/** Trusted server composition. Resolve the original actor from canonical admission;
+ * neither the model's input nor a transport service principal supplies authority. */
+export interface DelegationScopeAdmission {
+  readonly authority: CurrentExecutionScopeAuthority
+  readonly resolveCallerPrincipalId: (
+    input: z.output<typeof DelegateInputSchema>
+  ) => Promise<string>
+  readonly now: () => string
 }
 
 export class DelegationService {
@@ -269,6 +385,7 @@ export class DelegationService {
   readonly #plans: ExecutionPlanRepository
   readonly #events: DelegationEventPublisher
   readonly #graphs: ExecutionGraphAuthority | undefined
+  readonly #scopeAdmission: DelegationScopeAdmission | undefined
 
   constructor(options: {
     readonly delegations: DelegationRepository
@@ -276,12 +393,14 @@ export class DelegationService {
     readonly plans: ExecutionPlanRepository
     readonly events: DelegationEventPublisher
     readonly graphs?: ExecutionGraphAuthority
+    readonly scopeAdmission?: DelegationScopeAdmission
   }) {
     this.#delegations = options.delegations
     this.#lifecycle = options.lifecycle
     this.#plans = options.plans
     this.#events = options.events
     this.#graphs = options.graphs
+    this.#scopeAdmission = options.scopeAdmission
   }
 
   deriveChildPlan(parentPlan: unknown, childPlan: unknown): ExecutionPlan {
@@ -308,17 +427,21 @@ export class DelegationService {
         contentDigest: existing.childExecutionPlanDigest,
       })
       if (!plan) throw new DelegationError('DELEGATION_CONFLICT')
+      await this.#assertCurrentScope(parsed, plan)
       if (
         plan.graph &&
         !(await this.#graphs?.authorize(plan.correlation.workspaceId, plan.graph.reference))
       ) {
         throw new DelegationError('GRAPH_ADMISSION_DENIED')
       }
+      if (plan.graph) await this.#assertCurrentScope(parsed, plan)
       return { record: existing, execution, plan }
     }
 
     const parent = await this.#lifecycle.getExecution(parsed.parentExecutionId)
     assertParentPlan(parent, parsed.parentPlan)
+    if (parsed.parentAttemptId && parent.latestAttemptId !== parsed.parentAttemptId)
+      throw new DelegationError('DELEGATION_ATTEMPT_MISMATCH')
     if (parsed.profileVersionId !== parsed.parentPlan.profile.profileVersionId) {
       throw new DelegationError('PROFILE_EXPANSION')
     }
@@ -333,17 +456,30 @@ export class DelegationService {
       throw new DelegationError('DELEGATION_DEPTH_EXCEEDED')
     }
 
-    const plan = this.deriveChildPlan(parsed.parentPlan, parsed.childPlan)
+    const plan = await this.#deriveChildPlan(parsed)
     assertDeadline(parent, plan, parsed.acceptedAt, parsed.deadlineAt, parsed.policy.deadline)
     if (plan.graph && !(await this.#graphs?.validate(plan.correlation.workspaceId, plan.graph))) {
       throw new DelegationError('GRAPH_ADMISSION_DENIED')
     }
+    // Graph resolution can await external work; re-read current scope before writes.
+    await this.#assertCurrentScope(parsed, plan)
+    const currentParent = await this.#lifecycle.getExecution(parsed.parentExecutionId)
+    assertParentPlan(currentParent, parsed.parentPlan)
+    if (parsed.parentAttemptId && currentParent.latestAttemptId !== parsed.parentAttemptId)
+      throw new DelegationError('DELEGATION_ATTEMPT_MISMATCH')
+    if (
+      parsed.parentPlan.schemaVersion === 2 &&
+      ['completed', 'failed', 'cancelled', 'timed_out'].includes(currentParent.state)
+    )
+      throw new DelegationError('DELEGATION_STATE_CONFLICT')
     await this.#plans.put(plan)
     const execution = await this.#createOrRecoverChild(parsed, plan)
     const record = DelegationRecordSchema.parse({
       delegationId: parsed.delegationId,
       ...(parsed.delegationGroupId ? { delegationGroupId: parsed.delegationGroupId } : {}),
       parentExecutionId: parsed.parentExecutionId,
+      ...(parsed.parentAttemptId ? { parentAttemptId: parsed.parentAttemptId } : {}),
+      ...(parsed.admittedToolCallId ? { admittedToolCallId: parsed.admittedToolCallId } : {}),
       childExecutionId: parsed.childExecutionId,
       parentExecutionPlanId: parsed.parentPlan.executionPlanId,
       parentExecutionPlanDigest: parsed.parentPlan.contentDigest,
@@ -367,14 +503,69 @@ export class DelegationService {
       const replay = await this.#delegations.get(parsed.delegationId)
       if (
         !replay ||
-        (replay.inputDigest !== inputDigest && replay.inputDigest !== legacyInputDigest)
+        (replay.inputDigest !== inputDigest && replay.inputDigest !== legacyInputDigest) ||
+        replay.childExecutionPlanId !== plan.executionPlanId ||
+        replay.childExecutionPlanDigest !== plan.contentDigest
       ) {
         throw new DelegationError('DELEGATION_CONFLICT')
       }
+      await this.#assertCurrentScope(parsed, plan)
       return { record: replay, execution, plan }
     }
     await this.#publish(record, 'delegation.requested', parsed.acceptedAt)
     return { record, execution, plan }
+  }
+
+  async #scopeOptions(input: z.output<typeof DelegateInputSchema>) {
+    if (!this.#scopeAdmission) throw new DelegationError('SCOPE_ADMISSION_DENIED')
+    const callerPrincipalId = z
+      .string()
+      .min(1)
+      .max(256)
+      .parse(await this.#scopeAdmission.resolveCallerPrincipalId(structuredClone(input)))
+    return {
+      callerPrincipalId,
+      authority: this.#scopeAdmission.authority,
+      now: TimestampSchema.parse(this.#scopeAdmission.now()),
+    }
+  }
+
+  async #deriveChildPlan(input: z.output<typeof DelegateInputSchema>): Promise<ExecutionPlan> {
+    if (input.parentPlan.schemaVersion === 1) {
+      const legacy = this.deriveChildPlan(input.parentPlan, input.childPlan)
+      if (legacy.schemaVersion === 1) return legacy
+    }
+    return deriveExecutionPlanWithAuthority(
+      input.parentPlan,
+      input.childPlan,
+      await this.#scopeOptions(input)
+    )
+  }
+
+  async #assertCurrentScope(
+    input: z.output<typeof DelegateInputSchema>,
+    child: ExecutionPlan
+  ): Promise<void> {
+    if (input.parentPlan.schemaVersion === 1 && child.schemaVersion === 1) return
+    const options = await this.#scopeOptions(input)
+    for (const plan of [input.parentPlan, child]) {
+      if (
+        !(await currentExecutionScopeAllows(
+          options.authority,
+          {
+            ...plan.correlation,
+            callerPrincipalId: options.callerPrincipalId,
+            executionPlan: {
+              executionPlanId: plan.executionPlanId,
+              contentDigest: plan.contentDigest,
+              schemaVersion: plan.schemaVersion,
+            },
+          },
+          options.now
+        ))
+      )
+        throw new DelegationError('SCOPE_ADMISSION_DENIED')
+    }
   }
 
   async dispatchChild(input: unknown): Promise<{
@@ -382,22 +573,65 @@ export class DelegationService {
     readonly attempt: ExecutionAttempt
   }> {
     const parsed = DispatchInputSchema.parse(input)
-    const record = await this.#required(parsed.delegationId)
+    let record = await this.#required(parsed.delegationId)
     if (record.childAttemptId === parsed.childAttemptId) {
-      const [attempt] = await this.#lifecycle.repository.listAttempts(record.childExecutionId)
+      const attempt = await this.#lifecycle.repository.getAttempt(parsed.childAttemptId)
       if (!attempt) throw new DelegationError('DELEGATION_STATE_CONFLICT')
+      if (
+        canonicalJsonStringify(attempt.runtime) !== canonicalJsonStringify(parsed.runtime) ||
+        attempt.queuedAt !== parsed.dispatchedAt
+      )
+        throw new DelegationError('DELEGATION_STATE_CONFLICT')
       return { record, attempt }
     }
     if (record.state !== 'requested') throw new DelegationError('DELEGATION_STATE_CONFLICT')
+    if (record.pendingProgress || record.pendingCancellationAt)
+      throw new DelegationError('DELEGATION_STATE_CONFLICT')
+    if (
+      record.pendingDispatch &&
+      canonicalJsonStringify(record.pendingDispatch) !== canonicalJsonStringify(parsed)
+    )
+      throw new DelegationError('DELEGATION_STATE_CONFLICT')
     const execution = await this.#lifecycle.getExecution(record.childExecutionId)
-    const attempt = await this.#lifecycle.createAttempt({
-      executionId: record.childExecutionId,
-      attemptId: parsed.childAttemptId,
-      expectedExecutionVersion: execution.version,
-      queuedAt: parsed.dispatchedAt,
-      ...(record.deadlineAt ? { deadlineAt: record.deadlineAt } : {}),
-      runtime: parsed.runtime,
-    })
+    const retainedAttempt = await this.#lifecycle.repository.getAttempt(parsed.childAttemptId)
+    if (
+      retainedAttempt &&
+      (retainedAttempt.executionId !== record.childExecutionId ||
+        canonicalJsonStringify(retainedAttempt.runtime) !==
+          canonicalJsonStringify(parsed.runtime) ||
+        retainedAttempt.queuedAt !== parsed.dispatchedAt ||
+        retainedAttempt.state !== 'queued' ||
+        execution.latestAttemptId !== retainedAttempt.attemptId)
+    )
+      throw new DelegationError('DELEGATION_STATE_CONFLICT')
+    if (
+      !retainedAttempt &&
+      (['completed', 'failed', 'cancelled', 'timed_out'].includes(execution.state) ||
+        Date.parse(parsed.dispatchedAt) < Date.parse(execution.updatedAt))
+    )
+      throw new DelegationError('DELEGATION_STATE_CONFLICT')
+    if (execution.state === 'accepted')
+      previewLifecycleTransition(execution, { to: 'queued', transitionedAt: parsed.dispatchedAt })
+    if (!record.pendingDispatch) {
+      const pending = DelegationRecordSchema.parse({
+        ...record,
+        pendingDispatch: parsed,
+        revision: record.revision + 1,
+      })
+      if (!(await this.#delegations.compareAndSet(record.revision, pending)))
+        throw new DelegationError('DELEGATION_STATE_CONFLICT')
+      record = pending
+    }
+    const attempt =
+      retainedAttempt ??
+      (await this.#lifecycle.createAttempt({
+        executionId: record.childExecutionId,
+        attemptId: parsed.childAttemptId,
+        expectedExecutionVersion: execution.version,
+        queuedAt: parsed.dispatchedAt,
+        ...(record.deadlineAt ? { deadlineAt: record.deadlineAt } : {}),
+        runtime: parsed.runtime,
+      }))
     const queuedExecution = await this.#lifecycle.getExecution(record.childExecutionId)
     if (queuedExecution.state === 'accepted') {
       await this.#lifecycle.transitionExecution({
@@ -410,6 +644,7 @@ export class DelegationService {
     const next = DelegationRecordSchema.parse({
       ...record,
       childAttemptId: attempt.attemptId,
+      pendingDispatch: undefined,
       runtimeConnectionId: parsed.runtime.runtimeConnectionId,
       state: 'dispatched',
       revision: record.revision + 1,
@@ -431,7 +666,10 @@ export class DelegationService {
 
   async recordChildProgress(input: unknown): Promise<ChildProgressOutcome> {
     const parsed = ChildProgressInputSchema.parse(input)
-    const record = await this.#required(parsed.delegationId)
+    let record = await this.#required(parsed.delegationId)
+    if (record.pendingCancellationAt) throw new DelegationError('DELEGATION_STATE_CONFLICT')
+    if (record.childAttemptId !== parsed.childAttemptId)
+      throw new DelegationError('DELEGATION_ATTEMPT_MISMATCH')
     if (!record.childAttemptId) throw new DelegationError('DELEGATION_STATE_CONFLICT')
 
     if (['completed', 'failed', 'cancelled'].includes(record.state)) {
@@ -440,13 +678,15 @@ export class DelegationService {
         record.terminalResultRef === parsed.terminalResultRef &&
         record.failureCode === parsed.failure?.code
       ) {
-        return { record }
+        const published = await this.#publishTerminal(record)
+        return { record: published }
       }
       throw new DelegationError('DELEGATION_STATE_CONFLICT')
     }
 
     const attempt = await this.#lifecycle.repository.getAttempt(record.childAttemptId)
-    if (!attempt) throw new DelegationError('DELEGATION_STATE_CONFLICT')
+    if (!attempt || attempt.executionId !== record.childExecutionId)
+      throw new DelegationError('DELEGATION_STATE_CONFLICT')
     const execution = await this.#lifecycle.getExecution(record.childExecutionId)
     const resolution = parsed.failure
       ? decideDelegationFailure({
@@ -472,6 +712,36 @@ export class DelegationService {
         : {}),
       ...(parsed.terminalResultRef ? { terminalResultRef: parsed.terminalResultRef } : {}),
     }
+    const retrying = resolution === 'retry' || resolution === 'fallback'
+    const manual = resolution === 'manual_intervention'
+    const executionState = manual ? 'reconciliation_required' : lifecycleState
+    if (attempt.state !== lifecycleState)
+      previewLifecycleTransition(attempt, {
+        to: lifecycleState,
+        transitionedAt: parsed.observedAt,
+        ...transitionMetadata,
+      })
+    if (!retrying && execution.state !== executionState)
+      previewLifecycleTransition(execution, {
+        to: executionState,
+        transitionedAt: parsed.observedAt,
+        ...transitionMetadata,
+      })
+    if (
+      record.pendingProgress &&
+      canonicalJsonStringify(record.pendingProgress) !== canonicalJsonStringify(parsed)
+    )
+      throw new DelegationError('DELEGATION_STATE_CONFLICT')
+    if (['completed', 'failed', 'cancelled'].includes(parsed.state) && !record.pendingProgress) {
+      const pending = DelegationRecordSchema.parse({
+        ...record,
+        pendingProgress: parsed,
+        revision: record.revision + 1,
+      })
+      if (!(await this.#delegations.compareAndSet(record.revision, pending)))
+        throw new DelegationError('DELEGATION_STATE_CONFLICT')
+      record = pending
+    }
     if (attempt.state !== lifecycleState) {
       await this.#lifecycle.transitionAttempt({
         attemptId: attempt.attemptId,
@@ -482,13 +752,11 @@ export class DelegationService {
       })
     }
 
-    const retrying = resolution === 'retry' || resolution === 'fallback'
-    const manual = resolution === 'manual_intervention'
-    if (!retrying && execution.state !== lifecycleState) {
+    if (!retrying && execution.state !== executionState) {
       await this.#lifecycle.transitionExecution({
         executionId: execution.executionId,
         expectedVersion: execution.version,
-        to: manual ? 'reconciliation_required' : lifecycleState,
+        to: executionState,
         transitionedAt: parsed.observedAt,
         ...transitionMetadata,
       })
@@ -497,6 +765,7 @@ export class DelegationService {
     const state = retrying ? 'requested' : manual ? 'manual_intervention' : parsed.state
     const next = DelegationRecordSchema.parse({
       ...record,
+      pendingProgress: undefined,
       state,
       revision: record.revision + 1,
       updatedAt: parsed.observedAt,
@@ -506,6 +775,15 @@ export class DelegationService {
         : {}),
       ...(parsed.terminalResultRef ? { terminalResultRef: parsed.terminalResultRef } : {}),
       ...(parsed.failure && !retrying ? { failureCode: parsed.failure.code } : {}),
+      ...(['completed', 'failed', 'cancelled'].includes(state)
+        ? {
+            terminalPublication: {
+              status: 'pending',
+              idempotencyKey: terminalPublicationKey(record),
+              ...(resolution ? { resolution } : {}),
+            },
+          }
+        : {}),
     })
     if (!(await this.#delegations.compareAndSet(record.revision, next))) {
       const replay = await this.#required(parsed.delegationId)
@@ -515,9 +793,14 @@ export class DelegationService {
         replay.terminalResultRef === parsed.terminalResultRef &&
         replay.failureCode === (parsed.failure && !retrying ? parsed.failure.code : undefined)
       ) {
-        return { record: replay, ...(resolution ? { resolution } : {}) }
+        const published = await this.#publishTerminal(replay)
+        return { record: published, ...(resolution ? { resolution } : {}) }
       }
       throw new DelegationError('DELEGATION_STATE_CONFLICT')
+    }
+    if (next.terminalPublication) {
+      const published = await this.#publishTerminal(next)
+      return { record: published, ...(resolution ? { resolution } : {}) }
     }
     const eventType = parsed.failure
       ? 'delegation.failed'
@@ -541,6 +824,28 @@ export class DelegationService {
     return this.#delegations.listByParent(IdentifierSchemas.executionId.parse(parentExecutionId))
   }
 
+  /** Recovery can drain retained outcomes without invoking a parent model turn. */
+  async reconcileChildPublications(
+    parentExecutionId: string
+  ): Promise<readonly DelegationRecord[]> {
+    const records = await this.listChildren(parentExecutionId)
+    const reconciled: DelegationRecord[] = []
+    for (let record of records) {
+      if (record.pendingDispatch) record = (await this.dispatchChild(record.pendingDispatch)).record
+      if (record.pendingCancellationAt) {
+        await this.#cancelChild(record, record.pendingCancellationAt)
+        reconciled.push(await this.#required(record.delegationId))
+        continue
+      }
+      reconciled.push(
+        record.pendingProgress
+          ? (await this.recordChildProgress(record.pendingProgress)).record
+          : await this.#publishTerminal(record)
+      )
+    }
+    return reconciled
+  }
+
   async cancelChildren(input: {
     readonly parentExecutionId: string
     readonly cancelledAt: string
@@ -555,38 +860,72 @@ export class DelegationService {
       ) {
         continue
       }
-      const execution = await this.#lifecycle.getExecution(record.childExecutionId)
-      const attempts = await this.#lifecycle.repository.listAttempts(record.childExecutionId)
-      const latest = attempts.at(-1)
-      if (latest && !['completed', 'failed', 'cancelled', 'timed_out'].includes(latest.state)) {
-        await this.#lifecycle.transitionAttempt({
-          attemptId: latest.attemptId,
-          expectedVersion: latest.version,
-          to: 'cancelled',
-          transitionedAt: cancelledAt,
-        })
-      }
-      const child = await this.#lifecycle.transitionExecution({
-        executionId: execution.executionId,
-        expectedVersion: execution.version,
+      if (record.pendingProgress || record.pendingDispatch) {
+        await this.reconcileChildPublications(parentExecutionId)
+        const current = await this.#required(record.delegationId)
+        if (['completed', 'failed', 'cancelled'].includes(current.state)) continue
+        cancelled.push(
+          await this.#cancelChild(current, current.pendingCancellationAt ?? cancelledAt)
+        )
+      } else
+        cancelled.push(await this.#cancelChild(record, record.pendingCancellationAt ?? cancelledAt))
+    }
+    return cancelled
+  }
+
+  async #cancelChild(record: DelegationRecord, cancelledAt: string): Promise<Execution> {
+    const execution = await this.#lifecycle.getExecution(record.childExecutionId)
+    const attempts = await this.#lifecycle.repository.listAttempts(record.childExecutionId)
+    const latest = attempts.at(-1)
+    if (!record.pendingCancellationAt) {
+      if (latest && !['completed', 'failed', 'cancelled', 'timed_out'].includes(latest.state))
+        previewLifecycleTransition(latest, { to: 'cancelled', transitionedAt: cancelledAt })
+      if (execution.state !== 'cancelled')
+        previewLifecycleTransition(execution, { to: 'cancelled', transitionedAt: cancelledAt })
+      const pending = DelegationRecordSchema.parse({
+        ...record,
+        pendingCancellationAt: cancelledAt,
+        revision: record.revision + 1,
+      })
+      if (!(await this.#delegations.compareAndSet(record.revision, pending)))
+        throw new DelegationError('DELEGATION_STATE_CONFLICT')
+      record = pending
+    }
+    if (latest && !['completed', 'failed', 'cancelled', 'timed_out'].includes(latest.state)) {
+      await this.#lifecycle.transitionAttempt({
+        attemptId: latest.attemptId,
+        expectedVersion: latest.version,
         to: 'cancelled',
         transitionedAt: cancelledAt,
       })
-      const next = DelegationRecordSchema.parse({
-        ...record,
-        state: 'cancelled',
-        revision: record.revision + 1,
-        updatedAt: cancelledAt,
-      })
-      if (!(await this.#delegations.compareAndSet(record.revision, next))) {
-        throw new DelegationError('DELEGATION_STATE_CONFLICT')
-      }
-      await this.#publish(next, 'delegation.cancelled', cancelledAt, {
-        reason: 'parent_cancelled',
-      })
-      cancelled.push(child)
     }
-    return cancelled
+    const child =
+      execution.state === 'cancelled'
+        ? execution
+        : await this.#lifecycle.transitionExecution({
+            executionId: execution.executionId,
+            expectedVersion: execution.version,
+            to: 'cancelled',
+            transitionedAt: cancelledAt,
+          })
+    const next = DelegationRecordSchema.parse({
+      ...record,
+      state: 'cancelled',
+      pendingCancellationAt: undefined,
+      failureCode: undefined,
+      revision: record.revision + 1,
+      updatedAt: cancelledAt,
+      terminalPublication: {
+        status: 'pending',
+        idempotencyKey: terminalPublicationKey(record),
+        reason: 'parent_cancelled',
+      },
+    })
+    if (!(await this.#delegations.compareAndSet(record.revision, next))) {
+      throw new DelegationError('DELEGATION_STATE_CONFLICT')
+    }
+    await this.#publishTerminal(next)
+    return child
   }
 
   async #createOrRecoverChild(
@@ -638,21 +977,72 @@ export class DelegationService {
     return record
   }
 
+  async #publishTerminal(record: DelegationRecord): Promise<DelegationRecord> {
+    const publication = record.terminalPublication
+    // Legacy terminal records have no reliable publication receipt. Do not invent one.
+    if (!publication || publication.status === 'published') return record
+    const type =
+      record.state === 'completed'
+        ? 'delegation.completed'
+        : record.state === 'cancelled'
+          ? 'delegation.cancelled'
+          : 'delegation.failed'
+    await this.#events.publish(
+      {
+        type,
+        delegationId: record.delegationId,
+        parentExecutionId: record.parentExecutionId,
+        childExecutionId: record.childExecutionId,
+        occurredAt: record.updatedAt,
+        details: {
+          state: record.state,
+          ...(record.childAttemptId ? { childAttemptId: record.childAttemptId } : {}),
+          ...(publication.resolution ? { resolution: publication.resolution } : {}),
+          ...(record.terminalResultRef ? { terminalResultRef: record.terminalResultRef } : {}),
+          ...(record.failureCode ? { failureCode: record.failureCode } : {}),
+          ...(publication.reason ? { reason: publication.reason } : {}),
+        },
+      },
+      publication.idempotencyKey
+    )
+    const acknowledged = DelegationRecordSchema.parse({
+      ...record,
+      revision: record.revision + 1,
+      terminalPublication: { ...publication, status: 'published' },
+    })
+    if (await this.#delegations.compareAndSet(record.revision, acknowledged)) return acknowledged
+    const current = await this.#required(record.delegationId)
+    if (
+      current.terminalPublication?.idempotencyKey !== publication.idempotencyKey ||
+      current.terminalPublication.status !== 'published'
+    ) {
+      throw new DelegationError('DELEGATION_STATE_CONFLICT')
+    }
+    return current
+  }
+
   #publish(
     record: DelegationRecord,
     type: DelegationEvent['type'],
     occurredAt: string,
     details: Readonly<Record<string, unknown>> = {}
   ): Promise<void> {
-    return this.#events.publish({
-      type,
-      delegationId: record.delegationId,
-      parentExecutionId: record.parentExecutionId,
-      childExecutionId: record.childExecutionId,
-      occurredAt,
-      details,
-    })
+    return this.#events.publish(
+      {
+        type,
+        delegationId: record.delegationId,
+        parentExecutionId: record.parentExecutionId,
+        childExecutionId: record.childExecutionId,
+        occurredAt,
+        details,
+      },
+      `delegation:${record.delegationId}:${record.revision}:${type}`
+    )
   }
+}
+
+function terminalPublicationKey(record: Pick<DelegationRecord, 'delegationId'>): string {
+  return `delegation:${record.delegationId}:terminal`
 }
 
 export function decideDelegationFailure(input: {
