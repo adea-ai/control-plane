@@ -223,6 +223,53 @@ describe.skipIf(!enabled)('PostgreSQL RuntimeNode credential canonical binding',
   )
 
   test(
+    'a released channel owner keeps its workspace and generation fence against stale and foreign credentials',
+    async () => {
+      const nodeId = nodeIdentifier()
+      const owner = workspaceIdentifier()
+      const other = workspaceIdentifier()
+      const established = await establishOwner(nodeId, owner, 2)
+      expect(
+        await applicationOwnership.release(
+          ownershipRecord({ nodeId, workspaceId: owner, channelGeneration: 2 })
+        )
+      ).toBe(true)
+      expect(await applicationOwnership.lookup(nodeId)).toBeUndefined()
+
+      const stale = await issueCredential(established.key, { channelGeneration: 1 })
+      expect(
+        await applicationIdentity.consumeCredential(stale.credentialId, 1, now, {
+          nodeId,
+          workspaceId: owner,
+          channelGeneration: 1,
+        })
+      ).toBe('superseded')
+      expect(await unconsumed(stale.credentialId)).toBe(true)
+
+      const otherKey = await registerKey(nodeId, other)
+      const foreign = await issueCredential(otherKey, { channelGeneration: 3 })
+      expect(
+        await applicationIdentity.consumeCredential(foreign.credentialId, 1, now, {
+          nodeId,
+          workspaceId: other,
+          channelGeneration: 3,
+        })
+      ).toBe('workspace_mismatch')
+      expect(await unconsumed(foreign.credentialId)).toBe(true)
+
+      const next = await issueCredential(established.key, { channelGeneration: 3 })
+      expect(
+        await applicationIdentity.consumeCredential(next.credentialId, 1, now, {
+          nodeId,
+          workspaceId: owner,
+          channelGeneration: 3,
+        })
+      ).toBe('consumed')
+    },
+    integrationTestTimeout(60_000)
+  )
+
+  test(
     'a binding for another node is rejected without consuming the presented credential',
     async () => {
       const nodeId = nodeIdentifier()
