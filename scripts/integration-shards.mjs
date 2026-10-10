@@ -120,7 +120,10 @@ export const INTEGRATION_SHARDS = [
       },
       {
         package: '.',
-        files: ['./tests/profile-recovery-self-hosted-simple.integration.test.mjs'],
+        files: [
+          './tests/profile-recovery-self-hosted-simple.integration.test.mjs',
+          './tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs',
+        ],
       },
       {
         package: 'apps/hosted-control-plane',
