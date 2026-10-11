@@ -753,11 +753,30 @@ export class ExecutionPlanAcceptanceValidator {
     if (plan.correlation.executionScope === undefined) return true
     const authority = this.options?.scopeAuthority
     if (authority === undefined) return false
-    return currentExecutionScopeAllows(
-      authority,
-      input,
-      this.options?.now?.() ?? new Date().toISOString()
-    )
+    const now = this.options?.now?.() ?? new Date().toISOString()
+    const seen = new Set<string>()
+    let current = plan
+    let scopeInput = input
+    for (;;) {
+      if (seen.has(current.executionPlanId)) return false
+      seen.add(current.executionPlanId)
+      if (!(await currentExecutionScopeAllows(authority, scopeInput, now))) return false
+      if (current.parentExecutionPlan === undefined) return true
+      const parent = await this.repository.get(current.parentExecutionPlan)
+      if (parent === undefined || !executionScopeCanNarrow(parent.correlation, current.correlation))
+        return false
+      current = parent
+      scopeInput = {
+        ...parent.correlation,
+        executionScope: executionScopeOf(parent.correlation),
+        callerPrincipalId: input.callerPrincipalId,
+        executionPlan: {
+          executionPlanId: parent.executionPlanId,
+          contentDigest: parent.contentDigest,
+          schemaVersion: parent.schemaVersion,
+        },
+      }
+    }
   }
 
   async #catalogOwnershipAllows(

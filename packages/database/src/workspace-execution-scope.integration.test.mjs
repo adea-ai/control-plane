@@ -39,6 +39,7 @@ import { PostgresExecutionEventRepository } from './execution-event-repository.t
 import { migrateDatabase } from './migration.ts'
 import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
 import { commandInbox } from './schema/commands.ts'
+import { contextPackages } from './schema/context-packages.ts'
 import { executionPlans } from './schema/execution-plans.ts'
 import { executions } from './schema/executions.ts'
 import { usageBudgetStates } from './schema/usage-budget-state.ts'
@@ -199,6 +200,35 @@ describe.skipIf(!enabled)('PostgreSQL workspace execution scope migration and co
         sql`insert into command_inbox (command_id, caller_principal_id, operation, workspace_id, project_id, task_id, agent_id, request_id, idempotency_key, payload_hash, status, execution_id, execution_plan_id, execution_plan_digest, execution_plan_schema_version, version, conflict_count, received_at, last_seen_at, retention_expires_at) values (${command.commandId}, ${command.callerPrincipalId}, ${command.operation}, ${command.workspaceId}, ${command.projectId}, ${command.taskId}, ${command.agentId}, ${command.requestId}, ${command.idempotencyKey}, ${command.payloadHash}, 'accepted', ${command.executionId}, ${command.executionPlan.executionPlanId}, ${command.executionPlan.contentDigest}, 1, 1, 0, ${time}, ${time}, ${command.retentionExpiresAt})`
       )
     })
+    // Reproduce the pre-repair column-version gap without retaining malformed rows.
+    journal.entries = JSON.parse(await readFile(new URL('../drizzle/meta/_journal.json', import.meta.url), 'utf8')).entries.filter(({ idx }) => idx < 69)
+    await writeFile(journalPath, JSON.stringify(journal))
+    await migrateDatabase(
+      { role: 'migration', url: url.toString() },
+      { migrationsFolder: historicalFolder }
+    )
+    const rollback = new Error('ROLLBACK_VERSION_PAIR_REPRODUCTION')
+    await isolated.withMigrationDatabase(async (old) => {
+      try {
+        await old.transaction(async (transaction) => {
+          const [plan] = await transaction
+            .update(executionPlans)
+            .set({ schemaVersion: 2 })
+            .where(eq(executionPlans.executionPlanId, legacyPlan.executionPlanId))
+            .returning({ schemaVersion: executionPlans.schemaVersion })
+          expect(plan.schemaVersion).toBe(2)
+          const [context] = await transaction
+            .update(contextPackages)
+            .set({ schemaVersion: 2 })
+            .where(eq(contextPackages.contextPackageId, contextPackageSerializationFixtures.futurePi.contextPackageId))
+            .returning({ schemaVersion: contextPackages.schemaVersion })
+          expect(context.schemaVersion).toBe(2)
+          throw rollback
+        })
+      } catch (error) {
+        if (error !== rollback) throw error
+      }
+    })
     await isolated.migrate()
     await isolated.migrate()
     workspace = workspacePlan()
@@ -309,6 +339,40 @@ describe.skipIf(!enabled)('PostgreSQL workspace execution scope migration and co
         })
         .execute()
     ).rejects.toMatchObject({ cause: { code: '23514' } })
+  })
+
+  test('raw plan and context updates reject unpaired scope versions after the additive repair', async () => {
+    const projectScope = {
+      schemaVersion: 1,
+      kind: 'project',
+      projectId: legacyPlan.correlation.projectId,
+    }
+    for (const malformed of [
+      { schemaVersion: 2, executionScope: null },
+      { schemaVersion: 1, executionScope: projectScope },
+      { schemaVersion: 3, executionScope: projectScope },
+    ]) {
+      await expect(
+        database
+          .update(executionPlans)
+          .set(malformed)
+          .where(eq(executionPlans.executionPlanId, legacyPlan.executionPlanId))
+          .execute()
+      ).rejects.toMatchObject({ cause: { code: '23514' } })
+      await expect(
+        database
+          .update(contextPackages)
+          .set(malformed)
+          .where(eq(contextPackages.contextPackageId, contextPackageSerializationFixtures.futurePi.contextPackageId))
+          .execute()
+      ).rejects.toMatchObject({ cause: { code: '23514' } })
+    }
+    const [plan] = await database.select().from(executionPlans).where(eq(executionPlans.executionPlanId, legacyPlan.executionPlanId))
+    const [context] = await database.select().from(contextPackages).where(eq(contextPackages.contextPackageId, contextPackageSerializationFixtures.futurePi.contextPackageId))
+    expect(plan.schemaVersion).toBe(1)
+    expect(plan.executionScope).toBeNull()
+    expect(context.schemaVersion).toBe(1)
+    expect(context.executionScope).toBeNull()
   })
 
   test('workspace cancellation survives restart, lists exact scope and rejects cross-workspace ownership', async () => {

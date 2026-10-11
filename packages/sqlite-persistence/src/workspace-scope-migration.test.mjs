@@ -17,6 +17,46 @@ const insert = (database, namespace, id, value) =>
     .prepare('INSERT INTO control_plane_records VALUES (?, ?, 1, ?, ?)')
     .run(namespace, id, JSON.stringify(value), '2026-10-08T00:00:00.000Z')
 
+for (const [namespace, ownerField] of [
+  ['command-inbox', undefined],
+  ['executions', 'correlation'],
+  ['execution-plans', 'correlation'],
+  ['execution-events', 'correlation'],
+  ['execution-cancellation-receipts', 'request'],
+  ['context-packages', 'projectState'],
+]) {
+  test(`raw ${namespace} writes require a real project or explicit workspace scope`, () => {
+    const database = new DatabaseSync(':memory:')
+    try {
+      applyMigrations(database)
+      const owner = { ...command, projectId: project.projectId }
+      delete owner.executionScope
+      const legacy = ownerField ? { schemaVersion: 1, [ownerField]: owner } : owner
+      insert(database, namespace, 'retained-legacy', legacy)
+      const before = database.prepare('SELECT value FROM control_plane_records').get().value
+      for (const projectId of [undefined, null, '']) {
+        const invalidOwner = { ...owner, projectId }
+        const invalid = ownerField
+          ? { schemaVersion: 1, [ownerField]: invalidOwner }
+          : invalidOwner
+        expect(() => insert(database, namespace, 'invalid', invalid)).toThrow(
+          'SQLITE_EXECUTION_SCOPE_INVALID'
+        )
+        expect(() =>
+          database
+            .prepare('UPDATE control_plane_records SET value = ? WHERE id = ?')
+            .run(JSON.stringify(invalid), 'retained-legacy')
+        ).toThrow('SQLITE_EXECUTION_SCOPE_INVALID')
+        expect(database.prepare('SELECT value FROM control_plane_records').get().value).toBe(
+          before
+        )
+      }
+    } finally {
+      database.close()
+    }
+  })
+}
+
 test('scope upgrade preserves historical bytes and immutable migration checksums', () => {
   const database = new DatabaseSync(':memory:')
   try {

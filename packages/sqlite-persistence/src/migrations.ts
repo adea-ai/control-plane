@@ -66,13 +66,13 @@ function executionScopeTrigger(
     BEFORE ${action} ON control_plane_records
     WHEN NEW.namespace IN (${namespaces}) AND (
       (json_type(NEW.value, '${scope}') IS NOT NULL AND NOT coalesce((${valid}), 0))
+      OR (json_type(NEW.value, '${scope}') IS NULL AND NOT coalesce((json_type(NEW.value, '${project}') = 'text' AND length(json_extract(NEW.value, '${project}')) > 0), 0))
       OR (NEW.namespace IN ('execution-plans', 'context-packages') AND (
         (json_extract(NEW.value, '$.schemaVersion') = 2 AND json_type(NEW.value, '${scope}') IS NULL)
         OR (json_extract(NEW.value, '$.schemaVersion') = 1 AND json_type(NEW.value, '${scope}') IS NOT NULL)
       ))
       OR (NEW.namespace = 'context-packages' AND (
         json_type(NEW.value, '$.executionScope') IS NOT NULL
-        OR (json_type(NEW.value, '${scope}') IS NULL AND NOT coalesce((json_type(NEW.value, '${project}') = 'text' AND length(json_extract(NEW.value, '${project}')) > 0), 0))
       ))
     )
     BEGIN SELECT RAISE(ABORT, 'SQLITE_EXECUTION_SCOPE_INVALID'); END`

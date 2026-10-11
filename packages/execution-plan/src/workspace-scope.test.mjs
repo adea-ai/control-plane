@@ -283,8 +283,8 @@ test.each([false, true])(
   }
 )
 
-test('workspace to real project child requires narrowed current authority and retained structural proof', async () => {
-  const { base, contextCompiler, context, plan, projectId } = fixture()
+test('workspace child narrowing retains lineage and rechecks parent authority at admission', async () => {
+  const { base, contextCompiler, context, plan, projectId, input } = fixture()
   const projectContext = contextCompiler.compile({
     objective: base.objective,
     projectState: {
@@ -341,6 +341,45 @@ test('workspace to real project child requires narrowed current authority and re
   })
   expect(child.schemaVersion).toBe(2)
   expect(assertExecutionPlanDerivedFrom(plan, child, context, childContext)).toEqual(child)
+  const plans = new InMemoryExecutionPlanRepository()
+  await plans.put(plan)
+  await plans.put(child)
+  let parentActive = true
+  const validator = new ExecutionPlanAcceptanceValidator(plans, {
+    catalog: {
+      profiles: {
+        getAgentProfileVersion: async () => input.profile,
+        getAgentProfile: async (profileId) => ({ profileId, ownership: { scope: 'system' } }),
+      },
+      skills: {
+        getSkillVersion: async () => input.skills[0],
+        getSkill: async (skillId) => ({ skillId, ownership: { scope: 'system' } }),
+      },
+    },
+    scopeAuthority: {
+      readCurrent: async (value) => ({
+        ...snapshot(value),
+        grantActive: value.executionPlan.executionPlanId !== plan.executionPlanId || parentActive,
+      }),
+    },
+    now: () => at,
+  })
+  expect(await validator.validate(admission(child))).toBe(true)
+  expect(await validator.authorize(admission(child))).toBe(true)
+  parentActive = false
+  expect(await validator.validate(admission(child))).toBe(false)
+  expect(await validator.authorize(admission(child))).toBe(false)
+  const repository = new InMemoryCommandAcceptanceRepository()
+  const inbox = new CommandInboxService({
+    repository,
+    executionIdFactory: () => id('exe'),
+    now: () => at,
+    executionPlanValidator: validator,
+  })
+  await expect(inbox.acceptExecution(command(child))).rejects.toThrow(
+    'INVALID_EXECUTION_PLAN_REFERENCE'
+  )
+  expect(repository.executionCount).toBe(0)
   for (const override of [
     { projectWorkspaceId: id('wsp', 'H') },
     { grantActive: false },
