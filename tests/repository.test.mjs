@@ -35,6 +35,7 @@ const runtimeRef =
   (await readFile(new URL('../.github/code-foundry.yml', import.meta.url), 'utf8')).match(
     /^runtime_ref: (\S+)$/m
   )?.[1] ?? ''
+const sharedValidationRef = '4480e8aed1dac8bbb3cb12d8d7fe086a13a8eb3b'
 
 const apps = [
   'control-api',
@@ -558,8 +559,26 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
   assert.match(
     validation,
     new RegExp(
-      `uses: 0xPlayerOne\\/code-foundry\\/\\.github\\/workflows\\/validation\\.yml@${runtimeRef}`
+      `uses: 0xPlayerOne\\/code-foundry\\/\\.github\\/workflows\\/validation\\.yml@${sharedValidationRef}(?:\\s|$)`
     )
+  )
+  assert.match(validation, new RegExp(`runtime-ref: ${runtimeRef}\\s*$`, 'm'))
+  const validationJob = validation.split('\n  validation:\n')[1].split(/\n  [a-z0-9-]+:\n/)[0]
+  const callerPermissions = validationJob.match(/permissions:\n((?:      [a-z-]+: [a-z]+\n)+)/)?.[1]
+  assert.ok(callerPermissions, 'validation caller must declare its permission set')
+  assert.deepEqual(
+    callerPermissions
+      .trim()
+      .split('\n')
+      .map((permission) => permission.trim())
+      .toSorted(),
+    [
+      'actions: read',
+      'contents: read',
+      'issues: read',
+      'packages: read',
+      'security-events: write',
+    ].toSorted()
   )
   assert.equal((validation.match(/vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 3)
   // v1.44.x cancels only superseded pull-request runs; push runs queue so a

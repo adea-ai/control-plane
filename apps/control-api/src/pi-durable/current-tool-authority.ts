@@ -241,11 +241,19 @@ export function createPiDurableCurrentToolAuthority(
         // The canonical authority read above is awaited. Re-read retained mutable
         // evidence after it so approval revocation/version changes and deadlines
         // crossed during that read cannot authorize the effect on stale snapshots.
+        // Only authorization inputs are compared: a retained effect in flight in
+        // another process advances its own call row's progress fields (status,
+        // result, timestamps) without touching any input this reader decides on,
+        // and racing that progress must reach the invocation barrier, not read as
+        // an authority rejection.
         const currentCall = await options.service.calls.get(request.toolCallId)
         const currentApproval = request.approval
           ? await readApproval(options.interactions, request, Date.parse(now()))
           : undefined
-        if (!same(call, currentCall) || !same(approval?.interaction, currentApproval?.interaction))
+        if (
+          !same(callAuthorizationInputs(call), callAuthorizationInputs(currentCall)) ||
+          !same(approval?.interaction, currentApproval?.interaction)
+        )
           reject()
         assertCurrentDeadlines(
           Date.parse(now()),
@@ -306,6 +314,40 @@ async function readApproval(
   )
     reject()
   return { interaction, approved }
+}
+
+type CurrentPiDurableToolCallRecord = NonNullable<
+  Awaited<ReturnType<ToolComposition['service']['calls']['get']>>
+>
+
+/**
+ * The call-row fields this reader authorizes on: identity pins, approval linkage,
+ * and policy. Progress fields the running effect advances about itself (status,
+ * startedAt, result, usage) are excluded, so a concurrent retained effect's own
+ * evidence writes cannot flip a concurrent authority read into a rejection.
+ */
+function callAuthorizationInputs(call: CurrentPiDurableToolCallRecord | undefined) {
+  // A row that vanishes between the two reads has no stable authorization either.
+  if (!call) return undefined
+  return {
+    toolCallId: call.toolCallId,
+    executionId: call.executionId,
+    attemptId: call.attemptId,
+    workspaceId: call.workspaceId,
+    profileId: call.profileId,
+    principalRef: call.principalRef,
+    toolDefinitionId: call.toolDefinitionId,
+    toolVersionId: call.toolVersionId,
+    operation: call.operation,
+    inputDigest: call.inputDigest,
+    policySnapshotRef: call.policySnapshotRef,
+    idempotencyKey: call.idempotencyKey,
+    requestedAt: call.requestedAt,
+    executor: call.executor,
+    approvalInteractionId: call.approvalInteractionId,
+    approvalPrincipalRef: call.approvalPrincipalRef,
+    policyDecision: call.policyDecision,
+  }
 }
 
 function matchesToolCall(

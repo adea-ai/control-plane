@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.2](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.5.1...model-gateway-v1.5.2) (2026-10-11)
+
+
+### Bug Fixes
+
+* **control-api:** pin production BYO model eligibility to the Pi catalog ([#1079](https://github.com/adea-ai/control-plane/issues/1079)) ([fceb920](https://github.com/adea-ai/control-plane/commit/fceb920bc1b7401385f6e1b23b0e4a66f365a740)), refs [#931](https://github.com/adea-ai/control-plane/issues/931) (remaining scope is open)
+
 ## [1.5.1](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.5.0...model-gateway-v1.5.1) (2026-10-10)
 
 
