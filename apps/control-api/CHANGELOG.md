@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.30.0...control-api-v1.30.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **control-api:** pin production BYO model eligibility to the Pi catalog ([#1079](https://github.com/adea-ai/control-plane/issues/1079)) ([fceb920](https://github.com/adea-ai/control-plane/commit/fceb920bc1b7401385f6e1b23b0e4a66f365a740)), closes [#931](https://github.com/adea-ai/control-plane/issues/931)
+
 ## [1.30.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.29.2...control-api-v1.30.0) (2026-10-10)
 
 
