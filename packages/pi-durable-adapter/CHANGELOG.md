@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.7.0...pi-durable-adapter-v0.7.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **control-api:** pin production BYO model eligibility to the Pi catalog ([#1079](https://github.com/adea-ai/control-plane/issues/1079)) ([fceb920](https://github.com/adea-ai/control-plane/commit/fceb920bc1b7401385f6e1b23b0e4a66f365a740)), refs [#931](https://github.com/adea-ai/control-plane/issues/931) (remaining scope is open)
+
 ## [0.7.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.6.1...pi-durable-adapter-v0.7.0) (2026-10-10)
 
 
