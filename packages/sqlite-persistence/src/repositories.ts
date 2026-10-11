@@ -29,6 +29,7 @@ import {
   type RetentionDeletionResult,
   type RetentionEligibilityVerdict,
   type RetentionJournalSink,
+  type RetentionHoldPolicy,
   RetentionJournalOperationSchema,
 } from '@control-plane/domain'
 import { assertContextPackageIntegrity } from '@control-plane/context'
@@ -54,6 +55,7 @@ import {
   getReferenceRetentionWindow,
   setReferenceRetentionWindow,
 } from './retention-reference-metadata.js'
+import { countSqliteMatchingActiveRetentionHolds } from './retention-hold-repository.js'
 
 const namespaces = {
   commands: 'command-inbox',
@@ -276,7 +278,11 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
    */
   async assessExpiredInbox(
     now: Date,
-    options: { readonly policyRetainMs: number | null; readonly bound?: number }
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
+    }
   ): Promise<RetentionAssessment> {
     if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETENTION_INVALID_TIMESTAMP')
     const assessedAt = now.toISOString()
@@ -312,6 +318,18 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
           )
           const state =
             execution === undefined ? undefined : ExecutionSchema.parse(execution.value).state
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            {
+              classId: 'command-inbox',
+              scope: {
+                kind: 'project',
+                workspaceId: command.workspaceId,
+                projectId: command.projectId,
+              },
+            },
+            options.retentionHoldPolicy
+          )
           resolved.push(
             evaluateRetentionEligibility({
               retentionExpiresAt: command.retentionExpiresAt,
@@ -324,7 +342,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
               publicationSettled: true,
               rejectionKeyReserved: tombstone !== undefined,
               pendingReferences: command.reconciliationRequiredAt === undefined ? 0 : 1,
-              holds: 0,
+              holds,
             })
           )
         }
@@ -361,6 +379,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
       readonly dryRun?: boolean
       /** Journal sink; called with each candidate's effects before they apply. */
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETENTION_INVALID_TIMESTAMP')
@@ -400,6 +419,18 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
           )
           const state =
             execution === undefined ? undefined : ExecutionSchema.parse(execution.value).state
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            {
+              classId: 'command-inbox',
+              scope: {
+                kind: 'project',
+                workspaceId: command.workspaceId,
+                projectId: command.projectId,
+              },
+            },
+            options.retentionHoldPolicy
+          )
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt: command.retentionExpiresAt,
             now: assessedAt,
@@ -411,7 +442,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
             publicationSettled: true,
             rejectionKeyReserved: tombstone !== undefined,
             pendingReferences: command.reconciliationRequiredAt === undefined ? 0 : 1,
-            holds: 0,
+            holds,
           })
           if (!counter.add(verdict)) {
             return { verdict, admitted: false, removed: false, conflicted: false }
@@ -548,6 +579,7 @@ export class SqliteExecutionRepository implements ExecutionRepository {
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('EXECUTION_RETENTION_INVALID_TIMESTAMP')
@@ -685,6 +717,18 @@ export class SqliteExecutionRepository implements ExecutionRepository {
             execution.latestAttemptId,
             attempts
           )
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            {
+              classId: 'executions',
+              scope: {
+                kind: 'project',
+                workspaceId: execution.correlation.workspaceId,
+                projectId: execution.correlation.projectId,
+              },
+            },
+            options.retentionHoldPolicy
+          )
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt:
               options.policyRetainMs === null
@@ -709,7 +753,7 @@ export class SqliteExecutionRepository implements ExecutionRepository {
               !attemptsComplete
                 ? 1
                 : 0,
-            holds: 0,
+            holds,
           })
           if (!counter.add(verdict)) {
             return { verdict, admitted: false, removed: false, conflicted: false }
@@ -941,6 +985,7 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
       readonly afterId?: string
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('EXECUTION_PLAN_RETENTION_INVALID_TIMESTAMP')
@@ -1022,6 +1067,18 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
             'executionPlans',
             stored.id
           )
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            {
+              classId: 'execution-plans',
+              scope: {
+                kind: 'project',
+                workspaceId: plan.correlation.workspaceId,
+                projectId: plan.correlation.projectId,
+              },
+            },
+            options.retentionHoldPolicy
+          )
           const observed = observeReferenceRetentionWindow({
             now: assessedAt,
             unreferencedSince: currentWindow,
@@ -1046,7 +1103,7 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
                   publicationSettled: true,
                   rejectionKeyReserved: true,
                   pendingReferences,
-                  holds: 0,
+                  holds,
                 })
           if (verdict.verdict !== 'eligible' || dryRun)
             return { verdict, removed: false, raced: false }

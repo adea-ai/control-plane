@@ -11,6 +11,7 @@ import {
   StatePromotionProposalSchema,
   type RetentionDeletionResult,
   type RetentionJournalSink,
+  type RetentionHoldPolicy,
   RetentionJournalOperationSchema,
   evaluateRetentionEligibility,
   type RetentionAssessment,
@@ -41,6 +42,7 @@ import {
   type RuntimeInventoryCheckpoint,
   type RuntimeInventoryCheckpointRepository,
 } from '@control-plane/runtime-sdk'
+import { countSqliteMatchingActiveRetentionHolds } from './retention-hold-repository.js'
 
 /** The command a stored event receipt belongs to, when the value carries one. */
 function receiptCommandId(value: unknown): string | undefined {
@@ -117,7 +119,11 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
    */
   async assessExpiredEvents(
     now: Date,
-    options: { readonly policyRetainMs: number | null; readonly bound?: number }
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
+    }
   ): Promise<RetentionAssessment> {
     if (Number.isNaN(now.getTime())) throw new Error('EVENT_RETENTION_INVALID_TIMESTAMP')
     const assessedAt = now.toISOString()
@@ -147,8 +153,26 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
             namespaces.executions,
             recordId(event.executionId)
           )
-          const state =
-            execution === undefined ? undefined : ExecutionSchema.parse(execution.value).state
+          const owner = execution === undefined ? undefined : ExecutionSchema.parse(execution.value)
+          const state = owner?.state
+          const scope =
+            owner?.executionId === event.executionId &&
+            owner.correlation.workspaceId === event.correlation.workspaceId &&
+            owner.correlation.projectId === event.correlation.projectId
+              ? {
+                  kind: 'project' as const,
+                  workspaceId: owner.correlation.workspaceId,
+                  projectId: owner.correlation.projectId,
+                }
+              : undefined
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            {
+              classId: 'execution-events',
+              ...(scope === undefined ? {} : { scope }),
+            },
+            options.retentionHoldPolicy
+          )
           resolved.push(
             evaluateRetentionEligibility({
               retentionExpiresAt: event.retentionExpiresAt,
@@ -158,7 +182,7 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
               publicationSettled: event.publication.status === 'published',
               rejectionKeyReserved: true,
               pendingReferences: 0,
-              holds: 0,
+              holds,
             })
           )
         }
@@ -189,6 +213,7 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
       readonly dryRun?: boolean
       /** Journal sink; called with each candidate's effects before they apply. */
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('EVENT_RETENTION_INVALID_TIMESTAMP')
@@ -225,8 +250,26 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
             namespaces.executions,
             recordId(event.executionId)
           )
-          const state =
-            execution === undefined ? undefined : ExecutionSchema.parse(execution.value).state
+          const owner = execution === undefined ? undefined : ExecutionSchema.parse(execution.value)
+          const state = owner?.state
+          const scope =
+            owner?.executionId === event.executionId &&
+            owner.correlation.workspaceId === event.correlation.workspaceId &&
+            owner.correlation.projectId === event.correlation.projectId
+              ? {
+                  kind: 'project' as const,
+                  workspaceId: owner.correlation.workspaceId,
+                  projectId: owner.correlation.projectId,
+                }
+              : undefined
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            {
+              classId: 'execution-events',
+              ...(scope === undefined ? {} : { scope }),
+            },
+            options.retentionHoldPolicy
+          )
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt: event.retentionExpiresAt,
             now: assessedAt,
@@ -235,7 +278,7 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
             publicationSettled: event.publication.status === 'published',
             rejectionKeyReserved: true,
             pendingReferences: 0,
-            holds: 0,
+            holds,
           })
           if (!counter.add(verdict)) {
             return { verdict, admitted: false, removed: false, conflicted: false }
@@ -657,6 +700,7 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('RUNTIME_LEDGER_RETENTION_INVALID_TIMESTAMP')
@@ -696,6 +740,29 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
           if (stored === undefined) return { verdict: undefined, admitted: false, removed: false }
           const command = RuntimeCommandRecordSchema.parse(stored.value)
           const settledAt = command.resultRecordedAt
+          const executionRow = await transaction.get(
+            namespaces.executions,
+            recordId(command.executionId)
+          )
+          const execution =
+            executionRow === undefined ? undefined : ExecutionSchema.parse(executionRow.value)
+          const scope =
+            execution?.executionId === command.executionId &&
+            execution.correlation.workspaceId === command.workspaceId
+              ? {
+                  kind: 'project' as const,
+                  workspaceId: command.workspaceId,
+                  projectId: execution.correlation.projectId,
+                }
+              : undefined
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            {
+              classId: 'runtime-ledgers',
+              ...(scope === undefined ? {} : { scope }),
+            },
+            options.retentionHoldPolicy
+          )
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt:
               settledAt === undefined || options.policyRetainMs === null
@@ -707,7 +774,7 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
             publicationSettled: true,
             rejectionKeyReserved: true,
             pendingReferences: 0,
-            holds: 0,
+            holds,
           })
           if (!counter.add(verdict)) return { verdict, admitted: false, removed: false }
           if (verdict.verdict !== 'eligible' || dryRun)
