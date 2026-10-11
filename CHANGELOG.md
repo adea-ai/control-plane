@@ -5,7 +5,7 @@
 
 ### Bug Fixes
 
-* **control-api:** pin production BYO model eligibility to the Pi catalog ([#1079](https://github.com/adea-ai/control-plane/issues/1079)) ([fceb920](https://github.com/adea-ai/control-plane/commit/fceb920bc1b7401385f6e1b23b0e4a66f365a740)), closes [#931](https://github.com/adea-ai/control-plane/issues/931)
+* **control-api:** pin production BYO model eligibility to the Pi catalog ([#1079](https://github.com/adea-ai/control-plane/issues/1079)) ([fceb920](https://github.com/adea-ai/control-plane/commit/fceb920bc1b7401385f6e1b23b0e4a66f365a740)), refs [#931](https://github.com/adea-ai/control-plane/issues/931) (remaining scope is open)
 
 ## [1.92.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.91.4...workspace-v1.92.0) (2026-10-10)
 
