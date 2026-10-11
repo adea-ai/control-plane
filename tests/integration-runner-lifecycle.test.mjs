@@ -48,6 +48,20 @@ if (program === 'docker') {
   if (args.includes('exec')) console.log('1')
   if (args.includes('up') && process.env.FAKE_DOCKER_ECHO_PROJECT === 'true') console.log('Created ' + process.env.COMPOSE_PROJECT_NAME + '-postgres')
   if (args.includes(process.env.FAKE_DOCKER_FAIL_ON)) process.exit(7)
+} else if (args.includes('test') && process.env.FAKE_BUN_OVERSIZED_FAIL === 'true') {
+  process.stdout.write('stdout-start-marker\\n' + 'x'.repeat(90_000) + '\\nstdout-end-marker\\n')
+  process.stderr.write('stderr-start-marker\\n' + 'y'.repeat(90_000) + '\\nstderr-end-marker\\n')
+  process.exitCode = 9
+} else if (args.includes('test') && process.env.FAKE_BUN_MIXED_FAIL === 'true') {
+  console.error('TypeError: custom failure in an integration assertion')
+  console.error('diagnostic context also mentions CONNECTION_CLOSED')
+  process.exit(9)
+} else if (args.includes('test') && process.env.FAKE_BUN_ASSERTION_FAIL === 'true') {
+  console.error('AssertionError: expected true but received false; fixture also logged CONNECTION_CLOSED')
+  process.exit(9)
+} else if (args.includes('test') && process.env.FAKE_BUN_CONNECTION_FAIL === 'true') {
+  console.error('Error: CONNECTION_CLOSED')
+  process.exit(8)
 } else if (process.env.FAKE_BUN_FAIL === 'true') process.exit(9)
 `
     for (const name of ['docker', 'bun']) {
@@ -169,6 +183,95 @@ describe('integration runner resource ownership', () => {
       expect(result.status).not.toBe(0)
       expect(result.stderr).toContain('explicit DATABASE_ADMIN_URL')
       expect(result.calls).toEqual([])
+    },
+    runnerTestBudgetMs
+  )
+
+  test(
+    'remote Neon connection drops remain failed checks without automatic retries',
+    () => {
+      const result = executeRunner({
+        ...remoteTarget,
+        INTEGRATION_SHARD: '2',
+        FAKE_BUN_CONNECTION_FAIL: 'true',
+      })
+      const testCalls = result.calls.filter(
+        ({ program, args }) => program === 'bun' && args.includes('test')
+      )
+      expect(result.status).not.toBe(0)
+      expect(testCalls).toHaveLength(1)
+      expect(result.stderr).toContain('CONNECTION_CLOSED')
+      expect(result.stderr).not.toContain('retrying it once')
+    },
+    runnerTestBudgetMs
+  )
+
+  test(
+    'remote Neon does not retry assertion failures even when their output mentions a connection code',
+    () => {
+      const result = executeRunner({
+        ...remoteTarget,
+        INTEGRATION_SHARD: '2',
+        FAKE_BUN_ASSERTION_FAIL: 'true',
+      })
+      const testCalls = result.calls.filter(
+        ({ program, args }) => program === 'bun' && args.includes('test')
+      )
+      expect(result.status).not.toBe(0)
+      expect(testCalls).toHaveLength(1)
+      expect(result.stderr).toContain('AssertionError')
+      expect(result.stderr).toContain('CONNECTION_CLOSED')
+      expect(result.stderr).not.toContain('retrying it once')
+    },
+    runnerTestBudgetMs
+  )
+
+  test(
+    'remote Neon does not retry a mixed unknown failure that mentions a connection code',
+    () => {
+      const result = executeRunner({
+        ...remoteTarget,
+        INTEGRATION_SHARD: '2',
+        FAKE_BUN_MIXED_FAIL: 'true',
+      })
+      const testCalls = result.calls.filter(
+        ({ program, args }) => program === 'bun' && args.includes('test')
+      )
+      expect(result.status).not.toBe(0)
+      expect(testCalls).toHaveLength(1)
+      expect(result.stderr).toContain('TypeError: custom failure')
+      expect(result.stderr).toContain('CONNECTION_CLOSED')
+      expect(result.stderr).not.toContain('retrying it once')
+    },
+    runnerTestBudgetMs
+  )
+
+  test(
+    'remote Neon streams oversized output completely and retains only bounded failure tails',
+    () => {
+      const result = executeRunner({
+        ...remoteTarget,
+        INTEGRATION_SHARD: '2',
+        FAKE_BUN_OVERSIZED_FAIL: 'true',
+      })
+      const testCalls = result.calls.filter(
+        ({ program, args }) => program === 'bun' && args.includes('test')
+      )
+      expect(result.status).not.toBe(0)
+      expect(testCalls).toHaveLength(1)
+      expect(result.stdout).toContain('stdout-start-marker')
+      expect(result.stdout).toContain('stdout-end-marker')
+      expect(result.stderr).toContain('stderr-start-marker')
+      expect(result.stderr).toContain('stderr-end-marker')
+
+      const stdoutTail = result.stderr.match(
+        /stdout tail \(max 16384 bytes\):\n([\s\S]*?)\nstderr tail/
+      )
+      const stderrTail = result.stderr.match(/stderr tail \(max 16384 bytes\):\n([\s\S]*?)\n\s+at /)
+      expect(stdoutTail?.[1]).toContain('stdout-end-marker')
+      expect(stderrTail?.[1]).toContain('stderr-end-marker')
+      expect(Buffer.byteLength(stdoutTail[1])).toBeLessThanOrEqual(16 * 1024)
+      expect(Buffer.byteLength(stderrTail[1])).toBeLessThanOrEqual(16 * 1024)
     },
     runnerTestBudgetMs
   )
@@ -343,6 +446,19 @@ function readScriptFunction(path, name, globals) {
   expect(declaration).toBeDefined()
   return runInNewContext(`(${source.slice(declaration.start, declaration.end)})`, globals)
 }
+
+test('bounded output tail keeps the final diagnostic within its byte limit', () => {
+  const appendBoundedOutputTail = readScriptFunction(
+    'run-integration-tests.mjs',
+    'appendBoundedOutputTail',
+    {
+      Buffer,
+    }
+  )
+  const tail = appendBoundedOutputTail('', `${'é'.repeat(20_000)}final-marker`, 16 * 1024)
+  expect(Buffer.byteLength(tail)).toBeLessThanOrEqual(16 * 1024)
+  expect(tail.endsWith('final-marker')).toBe(true)
+})
 
 for (const script of ['run-integration-tests.mjs', 'run-postgres-disruption-drill.mjs']) {
   test(`${script} cannot spend a full probe beyond its readiness deadline`, async () => {
