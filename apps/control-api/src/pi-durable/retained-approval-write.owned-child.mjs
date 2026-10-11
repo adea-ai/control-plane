@@ -55,10 +55,11 @@ export class ChildCleanupError extends Error {
 /**
  * Binds one child script to the owned-child bounds. The returned runner spawns
  * `[process.execPath, childPath, directory, scenario]` and is stopped through
- * this handle only, and only while it is alive.
+ * this handle only, and only while it is alive. Every spawned child is tracked
+ * per state directory until its runner settles.
  */
 export function ownedChildRunner(childPath) {
-  return async function runChild(
+  return function runChild(
     directory,
     scenario,
     {
@@ -67,49 +68,96 @@ export function ownedChildRunner(childPath) {
       launch = (command, options) => Bun.spawn(command, options),
     } = {}
   ) {
-    const spawned = launch([process.execPath, childPath, directory, scenario], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-    const output = Promise.all([
-      new Response(spawned.stdout).text(),
-      new Response(spawned.stderr).text(),
-      spawned.exited,
-    ])
-    const first = await settledWithin(output, deadlineMs)
-    if (first.state === 'fulfilled') {
-      const [stdout, stderr, code] = first.value
-      const line = stdout.trim().split('\n').at(-1)
-      return { code, stderr, result: line ? JSON.parse(line) : undefined }
-    }
-    if (spawned.exitCode === null && spawned.signalCode === null) spawned.kill('SIGKILL')
-    const exit = await settledWithin(spawned.exited, cleanupMs)
-    if (exit.state !== 'fulfilled') {
-      await writeFile(
-        join(directory, UNCONFIRMED),
-        JSON.stringify({ scenario, deadlineMs, cleanupMs })
-      )
-      throw new ChildCleanupError(
-        directory,
-        { scenario, cleanupMs },
-        first.state === 'rejected' ? { cause: first.reason } : undefined
-      )
-    }
-    const drained = await settledWithin(output, cleanupMs)
-    if (first.state === 'rejected') throw first.reason
-    throw new ChildDeadlineError(scenario, deadlineMs, {
-      exitCode: spawned.exitCode,
-      signalCode: spawned.signalCode,
-      outputDrained: drained.state === 'fulfilled',
-    })
+    const settlement = (async () => {
+      const spawned = launch([process.execPath, childPath, directory, scenario], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const output = Promise.all([
+        new Response(spawned.stdout).text(),
+        new Response(spawned.stderr).text(),
+        spawned.exited,
+      ])
+      const first = await settledWithin(output, deadlineMs)
+      if (first.state === 'fulfilled') {
+        const [stdout, stderr, code] = first.value
+        const line = stdout.trim().split('\n').at(-1)
+        return { code, stderr, result: line ? JSON.parse(line) : undefined }
+      }
+      if (spawned.exitCode === null && spawned.signalCode === null) spawned.kill('SIGKILL')
+      const exit = await settledWithin(spawned.exited, cleanupMs)
+      if (exit.state !== 'fulfilled') {
+        await writeFile(
+          join(directory, UNCONFIRMED),
+          JSON.stringify({ scenario, deadlineMs, cleanupMs })
+        )
+        throw new ChildCleanupError(
+          directory,
+          { scenario, cleanupMs },
+          first.state === 'rejected' ? { cause: first.reason } : undefined
+        )
+      }
+      const drained = await settledWithin(output, cleanupMs)
+      if (first.state === 'rejected') throw first.reason
+      throw new ChildDeadlineError(scenario, deadlineMs, {
+        exitCode: spawned.exitCode,
+        signalCode: spawned.signalCode,
+        outputDrained: drained.state === 'fulfilled',
+      })
+    })()
+    trackOwnedChild(directory, settlement)
+    return settlement
   }
+}
+
+// Owned children per state directory, tracked from spawn until their runner
+// settles. A body that settles early (Promise.all over several children rejects
+// on the first failure) leaves its siblings tracked here.
+const ownedChildren = new Map()
+
+function trackOwnedChild(directory, settlement) {
+  let tracked = ownedChildren.get(directory)
+  if (!tracked) {
+    tracked = new Set()
+    ownedChildren.set(directory, tracked)
+  }
+  const record = {
+    settled: settlement.then(
+      () => {},
+      () => {}
+    ),
+  }
+  tracked.add(record)
+  record.settled.then(() => {
+    tracked.delete(record)
+    if (tracked.size === 0) ownedChildren.delete(directory)
+  })
+}
+
+/** Number of owned children of one state directory whose runner has not settled yet. */
+export function unsettledOwnedChildren(directory) {
+  return ownedChildren.get(directory)?.size ?? 0
+}
+
+/**
+ * Waits, bounded by cleanupMs, for every owned child of the directory to settle.
+ * A body that settles early — Promise.all over several children rejects on the
+ * first failure — leaves its siblings running; cleanup must not start until
+ * they are done.
+ */
+export async function awaitSettledOwnedChildren(directory, cleanupMs = CHILD_CLEANUP_MS) {
+  const tracked = ownedChildren.get(directory)
+  if (!tracked || tracked.size === 0) return
+  await settledWithin(Promise.allSettled([...tracked].map((record) => record.settled)), cleanupMs)
 }
 
 /**
  * Runs one test body over a fresh seeded state directory. The directory is
- * removed only after every owned child exit is confirmed; otherwise it is kept
- * for inspection and ChildCleanupError is thrown even if the body swallowed
- * the failure, retaining the body's original error as the cause.
+ * removed only after the body has settled AND every owned child — including
+ * siblings still running after an early body failure — has settled or
+ * confirmed its exit; otherwise it is kept for inspection and
+ * ChildCleanupError is thrown even if the body swallowed the failure,
+ * retaining the body's original error as the cause.
  */
 export async function withOwnedChildState(run, { prefix = 'pi-retained-owned-child-' } = {}) {
   const directory = await mkdtemp(join(tmpdir(), prefix))
@@ -122,13 +170,22 @@ export async function withOwnedChildState(run, { prefix = 'pi-retained-owned-chi
   } catch (error) {
     failure = { error }
   }
+  await awaitSettledOwnedChildren(directory, CHILD_CLEANUP_MS)
+  const stillRunning = unsettledOwnedChildren(directory)
   const unconfirmed = await readFile(join(directory, UNCONFIRMED), 'utf8').then(
     (text) => JSON.parse(text),
     () => undefined
   )
-  if (unconfirmed) {
+  if (unconfirmed || stillRunning > 0) {
     if (failure?.error instanceof ChildCleanupError) throw failure.error
-    throw new ChildCleanupError(directory, unconfirmed, failure && { cause: failure.error })
+    throw new ChildCleanupError(
+      directory,
+      unconfirmed ?? {
+        scenario: `${stillRunning} owned child(ren) unsettled after cleanup wait`,
+        cleanupMs: CHILD_CLEANUP_MS,
+      },
+      failure && { cause: failure.error }
+    )
   }
   await rm(directory, { recursive: true, force: true })
   if (failure) throw failure.error

@@ -7,6 +7,7 @@ import { SqliteDurableEffectGateStore } from '@control-plane/pi-durable-adapter'
 import {
   ChildDeadlineError,
   ownedChildRunner,
+  unsettledOwnedChildren,
   withOwnedChildState,
 } from './retained-approval-write.owned-child.mjs'
 import {
@@ -222,6 +223,36 @@ test(
     }),
   30_000
 )
+
+test('an early failure waits for its still-running owned sibling before the state directory is removed', async () => {
+  let directory
+  const caught = await withOwnedChildState(async (stateDirectory) => {
+    directory = stateDirectory
+    const early = runChild(stateDirectory, 'hang', { deadlineMs: 500 })
+    // The sibling keeps running long after the early failure settles — the
+    // shape Promise.all over several children produces when one loses first.
+    runChild(stateDirectory, 'hang', { deadlineMs: 3000 })
+    const failure = await early.then(
+      () => undefined,
+      (caughtError) => caughtError
+    )
+    expect(failure).toBeInstanceOf(ChildDeadlineError)
+    // Promise.all semantics: the body settles with the first failure while
+    // the sibling is still owned and running.
+    throw failure
+  }).then(
+    () => undefined,
+    (caughtError) => caughtError
+  )
+
+  // The body's original failure is what surfaces, after cleanup waited for
+  // the sibling to settle: nothing owned is left unsettled, and the state
+  // directory was removed only once every exit was confirmed.
+  expect(caught).toBeInstanceOf(ChildDeadlineError)
+  expect(caught).toMatchObject({ code: 'CHILD_DEADLINE_EXCEEDED', scenario: 'hang' })
+  expect(unsettledOwnedChildren(directory)).toBe(0)
+  await expect(readdir(directory)).rejects.toMatchObject({ code: 'ENOENT' })
+}, 30_000)
 
 test(
   'one logical settlement: concurrent restarted processes for one approved task execute and settle once',
