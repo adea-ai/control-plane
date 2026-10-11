@@ -12,6 +12,11 @@ import {
 import { createPinnedBuildCommand } from './pinned-build-command.mjs'
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
+export function nativeBuildJobCount(platform) {
+  if (platform === 'linux') return '1'
+  if (platform === 'darwin') return '4'
+  throw new Error('CODEX_NATIVE_PLATFORM_UNSUPPORTED')
+}
 export function normalizeCodexReleaseLock(input) {
   if (digest(input) !== pinnedCodexNativeBuild.lockSha256)
     throw new Error('CODEX_NATIVE_LOCK_MISMATCH')
@@ -39,7 +44,7 @@ export async function installPinnedCodexNative(destinationInput, rustBin, testBi
   environment.RUSTC = join(rustBin, 'rustc')
   environment.RUSTDOC = join(rustBin, 'rustdoc')
   environment.CARGO_HOME = join(destination, '.cargo')
-  environment.CARGO_BUILD_JOBS = '4'
+  environment.CARGO_BUILD_JOBS = nativeBuildJobCount(process.platform)
   const run = createPinnedBuildCommand(environment, 3600000)
   const source = join(destination, 'source')
   for (const [command, expected] of [
