@@ -140,6 +140,26 @@ export function unsettledOwnedChildren(directory) {
 }
 
 /**
+ * Test-only: tracks a fake owned child for one state directory without
+ * spawning a process. The returned handle settles the fake explicitly, so a
+ * test can release it and leave nothing tracked or pending behind.
+ */
+export function registerFakeOwnedChild(directory) {
+  let release
+  const settlement = new Promise((_resolve, reject) => {
+    release = reject
+  })
+  trackOwnedChild(directory, settlement)
+  return {
+    settle: (reason) => release(reason),
+    done: settlement.then(
+      () => 'fulfilled',
+      () => 'rejected'
+    ),
+  }
+}
+
+/**
  * Waits, bounded by cleanupMs, for every owned child of the directory to settle.
  * A body that settles early — Promise.all over several children rejects on the
  * first failure — leaves its siblings running; cleanup must not start until
@@ -159,7 +179,10 @@ export async function awaitSettledOwnedChildren(directory, cleanupMs = CHILD_CLE
  * ChildCleanupError is thrown even if the body swallowed the failure,
  * retaining the body's original error as the cause.
  */
-export async function withOwnedChildState(run, { prefix = 'pi-retained-owned-child-' } = {}) {
+export async function withOwnedChildState(
+  run,
+  { prefix = 'pi-retained-owned-child-', cleanupWaitMs = CHILD_CLEANUP_MS } = {}
+) {
   const directory = await mkdtemp(join(tmpdir(), prefix))
   let failure
   let value
@@ -170,7 +193,7 @@ export async function withOwnedChildState(run, { prefix = 'pi-retained-owned-chi
   } catch (error) {
     failure = { error }
   }
-  await awaitSettledOwnedChildren(directory, CHILD_CLEANUP_MS)
+  await awaitSettledOwnedChildren(directory, cleanupWaitMs)
   const stillRunning = unsettledOwnedChildren(directory)
   const unconfirmed = await readFile(join(directory, UNCONFIRMED), 'utf8').then(
     (text) => JSON.parse(text),
@@ -182,7 +205,7 @@ export async function withOwnedChildState(run, { prefix = 'pi-retained-owned-chi
       directory,
       unconfirmed ?? {
         scenario: `${stillRunning} owned child(ren) unsettled after cleanup wait`,
-        cleanupMs: CHILD_CLEANUP_MS,
+        cleanupMs: cleanupWaitMs,
       },
       failure && { cause: failure.error }
     )

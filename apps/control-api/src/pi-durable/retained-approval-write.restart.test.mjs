@@ -1,12 +1,16 @@
 import { expect, test } from 'bun:test'
-import { readdir } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { InteractionService } from '@control-plane/domain'
 import { SqliteDurableEffectGateStore } from '@control-plane/pi-durable-adapter'
 import {
+  ChildCleanupError,
   ChildDeadlineError,
   ownedChildRunner,
+  registerFakeOwnedChild,
+  UNCONFIRMED,
   unsettledOwnedChildren,
   withOwnedChildState,
 } from './retained-approval-write.owned-child.mjs'
@@ -252,6 +256,57 @@ test('an early failure waits for its still-running owned sibling before the stat
   expect(caught).toMatchObject({ code: 'CHILD_DEADLINE_EXCEEDED', scenario: 'hang' })
   expect(unsettledOwnedChildren(directory)).toBe(0)
   await expect(readdir(directory)).rejects.toMatchObject({ code: 'ENOENT' })
+}, 30_000)
+
+test('a sibling still unsettled beyond the cleanup window preserves the directory and retains the body failure as its cause', async () => {
+  let directory
+  let fake
+  const bodyFailure = new Error('BODY_FAILURE_BEFORE_CLEANUP')
+  const caught = await withOwnedChildState(
+    (stateDirectory) => {
+      directory = stateDirectory
+      // A tracked child whose runner never settles inside the (shortened)
+      // cleanup window: the shape a surviving sibling produces after an
+      // early body failure. No process and no timer are involved.
+      fake = registerFakeOwnedChild(stateDirectory)
+      throw bodyFailure
+    },
+    { prefix: 'pi-retained-owned-unsettled-', cleanupWaitMs: 150 }
+  ).then(
+    () => undefined,
+    (caughtError) => caughtError
+  )
+
+  // The unsettled-sibling branch exactly: directory preserved, the body's
+  // original failure retained as the cause, and not the unconfirmed-exit
+  // marker path.
+  expect(caught).toBeInstanceOf(ChildCleanupError)
+  expect(caught.code).toBe('CHILD_CLEANUP_UNCONFIRMED')
+  expect(caught.cause).toBe(bodyFailure)
+  expect(caught.scenario).toContain('unsettled')
+  expect(existsSync(join(directory, 'state.sqlite'))).toBe(true)
+  expect(existsSync(join(directory, UNCONFIRMED))).toBe(false)
+
+  // Release the fake exactly as a real sibling fails after the body settled,
+  // and prove the rejection is observed rather than escaping unhandled.
+  const unhandled = []
+  const onUnhandled = (reason) => unhandled.push(reason)
+  process.on('unhandledRejection', onUnhandled)
+  let released = false
+  try {
+    released = true
+    fake.settle(new Error('LATE_SIBLING_REJECTION'))
+    await fake.done
+    // One macrotask turn for any late rejection to surface if it would.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  } finally {
+    process.off('unhandledRejection', onUnhandled)
+    if (!released) fake.settle(new Error('TEST_FAKE_RELEASED_UNOBSERVED'))
+    // The test owns the preserved directory and leaves nothing live behind.
+    if (directory) await rm(directory, { recursive: true, force: true })
+  }
+  expect(unhandled).toEqual([])
+  expect(unsettledOwnedChildren(directory)).toBe(0)
 }, 30_000)
 
 test(
