@@ -11,6 +11,7 @@ import {
 } from '@control-plane/domain'
 import { deriveExecutionPlan, ExecutionPlanCompiler } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
+import { DelegationService } from '@control-plane/orchestration'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import { SqliteDelegationRepository } from './delegation-repository.ts'
 import { SqliteContextPackageRepository } from './repositories-extra.ts'
@@ -280,6 +281,7 @@ async function fixture({
   return {
     directory,
     provider,
+    executions,
     canonicalParentPlan,
     parentAttempt,
     parentAttemptVersion,
@@ -290,6 +292,474 @@ async function fixture({
       await rm(directory, { recursive: true, force: true })
     },
   }
+}
+
+function createReleaseGate() {
+  let resolveEntered
+  let releaseParked
+  let enteredState
+  let released = false
+  const entered = new Promise((resolve) => (resolveEntered = resolve))
+  const parked = new Promise((resolve) => (releaseParked = resolve))
+  return {
+    entered,
+    async pause() {
+      if (!released && enteredState === undefined) {
+        enteredState = 'entered'
+        resolveEntered(enteredState)
+      }
+      await parked
+    },
+    release() {
+      if (released) return
+      released = true
+      if (enteredState === undefined) {
+        enteredState = 'released'
+        resolveEntered(enteredState)
+      }
+      releaseParked()
+    },
+  }
+}
+
+function gateProviderBeforeTransaction(provider) {
+  const gate = createReleaseGate()
+  let armed = true
+  const gatedProvider = new Proxy(provider, {
+    get(target, property) {
+      if (property === 'transaction') {
+        return async (operation) => {
+          if (armed) {
+            armed = false
+            await gate.pause()
+          }
+          return target.transaction(operation)
+        }
+      }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  return { provider: gatedProvider, entered: gate.entered, release: gate.release }
+}
+
+function gateBeforeRetryCommit(repository) {
+  const gate = createReleaseGate()
+  let armed = true
+  const gatedRepository = new Proxy(repository, {
+    get(target, property) {
+      if (property === 'compareAndSet') {
+        return async (expectedRevision, record) => {
+          if (armed && record.state === 'requested' && record.retryCount === 1) {
+            armed = false
+            // Pause before the SQLite repository call opens its transaction.
+            await gate.pause()
+          }
+          return target.compareAndSet(expectedRevision, record)
+        }
+      }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  return { repository: gatedRepository, entered: gate.entered, release: gate.release }
+}
+
+const raceWaitLimitMs = 5_000
+
+function observeOperation(promise) {
+  const outcome = Promise.resolve(promise).then(
+    (value) => ({ status: 'fulfilled', value }),
+    (error) => ({ status: 'rejected', error })
+  )
+  return { promise, outcome }
+}
+
+async function raceWithLimit(promises, label) {
+  let timer
+  let settleTimeout
+  const timeout = new Promise((resolve) => {
+    settleTimeout = resolve
+    timer = setTimeout(() => resolve({ status: 'timeout' }), raceWaitLimitMs)
+  })
+  try {
+    const outcome = await Promise.race([...promises, timeout])
+    if (outcome.status === 'timeout') {
+      throw new Error(`${label} did not settle within ${raceWaitLimitMs}ms`)
+    }
+    return outcome
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+    settleTimeout({ status: 'cancelled' })
+  }
+}
+
+async function waitForGateOrOperation(entered, operation, label) {
+  const outcome = await raceWithLimit(
+    [
+      entered.then((state) => ({ status: state })),
+      operation.outcome.then((result) => ({ status: 'operation', result })),
+    ],
+    `${label} gate`
+  )
+  if (outcome.status === 'entered') return
+  if (outcome.status === 'released') {
+    throw new Error(`${label} gate was released before the operation entered it`)
+  }
+  if (outcome.result.status === 'rejected') throw outcome.result.error
+  throw new Error(`${label} settled before its gate was entered`)
+}
+
+async function settleOperation(operation, label) {
+  return raceWithLimit([operation.outcome], label)
+}
+
+async function settleOwnedOperationsAndClose(f, gate, operations) {
+  gate?.release()
+  let failed = false
+  let failure
+  const unsettled = []
+  const rememberFailure = (error) => {
+    if (!failed) {
+      failed = true
+      failure = error
+    }
+  }
+
+  for (const [operation, label] of operations) {
+    if (!operation) continue
+    try {
+      await settleOperation(operation, label)
+    } catch (error) {
+      rememberFailure(error)
+      unsettled.push([operation, label])
+    }
+  }
+  let closeOperation
+  try {
+    closeOperation = observeOperation(Promise.resolve().then(() => f.close()))
+    const closeOutcome = await settleOperation(closeOperation, 'fixture close')
+    if (closeOutcome.status === 'rejected') throw closeOutcome.error
+  } catch (error) {
+    rememberFailure(error)
+    if (closeOperation) unsettled.push([closeOperation, 'fixture close'])
+  }
+  for (const [operation, label] of unsettled) {
+    try {
+      const outcome = await settleOperation(operation, `${label} after fixture close`)
+      if (label === 'fixture close' && outcome.status === 'rejected') {
+        rememberFailure(outcome.error)
+      }
+    } catch (error) {
+      rememberFailure(error)
+    }
+  }
+  if (failed) throw failure
+}
+
+test('cleanup releases an entered gate and settles its operation after assertion failure', async () => {
+  const gate = createReleaseGate()
+  const operation = observeOperation(
+    (async () => {
+      await gate.pause()
+      return 'released'
+    })()
+  )
+  await expect(gate.entered).resolves.toBe('entered')
+
+  const assertionFailure = new Error('injected assertion failure')
+  let observedFailure
+  try {
+    throw assertionFailure
+  } catch (error) {
+    observedFailure = error
+  }
+
+  let closed = false
+  await settleOwnedOperationsAndClose(
+    {
+      async close() {
+        closed = true
+      },
+    },
+    gate,
+    [[operation, 'gated operation']]
+  )
+  expect(observedFailure).toBe(assertionFailure)
+  expect(await operation.outcome).toEqual({ status: 'fulfilled', value: 'released' })
+  expect(await gate.entered).toBe('entered')
+  expect(closed).toBe(true)
+})
+
+test('cleanup settles an unused gate signal when an operation finishes early', async () => {
+  const gate = createReleaseGate()
+  const operationFailure = new Error('operation finished before reaching the gate')
+  const operation = observeOperation(Promise.reject(operationFailure))
+  let observedFailure
+  try {
+    await waitForGateOrOperation(gate.entered, operation, 'early operation')
+  } catch (error) {
+    observedFailure = error
+  }
+
+  let closed = false
+  await settleOwnedOperationsAndClose(
+    {
+      async close() {
+        closed = true
+      },
+    },
+    gate,
+    [[operation, 'early operation']]
+  )
+  expect(observedFailure).toBe(operationFailure)
+  expect(await gate.entered).toBe('released')
+  expect(await operation.outcome).toEqual({ status: 'rejected', error: operationFailure })
+  expect(closed).toBe(true)
+})
+
+async function retryableChild(f, child) {
+  const delegation = {
+    ...child.delegation,
+    policy: { ...child.delegation.policy, maximumRetries: 1 },
+  }
+  await child.allocator.allocate({
+    request: child.request,
+    receipt: child.receipt,
+    execution: child.childExecution,
+    attempt: child.childAttempt,
+    delegation,
+    assertCurrent: async () => undefined,
+  })
+
+  const delegations = new SqliteDelegationRepository(f.provider)
+  const lifecycle = new ExecutionLifecycleService(new SqliteExecutionRepository(f.provider))
+  const createService = (delegationRepository = delegations) =>
+    new DelegationService({
+      delegations: delegationRepository,
+      lifecycle,
+      plans: new SqliteExecutionPlanRepository(f.provider),
+      events: { async publish() {} },
+    })
+  const service = createService()
+  await service.dispatchChild(child.request.childDispatch)
+  await service.recordChildProgress({
+    delegationId: child.childIds.delegationId,
+    childAttemptId: child.request.childAttemptId,
+    state: 'running',
+    observedAt: '2026-10-09T12:00:10.000Z',
+  })
+  return { service, createService, delegations, lifecycle }
+}
+
+async function expectSiblingDenialLeavesNoRows(f, sibling, expectedCode, budgetBefore, allocation) {
+  const repository = new SqliteDelegationRepository(f.provider)
+  const result =
+    allocation ??
+    sibling.allocator.allocate({
+      request: sibling.request,
+      receipt: sibling.receipt,
+      execution: sibling.childExecution,
+      attempt: sibling.childAttempt,
+      delegation: sibling.delegation,
+      assertCurrent: async () => undefined,
+    })
+  await expect(result).rejects.toMatchObject({ code: expectedCode })
+  expect(await f.executions.getExecution(sibling.childIds.childExecutionId)).toBeUndefined()
+  expect(await f.executions.getAttempt(sibling.request.childAttemptId)).toBeUndefined()
+  expect(await repository.get(sibling.childIds.delegationId)).toBeUndefined()
+  expect(await repository.findByChild(sibling.childIds.childExecutionId)).toBeUndefined()
+  await expect(
+    f.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(sibling.childIds.childExecutionId)
+    )
+  ).resolves.toBeUndefined()
+  await expect(
+    f.usageStore.transaction(ids.workspaceId, (tx) => tx.getBudget(ids.childExecutionId))
+  ).resolves.toEqual(budgetBefore)
+  await expect(repository.listByParent(ids.parentExecutionId)).resolves.toHaveLength(1)
+}
+
+const retryAdmissionRaces = [
+  {
+    limit: 'total',
+    maximumTotal: 1,
+    maximumParallel: 2,
+    code: 'DELEGATION_LIMIT_EXCEEDED',
+  },
+  {
+    limit: 'parallel',
+    maximumTotal: 2,
+    maximumParallel: 1,
+    code: 'DELEGATION_CONCURRENCY_LIMIT_EXCEEDED',
+  },
+]
+
+for (const scenario of retryAdmissionRaces) {
+  test(`retrying child remains counted against the ${scenario.limit} limit when retry commits first`, async () => {
+    const f = await fixture(scenario)
+    let gate
+    let allocation
+    let retryProgress
+    let failed = false
+    let failure
+    try {
+      const childA = await f.childAdmission()
+      const childB = await f.childAdmission()
+      const retry = await retryableChild(f, childA)
+      const budgetBefore = await f.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(childA.childIds.childExecutionId)
+      )
+      gate = gateProviderBeforeTransaction(f.provider)
+      const sibling = {
+        ...childB,
+        allocator: new SqliteDelegationRepository(gate.provider),
+      }
+      allocation = observeOperation(
+        sibling.allocator.allocate({
+          request: sibling.request,
+          receipt: sibling.receipt,
+          execution: sibling.childExecution,
+          attempt: sibling.childAttempt,
+          delegation: sibling.delegation,
+          assertCurrent: async () => undefined,
+        })
+      )
+      await waitForGateOrOperation(gate.entered, allocation, 'sibling allocation')
+      retryProgress = observeOperation(
+        retry.service.recordChildProgress({
+          delegationId: childA.childIds.delegationId,
+          childAttemptId: childA.request.childAttemptId,
+          state: 'failed',
+          observedAt: '2026-10-09T12:00:20.000Z',
+          failure: {
+            classification: 'runtime_unavailable',
+            code: 'RUNTIME_LOST',
+            retryable: true,
+          },
+        })
+      )
+      const retryOutcome = await settleOperation(retryProgress, 'retry commit')
+      if (retryOutcome.status === 'rejected') throw retryOutcome.error
+      expect(retryOutcome.value).toMatchObject({
+        resolution: 'retry',
+        record: { state: 'requested', retryCount: 1 },
+      })
+      gate.release()
+      await expectSiblingDenialLeavesNoRows(
+        f,
+        sibling,
+        scenario.code,
+        budgetBefore,
+        allocation.promise
+      )
+    } catch (error) {
+      failed = true
+      failure = error
+    }
+    try {
+      await settleOwnedOperationsAndClose(f, gate, [
+        [allocation, 'sibling allocation cleanup'],
+        [retryProgress, 'retry commit cleanup'],
+      ])
+    } catch (cleanupError) {
+      if (!failed) {
+        failed = true
+        failure = cleanupError
+      } else {
+        console.error(
+          'retry admission test cleanup failed after its assertion failed',
+          cleanupError
+        )
+      }
+    }
+    if (failed) throw failure
+  })
+
+  test(`sibling admission sees the active child during a paused ${scenario.limit} retry commit`, async () => {
+    const f = await fixture(scenario)
+    let gate
+    let allocation
+    let retryProgress
+    let failed = false
+    let failure
+    try {
+      const childA = await f.childAdmission()
+      const childB = await f.childAdmission()
+      const retry = await retryableChild(f, childA)
+      const budgetBefore = await f.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(childA.childIds.childExecutionId)
+      )
+      gate = gateBeforeRetryCommit(retry.delegations)
+      const service = retry.createService(gate.repository)
+      retryProgress = observeOperation(
+        service.recordChildProgress({
+          delegationId: childA.childIds.delegationId,
+          childAttemptId: childA.request.childAttemptId,
+          state: 'failed',
+          observedAt: '2026-10-09T12:00:20.000Z',
+          failure: {
+            classification: 'runtime_unavailable',
+            code: 'RUNTIME_LOST',
+            retryable: true,
+          },
+        })
+      )
+      await waitForGateOrOperation(gate.entered, retryProgress, 'retry transition')
+      expect(await retry.delegations.get(childA.childIds.delegationId)).toMatchObject({
+        state: 'running',
+        retryCount: 0,
+        pendingProgress: { state: 'failed' },
+      })
+      expect(await f.executions.getAttempt(childA.request.childAttemptId)).toMatchObject({
+        state: 'failed',
+      })
+      allocation = observeOperation(
+        childB.allocator.allocate({
+          request: childB.request,
+          receipt: childB.receipt,
+          execution: childB.childExecution,
+          attempt: childB.childAttempt,
+          delegation: childB.delegation,
+          assertCurrent: async () => undefined,
+        })
+      )
+      await expectSiblingDenialLeavesNoRows(
+        f,
+        childB,
+        scenario.code,
+        budgetBefore,
+        allocation.promise
+      )
+      gate.release()
+      const retryOutcome = await settleOperation(retryProgress, 'retry commit')
+      if (retryOutcome.status === 'rejected') throw retryOutcome.error
+      expect(retryOutcome.value).toMatchObject({
+        resolution: 'retry',
+        record: { state: 'requested', retryCount: 1 },
+      })
+    } catch (error) {
+      failed = true
+      failure = error
+    }
+    try {
+      await settleOwnedOperationsAndClose(f, gate, [
+        [allocation, 'sibling allocation cleanup'],
+        [retryProgress, 'retry transition cleanup'],
+      ])
+    } catch (cleanupError) {
+      if (!failed) {
+        failed = true
+        failure = cleanupError
+      } else {
+        console.error(
+          'retry admission test cleanup failed after its assertion failed',
+          cleanupError
+        )
+      }
+    }
+    if (failed) throw failure
+  })
 }
 
 test('child admission transaction rolls back execution and budget when current authority denies', async () => {
