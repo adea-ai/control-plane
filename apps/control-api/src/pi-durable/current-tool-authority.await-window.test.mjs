@@ -66,12 +66,17 @@ const rejected = { code: 'PI_TOOL_AUTHORITY_REJECTED' }
 
 async function openStores(path, f) {
   const provider = new SqlitePersistenceProvider({ path })
-  await provider.migrate()
-  return {
-    provider,
-    executions: new SqliteExecutionRepository(provider),
-    interactions: new SqliteInteractionRepository(provider),
-    calls: new SqliteToolCallRepository(provider, f.intent.workspaceId),
+  try {
+    await provider.migrate()
+    return {
+      provider,
+      executions: new SqliteExecutionRepository(provider),
+      interactions: new SqliteInteractionRepository(provider),
+      calls: new SqliteToolCallRepository(provider, f.intent.workspaceId),
+    }
+  } catch (error) {
+    provider.close()
+    throw error
   }
 }
 
@@ -255,10 +260,11 @@ function authorityFor(f, { calls, interactions, executions }, now) {
 
 async function withApprovedWork(run, { onSecondCallRead, onSecondInteractionRead } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'pi-await-window-'))
+  let stores
   try {
     const f = await fixture()
     await seedDatabase(join(directory, 'state.sqlite'), f)
-    const stores = await openStores(join(directory, 'state.sqlite'), f)
+    stores = await openStores(join(directory, 'state.sqlite'), f)
     await seedApprovedWork(f, stores, { callId: toolCallId, approvalId: interactionId })
     const calls = withSecondReadBarrier(stores.calls, onSecondCallRead)
     const interactions = withSecondReadBarrier(stores.interactions, onSecondInteractionRead)
@@ -270,6 +276,9 @@ async function withApprovedWork(run, { onSecondCallRead, onSecondInteractionRead
     const request = requestFor(f, toolCallId, interactionId)
     return await run({ authority, request, stores })
   } finally {
+    // Close before the directory goes away, including setup failures where the
+    // stores never came up.
+    stores?.provider.close()
     await rm(directory, { recursive: true, force: true })
   }
 }
@@ -381,18 +390,21 @@ test('retained write: a lifecycle write during the admission await reaches the i
       counter: { invocations: 0 },
       clock: { now: working },
     })
-    expect((await first.runner.run(taskFor(f))).state).toBe('awaiting_approval')
-    await new InteractionService(first.interactions).respond({
-      interactionId,
-      executionId: f.intent.executionId,
-      attemptId: f.intent.attemptId,
-      responseId: 'cmd_01JABCDEF0123456789ABCDEFH',
-      action: 'approve',
-      respondingPrincipalId: approverA,
-      expectedVersion: 1,
-      respondedAt: '2026-10-08T12:05:00.000Z',
-    })
-    first.close()
+    try {
+      expect((await first.runner.run(taskFor(f))).state).toBe('awaiting_approval')
+      await new InteractionService(first.interactions).respond({
+        interactionId,
+        executionId: f.intent.executionId,
+        attemptId: f.intent.attemptId,
+        responseId: 'cmd_01JABCDEF0123456789ABCDEFH',
+        action: 'approve',
+        respondingPrincipalId: approverA,
+        expectedVersion: 1,
+        respondedAt: '2026-10-08T12:05:00.000Z',
+      })
+    } finally {
+      first.close()
+    }
 
     // A concurrent winner holds the invocation barrier: its effect is in flight.
     await seedInvokingRecord(directory, f)

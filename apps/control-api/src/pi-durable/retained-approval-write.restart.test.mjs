@@ -1,23 +1,30 @@
 import { expect, test } from 'bun:test'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { InteractionService } from '@control-plane/domain'
 import { SqliteDurableEffectGateStore } from '@control-plane/pi-durable-adapter'
-import { fixture } from '../models/canonical-model-host-fixtures.mjs'
+import {
+  ChildDeadlineError,
+  ownedChildRunner,
+  withOwnedChildState,
+} from './retained-approval-write.owned-child.mjs'
 import {
   approverA,
   compose,
   interactionId,
-  seedDatabase,
   taskFor,
   working,
 } from './retained-approval-write.harness.mjs'
 
 // Restart proofs: each step runs in its own child process against the same persisted
-// directory. A crash is a real process exit with no cleanup.
+// directory. A crash is a real process exit with no cleanup. Children are owned:
+// the shared runner bounds every wait, stops a child past its deadline through
+// this handle, and the state directory is removed only once every exit is
+// confirmed — an unconfirmed exit preserves the directory behind its marker and
+// retains the body's original failure as the cleanup error's cause.
 const child = new URL('./retained-approval-write.child.mjs', import.meta.url).pathname
+const runChild = ownedChildRunner(child)
 const approvalResponse = {
   interactionId,
   executionId: undefined,
@@ -29,29 +36,8 @@ const approvalResponse = {
   respondedAt: '2026-10-08T12:05:00.000Z',
 }
 
-async function withState(run) {
-  const directory = await mkdtemp(join(tmpdir(), 'pi-retained-restart-'))
-  try {
-    const f = await fixture()
-    await seedDatabase(join(directory, 'state.sqlite'), f)
-    return await run(directory, f)
-  } finally {
-    await rm(directory, { recursive: true, force: true })
-  }
-}
-
-async function runChild(directory, scenario) {
-  const spawned = Bun.spawn([process.execPath, child, directory, scenario], {
-    stdout: 'pipe',
-    stderr: 'pipe',
-  })
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(spawned.stdout).text(),
-    new Response(spawned.stderr).text(),
-    spawned.exited,
-  ])
-  const line = stdout.trim().split('\n').at(-1)
-  return { code, stderr, result: line ? JSON.parse(line) : undefined }
+function withState(run) {
+  return withOwnedChildState(run, { prefix: 'pi-retained-restart-' })
 }
 
 async function respond(directory, f, overrides = {}) {
@@ -219,6 +205,22 @@ test(
       expect(await objectCount(directory)).toBe(1)
     }),
   120_000
+)
+
+test(
+  'an owned child that outlives its deadline is stopped and reported as a deadline error, never as an exit code',
+  () =>
+    withState(async (directory) => {
+      const error = await runChild(directory, 'hang', { deadlineMs: 500 }).then(
+        () => undefined,
+        (caught) => caught
+      )
+      expect(error).toBeInstanceOf(ChildDeadlineError)
+      expect(error).toMatchObject({ code: 'CHILD_DEADLINE_EXCEEDED', scenario: 'hang' })
+      // Stopped by signal and awaited before the helper threw: no exit code was produced.
+      expect(error.exit).toMatchObject({ exitCode: null, signalCode: 'SIGKILL' })
+    }),
+  30_000
 )
 
 test(
