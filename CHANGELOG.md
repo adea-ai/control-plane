@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.92.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.92.1...workspace-v1.92.2) (2026-10-11)
+
+
+### Bug Fixes
+
+* **tests:** recalibrate smoke watchdogs below spawn-bound fixture runtimes ([#1077](https://github.com/adea-ai/control-plane/issues/1077)) ([7d61c6c](https://github.com/adea-ai/control-plane/commit/7d61c6c5551348fa172bfc8998f8b6406329ea1b))
+
 ## [1.92.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.92.0...workspace-v1.92.1) (2026-10-11)
 
 
