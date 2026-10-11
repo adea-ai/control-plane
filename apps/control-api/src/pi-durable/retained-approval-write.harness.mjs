@@ -168,12 +168,17 @@ export async function seedDatabase(path, f) {
 }
 
 /** Opens (or reopens) every store from disk and wires the production-shaped gate over them. */
-export async function compose(directory, f, { counter, clock }) {
+export async function compose(directory, f, { counter, clock, wrapCalls } = {}) {
   const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
   await provider.migrate()
   const workspaceId = f.intent.workspaceId
   const interactions = new SqliteInteractionRepository(provider)
-  const calls = new SqliteToolCallRepository(provider, workspaceId)
+  const baseCalls = new SqliteToolCallRepository(provider, workspaceId)
+  // Optional test-only interception of the reader-visible call repository. The
+  // authority re-read observes calls through this surface, so a barrier here
+  // lands in the exact window the await-window proofs target. Every method
+  // delegates unchanged; only `get` can be armed.
+  const calls = wrapCalls ? wrapCalls(baseCalls) : baseCalls
   const registry = new ToolRegistry(new SqliteToolRegistryRepository(provider, workspaceId))
   const store = new FilesystemObjectStore({
     rootDirectory: join(directory, 'objects'),
