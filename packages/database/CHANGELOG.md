@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.46.1](https://github.com/adea-ai/control-plane/compare/database-v1.46.0...database-v1.46.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **database:** handle absent app schema in Neon probe ([#1105](https://github.com/adea-ai/control-plane/issues/1105)) ([d0f8aa6](https://github.com/adea-ai/control-plane/commit/d0f8aa650d07d6a831ec4a652ec8236c74d2828b))
+
+## [1.46.0](https://github.com/adea-ai/control-plane/compare/database-v1.45.1...database-v1.46.0) (2026-10-12)
+
+
+### Features
+
+* langgraph-legacy-drain-940 ([#1064](https://github.com/adea-ai/control-plane/issues/1064)) ([84aef5d](https://github.com/adea-ai/control-plane/commit/84aef5de92538f0f8101072dc62420a88f695f24))
+
+
+### Performance
+
+* **ci:** bound trusted-main Neon verification ([#1103](https://github.com/adea-ai/control-plane/issues/1103)) ([66ef7d8](https://github.com/adea-ai/control-plane/commit/66ef7d835dc64b8442467af612d4acfc4eb9526f))
+
 ## [1.45.1](https://github.com/adea-ai/control-plane/compare/database-v1.45.0...database-v1.45.1) (2026-10-12)
 
 

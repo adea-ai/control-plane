@@ -15,17 +15,22 @@ container_attempted=false
 test_pid=''
 test_reaped=false
 test_output_printed=false
+test_seconds=''
 node_bin="$(command -v node)"
 owner_label='control-plane.hosted-graph.owner'
 
 docker_command() {
-  timeout --signal=TERM --kill-after=5s 120s docker "$@"
+  timeout --signal=TERM --kill-after=2s 12s docker "$@"
+}
+
+docker_start() {
+  timeout --signal=TERM --kill-after=5s 60s docker "$@"
 }
 
 record_test() {
   # Readers can inspect ownership while the child starts or exits. Publish a
   # complete replacement so they never observe a truncated state transition.
-  printf '{"owner":"%s","container":"%s","state":"planned","scriptPid":%s,"ports":[19070,19080,33330,33331],"test":{"command":"timeout 480s bun test hosted-graph.integration.test.mjs","pid":%s,"state":"%s","exitCode":%s}}\n' "$fixture_owner" "$container_name" "$$" "${test_pid:-null}" "$1" "${2:-null}" > "$fixture_root/resources.json.tmp"
+  printf '{"owner":"%s","container":"%s","state":"planned","scriptPid":%s,"ports":[19070,19080,33330,33331],"test":{"command":"timeout %ss bun test hosted-graph.integration.test.mjs","pid":%s,"state":"%s","exitCode":%s}}\n' "$fixture_owner" "$container_name" "$$" "$test_seconds" "${test_pid:-null}" "$1" "${2:-null}" > "$fixture_root/resources.json.tmp"
   mv -f -- "$fixture_root/resources.json.tmp" "$fixture_root/resources.json"
 }
 
@@ -63,7 +68,7 @@ cleanup() {
     fi
   fi
   if [[ "$cleanup_code" == 0 && -n "$fixture_root" ]]; then
-    timeout --signal=TERM --kill-after=5s 20s "$node_bin" scripts/remove-hosted-compose-fixture.mjs "$RUNNER_TEMP" "$fixture_root" "$fixture_owner"
+    timeout --signal=TERM --kill-after=2s 15s "$node_bin" scripts/remove-hosted-compose-fixture.mjs "$RUNNER_TEMP" "$fixture_root" "$fixture_owner"
     cleanup_code="$?"
   fi
   if [[ "$cleanup_code" != 0 ]]; then
@@ -78,13 +83,14 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 fixture_root="$(mktemp -d "$RUNNER_TEMP/control-plane-m10-compose.XXXXXX")"
+work_deadline=$(( $(date +%s) + 235 ))
 fixture_suffix="$(printf '%s' "${fixture_root##*.}" | tr '[:upper:]' '[:lower:]')"
 fixture_owner="control-plane-m10-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${fixture_suffix}"
 container_name="$fixture_owner-graph-restate"
 printf '{"project":"%s"}\n' "$fixture_owner" > "$fixture_root/.fixture-owner.json"
 printf '{"owner":"%s","container":"%s","state":"planned","scriptPid":%s,"ports":[19070,19080,33330,33331]}\n' "$fixture_owner" "$container_name" "$$" > "$fixture_root/resources.json"
 install -d -m 700 "$fixture_root/identity"
-"$node_bin" scripts/provision-restate-identity.mjs "$fixture_root/identity" > "$fixture_root/public-key.txt"
+timeout --signal=TERM --kill-after=2s 8s "$node_bin" scripts/provision-restate-identity.mjs "$fixture_root/identity" > "$fixture_root/public-key.txt"
 
 # Reuse the supported Compose pin rather than creating a second version policy.
 restate_image="$(sed -n '/^  restate:/,/^  [a-z].*:/ {s/^    image: //p;}' infrastructure/compose/compose.yaml)"
@@ -92,7 +98,7 @@ restate_image="$(sed -n '/^  restate:/,/^  [a-z].*:/ {s/^    image: //p;}' infra
 container_attempted=true
 runner_uid="$(id -u)"
 runner_gid="$(id -g)"
-docker_command run --detach --name "$container_name" --label "$owner_label=$fixture_owner" \
+docker_start run --detach --name "$container_name" --label "$owner_label=$fixture_owner" \
   --user "$runner_uid:$runner_gid" \
   --network host --restart no --cpus 1.5 --memory 1g --pids-limit 256 \
   --read-only --cap-drop ALL --security-opt no-new-privileges \
@@ -111,14 +117,13 @@ docker_command run --detach --name "$container_name" --label "$owner_label=$fixt
   "$restate_image" > "$fixture_root/container-id.txt"
 
 ready=false
-for _ in {1..60}; do
-  if curl --fail --silent --show-error --max-time 2 http://127.0.0.1:19070/health >/dev/null 2>&1; then ready=true; break; fi
+for _ in {1..15}; do
+  if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:19070/health >/dev/null 2>&1; then ready=true; break; fi
   sleep 1
 done
 [[ "$ready" == true ]] || { echo 'Hosted graph Restate readiness failed.' >&2; exit 1; }
 
 export RUN_DATABASE_INTEGRATION=true RUN_HOSTED_GRAPH_RESTATE_INTEGRATION=true NO_COLOR=1
-export INTEGRATION_TEST_TIMEOUT_MS=120000
 install -d -m 700 "$fixture_root/test-tmp"
 export TMPDIR="$fixture_root/test-tmp"
 export HOSTED_GRAPH_TEST_PUBLIC_KEY_FILE="$fixture_root/public-key.txt"
@@ -126,11 +131,19 @@ export HOSTED_GRAPH_TEST_RESTATE_ADMIN_URL=http://127.0.0.1:19070
 export HOSTED_GRAPH_TEST_RESTATE_INGRESS_URL=http://127.0.0.1:19080
 export HOSTED_GRAPH_TEST_API_PORT=33330 HOSTED_GRAPH_TEST_ENDPOINT_PORT=33331
 export HOSTED_GRAPH_TEST_DEPLOYMENT_URI=http://127.0.0.1:33331
+remaining_test_seconds=$(( work_deadline - $(date +%s) - 10 ))
+if (( remaining_test_seconds <= 5 )); then
+  echo 'Hosted graph setup left no safe time for the strict test and cleanup.' >&2
+  exit 1
+fi
+test_seconds=$(( remaining_test_seconds < 120 ? remaining_test_seconds : 120 ))
+test_timeout_ms=$(( test_seconds * 1000 - 5000 ))
+export INTEGRATION_TEST_TIMEOUT_MS="$test_timeout_ms"
 record_test planned
 # A background child lets Bash's interruptible wait dispatch cancellation traps
 # immediately. Capture output inside the owned fixture; print it after reaping.
-echo 'Starting Hosted graph qualification (480s maximum).'
-timeout --signal=TERM --kill-after=5s 480s bun test --timeout 120000 ./apps/hosted-control-plane/src/hosted-graph.integration.test.mjs > "$fixture_root/test.log" 2>&1 &
+echo "Starting Hosted graph qualification (test cap ${test_seconds}s; setup and cleanup included in the five-minute step)."
+timeout --signal=TERM --kill-after=5s "${test_seconds}s" bun test --timeout "$test_timeout_ms" ./apps/hosted-control-plane/src/hosted-graph.integration.test.mjs > "$fixture_root/test.log" 2>&1 &
 test_pid="$!"
 record_test running
 set +e

@@ -913,6 +913,7 @@ export class SecureAcpDeviceEndpoint {
         return recorded
       }
       const outcome = await this.#execute(command)
+      if (outcome === undefined) return { kind: 'denial', reason: 'outcome_uncertain' }
       // Recording is best-effort: the claimed entry stays pending, and a later delivery or restart
       // reads pending as outcome_uncertain rather than re-running the effect.
       await this.#recordOutcome(header.commandId, outcome)
@@ -931,11 +932,13 @@ export class SecureAcpDeviceEndpoint {
     }
   }
 
-  async #execute(command: GatewayCommandEnvelope): Promise<AcpRemoteDeviceOutcome> {
+  async #execute(command: GatewayCommandEnvelope): Promise<AcpRemoteDeviceOutcome | undefined> {
     try {
       return { kind: 'exchange', exchange: await this.#executor.dispatch(command) }
     } catch {
-      return { kind: 'denial', reason: 'executor_failed' }
+      // The executor may have applied an external effect before throwing. Keep the claimed ledger
+      // entry pending so replay reports outcome_uncertain instead of asserting a terminal failure.
+      return undefined
     }
   }
 

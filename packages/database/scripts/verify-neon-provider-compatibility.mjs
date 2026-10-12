@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import postgres from 'postgres'
 import process from 'node:process'
+import { verifyNeonMigratorDdl } from './neon-ddl-probe.mjs'
 
 const endpoints = [
   { variable: 'DATABASE_URL', role: 'control_plane_app', pooled: true },
@@ -51,8 +52,12 @@ try {
       async (transaction) => transaction`select 1::integer as result`
     )
     assert.equal(roundTrip.result, 1, `${endpoint.variable} transaction did not round trip`)
+
+    if (endpoint.variable === 'DATABASE_MIGRATION_URL') {
+      await verifyNeonMigratorDdl(sql)
+    }
   }
-  console.log('Neon pooled/direct endpoint and role compatibility verified.')
+  console.log('Neon pooled/direct endpoint, role and migrator DDL compatibility verified.')
 } finally {
   await Promise.all(clients.map((client) => client.end({ timeout: 5 })))
 }

@@ -758,7 +758,7 @@ describe('CP1 persistence-profile conformance', () => {
   )
 
   conformanceMatrix(
-    'matches the cloud Postgres baseline through the profile conformance matrix (direct ports; runs in local PR and trusted-main Neon lanes)',
+    'matches the cloud Postgres baseline through the profile conformance matrix (direct ports; runs in the local PostgreSQL pull-request lane)',
     async () =>
       withConformanceResources(async (own) => {
         const credentials = {

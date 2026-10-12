@@ -699,31 +699,32 @@ describe('edge fences: binding, executor failure, payload ceiling, state store',
     expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(0)
   })
 
-  test('an executor failure is recorded once and replayed without re-running the effect', async () => {
+  test('an executor failure after a side effect remains uncertain on durable replay', async () => {
     const store = new InMemoryAcpRemoteDeviceStateStore()
-    let calls = 0
+    let observedEffects = 0
     const fixture = await createSecureFixture({
       stateStore: store,
       executor: {
         inventory: () => Promise.reject(new Error('INVENTORY_NOT_EXPECTED')),
         dispatch: () => {
-          calls += 1
-          return Promise.reject(new Error('EXECUTOR_DOWN'))
+          observedEffects += 1
+          throw new Error('EXECUTOR_FAILED_AFTER_EFFECT')
         },
       },
     })
-    const sealed = await captureSealedCommand({ commandId: commandIds.first })
+    const firstDelivery = await captureSealedCommand({ commandId: commandIds.first })
 
-    const first = await fixture.device.handleCommand(structuredClone(sealed))
-    expect(first).toMatchObject({ kind: 'denial', reason: 'executor_failed' })
-    expect(calls).toBe(1)
+    const first = await fixture.device.handleCommand(firstDelivery)
+    expect(first).toMatchObject({ kind: 'denial', reason: 'outcome_uncertain' })
+    expect(observedEffects).toBe(1)
 
-    const second = await fixture.device.handleCommand(structuredClone(sealed))
-    expect(second).toEqual(first)
-    expect(calls).toBe(1)
+    // A fresh return key bypasses the in-process delivery-response cache and exercises the durable ledger.
+    const secondDelivery = await captureSealedCommand({ commandId: commandIds.first })
+    const second = await fixture.device.handleCommand(secondDelivery)
+    expect(second).toMatchObject({ kind: 'denial', reason: 'outcome_uncertain' })
+    expect(observedEffects).toBe(1)
     expect(await store.readLedger(commandIds.first)).toEqual({
       identity: expect.any(String),
-      outcome: { kind: 'denial', reason: 'executor_failed' },
     })
   })
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/adea-ai/control-plane/compare/orchestration-v1.8.0...orchestration-v1.9.0) (2026-10-12)
+
+
+### Features
+
+* langgraph-legacy-drain-940 ([#1064](https://github.com/adea-ai/control-plane/issues/1064)) ([84aef5d](https://github.com/adea-ai/control-plane/commit/84aef5de92538f0f8101072dc62420a88f695f24))
+
 ## [1.8.0](https://github.com/adea-ai/control-plane/compare/orchestration-v1.7.0...orchestration-v1.8.0) (2026-10-12)
 
 
