@@ -292,8 +292,16 @@ describe('SQLite persistence provider', () => {
 
   test('fails closed on stale revisions and rolls the transaction back', async () => {
     const { instance } = await provider()
+    const correlation = { workspaceId: 'wsp_test', projectId: 'prj_test' }
     await instance.transaction((transaction) =>
-      transaction.put({ namespace: 'executions', id: 'execution-1', value: { state: 'queued' } })
+      transaction.put({
+        namespace: 'executions',
+        id: 'execution-1',
+        value: {
+          state: 'queued',
+          correlation,
+        },
+      })
     )
 
     await expect(
@@ -302,13 +310,13 @@ describe('SQLite persistence provider', () => {
           namespace: 'executions',
           id: 'execution-1',
           expectedRevision: 1,
-          value: { state: 'running' },
+          value: { state: 'running', correlation },
         })
         await transaction.put({
           namespace: 'executions',
           id: 'execution-1',
           expectedRevision: 1,
-          value: { state: 'completed' },
+          value: { state: 'completed', correlation },
         })
       })
     ).rejects.toMatchObject({ code: 'SQLITE_REVISION_CONFLICT' })

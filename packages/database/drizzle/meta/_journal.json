@@ -505,6 +505,13 @@
       "when": 1791642056459,
       "tag": "0071_persistence_records",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1791789524065,
+      "tag": "0072_scope_version_pairing",
+      "breakpoints": true
     }
   ]
 }

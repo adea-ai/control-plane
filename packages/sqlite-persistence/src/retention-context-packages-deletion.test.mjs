@@ -487,6 +487,7 @@ describe('SQLite context-package retention deletion (#194)', () => {
           value: {
             executionPlanId: 'pln_fixture',
             contextPackage: { contextPackageId: package_.contextPackageId },
+            correlation: { projectId: package_.projectState.projectId },
           },
         })
       )

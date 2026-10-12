@@ -104,6 +104,7 @@ export const INTEGRATION_SHARDS = [
           'src/retention-claim-budget.integration.test.mjs',
           'src/retention-claim-lock-order.integration.test.mjs',
           'src/workspace-execution-scope.integration.test.mjs',
+          'src/workspace-execution-scope-version-pairing.integration.test.mjs',
           'src/legacy-drain-fence-repository.integration.test.mjs',
         ],
       },

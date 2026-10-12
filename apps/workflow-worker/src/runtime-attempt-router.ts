@@ -52,6 +52,7 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
   }): Promise<SelectedRuntime> {
     const scope = executionScopeOf(input.execution.correlation)
     if (
+      input.executionPlan.schemaVersion !== 1 ||
       scope.kind !== 'project' ||
       !executionScopesEqual(input.execution.correlation, input.executionPlan.correlation)
     ) {
