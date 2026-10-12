@@ -3,17 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'bun:test'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
-import {
-  CompactionEntry,
-  createRegistry,
-  Harness,
-} from '@earendil-works/pi-durable'
+import { CompactionEntry, createRegistry, Harness } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { createModels } from '@earendil-works/pi-ai/models'
-import {
-  fauxAssistantMessage,
-  fauxProvider,
-} from '@earendil-works/pi-ai/providers/faux'
+import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux'
 import { contextPackageSerializationFixtures, deriveContextPackage } from '@control-plane/context'
 import {
   ExecutionAttemptSchema,
