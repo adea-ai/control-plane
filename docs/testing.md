@@ -104,50 +104,77 @@ M10 profile-aware conformance covers:
   `server` for deployment-independent semantics. Its report names the owning port, concrete adapter,
   profile, normalized digest, and divergence result for every case.
 
-PostgreSQL-backed cases must additionally run against an isolated database on a disposable Neon
-branch or the pinned local PostgreSQL fixture. SQLite-backed cases use disposable database files.
-An in-memory cloud baseline is contract evidence only and never substitutes for the live PostgreSQL
-lane. Provider branches used for release checks must be created from the intended environment,
-expire automatically, and be deleted after evidence is recorded.
+PostgreSQL-backed cases run against an isolated database on the pinned local PostgreSQL fixture in
+the required integration and migration/profile lanes. The bounded Neon provider-compatibility proof
+is a separate live-provider check; it does not substitute for those cases. SQLite-backed cases use
+disposable database files. An in-memory cloud baseline is contract evidence only and never
+substitutes for the live PostgreSQL lane. Neon compatibility branches expire automatically and are
+deleted after evidence is recorded.
 
-The local pull-request lane builds once, starts one runner-owned disposable PostgreSQL service, and
-runs the three `test:integration` shards from `scripts/integration-shards.mjs` concurrently against
-that service. Files remain serial within each shard; the bounded test cases create isolated
-databases. The trusted-main Neon lane gives each shard its own disposable branch so shards never
-share a Neon compute instance. After migrations, shard 1 checks Neon pooled and direct runtime
-connections and the direct migrator role with TLS and transaction round trips; the general suite
-continues to run on all three Neon shards. New integration files must be assigned to a shard explicitly, which
-`tests/integration-shards.test.mjs` enforces. The expanded database foundation file has complementary
-case filters on shards 1 and 2. The partition check uses the development-only Acorn JavaScript
-parser (independent of the TypeScript compiler API) to inventory its literal test names, bounds each
-slice, and executes those names through Bun using the runner's actual arguments to reject missing
-or duplicate selection. The local lanes run cloud-remote and PostgreSQL recovery drills once after
-all shards finish.
+The required Code Foundry `Test/Integration` lane builds once, starts one runner-owned disposable
+PostgreSQL service, and runs the three `test:integration` shards from
+`scripts/integration-shards.mjs` concurrently against it. Files remain serial within each shard;
+bounded test cases create isolated databases. The separate local PostgreSQL pull-request workflow
+checks migration/schema consistency, the PostgreSQL profile conformance matrix, and Hosted
+PostgreSQL/Restate graph behavior. The ruleset check is `Validation / Gate`; it depends on the mode,
+Code Foundry runtime, and PostgreSQL qualification results, and fails closed if any dependency is
+not successful, including when a dependency is skipped or cancelled. New integration files must be
+assigned to one shard or to the explicit dedicated-qualification manifest, which
+`tests/integration-shards.test.mjs` enforces. The expanded database foundation file has
+complementary case filters on shards 1 and 2. The partition check uses the development-only Acorn
+JavaScript parser (independent of the TypeScript compiler API) to inventory literal test names,
+bounds each slice, and executes those names through Bun using the runner's actual arguments to
+reject missing or duplicate selection. The local integration lane runs
+cloud-remote and PostgreSQL recovery drills once after all shards finish.
+
+The trusted-main Neon lane creates one short-lived branch and checks pooled and direct application
+connections plus the direct migrator role, TLS, and transaction round trips. The compatibility
+check also runs a transaction as the migrator that creates a uniquely named table in `app`, writes
+and reads a marker, then drops the table. This narrow DDL probe checks provider permissions; it does
+not apply the application migration set. The lane does not run the portable integration suite,
+migrations, build, profile matrix, or Hosted Restate qualification on Neon. Its five-minute budget
+starts before branch creation and ends after exact branch lookup, deletion, and absence verification;
+the compatibility command itself has a 90-second timeout. A successful baseline requires the
+compatibility proof and every cleanup/budget step to succeed.
+Complete historical three-shard Neon runs remain accepted as stronger baselines while they are in
+the classifier lookback window. New full-suite files still need their single local owner, recorded
+in `tests/integration-shards.test.mjs`.
 The complete database budget-admission file runs on shard 1. In trusted-main run
 `37177353771`, that file took 955.20 seconds on shard 2, whose integration step took
 2,602 seconds without retries. Moving the file uses shard 1's spare capacity while
 keeping three branch owners and every case. This addresses imbalance near the job
 deadline; actual runner billing and Neon cost savings remain unmeasured. See
 [the timing evidence](evidence/m11-neon-budget-balance-2026-10-04.md).
-The 2026-10-11 main run reached shard 2's 45-minute limit after its foundation,
-retention, and partial usage-store work. The candidate moves the measured tail
-files to shard 1 and the unmeasured workspace-scope file to shard 3; the censored
-durations remain lower bounds pending a complete hosted run. See
-[the shard rebalance evidence](evidence/m11-neon-shard-rebalance-2026-10-11.md).
-Preview cleanup resolves the exact run/attempt/shard name and validates the project, parent,
+The historical 2026-10-11 main run reached shard 2's 45-minute limit after its
+foundation, retention, and partial usage-store work. A shard-rebalance proposal
+then moved the measured tail files to shard 1 and the unmeasured workspace-scope
+file to shard 3; its censored durations remain lower bounds pending a complete
+hosted run. This is historical partition evidence, not the current trusted-main
+Neon workflow. See [the shard rebalance evidence](evidence/m11-neon-shard-rebalance-2026-10-11.md).
+Historical measurements explain why the full suite remains on the local lane. The complete trusted-
+main run [38198473355](https://github.com/adea-ai/control-plane/actions/runs/38198473355) measured
+791s/416s/1,047s of integration work on shards 1/2/3; Hosted Restate qualification took 31s on
+shard 3. Later run [38209161123](https://github.com/adea-ai/control-plane/actions/runs/38209161123)
+measured 37m09s on shard 1 and 18m14s on shard 2 before shard 3 was canceled at 45m23s. All three
+branches were deleted and their absence verified. The former candidate that moved the 263.7s
+LangGraph inventory test was only a projection and did not solve this runtime. See the
+[compatibility budget evidence](evidence/m11-neon-compatibility-budget-2026-10-12.md) for current
+scope and the local pull-request timing record.
+
+Preview cleanup resolves the exact run/attempt/branch name and validates the project, parent,
 protection flags, and complete listing before exporting a branch ID for deletion. Each listing
 page allows three attempts for transport failures or HTTP 408/429/500/502/503/504, with ten-second
 request deadlines and 500/1000 ms backoff. Other HTTP failures and invalid metadata fail closed.
-The lookup step has a twelve-minute ceiling, including the existing twenty-page limit; exhausting
+The lookup step has a two-minute ceiling, including the existing twenty-page limit; exhausting
 retries leaves the workflow failed and requires follow-up cleanup. The one-day branch expiration
 is a fallback, not evidence that deletion succeeded. Cleanup retries do not repeat integration tests.
-A remote branch stretches tests that finish in
-seconds locally to tens of seconds and its pooler occasionally severs pooled connections, so the
-remote lane raises the per-test ceiling to 120 seconds. Every integration file runs once in a fresh
-process. Connection-drop evidence, assertion failures, timeouts and all other errors fail the
-owning shard; no automatic file or slice rerun can turn a failed attempt green. The runner streams
-complete child output to the job log and retains only a 16 KiB tail per stream for bounded failure
-diagnostics. The local lane keeps the 30-second fast-fail ceiling. Because an explicit
+A remote branch stretches tests that finish in seconds locally to tens of seconds and its pooler
+occasionally severs pooled connections. The runner's remote mode keeps a 120-second per-test ceiling
+for explicit remote integration invocations; the trusted-main compatibility check uses its own
+bounded command instead. Every integration file runs once in a fresh process. Connection-drop
+evidence, assertion failures, timeouts and all other errors fail the owning shard; no automatic file or slice rerun can turn a failed attempt green. The runner streams complete child output to the job
+log and retains only a 16 KiB tail per stream for bounded failure diagnostics. The local lane keeps
+the 30-second fast-fail ceiling. Because an explicit
 bun `test()` timeout argument always overrides the CLI `--timeout` default, the
 PostgreSQL integration suites author their explicit budgets through
 `integrationTestTimeout()` (`@control-plane/database/testing`), which the runner scales through

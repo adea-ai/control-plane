@@ -2,8 +2,17 @@ import {
   GraphReferenceSchema,
   GraphToolPinSchema,
   IdentifierSchemas,
+  OPAQUE_IDENTIFIER_SUFFIX_LENGTH,
 } from '@control-plane/contracts'
 import { z } from 'zod'
+
+export const MAXIMUM_GRAPH_REFERENCE_LENGTH = 256
+const WORKSPACE_IDENTIFIER_LENGTH = 'wsp'.length + 1 + OPAQUE_IDENTIFIER_SUFFIX_LENGTH
+const EXECUTION_IDENTIFIER_LENGTH = 'exe'.length + 1 + OPAQUE_IDENTIFIER_SUFFIX_LENGTH
+
+/** Maximum composite checkpoint ID: canonical workspace/execution IDs plus the full safe thread reference. */
+export const MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH =
+  WORKSPACE_IDENTIFIER_LENGTH + 1 + EXECUTION_IDENTIFIER_LENGTH + 1 + MAXIMUM_GRAPH_REFERENCE_LENGTH
 
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 const MarketplacePluginReferenceSchema = z
@@ -17,7 +26,7 @@ const TimestampSchema = z.iso.datetime()
 const SafeReferenceSchema = z
   .string()
   .min(1)
-  .max(256)
+  .max(MAXIMUM_GRAPH_REFERENCE_LENGTH)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/)
 const JsonObjectSchema = z.record(z.string(), z.json())
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/adea-ai/control-plane/compare/contracts-v1.20.0...contracts-v1.21.0) (2026-10-12)
+
+
+### Features
+
+* langgraph-legacy-drain-940 ([#1064](https://github.com/adea-ai/control-plane/issues/1064)) ([84aef5d](https://github.com/adea-ai/control-plane/commit/84aef5de92538f0f8101072dc62420a88f695f24))
+
 ## [1.20.0](https://github.com/adea-ai/control-plane/compare/contracts-v1.19.1...contracts-v1.20.0) (2026-10-10)
 
 

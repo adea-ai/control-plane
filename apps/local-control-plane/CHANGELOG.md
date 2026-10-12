@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.32.0...local-control-plane-v1.33.0) (2026-10-12)
+
+
+### Features
+
+* langgraph-legacy-drain-940 ([#1064](https://github.com/adea-ai/control-plane/issues/1064)) ([84aef5d](https://github.com/adea-ai/control-plane/commit/84aef5de92538f0f8101072dc62420a88f695f24))
+
 ## [1.32.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.31.0...local-control-plane-v1.32.0) (2026-10-10)
 
 

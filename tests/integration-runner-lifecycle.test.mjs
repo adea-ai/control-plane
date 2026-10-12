@@ -13,7 +13,12 @@ import {
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { INTEGRATION_SHARDS, integrationFileArguments } from '../scripts/integration-shards.mjs'
+import {
+  DEDICATED_INTEGRATION_QUALIFICATIONS,
+  INTEGRATION_SHARDS,
+  integrationFileArguments,
+  selectIntegrationShard,
+} from '../scripts/integration-shards.mjs'
 
 const repository = fileURLToPath(new URL('..', import.meta.url))
 const runner = join(repository, 'scripts/run-integration-tests.mjs')
@@ -179,8 +184,38 @@ describe('integration runner resource ownership', () => {
   )
 
   test(
-    'trusted remote shard 3 delegates Hosted graph exactly once to qualification',
+    'remote shard 3 leaves Hosted graph to its sole dedicated PostgreSQL qualification owner',
     () => {
+      const hostedGraphFile = 'apps/hosted-control-plane/src/hosted-graph.integration.test.mjs'
+      const shardOwners = INTEGRATION_SHARDS.flatMap(({ shard, groups }) =>
+        groups.flatMap((group) =>
+          group.files
+            .map((file) =>
+              group.package === '.' ? file.replace(/^\.\//, '') : `${group.package}/${file}`
+            )
+            .filter((file) => file === hostedGraphFile)
+            .map(() => ({ kind: 'shard', shard }))
+        )
+      )
+      const qualificationOwners = DEDICATED_INTEGRATION_QUALIFICATIONS.filter(
+        ({ file }) => file === hostedGraphFile
+      ).map(({ file, workflow, command }) => ({ kind: 'qualification', file, workflow, command }))
+      expect([...shardOwners, ...qualificationOwners]).toEqual([
+        {
+          kind: 'qualification',
+          file: hostedGraphFile,
+          workflow: '.github/workflows/postgres-pull-request.yml',
+          command: 'bash scripts/run-hosted-graph-qualification.sh',
+        },
+      ])
+
+      const expectedShardCalls = selectIntegrationShard(3).flatMap((group) =>
+        group.files.map((file) => integrationFileArguments(group, file, '120000'))
+      )
+      const shardTestCalls = (result) =>
+        result.calls
+          .filter(({ program, args }) => program === 'bun' && args[0] === 'test')
+          .map(({ args }) => args)
       const result = executeRunner({
         ...remoteTarget,
         INTEGRATION_SHARD: '3',
@@ -188,10 +223,8 @@ describe('integration runner resource ownership', () => {
       })
       expect(result.status).toBe(0)
       expect(result.calls.filter(({ program }) => program === 'docker')).toEqual([])
-      expect(
-        result.calls.some(({ args }) => args.includes('src/hosted-graph.integration.test.mjs'))
-      ).toBe(false)
-      expect(result.stdout).toContain(
+      expect(shardTestCalls(result)).toEqual(expectedShardCalls)
+      expect(result.stdout).not.toContain(
         'Hosted PostgreSQL/Restate graph runs in its required qualification step.'
       )
       const developer = executeRunner({
@@ -200,9 +233,7 @@ describe('integration runner resource ownership', () => {
         GITHUB_ACTIONS: '',
       })
       expect(developer.status).toBe(0)
-      expect(
-        developer.calls.filter(({ args }) => args.includes('src/hosted-graph.integration.test.mjs'))
-      ).toHaveLength(1)
+      expect(shardTestCalls(developer)).toEqual(expectedShardCalls)
     },
     runnerTestBudgetMs
   )

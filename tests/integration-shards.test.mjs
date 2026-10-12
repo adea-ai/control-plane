@@ -6,11 +6,17 @@ import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse } from 'acorn'
 import {
+  DEDICATED_INTEGRATION_QUALIFICATIONS,
   INTEGRATION_SHARDS,
   integrationFileArguments,
   parseIntegrationShard,
   selectIntegrationShard,
 } from '../scripts/integration-shards.mjs'
+
+const postgresPullRequestWorkflow = readFileSync(
+  new URL('../.github/workflows/postgres-pull-request.yml', import.meta.url),
+  'utf8'
+)
 
 function integrationFilesUnder(directory) {
   const root = fileURLToPath(new URL(`../${directory}`, import.meta.url))
@@ -134,8 +140,8 @@ describe('integration shard partition', () => {
     expect(foundationCaseInventory(source).names).toHaveLength(24)
     expect(file.totalStaticCases).toBe(24)
     expect(measurement.integrationComplete).toEqual({ 1: false, 2: true, 3: true })
-    // Both the interrupted step and file are censored. Bound only the known
-    // work after redistribution; complete hosted qualification remains required.
+    // Both the interrupted step and file are censored. This evidence is
+    // historical and no longer qualifies the current Neon provider-only lane.
     const recorded = { ...measurement.integrationSeconds }
     recorded[file.fromShard] -= file.secondsLowerBound
     recorded[owners[0].shard] += file.secondsLowerBound
@@ -143,35 +149,6 @@ describe('integration shard partition', () => {
     expect(
       measurement.integrationSeconds[1] - Math.max(...Object.values(recorded))
     ).toBeGreaterThan(12 * 60)
-  })
-
-  test('recent censored shard evidence moves the measured tail without losing coverage', () => {
-    const measurement = JSON.parse(
-      readFileSync(
-        new URL('../docs/evidence/m11-neon-shard-rebalance-2026-10-11.json', import.meta.url),
-        'utf8'
-      )
-    )
-    expect(measurement.runId).toBe(38178336814)
-    expect(measurement.runHeadSha).toBe('7d61c6c5551348fa172bfc8998f8b6406329ea1b')
-    expect(measurement.baselineSha).toBe('6e772034516d31f3a7ddd0474b7c41cfc42f38a7')
-    expect(measurement.observed.shard2.usageStoreCompletedTests).toBe(9)
-    expect(measurement.observed.shard2.usageStoreTotalTests).toBe(12)
-    expect(measurement.observed.shard2.usageStoreSecondsLowerBound).toBe(594.492)
-    expect(measurement.observed.shard2.retryMessages).toBe(false)
-    expect(measurement.observed.shard2.cleanupVerified).toBe(true)
-
-    for (const file of measurement.proposedMoves) {
-      const owners = INTEGRATION_SHARDS.flatMap(({ shard, groups }) =>
-        groups
-          .filter((group) => group.package === file.package && group.files.includes(file.file))
-          .map(() => shard)
-      )
-      expect(owners).toEqual([file.toShard])
-      const source = readFileSync(new URL(`../${file.package}/${file.file}`, import.meta.url))
-      expect(createHash('sha256').update(source).digest('hex')).toBe(file.sourceSha256)
-    }
-    expect(measurement.completeHostedRunRequired).toBe(true)
   })
 
   test('inventory parses JavaScript and rejects disabled or dynamic case declarations', () => {
@@ -212,10 +189,17 @@ describe('integration shard partition', () => {
         for (const file of group.files) {
           const key = group.package === '.' ? file.replace(/^\.\//, '') : `${group.package}/${file}`
           const owners = assigned.get(key) ?? []
-          owners.push({ shard: entry.shard, pattern: group.testNamePattern })
+          owners.push({ kind: 'shard', shard: entry.shard, pattern: group.testNamePattern })
           assigned.set(key, owners)
         }
       }
+    }
+    for (const qualification of DEDICATED_INTEGRATION_QUALIFICATIONS) {
+      const owners = assigned.get(qualification.file) ?? []
+      owners.push({ kind: 'qualification', ...qualification })
+      assigned.set(qualification.file, owners)
+      expect(qualification.workflow).toBe('.github/workflows/postgres-pull-request.yml')
+      expect(postgresPullRequestWorkflow.split(qualification.command)).toHaveLength(2)
     }
     const discovered = []
     for (const directory of packages) {
@@ -226,6 +210,10 @@ describe('integration shard partition', () => {
     expect([...assigned.keys()].toSorted()).toEqual(discovered.toSorted())
     expect(assigned.size).toBeGreaterThan(20)
     for (const [file, owners] of assigned) {
+      if (owners[0].kind === 'qualification') {
+        expect(owners).toHaveLength(1)
+        continue
+      }
       if (owners.length === 1) {
         expect(owners[0].pattern).toBeUndefined()
       } else {
