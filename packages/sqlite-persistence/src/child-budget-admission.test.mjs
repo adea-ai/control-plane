@@ -2,6 +2,18 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'bun:test'
+import { BACKGROUND_CONTEXT } from '../../pi-durable-adapter/node_modules/@earendil-works/chord/dist/context/index.js'
+import {
+  CompactionEntry,
+  createRegistry,
+  Harness,
+} from '../../pi-durable-adapter/node_modules/@earendil-works/pi-durable/dist/index.js'
+import { openNodeSqliteStorage } from '../../pi-durable-adapter/node_modules/@earendil-works/pi-durable/dist/storage/sqlite/node.js'
+import { createModels } from '../../pi-durable-adapter/node_modules/@earendil-works/pi-ai/dist/models.js'
+import {
+  fauxAssistantMessage,
+  fauxProvider,
+} from '../../pi-durable-adapter/node_modules/@earendil-works/pi-ai/dist/providers/faux.js'
 import { contextPackageSerializationFixtures, deriveContextPackage } from '@control-plane/context'
 import {
   ExecutionAttemptSchema,
@@ -40,6 +52,7 @@ async function fixture({
   parentBudget = { maximumMicrounits: 10_000_000, maximumTokens: 250_000 },
   maximumTotal = 1,
   maximumParallel = 1,
+  maximumDepth = 2,
   startParent = true,
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'sqlite-child-budget-admission-'))
@@ -51,7 +64,7 @@ async function fixture({
   parentInput.correlation.taskId = 'tsk_01JABCDEF0123456789ABCDEFG'
   parentInput.correlation.requestId = 'req_01JABCDEF0123456789ABCDEFG'
   parentInput.constraints.limits.childExecutions.maximumTotal = maximumTotal
-  parentInput.constraints.limits.childExecutions.maximumDepth = 2
+  parentInput.constraints.limits.childExecutions.maximumDepth = maximumDepth
   parentInput.constraints.limits.concurrency.maximumParallel = maximumParallel
   const canonicalParentPlan = compiler.compile(parentInput)
   const parentContextPackage = contextPackageSerializationFixtures.futurePi
@@ -1145,5 +1158,148 @@ test('a child authority reader is unusable after its fence returns', async () =>
     )
   } finally {
     await f.close()
+  }
+})
+
+test('manual Pi compaction preserves SQLite child budget, depth, total, and concurrency fences', async () => {
+  const compactionDirectory = await mkdtemp(join(tmpdir(), 'pi-manual-compaction-child-fences-'))
+  const compactionStorage = await openNodeSqliteStorage(join(compactionDirectory, 'pi.sqlite'))
+  const models = createModels()
+  const faux = fauxProvider()
+  models.setProvider(faux.provider)
+  faux.setResponses([
+    fauxAssistantMessage('The parent turn is recorded before compaction.'),
+    fauxAssistantMessage('The parent turn and its active child constraints remain recorded.'),
+  ])
+  let harness
+  const fixtures = []
+  const allocate = (child) =>
+    child.allocator.allocate({
+      request: child.request,
+      receipt: child.receipt,
+      execution: child.childExecution,
+      attempt: child.childAttempt,
+      delegation: child.delegation,
+      assertCurrent: async () => undefined,
+    })
+  try {
+    const total = await fixture({ maximumTotal: 1, maximumParallel: 2 })
+    fixtures.push(total)
+    const parallel = await fixture({ maximumTotal: 2, maximumParallel: 1 })
+    fixtures.push(parallel)
+    const depth = await fixture({ maximumTotal: 2, maximumParallel: 2, maximumDepth: 0 })
+    fixtures.push(depth)
+
+    const totalAdmitted = await total.childAdmission()
+    const totalSibling = await total.childAdmission()
+    await allocate(totalAdmitted)
+    const totalBudgetBefore = await total.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(ids.parentExecutionId)
+    )
+    const parallelAdmitted = await parallel.childAdmission()
+    const parallelSibling = await parallel.childAdmission()
+    await allocate(parallelAdmitted)
+    const parallelBudgetBefore = await parallel.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(ids.parentExecutionId)
+    )
+    const tooDeep = await depth.childAdmission()
+
+    harness = await Harness.open(
+      compactionStorage,
+      {
+        models,
+        registry: createRegistry(),
+        settings: {
+          compaction: {
+            enabled: false,
+            keepRecentTokens: 1,
+            reserveTokens: 128,
+            backgroundTokens: 0,
+          },
+          retry: { enabled: false, maxRetries: 0 },
+        },
+      },
+      BACKGROUND_CONTEXT
+    )
+    const root = await harness.root(BACKGROUND_CONTEXT, {
+      agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+    })
+    const firstTurn = await root.submit(
+      {
+        type: 'input',
+        requestId: 'manual-compaction-child-fences:turn:1',
+        content: 'Record the parent turn before manual compaction.',
+      },
+      BACKGROUND_CONTEXT
+    )
+    expect((await firstTurn.wait(BACKGROUND_CONTEXT)).status).toBe('done')
+    expect(faux.state.callCount).toBe(1)
+
+    const taskId = await root.compact(
+      'Preserve the parent turn and its child admission constraints.',
+      BACKGROUND_CONTEXT
+    )
+    const task = await harness.waitForTask(taskId, BACKGROUND_CONTEXT)
+    expect(task.state.status).toBe('terminal')
+    expect(task.state.outcome.status).toBe('completed')
+    expect(task.state.outcome.result.submissionId).toBeDefined()
+    const compactionSubmission = await harness.submission(
+      task.state.outcome.result.submissionId,
+      BACKGROUND_CONTEXT
+    )
+    expect(compactionSubmission).toBeDefined()
+    expect((await compactionSubmission.wait(BACKGROUND_CONTEXT)).status).toBe('done')
+    expect(faux.state.callCount).toBe(2)
+    const compacted = await root.context(BACKGROUND_CONTEXT)
+    const summary = compacted.entries.find((entry) => entry.kind === CompactionEntry.kind)
+    expect(summary).toBeDefined()
+    expect(JSON.stringify(summary)).toContain('parent turn and its active child constraints')
+
+    await expect(allocate(totalSibling)).rejects.toMatchObject({
+      code: 'DELEGATION_LIMIT_EXCEEDED',
+    })
+    await expect(allocate(parallelSibling)).rejects.toMatchObject({
+      code: 'DELEGATION_CONCURRENCY_LIMIT_EXCEEDED',
+    })
+    await expect(allocate(tooDeep)).rejects.toMatchObject({
+      code: 'DELEGATION_DEPTH_EXCEEDED',
+    })
+
+    await expect(
+      total.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(totalAdmitted.childIds.childExecutionId)
+      )
+    ).resolves.toBeDefined()
+    await expect(
+      total.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(totalSibling.childIds.childExecutionId)
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      total.usageStore.transaction(ids.workspaceId, (tx) => tx.getBudget(ids.parentExecutionId))
+    ).resolves.toEqual(totalBudgetBefore)
+    await expect(
+      parallel.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(parallelAdmitted.childIds.childExecutionId)
+      )
+    ).resolves.toBeDefined()
+    await expect(
+      parallel.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(parallelSibling.childIds.childExecutionId)
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      parallel.usageStore.transaction(ids.workspaceId, (tx) => tx.getBudget(ids.parentExecutionId))
+    ).resolves.toEqual(parallelBudgetBefore)
+    await expect(
+      depth.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(tooDeep.childIds.childExecutionId)
+      )
+    ).resolves.toBeUndefined()
+  } finally {
+    await harness?.close(BACKGROUND_CONTEXT)
+    await compactionStorage.close(BACKGROUND_CONTEXT)
+    await rm(compactionDirectory, { recursive: true, force: true })
+    await Promise.all(fixtures.map((item) => item.close()))
   }
 })
