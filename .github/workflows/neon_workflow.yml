@@ -237,6 +237,9 @@ jobs:
         run: |
           bun --cwd=packages/database run db:check
           bun --cwd=packages/database run db:migrate
+          if [ "${{ matrix.shard }}" = "1" ]; then
+            bun --cwd=packages/database scripts/verify-neon-provider-compatibility.mjs
+          fi
           bun scripts/run-integration-tests.mjs --shard=${{ matrix.shard }}
 
       - name: Verify Hosted PostgreSQL and Restate graph

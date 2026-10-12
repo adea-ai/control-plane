@@ -103,15 +103,33 @@ export class ParallelDelegationCoordinator {
   >
   readonly #projectState: Pick<ProjectStateService, 'createPromotionProposal'>
 
+  readonly #contexts:
+    | {
+        put(contextPackage: ReturnType<typeof deriveContextPackage>): Promise<unknown>
+      }
+    | undefined
+
   constructor(options: {
     readonly delegations: Pick<
       DelegationService,
       'delegate' | 'deriveChildPlan' | 'dispatchChild' | 'listChildren'
     >
     readonly projectState: Pick<ProjectStateService, 'createPromotionProposal'>
+    /**
+     * Optional persistence port for the derived per-branch context packages.
+     * Durable plan repositories reject a plan whose context package is not
+     * retained, so a composition backed by SQLite (or any validating store)
+     * passes its context repository here; in-memory compositions may omit it.
+     * The coordinator still derives the packages itself — owners never
+     * pre-supply or substitute them.
+     */
+    readonly contexts?: {
+      put(contextPackage: ReturnType<typeof deriveContextPackage>): Promise<unknown>
+    }
   }) {
     this.#delegations = options.delegations
     this.#projectState = options.projectState
+    this.#contexts = options.contexts
   }
 
   async fanOut(input: {
@@ -184,6 +202,9 @@ export class ParallelDelegationCoordinator {
 
     const results: ParallelDelegationBranch[] = []
     for (const { branch, contextPackage } of prepared) {
+      // Retain the derived context before the child plan is persisted, so a
+      // validating (durable) plan repository finds its context package.
+      await this.#contexts?.put(contextPackage)
       await this.#delegations.delegate({
         delegationId: branch.delegationId,
         delegationGroupId,
