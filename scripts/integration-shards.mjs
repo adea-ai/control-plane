@@ -104,6 +104,7 @@ export const INTEGRATION_SHARDS = [
           'src/retention-claim-budget.integration.test.mjs',
           'src/retention-claim-lock-order.integration.test.mjs',
           'src/workspace-execution-scope.integration.test.mjs',
+          'src/legacy-drain-fence-repository.integration.test.mjs',
         ],
       },
       { package: 'packages/profile-portability', files: ['src/postgres.integration.test.mjs'] },
@@ -114,7 +115,10 @@ export const INTEGRATION_SHARDS = [
       },
       {
         package: '.',
-        files: ['./tests/langgraph-retirement-inventory-pg.integration.test.mjs'],
+        files: [
+          './tests/langgraph-retirement-inventory-pg.integration.test.mjs',
+          './tests/langgraph-retirement-status-adapter.integration.test.mjs',
+        ],
       },
       {
         package: 'apps/workflow-worker',
@@ -144,6 +148,7 @@ export const INTEGRATION_SHARDS = [
           'src/hosted-http.integration.test.mjs',
           'src/reconciliation-metrics.integration.test.mjs',
           'src/reconciliation-projection.integration.test.mjs',
+          'src/hosted-graph-legacy-fence.integration.test.mjs',
         ],
       },
     ],
