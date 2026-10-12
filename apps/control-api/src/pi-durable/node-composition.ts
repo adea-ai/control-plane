@@ -122,6 +122,9 @@ export async function createNodePiDurableLeadComposition(
       ...(options.governedDelegateChild
         ? { governedDelegateChild: options.governedDelegateChild }
         : {}),
+      ...(options.governedManagementCall
+        ? { governedManagementCall: options.governedManagementCall }
+        : {}),
     })
     const preparations = options.preparationAuthority
       ? new SqlitePiLeadPreparations(

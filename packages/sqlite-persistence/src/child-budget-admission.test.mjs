@@ -1460,8 +1460,6 @@ test('cancelling an admitted child persists consistently across a store restart'
   }
 })
 
-const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
-
 test('child authority reads go through the allocation transaction reader and match the repositories', async () => {
   const f = await fixture()
   try {
@@ -1500,40 +1498,115 @@ test('child authority reads go through the allocation transaction reader and mat
 
 test('an unrelated reader stays outside an open child allocation fence until it commits', async () => {
   const f = await fixture()
+  const gate = createReleaseGate()
+  let allocation
+  let unrelated
+  let failed = false
+  let failure
   try {
     const child = await f.childAdmission()
-    let fenceEntered
-    const entered = new Promise((resolve) => (fenceEntered = resolve))
-    let release
-    const parked = new Promise((resolve) => (release = resolve))
-    const allocation = child.allocator.allocate({
-      request: child.request,
-      receipt: child.receipt,
-      execution: child.childExecution,
-      attempt: child.childAttempt,
-      delegation: child.delegation,
-      assertCurrent: async (reader) => {
-        await reader.getExecution(child.request.parentExecutionId)
-        fenceEntered()
-        await parked
-      },
-    })
-    await entered
-    let unrelatedSettled = false
-    const unrelated = child.executionRepository
-      .getExecution(child.childIds.childExecutionId)
-      .then((value) => {
-        unrelatedSettled = true
-        return value
+    allocation = observeOperation(
+      child.allocator.allocate({
+        request: child.request,
+        receipt: child.receipt,
+        execution: child.childExecution,
+        attempt: child.childAttempt,
+        delegation: child.delegation,
+        assertCurrent: async (reader) => {
+          await reader.getExecution(child.request.parentExecutionId)
+          await gate.pause()
+        },
       })
-    await pause(25)
-    expect(unrelatedSettled).toBe(false)
-    release()
-    await expect(allocation).resolves.toBe(true)
-    expect(await unrelated).toBeDefined()
-  } finally {
-    await f.close()
+    )
+    await waitForGateOrOperation(gate.entered, allocation, 'child allocation fence')
+    unrelated = observeOperation(
+      Promise.resolve().then(() =>
+        child.executionRepository.getExecution(child.childIds.childExecutionId)
+      )
+    )
+    const readerRace = await raceWithLimit(
+      [
+        unrelated.outcome.then((result) => ({ status: 'operation', result })),
+        new Promise((resolve) => setTimeout(() => resolve({ status: 'observation-window' }), 25)),
+      ],
+      'unrelated reader fence observation'
+    )
+    expect(readerRace.status).toBe('observation-window')
+    expect(await gate.entered).toBe('entered')
+    gate.release()
+    const allocationOutcome = await settleOperation(allocation, 'child allocation')
+    if (allocationOutcome.status === 'rejected') throw allocationOutcome.error
+    expect(allocationOutcome.value).toBe(true)
+    const unrelatedOutcome = await settleOperation(unrelated, 'unrelated reader')
+    if (unrelatedOutcome.status === 'rejected') throw unrelatedOutcome.error
+    expect(unrelatedOutcome.value).toBeDefined()
+  } catch (error) {
+    failed = true
+    failure = error
   }
+  try {
+    await settleOwnedOperationsAndClose(f, gate, [
+      [allocation, 'child allocation cleanup'],
+      [unrelated, 'unrelated reader cleanup'],
+    ])
+  } catch (cleanupError) {
+    if (!failed) {
+      failed = true
+      failure = cleanupError
+    } else {
+      console.error('allocation-fence cleanup failed after its assertion failed', cleanupError)
+    }
+  }
+  if (failed) throw failure
+})
+
+test('allocation-fence cleanup releases parked work and preserves the original assertion failure', async () => {
+  const f = await fixture()
+  const gate = createReleaseGate()
+  let allocation
+  let unrelated
+  let observedFailure
+  const assertionFailure = new Error('injected allocation-fence assertion failure')
+  try {
+    const child = await f.childAdmission()
+    allocation = observeOperation(
+      child.allocator.allocate({
+        request: child.request,
+        receipt: child.receipt,
+        execution: child.childExecution,
+        attempt: child.childAttempt,
+        delegation: child.delegation,
+        assertCurrent: async (reader) => {
+          await reader.getExecution(child.request.parentExecutionId)
+          await gate.pause()
+        },
+      })
+    )
+    await waitForGateOrOperation(gate.entered, allocation, 'fault-path allocation fence')
+    unrelated = observeOperation(
+      Promise.resolve().then(() =>
+        child.executionRepository.getExecution(child.childIds.childExecutionId)
+      )
+    )
+    throw assertionFailure
+  } catch (error) {
+    observedFailure = error
+  }
+
+  let cleanupFailure
+  try {
+    await settleOwnedOperationsAndClose(f, gate, [
+      [allocation, 'fault-path allocation cleanup'],
+      [unrelated, 'fault-path unrelated reader cleanup'],
+    ])
+  } catch (error) {
+    cleanupFailure = error
+  }
+  expect(observedFailure).toBe(assertionFailure)
+  expect(cleanupFailure).toBeUndefined()
+  expect(await allocation.outcome).toMatchObject({ status: 'fulfilled', value: true })
+  expect(await unrelated.outcome).toMatchObject({ status: 'fulfilled' })
+  expect(await gate.entered).toBe('entered')
 })
 
 test('a refused child fence leaves no canonical rows after restart', async () => {

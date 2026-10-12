@@ -471,6 +471,9 @@ export async function createProductionFactoryFixture(options = {}) {
     fetchInstalled = true
     composition = await createProductionPiLeadComposition({
       ...(children ? { children } : {}),
+      ...(options.governedManagementCall
+        ? { governedManagementCall: options.governedManagementCall }
+        : {}),
       directory,
       fundingDirectory,
       modelConnections: models.modelConnections,
