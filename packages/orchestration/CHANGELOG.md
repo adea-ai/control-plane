@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/adea-ai/control-plane/compare/orchestration-v1.7.0...orchestration-v1.8.0) (2026-10-12)
+
+
+### Features
+
+* coalesce child progress into bounded evidence packets ([#973](https://github.com/adea-ai/control-plane/issues/973)) ([0df9d17](https://github.com/adea-ai/control-plane/commit/0df9d17ec3b0e167e081ad8a056bc2f21a194ccd))
+
 ## [1.7.0](https://github.com/adea-ai/control-plane/compare/orchestration-v1.6.0...orchestration-v1.7.0) (2026-10-08)
 
 
