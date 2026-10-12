@@ -280,9 +280,97 @@ export class SqlitePiDurableLeadIntentStore implements CanonicalLeadIntentReader
   #preparationCursor = ''
   constructor(readonly database: DatabaseSync) {
     database.exec(
-      'CREATE TABLE IF NOT EXISTS pi_lead_intent_admissions (intent_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, attempt_id TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, state TEXT NOT NULL, record TEXT NOT NULL); CREATE TABLE IF NOT EXISTS pi_lead_intent_budgets (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL); CREATE TABLE IF NOT EXISTS pi_lead_intent_admission_bindings (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL)'
+      'CREATE TABLE IF NOT EXISTS pi_lead_intent_admissions (intent_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, attempt_id TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, state TEXT NOT NULL, record TEXT NOT NULL, execution_id TEXT); CREATE TABLE IF NOT EXISTS pi_lead_intent_budgets (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL); CREATE TABLE IF NOT EXISTS pi_lead_intent_admission_bindings (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL)'
     )
+    this.#migrateExecutionLookup()
   }
+
+  /**
+   * Add the execution lookup to existing stores and backfill only from fully validated markers.
+   * The transaction and unique index make partial or ambiguous mappings unavailable after restart.
+   */
+  #migrateExecutionLookup(): void {
+    if (this.#hasExecutionLookupSchema()) return
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const columns = this.database.prepare('PRAGMA table_info(pi_lead_intent_admissions)').all()
+      const indexes = this.database.prepare('PRAGMA index_list(pi_lead_intent_admissions)').all()
+      if (
+        columns.some((column) => column['name'] === 'execution_id') &&
+        indexes.some(
+          (index) =>
+            index['name'] === 'pi_lead_intent_admissions_execution_id_idx' &&
+            Number(index['unique']) === 1
+        )
+      ) {
+        this.database.exec('COMMIT')
+        return
+      }
+      if (!columns.some((column) => column['name'] === 'execution_id'))
+        this.database.exec('ALTER TABLE pi_lead_intent_admissions ADD COLUMN execution_id TEXT')
+
+      const rows = this.database
+        .prepare('SELECT intent_id, execution_id FROM pi_lead_intent_admissions ORDER BY intent_id')
+        .all()
+      const executions = new Set<string>()
+      for (const row of rows) {
+        const intentId = String(row['intent_id'])
+        let marker: LeadIntentMarker | undefined
+        try {
+          marker = this.marker(intentId)
+        } catch (error) {
+          // A bad legacy record is not authority for a new index entry. Leave it unindexed so
+          // unrelated valid admissions remain available; any direct read of that record still
+          // fails closed through marker validation.
+          if (!(error instanceof PiDurableLeadError)) throw error
+          if (row['execution_id'] !== null && row['execution_id'] !== undefined)
+            this.database
+              .prepare(
+                'UPDATE pi_lead_intent_admissions SET execution_id = NULL WHERE intent_id = ?'
+              )
+              .run(intentId)
+          continue
+        }
+        if (!marker) conflict()
+        const executionId = IdentifierSchemas.executionId.parse(marker.intent.executionId)
+        const existing = row['execution_id']
+        if (executions.has(executionId)) conflict()
+        executions.add(executionId)
+        if (existing !== executionId) {
+          const changed = this.database
+            .prepare('UPDATE pi_lead_intent_admissions SET execution_id = ? WHERE intent_id = ?')
+            .run(executionId, intentId).changes
+          if (changed !== 1) conflict()
+        }
+      }
+      this.database.exec(
+        'CREATE UNIQUE INDEX IF NOT EXISTS pi_lead_intent_admissions_execution_id_idx ON pi_lead_intent_admissions (execution_id)'
+      )
+      this.database.exec('COMMIT')
+    } catch (error) {
+      try {
+        this.database.exec('ROLLBACK')
+      } catch {
+        // The original migration failure remains authoritative.
+      }
+      if (error instanceof PiDurableLeadError) throw error
+      conflict()
+    }
+  }
+
+  #hasExecutionLookupSchema(): boolean {
+    const columns = this.database.prepare('PRAGMA table_info(pi_lead_intent_admissions)').all()
+    if (!columns.some((column) => column['name'] === 'execution_id')) return false
+    return this.database
+      .prepare('PRAGMA index_list(pi_lead_intent_admissions)')
+      .all()
+      .some(
+        (index) =>
+          index['name'] === 'pi_lead_intent_admissions_execution_id_idx' &&
+          Number(index['unique']) === 1
+      )
+  }
+
   marker(intentId: string): LeadIntentMarker | undefined {
     const row = this.database
       .prepare(
@@ -309,17 +397,33 @@ export class SqlitePiDurableLeadIntentStore implements CanonicalLeadIntentReader
       conflict()
     return validatedMarker({ ...stored, state: row['state'] })
   }
+
+  markerByExecutionId(executionId: string): LeadIntentMarker | undefined {
+    const parsedExecutionId = IdentifierSchemas.executionId.parse(executionId)
+    const rows = this.database
+      .prepare('SELECT intent_id FROM pi_lead_intent_admissions WHERE execution_id = ? LIMIT 2')
+      .all(parsedExecutionId)
+    if (rows.length > 1) conflict()
+    if (rows.length === 0) return undefined
+    const marker = this.marker(String(rows[0]!['intent_id']))
+    if (!marker || marker.intent.executionId !== parsedExecutionId) conflict()
+    return marker
+  }
+
   bind(marker: LeadIntentMarker): LeadIntentMarker {
     validatedMarker(marker)
     this.database
-      .prepare('INSERT OR IGNORE INTO pi_lead_intent_admissions VALUES (?, ?, ?, ?, ?, ?)')
+      .prepare(
+        'INSERT OR IGNORE INTO pi_lead_intent_admissions (intent_id, workspace_id, attempt_id, digest, state, record, execution_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      )
       .run(
         marker.intentId,
         marker.workspaceId,
         marker.intent.attemptId,
         marker.evidenceDigest,
         marker.state,
-        JSON.stringify(marker)
+        JSON.stringify(marker),
+        marker.intent.executionId
       )
     const existing = this.marker(marker.intentId)
     if (
@@ -888,6 +992,112 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     })
   }
 
+  /**
+   * Resolves an existing execution back to its retained admission for read/recovery paths. The
+   * lookup is only an index: current product evidence, the canonical product actor, live scope,
+   * execution, attempt and immutable plan pin are all revalidated before an admission is returned.
+   */
+  async resolveRetainedAdmissionByExecutionId(input: {
+    readonly executionId: string
+    readonly workspaceId: string
+    readonly principal: ServicePrincipal
+  }): Promise<PiDurableLeadAdmission | undefined> {
+    return this.#safe(async () => {
+      const executionId = IdentifierSchemas.executionId.parse(input.executionId)
+      const workspaceId = IdentifierSchemas.workspaceId.parse(input.workspaceId)
+      const principal = ServicePrincipalSchema.parse(input.principal)
+      if (
+        !principal.scopes.includes('execution:read') ||
+        !principal.workspaceIds.includes(workspaceId)
+      )
+        denied()
+
+      const marker = this.store.markerByExecutionId(executionId)
+      if (!marker) return undefined
+      if (marker.workspaceId !== workspaceId || marker.intent.executionId !== executionId)
+        conflict()
+      if (marker.state !== 'ready') throw new PiDurableLeadError('PI_LEAD_MISSING')
+      if (
+        marker.intent.projectId !== undefined &&
+        !principal.projectIds.includes(marker.intent.projectId)
+      )
+        denied()
+
+      // actorPrincipalId is the service audience that created the row. It is never the product
+      // actor: the canonical actor must come from current product evidence and authorize scope.
+      const canonicalActorPrincipalId = marker.intent.canonicalActorPrincipalId
+      if (
+        !canonicalActorPrincipalId ||
+        ServicePrincipalSchema.shape.principalId.safeParse(canonicalActorPrincipalId).success
+      )
+        conflict()
+      const currentEvidence = await this.#evidence(
+        workspaceId,
+        marker.intentId,
+        principal.principalId
+      )
+      if (currentEvidence.canonicalActorPrincipalId !== canonicalActorPrincipalId) conflict()
+      if (hash({ evidence: currentEvidence, planPin: marker.planPin }) !== marker.evidenceDigest)
+        conflict()
+
+      const plan = await this.#validateCurrentPlan(marker, { requireCurrentActorScope: true })
+      const executionInput = await this.options.executions.getExecution(executionId)
+      const execution = ExecutionSchema.parse(executionInput)
+      const attemptInput = await this.options.executions.getAttempt(marker.intent.attemptId)
+      const attempt = ExecutionAttemptSchema.parse(attemptInput)
+      if (
+        execution.executionId !== executionId ||
+        execution.correlation.workspaceId !== workspaceId ||
+        hash(execution.executionPlan) !== hash(marker.planPin) ||
+        hash(execution.correlation) !== hash(plan.correlation) ||
+        attempt.attemptId !== marker.intent.attemptId ||
+        attempt.executionId !== executionId ||
+        execution.latestAttemptId !== attempt.attemptId
+      )
+        conflict()
+
+      const resolved = await this.canonicalAuthority.get(
+        marker.intentId,
+        workspaceId,
+        principal.principalId,
+        'read'
+      )
+      if (
+        resolved.startRequest.executionId !== executionId ||
+        resolved.startRequest.attemptId !== marker.intent.attemptId ||
+        hash({
+          executionPlanId: resolved.startRequest.executionPlan.executionPlanId,
+          contentDigest: resolved.startRequest.executionPlan.contentDigest,
+          schemaVersion: resolved.startRequest.executionPlan.schemaVersion,
+        }) !== hash(marker.planPin)
+      )
+        conflict()
+
+      // Re-sample both independent authorities after awaited repository and product reads. This
+      // narrows stale-read windows without claiming a cross-store atomic snapshot.
+      const [finalEvidence, finalPlan, finalExecution, finalAttempt] = await Promise.all([
+        this.#evidence(workspaceId, marker.intentId, principal.principalId),
+        this.#validateCurrentPlan(marker, { requireCurrentActorScope: true }),
+        this.options.executions.getExecution(executionId),
+        this.options.executions.getAttempt(marker.intent.attemptId),
+      ])
+      if (
+        finalEvidence.canonicalActorPrincipalId !== canonicalActorPrincipalId ||
+        hash(finalEvidence) !== hash(currentEvidence) ||
+        hash(finalPlan) !== hash(plan) ||
+        hash(ExecutionSchema.parse(finalExecution)) !== hash(execution) ||
+        hash(ExecutionAttemptSchema.parse(finalAttempt)) !== hash(attempt) ||
+        hash(this.store.markerByExecutionId(executionId)) !== hash(marker)
+      )
+        conflict()
+
+      const admission = project(resolved, marker.intent, marker.preparationDeadlineAt)
+      if (Date.parse(admission.deadlineAt) <= Date.parse(this.#now()))
+        throw new PiDurableLeadError('PI_LEAD_DEADLINE_EXPIRED')
+      return admission
+    })
+  }
+
   /** Host startup/periodic cleanup for minting interrupted before the preparation
    * store could claim an allocation. It uses retained authority only; no current
    * provider grant, product message lookup or inference is needed to release it.
@@ -1010,9 +1220,24 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       throw new PiDurableLeadError('PI_LEAD_DEADLINE_EXPIRED')
   }
 
-  async #validateCurrentPlan(marker: LeadIntentMarker): Promise<void> {
+  async #validateCurrentPlan(
+    marker: LeadIntentMarker,
+    options: { readonly requireCurrentActorScope?: boolean } = {}
+  ): Promise<ExecutionPlan> {
     const plan = assertExecutionPlanIntegrity(await this.options.plans.get(marker.planPin))
-    if (!executionScopesEqual(plan.correlation, marker.intent)) conflict()
+    if (
+      plan.executionPlanId !== marker.planPin.executionPlanId ||
+      plan.contentDigest !== marker.planPin.contentDigest ||
+      plan.schemaVersion !== marker.planPin.schemaVersion ||
+      plan.correlation.workspaceId !== marker.workspaceId ||
+      !executionScopesEqual(plan.correlation, marker.intent)
+    )
+      conflict()
+    if (
+      options.requireCurrentActorScope &&
+      (plan.schemaVersion !== 2 || plan.correlation.executionScope === undefined)
+    )
+      throw new PiDurableLeadError('PI_LEAD_SCOPE_REJECTED')
     if (plan.schemaVersion === 2 && !marker.intent.canonicalActorPrincipalId) denied()
     await this.#assertScope(
       plan,
@@ -1028,6 +1253,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       callerPrincipalId: this.options.admissionPrincipalId,
     })
     if (!allowed) conflict()
+    return plan
   }
   async #assertScope(plan: ExecutionPlan, actorPrincipalId: string): Promise<void> {
     if (plan.correlation.executionScope === undefined) return

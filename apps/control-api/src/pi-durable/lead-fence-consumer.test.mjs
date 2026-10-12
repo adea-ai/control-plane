@@ -343,6 +343,57 @@ test('v2 observation refuses a legacy marker that lacks the canonical actor pin'
   }
 })
 
+test('execution lookup rejects corrupt retained marker records', async () => {
+  const { authority, cleanup } = await harness(fenceV2())
+  try {
+    bindRetainedMarker(authority)
+    const ids = deterministicPiLeadIntentIds(workspaceId, intentId)
+    authority.store.database
+      .prepare('UPDATE pi_lead_intent_admissions SET record = ? WHERE intent_id = ?')
+      .run('{', intentId)
+    expect(() => authority.store.markerByExecutionId(ids.executionId)).toThrow(
+      'PI_LEAD_AUTHORITY_CONFLICT'
+    )
+    authority.store.database.exec(
+      'DROP INDEX pi_lead_intent_admissions_execution_id_idx; ALTER TABLE pi_lead_intent_admissions DROP COLUMN execution_id'
+    )
+    const reopened = new NodePiDurableLeadAdmission(authority.options)
+    expect(reopened.store.markerByExecutionId(ids.executionId)).toBeUndefined()
+  } finally {
+    await cleanup()
+  }
+})
+
+test('execution lookup rejects duplicate execution mappings even if the unique index was removed', async () => {
+  const { authority, cleanup } = await harness(fenceV2())
+  try {
+    bindRetainedMarker(authority)
+    const first = authority.store.marker(intentId)
+    const secondIntentId = '6ff242cc-fac5-49a4-82a2-977124777dec'
+    const secondIds = deterministicPiLeadIntentIds(workspaceId, secondIntentId)
+    authority.store.bind({
+      ...first,
+      intentId: secondIntentId,
+      intent: {
+        ...first.intent,
+        intentId: secondIntentId,
+        executionId: secondIds.executionId,
+        attemptId: secondIds.attemptId,
+      },
+    })
+    const firstIds = deterministicPiLeadIntentIds(workspaceId, intentId)
+    authority.store.database.exec('DROP INDEX pi_lead_intent_admissions_execution_id_idx')
+    authority.store.database
+      .prepare('UPDATE pi_lead_intent_admissions SET execution_id = ? WHERE intent_id = ?')
+      .run(firstIds.executionId, secondIntentId)
+    expect(() => authority.store.markerByExecutionId(firstIds.executionId)).toThrow(
+      'PI_LEAD_AUTHORITY_CONFLICT'
+    )
+  } finally {
+    await cleanup()
+  }
+})
+
 test('v2 refuses status/progress from a principal outside allowedPrincipalIds', async () => {
   const { authority, cleanup } = await harness(fenceV2())
   try {
