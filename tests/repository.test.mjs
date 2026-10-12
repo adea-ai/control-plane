@@ -122,13 +122,13 @@ test('schedules every discovered integration file through a package or repositor
         new URL('../scripts/run-integration-tests.mjs', import.meta.url),
         'utf8'
       )
-      const unsharded = runner.slice(
-        runner.indexOf('if (integrationShard === null) {'),
-        runner.indexOf('} else {', runner.indexOf('if (integrationShard === null) {'))
+      const shardRegistry = await readFile(
+        new URL('../scripts/integration-shards.mjs', import.meta.url),
+        'utf8'
       )
       assert.ok(
-        unsharded.includes(`'./${path}'`),
-        `${path} is not selected by the unsharded repository runner`
+        runner.includes(`'./${path}'`) || shardRegistry.includes(`'./${path}'`),
+        `${path} is not selected by the remote runner or integration shard registry`
       )
       continue
     }
@@ -207,6 +207,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'apps/control-api/src/marketplace-installation.integration.test.mjs',
     'apps/control-api/src/validation-replay.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-graph-cancellation.integration.test.mjs',
+    'apps/hosted-control-plane/src/hosted-graph-legacy-fence.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-graph.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-http.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-metrics.integration.test.mjs',
@@ -215,11 +216,13 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'apps/workflow-worker/src/runtime-budget-admission.integration.test.mjs',
     'packages/database/src/admission-rollout-admin.integration.test.mjs',
     'packages/database/src/budget-admission.integration.test.mjs',
+    'packages/database/src/child-budget-admission.integration.test.mjs',
     'packages/database/src/credential-vault-repository.integration.test.mjs',
     'packages/database/src/delegation-reference.integration.test.mjs',
     'packages/database/src/graph-definition-repository.integration.test.mjs',
     'packages/database/src/hosted-graph-operations.integration.test.mjs',
     'packages/database/src/integration.test.mjs',
+    'packages/database/src/legacy-drain-fence-repository.integration.test.mjs',
     'packages/database/src/memory-provenance-retention.integration.test.mjs',
     'packages/database/src/model-selection-repository.integration.test.mjs',
     'packages/database/src/project-state-initialization.integration.test.mjs',
@@ -242,7 +245,10 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/profile-portability/src/postgres.integration.test.mjs',
     'packages/testing/src/postgres.integration.test.mjs',
     'tests/acp-remote-device-postgres.integration.test.mjs',
+    'tests/child-progress-scanner.integration.test.mjs',
+    'tests/child-progress-sqlite-feed-replay.integration.test.mjs',
     'tests/langgraph-retirement-inventory-pg.integration.test.mjs',
+    'tests/langgraph-retirement-status-adapter.integration.test.mjs',
     'tests/memory-process-loss.integration.test.mjs',
     'tests/runtime-node-credential-revocation.integration.test.mjs',
   ])
@@ -269,14 +275,17 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-context-transport-e2e.test.mjs',
     'tests/m11-local-native-terminal-usage.test.mjs',
     'tests/m11-standalone-e2e.test.mjs',
+    'tests/child-progress-two-siblings-composition.test.mjs',
     'tests/pi-child-continuation-sqlite.test.mjs',
     'tests/pi-durable-child-host.test.mjs',
     'tests/pi-durable-delegation-recovery.test.mjs',
     'tests/pi-durable-canonical-authority.test.mjs',
+    'tests/pi-durable-production-child-composition.test.mjs',
     'tests/pi-durable-execution-model-composition.test.mjs',
     'tests/pi-durable-governed-child-composition.test.mjs',
-    'tests/j1-native-child-store-restart.test.mjs',
+    'tests/pi-durable-governed-publisher-regression.test.mjs',
     'tests/j1-unfinished-child-process-restart.test.mjs',
+    'tests/j1-native-child-store-restart.test.mjs',
     'tests/pi-durable-workspace-scope.test.mjs',
     'tests/pi-production-management-authority.test.mjs',
     'tests/pi-production-runtime-startup.test.mjs',
@@ -302,6 +311,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/hosted-compose-lifecycle.test.mjs',
     'tests/hosted-graph-qualification.test.mjs',
     'tests/langgraph-retirement-inventory.test.mjs',
+    'tests/langgraph-retirement-status-adapter.test.mjs',
     'tests/m11-admission-rollout-admin.test.mjs',
     'tests/m11-acp-installation.test.mjs',
     'tests/m11-architecture-audit.test.mjs',
@@ -558,10 +568,9 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
 
   assert.match(
     validation,
-    new RegExp(
-      `uses: 0xPlayerOne\\/code-foundry\\/\\.github\\/workflows\\/validation\\.yml@${runtimeRef}`
-    )
+    /uses: 0xPlayerOne\/code-foundry\/\.github\/workflows\/validation\.yml@[0-9a-f]{40}/
   )
+  assert.match(validation, new RegExp(`runtime-ref: ${runtimeRef}`))
   assert.equal((validation.match(/vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 3)
   // v1.44.x cancels only superseded pull-request runs; push runs queue so a
   // cancellation can never drop default-branch analysis.
@@ -726,12 +735,11 @@ test('provides a documented isolated integration-test runner', async () => {
   assert.match(runner, /database system is accepting SQL connections/)
   assert.match(runner, /'test:integration', '--concurrency=1'/)
   assert.match(runner, /'stop', '--timeout', '60', 'postgres'/)
-  // The sharded remote lane survives Neon pooler connection drops: a raised
-  // per-test ceiling plus one fresh-process retry per file, and the ceiling
-  // reaches suites whose explicit bun test() timeouts override the CLI flag
-  // through INTEGRATION_TEST_TIMEOUT_MS.
+  // The remote lane raises per-test budgets for Neon. It reports failures
+  // without replaying an integration file whose partial effects may be unknown.
   assert.match(runner, /remoteDatabase \? '120000' : '30000'/)
-  assert.match(runner, /retrying once before failing the shard/)
+  assert.doesNotMatch(runner, /retrying once before failing the shard/)
+  assert.match(runner, /await runIntegrationFileStreaming\(testArguments/)
   assert.match(runner, /INTEGRATION_TEST_TIMEOUT_MS: remoteDatabase \? '120000' : undefined/)
   assert.match(database.scripts['test:integration'], /--timeout 30000/)
   assert.match(testing.scripts['test:integration'], /--timeout 30000/)
@@ -826,7 +834,8 @@ test('isolates credentialed Neon validation from pull-request source', async () 
   assert.match(neonWorkflow, /expires_at: \$\{\{ env\.EXPIRES_AT \}\}/)
   assert.doesNotMatch(pullRequestWorkflow, /\$\{\{[^}]*\bsecrets\b|^\s*secrets\s*:/m)
   assert.match(pullRequestWorkflow, /RUN_M10_POSTGRES_CONFORMANCE/)
-  assert.match(pullRequestWorkflow, /bun run test:integration/)
+  assert.match(pullRequestWorkflow, /bun --cwd=packages\/database run db:migrate/)
+  assert.match(pullRequestWorkflow, /bun test tests\/cp1-embedded-durable-execution\.test\.mjs/)
   assert.ok(validationJob)
   assert.match(validationJob, /uses: 0xPlayerOne\/code-foundry/)
   // The reusable-workflow call forwards exactly two sanctioned secrets

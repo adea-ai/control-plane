@@ -782,7 +782,7 @@ export function fromExecutionRow(row: ExecutionRow): Execution {
   })
 }
 
-function toAttemptRow(attempt: ExecutionAttempt): typeof executionAttempts.$inferInsert {
+export function toAttemptRow(attempt: ExecutionAttempt): typeof executionAttempts.$inferInsert {
   return {
     attemptId: attempt.attemptId,
     executionId: attempt.executionId,

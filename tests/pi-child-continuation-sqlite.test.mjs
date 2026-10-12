@@ -25,7 +25,9 @@ import {
   SqliteDelegationRepository,
   SqliteDelegationToolAdmissionRepository,
   SqliteToolCallRepository,
+  SqliteDurableUsageStore,
 } from '@control-plane/sqlite-persistence'
+import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
   createFixture,
   delegationInput,
@@ -53,6 +55,135 @@ const pin = (plan) => ({
   contentDigest: plan.contentDigest,
   schemaVersion: plan.schemaVersion,
 })
+function fixtureLifecycle(close, remove) {
+  const pending = new Set()
+  let closing = false
+  return {
+    run(operation) {
+      if (closing) throw new Error('Fixture cleanup already started')
+      const work = Promise.resolve().then(operation)
+      pending.add(work)
+      work.then(
+        () => pending.delete(work),
+        () => pending.delete(work)
+      )
+      return work
+    },
+    async cleanup() {
+      closing = true
+      // Bun timeout does not cancel an async reopen. Keep its directory and
+      // connection alive until the owned migration has actually settled.
+      const results = await Promise.allSettled(pending)
+      const errors = results
+        .filter((result) => result.status === 'rejected')
+        .map((result) => result.reason)
+      let closed = false
+      try {
+        await close()
+        closed = true
+      } catch (error) {
+        errors.push(error)
+      }
+      // A failed close leaves the directory intact for safe diagnosis.
+      if (closed) {
+        try {
+          await remove()
+        } catch (error) {
+          errors.push(error)
+        }
+      }
+      if (errors.length === 1) throw errors[0]
+      if (errors.length > 1)
+        throw new AggregateError(errors, 'Fixture operation and cleanup failed')
+    },
+  }
+}
+
+test('fixture cleanup waits for owned reopen work before closing or deleting its directory', async () => {
+  const events = []
+  let release
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const lifecycle = fixtureLifecycle(
+    async () => {
+      events.push('close')
+    },
+    async () => {
+      events.push('remove')
+    }
+  )
+  const reopen = lifecycle.run(async () => {
+    events.push('migrate-enter')
+    await gate
+    expect(events).not.toContain('remove')
+    events.push('migrate-return')
+  })
+  const cleanup = lifecycle.cleanup()
+  await Promise.resolve()
+  try {
+    expect(events).toEqual(['migrate-enter'])
+  } finally {
+    release()
+    await Promise.allSettled([reopen, cleanup])
+  }
+  expect(events).toEqual(['migrate-enter', 'migrate-return', 'close', 'remove'])
+})
+
+test('fixture cleanup preserves a failed reopen and rejects new work after cleanup starts', async () => {
+  const events = []
+  let reject
+  const failure = new Error('migration failed')
+  const gate = new Promise((_, rejectGate) => {
+    reject = rejectGate
+  })
+  const lifecycle = fixtureLifecycle(
+    async () => {
+      events.push('close')
+    },
+    async () => {
+      events.push('remove')
+    }
+  )
+  const reopen = lifecycle.run(() => gate)
+  const cleanup = lifecycle.cleanup()
+  const reopenCheck = reopen.catch((error) => error)
+  const cleanupCheck = cleanup.catch((error) => error)
+  expect(() => lifecycle.run(() => {})).toThrow('Fixture cleanup already started')
+  expect(events).toEqual([])
+  reject(failure)
+  expect(await reopenCheck).toBe(failure)
+  expect(await cleanupCheck).toBe(failure)
+  expect(events).toEqual(['close', 'remove'])
+})
+
+test('fixture cleanup retains migration and close failure provenance without deleting an open store', async () => {
+  const migrationFailure = new Error('migration failure')
+  const closeFailure = new Error('close failure')
+  let reject
+  let removed = false
+  const gate = new Promise((_, rejectGate) => {
+    reject = rejectGate
+  })
+  const lifecycle = fixtureLifecycle(
+    async () => {
+      throw closeFailure
+    },
+    async () => {
+      removed = true
+    }
+  )
+  const work = lifecycle.run(() => gate)
+  const workResult = work.catch((error) => error)
+  const cleanupResult = lifecycle.cleanup().catch((error) => error)
+  reject(migrationFailure)
+  expect(await workResult).toBe(migrationFailure)
+  const error = await cleanupResult
+  expect(error).toBeInstanceOf(AggregateError)
+  expect(error.errors).toEqual([migrationFailure, closeFailure])
+  expect(removed).toBe(false)
+})
+
 const cleanups = []
 afterEach(async () => {
   for (const f of cleanups.splice(0)) await f()
@@ -62,10 +193,11 @@ async function fixture({ crossScope = false } = {}) {
   const path = join(directory, 'canonical.sqlite')
   let provider = new SqlitePersistenceProvider({ path })
   await provider.migrate()
-  cleanups.push(async () => {
-    await provider.close()
-    await rm(directory, { recursive: true, force: true })
-  })
+  const lifecycle = fixtureLifecycle(
+    () => provider.close(),
+    () => rm(directory, { recursive: true, force: true })
+  )
+  cleanups.push(() => lifecycle.cleanup())
   const state = { now: at, active: true, metadata: undefined, reads: 0, current: 0 }
   const workspace = crossScope ? workspaceInput() : undefined
   const scopeReads = []
@@ -86,7 +218,31 @@ async function fixture({ crossScope = false } = {}) {
       plans: new SqliteExecutionPlanRepository(provider),
       contexts: new SqliteContextPackageRepository(provider),
       delegations: new SqliteDelegationRepository(provider),
+      // Canonical governed-child admission ports (CP1041): scope admission is
+      // mandatory at delegate and dispatch, and the authority produces the
+      // retained receipt over the exact request the service builds.
+      scopeAdmission: {
+        authority: scopeAuthority,
+        now: () => state.now,
+        resolveCallerPrincipalId: async () => 'principal:original-actor',
+      },
+      childAdmission: {
+        async prepare(request) {
+          return {
+            schemaVersion: 'pi-child-admission/v1',
+            ...request,
+            authorityRevision: 1,
+            productRevision: 'product:rev-1',
+            productReaderPrincipalId: 'svc_product-reader',
+            selectionRef: 'selection:child-role',
+            selectionRevision: 1,
+            expiresAt: '2999-01-01T00:00:00.000Z',
+          }
+        },
+        async assertCurrent() {},
+      },
     }
+    storage.childAllocator = storage.delegations
     if (workspace)
       Object.assign(storage, {
         parentPlan: workspace.parentPlan,
@@ -115,6 +271,21 @@ async function fixture({ crossScope = false } = {}) {
   }
   open()
   const base = await createFixture(undefined, storage)
+  // Governed allocation reserves on the canonical parent budget transaction,
+  // so the durable parent budget must exist before any child admission; the
+  // parent execution exists only after createFixture above.
+  const usageLedger = new DurableUsageLedger({
+    store: new SqliteDurableUsageStore(provider),
+    now: () => state.now,
+  })
+  await usageLedger.openBudget({
+    workspaceId: ids.workspaceId,
+    executionId: ids.parentExecutionId,
+    currency: 'USD',
+    maximumMicrounits: 10_000_000,
+    maximumTokens: 250_000,
+    source: { sourceId: 'continuation-fixture', idempotencyKey: 'parent-budget-open' },
+  })
   await base.lifecycle.createAttempt({
     executionId: ids.parentExecutionId,
     attemptId: parentAttemptId,
@@ -139,14 +310,20 @@ async function fixture({ crossScope = false } = {}) {
   const command = workspace ? structuredClone(workspace.command) : delegationInput(base)
   command.parentAttemptId = parentAttemptId
   command.admittedToolCallId = id('tlc')
-  await storage.contexts.put(command.childPlan.contextPackage)
-  const delegated = await base.service.delegate(command)
+  // Canonical governed-child admission (CP1041): server-bound parent product
+  // intent, stable child attempt identity, and the exact initial dispatch the
+  // admission transaction allocates atomically.
+  command.parentIntentId = '11111111-1111-4111-8111-111111111112'
+  command.childAttemptId = ids.childAttemptId
   const dispatch = {
     delegationId: ids.delegationId,
     childAttemptId: ids.childAttemptId,
     runtime: { runtimeConnectionId: id('rtc') },
     dispatchedAt: '2026-08-25T18:02:00.000Z',
   }
+  command.initialDispatch = structuredClone(dispatch)
+  await storage.contexts.put(command.childPlan.contextPackage)
+  const delegated = await base.service.delegate(command)
   await base.service.dispatchChild(dispatch)
   await base.service.recordChildProgress({
     delegationId: ids.delegationId,
@@ -404,12 +581,13 @@ async function fixture({ crossScope = false } = {}) {
     },
     mutate,
     complete,
-    reopen: async () => {
-      await provider.close()
-      provider = new SqlitePersistenceProvider({ path })
-      await provider.migrate()
-      open()
-    },
+    reopen: () =>
+      lifecycle.run(async () => {
+        await provider.close()
+        provider = new SqlitePersistenceProvider({ path })
+        await provider.migrate()
+        open()
+      }),
   }
 }
 

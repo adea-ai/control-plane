@@ -130,6 +130,15 @@ export class LangGraphOrchestrationAdapter implements OrchestrationPort {
   readonly #graphDefinitionResolver: PublishedGraphDefinitionResolver | undefined
   readonly #declarativeCompiler: DeclarativeGraphCompiler | undefined
   readonly #active = new Map<string, AbortController>()
+  readonly #admissionGuard:
+    | {
+        assertNewAdmissionAllowed(request: {
+          readonly executionId: string
+          readonly storageThreadId: string
+        }): Promise<void>
+      }
+    | undefined
+  readonly #resumeFence: { assertResumeAllowed(storageThreadId: string): Promise<void> } | undefined
 
   constructor(options: {
     readonly graphs?: readonly LangGraphRegistration[]
@@ -142,7 +151,18 @@ export class LangGraphOrchestrationAdapter implements OrchestrationPort {
     readonly compilerVersion?: string
     readonly adapterVersion?: string
     readonly telemetry?: Pick<Telemetry, 'startSpan'>
+    /** Optional legacy retirement gate for new admissions. Absent means no gate. */
+    readonly admissionGuard?: {
+      assertNewAdmissionAllowed(request: {
+        readonly executionId: string
+        readonly storageThreadId: string
+      }): Promise<void>
+    }
+    /** Optional legacy drain fence for resume and continue. Absent means no fence. */
+    readonly resumeFence?: { assertResumeAllowed(storageThreadId: string): Promise<void> }
   }) {
+    this.#admissionGuard = options.admissionGuard
+    this.#resumeFence = options.resumeFence
     if (Boolean(options.graphDefinitionResolver) !== Boolean(options.declarativeCompiler)) {
       throw new TypeError(
         'Graph definition resolver and declarative compiler must be configured together'
@@ -167,6 +187,10 @@ export class LangGraphOrchestrationAdapter implements OrchestrationPort {
   async run(input: unknown): Promise<GraphSegmentResult> {
     const parsed = GraphExecutionRequestSchema.safeParse(input)
     if (!parsed.success) throw new OrchestrationError('INVALID_GRAPH_REQUEST', false)
+    await this.#admissionGuard?.assertNewAdmissionAllowed({
+      executionId: parsed.data.executionId,
+      storageThreadId: storageThreadId(parsed.data),
+    })
     assertCheckpointSafe(parsed.data.input)
     return this.#invoke(parsed.data, parsed.data.input, 'graph.started', 'GRAPH_FAILED', 'new')
   }
@@ -174,6 +198,7 @@ export class LangGraphOrchestrationAdapter implements OrchestrationPort {
   async resume(input: unknown): Promise<GraphSegmentResult> {
     const parsed = GraphResumeRequestSchema.safeParse(input)
     if (!parsed.success) throw new OrchestrationError('INVALID_GRAPH_REQUEST', false)
+    await this.#resumeFence?.assertResumeAllowed(storageThreadId(parsed.data))
     assertCheckpointSafe(parsed.data.response)
     return this.#invoke(
       parsed.data,
@@ -187,6 +212,7 @@ export class LangGraphOrchestrationAdapter implements OrchestrationPort {
   async continue(input: unknown): Promise<GraphSegmentResult> {
     const parsed = GraphContinueRequestSchema.safeParse(input)
     if (!parsed.success) throw new OrchestrationError('INVALID_GRAPH_REQUEST', false)
+    await this.#resumeFence?.assertResumeAllowed(storageThreadId(parsed.data))
     return this.#invoke(parsed.data, null, 'graph.resumed', 'RESUME_FAILED', 'pinned')
   }
 
@@ -1037,3 +1063,17 @@ export * from './execution-event-publisher.js'
 export * from './managed-runtime.js'
 export * from './postgres-checkpointer.js'
 export * from './sqlite-checkpointer.js'
+export {
+  buildLegacyOperatorStatus,
+  claimLegacyDrainFence,
+  createLegacyAdmissionGuard,
+  createLegacyResumeFence,
+  evaluateLegacyAdmissionGate,
+  planLegacyDrain,
+  readLegacyRemainder,
+  releaseLegacyDrainFence,
+  type AdmissionEvidence,
+  type LegacyAdmissionRequest,
+  type LegacyDrainFenceClaim,
+  type LegacyOperatorStatus,
+} from './legacy-retirement.js'

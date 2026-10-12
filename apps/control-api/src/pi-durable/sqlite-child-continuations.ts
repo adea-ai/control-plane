@@ -215,7 +215,14 @@ export class SqlitePiChildContinuationRepository implements PiChildContinuationG
       delegation.role !== admission.command.delegation.role ||
       delegation.profileVersionId !== admission.command.delegation.profileVersionId ||
       !same(delegation.policy, admission.command.delegation.policy) ||
-      delegation.inputDigest !== delegationInputDigestV2(admission.command.delegation) ||
+      delegation.inputDigest !==
+        delegationInputDigestV2({
+          ...admission.command.delegation,
+          // initialDispatch is transport routing: delegate() hashes the
+          // delegation without it, so recompute over the same shape no matter
+          // which admission writer embedded the dispatch envelope.
+          initialDispatch: undefined,
+        }) ||
       delegation.parentExecutionId !== grant.parent.executionId ||
       delegation.parentAttemptId !== grant.parent.attemptId ||
       delegation.childExecutionId !== grant.child.executionId ||

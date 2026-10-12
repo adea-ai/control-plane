@@ -128,6 +128,39 @@ describe('durable parent and child delegation', () => {
     })
   })
 
+  test('wakes the parent only after event retention and treats wake failure as advisory', async () => {
+    const retained = []
+    const wakes = []
+    const fixture = await createFixture(undefined, {
+      events: {
+        async publish(event) {
+          retained.push(structuredClone(event))
+        },
+      },
+      onEventRetained: async (event) => {
+        expect(retained).toContainEqual(event)
+        wakes.push(event)
+      },
+    })
+
+    await fixture.service.delegate(delegationInput(fixture))
+    expect(wakes).toHaveLength(1)
+    expect(wakes[0]).toMatchObject({
+      type: 'delegation.requested',
+      parentExecutionId: ids.parentExecutionId,
+      childExecutionId: ids.childExecutionId,
+    })
+
+    const advisory = await createFixture(undefined, {
+      onEventRetained: async () => {
+        throw new Error('wake unavailable')
+      },
+    })
+    await expect(advisory.service.delegate(delegationInput(advisory))).resolves.toMatchObject({
+      record: { delegationId: ids.delegationId },
+    })
+  })
+
   test('normalizes child progress and a duplicate durable result into parent events', async () => {
     const fixture = await createFixture()
     await fixture.service.delegate(delegationInput(fixture))
@@ -501,6 +534,72 @@ describe('durable parent and child delegation', () => {
     })
     expect(cancelled).toHaveLength(1)
     expect((await fixture.lifecycle.getExecution(ids.childExecutionId)).state).toBe('cancelled')
+  })
+
+  test('replayed parent stop completes a retained terminal inbox publication after a crash', async () => {
+    const fixture = await createFixture()
+    await fixture.service.delegate(delegationInput(fixture))
+    const inbox = new Map()
+    const wakes = []
+    const events = {
+      async publish(event, key) {
+        const existing = inbox.get(key)
+        if (existing) expect(existing).toEqual(event)
+        else inbox.set(key, structuredClone(event))
+      },
+    }
+    const interruptedRepository = {
+      insert: (record) => fixture.delegations.insert(record),
+      get: (delegationId) => fixture.delegations.get(delegationId),
+      findByChild: (executionId) => fixture.delegations.findByChild(executionId),
+      listByParent: (executionId) => fixture.delegations.listByParent(executionId),
+      async compareAndSet(revision, record) {
+        if (record.terminalPublication?.status === 'published') return false
+        return fixture.delegations.compareAndSet(revision, record)
+      },
+    }
+    const interrupted = new DelegationService({
+      delegations: interruptedRepository,
+      lifecycle: fixture.lifecycle,
+      plans: fixture.plans,
+      events,
+      onEventRetained: async (event) => {
+        expect([...inbox.values()]).toContainEqual(event)
+        wakes.push(event)
+      },
+    })
+    const stop = {
+      parentExecutionId: ids.parentExecutionId,
+      cancelledAt: '2026-08-25T18:03:00.000Z',
+    }
+    await expect(interrupted.cancelChildren(stop)).rejects.toMatchObject({
+      code: 'DELEGATION_STATE_CONFLICT',
+    })
+    expect((await fixture.delegations.get(ids.delegationId)).terminalPublication.status).toBe(
+      'pending'
+    )
+    expect([...inbox.values()].filter(({ type }) => type === 'delegation.cancelled')).toHaveLength(
+      1
+    )
+
+    const recovered = new DelegationService({
+      delegations: fixture.delegations,
+      lifecycle: fixture.lifecycle,
+      plans: fixture.plans,
+      events,
+      onEventRetained: async (event) => {
+        expect([...inbox.values()]).toContainEqual(event)
+        wakes.push(event)
+      },
+    })
+    await expect(recovered.cancelChildren(stop)).resolves.toEqual([])
+    expect((await fixture.delegations.get(ids.delegationId)).terminalPublication.status).toBe(
+      'published'
+    )
+    expect([...inbox.values()].filter(({ type }) => type === 'delegation.cancelled')).toHaveLength(
+      1
+    )
+    expect(wakes.filter(({ type }) => type === 'delegation.cancelled')).toHaveLength(2)
   })
 })
 

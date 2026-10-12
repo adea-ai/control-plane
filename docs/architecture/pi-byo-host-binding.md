@@ -18,9 +18,11 @@ first transport is the reviewed Pi Durable/pi-ai 1.1.0 source
 `1cedd32724abfcb0915f76cc61b6827e2c16dbad`, OpenAI Responses, API key, BYO API,
 remote host, `pi_durable_models`. Catalog membership establishes neither quota nor
 entitlement. Unknown account, quota or residency state denies. This adapter never
-constructs a custom provider or extracts OAuth/environment credentials. The host
-must supply actual pinned package metadata and an authenticated current account
-reader; deterministic fixtures do not qualify a live provider.
+constructs a custom provider or extracts OAuth/environment credentials. The product
+composition applies this intersection to `piDurableRegistryMetadata`, the installed
+pi-ai 1.1.0 catalog (package version verified by test). The host supplies only an
+authenticated current account reader; deterministic fixtures do not qualify a live
+provider.
 
 `createFileRecordedModelFundingAuthority` is an optional local operator metadata
 reader. Its configured directory and descendants must be private and owned by the

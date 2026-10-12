@@ -34,18 +34,17 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
-      - name: Setup pinned Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
       - name: Verify toolchain
         run: |
           test "$(node --version)" = "v$(cat .node-version)"
-          test "$(bun --version)" = "$(cat .bun-version)"
-      - name: Install frozen dependencies
-        run: bun install --frozen-lockfile
-      - name: Run core foundation acceptance
-        run: bun scripts/run-foundation-acceptance.mjs --skip-install --skip-containers
+      # Code Foundry's required Validation / Gate already runs the full
+      # formatter, lint, type-check, build, unit, integration, E2E, and smoke
+      # coverage. Keep this extension scoped to the M1 checks generic CI cannot
+      # infer: accepted dependency ancestry and the Railway deployment manifest.
+      - name: Verify accepted foundation ancestry
+        run: node scripts/run-foundation-acceptance.mjs --verify-only
+      - name: Validate Railway manifest and cost policy
+        run: node scripts/validate-railway.mjs
         env:
           GH_TOKEN: ${{ github.token }}
 

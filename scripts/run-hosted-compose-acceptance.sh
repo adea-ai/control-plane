@@ -34,6 +34,9 @@ cleanup() {
   exit "$exit_code"
 }
 node_bin="$(command -v node)"
+# Pre-pull the pinned database image through the bounded registry-only retry
+# helper. The profile starts below remain single-shot.
+"$node_bin" ../../scripts/pull-postgres-image.mjs
 trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
