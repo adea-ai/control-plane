@@ -4,10 +4,16 @@ export type OpaqueIdentifier<Kind extends string> = string & {
   readonly __identifierKind: Kind
 }
 
+/** Opaque identifiers use a fixed canonical suffix after their three-character kind prefix. */
+export const OPAQUE_IDENTIFIER_SUFFIX_LENGTH = 26
+
 const opaqueIdentifier = <Kind extends string>(prefix: string, kind: Kind) =>
   z
     .string()
-    .regex(new RegExp(`^${prefix}_[0-9A-HJKMNP-TV-Z]{26}$`), `Expected a canonical opaque ${kind}`)
+    .regex(
+      new RegExp(`^${prefix}_[0-9A-HJKMNP-TV-Z]{${OPAQUE_IDENTIFIER_SUFFIX_LENGTH}}$`),
+      `Expected a canonical opaque ${kind}`
+    )
     .transform((value) => value as OpaqueIdentifier<Kind>)
 
 export const IdentifierSchemas = {

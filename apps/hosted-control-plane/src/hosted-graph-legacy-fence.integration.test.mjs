@@ -10,6 +10,7 @@ import {
 } from '@control-plane/database'
 import { createIsolatedTestDatabase, integrationTestTimeout } from '@control-plane/database/testing'
 import { ExecutionLifecycleService } from '@control-plane/domain'
+import { MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH } from '@control-plane/orchestration'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { HostedServerGraphRuntime } from './hosted-graph-runtime.ts'
 
@@ -156,6 +157,35 @@ describe.skipIf(!enabled)(
         (error) => error
       )
       expect(afterRelease?.code).not.toBe('LEGACY_DRAIN_FENCE_HELD')
+    })
+
+    test('the maximum valid thread id passes through hosted claim, resume, and continue fencing', async () => {
+      const threadId = 't'.repeat(256)
+      const compositeStorageThreadId = `${workspaceId}:${executionId}:${threadId}`
+      expect(compositeStorageThreadId).toHaveLength(MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH)
+      const claim = await runtime.legacyDrainFence.claim({
+        storageThreadId: compositeStorageThreadId,
+        owner: 'drain-maximum-thread',
+      })
+      try {
+        await expect(
+          runtime.activities.resumeGraphSegment(resumeInput('ckpt-maximum-thread', threadId))
+        ).rejects.toMatchObject({ code: 'LEGACY_DRAIN_FENCE_HELD' })
+        await expect(
+          runtime.activities.continueGraphSegment({
+            executionId,
+            attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+            workspaceId,
+            workflowId: 'wfl_01JABCDEF0123456789ABCDEFG',
+            graph,
+            threadId,
+            checkpointId: 'ckpt-maximum-thread',
+            idempotencyKey: 'hosted:legacy:maximum-thread:continue',
+          })
+        ).rejects.toMatchObject({ code: 'LEGACY_DRAIN_FENCE_HELD' })
+      } finally {
+        expect(await runtime.legacyDrainFence.release(claim)).toBe(true)
+      }
     })
 
     test('owners racing for one thread serialize generations and revisions and never both hold it', async () => {

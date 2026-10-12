@@ -3911,7 +3911,7 @@
       "columns": {
         "storage_thread_id": {
           "name": "storage_thread_id",
-          "type": "varchar(256)",
+          "type": "varchar(318)",
           "primaryKey": true,
           "notNull": true
         },
@@ -3948,7 +3948,7 @@
       "checkConstraints": {
         "langgraph_legacy_drain_fences_thread_check": {
           "name": "langgraph_legacy_drain_fences_thread_check",
-          "value": "length(\"langgraph_legacy_drain_fences\".\"storage_thread_id\") between 1 and 256"
+          "value": "length(\"langgraph_legacy_drain_fences\".\"storage_thread_id\") between 1 and 318"
         },
         "langgraph_legacy_drain_fences_owner_check": {
           "name": "langgraph_legacy_drain_fences_owner_check",

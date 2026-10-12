@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { readFile, rm } from 'node:fs/promises'
 import { emptyCheckpoint } from '@langchain/langgraph'
+import { MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH } from '@control-plane/orchestration'
 import { LangGraphSqliteCheckpointSaver } from './index.ts'
 import {
   LEGACY_CHECKPOINT_NAMESPACE,
@@ -33,6 +34,31 @@ import {
 
 // Disposable local stores only. Nothing here reads, writes or shuts down a deployed store.
 describe('legacy LangGraph retirement controls (M16.03, #940)', () => {
+  test('SQLite fence bounds allow a composite thread key and keep the owner bound separate', async () => {
+    const { directory, provider } = await disposableStore()
+    const maximumThreadId = 't'.repeat(256)
+    const maximumStorageThreadId =
+      'wsp_01JABCDEF0123456789ABCDEFG:exe_01JABCDEF0123456789ABCDEFG:' + maximumThreadId
+    try {
+      expect(maximumStorageThreadId).toHaveLength(MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH)
+      const claim = await claimLegacyDrainFence(provider, {
+        storageThreadId: maximumStorageThreadId,
+        owner: 'o'.repeat(256),
+      })
+      expect(claim.storageThreadId).toBe(maximumStorageThreadId)
+      await expect(
+        claimLegacyDrainFence(provider, {
+          storageThreadId: maximumStorageThreadId,
+          owner: 'o'.repeat(257),
+        })
+      ).rejects.toMatchObject({ code: 'LEGACY_FENCE_INVALID' })
+      expect(await releaseLegacyDrainFence(provider, claim)).toBe(true)
+    } finally {
+      provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('version and deprecation markers match exactly the public graph routes', async () => {
     const source = await readFile(
       new URL(

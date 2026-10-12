@@ -6,6 +6,7 @@ import type {
   PersistenceTransaction,
 } from '@control-plane/deployment'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
+import { MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH } from '@control-plane/orchestration'
 import { z } from 'zod'
 
 // Bounded legacy LangGraph reader, drain plan, handoff fences and new-admission gate (M16.03, #940).
@@ -24,6 +25,7 @@ export const TYPED_REPLACEMENT_OWNER = 'typed-replacement'
 export const LEGACY_STATUS_SCHEMA = 'langgraph-legacy-operator-status/v1'
 /** Maximum work items included in an operator status; the total is always reported. */
 export const LEGACY_STATUS_ITEM_LIMIT = 25
+const MAXIMUM_FENCE_OWNER_LENGTH = 256
 
 /** Repository-side version and deprecation marker for the public graph routes. Changes no HTTP behavior. */
 export const LEGACY_GRAPH_API = Object.freeze({
@@ -181,15 +183,18 @@ const ExecutionRowSchema = z
 const PlanIdentitySchema = z.object({ executionPlanId: z.string() }).passthrough()
 const FenceRecordSchema = z
   .object({
-    storageThreadId: z.string(),
-    owner: z.string(),
+    storageThreadId: z.string().min(1).max(MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH),
+    owner: z.string().min(1).max(MAXIMUM_FENCE_OWNER_LENGTH),
     generation: z.number().int().positive(),
     claimedAt: z.string(),
   })
   .passthrough()
 
 const GenerationRecordSchema = z
-  .object({ storageThreadId: z.string(), generation: z.number().int().nonnegative() })
+  .object({
+    storageThreadId: z.string().min(1).max(MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH),
+    generation: z.number().int().nonnegative(),
+  })
   .passthrough()
 
 // A persisted record that does not parse fails closed: it is never treated as absent or as someone else's.
@@ -650,8 +655,14 @@ function fenceId(storageThreadId: string): string {
   return `fence:${createHash('sha256').update(storageThreadId).digest('hex')}`
 }
 
-function requireIdentifier(value: string): string {
-  if (value.length === 0 || value.length > 256)
+function requireStorageThreadIdentifier(value: string): string {
+  if (value.length === 0 || value.length > MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH)
+    throw new LegacyRetirementError('LEGACY_FENCE_INVALID')
+  return value
+}
+
+function requireFenceOwner(value: string): string {
+  if (value.length === 0 || value.length > MAXIMUM_FENCE_OWNER_LENGTH)
     throw new LegacyRetirementError('LEGACY_FENCE_INVALID')
   return value
 }
@@ -697,8 +708,8 @@ export async function claimLegacyDrainFence(
   provider: PersistenceProvider,
   input: { readonly storageThreadId: string; readonly owner: string; readonly now?: () => string }
 ): Promise<LegacyDrainFenceClaim> {
-  const storageThreadId = requireIdentifier(input.storageThreadId)
-  const owner = requireIdentifier(input.owner)
+  const storageThreadId = requireStorageThreadIdentifier(input.storageThreadId)
+  const owner = requireFenceOwner(input.owner)
   const now = input.now ?? (() => new Date().toISOString())
   return provider.transaction(async (tx) => {
     const id = fenceId(storageThreadId)
@@ -739,8 +750,8 @@ export async function releaseLegacyDrainFence(
   provider: PersistenceProvider,
   claim: LegacyDrainFenceClaim
 ): Promise<boolean> {
-  const storageThreadId = requireIdentifier(claim.storageThreadId)
-  const owner = requireIdentifier(claim.owner)
+  const storageThreadId = requireStorageThreadIdentifier(claim.storageThreadId)
+  const owner = requireFenceOwner(claim.owner)
   requireHandleCounter(claim.generation)
   requireHandleCounter(claim.revision)
   return provider.transaction(async (tx) => {
@@ -867,7 +878,7 @@ export interface LegacyOperatorStatus {
   readonly schema: typeof LEGACY_STATUS_SCHEMA
   readonly api: { readonly path: string; readonly version: string; readonly lifecycle: string }
   readonly scope: ObservationScope
-  /** False when a read was truncated or any retained record could not be parsed or verified. */
+  /** True when the bounded inventory scan reached the end; item validity and verification are reported separately. */
   readonly readComplete: boolean
   readonly exact: boolean
   readonly zero: LegacyRemainder['zero']
