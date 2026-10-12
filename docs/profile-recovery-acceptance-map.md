@@ -5,8 +5,10 @@ rollback, backup/restore, reconnect revalidation, and fencing. It does not
 certify any live deployment. A "proven" result means a deterministic test in
 this repository drives the named primitive; "unproven" means no test does.
 The proofs cover the supported Local composition, the legacy `hosted-simple`
-composition (SQLite with pinned Restate), and PostgreSQL primitives. They do not
-cover Pi Durable startup recovery or orphan adoption; see gap 8.
+composition (SQLite with pinned Restate), PostgreSQL primitives, and Pi Durable
+lead retained-record startup adoption after SIGKILL. They do not prove production
+reconciliation evidence for safe continuation or OS orphan-process adoption; see
+gap 8.
 Unsupported hosted candidates fail closed (`PROFILE_RUNTIME_NOT_QUALIFIED` for
 the declared `CLOUD_PROFILE_UNQUALIFIED` denial, `PROFILE_RUNTIME_TRANSPORT_MISMATCH`
 for the Node Pi Durable adapter's direct-local identity) rather than falling back
@@ -54,8 +56,11 @@ files above:
 - `packages/pi-durable-adapter/src/adapter-process.test.mjs`: Pi adapter restart
   with real SQLite and SIGKILL at the physical-send, pre-dispatch, and approval
   boundaries. In addition, `tests/profile-recovery-pi-lead-restart.test.mjs`
-  proves production lead-composition adoption after SIGKILL without resend. The
-  interrupted inference remains unknown and pending; continuation is not proved.
+  proves production lead-composition retained-record adoption after SIGKILL
+  without resend. An already-forwarded inference remains unknown and pending;
+  continuation is exercised only when a test-only loopback probe establishes
+  that the inference did not reach HTTP dispatch. Production reconciliation
+  evidence wiring remains unqualified.
 
 ## Clause map
 
@@ -133,8 +138,10 @@ Owners are existing issues. Where no open issue names a gap, the row says so.
 7. **Channel-generation fencing** has disposable-PostgreSQL integration evidence
    (`packages/database/src/integration.test.mjs`). It is not yet exercised
    through a live gateway handshake (gap 6). Owner: #1025.
-8. **Pi Durable continuation of an interrupted inference after SIGKILL remains
-   unproven.** Startup recovery runs when the host constructs the runtime:
+8. **Production evidence for Pi Durable safe continuation after SIGKILL remains
+   unproven.** Retained-record startup adoption is proven, but the production
+   reconciliation source is not. Startup recovery runs when the host constructs
+   the runtime:
    `createNodePiDurableRuntime` (`packages/pi-durable-adapter/src/composition.ts`)
    calls `recover()` before it returns. `createNodePiDurableLeadComposition`
    (`apps/control-api/src/pi-durable/node-composition.ts`) runs the preparation and
