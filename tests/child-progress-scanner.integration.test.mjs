@@ -2,12 +2,12 @@ import { expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createNodePiDurableRuntime } from '../../../../packages/pi-durable-adapter/src/composition.ts'
+import { createNodePiDurableRuntime } from '../packages/pi-durable-adapter/src/composition.ts'
 import {
   governedFixture,
   id,
-} from '../../../../packages/pi-durable-adapter/src/governed-delegation.fixture.mjs'
-import { PiDurableChildProgressScanner } from './child-progress-scanner.ts'
+} from '../packages/pi-durable-adapter/src/governed-delegation.fixture.mjs'
+import { PiDurableChildProgressScanner } from '../apps/control-api/src/pi-durable/child-progress-scanner.ts'
 
 test('native approval interaction flows from the real adapter into child progress scanning', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'pi-child-scanner-native-approval-'))
