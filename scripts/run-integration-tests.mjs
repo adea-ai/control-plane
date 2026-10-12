@@ -1,8 +1,9 @@
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
-import { runWithPullBackoff } from './docker-pull-backoff.mjs'
+import { pullPostgresImage } from './pull-postgres-image.mjs'
 import {
+  INTEGRATION_SHARD_IDS,
   integrationFileArguments,
   parseIntegrationShard,
   selectIntegrationShard,
@@ -11,10 +12,10 @@ import {
 // Keep the documented production-like command visible to repository policy tests.
 const COMPOSE_COMMAND = 'docker compose'
 
-// `--shard=<n>` (or INTEGRATION_SHARD) runs one explicit slice of the suite
-// from scripts/integration-shards.mjs instead of the full turbo sweep. The
-// Neon workflow pairs each shard with its own disposable branch; unsharded
-// runs keep the exact historical behavior.
+// `--shard=<n>` (or INTEGRATION_SHARD) runs one explicit slice of the suite.
+// Trusted-main Neon runs pair each shard with its own disposable branch. The
+// local PR lane runs all three inventory-checked slices concurrently against
+// one runner-owned disposable PostgreSQL service.
 const integrationShard = parseIntegrationShard(
   process.argv.find((argument) => argument.startsWith('--shard='))?.slice('--shard='.length) ??
     process.env.INTEGRATION_SHARD
@@ -39,24 +40,109 @@ function run(command, arguments_, options = {}) {
   return result.stdout ?? ''
 }
 
-// Starting the database pulls `postgres` from Docker Hub, which rate-limits
-// anonymous pulls from shared runners. Output is captured so the rate-limit
-// signature can be recognized; it is echoed once the attempt settles.
+// Retry only the digest-pinned image pull. Container startup and health checks
+// run once, so a startup failure cannot be hidden by repeating `compose up`.
 async function composeUpPostgres() {
-  const result = await runWithPullBackoff(() =>
-    spawnSync('docker', ['compose', 'up', '-d', '--wait', 'postgres'], {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-      stdio: 'pipe',
-      env: runnerEnvironment,
-      timeout: 90_000,
+  await pullPostgresImage({ environment: runnerEnvironment })
+  run('docker', ['compose', 'up', '-d', '--wait', 'postgres'], {
+    environment: runnerEnvironment,
+  })
+}
+
+const MAX_OUTPUT_TAIL_BYTES = 16 * 1024
+
+function appendBoundedOutputTail(current, chunk, maxBytes = MAX_OUTPUT_TAIL_BYTES) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new RangeError('Output tail byte limit must be a non-negative safe integer')
+  }
+  const combined = Buffer.concat([Buffer.from(current), Buffer.from(chunk)])
+  if (combined.length <= maxBytes) return combined.toString('utf8')
+
+  let start = combined.length - maxBytes
+  while (start < combined.length && (combined[start] & 0xc0) === 0x80) start += 1
+  return combined.subarray(start).toString('utf8')
+}
+
+function runStreaming(command, arguments_, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, arguments_, {
+      cwd: options.cwd ?? process.cwd(),
+      env: options.environment ?? runnerEnvironment,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdoutTail = ''
+    let stderrTail = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdoutTail = appendBoundedOutputTail(stdoutTail, chunk)
+      process.stdout.write(chunk)
+    })
+    child.stderr.on('data', (chunk) => {
+      stderrTail = appendBoundedOutputTail(stderrTail, chunk)
+      process.stderr.write(chunk)
+    })
+    child.once('error', reject)
+    child.once('close', (status, signal) => resolve({ status, signal, stdoutTail, stderrTail }))
+  })
+}
+
+function formatStreamingFailure(result) {
+  const tails = []
+  if (result.stdoutTail)
+    tails.push(`stdout tail (max ${MAX_OUTPUT_TAIL_BYTES} bytes):\n${result.stdoutTail}`)
+  if (result.stderrTail)
+    tails.push(`stderr tail (max ${MAX_OUTPUT_TAIL_BYTES} bytes):\n${result.stderrTail}`)
+  return tails.length === 0 ? '' : `\nBounded output diagnostics:\n${tails.join('\n')}`
+}
+
+async function runIntegrationFileStreaming(testArguments, options) {
+  const result = await runStreaming('bun', testArguments, options)
+  if (result.status === 0) return
+  throw new Error(
+    `bun test exited with status ${String(result.status)}${formatStreamingFailure(result)}`
+  )
+}
+
+async function runIntegrationShardStreaming(shard, integrationEnvironment, remoteDatabase) {
+  const perTestTimeoutMs = remoteDatabase ? '120000' : '30000'
+  for (const group of selectIntegrationShard(shard)) {
+    if (
+      remoteDatabase &&
+      process.env.GITHUB_ACTIONS === 'true' &&
+      group.qualification === 'hosted-graph-restate'
+    ) {
+      console.log('Hosted PostgreSQL/Restate graph runs in its required qualification step.')
+      continue
+    }
+    for (const file of group.files) {
+      const testArguments = integrationFileArguments(group, file, perTestTimeoutMs)
+      await runIntegrationFileStreaming(testArguments, {
+        cwd: group.package,
+        environment: integrationEnvironment,
+      })
+    }
+  }
+}
+
+async function runLocalIntegrationShards(integrationEnvironment) {
+  const results = await Promise.allSettled(
+    INTEGRATION_SHARD_IDS.map(async (shard) => {
+      console.log(`Local PostgreSQL integration shard ${shard} starting.`)
+      await runIntegrationShardStreaming(shard, integrationEnvironment, false)
     })
   )
-  if (result.stdout) process.stdout.write(result.stdout)
-  if (result.stderr) process.stderr.write(result.stderr)
-  if (result.error) throw result.error
-  if (result.status !== 0) {
-    throw new Error(`docker exited with status ${String(result.status)}`)
+  const failures = results.flatMap((result, index) =>
+    result.status === 'rejected'
+      ? [
+          new Error(`Local PostgreSQL integration shard ${INTEGRATION_SHARD_IDS[index]} failed`, {
+            cause: result.reason,
+          }),
+        ]
+      : []
+  )
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'One or more local PostgreSQL integration shards failed')
   }
 }
 
@@ -185,9 +271,9 @@ try {
     // reach them through the environment.
     INTEGRATION_TEST_TIMEOUT_MS: remoteDatabase ? '120000' : undefined,
   }
-  // Stream progress even while a remote database task is unfinished. Grouped
-  // CI logs hide test/setup timing until the whole package exits.
-  if (integrationShard === null) {
+  if (integrationShard === null && remoteDatabase) {
+    // Preserve the full remote command for callers that do not select explicit
+    // Neon shards. The trusted-main workflow uses the sharded path below.
     run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1', '--log-order=stream'], {
       environment: integrationEnvironment,
     })
@@ -208,14 +294,16 @@ try {
         environment: integrationEnvironment,
       }
     )
-    // Repository-owned scenarios span composition roots without importing
-    // repository fixtures from inside an application package.
+    // Repository-owned scenarios span composition roots; keep their fixtures
+    // outside individual workspace packages.
     run(
       'bun',
       [
         'test',
         '--timeout',
         remoteDatabase ? '120000' : '30000',
+        './tests/child-progress-scanner.integration.test.mjs',
+        './tests/child-progress-sqlite-feed-replay.integration.test.mjs',
         './tests/memory-process-loss.integration.test.mjs',
         './tests/langgraph-retirement-inventory-pg.integration.test.mjs',
         './tests/runtime-node-credential-revocation.integration.test.mjs',
@@ -224,41 +312,17 @@ try {
         environment: integrationEnvironment,
       }
     )
+  } else if (integrationShard === null) {
+    // The local runner owns one disposable PostgreSQL service. Build package
+    // entrypoints once, then run the complete disjoint partition concurrently;
+    // files remain serial within each shard to avoid cross-project contention.
+    run('bun', ['run', 'build'], { environment: integrationEnvironment })
+    await runLocalIntegrationShards(integrationEnvironment)
   } else {
-    // A remote branch stretches tests that finish in seconds locally to
-    // 30-70 seconds each, and its pooler occasionally severs a pooled
-    // connection mid-run (CONNECTION_CLOSED / CONNECTION_ENDED), leaving
-    // later queries blocked long enough to trip the per-test timeout. The
-    // remote lane therefore raises the ceiling and runs every file in its
-    // own process with one retry, so a transient drop costs one file
-    // instead of poisoning the rest of the shard. The local lane keeps the
-    // fast-fail ceiling and the package-level sweep.
-    const perTestTimeoutMs = remoteDatabase ? '120000' : '30000'
-    for (const group of selectIntegrationShard(integrationShard)) {
-      if (
-        remoteDatabase &&
-        process.env.GITHUB_ACTIONS === 'true' &&
-        group.qualification === 'hosted-graph-restate'
-      ) {
-        console.log('Hosted PostgreSQL/Restate graph runs in its required qualification step.')
-        continue
-      }
-      for (const file of group.files) {
-        const testArguments = integrationFileArguments(group, file, perTestTimeoutMs)
-        try {
-          run('bun', testArguments, {
-            cwd: group.package,
-            environment: integrationEnvironment,
-          })
-        } catch {
-          console.log(`Integration file ${file} failed; retrying once before failing the shard.`)
-          run('bun', testArguments, {
-            cwd: group.package,
-            environment: integrationEnvironment,
-          })
-        }
-      }
-    }
+    // Explicit local shard runs need the same built package entrypoints as the
+    // default local lane. Neon callers build once before creating their shards.
+    if (!remoteDatabase) run('bun', ['run', 'build'], { environment: integrationEnvironment })
+    await runIntegrationShardStreaming(integrationShard, integrationEnvironment, remoteDatabase)
   }
   // One drill execution per verification: shard 1 owns it in sharded runs.
   if (integrationShard === null || integrationShard === 1) {

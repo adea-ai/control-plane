@@ -36,6 +36,8 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly onParentInboxWake?: NodePiDurableCompositionOptions['onParentInboxWake']
   readonly tools?: NodePiDurableCompositionOptions['tools']
   readonly governedDelegateChild?: NodePiDurableCompositionOptions['governedDelegateChild']
+  /** Host prepare plus retained execute for governed management calls. */
+  readonly governedManagementCall?: NodePiDurableCompositionOptions['governedManagementCall']
   /** The same canonical service used by child admission/progress. */
   readonly delegationService?: Pick<DelegationService, 'cancelChildren'>
   /** A child must independently reload its canonical lineage, selection and authority. */

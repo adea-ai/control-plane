@@ -262,7 +262,7 @@ const pin = (plan) => ({
   contentDigest: plan.contentDigest,
   schemaVersion: plan.schemaVersion,
 })
-const actor = 'user:6ba7b810-9dad-41d1-80b4-00c04fd430c8'
+const actor = 'user:11111111-1111-4111-8111-111111111111'
 
 export async function continuationPorts(directory, journal, canonicalProvider) {
   const sqlite = await import('@control-plane/sqlite-persistence')
@@ -529,6 +529,7 @@ export async function initialWorker(directory, mode, baseUrl) {
       // delegate_child turn dies before completion ('unknown' status) and the
       // worker exits before any evidence can be retained.
       transactionalChildAdmission: true,
+      canonicalActorPrincipalId: actor,
       childRuntimeFactory: async (options, { canonicalProvider }) => {
         ports = await continuationPorts(
           directory,

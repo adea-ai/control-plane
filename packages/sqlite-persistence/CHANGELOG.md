@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.37.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.36.0...sqlite-persistence-v1.37.0) (2026-10-12)
+
+
+### Features
+
+* coalesce child progress into bounded evidence packets ([#973](https://github.com/adea-ai/control-plane/issues/973)) ([0df9d17](https://github.com/adea-ai/control-plane/commit/0df9d17ec3b0e167e081ad8a056bc2f21a194ccd))
+
 ## [1.36.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.35.0...sqlite-persistence-v1.36.0) (2026-10-10)
 
 

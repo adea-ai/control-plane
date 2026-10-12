@@ -11,9 +11,14 @@ import {
   createProductionChildDelegation,
   type ProductionChildDelegationOptions,
 } from './production-child-delegation.js'
+import type {
+  DurableExecutionAuthority,
+  PiDurableGovernedManagementCallCompiler,
+} from '@control-plane/pi-durable-adapter'
 import { RecordedModelFundingDecisionSchema } from '@control-plane/model-gateway'
 import { createPiExecutionBoundModelComposition } from '@control-plane/pi-durable-adapter'
 import { createCurrentModelConnectionComposition } from './current-model-composition.js'
+import { pinModelConnectionOptions } from './pinned-model-connections.js'
 import { createCanonicalModelHostComposition } from './canonical-model-composition.js'
 import { ConfiguredModelConnectionService } from './model-connections.service.js'
 import { createPiLeadModelAdmissionReadiness } from './pi-lead-model-readiness.js'
@@ -31,6 +36,12 @@ import {
   createPiDurableCurrentToolAuthority,
   type CreatePiDurableCurrentToolAuthorityOptions,
 } from '../pi-durable/current-tool-authority.js'
+import {
+  createPiDurableGovernedManagementCall,
+  SqlitePiDurableManagementCallStore,
+  type PiDurableManagementCallAuthority,
+  type PiDurableManagementCallerOptions,
+} from '../pi-durable/management-governed-call.js'
 import {
   PiLeadPublicationService,
   type PiLeadPublicationPorts,
@@ -64,14 +75,26 @@ export interface ProductionPiLeadCompositionOptions {
   >
   readonly leasePrincipalRef: string
   readonly modelAlias: string
+  /** Host-built issuer + Adea transport; the launcher supplies the exact tool-call compiler. */
+  readonly governedManagementCall?: NodePiDurableLeadCompositionOptions['governedManagementCall']
+  /** Host-owned management call ingredients; this composition supplies only its retained gate. */
+  readonly managementCall?: Pick<
+    PiDurableManagementCallerOptions,
+    'issue' | 'callAdea' | 'resolveTargetId' | 'requiresApproval'
+  > & {
+    readonly prepare: PiDurableGovernedManagementCallCompiler['prepare']
+  }
   /** Separate canonical child admission and confirmed provider/spending authority. Never lead fallback. */
   readonly children?: {
+    /** Optional host-owned child authority mode used by newer launchers. */
+    readonly authority?: Omit<Parameters<typeof createProductionChildModelAuthority>[0], 'product'>
+    readonly forgetCanonicalModels?: (authority: DurableExecutionAuthority) => void
     /** Server-only retained tool bindings; never derived from an HTTP/request payload. */
     readonly tools: Pick<CreatePiDurableCurrentToolAuthorityOptions, 'service' | 'interactions'>
     readonly delegation: Omit<
       ProductionChildDelegationOptions,
       'product' | 'readCurrent' | 'now' | 'onEventRetained'
-    >
+    > & { readonly readCurrent?: ProductionChildDelegationOptions['readCurrent'] }
     readonly createGovernedDelegateChild: (
       service: DelegationService
     ) => NonNullable<NodePiDurableLeadCompositionOptions['governedDelegateChild']>
@@ -79,12 +102,37 @@ export interface ProductionPiLeadCompositionOptions {
     readonly modelAuthority: Pick<
       Parameters<typeof createPiExecutionBoundModelComposition>[0],
       'leasePrincipalRef' | 'modelAlias' | 'maximumRetainedFacades'
-    >
+    > &
+      Partial<
+        Pick<
+          Parameters<typeof createPiExecutionBoundModelComposition>[0],
+          'forExecution' | 'readRecordedDecision'
+        >
+      >
     readonly runtime: Required<
       Pick<NodePiDurableLeadCompositionOptions, 'childProgress' | 'consumeParentInbox'>
     > &
       Pick<NodePiDurableLeadCompositionOptions, 'onParentInboxWake'>
   }
+}
+
+/** Build the durable management-call authority using the host's exact issuer, transport and target. */
+export function createProductionGovernedManagementCall(options: {
+  readonly authority: PiDurableManagementCallAuthority
+  readonly database: DatabaseSync
+  readonly call: Pick<
+    PiDurableManagementCallerOptions,
+    'issue' | 'callAdea' | 'resolveTargetId' | 'requiresApproval'
+  >
+}): ReturnType<typeof createPiDurableGovernedManagementCall> {
+  return createPiDurableGovernedManagementCall({
+    authority: options.authority,
+    store: new SqlitePiDurableManagementCallStore(options.database),
+    issue: options.call.issue,
+    callAdea: options.call.callAdea,
+    resolveTargetId: options.call.resolveTargetId,
+    ...(options.call.requiresApproval ? { requiresApproval: options.call.requiresApproval } : {}),
+  })
 }
 
 /** Actual opt-in production composition. No fixture, secret discovery, environment provider,
@@ -138,9 +186,41 @@ export async function createProductionPiLeadComposition(
       typeof children.tools?.interactions?.get !== 'function')
   )
     throw new Error('PI_PRODUCTION_CHILD_BINDING_REQUIRED')
+  if (options.managementCall !== undefined) {
+    if (options.governedManagementCall !== undefined || !options.managementAuthority)
+      throw new Error('PI_PRODUCTION_BINDING_REQUIRED')
+    if (
+      typeof options.managementCall.issue !== 'function' ||
+      typeof options.managementCall.callAdea !== 'function' ||
+      typeof options.managementCall.resolveTargetId !== 'function' ||
+      typeof options.managementCall.prepare !== 'function' ||
+      (options.managementCall.requiresApproval !== undefined &&
+        typeof options.managementCall.requiresApproval !== 'function')
+    )
+      throw new Error('PI_PRODUCTION_BINDING_REQUIRED')
+  }
+  const externalChildAuthority =
+    options.children !== undefined &&
+    (options.children.authority !== undefined ||
+      options.children.forgetCanonicalModels !== undefined ||
+      options.children.modelAuthority.forExecution !== undefined ||
+      options.children.modelAuthority.readRecordedDecision !== undefined)
+  if (
+    externalChildAuthority &&
+    (!options.children?.authority ||
+      typeof options.children.authority.readCurrent !== 'function' ||
+      typeof options.children.authority.admit !== 'function' ||
+      typeof options.children.authority.assertCurrent !== 'function' ||
+      typeof options.children.forgetCanonicalModels !== 'function' ||
+      typeof options.children.modelAuthority.forExecution !== 'function' ||
+      typeof options.children.modelAuthority.readRecordedDecision !== 'function' ||
+      typeof options.children.delegation.readCurrent !== 'function')
+  )
+    throw new Error('PI_PRODUCTION_CHILD_BINDING_REQUIRED')
   mkdirSync(options.directory, { recursive: true, mode: 0o700 })
   let fundingDatabase: DatabaseSync | undefined
   let intentDatabase: DatabaseSync | undefined
+  let managementJournalDatabase: DatabaseSync | undefined
   let runtime: Awaited<ReturnType<typeof createNodePiDurableLeadComposition>> | undefined
   const runtimeBinding = createProductionRuntimeBinding()
   let retentionTimer: ReturnType<typeof setInterval> | undefined
@@ -148,7 +228,11 @@ export async function createProductionPiLeadComposition(
     try {
       intentDatabase?.close()
     } finally {
-      fundingDatabase?.close()
+      try {
+        fundingDatabase?.close()
+      } finally {
+        managementJournalDatabase?.close()
+      }
     }
   }
   try {
@@ -158,7 +242,15 @@ export async function createProductionPiLeadComposition(
     intentDatabase = new DatabaseSync(join(options.directory, 'lead-admission.sqlite'))
     fundingDatabase.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL')
     intentDatabase.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL')
-    const metadata = createCurrentModelConnectionComposition(options.modelConnections)
+    if (options.managementCall !== undefined) {
+      managementJournalDatabase = new DatabaseSync(join(options.directory, 'authority.sqlite'), {
+        timeout: 5000,
+      })
+      managementJournalDatabase.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL')
+    }
+    const metadata = createCurrentModelConnectionComposition(
+      pinModelConnectionOptions(options.modelConnections)
+    )
     const product = createProductionLeadProductAuthority({
       database: fundingDatabase,
       product: options.product,
@@ -200,7 +292,7 @@ export async function createProductionPiLeadComposition(
         ? createProductionChildDelegation({
             ...children.delegation,
             product,
-            readCurrent: childCurrent.readAdmission,
+            readCurrent: children.delegation.readCurrent ?? childCurrent.readAdmission,
             ...(options.admission.now ? { now: options.admission.now } : {}),
             ...(children.runtime.onParentInboxWake
               ? { onEventRetained: async () => children.runtime.onParentInboxWake?.() }
@@ -254,6 +346,22 @@ export async function createProductionPiLeadComposition(
           ...(options.admission.now ? { now: options.admission.now } : {}),
         })
       : undefined
+    const managementCaller =
+      options.managementCall && piDurableCurrentToolAuthority && managementJournalDatabase
+        ? createProductionGovernedManagementCall({
+            authority: { assertCurrent: piDurableCurrentToolAuthority.assertCurrent },
+            database: managementJournalDatabase,
+            call: options.managementCall,
+          })
+        : undefined
+    const builtManagementCall: PiDurableGovernedManagementCallCompiler | undefined =
+      managementCaller && options.managementCall
+        ? {
+            prepare: options.managementCall.prepare,
+            execute: async (request) => managementCaller.execute(request),
+          }
+        : undefined
+    const managementPort = options.governedManagementCall ?? builtManagementCall
     let retention: ReturnType<typeof createProductionFacadeRetention> | undefined
     const native = createPiExecutionBoundModelComposition({
       forExecution: (binding) => {
@@ -294,24 +402,39 @@ export async function createProductionPiLeadComposition(
       ...options.readiness,
       selections: metadata.selections,
     })
-    const childAuthority =
-      childCurrent && childHost
-        ? createProductionChildModelAuthority({
-            product,
-            readCurrent: childCurrent.readRuntime,
-            admit: childHost.admit,
-            assertCurrent: childHost.assertCurrent,
-          })
-        : undefined
-    const childModels =
-      children && childHost
+    const childAuthority = children
+      ? children.authority
+        ? createProductionChildModelAuthority({ ...children.authority, product })
+        : childCurrent && childHost
+          ? createProductionChildModelAuthority({
+              product,
+              readCurrent: childCurrent.readRuntime,
+              admit: childHost.admit,
+              assertCurrent: childHost.assertCurrent,
+            })
+          : undefined
+      : undefined
+    const childModels = children
+      ? children.modelAuthority.forExecution && children.modelAuthority.readRecordedDecision
         ? createPiExecutionBoundModelComposition({
             ...children.modelAuthority,
-            forExecution: childHost.forExecution,
-            readRecordedDecision: childHost.readRecordedDecision,
+            forExecution: children.modelAuthority.forExecution,
+            readRecordedDecision: children.modelAuthority.readRecordedDecision,
             ledger: options.ledger,
           })
-        : undefined
+        : childHost
+          ? createPiExecutionBoundModelComposition({
+              leasePrincipalRef: children.modelAuthority.leasePrincipalRef,
+              modelAlias: children.modelAuthority.modelAlias,
+              ...(children.modelAuthority.maximumRetainedFacades !== undefined
+                ? { maximumRetainedFacades: children.modelAuthority.maximumRetainedFacades }
+                : {}),
+              forExecution: childHost.forExecution,
+              readRecordedDecision: childHost.readRecordedDecision,
+              ledger: options.ledger,
+            })
+          : undefined
+      : undefined
     const childRetention =
       children && childModels && childHost
         ? createProductionChildModelRetention({
@@ -319,7 +442,8 @@ export async function createProductionPiLeadComposition(
             ledger: options.ledger,
             maximum: children.modelAuthority.maximumRetainedFacades ?? 256,
             forgetNative: childModels.forgetTerminalExecution,
-            forgetCanonical: childHost.forgetTerminalExecution,
+            forgetCanonical:
+              children.forgetCanonicalModels ?? childHost?.forgetTerminalExecution ?? (() => {}),
           })
         : undefined
     const collectModels = async () => {
@@ -334,6 +458,7 @@ export async function createProductionPiLeadComposition(
       return childModels
     }
     runtime = await createNodePiDurableLeadComposition({
+      ...(managementPort ? { governedManagementCall: managementPort } : {}),
       ...(options.children &&
       childAuthority &&
       currentToolAuthority &&
@@ -430,6 +555,7 @@ export async function createProductionPiLeadComposition(
     let closing: Promise<void> | undefined
     return {
       piDurableLeadService: installed.service,
+      ...(managementPort ? { governedManagementCall: managementPort } : {}),
       /** Read-only server-owned child authority (no caller input); used by composition proofs. */
       ...(childCurrent ? { childAuthorityCurrent: childCurrent } : {}),
       /** The exact child authority port the adapter consumes; read-only proof surface. */

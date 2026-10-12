@@ -195,6 +195,18 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
       at >= Date.parse(evidence.expiresAt)
     )
       deny()
+    const expiries = [
+      intent.expiresAt,
+      evidence.expiresAt,
+      execution.deadlineAt,
+      attempt.deadlineAt,
+    ].filter((expiry): expiry is string => expiry !== undefined)
+    const expiresAt = expiries.reduce((earliest, candidate) =>
+      Date.parse(candidate) < Date.parse(earliest) ? candidate : earliest
+    )
+    // Product reads are asynchronous. Recheck after the final read and carry the
+    // parent/attempt deadline into downstream authorities so it cannot be outlived.
+    if (nowMs() >= Date.parse(expiresAt)) deny()
     const requested = evidence.requestedModelSelections?.child
     return {
       intentId: intent.intentId,
@@ -205,10 +217,7 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
       scopeRef: evidence.scopeRef,
       allowedPrincipalIds: [...intent.allowedPrincipalIds],
       authorityRevision: intent.authorityRevision,
-      expiresAt:
-        Date.parse(evidence.expiresAt) < Date.parse(intent.expiresAt)
-          ? evidence.expiresAt
-          : intent.expiresAt,
+      expiresAt,
       ...(requested ? { requestedSelection: ModelSelectionReferenceSchema.parse(requested) } : {}),
     }
   }

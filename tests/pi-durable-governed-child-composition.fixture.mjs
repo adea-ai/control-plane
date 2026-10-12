@@ -1,10 +1,17 @@
 // Actual Pi/J1/SQLite composition. HTTP, grants and approval are deterministic host fixtures.
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { createServer } from 'node:net'
 import { DatabaseSync } from 'node:sqlite'
 import { createModels, createProvider } from '@earendil-works/pi-ai/models'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
+import {
+  ChildProgressEvidenceBuffer,
+  ChildProgressLeadDispatcher,
+  ChildProgressLeadFeed,
+  ChildUsageLedger,
+} from '@control-plane/orchestration'
 import { DurableUsageLedger, PinnedModelPrice } from '@control-plane/usage-ledger'
 import { ExecutionLifecycleService } from '@control-plane/domain'
 import { ExecutionPlanCompiler } from '@control-plane/execution-plan'
@@ -20,6 +27,7 @@ import {
   SqliteDelegationEventPublisher,
   SqliteToolCallRepository,
   SqliteDelegationToolAdmissionRepository,
+  SqliteChildUsageOutcomeRepository,
 } from '@control-plane/sqlite-persistence'
 import {
   createGovernedChildHostFixture,
@@ -43,12 +51,29 @@ import { createProductionChildDelegation } from '../apps/control-api/src/models/
 import { selection as productSelectionFixture } from '../apps/control-api/src/models/model-selection-fixtures.mjs'
 
 function persistentStorage(provider) {
+  const publications = new SqliteDelegationEventPublisher(provider, ids.parentExecutionId)
+  // The lead projection composes over the canonical durable outlet: every
+  // delegation event the service (or the production scanner's
+  // recordChildProgress path) publishes folds through the feed into the lead
+  // dispatcher, and `list()` stays the durable restart source.
+  const dispatcher = new ChildProgressLeadDispatcher({
+    buffer: new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId }),
+  })
+  const leadFeed = new ChildProgressLeadFeed({
+    publications,
+    dispatcher,
+    generationOf: () => 1,
+  })
   return {
     executions: new SqliteExecutionRepository(provider),
     plans: new SqliteExecutionPlanRepository(provider),
     contexts: new SqliteContextPackageRepository(provider),
     delegations: new SqliteDelegationRepository(provider),
-    events: new SqliteDelegationEventPublisher(provider, ids.parentExecutionId),
+    events: leadFeed,
+    publications,
+    leadFeed,
+    dispatcher,
+    usageOutcomes: new SqliteChildUsageOutcomeRepository(provider, ids.delegationId),
     calls: new SqliteToolCallRepository(provider, ids.workspaceId),
     admissions: new SqliteDelegationToolAdmissionRepository(provider, ids.workspaceId),
   }
@@ -214,6 +239,39 @@ export async function createGovernedChildCompositionFixture(
   const ledger = new DurableUsageLedger({
     store: new SqliteDurableUsageStore(provider),
     now: () => now,
+  })
+  // Canonical publication ordering source: the durable usage ledger assigns a
+  // monotonic sequence per settle entry. Capturing it from the very entry the
+  // authority settles means a redelivery of the same entry (same idempotency
+  // key) reuses its ORIGINAL sequence instead of minting a new one — the
+  // property that keeps an old provider report from ever ordering as new.
+  // Each canonical settle entry carries its own idempotency identity, so the
+  // sequence is bound to THAT identity rather than a shared last-result. Two
+  // concurrently settling requests can therefore never lend their sequence to
+  // one another's report.
+  const settleSequenceByIdempotency = new Map()
+  const canonicalSettleModelRequest = ledger.settleModelRequest.bind(ledger)
+  ledger.settleModelRequest = async (settleInput) => {
+    const entry = await canonicalSettleModelRequest(settleInput)
+    settleSequenceByIdempotency.set(entry.source.idempotencyKey, entry.sequence)
+    // Traced actual failing value: the ledger canonicalizes entry.source.idempotencyKey
+    // to `usage:<digest>`, while the report path looks up `${sourceId}:settle` — the raw
+    // input identity. Record the sequence under BOTH identities (same entry, same
+    // sequence) so each report finds its own actual ledger entry; redelivery of the same
+    // sourceId returns the retained entry and therefore the ORIGINAL sequence.
+    settleSequenceByIdempotency.set(`${entry.source.sourceId}:settle`, entry.sequence)
+    return entry
+  }
+  // The correlated cost-state projection for the child attempt. The money
+  // stays in the canonical durable ledger above; this records the explicit
+  // estimated/reserved/reported/reconciled/settled evidence stages, driven
+  // live by the bridge's reserveBudget seam and the canonical settle path.
+  const childUsage = new ChildUsageLedger()
+  const childUsageIdentity = (admission) => ({
+    parentExecutionId: admission.identity.parentExecutionId,
+    delegationId: admission.identity.delegationId,
+    childExecutionId: admission.record.childExecutionId,
+    childAttemptId: admission.identity.childAttemptId,
   })
   const selections = {
     lead: { selectionRef: `msel_${'a'.repeat(32)}`, selectionRevision: 1 },
@@ -395,6 +453,16 @@ export async function createGovernedChildCompositionFixture(
         maximumTokens: budget.maximumTokens,
         source: { sourceId: 'child-reserved', idempotencyKey: 'child-reserved' },
       })
+      // Live bridge seam: the canonical durable reservation above is recorded
+      // verbatim as the attempt's reservation evidence (and the plan ceiling
+      // as its estimate) in the same scheduling step.
+      const usageIdentity = childUsageIdentity(admission)
+      childUsage.recordEstimate(usageIdentity, {
+        currency: 'USD',
+        maximumMicrounits: workspace.command.childPlan.constraints.limits.budget.maximumMicrounits,
+        source: 'fixture-child-plan-constraints',
+      })
+      childUsage.recordReservation(usageIdentity, budget)
     }
     childAdmission = {
       schemaVersion: 'pi-durable-admission/v1',
@@ -415,7 +483,57 @@ export async function createGovernedChildCompositionFixture(
     assertAuthority: assertCurrent,
     scopeAuthority,
     authorizeInference: usage.authorizeInference,
-    settleUsage: usage.settleUsage,
+    lastSettle: undefined,
+    settleUsage: async (authority, key, usageInput, counts) => {
+      shared.lastSettle = { authority, key }
+      // Canonical settlement first: the durable usage ledger records the
+      // charge, and only its returned, priced RuntimeUsage feeds the
+      // cost-state projection — never an estimate or an inferred amount.
+      const settled = await usage.settleUsage(authority, key, usageInput, counts)
+      const accounting = settled.accounting
+      if (authority.request.executionId === ids.childExecutionId && accounting !== undefined) {
+        const settlementIdentity = childUsageIdentity({
+          identity: {
+            parentExecutionId: ids.parentExecutionId,
+            delegationId: ids.delegationId,
+            childAttemptId: ids.childAttemptId,
+          },
+          record: { childExecutionId: ids.childExecutionId },
+        })
+        const reportId = `usage-settle:${ids.childAttemptId}:${createHash('sha256')
+          .update(String(key))
+          .digest('hex')
+          .slice(0, 16)}`
+        // The sequence is looked up by THIS settlement's own idempotency
+        // identity (the authority settles with `<sourceId>:settle`), so a
+        // concurrently settling request can never lend its sequence here.
+        const sequenceKey = `${settled.accounting.sourceId}:settle`
+        // Test seam: run BETWEEN the canonical settle and the sequence lookup so a
+        // cold-map publication (settle observed elsewhere) can be exercised honestly.
+        await shared.beforeSequenceLookup?.(settled)
+        const publicationSequence = settleSequenceByIdempotency.get(sequenceKey)
+        // Fail closed: a settled child report with no observed canonical sequence must
+        // never publish. Silently omitting publicationSequence let an old redelivery
+        // order as new downstream — the exact regression this fixture must prevent.
+        if (publicationSequence === undefined) {
+          throw new Error(`PUBLICATION_SEQUENCE_MISSING:${sequenceKey}`)
+        }
+        const receipt = childUsage.recordReportedUsage(settlementIdentity, settled, {
+          reportId,
+          publicationSequence,
+        })
+        if (receipt.outcome === 'recorded') {
+          childUsage.reconcile(settlementIdentity, { reconciledAt: now })
+          childUsage.settle(settlementIdentity, {
+            currency: 'USD',
+            settledMicrounits: accounting.chargedMicrounits,
+            settledAt: now,
+            settlementRef: reportId,
+          })
+        }
+      }
+      return settled
+    },
     reconcileInference: async () => 'unresolved',
     verifyApproval: async (_authority, _identity, submitted) =>
       state.approved &&
@@ -642,7 +760,11 @@ export async function createGovernedChildCompositionFixture(
     return {
       state,
       host,
+      shared,
+      settleSequenceByIdempotency,
+      childAdmissionAuthority,
       ledger,
+      childUsage,
       storage,
       leadDatabase,
       selections,

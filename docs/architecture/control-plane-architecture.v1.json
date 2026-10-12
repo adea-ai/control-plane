@@ -107,6 +107,7 @@
         "@control-plane/execution-plan",
         "@control-plane/memory-writeback",
         "@control-plane/model-gateway",
+        "@control-plane/object-store",
         "@control-plane/orchestration",
         "@control-plane/pi-durable-adapter",
         "@control-plane/runtime-sdk",

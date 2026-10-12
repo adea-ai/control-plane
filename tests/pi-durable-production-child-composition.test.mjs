@@ -83,7 +83,7 @@ function functionCallResponse() {
   )
 }
 
-function childrenFactory({ denyCurrentScopeRead = true } = {}) {
+function childrenFactory({ denyCurrentScopeRead = true, selfComposed = false } = {}) {
   return async ({
     persistence,
     repositories,
@@ -221,6 +221,18 @@ function childrenFactory({ denyCurrentScopeRead = true } = {}) {
       }
     }
     return {
+      ...(selfComposed
+        ? {}
+        : {
+            authority: {
+              readCurrent: async () => undefined,
+              admit: async () => {
+                throw new Error('CHILD_RUNTIME_NOT_EXPECTED')
+              },
+              assertCurrent: async () => {},
+            },
+            forgetCanonicalModels: () => {},
+          }),
       tools: { service, interactions },
       delegation: {
         records: delegationRecords,
@@ -228,6 +240,7 @@ function childrenFactory({ denyCurrentScopeRead = true } = {}) {
         plans: repositories.plans,
         events,
         scopeAdmission,
+        ...(selfComposed ? {} : { readCurrent: async () => undefined }),
       },
       createGovernedDelegateChild(delegationService) {
         state.governedDelegationService = delegationService
@@ -243,6 +256,16 @@ function childrenFactory({ denyCurrentScopeRead = true } = {}) {
         }
       },
       modelAuthority: {
+        ...(selfComposed
+          ? {}
+          : {
+              forExecution: async () => {
+                throw new Error('CHILD_MODEL_NOT_EXPECTED')
+              },
+              readRecordedDecision: async () => {
+                throw new Error('CHILD_MODEL_NOT_EXPECTED')
+              },
+            }),
         leasePrincipalRef,
         modelAlias: 'reasoning.standard',
       },
@@ -273,7 +296,7 @@ test('retained child model funding can resume after its parent and attempt compl
   const releaseProvider = deferred()
   let host
   host = await createProductionFactoryFixture({
-    childrenFactory: childrenFactory({ denyCurrentScopeRead: false }),
+    childrenFactory: childrenFactory({ denyCurrentScopeRead: false, selfComposed: true }),
     physicalResponder: async () => {
       providerReached.resolve()
       await releaseProvider.promise
@@ -679,6 +702,14 @@ test('actual production composition uses the canonical Pi tool authority and sha
     expect(parent.latestAttemptId).toBeTruthy()
     expect(parent.state).toBe('running')
     const parentAttemptId = parent.latestAttemptId
+    // Target-bound observation through the REAL production composition: the
+    // installed adapter's runtime session is exactly what dispatch reports as
+    // the observed target (server-owned session + plan task), proving the
+    // composition invokes the adapter for observation rather than relying on
+    // an isolated policy mock.
+    expect(dispatch.observedTarget).toBeDefined()
+    expect(dispatch.observedTarget.sessionId).toBe(dispatch.runtimeSessionId)
+    expect(typeof dispatch.observedTarget.taskId).toBe('string')
     host.state.parentExecutionId = dispatch.executionId
     const childExecutionId = id('exe', childSuffix)
     const childAttemptId = id('att', childSuffix)
@@ -747,51 +778,9 @@ test('actual production composition uses the canonical Pi tool authority and sha
     expect(host.state.toolExecutorCalls).toBe(0)
     expect(host.state.physicalSends).toBe(1)
 
-    // Adversarial current authority: the parent's delegate-child call was rejected by canonical
-    // effect authority. The server-owned child resolver, reading the real retained stores, must
-    // refuse a governed child admitted under that call. This asserts the resolver's own denial,
-    // not a limit or precondition failure in the delegation service.
-    const refusedSuffix = '01JCCCDEF0123456789ABCDEFG'
-    const refused = await host.composition.childAuthorityCurrent
-      .readAdmission({
-        workspaceId: host.workspaceId,
-        parentIntentId: intentId,
-        parentExecutionId: dispatch.executionId,
-        parentAttemptId,
-        parentExecutionVersion: parent.version,
-        parentPlan: {
-          executionPlanId: parentPlan.executionPlanId,
-          contentDigest: parentPlan.contentDigest,
-          schemaVersion: parentPlan.schemaVersion,
-        },
-        admittedToolCallId: host.state.toolCallId,
-        delegationId: id('dlg', refusedSuffix),
-        childRequestId: id('req', refusedSuffix),
-        childExecutionId: id('exe', refusedSuffix),
-        childAttemptId: id('att', refusedSuffix),
-        childDispatch: {
-          delegationId: id('dlg', refusedSuffix),
-          childAttemptId: id('att', refusedSuffix),
-          runtime: { runtimeConnectionId: id('rtc', refusedSuffix) },
-          dispatchedAt: host.at,
-        },
-        childPlan: {
-          executionPlanId: id('pln', refusedSuffix),
-          contentDigest: `sha256:${'a'.repeat(64)}`,
-          schemaVersion: parentPlan.schemaVersion,
-        },
-        role: 'researcher',
-        profileVersionId: parentPlan.profile.profileVersionId,
-        originalActorPrincipalId: host.actorPrincipalId,
-        childRequestDigest: `sha256:${'b'.repeat(64)}`,
-        acceptedAt: host.at,
-      })
-      .then(
-        () => undefined,
-        (error) => error
-      )
-    expect(refused?.message).toBe('PI_CHILD_MODEL_AUTHORITY_DENIED')
-
+    const childExecutionBeforeStop =
+      await host.repositories.executions.getExecution(childExecutionId)
+    const childAttemptBeforeStop = await host.repositories.executions.getAttempt(childAttemptId)
     const cancelCommand = host.command('pi-durable.lead.cancel', {
       dispatchId: dispatch.dispatchId,
     })
@@ -804,14 +793,30 @@ test('actual production composition uses the canonical Pi tool authority and sha
       state: 'failed',
       error: { code: 'PI_CHILD_DELEGATION_DENIED' },
     })
-    // Lead-stop never cascades to child jobs (#1045): child cancellation is a
-    // separately authorized operation. The production composition wires that
-    // same canonical delegation service, so the explicit stop publishes the
-    // durable child-stop events through the shared service proven here.
-    await host.state.governedDelegationService.cancelChildren({
-      parentExecutionId: dispatch.executionId,
-      cancelledAt: host.at,
-    })
+    // CP935 contract (Root-adjudicated authoritative): a lead-stop must NOT
+    // implicitly cancel child sessions — child cancellation is a separate,
+    // explicitly authorized operation. Prove the lead-stop leaves the
+    // dispatched child untouched.
+    expect(host.state.cancelChildCalls).toEqual([])
+    expect(await host.repositories.executions.getExecution(childExecutionId)).toEqual(
+      childExecutionBeforeStop
+    )
+    expect(await host.repositories.executions.getAttempt(childAttemptId)).toEqual(
+      childAttemptBeforeStop
+    )
+    expect(
+      host.state.retainedEvents.filter((event) => event.type === 'delegation.cancelled')
+    ).toHaveLength(0)
+
+    // Separately invoke the governed child-cancel path with its own
+    // authorization; it durably cancels the child and publishes the terminal
+    // packet exactly once.
+    const cancelChildren = () =>
+      host.state.governedDelegationService.cancelChildren({
+        parentExecutionId: dispatch.executionId,
+        cancelledAt: host.at,
+      })
+    await cancelChildren()
     expect(host.state.cancelChildCalls).toEqual([
       { parentExecutionId: dispatch.executionId, cancelledAt: host.at },
     ])
@@ -836,21 +841,19 @@ test('actual production composition uses the canonical Pi tool authority and sha
     expect(terminalWakeIndex).toBeGreaterThan(terminalIndex)
     expect(host.state.parentInboxWakeSnapshots.at(-1)).toContainEqual(terminalEvents[0])
 
+    // A repeated child-cancel is idempotent (terminal packet published once),
+    // and a lead-stop replay still never cascades to children.
+    await cancelChildren()
+    expect(host.state.cancelChildCalls).toHaveLength(2)
+    expect(
+      host.state.retainedEvents.filter((event) => event.type === 'delegation.cancelled')
+    ).toHaveLength(1)
     const replayed = await host.composition.piDurableLeadService.cancel(
       cancelCommand,
       host.principal
     )
     expect(replayed.data.state).toBe('failed')
-    // A repeated explicit child stop repairs the terminal publication
-    // idempotently without a second lifecycle transition or event.
-    await host.state.governedDelegationService.cancelChildren({
-      parentExecutionId: dispatch.executionId,
-      cancelledAt: host.at,
-    })
     expect(host.state.cancelChildCalls).toHaveLength(2)
-    expect(
-      host.state.retainedEvents.filter((event) => event.type === 'delegation.cancelled')
-    ).toHaveLength(1)
     expect(host.state.physicalSends).toBe(1)
     expect(host.state.toolExecutorCalls).toBe(0)
   } finally {

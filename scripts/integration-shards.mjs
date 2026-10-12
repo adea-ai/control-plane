@@ -28,6 +28,16 @@
 // Shard 3 completed its integration slice in 601s. Move the complete budget
 // file to shard 3; the interrupted file's 1,038.311s span is a lower bound.
 // Keep the preceding observations as history, not current-run acceptance.
+// Run 38178336814 (2026-10-11, head 7d61c6c) reached shard 2's 45-minute
+// limit. Its runner completed the foundation slice and three retention files
+// in 2,065.381s, then spent 594.492s in usage-store with 9/12 tests complete.
+// The exact same usage-store source in run 38112415657 reached 619.319s with
+// 10 tests complete before cancellation. Move usage-store and the two unchanged
+// measured retention files to shard 1, and move the unmeasured workspace-scope
+// file to shard 3's observed spare capacity. The ownership change itself
+// preserves tests, filters, timeout, and branch count. This review candidate
+// separately removes automatic per-file reruns. A complete hosted run must
+// qualify the new ownership.
 
 const foundationCasesForShard2 =
   'retention|delet|sweep|retired command|retains|frees|pins|usage|evaluation|release decisions|proposal'
@@ -40,6 +50,14 @@ export const INTEGRATION_SHARDS = [
         package: 'packages/database',
         files: ['src/integration.test.mjs'],
         testNamePattern: `^(?!.*(?:${foundationCasesForShard2})).*$`,
+      },
+      {
+        package: 'packages/database',
+        files: [
+          'src/usage-store.integration.test.mjs',
+          'src/memory-provenance-retention.integration.test.mjs',
+          'src/retention-hold-owner-activation.integration.test.mjs',
+        ],
       },
     ],
   },
@@ -57,10 +75,6 @@ export const INTEGRATION_SHARDS = [
           'src/retention-reference-windows.integration.test.mjs',
           'src/retention-hold-activation.integration.test.mjs',
           'src/retention-ancestry.integration.test.mjs',
-          'src/usage-store.integration.test.mjs',
-          'src/memory-provenance-retention.integration.test.mjs',
-          'src/retention-hold-owner-activation.integration.test.mjs',
-          'src/workspace-execution-scope.integration.test.mjs',
         ],
       },
     ],
@@ -87,6 +101,7 @@ export const INTEGRATION_SHARDS = [
           'src/retention-hold-repository.integration.test.mjs',
           'src/retention-claim-budget.integration.test.mjs',
           'src/retention-claim-lock-order.integration.test.mjs',
+          'src/workspace-execution-scope.integration.test.mjs',
         ],
       },
       { package: 'packages/profile-portability', files: ['src/postgres.integration.test.mjs'] },
@@ -114,6 +129,8 @@ export const INTEGRATION_SHARDS = [
       {
         package: '.',
         files: [
+          './tests/child-progress-scanner.integration.test.mjs',
+          './tests/child-progress-sqlite-feed-replay.integration.test.mjs',
           './tests/memory-process-loss.integration.test.mjs',
           './tests/runtime-node-credential-revocation.integration.test.mjs',
         ],
