@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.45.1](https://github.com/adea-ai/control-plane/compare/database-v1.45.0...database-v1.45.1) (2026-10-12)
+
+
+### Performance
+
+* **ci:** trim required integration critical path ([#1101](https://github.com/adea-ai/control-plane/issues/1101)) ([2085eeb](https://github.com/adea-ai/control-plane/commit/2085eebcf5e66afd50707158c50eb7db18db8a67))
+
 ## [1.45.0](https://github.com/adea-ai/control-plane/compare/database-v1.44.0...database-v1.45.0) (2026-10-12)
 
 

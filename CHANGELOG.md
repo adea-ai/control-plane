@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.93.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.93.0...workspace-v1.93.1) (2026-10-12)
+
+
+### Performance
+
+* **ci:** trim required integration critical path ([#1101](https://github.com/adea-ai/control-plane/issues/1101)) ([2085eeb](https://github.com/adea-ai/control-plane/commit/2085eebcf5e66afd50707158c50eb7db18db8a67))
+
 ## [1.93.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.92.2...workspace-v1.93.0) (2026-10-12)
 
 
