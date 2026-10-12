@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
 import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
+import { createLocalGraphToolFixture } from './local-graph-tool-fixture.mjs'
 import { ManagedLocalGraphRuntime } from './managed-graph-runtime.ts'
 
 // Composition proof for the local production adapter: the resume fence and admission gate the runtime builds,
@@ -96,27 +97,50 @@ describe('local managed graph runtime legacy retirement composition (M16.03, #94
   })
 
   test('a run passes the production admission gate, which does not refuse the local store', async () => {
-    const { directory, persistence, activities } = await localRuntime()
+    const fixture = await createLocalGraphToolFixture({ approvalMode: 'never' })
     try {
-      const refusal = await activities
-        .runGraphSegment({
-          executionId,
-          attemptId: 'att_01JABCDEF0123456789ABCDEFG',
-          workspaceId,
-          workflowId: 'wfl_01JABCDEF0123456789ABCDEFG',
-          graph,
-          threadId: 'thread-1',
-          input: { objective: 'composition admission check' },
+      const runtime = new ManagedLocalGraphRuntime(fixture.persistence, {
+        capabilities: ['graph.tool-pins.v1'],
+        compiler: {
+          operationAllowlist: [{ kind: 'tool', name: 'store' }],
+          schemaRegistry: {
+            getValidator(reference) {
+              if (reference === 'schema:json' || reference === 'local.graph-json-object.v1') {
+                return (value) =>
+                  value !== null && typeof value === 'object' && !Array.isArray(value)
+              }
+              if (reference === 'local.graph-state.v1') {
+                return (value) => value !== null && typeof value === 'object'
+              }
+              return undefined
+            },
+          },
+          maximumSteps: 8,
+        },
+        operations: {
+          async invoke() {
+            return { value: 'unused' }
+          },
+          async cancel() {
+            return true
+          },
+        },
+      })
+
+      await expect(
+        runtime.activities(fixture.api).runGraphSegment({
+          executionId: fixture.operation.executionId,
+          attemptId: fixture.operation.attemptId,
+          workspaceId: fixture.operation.workspaceId,
+          workflowId: fixture.operation.workflowId,
+          graph: fixture.graph.reference,
+          threadId: fixture.operation.threadId,
+          input: fixture.plan.graph.input,
           idempotencyKey: 'legacy:composition:run',
         })
-        .then(
-          () => undefined,
-          (error) => error
-        )
-      expect(refusal?.code).not.toBe('LEGACY_ADMISSION_CLOSED')
+      ).resolves.toMatchObject({ outcome: 'completed' })
     } finally {
-      persistence.close()
-      await rm(directory, { recursive: true, force: true })
+      await fixture.cleanup()
     }
   })
 })
