@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.94.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.94.0...workspace-v1.94.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **database:** handle absent app schema in Neon probe ([#1105](https://github.com/adea-ai/control-plane/issues/1105)) ([d0f8aa6](https://github.com/adea-ai/control-plane/commit/d0f8aa650d07d6a831ec4a652ec8236c74d2828b))
+
 ## [1.94.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.93.1...workspace-v1.94.0) (2026-10-12)
 
 
