@@ -85,9 +85,11 @@ attempts after dispatch. Its server-owned topology guard verifies the exact
 dispatcher instance; profile and wake-kind labels alone are not proof. The
 command's `callerPrincipalId` is retained for service admission and is not
 treated as the original product actor. Composition must supply guards that
-independently bind that actor to current grants and trusted residency. The
-hosted-server composition has no such actor or residency source and is not
-wired to this binder, so its wake/replay path remains unqualified. This
+independently bind that actor to current grants and trusted residency. Hosted
+Server has opt-in wiring for caller-supplied placement and current guards, but
+it does not construct an original-actor/current-grant source, authoritative
+host/residency source, or independently re-read topology source. The Hosted
+path therefore remains unqualified. This
 generation check does not make separate stores and dispatcher effects atomic,
 and it does not prove active-attempt crash replay.
 

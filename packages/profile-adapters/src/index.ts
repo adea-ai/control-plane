@@ -127,11 +127,15 @@ export class ProfileAdapterError extends Error {
   }
 }
 
+export type ProfileStorageDeployment = Pick<DeploymentComposition, 'profile' | 'workflow'> & {
+  readonly persistence: Pick<DeploymentComposition['persistence'], 'profile' | 'dialect'>
+}
+
 export interface ProfileStorageBinding {
   readonly profile: ExecutionProfile
   readonly deploymentProfile: DeploymentProfile
   readonly persistenceDialect: 'sqlite' | 'postgresql'
-  readonly deployment: DeploymentComposition
+  readonly deployment: ProfileStorageDeployment
 }
 
 /**
@@ -140,7 +144,7 @@ export interface ProfileStorageBinding {
  */
 export function bindProfileStorage(
   profileInput: unknown,
-  deployment: DeploymentComposition
+  deployment: ProfileStorageDeployment
 ): ProfileStorageBinding {
   const profile = resolveExecutionProfile(profileInput)
   if (!profile) throw new ProfileAdapterError('PROFILE_NAME_INVALID')

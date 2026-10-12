@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { executionConstraintFixtures } from '@control-plane/domain'
@@ -258,6 +261,51 @@ function retainedWakeFixture({
           }),
     },
   }
+}
+
+async function writeRestartState(path, state) {
+  const temporaryPath = `${path}.${process.pid}.tmp`
+  await writeFile(temporaryPath, JSON.stringify(state), { mode: 0o600 })
+  await rename(temporaryPath, path)
+}
+
+function startWakeRestartWorker(statePath, mode) {
+  const workerPath = fileURLToPath(new URL('./wake-restart.worker.mjs', import.meta.url))
+  const child = spawn(process.execPath, [workerPath, statePath, mode], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let output = ''
+  let errors = ''
+  child.stdout.setEncoding('utf8')
+  child.stderr.setEncoding('utf8')
+  const exited = once(child, 'exit')
+  child.stdout.on('data', (chunk) => {
+    output += chunk
+  })
+  child.stderr.on('data', (chunk) => {
+    errors += chunk
+  })
+  return { child, exited, output: () => output, errors: () => errors }
+}
+
+async function waitForWorkerOutput(worker, marker) {
+  const deadline = Date.now() + 10_000
+  while (!worker.output().includes(marker)) {
+    if (worker.child.exitCode !== null || worker.child.signalCode !== null) {
+      throw new Error(`wake worker exited before ${marker}: ${worker.errors()}`)
+    }
+    if (Date.now() >= deadline) throw new Error(`wake worker did not print ${marker}`)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+async function finishWakeRestartWorker(worker) {
+  const [code, signal] = await worker.exited
+  expect({ code, signal, errors: worker.errors() }).toEqual({
+    code: 0,
+    signal: null,
+    errors: '',
+  })
 }
 
 /** Minimal managed-Pi client over the canonical driver contract, mirroring
@@ -901,6 +949,98 @@ describe('profile infrastructure bindings', () => {
           deniedGuard === 'authority' ? 'PROFILE_AUTHORITY_REJECTED' : 'PROFILE_RESIDENCY_REJECTED',
       })
       expect(submitted).toEqual([])
+    }
+  })
+
+  test('replays a retained wake after child-process SIGKILL using a test-only idempotent ingress', async () => {
+    const fixture = retainedWakeFixture()
+    const directory = await mkdtemp(join(tmpdir(), 'profile-wake-restart-'))
+    const statePath = join(directory, 'state.json')
+    await writeRestartState(statePath, {
+      command: fixture.command,
+      execution: fixture.execution,
+      plan: fixture.plan,
+      workflow: fixture.workflow,
+      actorGrant: true,
+      resident: true,
+      submissions: 0,
+      acceptedExecutionIds: [],
+    })
+
+    let interrupted
+    let restarted
+    try {
+      // This is a local file-backed authority/residency fixture and a fake ingress
+      // that deduplicates by execution ID. It does not exercise Postgres or Restate.
+      interrupted = startWakeRestartWorker(statePath, 'crash-after-effect')
+      await waitForWorkerOutput(interrupted, 'EFFECT_RECORDED')
+      interrupted.child.kill('SIGKILL')
+      const [code, signal] = await interrupted.exited
+      expect({ code, signal }).toEqual({ code: null, signal: 'SIGKILL' })
+
+      restarted = startWakeRestartWorker(statePath, 'resume')
+      await waitForWorkerOutput(restarted, 'SUBMITTED')
+      await finishWakeRestartWorker(restarted)
+
+      const state = JSON.parse(await readFile(statePath, 'utf8'))
+      expect(state.submissions).toBe(2)
+      expect(state.acceptedExecutionIds).toEqual([fixture.execution.executionId])
+    } finally {
+      for (const worker of [interrupted, restarted]) {
+        if (worker && worker.child.exitCode === null && worker.child.signalCode === null) {
+          worker.child.kill('SIGKILL')
+          await worker.exited
+        }
+      }
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('rechecks actor authority after binder restart before dispatching a retained wake', async () => {
+    const fixture = retainedWakeFixture()
+    const directory = await mkdtemp(join(tmpdir(), 'profile-wake-revocation-'))
+    const statePath = join(directory, 'state.json')
+    await writeRestartState(statePath, {
+      command: fixture.command,
+      execution: fixture.execution,
+      plan: fixture.plan,
+      workflow: fixture.workflow,
+      actorGrant: true,
+      resident: true,
+      submissions: 0,
+      acceptedExecutionIds: [],
+    })
+
+    let bound
+    let restarted
+    try {
+      // The first worker binds, then dies. Revocation is read from the test
+      // fixture by the fresh worker before it can call the fake ingress.
+      bound = startWakeRestartWorker(statePath, 'bind-only')
+      await waitForWorkerOutput(bound, 'BOUND')
+      bound.child.kill('SIGKILL')
+      const [code, signal] = await bound.exited
+      expect({ code, signal }).toEqual({ code: null, signal: 'SIGKILL' })
+
+      const state = JSON.parse(await readFile(statePath, 'utf8'))
+      state.actorGrant = false
+      await writeRestartState(statePath, state)
+
+      restarted = startWakeRestartWorker(statePath, 'resume')
+      await waitForWorkerOutput(restarted, 'DENIED')
+      await finishWakeRestartWorker(restarted)
+
+      const afterRestart = JSON.parse(await readFile(statePath, 'utf8'))
+      expect(afterRestart.submissions).toBe(0)
+      expect(afterRestart.acceptedExecutionIds).toEqual([])
+    } finally {
+      for (const worker of [bound, restarted]) {
+        if (worker && worker.child.exitCode === null && worker.child.signalCode === null) {
+          worker.child.kill('SIGKILL')
+          await worker.exited
+        }
+      }
+      await rm(directory, { recursive: true, force: true })
     }
   })
 

@@ -1,15 +1,15 @@
 // CP1025 (#1025) self-hosted-server profile wake/replay boundary check.
 //
-// This is not a wake/replay proof. The package has a retained-record binder, but
-// the hosted-server composition still exposes no profile-wake API or trusted
-// topology-guard factory. A successful product-path replay proof remains unproven.
+// This is not a wake/replay proof. Hosted now has opt-in binder wiring for
+// explicitly supplied guards and placement, but it has no authoritative actor,
+// residency, or topology inputs. A product-path replay proof remains unproven.
 
 import { describe, expect, test } from 'bun:test'
 import * as profileAdapters from '@control-plane/profile-adapters'
 import { HostedServerControlPlaneComposition } from '../apps/hosted-control-plane/src/composition.ts'
 
 describe('self-hosted-server profile wake/replay boundary (#1025)', () => {
-  test('the supported server composition exposes no profile-wake member', () => {
+  test('the supported server composition exposes no public wake method', () => {
     const members = Object.getOwnPropertyNames(HostedServerControlPlaneComposition.prototype)
     expect(members).toContain('start')
     expect(members).toContain('close')

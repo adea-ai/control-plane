@@ -125,12 +125,16 @@ Owners are existing issues. Where no open issue names a gap, the row says so.
    fences the submit to current command/execution versions. Historical execution
    records without a retained deadline fail closed; missing legacy deadlines are
    not treated as unbounded. The same admission snapshot is supplied to
-   pre-submit and post-submit workflow-wake guards. It is not wired into
-   hosted-server composition. The retained
-   command only identifies a `svc_*` service principal; there is no original
-   product-actor/current-grant source or trusted residency/placement source to
-   compose the required guards. The self-hosted-server path has no SIGKILL
-   wake/replay test, and active-attempt crash replay remains unproven.
+   pre-submit and post-submit workflow-wake guards. Hosted-server composition
+   now has an opt-in binding that routes acceptance and reconciliation through
+   this binder when callers provide placement and current guards. It does not
+   construct those authorities. The retained command only identifies a `svc_*`
+   service principal; there is no original product-actor/current-grant source,
+   authoritative host/residency source, or independently re-read topology source
+   to compose the required guards. The local child-process test uses JSON-backed
+   records and a fake idempotent ingress; it is not PostgreSQL + Restate proof.
+   Product-path SIGKILL wake/replay and active-attempt crash replay remain
+   unproven.
    Self-hosted simple wake and replay after close/reopen, checkpoint restore, and SIGKILL is proven by
    `tests/profile-recovery-self-hosted-simple.integration.test.mjs` and
    `tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs`.
