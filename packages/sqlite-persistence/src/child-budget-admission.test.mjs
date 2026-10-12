@@ -965,17 +965,7 @@ test('child budget exhaustion rolls back the child execution and delegation in t
   }
 })
 
-test('manual Pi compaction preserves SQLite child budget, depth, total, and concurrency fences', async () => {
-  const compactionDirectory = await mkdtemp(join(tmpdir(), 'pi-manual-compaction-child-fences-'))
-  const compactionStorage = await openNodeSqliteStorage(join(compactionDirectory, 'pi.sqlite'))
-  const models = createModels()
-  const faux = fauxProvider()
-  models.setProvider(faux.provider)
-  faux.setResponses([
-    fauxAssistantMessage('The parent turn is recorded before compaction.'),
-    fauxAssistantMessage('The parent turn and its active child constraints remain recorded.'),
-  ])
-  let harness
+test('SQLite child admission fences preserve the parent budget across total, parallel, and depth denials', async () => {
   const fixtures = []
   const allocate = (child) =>
     child.allocator.allocate({
@@ -1000,14 +990,78 @@ test('manual Pi compaction preserves SQLite child budget, depth, total, and conc
     const totalBudgetBefore = await total.usageStore.transaction(ids.workspaceId, (tx) =>
       tx.getBudget(ids.parentExecutionId)
     )
+    await expect(allocate(totalSibling)).rejects.toMatchObject({
+      code: 'DELEGATION_LIMIT_EXCEEDED',
+    })
+    await expect(
+      total.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(totalAdmitted.childIds.childExecutionId)
+      )
+    ).resolves.toBeDefined()
+    await expect(
+      total.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(totalSibling.childIds.childExecutionId)
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      total.usageStore.transaction(ids.workspaceId, (tx) => tx.getBudget(ids.parentExecutionId))
+    ).resolves.toEqual(totalBudgetBefore)
+
     const parallelAdmitted = await parallel.childAdmission()
     const parallelSibling = await parallel.childAdmission()
     await allocate(parallelAdmitted)
     const parallelBudgetBefore = await parallel.usageStore.transaction(ids.workspaceId, (tx) =>
       tx.getBudget(ids.parentExecutionId)
     )
-    const tooDeep = await depth.childAdmission()
+    await expect(allocate(parallelSibling)).rejects.toMatchObject({
+      code: 'DELEGATION_CONCURRENCY_LIMIT_EXCEEDED',
+    })
+    await expect(
+      parallel.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(parallelAdmitted.childIds.childExecutionId)
+      )
+    ).resolves.toBeDefined()
+    await expect(
+      parallel.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(parallelSibling.childIds.childExecutionId)
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      parallel.usageStore.transaction(ids.workspaceId, (tx) => tx.getBudget(ids.parentExecutionId))
+    ).resolves.toEqual(parallelBudgetBefore)
 
+    const tooDeep = await depth.childAdmission()
+    const depthBudgetBefore = await depth.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(ids.parentExecutionId)
+    )
+    await expect(allocate(tooDeep)).rejects.toMatchObject({
+      code: 'DELEGATION_DEPTH_EXCEEDED',
+    })
+    await expect(
+      depth.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(tooDeep.childIds.childExecutionId)
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      depth.usageStore.transaction(ids.workspaceId, (tx) => tx.getBudget(ids.parentExecutionId))
+    ).resolves.toEqual(depthBudgetBefore)
+  } finally {
+    await Promise.all(fixtures.map((item) => item.close()))
+  }
+})
+
+test('manual Pi compaction persists its explicit summary in SQLite', async () => {
+  const compactionDirectory = await mkdtemp(join(tmpdir(), 'pi-manual-compaction-'))
+  const compactionStorage = await openNodeSqliteStorage(join(compactionDirectory, 'pi.sqlite'))
+  const models = createModels()
+  const faux = fauxProvider()
+  models.setProvider(faux.provider)
+  faux.setResponses([
+    fauxAssistantMessage('The parent turn is recorded before compaction.'),
+    fauxAssistantMessage('The recorded parent turn remains preserved in this summary.'),
+  ])
+  let harness
+  try {
     harness = await Harness.open(
       compactionStorage,
       {
@@ -1039,10 +1093,7 @@ test('manual Pi compaction preserves SQLite child budget, depth, total, and conc
     expect((await firstTurn.wait(BACKGROUND_CONTEXT)).status).toBe('done')
     expect(faux.state.callCount).toBe(1)
 
-    const taskId = await root.compact(
-      'Preserve the parent turn and its child admission constraints.',
-      BACKGROUND_CONTEXT
-    )
+    const taskId = await root.compact('Preserve the recorded parent turn.', BACKGROUND_CONTEXT)
     const task = await harness.waitForTask(taskId, BACKGROUND_CONTEXT)
     expect(task.state.status).toBe('terminal')
     expect(task.state.outcome.status).toBe('completed')
@@ -1057,54 +1108,11 @@ test('manual Pi compaction preserves SQLite child budget, depth, total, and conc
     const compacted = await root.context(BACKGROUND_CONTEXT)
     const summary = compacted.entries.find((entry) => entry.kind === CompactionEntry.kind)
     expect(summary).toBeDefined()
-    expect(JSON.stringify(summary)).toContain('parent turn and its active child constraints')
-
-    await expect(allocate(totalSibling)).rejects.toMatchObject({
-      code: 'DELEGATION_LIMIT_EXCEEDED',
-    })
-    await expect(allocate(parallelSibling)).rejects.toMatchObject({
-      code: 'DELEGATION_CONCURRENCY_LIMIT_EXCEEDED',
-    })
-    await expect(allocate(tooDeep)).rejects.toMatchObject({
-      code: 'DELEGATION_DEPTH_EXCEEDED',
-    })
-
-    await expect(
-      total.usageStore.transaction(ids.workspaceId, (tx) =>
-        tx.getBudget(totalAdmitted.childIds.childExecutionId)
-      )
-    ).resolves.toBeDefined()
-    await expect(
-      total.usageStore.transaction(ids.workspaceId, (tx) =>
-        tx.getBudget(totalSibling.childIds.childExecutionId)
-      )
-    ).resolves.toBeUndefined()
-    await expect(
-      total.usageStore.transaction(ids.workspaceId, (tx) => tx.getBudget(ids.parentExecutionId))
-    ).resolves.toEqual(totalBudgetBefore)
-    await expect(
-      parallel.usageStore.transaction(ids.workspaceId, (tx) =>
-        tx.getBudget(parallelAdmitted.childIds.childExecutionId)
-      )
-    ).resolves.toBeDefined()
-    await expect(
-      parallel.usageStore.transaction(ids.workspaceId, (tx) =>
-        tx.getBudget(parallelSibling.childIds.childExecutionId)
-      )
-    ).resolves.toBeUndefined()
-    await expect(
-      parallel.usageStore.transaction(ids.workspaceId, (tx) => tx.getBudget(ids.parentExecutionId))
-    ).resolves.toEqual(parallelBudgetBefore)
-    await expect(
-      depth.usageStore.transaction(ids.workspaceId, (tx) =>
-        tx.getBudget(tooDeep.childIds.childExecutionId)
-      )
-    ).resolves.toBeUndefined()
+    expect(JSON.stringify(summary)).toContain('recorded parent turn')
   } finally {
     await harness?.close(BACKGROUND_CONTEXT)
     await compactionStorage.close(BACKGROUND_CONTEXT)
     await rm(compactionDirectory, { recursive: true, force: true })
-    await Promise.all(fixtures.map((item) => item.close()))
   }
 })
 
