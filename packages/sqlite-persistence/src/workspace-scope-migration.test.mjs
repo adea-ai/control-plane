@@ -148,6 +148,37 @@ test('explicit scope constraints reject project-null ambiguity and mismatched pr
   }
 })
 
+test('raw execution plan and context package rows reject unsupported schema version 3', () => {
+  const database = new DatabaseSync(':memory:')
+  try {
+    applyMigrations(database)
+    const plan = {
+      schemaVersion: 3,
+      correlation: {
+        workspaceId: command.workspaceId,
+        projectId: project.projectId,
+        executionScope: project,
+      },
+    }
+    const context = {
+      schemaVersion: 3,
+      projectState: {
+        workspaceId: command.workspaceId,
+        projectId: project.projectId,
+        executionScope: project,
+      },
+    }
+    expect(() => insert(database, 'execution-plans', 'schema-v3-plan', plan)).toThrow(
+      'SQLITE_EXECUTION_SCOPE_INVALID'
+    )
+    expect(() => insert(database, 'context-packages', 'schema-v3-context', context)).toThrow(
+      'SQLITE_EXECUTION_SCOPE_INVALID'
+    )
+  } finally {
+    database.close()
+  }
+})
+
 test('workspace admission index cannot be bypassed with missing identity fields', () => {
   const database = new DatabaseSync(':memory:')
   try {

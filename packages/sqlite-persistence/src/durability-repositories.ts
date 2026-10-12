@@ -678,27 +678,37 @@ export class SqliteReconciliationCheckpointRepository implements ReconciliationC
 }
 
 /** Mirrors the PG port's InventoryCredentialFenceInvalidError (same wire code). */
-/** Structural authority for credential revocation checks (runtime-node identity port shape). */
+/**
+ * Structural authority for a SQLite credential fence. The authority must read both the
+ * canonical credential binding and current revocation state through the supplied transaction.
+ */
 export interface RuntimeNodeCredentialFenceAuthorityPort {
-  isRevoked(credentialId: string, revocationVersion?: number): Promise<boolean>
+  validateCredentialFenceInTransaction?(
+    transaction: PersistenceTransaction,
+    fence: CredentialRevocationFence,
+    scope: { readonly nodeId: string; readonly workspaceId: string }
+  ): Promise<boolean>
 }
 
 /**
- * Builds the credential-fence validator from the SAME runtime-node credential authority the
- * channel authenticator trusts. The port-based check consults `isRevoked` only; the LIVE
- * transaction handle is passed through so provider-backed authorities can additionally read
- * durable invalidation state IN-TRANSACTION. Ordering under the store contract: the SQLite
- * provider serializes writers, so an invalidation applied through the same provider cannot commit
- * between this check and the fenced ACK write — it orders strictly before (visible to the check)
- * or strictly after (applies to the next fenced transition). Consumes no credentials and creates
- * none. No revocation re-check exists at commit time beyond this ordering guarantee.
+ * Builds a fail-closed validator for SQLite runtime-command settlements. A plain asynchronous
+ * `isRevoked` call cannot prove command scope or share SQLite's write transaction, so it is not
+ * accepted here. The authority must validate credential id/version, node, workspace, and current
+ * revocation using this transaction. SQLite serializes writers, which orders an invalidation
+ * through the same provider strictly before this check or after the fenced command update.
  */
 export function createRuntimeNodeCredentialFenceValidator(
   authority: RuntimeNodeCredentialFenceAuthorityPort
 ) {
-  return async (transaction: PersistenceTransaction, fence: CredentialRevocationFence) => {
-    void transaction
-    if (await authority.isRevoked(fence.credentialId, fence.revocationVersion)) {
+  return async (
+    transaction: PersistenceTransaction,
+    fence: CredentialRevocationFence,
+    scope: { readonly nodeId: string; readonly workspaceId: string }
+  ) => {
+    if (
+      authority.validateCredentialFenceInTransaction === undefined ||
+      !(await authority.validateCredentialFenceInTransaction(transaction, fence, scope))
+    ) {
       throw new SqliteRuntimeCommandCredentialFenceInvalidError()
     }
   }

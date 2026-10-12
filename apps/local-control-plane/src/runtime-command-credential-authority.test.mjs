@@ -57,14 +57,30 @@ function acknowledgedFrom(queued) {
 }
 
 function fixtureAuthority() {
-  const revoked = new Set()
-  const authority = {
-    revoked,
-    current: 1,
-    isRevoked: async (credentialId, revocationVersion) =>
-      revoked.has(credentialId) || (revocationVersion ?? 1) < authority.current,
+  return {
+    async validateCredentialFenceInTransaction(transaction, fence, scope) {
+      const record = await transaction.get('fixture-runtime-node-credentials', fence.credentialId)
+      return (
+        record !== undefined &&
+        record.value.revoked === false &&
+        record.value.revocationVersion === fence.revocationVersion &&
+        record.value.nodeId === scope.nodeId &&
+        record.value.workspaceId === scope.workspaceId
+      )
+    },
   }
-  return authority
+}
+
+async function putFixtureCredential(provider, credentialId, value) {
+  await provider.transaction(async (transaction) => {
+    const existing = await transaction.get('fixture-runtime-node-credentials', credentialId)
+    await transaction.put({
+      namespace: 'fixture-runtime-node-credentials',
+      id: credentialId,
+      ...(existing === undefined ? {} : { expectedRevision: existing.revision }),
+      value,
+    })
+  })
 }
 
 async function withComposition(authority, run) {
@@ -96,7 +112,13 @@ const FENCE = { credentialId: 'crd_fixture', revocationVersion: 1 }
 describe('Local all-in-one credential authority for runtime-command fences', () => {
   test('an injected authority admits the ACK transition and rejects revoked and stale fences', async () => {
     const authority = fixtureAuthority()
-    await withComposition(authority, async (composition) => {
+    await withComposition(authority, async (composition, provider) => {
+      await putFixtureCredential(provider, FENCE.credentialId, {
+        revoked: false,
+        revocationVersion: 1,
+        nodeId: NODE_ID,
+        workspaceId: WORKSPACE_ID,
+      })
       const first = queuedRecord('cmd_01ARZ3NDEKTSV4RRFFQ69G5FAA')
       await composition.runtimeCommands.create(first)
       // Positive: live credential admits the fenced inbound ACK.
@@ -110,7 +132,12 @@ describe('Local all-in-one credential authority for runtime-command fences', () 
 
       // Stale-generation fence: the credential is re-issued at a newer revision,
       // so a fence behind the authority's current rejects.
-      authority.current = 2
+      await putFixtureCredential(provider, FENCE.credentialId, {
+        revoked: false,
+        revocationVersion: 2,
+        nodeId: NODE_ID,
+        workspaceId: WORKSPACE_ID,
+      })
       const second = queuedRecord('cmd_01ARZ3NDEKTSV4RRFFQ69G5FAB')
       await composition.runtimeCommands.create(second)
       await expect(
@@ -122,7 +149,12 @@ describe('Local all-in-one credential authority for runtime-command fences', () 
       })
 
       // Revoked credential rejects the next fenced transition; row unchanged.
-      authority.revoked.add(FENCE.credentialId)
+      await putFixtureCredential(provider, FENCE.credentialId, {
+        revoked: true,
+        revocationVersion: 2,
+        nodeId: NODE_ID,
+        workspaceId: WORKSPACE_ID,
+      })
       const third = queuedRecord('cmd_01ARZ3NDEKTSV4RRFFQ69G5FAC')
       await composition.runtimeCommands.create(third)
       await expect(
@@ -156,21 +188,23 @@ describe('Local all-in-one credential authority for runtime-command fences', () 
     await withComposition(fixtureAuthority(), async (composition, provider) => {
       // Provider-backed authority: reads durable invalidation state through the LIVE transaction
       // handle the validator receives.
-      const inTransaction = async (transaction, fence) => {
-        const revoked = await transaction.get('credential-revocations', `r-${fence.credentialId}`)
-        return revoked !== undefined
-      }
       const validatorAuthority = {
-        isRevoked: async () => false,
+        async validateCredentialFenceInTransaction(transaction, fence, scope) {
+          const credential = await transaction.get('runtime-node-credentials', fence.credentialId)
+          const revoked = await transaction.get('credential-revocations', `r-${fence.credentialId}`)
+          return (
+            credential !== undefined &&
+            credential.value.revoked === false &&
+            credential.value.revocationVersion === fence.revocationVersion &&
+            credential.value.nodeId === scope.nodeId &&
+            credential.value.workspaceId === scope.workspaceId &&
+            revoked === undefined
+          )
+        },
       }
       const repository = new SqliteRuntimeCommandRepository(
         provider,
-        async (transaction, fence) => {
-          if (await inTransaction(transaction, fence)) {
-            throw new Error('INVENTORY_CREDENTIAL_FENCE_INVALID')
-          }
-          await createRuntimeNodeCredentialFenceValidator(validatorAuthority)(transaction, fence)
-        }
+        createRuntimeNodeCredentialFenceValidator(validatorAuthority)
       )
       // Half 1: invalidation that commits FIRST is visible to the in-transaction read.
       await provider.transaction(async (transaction) =>
@@ -191,13 +225,30 @@ describe('Local all-in-one credential authority for runtime-command fences', () 
       const barrier = new Promise((resolve) => {
         release = resolve
       })
-      const parking = new SqliteRuntimeCommandRepository(provider, async (transaction, fence) => {
-        announce()
-        await barrier
-        if (await inTransaction(transaction, fence)) {
-          throw new Error('INVENTORY_CREDENTIAL_FENCE_INVALID')
+      const parking = new SqliteRuntimeCommandRepository(
+        provider,
+        async (transaction, fence, scope) => {
+          announce()
+          await barrier
+          await createRuntimeNodeCredentialFenceValidator(validatorAuthority)(
+            transaction,
+            fence,
+            scope
+          )
         }
-      })
+      )
+      await provider.transaction((transaction) =>
+        transaction.put({
+          namespace: 'runtime-node-credentials',
+          id: 'crd_parked',
+          value: {
+            revoked: false,
+            revocationVersion: 1,
+            nodeId: NODE_ID,
+            workspaceId: WORKSPACE_ID,
+          },
+        })
+      )
       const second = queuedRecord('cmd_01ARZ3NDEKTSV4RRFFQ69G5FAB')
       await parking.create(second)
       const pending = parking.compareAndSet(1, acknowledgedFrom(second), {
@@ -256,6 +307,12 @@ describe('Local all-in-one credential authority for runtime-command fences', () 
     })
     try {
       await composition.persistence.migrate()
+      await putFixtureCredential(composition.persistence, FENCE.credentialId, {
+        revoked: false,
+        revocationVersion: 1,
+        nodeId: NODE_ID,
+        workspaceId: WORKSPACE_ID,
+      })
       const first = queuedRecord('cmd_01ARZ3NDEKTSV4RRFFQ69G5FBA')
       await composition.runtimeCommands.create(first)
       // Positive through the REAL production host composition.
@@ -263,7 +320,12 @@ describe('Local all-in-one credential authority for runtime-command fences', () 
         await composition.runtimeCommands.compareAndSet(1, acknowledgedFrom(first), FENCE)
       ).toBe(true)
       // Revoked: rejected with unchanged row through the same composition.
-      authority.revoked.add(FENCE.credentialId)
+      await putFixtureCredential(composition.persistence, FENCE.credentialId, {
+        revoked: true,
+        revocationVersion: 2,
+        nodeId: NODE_ID,
+        workspaceId: WORKSPACE_ID,
+      })
       const second = queuedRecord('cmd_01ARZ3NDEKTSV4RRFFQ69G5FB1')
       await composition.runtimeCommands.create(second)
       await expect(

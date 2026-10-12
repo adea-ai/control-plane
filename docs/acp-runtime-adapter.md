@@ -121,15 +121,23 @@ from `start()` via `compositionOptions`. The route record (public keys, ids, val
 explicit host-supplied composition input — no ambient credential or key material — and the
 in-memory default remains test-only.
 
-**Fenced-settlement scope (evidence closing the credential-authority gap):** the only production
-callers that pass a credential fence into a runtime-command settlement are the gateway deliveries
-(`apps/runtime-gateway/src/runtime-command-delivery.ts:356` and
-`context-command-delivery.ts:412`), and the gateway profile is wired for the authority
-(`runtimeNodeCredentialAuthority`, fail-closed when absent). The Local all-in-one has ZERO fenced
-settlement callers (verified by repository search), so its fail-closed default is unreachable in
-production Local today: no Local path ever settles a fenced ACK/result. The
-`runtimeCommandCredentialAuthority` seam on the Local composition is forward-compatible only; a
-credential source is required solely when a fenced settlement caller is added to the Local profile.
+**Production wire boundary (#1023 remains open):** the Local composition constructs the durable
+device endpoint, but `AcpRemoteWire` still has no concrete production implementation or call site
+that sends its sealed commands and inventory requests through `apps/runtime-gateway`. The secure
+route tests connect callbacks directly to `device.handleCommand` and `device.handleInventory`; they
+prove endpoint behavior, not an authenticated controller-to-device production exchange. The
+runtime-gateway WebSocket server handles runtime-node connections, but these paths do not join it
+to a controller-side ACP wire. Therefore #1023's production transport acceptance is still open.
+
+**SQLite credential-fence contract:** SQLite runtime-command settlement now requires an authority
+that validates credential id and version, the command's node and workspace, and current revocation
+state through the same `PersistenceTransaction` as the ACK/result write. A plain `isRevoked` call
+cannot authorize a SQLite settlement; if the transaction-bound authority is missing, validation
+fails closed. SQLite serializes writes through that provider, so an invalidation using the same
+provider orders before the check or after the fenced update. The Local all-in-one currently has no
+production fenced settlement caller; its authority seam is for future callers. Hosted PostgreSQL
+settlements continue to use the PostgreSQL identity authority and fence path, not the SQLite
+transaction hook.
 
 **Hosted PostgreSQL durable state:** the Hosted `hosted-server` profile qualifies the same
 `PersistenceProvider` contract through `PostgresPersistenceProvider`

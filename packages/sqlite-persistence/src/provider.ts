@@ -24,6 +24,7 @@ import {
   applyMigrations,
   EXPIRY_INDEX_STATEMENTS,
   EXECUTION_SCOPE_STATEMENTS,
+  SCOPE_SCHEMA_VERSION_STATEMENTS,
   SCHEMA_STATEMENTS,
   SCHEMA_VERSION,
   SqliteMigrationError,
@@ -277,6 +278,7 @@ function validateRestoreDatabase(path: string, expectedSnapshotVersion: number):
     for (const [name, expected] of Object.entries({
       ...EXPIRY_INDEX_STATEMENTS,
       ...EXECUTION_SCOPE_STATEMENTS,
+      ...SCOPE_SCHEMA_VERSION_STATEMENTS,
     })) {
       const actual = database.prepare('SELECT sql FROM sqlite_master WHERE name = ?').get(name)
       if (

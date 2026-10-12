@@ -221,10 +221,10 @@ export interface RuntimeGatewayComposition {
  */
 /**
  * Credential-fence validator for SQLite-profile runtime-command repositories:
- * consults the SAME runtime-node credential authority the channel authenticator
- * uses, and receives the LIVE in-transaction handle so durable authorities can
- * read within the fenced transaction. Revoked (and, for version-aware
- * authorities, stale-generation) credentials reject with the wire parity code.
+ * consults the same runtime-node credential authority the channel authenticator
+ * uses. The authority must implement `validateCredentialFenceInTransaction` to
+ * check credential version, command node/workspace, and revocation through the
+ * live transaction. A revocation-only authority fails closed with the wire code.
  */
 export function createRuntimeCommandCredentialFenceValidator(
   authority: RuntimeNodeIdentityGatewayPort

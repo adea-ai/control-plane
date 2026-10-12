@@ -3,6 +3,7 @@ import type {
   RuntimeNodeIdentityInvalidation,
   RuntimeNodeIdentityValidationPort,
 } from '@control-plane/runtime-gateway-protocol'
+import type { RuntimeNodeCredentialFenceAuthorityPort } from '@control-plane/sqlite-persistence'
 
 /**
  * The scope and generation a presenting channel asserts. PostgreSQL checks it against the canonical
@@ -26,14 +27,15 @@ export type RuntimeNodeCredentialGatewayConsumption =
 export type RuntimeNodeIdentityGatewayPort = Omit<
   RuntimeNodeIdentityValidationPort,
   'subscribeRevocations'
-> & {
-  consumeCredential(
-    credentialId: string,
-    revocationVersion: number,
-    now: Date,
-    binding?: RuntimeNodeCredentialBinding
-  ): Promise<RuntimeNodeCredentialGatewayConsumption>
-  subscribeRevocations(
-    listener: (invalidation: RuntimeNodeIdentityInvalidation) => void
-  ): () => void
-}
+> &
+  RuntimeNodeCredentialFenceAuthorityPort & {
+    consumeCredential(
+      credentialId: string,
+      revocationVersion: number,
+      now: Date,
+      binding?: RuntimeNodeCredentialBinding
+    ): Promise<RuntimeNodeCredentialGatewayConsumption>
+    subscribeRevocations(
+      listener: (invalidation: RuntimeNodeIdentityInvalidation) => void
+    ): () => void
+  }
