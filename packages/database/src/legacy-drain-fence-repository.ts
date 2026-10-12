@@ -1,4 +1,5 @@
 import { and, eq } from 'drizzle-orm'
+import { MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH } from '@control-plane/orchestration'
 import type { ControlPlaneDatabase } from './connection.js'
 import { langgraphLegacyDrainFences } from './schema/langgraph-legacy-drain-fences.js'
 
@@ -27,11 +28,22 @@ export interface LegacyDrainFenceHandle {
   readonly revision: number
 }
 
-const MAXIMUM_IDENTIFIER_LENGTH = 256
+const MAXIMUM_OWNER_LENGTH = 256
 const MAXIMUM_COUNTER = Number.MAX_SAFE_INTEGER
 
-function identifier(value: string): string {
-  if (typeof value !== 'string' || value.length === 0 || value.length > MAXIMUM_IDENTIFIER_LENGTH) {
+function storageThreadIdentifier(value: string): string {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH
+  ) {
+    throw new LegacyDrainFenceRepositoryError('LEGACY_FENCE_INVALID')
+  }
+  return value
+}
+
+function ownerIdentifier(value: string): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAXIMUM_OWNER_LENGTH) {
     throw new LegacyDrainFenceRepositoryError('LEGACY_FENCE_INVALID')
   }
   return value
@@ -104,8 +116,8 @@ export class PostgresLegacyDrainFenceRepository {
     readonly owner: string
     readonly now?: () => string
   }): Promise<LegacyDrainFenceHandle> {
-    const storageThreadId = identifier(input.storageThreadId)
-    const owner = identifier(input.owner)
+    const storageThreadId = storageThreadIdentifier(input.storageThreadId)
+    const owner = ownerIdentifier(input.owner)
     const updatedAt = new Date((input.now ?? (() => new Date().toISOString()))())
     return this.database.transaction(async (transaction) => {
       const [created] = await transaction
@@ -151,8 +163,8 @@ export class PostgresLegacyDrainFenceRepository {
    * LEGACY_DRAIN_FENCE_STALE. Neither refusal changes the row.
    */
   async release(handle: LegacyDrainFenceHandle): Promise<boolean> {
-    const storageThreadId = identifier(handle.storageThreadId)
-    const owner = identifier(handle.owner)
+    const storageThreadId = storageThreadIdentifier(handle.storageThreadId)
+    const owner = ownerIdentifier(handle.owner)
     const generation = counter(handle.generation)
     const revision = counter(handle.revision)
     return this.database.transaction(async (transaction) => {
@@ -186,7 +198,9 @@ export class PostgresLegacyDrainFenceRepository {
     const [row] = await this.database
       .select({ owner: langgraphLegacyDrainFences.owner })
       .from(langgraphLegacyDrainFences)
-      .where(eq(langgraphLegacyDrainFences.storageThreadId, identifier(storageThreadId)))
+      .where(
+        eq(langgraphLegacyDrainFences.storageThreadId, storageThreadIdentifier(storageThreadId))
+      )
       .limit(1)
     if (row !== undefined && row.owner !== null) {
       throw new LegacyDrainFenceRepositoryError('LEGACY_DRAIN_FENCE_HELD')

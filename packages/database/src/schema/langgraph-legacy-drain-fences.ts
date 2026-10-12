@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import { bigint, check, pgTable, timestamp, varchar } from 'drizzle-orm/pg-core'
+import { MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH } from '@control-plane/orchestration'
 
 // One row per legacy thread. Rows are never deleted: a release clears the owner and advances the revision,
 // so a released claim's generation and revision can never be reused. Hosted fencing uses this table through
@@ -7,7 +8,9 @@ import { bigint, check, pgTable, timestamp, varchar } from 'drizzle-orm/pg-core'
 export const langgraphLegacyDrainFences = pgTable(
   'langgraph_legacy_drain_fences',
   {
-    storageThreadId: varchar('storage_thread_id', { length: 256 }).primaryKey(),
+    storageThreadId: varchar('storage_thread_id', {
+      length: MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH,
+    }).primaryKey(),
     owner: varchar('owner', { length: 256 }),
     generation: bigint('generation', { mode: 'number' }).notNull(),
     revision: bigint('revision', { mode: 'number' }).notNull(),
@@ -16,7 +19,7 @@ export const langgraphLegacyDrainFences = pgTable(
   (table) => [
     check(
       'langgraph_legacy_drain_fences_thread_check',
-      sql`length(${table.storageThreadId}) between 1 and 256`
+      sql`length(${table.storageThreadId}) between 1 and ${sql.raw(String(MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH))}`
     ),
     check(
       'langgraph_legacy_drain_fences_owner_check',

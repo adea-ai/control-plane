@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
+import { MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH } from '@control-plane/orchestration'
 import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
 import { createLocalGraphToolFixture } from './local-graph-tool-fixture.mjs'
 import { ManagedLocalGraphRuntime } from './managed-graph-runtime.ts'
@@ -55,6 +56,35 @@ async function localRuntime() {
   return { directory, persistence, runtime, activities: runtime.activities(api) }
 }
 
+function localToolRuntime(fixture) {
+  return new ManagedLocalGraphRuntime(fixture.persistence, {
+    capabilities: ['graph.tool-pins.v1'],
+    compiler: {
+      operationAllowlist: [{ kind: 'tool', name: 'store' }],
+      schemaRegistry: {
+        getValidator(reference) {
+          if (reference === 'schema:json' || reference === 'local.graph-json-object.v1') {
+            return (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+          }
+          if (reference === 'local.graph-state.v1') {
+            return (value) => value !== null && typeof value === 'object'
+          }
+          return undefined
+        },
+      },
+      maximumSteps: 8,
+    },
+    operations: {
+      async invoke() {
+        return { value: 'unused' }
+      },
+      async cancel() {
+        return true
+      },
+    },
+  })
+}
+
 describe('local managed graph runtime legacy retirement composition (M16.03, #940)', () => {
   test('a held drain fence refuses resume through the production adapter until its exact claim is released', async () => {
     const { directory, persistence, runtime, activities } = await localRuntime()
@@ -99,34 +129,7 @@ describe('local managed graph runtime legacy retirement composition (M16.03, #94
   test('a run passes the production admission gate, which does not refuse the local store', async () => {
     const fixture = await createLocalGraphToolFixture({ approvalMode: 'never' })
     try {
-      const runtime = new ManagedLocalGraphRuntime(fixture.persistence, {
-        capabilities: ['graph.tool-pins.v1'],
-        compiler: {
-          operationAllowlist: [{ kind: 'tool', name: 'store' }],
-          schemaRegistry: {
-            getValidator(reference) {
-              if (reference === 'schema:json' || reference === 'local.graph-json-object.v1') {
-                return (value) =>
-                  value !== null && typeof value === 'object' && !Array.isArray(value)
-              }
-              if (reference === 'local.graph-state.v1') {
-                return (value) => value !== null && typeof value === 'object'
-              }
-              return undefined
-            },
-          },
-          maximumSteps: 8,
-        },
-        operations: {
-          async invoke() {
-            return { value: 'unused' }
-          },
-          async cancel() {
-            return true
-          },
-        },
-      })
-
+      const runtime = localToolRuntime(fixture)
       await expect(
         runtime.activities(fixture.api).runGraphSegment({
           executionId: fixture.operation.executionId,
@@ -139,6 +142,50 @@ describe('local managed graph runtime legacy retirement composition (M16.03, #94
           idempotencyKey: 'legacy:composition:run',
         })
       ).resolves.toMatchObject({ outcome: 'completed' })
+    } finally {
+      await fixture.cleanup()
+    }
+  })
+
+  test('the maximum valid thread id passes through local claim, resume, and continue fencing', async () => {
+    const fixture = await createLocalGraphToolFixture()
+    const threadId = 't'.repeat(256)
+    const runtime = localToolRuntime(fixture)
+    const activities = runtime.activities(fixture.api)
+    try {
+      const storageThreadId = `${fixture.operation.workspaceId}:${fixture.operation.executionId}:${threadId}`
+      expect(storageThreadId).toHaveLength(MAXIMUM_LEGACY_STORAGE_THREAD_ID_LENGTH)
+      const claim = await runtime.legacyDrainFence.claim({
+        storageThreadId,
+        owner: 'drain-maximum-thread',
+      })
+      const resume = {
+        executionId: fixture.operation.executionId,
+        attemptId: fixture.operation.attemptId,
+        workspaceId: fixture.operation.workspaceId,
+        workflowId: fixture.operation.workflowId,
+        graph: fixture.graph.reference,
+        threadId,
+        checkpointId: 'ckpt-maximum-thread',
+        response: { action: 'approve' },
+        idempotencyKey: 'legacy:maximum-thread:resume',
+      }
+      await expect(activities.resumeGraphSegment(resume)).rejects.toMatchObject({
+        code: 'LEGACY_DRAIN_FENCE_HELD',
+      })
+      await expect(
+        activities.continueGraphSegment({
+          executionId: fixture.operation.executionId,
+          attemptId: fixture.operation.attemptId,
+          workspaceId: fixture.operation.workspaceId,
+          workflowId: fixture.operation.workflowId,
+          graph: fixture.graph.reference,
+          threadId,
+          checkpointId: 'ckpt-maximum-thread',
+          idempotencyKey: 'legacy:maximum-thread:continue',
+        })
+      ).rejects.toMatchObject({ code: 'LEGACY_DRAIN_FENCE_HELD' })
+      expect(await runtime.legacyDrainFence.release(claim)).toBe(true)
     } finally {
       await fixture.cleanup()
     }
