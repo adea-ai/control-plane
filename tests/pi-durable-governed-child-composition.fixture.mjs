@@ -1,10 +1,19 @@
 // Actual Pi/J1/SQLite composition. HTTP, grants and approval are deterministic host fixtures.
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
+import { createServer } from 'node:net'
 import { DatabaseSync } from 'node:sqlite'
 import { createModels, createProvider } from '@earendil-works/pi-ai/models'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
+import {
+  ChildProgressEvidenceBuffer,
+  ChildProgressLeadDispatcher,
+  ChildProgressLeadFeed,
+  ChildUsageLedger,
+} from '@control-plane/orchestration'
 import { DurableUsageLedger, PinnedModelPrice } from '@control-plane/usage-ledger'
+import { ExecutionLifecycleService } from '@control-plane/domain'
 import { ExecutionPlanCompiler } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
 import { PolicyControlledToolExecutionService } from '@control-plane/tool-execution'
@@ -18,6 +27,7 @@ import {
   SqliteDelegationEventPublisher,
   SqliteToolCallRepository,
   SqliteDelegationToolAdmissionRepository,
+  SqliteChildUsageOutcomeRepository,
 } from '@control-plane/sqlite-persistence'
 import {
   createGovernedChildHostFixture,
@@ -37,14 +47,33 @@ import { createNativeEngineToolFixture } from '../packages/pi-durable-adapter/sr
 import { PiDurableChildProgressScanner } from '../apps/control-api/src/pi-durable/child-progress-scanner.ts'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import { SqlitePiLeadRunningLifecycle } from '../apps/control-api/src/pi-durable/lead-running-lifecycle.ts'
+import { createProductionChildDelegation } from '../apps/control-api/src/models/production-child-delegation.ts'
+import { selection as productSelectionFixture } from '../apps/control-api/src/models/model-selection-fixtures.mjs'
 
 function persistentStorage(provider) {
+  const publications = new SqliteDelegationEventPublisher(provider, ids.parentExecutionId)
+  // The lead projection composes over the canonical durable outlet: every
+  // delegation event the service (or the production scanner's
+  // recordChildProgress path) publishes folds through the feed into the lead
+  // dispatcher, and `list()` stays the durable restart source.
+  const dispatcher = new ChildProgressLeadDispatcher({
+    buffer: new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId }),
+  })
+  const leadFeed = new ChildProgressLeadFeed({
+    publications,
+    dispatcher,
+    generationOf: () => 1,
+  })
   return {
     executions: new SqliteExecutionRepository(provider),
     plans: new SqliteExecutionPlanRepository(provider),
     contexts: new SqliteContextPackageRepository(provider),
     delegations: new SqliteDelegationRepository(provider),
-    events: new SqliteDelegationEventPublisher(provider, ids.parentExecutionId),
+    events: leadFeed,
+    publications,
+    leadFeed,
+    dispatcher,
+    usageOutcomes: new SqliteChildUsageOutcomeRepository(provider, ids.delegationId),
     calls: new SqliteToolCallRepository(provider, ids.workspaceId),
     admissions: new SqliteDelegationToolAdmissionRepository(provider, ids.workspaceId),
   }
@@ -52,9 +81,22 @@ function persistentStorage(provider) {
 
 async function childTransport(state) {
   const requests = []
+  const port = await new Promise((resolve, reject) => {
+    const probe = createServer()
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address()
+      if (!address || typeof address === 'string') {
+        probe.close()
+        reject(new Error('CHILD_TRANSPORT_PORT_UNAVAILABLE'))
+        return
+      }
+      probe.close((error) => (error ? reject(error) : resolve(address.port)))
+    })
+  })
   const server = Bun.serve({
     hostname: '127.0.0.1',
-    port: 0,
+    port,
     async fetch(request) {
       assert.equal(state.active.child, true, 'child current grant before physical HTTP')
       const body = await request.json()
@@ -133,6 +175,8 @@ export async function createGovernedChildCompositionFixture(
     revokeChildBeforeDispatch = false,
     childRuntimeFactory = createNodePiDurableRuntime,
     retainContinuation,
+    transactionalChildAdmission = false,
+    canonicalActorPrincipalId = actor,
   } = {}
 ) {
   const provider = new SqlitePersistenceProvider({ path: join(directory, 'canonical.sqlite') })
@@ -147,8 +191,15 @@ export async function createGovernedChildCompositionFixture(
     selections: [],
     budgets: [],
     parentAtChildAdmission: [],
+    childAdmissionChecks: [],
+    childSelectionChecks: [],
   }
   const workspace = workspaceInput()
+  const childProductIntentId = '11111111-1111-4111-8111-111111111112'
+  if (transactionalChildAdmission) {
+    workspace.parentIntentId = childProductIntentId
+    workspace.command.parentIntentId = childProductIntentId
+  }
   // This first qualified runtime has no ambient filesystem capability. Compile
   // a real fixture plan requiring only its admitted streaming/workspace tools.
   const planInput = createExecutionPlanTestFixtureInputs({
@@ -171,10 +222,11 @@ export async function createGovernedChildCompositionFixture(
   )
   const scopeAuthority = {
     readCurrent: async (input) => {
-      assert.equal(input.callerPrincipalId, actor)
+      assert.equal(input.callerPrincipalId, canonicalActorPrincipalId)
       const current = currentSnapshot(input)
       return {
         ...current,
+        allowedPrincipalIds: [canonicalActorPrincipalId],
         grantActive: state.active[input.executionScope.kind === 'workspace' ? 'lead' : 'child'],
       }
     },
@@ -182,16 +234,117 @@ export async function createGovernedChildCompositionFixture(
   workspace.scopeAdmission = {
     authority: scopeAuthority,
     now: () => now,
-    resolveCallerPrincipalId: async () => actor,
+    resolveCallerPrincipalId: async () => canonicalActorPrincipalId,
   }
   const ledger = new DurableUsageLedger({
     store: new SqliteDurableUsageStore(provider),
     now: () => now,
   })
+  // Canonical publication ordering source: the durable usage ledger assigns a
+  // monotonic sequence per settle entry. Capturing it from the very entry the
+  // authority settles means a redelivery of the same entry (same idempotency
+  // key) reuses its ORIGINAL sequence instead of minting a new one — the
+  // property that keeps an old provider report from ever ordering as new.
+  // Each canonical settle entry carries its own idempotency identity, so the
+  // sequence is bound to THAT identity rather than a shared last-result. Two
+  // concurrently settling requests can therefore never lend their sequence to
+  // one another's report.
+  const settleSequenceByIdempotency = new Map()
+  const canonicalSettleModelRequest = ledger.settleModelRequest.bind(ledger)
+  ledger.settleModelRequest = async (settleInput) => {
+    const entry = await canonicalSettleModelRequest(settleInput)
+    settleSequenceByIdempotency.set(entry.source.idempotencyKey, entry.sequence)
+    // Traced actual failing value: the ledger canonicalizes entry.source.idempotencyKey
+    // to `usage:<digest>`, while the report path looks up `${sourceId}:settle` — the raw
+    // input identity. Record the sequence under BOTH identities (same entry, same
+    // sequence) so each report finds its own actual ledger entry; redelivery of the same
+    // sourceId returns the retained entry and therefore the ORIGINAL sequence.
+    settleSequenceByIdempotency.set(`${entry.source.sourceId}:settle`, entry.sequence)
+    return entry
+  }
+  // The correlated cost-state projection for the child attempt. The money
+  // stays in the canonical durable ledger above; this records the explicit
+  // estimated/reserved/reported/reconciled/settled evidence stages, driven
+  // live by the bridge's reserveBudget seam and the canonical settle path.
+  const childUsage = new ChildUsageLedger()
+  const childUsageIdentity = (admission) => ({
+    parentExecutionId: admission.identity.parentExecutionId,
+    delegationId: admission.identity.delegationId,
+    childExecutionId: admission.record.childExecutionId,
+    childAttemptId: admission.identity.childAttemptId,
+  })
   const selections = {
     lead: { selectionRef: `msel_${'a'.repeat(32)}`, selectionRevision: 1 },
     child: { selectionRef: `msel_${'b'.repeat(32)}`, selectionRevision: 2 },
   }
+  const childModelSelection = {
+    ...structuredClone(productSelectionFixture),
+    selectionRef: selections.child.selectionRef,
+    selectionRevision: selections.child.selectionRevision,
+  }
+  const readCurrentChildBudget = async (request) => {
+    state.childAdmissionChecks.push('read-current')
+    if (
+      !state.active.lead ||
+      !state.active.child ||
+      request.originalActorPrincipalId !== canonicalActorPrincipalId ||
+      request.parentIntentId !== childProductIntentId
+    )
+      return undefined
+    return {
+      workspaceId: request.workspaceId,
+      parentIntentId: childProductIntentId,
+      childRequestId: request.childRequestId,
+      executionId: request.childExecutionId,
+      attemptId: request.childAttemptId,
+      executionPlanId: request.childPlan.executionPlanId,
+      executionPlanDigest: request.childPlan.contentDigest,
+      parentExecutionPlanId: request.parentPlan.executionPlanId,
+      parentExecutionPlanDigest: request.parentPlan.contentDigest,
+      canonicalActorPrincipalId: canonicalActorPrincipalId,
+      productReaderPrincipalId: 'svc_product-reader',
+      authorityRevision: 1,
+      expiresAt: '2999-01-01T00:00:00.000Z',
+    }
+  }
+  const childBudgetProduct = {
+    async resolveChildSelection(input, childRequest) {
+      state.childSelectionChecks.push({ input, childRequest })
+      if (
+        !state.active.lead ||
+        !state.active.child ||
+        input.workspaceId !== ids.workspaceId ||
+        input.intentId !== childProductIntentId ||
+        input.principalId !== 'svc_product-reader' ||
+        childRequest.canonicalActorPrincipalId !== canonicalActorPrincipalId
+      )
+        throw new Error('PI_CHILD_MODEL_AUTHORITY_DENIED')
+      return childModelSelection
+    },
+  }
+  const productionChildDelegation = transactionalChildAdmission
+    ? createProductionChildDelegation({
+        records: storage.delegations,
+        lifecycle: new ExecutionLifecycleService(storage.executions),
+        plans: storage.plans,
+        events: storage.events,
+        scopeAdmission: workspace.scopeAdmission,
+        product: childBudgetProduct,
+        readCurrent: readCurrentChildBudget,
+        now: () => now,
+        async onEventRetained(event) {
+          const retained = await storage.events.list()
+          assert.ok(
+            retained.some(
+              (candidate) => canonicalJsonStringify(candidate) === canonicalJsonStringify(event)
+            )
+          )
+          state.parentInboxWakes ??= []
+          state.parentInboxWakes.push(event.type)
+        },
+      })
+    : undefined
+  const childAdmissionAuthority = productionChildDelegation?.childAdmission
   let childRuntime, leadRuntime, host, childAdmission, childOptions
   const child = await childTransport(state)
   const parentNative = await createNativeEngineToolFixture({
@@ -202,7 +355,7 @@ export async function createGovernedChildCompositionFixture(
   async function assertCurrent(authority) {
     const role = roleFor(authority)
     const request = authority.request
-    assert.equal(authority.admission.canonicalActorPrincipalId, actor)
+    assert.equal(authority.admission.canonicalActorPrincipalId, canonicalActorPrincipalId)
     assert.deepEqual(authority.admission.selection, selections[role])
     assert.equal(state.active[role], true, `${role} authority revoked`)
     const execution = await storage.executions.getExecution(request.executionId)
@@ -213,7 +366,7 @@ export async function createGovernedChildCompositionFixture(
     assert.equal(request.attemptBudget.reservationKey, `runtime-attempt:${request.attemptId}`)
     state.authorityChecks.push({
       role,
-      actor,
+      actor: canonicalActorPrincipalId,
       executionId: request.executionId,
       attemptId: request.attemptId,
     })
@@ -280,15 +433,17 @@ export async function createGovernedChildCompositionFixture(
     if (existing) assert.deepEqual(existing, budget)
     else {
       state.budgets.push(budget)
-      await ledger.openBudget({
-        workspaceId: ids.workspaceId,
-        executionId: budget.executionId,
-        parentExecutionId: ids.parentExecutionId,
-        currency: 'USD',
-        maximumMicrounits: budget.maximumMicrounits,
-        maximumTokens: budget.maximumTokens,
-        source: { sourceId: 'child-funded', idempotencyKey: 'child-funded' },
-      })
+      if (!transactionalChildAdmission) {
+        await ledger.openBudget({
+          workspaceId: ids.workspaceId,
+          executionId: budget.executionId,
+          parentExecutionId: ids.parentExecutionId,
+          currency: 'USD',
+          maximumMicrounits: budget.maximumMicrounits,
+          maximumTokens: budget.maximumTokens,
+          source: { sourceId: 'child-funded', idempotencyKey: 'child-funded' },
+        })
+      }
       await ledger.reserve({
         workspaceId: ids.workspaceId,
         executionId: budget.executionId,
@@ -298,11 +453,21 @@ export async function createGovernedChildCompositionFixture(
         maximumTokens: budget.maximumTokens,
         source: { sourceId: 'child-reserved', idempotencyKey: 'child-reserved' },
       })
+      // Live bridge seam: the canonical durable reservation above is recorded
+      // verbatim as the attempt's reservation evidence (and the plan ceiling
+      // as its estimate) in the same scheduling step.
+      const usageIdentity = childUsageIdentity(admission)
+      childUsage.recordEstimate(usageIdentity, {
+        currency: 'USD',
+        maximumMicrounits: workspace.command.childPlan.constraints.limits.budget.maximumMicrounits,
+        source: 'fixture-child-plan-constraints',
+      })
+      childUsage.recordReservation(usageIdentity, budget)
     }
     childAdmission = {
       schemaVersion: 'pi-durable-admission/v1',
       prompt: admission.record.objective,
-      canonicalActorPrincipalId: actor,
+      canonicalActorPrincipalId: canonicalActorPrincipalId,
       selection: selections.child,
       authority: {
         revision: 2,
@@ -318,7 +483,57 @@ export async function createGovernedChildCompositionFixture(
     assertAuthority: assertCurrent,
     scopeAuthority,
     authorizeInference: usage.authorizeInference,
-    settleUsage: usage.settleUsage,
+    lastSettle: undefined,
+    settleUsage: async (authority, key, usageInput, counts) => {
+      shared.lastSettle = { authority, key }
+      // Canonical settlement first: the durable usage ledger records the
+      // charge, and only its returned, priced RuntimeUsage feeds the
+      // cost-state projection — never an estimate or an inferred amount.
+      const settled = await usage.settleUsage(authority, key, usageInput, counts)
+      const accounting = settled.accounting
+      if (authority.request.executionId === ids.childExecutionId && accounting !== undefined) {
+        const settlementIdentity = childUsageIdentity({
+          identity: {
+            parentExecutionId: ids.parentExecutionId,
+            delegationId: ids.delegationId,
+            childAttemptId: ids.childAttemptId,
+          },
+          record: { childExecutionId: ids.childExecutionId },
+        })
+        const reportId = `usage-settle:${ids.childAttemptId}:${createHash('sha256')
+          .update(String(key))
+          .digest('hex')
+          .slice(0, 16)}`
+        // The sequence is looked up by THIS settlement's own idempotency
+        // identity (the authority settles with `<sourceId>:settle`), so a
+        // concurrently settling request can never lend its sequence here.
+        const sequenceKey = `${settled.accounting.sourceId}:settle`
+        // Test seam: run BETWEEN the canonical settle and the sequence lookup so a
+        // cold-map publication (settle observed elsewhere) can be exercised honestly.
+        await shared.beforeSequenceLookup?.(settled)
+        const publicationSequence = settleSequenceByIdempotency.get(sequenceKey)
+        // Fail closed: a settled child report with no observed canonical sequence must
+        // never publish. Silently omitting publicationSequence let an old redelivery
+        // order as new downstream — the exact regression this fixture must prevent.
+        if (publicationSequence === undefined) {
+          throw new Error(`PUBLICATION_SEQUENCE_MISSING:${sequenceKey}`)
+        }
+        const receipt = childUsage.recordReportedUsage(settlementIdentity, settled, {
+          reportId,
+          publicationSequence,
+        })
+        if (receipt.outcome === 'recorded') {
+          childUsage.reconcile(settlementIdentity, { reconciledAt: now })
+          childUsage.settle(settlementIdentity, {
+            currency: 'USD',
+            settledMicrounits: accounting.chargedMicrounits,
+            settledAt: now,
+            settlementRef: reportId,
+          })
+        }
+      }
+      return settled
+    },
     reconcileInference: async () => 'unresolved',
     verifyApproval: async (_authority, _identity, submitted) =>
       state.approved &&
@@ -357,13 +572,20 @@ export async function createGovernedChildCompositionFixture(
     host = await createGovernedChildHostFixture({
       storage,
       workspace,
-      principalRef: actor,
+      principalRef: canonicalActorPrincipalId,
       runtimeAdapter: childRuntime.adapter,
       reserveChildBudget: reserveBudget,
       retainAdmission: false,
       initializeParentRunning: false,
+      ...(childAdmissionAuthority
+        ? {
+            childAdmission: childAdmissionAuthority,
+            childAllocator: storage.delegations,
+            delegationService: productionChildDelegation.service,
+          }
+        : {}),
       onCommandAuthority: async (admission) => {
-        assert.equal(admission.request.audit.principalRef, actor)
+        assert.equal(admission.request.audit.principalRef, canonicalActorPrincipalId)
         const parent = await storage.executions.getExecution(ids.parentExecutionId)
         const attempt = await storage.executions.getAttempt(parentAttemptId)
         assert.equal(parent.state, 'running')
@@ -413,7 +635,7 @@ export async function createGovernedChildCompositionFixture(
     const leadAdmission = {
       schemaVersion: 'pi-durable-admission/v1',
       prompt: 'Delegate the bounded project objective.',
-      canonicalActorPrincipalId: actor,
+      canonicalActorPrincipalId: canonicalActorPrincipalId,
       selection: selections.lead,
       authority: {
         revision: 1,
@@ -439,7 +661,7 @@ export async function createGovernedChildCompositionFixture(
         review: async (input) => ({
           state: state.approved ? 'approved' : 'pending',
           interactionId: input.interactionId,
-          ...(state.approved ? { decisionPrincipalRef: actor } : {}),
+          ...(state.approved ? { decisionPrincipalRef: canonicalActorPrincipalId } : {}),
         }),
       },
     })
@@ -456,7 +678,7 @@ export async function createGovernedChildCompositionFixture(
       tools: {
         service,
         assertAuthority: async (request) => {
-          assert.equal(request.audit.principalRef, actor)
+          assert.equal(request.audit.principalRef, canonicalActorPrincipalId)
           assert.equal(state.active.lead, true)
         },
       },
@@ -511,7 +733,7 @@ export async function createGovernedChildCompositionFixture(
         assert.equal(current.childAttemptId, retained.identity.childAttemptId)
         const call = await storage.calls.get(current.admittedToolCallId)
         assert.equal(call.status, 'succeeded')
-        assert.equal(call.principalRef, actor)
+        assert.equal(call.principalRef, canonicalActorPrincipalId)
         assert.equal(call.result.output.externalSessionId, retained.handle.externalSessionId)
         const journal = childRuntime.adapter.journal.get(retained.handle.handleId)
         assert.deepEqual(journal.admission.handle, retained.handle)
@@ -538,14 +760,20 @@ export async function createGovernedChildCompositionFixture(
     return {
       state,
       host,
+      shared,
+      settleSequenceByIdempotency,
+      childAdmissionAuthority,
       ledger,
+      childUsage,
       storage,
       leadDatabase,
       selections,
       leadRequest,
       identity,
+      transactionalChildAdmission,
+      childProductIntentId,
       ids,
-      actor,
+      actor: canonicalActorPrincipalId,
       parentNative,
       child,
       get leadRuntime() {

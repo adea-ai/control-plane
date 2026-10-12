@@ -86,6 +86,7 @@ export const INTEGRATION_SHARDS = [
         package: 'packages/database',
         files: [
           'src/budget-admission.integration.test.mjs',
+          'src/child-budget-admission.integration.test.mjs',
           'src/tool-repositories.integration.test.mjs',
           'src/runtime-node-identity-repository.integration.test.mjs',
           'src/delegation-reference.integration.test.mjs',
@@ -128,6 +129,8 @@ export const INTEGRATION_SHARDS = [
       {
         package: '.',
         files: [
+          './tests/child-progress-scanner.integration.test.mjs',
+          './tests/child-progress-sqlite-feed-replay.integration.test.mjs',
           './tests/memory-process-loss.integration.test.mjs',
           './tests/runtime-node-credential-revocation.integration.test.mjs',
         ],

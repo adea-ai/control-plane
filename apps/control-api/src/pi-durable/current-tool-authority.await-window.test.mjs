@@ -310,7 +310,7 @@ test('an authorization pin changed during the awaited re-read rejects', async ()
   )
 })
 
-test('an approval-linkage change during the awaited re-read rejects', async () => {
+test('a different persisted approval principal than the approved respondent rejects', async () => {
   await withApprovedWork(
     async ({ authority, request }) => {
       await expect(authority.assertCurrent(request, 'admission')).rejects.toMatchObject(rejected)
@@ -323,6 +323,55 @@ test('an approval-linkage change during the awaited re-read rejects', async () =
           approvalPrincipalRef: approverB,
           revision: row.revision + 1,
         })
+      },
+    }
+  )
+})
+
+test('the current approved principal may be persisted during the awaited admission re-read', async () => {
+  await withApprovedWork(
+    async ({ authority, request, stores }) => {
+      const current = await stores.calls.get(toolCallId)
+      const { approvalPrincipalRef: _approvalPrincipalRef, ...unrecordedApproval } = current
+      expect(
+        await stores.calls.compareAndSet(current.revision, {
+          ...unrecordedApproval,
+          revision: current.revision + 1,
+        })
+      ).toBe(true)
+
+      await expect(authority.assertCurrent(request, 'admission')).resolves.toBeUndefined()
+    },
+    {
+      onSecondCallRead: async (repository) => {
+        const current = await repository.get(toolCallId)
+        expect(
+          await repository.compareAndSet(current.revision, {
+            ...current,
+            approvalPrincipalRef: approverA,
+            revision: current.revision + 1,
+          })
+        ).toBe(true)
+      },
+    }
+  )
+})
+
+test('removing the persisted approved principal during the awaited re-read rejects', async () => {
+  await withApprovedWork(
+    async ({ authority, request }) => {
+      await expect(authority.assertCurrent(request, 'admission')).rejects.toMatchObject(rejected)
+    },
+    {
+      onSecondCallRead: async (repository) => {
+        const current = await repository.get(toolCallId)
+        const { approvalPrincipalRef: _approvalPrincipalRef, ...unrecordedApproval } = current
+        expect(
+          await repository.compareAndSet(current.revision, {
+            ...unrecordedApproval,
+            revision: current.revision + 1,
+          })
+        ).toBe(true)
       },
     }
   )

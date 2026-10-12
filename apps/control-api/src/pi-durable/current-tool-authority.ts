@@ -251,7 +251,13 @@ export function createPiDurableCurrentToolAuthority(
           ? await readApproval(options.interactions, request, Date.parse(now()))
           : undefined
         if (
-          !same(callAuthorizationInputs(call), callAuthorizationInputs(currentCall)) ||
+          !sameCallAuthorizationInputs(
+            call,
+            currentCall,
+            currentApproval?.approved
+              ? currentApproval.interaction.response?.respondingPrincipalId
+              : undefined
+          ) ||
           !same(approval?.interaction, currentApproval?.interaction)
         )
           reject()
@@ -345,9 +351,27 @@ function callAuthorizationInputs(call: CurrentPiDurableToolCallRecord | undefine
     requestedAt: call.requestedAt,
     executor: call.executor,
     approvalInteractionId: call.approvalInteractionId,
-    approvalPrincipalRef: call.approvalPrincipalRef,
     policyDecision: call.policyDecision,
   }
+}
+
+function sameCallAuthorizationInputs(
+  before: CurrentPiDurableToolCallRecord | undefined,
+  after: CurrentPiDurableToolCallRecord | undefined,
+  currentApprovedPrincipalRef: string | undefined
+): boolean {
+  if (!same(callAuthorizationInputs(before), callAuthorizationInputs(after))) return false
+  if (!before || !after) return before === after
+
+  // ToolExecutionService may persist the approved respondent onto the call
+  // after review. Permit only that one-way materialization; removing or
+  // changing an already-persisted principal remains authorization drift.
+  return (
+    before.approvalPrincipalRef === after.approvalPrincipalRef ||
+    (before.approvalPrincipalRef === undefined &&
+      after.approvalPrincipalRef === currentApprovedPrincipalRef &&
+      currentApprovedPrincipalRef !== undefined)
+  )
 }
 
 function matchesToolCall(

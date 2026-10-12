@@ -55,6 +55,9 @@ export async function createFixture(graphs, storage = {}) {
     plans,
     graphs,
     scopeAdmission: storage.scopeAdmission,
+    childAdmission: storage.childAdmission,
+    childAllocator: storage.childAllocator,
+    onEventRetained: storage.onEventRetained,
     events: storage.events ?? {
       async publish(event) {
         events.push(event)

@@ -251,14 +251,16 @@ try {
         environment: integrationEnvironment,
       }
     )
-    // Repository-owned scenarios span composition roots without importing
-    // repository fixtures from inside an application package.
+    // Repository-owned scenarios span composition roots; keep their fixtures
+    // outside individual workspace packages.
     run(
       'bun',
       [
         'test',
         '--timeout',
         remoteDatabase ? '120000' : '30000',
+        './tests/child-progress-scanner.integration.test.mjs',
+        './tests/child-progress-sqlite-feed-replay.integration.test.mjs',
         './tests/memory-process-loss.integration.test.mjs',
         './tests/langgraph-retirement-inventory-pg.integration.test.mjs',
         './tests/runtime-node-credential-revocation.integration.test.mjs',

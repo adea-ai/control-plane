@@ -1,3 +1,5 @@
+import { appendFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { expect, test } from 'bun:test'
 import {
   createUnfinishedChildProcessHarness,
@@ -337,4 +339,25 @@ test('J1 fast-terminal oracle rejects allowed grants and unrelated storage denia
   expect(() =>
     assertJ1FastTerminalRetention({ ...terminal, childNativeState: 'running' })
   ).toThrow()
+})
+
+test('J1 evidence poll waits for an incomplete trailing record and rejects malformed complete records', async () => {
+  const harness = await createUnfinishedChildProcessHarness()
+  try {
+    const path = join(harness.directory, 'process-evidence.jsonl')
+    // A writer is mid-record: the complete row is read, the unterminated tail is not parsed.
+    await writeFile(path, '{"stage":"parent_completed"}\n{"stage":"recovery_snap')
+    expect(await harness.evidence()).toEqual([{ stage: 'parent_completed' }])
+    // The record completes on a later poll and is then read in full.
+    await appendFile(path, 'shot"}\n')
+    expect(await harness.evidence()).toEqual([
+      { stage: 'parent_completed' },
+      { stage: 'recovery_snapshot' },
+    ])
+    // A malformed record that ends in a newline is never skipped, even with a tail after it.
+    await appendFile(path, '{"stage":oops}\n{"stage":"tail')
+    await expect(harness.evidence()).rejects.toThrow(SyntaxError)
+  } finally {
+    await harness.close()
+  }
 })

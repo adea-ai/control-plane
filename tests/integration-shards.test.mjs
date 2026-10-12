@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { parse } from 'acorn'
 import {
   INTEGRATION_SHARDS,
@@ -12,14 +13,21 @@ import {
 } from '../scripts/integration-shards.mjs'
 
 function integrationFilesUnder(directory) {
-  return readdirSync(new URL(`../${directory}`, import.meta.url), { withFileTypes: true })
-    .filter(
-      (entry) =>
+  const root = fileURLToPath(new URL(`../${directory}`, import.meta.url))
+  function visit(path) {
+    return readdirSync(path, { withFileTypes: true }).flatMap((entry) => {
+      const entryPath = join(path, entry.name)
+      if (entry.isDirectory()) return visit(entryPath)
+      if (
         entry.isFile() &&
         (entry.name === 'integration.test.mjs' || entry.name.endsWith('.integration.test.mjs'))
-    )
-    .map((entry) => entry.name)
-    .toSorted()
+      ) {
+        return [relative(root, entryPath)]
+      }
+      return []
+    })
+  }
+  return visit(root).toSorted()
 }
 
 function foundationCaseInventory(text) {
