@@ -14,7 +14,7 @@
 // self-hosted-server PostgreSQL restore is in
 // tests/profile-recovery-postgres-restore.integration.test.mjs.
 
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from 'bun:test'
@@ -36,6 +36,7 @@ import {
   planPortableImport,
 } from '@control-plane/profile-portability'
 import { observedEvaluationFixture } from '../packages/profile-portability/src/evaluation-fixture.mjs'
+import { cleanupTemporaryCompositions } from './fixtures/profile-recovery-cleanup.mjs'
 
 const createdAt = '2026-10-09T00:00:00.000Z'
 const laterAt = '2026-10-09T00:01:00.000Z'
@@ -68,23 +69,12 @@ async function disposeComposition(composition) {
 }
 
 afterEach(async () => {
-  const failures = []
-  for (const composition of temporaryCompositions.splice(0)) {
-    try {
-      await disposeComposition(composition)
-    } catch (error) {
-      failures.push(error)
-    }
-  }
-  // Directories are removed only after every composition has released its storage.
-  for (const directory of temporaryDirectories.splice(0)) {
-    try {
-      await rm(directory, { recursive: true, force: true })
-    } catch (error) {
-      failures.push(error)
-    }
-  }
-  if (failures.length > 0) throw new AggregateError(failures, 'profile recovery cleanup failed')
+  await cleanupTemporaryCompositions({
+    ownedCompositions: temporaryCompositions.splice(0),
+    directories: temporaryDirectories.splice(0),
+    disposeComposition,
+    removeDirectory: (directory) => rm(directory, { recursive: true, force: true }),
+  })
 })
 
 async function openTempDirectory(prefix) {
@@ -95,9 +85,57 @@ async function openTempDirectory(prefix) {
 
 function openComposition(directory, options = {}) {
   const composition = new LocalControlPlaneComposition({ dataDirectory: directory, ...options })
-  temporaryCompositions.push(composition)
+  temporaryCompositions.push({ composition, directory })
   return composition
 }
+
+test('composition cleanup attempts every close and preserves state when a close fails', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'profile-recovery-close-failure-'))
+  const closeFailure = new Error('SIMULATED_COMPOSITION_CLOSE_FAILURE')
+  const calls = []
+  let removeCalls = 0
+  const composition = {
+    async close() {
+      calls.push('composition')
+      throw closeFailure
+    },
+    persistence: {
+      async close() {
+        calls.push('persistence')
+      },
+    },
+    coordination: {
+      async close() {
+        calls.push('coordination')
+      },
+    },
+    observability: {
+      async close() {
+        calls.push('observability')
+      },
+    },
+  }
+
+  try {
+    const failure = await cleanupTemporaryCompositions({
+      ownedCompositions: [{ composition, directory }],
+      directories: [directory],
+      disposeComposition,
+      removeDirectory: async () => {
+        removeCalls += 1
+      },
+    }).catch((error) => error)
+
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect(failure.errors[0].errors).toContain(closeFailure)
+    expect(failure.errors[1].message).toContain(directory)
+    expect(calls).toEqual(['composition', 'persistence', 'coordination', 'observability'])
+    expect(removeCalls).toBe(0)
+    expect(await stat(directory)).toBeDefined()
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 /** Retains the full guarded parent tuple the local composition's queue
  *  requires (context package, execution plan, lifecycle execution) and returns

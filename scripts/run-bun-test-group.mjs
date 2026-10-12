@@ -79,6 +79,7 @@ const repositoryGroups = {
     'tests/profile-recovery-crash-restore.test.mjs',
     'tests/profile-recovery-fenced-rollback.test.mjs',
     'tests/profile-recovery-rebind-fencing.test.mjs',
+    'tests/profile-recovery-selfhosted-server-wake-replay.boundary.test.mjs',
     'tests/skill-library.test.mjs',
     'tests/m11-recovery-rpo-rto.test.mjs',
     'tests/m11-retention-apply-cli.test.mjs',

@@ -302,6 +302,16 @@ describe('profile infrastructure bindings', () => {
     expect(() => bindProfileStorage('local', composition('hosted-simple'))).toThrow(
       expect.objectContaining({ code: 'PROFILE_DEPLOYMENT_MISMATCH' })
     )
+    for (const [profile, deploymentProfile] of [
+      ['local', 'cloud'],
+      ['local', 'hosted-server'],
+      ['hosted', 'local'],
+      ['self-hosted', 'local'],
+    ]) {
+      expect(() => bindProfileStorage(profile, composition(deploymentProfile))).toThrow(
+        expect.objectContaining({ code: 'PROFILE_DEPLOYMENT_MISMATCH' })
+      )
+    }
     expect(() => bindProfileStorage('self-hosted', composition('hosted-server', 'sqlite'))).toThrow(
       expect.objectContaining({ code: 'PROFILE_PERSISTENCE_MISMATCH' })
     )

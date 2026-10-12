@@ -45,6 +45,7 @@ import {
 import { SqliteEvaluationRepository } from '@control-plane/sqlite-persistence'
 import { observedEvaluationFixture } from '../packages/profile-portability/src/evaluation-fixture.mjs'
 import { CompletedManagedPiClient } from './fixtures/completed-managed-pi-client.mjs'
+import { cleanupTemporaryCompositions } from './fixtures/profile-recovery-cleanup.mjs'
 import {
   createRegisteredGraphPlan,
   seedRegisteredGraphPlan,
@@ -85,22 +86,12 @@ async function disposeComposition(composition) {
 }
 
 afterEach(async () => {
-  const failures = []
-  for (const composition of temporaryCompositions.splice(0)) {
-    try {
-      await disposeComposition(composition)
-    } catch (error) {
-      failures.push(error)
-    }
-  }
-  for (const directory of temporaryDirectories.splice(0)) {
-    try {
-      await rm(directory, { recursive: true, force: true })
-    } catch (error) {
-      failures.push(error)
-    }
-  }
-  if (failures.length > 0) throw new AggregateError(failures, 'self-hosted simple cleanup failed')
+  await cleanupTemporaryCompositions({
+    ownedCompositions: temporaryCompositions.splice(0),
+    directories: temporaryDirectories.splice(0),
+    disposeComposition,
+    removeDirectory: (directory) => rm(directory, { recursive: true, force: true }),
+  })
 })
 
 async function openTempDirectory(prefix) {
@@ -192,7 +183,7 @@ function openSelfHostedSimple({ dataDirectory, ports, plan, registration, contex
         })
       ),
   })
-  temporaryCompositions.push(composition)
+  temporaryCompositions.push({ composition, directory: dataDirectory })
   return composition
 }
 
@@ -444,7 +435,7 @@ describe('M17.02.2 self-hosted simple composition recovery (hosted-simple, pinne
       profile: 'hosted-simple',
       dataDirectory: sourceDirectory,
     })
-    temporaryCompositions.push(source)
+    temporaryCompositions.push({ composition: source, directory: sourceDirectory })
     // The source is never started: the portable export reads its SQLite persistence only.
     await source.persistence.migrate()
     const evaluation = await observedEvaluationFixture()
@@ -482,7 +473,7 @@ describe('M17.02.2 self-hosted simple composition recovery (hosted-simple, pinne
       profile: 'hosted-simple',
       dataDirectory: restoredDirectory,
     })
-    temporaryCompositions.push(restored)
+    temporaryCompositions.push({ composition: restored, directory: restoredDirectory })
     await restored.persistence.migrate()
     const destination = new PersistencePortableStateDestination({
       persistence: restored.persistence,
@@ -501,7 +492,7 @@ describe('M17.02.2 self-hosted simple composition recovery (hosted-simple, pinne
       profile: 'hosted-simple',
       dataDirectory: restoredDirectory,
     })
-    temporaryCompositions.push(reopened)
+    temporaryCompositions.push({ composition: reopened, directory: restoredDirectory })
     await reopened.persistence.migrate()
     await expect(
       new SqliteEvaluationRepository(reopened.persistence).getRun(evaluation.evalRunId)

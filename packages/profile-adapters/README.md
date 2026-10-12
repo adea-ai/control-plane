@@ -88,3 +88,14 @@ and the internal adapters in `packages/pi-cloudflare-host` and
 source boundaries and the tested qualification gate; it does not claim a live
 production certification or that the separate profile-specific adapter map
 requested by issue #941 has been accepted.
+
+## Recovery boundary evidence
+
+`tests/profile-recovery-rebind-fencing.test.mjs` exercises synthetic profile
+bindings across a rollback fence: operations from the old owner fail before
+upstream calls, a newly bound owner resumes the retained handle, and the
+managed-Pi fixture does not resend its physical start. This is adapter-binding
+evidence only. It does not prove process-level durability, self-hosted-server
+wake/replay, storage restore through every profile composition, or live
+production rollback; those recovery gaps are tracked in
+`docs/profile-recovery-acceptance-map.md`.

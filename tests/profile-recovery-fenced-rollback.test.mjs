@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
@@ -50,22 +50,102 @@ function recoveryKey(id) {
   return `${executionId}:graph-recovery:${id}`
 }
 
-async function withJobStore(run) {
+async function withJobStore(
+  run,
+  {
+    createProvider = (directory) =>
+      new SqlitePersistenceProvider({ path: join(directory, 'queue.sqlite') }),
+    removeDirectory = (directory) => rm(directory, { recursive: true, force: true }),
+  } = {}
+) {
   const directory = await mkdtemp(join(tmpdir(), 'profile-recovery-rollback-'))
-  const provider = new SqlitePersistenceProvider({ path: join(directory, 'queue.sqlite') })
+  let provider
+  let bodyFailed = false
+  let bodyError
   try {
+    provider = createProvider(directory)
     await provider.migrate()
     await run(new WorkflowJobStore(provider))
-  } finally {
+  } catch (error) {
+    bodyFailed = true
+    bodyError = error
+  }
+
+  const cleanupFailures = []
+  let releaseConfirmed = provider === undefined
+  if (provider !== undefined) {
     try {
-      provider.close({ checkpoint: true })
-    } finally {
-      await rm(directory, { recursive: true, force: true })
+      await provider.close({ checkpoint: true })
+      releaseConfirmed = true
+    } catch (error) {
+      releaseConfirmed = false
+      cleanupFailures.push(error)
     }
+  }
+
+  if (releaseConfirmed) {
+    try {
+      await removeDirectory(directory)
+    } catch (error) {
+      cleanupFailures.push(error)
+    }
+  } else {
+    cleanupFailures.push(new Error(`queue state preserved until close is confirmed: ${directory}`))
+  }
+
+  if (bodyFailed && cleanupFailures.length > 0) {
+    throw new AggregateError([bodyError, ...cleanupFailures], 'WorkflowJobStore cleanup failed', {
+      cause: bodyError,
+    })
+  }
+  if (bodyFailed) throw bodyError
+  if (cleanupFailures.length > 0) {
+    throw new AggregateError(cleanupFailures, 'WorkflowJobStore cleanup failed', {
+      cause: cleanupFailures[0],
+    })
   }
 }
 
 describe('WorkflowJobStore rollback continuation fencing (recovery graph)', () => {
+  test('preserves queue state and both failures when provider close fails', async () => {
+    const bodyFailure = new Error('SIMULATED_WORKFLOW_JOB_FAILURE')
+    const closeFailure = new Error('SIMULATED_QUEUE_CLOSE_FAILURE')
+    let directory
+    let removeCalls = 0
+
+    const failure = await withJobStore(
+      async () => {
+        throw bodyFailure
+      },
+      {
+        createProvider: (path) => {
+          directory = path
+          return {
+            async migrate() {},
+            async close() {
+              throw closeFailure
+            },
+          }
+        },
+        removeDirectory: async () => {
+          removeCalls += 1
+        },
+      }
+    ).catch((error) => error)
+
+    try {
+      expect(failure).toBeInstanceOf(AggregateError)
+      expect(failure.errors[0]).toBe(bodyFailure)
+      expect(failure.errors[1]).toBe(closeFailure)
+      expect(failure.errors[2].message).toContain(directory)
+      expect(failure.cause).toBe(bodyFailure)
+      expect(removeCalls).toBe(0)
+      expect(await stat(directory)).toBeDefined()
+    } finally {
+      if (directory !== undefined) await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   async function completedParent(store) {
     await store.enqueue({ workflowKey: executionId, input: executionInput, at: baseInstant })
     const [claim] = await store.claimDue({

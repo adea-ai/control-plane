@@ -116,10 +116,14 @@ Owners are existing issues. Where no open issue names a gap, the row says so.
    composition close is tested. Workflow-queue stop, runtime-transport drain,
    and Restate drain are unproven. Owner: #1025 drain clause. Operator admission
    stops are #1029 (under #943). Legacy-work drain is #940, which depends on #939.
-3. **Restate wake and replay** for the self-hosted server (PostgreSQL + Restate)
-   is unproven. The self-hosted server path has no SIGKILL test. Self-hosted
-   simple wake and replay after close/reopen, checkpoint restore, and SIGKILL is
-   proven by `tests/profile-recovery-self-hosted-simple.integration.test.mjs` and
+3. **Self-hosted-server profile wake/replay** (PostgreSQL + Restate) is unproven.
+   `tests/profile-recovery-selfhosted-server-wake-replay.boundary.test.mjs` only
+   checks that the composition prototype exposes no profile-wake member and the
+   package exports no wake topology-guard factory. It is a missing-wiring
+   boundary check, not a successful wake/replay proof. The self-hosted server
+   path has no SIGKILL wake/replay test. Self-hosted simple wake and replay after
+   close/reopen, checkpoint restore, and SIGKILL is proven by
+   `tests/profile-recovery-self-hosted-simple.integration.test.mjs` and
    `tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs`.
    Owner: #1025 (child of #942).
 4. **Self-hosted simple** composition-level recovery and backup are proven for
