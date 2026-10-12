@@ -31,6 +31,10 @@ const migrationGateScript = fileURLToPath(
   new URL('../.github/scripts/neon-migration-gate.mjs', import.meta.url)
 )
 const migrationGateSource = readFileSync(migrationGateScript, 'utf8')
+const neonCompatibilitySource = readFileSync(
+  new URL('../packages/database/scripts/verify-neon-provider-compatibility.mjs', import.meta.url),
+  'utf8'
+)
 const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
 const realNode = execFileSync('which', ['node'], { encoding: 'utf8' }).trim()
 const migrationVerifyStep = "Verify migrations and this shard's integration slice"
@@ -608,6 +612,20 @@ describe('Neon preview cleanup lookup', () => {
     ).toBe(1)
     // The runner owns per-file retries; the workflow invokes each command once.
     expect((step.match(/db:migrate/g) ?? []).length).toBe(1)
+    expect(step).toContain(
+      'bun --cwd=packages/database scripts/verify-neon-provider-compatibility.mjs'
+    )
+    expect(step).toContain('if [ "${{ matrix.shard }}" = "1" ]')
+    expect(
+      step.indexOf('bun --cwd=packages/database scripts/verify-neon-provider-compatibility.mjs')
+    ).toBeLessThan(
+      step.indexOf('bun scripts/run-integration-tests.mjs --shard=${{ matrix.shard }}')
+    )
+    expect(neonCompatibilitySource).toContain("role: 'control_plane_app'")
+    expect(neonCompatibilitySource).toContain("role: 'control_plane_migrator'")
+    expect(neonCompatibilitySource).toContain("url.searchParams.get('sslmode')")
+    expect(neonCompatibilitySource).toContain('pooler\\.')
+    expect(neonCompatibilitySource).toContain('sql.begin(')
   })
 
   test('keeps database credentials out of dependency installation, builds, and cleanup', () => {
@@ -636,7 +654,8 @@ describe('Neon preview cleanup lookup', () => {
     )
     expect(pullRequestWorkflow).toContain('local-admin-only')
     expect(pullRequestWorkflow).toContain('RUN_M10_POSTGRES_CONFORMANCE')
-    expect(pullRequestWorkflow).toContain('bun run test:integration')
+    expect(pullRequestWorkflow).toContain('bun test tests/cp1-embedded-durable-execution.test.mjs')
+    expect(pullRequestWorkflow).not.toContain('bun run test:integration')
     expect(pullRequestWorkflow).toContain('docker compose up -d --wait postgres')
     expect(pullRequestWorkflow.indexOf('docker compose up -d --wait postgres')).toBeLessThan(
       pullRequestWorkflow.indexOf('bun --cwd=packages/database run db:migrate')

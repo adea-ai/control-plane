@@ -64,9 +64,6 @@ jobs:
       - name: Verify cross-profile conformance matrix (Postgres)
         run: bun test tests/cp1-embedded-durable-execution.test.mjs
 
-      - name: Verify integration and recovery behavior
-        run: bun run test:integration
-
       - name: Remove owned PostgreSQL fixture
         if: always()
         timeout-minutes: 3

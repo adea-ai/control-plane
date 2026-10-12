@@ -27,6 +27,7 @@ import {
   discoverTestInventory,
   normalizedBunTestArguments,
 } from '../scripts/run-bun-test-group.mjs'
+import { INTEGRATION_SHARDS } from '../scripts/integration-shards.mjs'
 
 // The fleet upgrade rewrites the runtime pin on every release; tests assert
 // the caller pins stay consistent with the configured ref, not a hardcoded
@@ -115,22 +116,16 @@ test('defines root quality and build commands', async () => {
   assert.match(manifest.scripts.test, /--parallel/)
 })
 
-test('schedules every discovered integration file through a package or repository command', async () => {
+test('schedules every discovered integration file through a package command or shard', async () => {
   const integration = await discoverTestFiles('integration')
   for (const path of integration) {
     if (path.startsWith('tests/')) {
-      const runner = await readFile(
-        new URL('../scripts/run-integration-tests.mjs', import.meta.url),
-        'utf8'
+      const scheduled = INTEGRATION_SHARDS.flatMap(({ groups }) =>
+        groups.filter(
+          ({ package: packageName, files }) => packageName === '.' && files.includes(`./${path}`)
+        )
       )
-      const unsharded = runner.slice(
-        runner.indexOf('if (integrationShard === null) {'),
-        runner.indexOf('} else {', runner.indexOf('if (integrationShard === null) {'))
-      )
-      assert.ok(
-        unsharded.includes(`'./${path}'`),
-        `${path} is not selected by the unsharded repository runner`
-      )
+      assert.equal(scheduled.length, 1, `${path} must have exactly one verified shard owner`)
       continue
     }
     const [kind, name, ...relativeParts] = path.split('/')
@@ -745,6 +740,11 @@ test('provides a documented isolated integration-test runner', async () => {
   assert.match(runner, /SELECT 1/)
   assert.match(runner, /database system is accepting SQL connections/)
   assert.match(runner, /'test:integration', '--concurrency=1'/)
+  assert.match(runner, /async function runLocalIntegrationShards/)
+  assert.match(runner, /INTEGRATION_SHARD_IDS\.map\(async \(shard\)/)
+  assert.match(runner, /Local PostgreSQL integration shard .* starting/)
+  assert.match(runner, /One or more local PostgreSQL integration shards failed/)
+  assert.match(runner, /files remain serial within each shard/)
   assert.match(runner, /'stop', '--timeout', '60', 'postgres'/)
   // The sharded lane streams every file once and retains only bounded
   // diagnostics; explicit test timeouts still scale for remote execution.
@@ -851,7 +851,8 @@ test('isolates credentialed Neon validation from pull-request source', async () 
   assert.match(neonWorkflow, /expires_at: \$\{\{ env\.EXPIRES_AT \}\}/)
   assert.doesNotMatch(pullRequestWorkflow, /\$\{\{[^}]*\bsecrets\b|^\s*secrets\s*:/m)
   assert.match(pullRequestWorkflow, /RUN_M10_POSTGRES_CONFORMANCE/)
-  assert.match(pullRequestWorkflow, /bun run test:integration/)
+  assert.match(pullRequestWorkflow, /bun test tests\/cp1-embedded-durable-execution\.test\.mjs/)
+  assert.doesNotMatch(pullRequestWorkflow, /bun run test:integration/)
   assert.ok(validationJob)
   assert.match(validationJob, /uses: 0xPlayerOne\/code-foundry/)
   // The reusable-workflow call forwards exactly two sanctioned secrets
