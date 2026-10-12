@@ -373,7 +373,7 @@ test('restart acknowledges a cancellation applied before an acknowledgement fail
   }
 })
 
-test('historical cancellation resolution replays across turns after a lost acknowledgement', async () => {
+test('historical cancellation resolution survives the next run start and replays only its original generation', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-cancel-cross-turn-ack-'))
   const authority = createSqliteCommittedCancellationAuthority(
     join(directory, 'cancellation-owner.sqlite'),
@@ -381,7 +381,11 @@ test('historical cancellation resolution replays across turns after a lost ackno
   )
   const started = [deferred(), deferred(), deferred()]
   const finish = [deferred(), deferred(), deferred()]
+  const secondProviderEntered = deferred()
+  const releaseSecondProvider = deferred()
   let runs = 0
+  let providerCalls = 0
+  let aborts = 0
   let adapter
   let reopened
   try {
@@ -420,9 +424,20 @@ test('historical cancellation resolution replays across turns after a lost ackno
           }
         },
         close: async () => {},
-        cancel: async () => {},
+        cancel: async () => {
+          aborts += 1
+        },
       }),
     })
+    const resolveProvider = options.resolveProvider
+    options.resolveProvider = async (...args) => {
+      providerCalls += 1
+      if (providerCalls === 3) {
+        secondProviderEntered.resolve()
+        await releaseSecondProvider.promise
+      }
+      return resolveProvider(...args)
+    }
     adapter = new PiDurableRuntimeAdapter(options)
     const handle = await adapter.start(request)
     await started[0].promise
@@ -445,6 +460,9 @@ test('historical cancellation resolution replays across turns after a lost ackno
     await expect(adapter.cancel(handle, firstRequest)).rejects.toThrow(
       'PI_CANCELLATION_COMMIT_OUTCOME_UNKNOWN'
     )
+    const firstIntent = authority.intentForKey(handle.handleId, firstRequest.idempotencyKey)
+    expect(firstIntent.generation.turnKey).toBe(firstTurn)
+    expect(firstIntent.generation.inferenceId).toBe('pi-generation:turn-1')
     finish[0].resolve()
     await adapter.drain()
     await adapter.awaitInput(handle, 'int_01JABCDEF0123456789ABCDEFG')
@@ -453,18 +471,49 @@ test('historical cancellation resolution replays across turns after a lost ackno
       idempotencyKey: 'input:two',
       text: 'second turn',
     })
+    await secondProviderEntered.promise
+    const starting = adapter.journal.get(handle.handleId)
+    expect(starting.state).toBe('starting')
+    authority.failNextAcknowledge()
+    await expect(adapter.cancel(handle, firstRequest)).rejects.toThrow(
+      'PI_CANCELLATION_ACK_UNAVAILABLE'
+    )
+    const resolvedDuringStart = adapter.journal.get(handle.handleId)
+    const cancellationKey = `cancel:${firstRequest.idempotencyKey}`
+    expect(resolvedDuringStart.epoch).toBe(starting.epoch)
+    expect(resolvedDuringStart.detail.actions[`cancel:${firstRequest.idempotencyKey}`]).toBe(
+      firstIntent.requestDigest
+    )
+    expect(resolvedDuringStart.detail.cancellationResolutions[cancellationKey]).toMatchObject({
+      authorityIntentId: firstIntent.intentId,
+      generation: firstIntent.generation,
+      resolution: 'target_generation_superseded',
+    })
+    expect(aborts).toBe(0)
+
+    releaseSecondProvider.resolve()
     await started[1].promise
+    const afterRunStart = adapter.journal.get(handle.handleId)
+    expect(afterRunStart.detail.cancellationResolutions[cancellationKey]).toEqual(
+      resolvedDuringStart.detail.cancellationResolutions[cancellationKey]
+    )
+    expect(afterRunStart.detail.activeInference.turnKey).toBe(
+      `pi-input:${request.attemptId}:input:two`
+    )
+    expect(authority.intentForKey(handle.handleId, firstRequest.idempotencyKey)).toEqual(
+      firstIntent
+    )
+    expect(aborts).toBe(0)
 
     authority.failNextAcknowledge()
     await expect(adapter.cancel(handle, firstRequest)).rejects.toThrow(
       'PI_CANCELLATION_ACK_UNAVAILABLE'
     )
-    const cancellationKey = `cancel:${firstRequest.idempotencyKey}`
     const persisted = adapter.journal.get(handle.handleId).detail.cancellationResolutions[
       cancellationKey
     ]
     expect(persisted.generation.turnKey).toBe(firstTurn)
-    expect(persisted.observedGeneration.turnKey).toBe(`pi-input:${request.attemptId}:input:two`)
+    expect(persisted.observedGeneration).toBeNull()
 
     authority.failNextAcknowledge()
     await expect(adapter.cancel(handle, firstRequest)).rejects.toThrow(
@@ -528,6 +577,7 @@ test('historical cancellation resolution replays across turns after a lost ackno
     expect((await reopened.cancel(handle, firstRequest)).state).toBe('completed')
     expect(runs).toBe(3)
   } finally {
+    releaseSecondProvider.resolve()
     for (const gate of finish) gate.resolve()
     if (adapter) {
       await adapter.drain()

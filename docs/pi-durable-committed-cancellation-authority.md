@@ -61,14 +61,17 @@ can use a shared transactional authority store or a fencing lease that all
 product and CP revocation/deadline writers also honor. A sequence of independent
 reads followed by an outbox insert does not close the race.
 
-`createNodePiDurableLeadComposition()` currently does not inject this port. The
-SQLite coordinator in `src/committed-cancellation-authority.test-fixture.mjs`
-is disposable test infrastructure proving transaction ordering, idempotency,
+`createNodePiDurableLeadComposition()` accepts an optional injection, but its
+default production wiring does not supply an owner for this port. The SQLite
+coordinator in `src/committed-cancellation-authority.test-fixture.mjs` is
+disposable test infrastructure proving transaction ordering, idempotency,
 restart replay, and unknown commit outcomes. It is not a production owner and
 does not make the current separate product and CP stores atomic. Until an owner
 implements and injects the port, production cancellation stays unavailable by
-design. The published PR 1048 head still needs this change; this local patch
-does not change or validate the published branch.
+design. Published PR #1048 includes the adapter-side owner/outbox behavior and
+optional injection point; the default production wiring still has no owner
+coordinating the separate product and CP stores through a shared transaction
+or fencing lease.
 
 ## Smallest remaining compare-and-effect contract
 

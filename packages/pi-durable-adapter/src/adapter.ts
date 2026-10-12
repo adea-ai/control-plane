@@ -1544,21 +1544,23 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             }
           : undefined
       const runningAt = this.#now()
-      this.journal.update(
-        record.handleId,
-        epoch,
-        {
-          state: 'running',
-          detail: {
-            ...record.detail,
-            observedAt: runningAt,
-            inferenceTrackingVersion: 1,
-            engineRunStarted: false,
-            inferencePending: true,
+      this.journal.transitionCurrent(record.handleId, (current) => {
+        if (current.epoch !== epoch) throw new Error('STALE_OWNER')
+        return {
+          value: undefined,
+          change: {
+            state: 'running',
+            detail: {
+              ...current.detail,
+              observedAt: runningAt,
+              inferenceTrackingVersion: 1,
+              engineRunStarted: false,
+              inferencePending: true,
+            },
           },
-        },
-        { type: 'status', data: { state: 'running' }, at: runningAt }
-      )
+          event: { type: 'status', data: { state: 'running' }, at: runningAt },
+        }
+      })
       await this.#options.onExecutionRunning?.({
         request: structuredClone(authority.request),
         admission: structuredClone(authority.admission),
