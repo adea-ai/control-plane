@@ -15,6 +15,7 @@ import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import { isNeonProofRelevantPath } from '../.github/scripts/neon-migration-gate.mjs'
+import { verifyNeonMigratorDdl } from '../packages/database/scripts/neon-ddl-probe.mjs'
 
 const workflow = readFileSync(
   new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
@@ -641,7 +642,8 @@ describe('Neon preview cleanup lookup', () => {
     expect(workflow).not.toContain('db:migrate')
     expect(workflow).not.toContain('bun run build')
     expect(workflow).not.toContain('RUN_M10_POSTGRES_CONFORMANCE')
-    expect(workflow).toContain('timeout-minutes: 20')
+    expect(workflow).toContain('timeout-minutes: 15')
+    expect(workflow).not.toContain('timeout-minutes: 20')
     expect(workflow).toContain(
       'timeout --signal=TERM --kill-after=5s 90s bun --cwd=packages/database scripts/verify-neon-provider-compatibility.mjs'
     )
@@ -652,6 +654,10 @@ describe('Neon preview cleanup lookup', () => {
     expect(workflow.indexOf('Start Neon verification budget')).toBeLessThan(
       workflow.indexOf('Create Neon branch')
     )
+    expect(workflow.indexOf('Install dependencies')).toBeLessThan(
+      workflow.indexOf('Create Neon branch')
+    )
+    expect(workflow).toContain('timeout-minutes: 5')
     expect(workflow.indexOf('Verify Neon branch absence')).toBeLessThan(
       workflow.indexOf(budgetStep)
     )
@@ -663,7 +669,7 @@ describe('Neon preview cleanup lookup', () => {
     expect(neonCompatibilitySource).toContain("role: 'control_plane_migrator'")
     expect(neonCompatibilitySource).toContain("url.searchParams.get('sslmode')")
     expect(neonCompatibilitySource).toContain('pooler\\.')
-    expect(neonCompatibilitySource).toContain('sql.begin(')
+    expect(neonCompatibilitySource).toContain('verifyNeonMigratorDdl(sql)')
   })
 
   test('keeps database credentials out of dependency installation and cleanup', () => {
@@ -686,9 +692,7 @@ describe('Neon preview cleanup lookup', () => {
   })
 
   test('runs pull-request PostgreSQL checks with local credentials and no secret references', () => {
-    expect(workflowEvents(pullRequestWorkflow)).toBe(
-      '  pull_request:\n    branches:\n      - main\n    types:\n      - opened\n      - reopened\n      - synchronize\n      - ready_for_review'
-    )
+    expect(workflowEvents(pullRequestWorkflow)).toBe('  workflow_call: {}')
     expect(pullRequestWorkflow).toContain('local-admin-only')
     expect(pullRequestWorkflow).toContain('RUN_M10_POSTGRES_CONFORMANCE')
     expect(pullRequestWorkflow).toContain('bun test tests/cp1-embedded-durable-execution.test.mjs')
@@ -843,7 +847,7 @@ describe('Neon preview cleanup lookup', () => {
     expect(invalid.requests).toHaveLength(1)
     expect(invalid.waits).toEqual([])
     expect(invalid.writes).toEqual([])
-    expect(workflow).toContain('timeout-minutes: 12')
+    expect(workflow).toContain('timeout-minutes: 5')
   })
 
   test('retries the current pagination page without discarding previously validated entries', async () => {
@@ -1009,6 +1013,38 @@ describe('Neon restricted connection workflow', () => {
         'Neon compatibility connection inputs are unavailable'
       )
     }
+  })
+
+  test('the migration role performs and removes a transactional app-schema DDL probe', async () => {
+    const statements = []
+    let transactions = 0
+    const sql = {
+      begin: async (operation) => {
+        transactions += 1
+        return operation({
+          unsafe: async (query, values) => {
+            statements.push({ query, values })
+            return query.startsWith('SELECT') ? [{ marker: 'ok' }] : []
+          },
+        })
+      },
+    }
+
+    await verifyNeonMigratorDdl(sql)
+
+    expect(transactions).toBe(1)
+    expect(statements).toHaveLength(4)
+    const table = statements[0].query.match(/app\.(cp_neon_probe_[a-f0-9]{16})/)?.[1]
+    expect(table).toBeDefined()
+    expect(statements.map(({ query }) => query.split(' ')[0])).toEqual([
+      'CREATE',
+      'INSERT',
+      'SELECT',
+      'DROP',
+    ])
+    expect(statements.every(({ query }) => query.includes(`app.${table}`))).toBe(true)
+    expect(statements[1].values).toEqual([1, 'ok'])
+    expect(statements[2].values).toEqual([1])
   })
 })
 

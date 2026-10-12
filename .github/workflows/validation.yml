@@ -62,10 +62,10 @@ jobs:
           FOUNDRY_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: node "$RUNNER_TEMP/code-foundry/src/runtime.mjs" validation mode >> "$GITHUB_OUTPUT"
 
-  # The stable aggregate check name is the caller job name plus the
-  # orchestrator gate job name: "Validation / Gate". Keep both names fixed.
-  validation:
-    name: Validation
+  # The original Code Foundry gate is retained as a runtime dependency; the
+  # explicit local aggregate below preserves the ruleset's stable check name.
+  validation_runtime:
+    name: Code Foundry runtime
     needs: mode
     # Bot-authored pull requests (Dependabot and friends) validate only on an
     # explicit ready transition: dependency pushes never allocate validation
@@ -106,6 +106,43 @@ jobs:
     secrets:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
       NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+
+  postgres_qualification:
+    name: PostgreSQL qualification
+    needs: mode
+    if: >-
+      vars.CI_BILLING_PAUSED != 'true' && github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      (github.event.pull_request.user.type != 'Bot' || github.event.sender.type != 'Bot' ||
+      startsWith(github.event.pull_request.head.ref, 'release-please--branches--main'))
+    permissions:
+      contents: read
+    uses: ./.github/workflows/postgres-pull-request.yml
+
+  # Keep the required ruleset context (Validation / Gate) and fail closed if
+  # either the reusable validation runtime or strict PostgreSQL qualification
+  # fails, is skipped, or cannot report a result.
+  validation_gate:
+    name: Validation / Gate
+    needs: [mode, validation_runtime, postgres_qualification]
+    if: >-
+      always() && vars.CI_BILLING_PAUSED != 'true' &&
+      github.event_name == 'pull_request' && github.event.pull_request.draft == false &&
+      (github.event.pull_request.user.type != 'Bot' || github.event.sender.type != 'Bot' ||
+      startsWith(github.event.pull_request.head.ref, 'release-please--branches--main'))
+    runs-on: ubuntu-slim
+    permissions: {}
+    steps:
+      - name: Require every validation lane to succeed
+        env:
+          MODE_RESULT: ${{ needs.mode.result }}
+          VALIDATION_RESULT: ${{ needs.validation_runtime.result }}
+          POSTGRES_RESULT: ${{ needs.postgres_qualification.result }}
+        run: |
+          if [[ "$MODE_RESULT" != success || "$VALIDATION_RESULT" != success || "$POSTGRES_RESULT" != success ]]; then
+            echo "Validation gate failed closed (mode=$MODE_RESULT validation=$VALIDATION_RESULT postgres=$POSTGRES_RESULT)." >&2
+            exit 1
+          fi
 
   # CodeQL requires a push analysis to populate default-branch code-scanning
   # alerts. Keep the full validation gate pull-request-only so main pushes do

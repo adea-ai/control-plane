@@ -29,23 +29,31 @@ const runWatchdogMs = 25_000
 const fixtureTestBudgetMs = 30_000
 
 test(
-  'Neon requires a real Hosted PostgreSQL/Restate graph qualification',
+  'the required local PostgreSQL lane owns a strict Hosted graph step under five minutes',
   () => {
     const workflow = readFileSync(
-      new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
+      new URL('../.github/workflows/postgres-pull-request.yml', import.meta.url),
       'utf8'
     )
-    const gate = readFileSync(
-      new URL('../.github/scripts/neon-migration-gate.mjs', import.meta.url),
+    const script = readFileSync(
+      new URL('../scripts/run-hosted-graph-qualification.sh', import.meta.url),
       'utf8'
     )
     const step = workflow
       .split('      - name: Verify Hosted PostgreSQL and Restate graph')[1]
       ?.split('\n      - name:')[0]
     expect(step).toBeDefined()
-    expect(step).toContain("if: steps.credentials.outputs.available == 'true' && matrix.shard == 3")
+    expect(step).toContain('timeout-minutes: 5')
     expect(step).toContain('bash scripts/run-hosted-graph-qualification.sh')
-    expect(gate).toContain("const HOSTED_GRAPH_STEP = 'Verify Hosted PostgreSQL and Restate graph'")
+    expect(script).toContain('remaining_test_seconds < 120 ? remaining_test_seconds : 120')
+    expect(script).toContain('timeout --signal=TERM --kill-after=5s "${test_seconds}s" bun test')
+    expect(script).toContain('work_deadline=$(( $(date +%s) + 235 ))')
+    expect(script).toContain(
+      'docker_command() {\n  timeout --signal=TERM --kill-after=2s 12s docker'
+    )
+    expect(script).toContain('docker_start() {\n  timeout --signal=TERM --kill-after=5s 60s docker')
+    expect(script).not.toContain('timeout 480s')
+    expect(script).toContain('docker_start')
   },
   fixtureTestBudgetMs
 )

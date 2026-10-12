@@ -560,7 +560,9 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
     )
   )
   assert.match(validation, new RegExp(`runtime-ref: ${runtimeRef}\\s*$`, 'm'))
-  const validationJob = validation.split('\n  validation:\n')[1].split(/\n  [a-z0-9-]+:\n/)[0]
+  const validationJob = validation
+    .split('\n  validation_runtime:\n')[1]
+    .split('\n  postgres_qualification:')[0]
   const callerPermissions = validationJob.match(/permissions:\n((?:      [a-z-]+: [a-z]+\n)+)/)?.[1]
   assert.ok(callerPermissions, 'validation caller must declare its permission set')
   assert.deepEqual(
@@ -577,7 +579,7 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
       'security-events: write',
     ].toSorted()
   )
-  assert.equal((validation.match(/vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 3)
+  assert.equal((validation.match(/vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 5)
   // v1.44.x cancels only superseded pull-request runs; push runs queue so a
   // cancellation can never drop default-branch analysis.
   assert.match(validation, /cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/)
@@ -781,11 +783,31 @@ test('Neon provider proof is bounded and cleanup precedes its budget check', asy
   const proof = workflow
     .split('- name: Verify Neon provider compatibility')[1]
     ?.split('- name: Find exact preview branch for cleanup')[0]
+  const providerProof = await readFile(
+    new URL('../packages/database/scripts/verify-neon-provider-compatibility.mjs', import.meta.url),
+    'utf8'
+  )
   assert.ok(proof, 'The bounded Neon compatibility proof is required')
   assert.match(proof, /timeout-minutes: 2/)
   assert.match(proof, /timeout --signal=TERM --kill-after=5s 90s bun --cwd=packages\/database/)
+  assert.match(providerProof, /verifyNeonMigratorDdl\(sql\)/)
   assert.equal((proof.match(/verify-neon-provider-compatibility\.mjs/g) ?? []).length, 1)
   assert.doesNotMatch(workflow, /run-integration-tests\.mjs|db:migrate|bun run build/)
+  assert.match(workflow, /timeout-minutes: 15/)
+  assert.doesNotMatch(workflow, /timeout-minutes: (?:12|16|20)/)
+  assert.ok(
+    workflow.indexOf('- name: Install dependencies') <
+      workflow.indexOf('- name: Create Neon branch'),
+    'Install before creating an owned branch so setup failures need no remote cleanup'
+  )
+  const create = workflow.split('- name: Create Neon branch')[1]?.split('\n      - name:')[0]
+  const cleanup = workflow
+    .split('- name: Find exact preview branch for cleanup')[1]
+    ?.split('\n      - name: Delete Neon branch')[0]
+  const remove = workflow.split('- name: Delete Neon branch')[1]?.split('\n      - name:')[0]
+  assert.match(create, /timeout-minutes: 2/)
+  assert.match(cleanup, /timeout-minutes: 2/)
+  assert.match(remove, /timeout-minutes: 1/)
   assert.ok(
     workflow.indexOf('- name: Verify Neon branch absence') <
       workflow.indexOf('- name: Enforce five-minute Neon verification budget'),
@@ -807,7 +829,9 @@ test('isolates credentialed Neon validation from pull-request source', async () 
     new URL('../.github/workflows/validation.yml', import.meta.url),
     'utf8'
   )
-  const validationJob = validationWorkflow.split('  validation:\n')[1]?.split('\n  # CodeQL')[0]
+  const validationJob = validationWorkflow
+    .split('  validation_runtime:\n')[1]
+    ?.split('\n  postgres_qualification:')[0]
 
   const events = neonWorkflow.match(/^on:\n([\s\S]*?)\npermissions:/m)?.[1]?.trimEnd()
   assert.match(
@@ -839,10 +863,20 @@ test('isolates credentialed Neon validation from pull-request source', async () 
   assert.match(neonWorkflow, /preview\/main-/)
   assert.match(neonWorkflow, /expires_at: \$\{\{ env\.EXPIRES_AT \}\}/)
   assert.doesNotMatch(pullRequestWorkflow, /\$\{\{[^}]*\bsecrets\b|^\s*secrets\s*:/m)
+  assert.match(pullRequestWorkflow, /^on:\n  workflow_call: \{\}$/m)
+  assert.doesNotMatch(pullRequestWorkflow, /^  pull_request:/m)
   assert.match(pullRequestWorkflow, /RUN_M10_POSTGRES_CONFORMANCE/)
   assert.match(pullRequestWorkflow, /bun test tests\/cp1-embedded-durable-execution\.test\.mjs/)
   assert.match(pullRequestWorkflow, /bash scripts\/run-hosted-graph-qualification\.sh/)
   assert.doesNotMatch(pullRequestWorkflow, /bun run test:integration/)
+  assert.match(validationWorkflow, /uses: \.\/\.github\/workflows\/postgres-pull-request\.yml/)
+  assert.match(validationWorkflow, /name: Validation \/ Gate/)
+  const gate = validationWorkflow.split('  validation_gate:\n')[1]
+  assert.match(gate, /needs: \[mode, validation_runtime, postgres_qualification\]/)
+  assert.match(gate, /VALIDATION_RESULT: \$\{\{ needs\.validation_runtime\.result \}\}/)
+  assert.match(gate, /POSTGRES_RESULT: \$\{\{ needs\.postgres_qualification\.result \}\}/)
+  assert.match(gate, /\$POSTGRES_RESULT" != success/)
+  assert.match(gate, /\$VALIDATION_RESULT" != success/)
   assert.ok(validationJob)
   assert.match(validationJob, /uses: 0xPlayerOne\/code-foundry/)
   // The reusable-workflow call forwards exactly two sanctioned secrets
