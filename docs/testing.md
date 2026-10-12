@@ -110,15 +110,19 @@ An in-memory cloud baseline is contract evidence only and never substitutes for 
 lane. Provider branches used for release checks must be created from the intended environment,
 expire automatically, and be deleted after evidence is recorded.
 
-The trusted-main Neon verification partitions `test:integration` into three shards
-(`scripts/integration-shards.mjs`), each provisioning its own disposable branch so shards never
-share a Neon compute instance. Files still run one at a time inside a shard, preserving the
-per-case database isolation; new integration files must be assigned to a shard explicitly, which
+The local pull-request lane builds once, starts one runner-owned disposable PostgreSQL service, and
+runs the three `test:integration` shards from `scripts/integration-shards.mjs` concurrently against
+that service. Files remain serial within each shard; the bounded test cases create isolated
+databases. The trusted-main Neon lane gives each shard its own disposable branch so shards never
+share a Neon compute instance. After migrations, shard 1 checks Neon pooled and direct runtime
+connections and the direct migrator role with TLS and transaction round trips; the general suite
+continues to run on all three Neon shards. New integration files must be assigned to a shard explicitly, which
 `tests/integration-shards.test.mjs` enforces. The expanded database foundation file has complementary
 case filters on shards 1 and 2. The partition check uses the development-only Acorn JavaScript
 parser (independent of the TypeScript compiler API) to inventory its literal test names, bounds each
 slice, and executes those names through Bun using the runner's actual arguments to reject missing
-or duplicate selection. Unsharded local runs still execute the full file without filters.
+or duplicate selection. The local lanes run cloud-remote and PostgreSQL recovery drills once after
+all shards finish.
 The complete database budget-admission file runs on shard 1. In trusted-main run
 `37177353771`, that file took 955.20 seconds on shard 2, whose integration step took
 2,602 seconds without retries. Moving the file uses shard 1's spare capacity while

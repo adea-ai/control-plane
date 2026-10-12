@@ -138,7 +138,7 @@ test('records architecture ownership and adapter decisions', async () => {
   assert.match(architecture, /contract.*context.*execution.*runtime/is)
 })
 
-test('provides one ancestry-aware local acceptance command and a parallel CI gate', async () => {
+test('keeps the local acceptance command complete and the CI extension focused', async () => {
   const manifest = JSON.parse(await readRepositoryFile('package.json'))
   const runner = await readRepositoryFile('scripts/run-foundation-acceptance.mjs')
   const workflow = await readRepositoryFile('.github/workflows/foundation-acceptance.yml')
@@ -154,6 +154,11 @@ test('provides one ancestry-aware local acceptance command and a parallel CI gat
   assert.match(runner, /test:foundation/)
   assert.match(runner, /infra:validate/)
   assert.match(runner, /'docker'.*'buildx'.*'bake'/s)
+  assert.match(workflow, /node scripts\/run-foundation-acceptance\.mjs --verify-only/)
+  assert.match(workflow, /node scripts\/validate-railway\.mjs/)
+  assert.doesNotMatch(workflow, /oven-sh\/setup-bun/)
+  assert.doesNotMatch(workflow, /bun run (format:check|lint|type-check|build|test:foundation)/)
+  assert.doesNotMatch(workflow, /bun install --frozen-lockfile/)
   assert.deepEqual(
     milestone.dependencies.map(({ issue }) => issue),
     [1, 2, 3, 4, 5, 6, 7, 8]

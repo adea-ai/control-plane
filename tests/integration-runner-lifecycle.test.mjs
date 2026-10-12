@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { INTEGRATION_SHARDS, integrationFileArguments } from '../scripts/integration-shards.mjs'
 
 const repository = fileURLToPath(new URL('..', import.meta.url))
 const runner = join(repository, 'scripts/run-integration-tests.mjs')
@@ -136,6 +137,47 @@ function destructiveCalls(result) {
 }
 
 describe('integration runner resource ownership', () => {
+  test(
+    'local PostgreSQL runs every verified shard once and removes only its owned project',
+    () => {
+      const result = executeRunner()
+      const start = result.calls.find(
+        ({ program, args }) => program === 'docker' && args.includes('up')
+      )
+      const localTestCalls = result.calls.filter(
+        ({ program, args }) => program === 'bun' && args[0] === 'test'
+      )
+      const expectedCalls = INTEGRATION_SHARDS.flatMap(({ groups }) =>
+        groups.flatMap((group) =>
+          group.files.map((file) => integrationFileArguments(group, file, '30000'))
+        )
+      )
+      const sortCalls = (calls) =>
+        calls.toSorted((left, right) => {
+          const leftValue = JSON.stringify(left)
+          const rightValue = JSON.stringify(right)
+          return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0
+        })
+
+      expect(result.status).toBe(0)
+      expect(
+        result.calls.filter(
+          ({ program, args }) => program === 'bun' && args[0] === 'run' && args[1] === 'build'
+        )
+      ).toHaveLength(1)
+      expect(sortCalls(localTestCalls.map(({ args }) => args))).toEqual(sortCalls(expectedCalls))
+      expect(localTestCalls.every(({ project }) => project === start.project)).toBe(true)
+      expect(
+        result.calls.filter(({ program, args }) => program === 'docker' && args.includes('up'))
+      ).toHaveLength(1)
+      const cleanup = destructiveCalls(result)
+      expect(cleanup).toHaveLength(1)
+      expect(cleanup[0].project).toBe(start.project)
+      expect(cleanup[0].args).toContain('--volumes')
+    },
+    runnerTestBudgetMs
+  )
+
   test(
     'trusted remote shard 3 delegates Hosted graph exactly once to qualification',
     () => {

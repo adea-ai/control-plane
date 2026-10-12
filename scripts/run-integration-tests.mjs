@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import process from 'node:process'
 import { pullPostgresImage } from './pull-postgres-image.mjs'
 import {
+  INTEGRATION_SHARD_IDS,
   integrationFileArguments,
   parseIntegrationShard,
   selectIntegrationShard,
@@ -11,10 +12,10 @@ import {
 // Keep the documented production-like command visible to repository policy tests.
 const COMPOSE_COMMAND = 'docker compose'
 
-// `--shard=<n>` (or INTEGRATION_SHARD) runs one explicit slice of the suite
-// from scripts/integration-shards.mjs instead of the full turbo sweep. The
-// Neon workflow pairs each shard with its own disposable branch; unsharded
-// runs keep the exact historical behavior.
+// `--shard=<n>` (or INTEGRATION_SHARD) runs one explicit slice of the suite.
+// Trusted-main Neon runs pair each shard with its own disposable branch. The
+// local PR lane runs all three inventory-checked slices concurrently against
+// one runner-owned disposable PostgreSQL service.
 const integrationShard = parseIntegrationShard(
   process.argv.find((argument) => argument.startsWith('--shard='))?.slice('--shard='.length) ??
     process.env.INTEGRATION_SHARD
@@ -101,6 +102,48 @@ async function runIntegrationFileStreaming(testArguments, options) {
   throw new Error(
     `bun test exited with status ${String(result.status)}${formatStreamingFailure(result)}`
   )
+}
+
+async function runIntegrationShardStreaming(shard, integrationEnvironment, remoteDatabase) {
+  const perTestTimeoutMs = remoteDatabase ? '120000' : '30000'
+  for (const group of selectIntegrationShard(shard)) {
+    if (
+      remoteDatabase &&
+      process.env.GITHUB_ACTIONS === 'true' &&
+      group.qualification === 'hosted-graph-restate'
+    ) {
+      console.log('Hosted PostgreSQL/Restate graph runs in its required qualification step.')
+      continue
+    }
+    for (const file of group.files) {
+      const testArguments = integrationFileArguments(group, file, perTestTimeoutMs)
+      await runIntegrationFileStreaming(testArguments, {
+        cwd: group.package,
+        environment: integrationEnvironment,
+      })
+    }
+  }
+}
+
+async function runLocalIntegrationShards(integrationEnvironment) {
+  const results = await Promise.allSettled(
+    INTEGRATION_SHARD_IDS.map(async (shard) => {
+      console.log(`Local PostgreSQL integration shard ${shard} starting.`)
+      await runIntegrationShardStreaming(shard, integrationEnvironment, false)
+    })
+  )
+  const failures = results.flatMap((result, index) =>
+    result.status === 'rejected'
+      ? [
+          new Error(`Local PostgreSQL integration shard ${INTEGRATION_SHARD_IDS[index]} failed`, {
+            cause: result.reason,
+          }),
+        ]
+      : []
+  )
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'One or more local PostgreSQL integration shards failed')
+  }
 }
 
 async function waitForPostgres() {
@@ -228,9 +271,9 @@ try {
     // reach them through the environment.
     INTEGRATION_TEST_TIMEOUT_MS: remoteDatabase ? '120000' : undefined,
   }
-  // Stream progress even while a remote database task is unfinished. Grouped
-  // CI logs hide test/setup timing until the whole package exits.
-  if (integrationShard === null) {
+  if (integrationShard === null && remoteDatabase) {
+    // Preserve the full remote command for callers that do not select explicit
+    // Neon shards. The trusted-main workflow uses the sharded path below.
     run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1', '--log-order=stream'], {
       environment: integrationEnvironment,
     })
@@ -269,33 +312,17 @@ try {
         environment: integrationEnvironment,
       }
     )
+  } else if (integrationShard === null) {
+    // The local runner owns one disposable PostgreSQL service. Build package
+    // entrypoints once, then run the complete disjoint partition concurrently;
+    // files remain serial within each shard to avoid cross-project contention.
+    run('bun', ['run', 'build'], { environment: integrationEnvironment })
+    await runLocalIntegrationShards(integrationEnvironment)
   } else {
-    // A remote branch stretches tests that finish in seconds locally to
-    // 30-70 seconds each, and its pooler occasionally severs a pooled
-    // connection mid-run (CONNECTION_CLOSED / CONNECTION_ENDED), leaving
-    // later queries blocked long enough to trip the per-test timeout. The
-    // remote lane therefore raises the ceiling and runs every file in its
-    // own process. A transient drop remains a failed check rather than being
-    // retried into a pass. The local lane keeps the fast-fail ceiling and the
-    // package-level sweep.
-    const perTestTimeoutMs = remoteDatabase ? '120000' : '30000'
-    for (const group of selectIntegrationShard(integrationShard)) {
-      if (
-        remoteDatabase &&
-        process.env.GITHUB_ACTIONS === 'true' &&
-        group.qualification === 'hosted-graph-restate'
-      ) {
-        console.log('Hosted PostgreSQL/Restate graph runs in its required qualification step.')
-        continue
-      }
-      for (const file of group.files) {
-        const testArguments = integrationFileArguments(group, file, perTestTimeoutMs)
-        await runIntegrationFileStreaming(testArguments, {
-          cwd: group.package,
-          environment: integrationEnvironment,
-        })
-      }
-    }
+    // Explicit local shard runs need the same built package entrypoints as the
+    // default local lane. Neon callers build once before creating their shards.
+    if (!remoteDatabase) run('bun', ['run', 'build'], { environment: integrationEnvironment })
+    await runIntegrationShardStreaming(integrationShard, integrationEnvironment, remoteDatabase)
   }
   // One drill execution per verification: shard 1 owns it in sharded runs.
   if (integrationShard === null || integrationShard === 1) {
