@@ -556,6 +556,21 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       }
       fail('PI_CANCELLATION_AUTHORITY_UNAVAILABLE', 'unavailable')
     }
+    // The owner commit may have succeeded while its response was lost, before the journal
+    // recorded the idempotency action. Recover only the exact already-committed request here,
+    // before fresh authorization can reject it after revocation or expiry. Its saved target is
+    // immutable; delivery classifies it against the current generation without retargeting.
+    const pendingIntent = await this.#matchingPendingCancellationIntent(
+      record.handleId,
+      request,
+      requestDigest,
+      cancellationAuthority
+    )
+    if (pendingIntent) {
+      this.#assertCommittedCancellationBinding(pendingIntent, record)
+      await this.#deliverCommittedCancellation(pendingIntent, cancellationAuthority)
+      return this.status(handle)
+    }
     // Ordinary and fenced cancellation both fail closed without the server-owned commit port.
     // The caller's authorization callback is a preflight only; it never grants cancellation.
     await authorize(this.#stored(record))
@@ -631,6 +646,36 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       turnKey: targetTurnKey,
       generation,
     })
+  }
+
+  async #matchingPendingCancellationIntent(
+    handleId: string,
+    request: ReturnType<typeof RuntimeCancelRequestSchema.parse>,
+    requestDigest: string,
+    authority: NonNullable<PiDurableRuntimeOptions['committedCancellationAuthority']>
+  ): Promise<PiDurableCommittedCancellationIntent | undefined> {
+    let untrusted: readonly unknown[]
+    try {
+      untrusted = await authority.pendingForHandle(handleId)
+    } catch (error) {
+      if (this.#closing || this.#closed) throw error
+      fail('PI_CANCELLATION_AUTHORITY_UNAVAILABLE', 'unavailable')
+    }
+    this.#assertOpen()
+    if (!Array.isArray(untrusted)) fail('PI_CANCELLATION_AUTHORITY_INVALID', 'unavailable')
+
+    let matching: PiDurableCommittedCancellationIntent | undefined
+    for (const unparsed of untrusted) {
+      const parsed = PiDurableCommittedCancellationIntentSchema.safeParse(unparsed)
+      if (!parsed.success || parsed.data.handleId !== handleId)
+        fail('PI_CANCELLATION_AUTHORITY_INVALID', 'unavailable')
+      const intent = parsed.data
+      if (intent.idempotencyKey !== request.idempotencyKey) continue
+      if (matching || intent.requestDigest !== requestDigest)
+        fail('PI_CANCELLATION_INTENT_CONFLICT', 'conflict')
+      matching = intent
+    }
+    return matching
   }
 
   #parseCommittedCancellation(

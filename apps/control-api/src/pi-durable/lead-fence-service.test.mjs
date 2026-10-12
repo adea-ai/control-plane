@@ -314,6 +314,184 @@ test('a receipt revision and handle change during the final fenced authority rea
   })
 }, 60000)
 
+test('a receipt revision change during cancellation withholds the response and retains the committed intent', async () => {
+  await withLiveHarness(async (harness) => {
+    const { dispatchId } = await harness.admitInFlightRun()
+    const composition = harness.composition
+    harness.state.product = harness.fenceBody()
+    const original = harness.receiptRecord(dispatchId)
+    const adapter = composition.adapter
+    const realCancelFenced = adapter.cancelFenced.bind(adapter)
+    let cancelCalls = 0
+    adapter.cancelFenced = async (...args) => {
+      cancelCalls += 1
+      const result = await realCancelFenced(...args)
+      harness.writeReceiptRecord(dispatchId, { ...original, revision: original.revision + 1 })
+      return result
+    }
+
+    try {
+      await expectRefused(
+        cancelled(harness, dispatchId, 'live-fence:receipt-revision-during-cancel'),
+        'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN'
+      )
+    } finally {
+      adapter.cancelFenced = realCancelFenced
+    }
+
+    const retained = adapter.journal.get(original.handle.handleId)
+    expect(cancelCalls).toBe(1)
+    expect(retained.detail.cancellationIntent).toBeDefined()
+    expect(['cancelling', 'unknown']).toContain(retained.state)
+    expect(harness.receiptRecord(dispatchId).revision).toBe(original.revision + 1)
+    await waitUntil(() => harness.state.streamsAborted === 1, 'receipt-race abort delivered')
+    expect(harness.state.streamsAborted).toBe(1)
+    expect(harness.state.starts).toBe(1)
+    expect(harness.state.requests).toHaveLength(1)
+  })
+}, 60000)
+
+test('a fenced lookup refuses an existing receipt before runtime-handle recovery or adapter effects', async () => {
+  await withLiveHarness(async (harness) => {
+    const { dispatchId } = await harness.admitInFlightRun()
+    const composition = harness.composition
+    harness.state.product = harness.fenceBody()
+    let handleLookups = 0
+    let statusCalls = 0
+    const oldFindHandle = composition.service.options.findRuntimeHandle
+    const oldStatus = composition.adapter.status.bind(composition.adapter)
+    composition.service.options.findRuntimeHandle = async (...args) => {
+      handleLookups += 1
+      return oldFindHandle(...args)
+    }
+    composition.adapter.status = async (...args) => {
+      statusCalls += 1
+      return oldStatus(...args)
+    }
+    const before = harness.leadTableCounts()
+    const starts = harness.state.starts
+    const inferences = harness.state.requests.length
+
+    try {
+      await expectRefused(
+        composition.service.lookup(harness.read('pi-durable.lead.lookup', { intentId }), principal),
+        'PI_LEAD_UNAVAILABLE'
+      )
+    } finally {
+      composition.service.options.findRuntimeHandle = oldFindHandle
+      composition.adapter.status = oldStatus
+    }
+
+    expect(handleLookups).toBe(0)
+    expect(statusCalls).toBe(0)
+    expect(harness.leadTableCounts()).toEqual(before)
+    expect(harness.state.starts).toBe(starts)
+    expect(harness.state.requests.length).toBe(inferences)
+    expect(
+      composition.adapter.journal.get(harness.receiptRecord(dispatchId).handle.handleId).state
+    ).toBe('running')
+  })
+}, 60000)
+
+test('fenced cancellation forwards the transport idempotency key and issue time unchanged', async () => {
+  await withLiveHarness(async (harness) => {
+    const { dispatchId } = await harness.admitInFlightRun()
+    harness.state.product = harness.fenceBody()
+    const adapter = harness.composition.adapter
+    const realCancelFenced = adapter.cancelFenced.bind(adapter)
+    const forwarded = []
+    adapter.cancelFenced = async (handle, input, authorize) => {
+      forwarded.push(structuredClone(input))
+      return realCancelFenced(handle, input, authorize)
+    }
+
+    try {
+      await cancelled(harness, dispatchId, 'live-fence:exact-cancel-command')
+    } finally {
+      adapter.cancelFenced = realCancelFenced
+    }
+
+    expect(forwarded).toEqual([
+      {
+        idempotencyKey: 'live-fence:exact-cancel-command',
+        requestedAt: '2026-10-08T09:00:00.000Z',
+      },
+    ])
+    await waitUntil(() => harness.state.streamsAborted === 1, 'exact-command abort delivered')
+    expect(harness.state.streamsAborted).toBe(1)
+  })
+}, 60000)
+
+test('a fenced adapter response with a different handle is rejected', async () => {
+  await withLiveHarness(async (harness) => {
+    const { dispatchId } = await harness.admitInFlightRun()
+    harness.state.product = harness.fenceBody()
+    const adapter = harness.composition.adapter
+    const realStatus = adapter.status.bind(adapter)
+    let statusCalls = 0
+    adapter.status = async (handle) => {
+      statusCalls += 1
+      const status = await realStatus(handle)
+      return {
+        ...status,
+        handle: { ...status.handle, externalSessionId: 'ses_01JABCDEF0123456789ABCDEFX' },
+      }
+    }
+
+    try {
+      await expectRefused(
+        harness.composition.service.status(
+          harness.read('pi-durable.lead.status', { dispatchId }),
+          principal
+        ),
+        'PI_LEAD_AUTHORITY_CONFLICT'
+      )
+    } finally {
+      adapter.status = realStatus
+    }
+
+    expect(statusCalls).toBe(1)
+    expect(adapter.journal.list()[0].state).toBe('running')
+  })
+}, 60000)
+
+test('a fenced receipt with a different execution or attempt is refused before observation', async () => {
+  await withLiveHarness(async (harness) => {
+    const { dispatchId } = await harness.admitInFlightRun()
+    const composition = harness.composition
+    harness.state.product = harness.fenceBody()
+    const original = harness.receiptRecord(dispatchId)
+    const realStatus = composition.adapter.status.bind(composition.adapter)
+    let statusCalls = 0
+    composition.adapter.status = async (...args) => {
+      statusCalls += 1
+      return realStatus(...args)
+    }
+
+    try {
+      for (const change of [
+        { executionId: 'exe_01JABCDEF0123456789ABCDEFH' },
+        { attemptId: 'att_01JABCDEF0123456789ABCDEFH' },
+      ]) {
+        harness.writeReceiptRecord(dispatchId, { ...original, ...change })
+        await expectRefused(
+          composition.service.status(
+            harness.read('pi-durable.lead.status', { dispatchId }),
+            principal
+          ),
+          'PI_LEAD_AUTHORITY_CONFLICT'
+        )
+      }
+    } finally {
+      composition.adapter.status = realStatus
+      harness.writeReceiptRecord(dispatchId, original)
+    }
+
+    expect(statusCalls).toBe(0)
+    expect(composition.adapter.journal.list()[0].state).toBe('running')
+  })
+}, 60000)
+
 test('the fence is rechecked after each awaited effect, and a changed fence withholds the response', async () => {
   await withLiveHarness(async (harness) => {
     const { dispatchId } = await harness.admitInFlightRun()

@@ -316,6 +316,68 @@ test('unknown commit response recovers the same intent after adapter reopen with
   }
 })
 
+test('same-process same-key retry delivers a committed cancellation after authority revocation and a lost response', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-cancel-unknown-retry-'))
+  let context
+  try {
+    context = await prepareLiveCase(directory)
+    let authorizationAvailable = true
+    const cancelFenced = (input = context.request) =>
+      context.adapter.cancelFenced(context.handle, input, async () => {
+        if (!authorizationAvailable) throw new Error('PI_LEAD_AUTHORITY_CONFLICT')
+      })
+    context.authority.loseNextCommitResponse()
+    await expect(cancelFenced()).rejects.toThrow('PI_CANCELLATION_COMMIT_OUTCOME_UNKNOWN')
+
+    const committed = context.authority.intentForHandle(context.handle.handleId)
+    expect(context.adapter.journal.get(context.handle.handleId).state).toBe('running')
+    expect(
+      context.adapter.journal.get(context.handle.handleId).detail.cancellationIntent
+    ).toBeUndefined()
+    await expect(context.authority.pendingForHandle(context.handle.handleId)).resolves.toEqual([
+      committed,
+    ])
+    expect(context.aborts()).toBe(0)
+
+    context.authority.updateProductFence(context.handle.handleId, {
+      revision: 2,
+      active: false,
+    })
+    authorizationAvailable = false
+    await expect(
+      cancelFenced({ ...context.request, requestedAt: '2026-10-08T00:01:00.000Z' })
+    ).rejects.toThrow('PI_CANCELLATION_INTENT_CONFLICT')
+    await expect(
+      cancelFenced({ ...context.request, idempotencyKey: 'cancel:different-pending-key' })
+    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+    expect(context.aborts()).toBe(0)
+    await expect(context.authority.pendingForHandle(context.handle.handleId)).resolves.toEqual([
+      committed,
+    ])
+
+    const replay = await cancelFenced()
+
+    expect(replay.state).toBe('cancelling')
+    expect(
+      context.adapter.journal.get(context.handle.handleId).detail.cancellationIntent
+    ).toMatchObject({
+      authorityIntentId: committed.intentId,
+      requestDigest: committed.requestDigest,
+      generation: committed.generation,
+      turnKey: committed.turnKey,
+    })
+    expect(context.aborts()).toBe(1)
+    expect(context.runs()).toBe(1)
+    await expect(context.authority.pendingForHandle(context.handle.handleId)).resolves.toEqual([])
+  } finally {
+    context?.stop()
+    await context?.adapter.drain()
+    await context?.adapter.close()
+    context?.authority.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('failed outbox acknowledgement retries delivery in the same live engine without rerunning inference', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-cancel-ack-retry-'))
   let context
@@ -589,7 +651,7 @@ test('historical cancellation resolution survives the next run start and replays
   }
 })
 
-test('lost no-generation cancellation responses cannot cancel later submitted turns', async () => {
+test('lost no-generation cancellation responses cannot cancel later turns after authority revocation', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-cancel-no-generation-cross-turn-'))
   const authority = createSqliteCommittedCancellationAuthority(
     join(directory, 'cancellation-owner.sqlite'),
@@ -725,7 +787,11 @@ test('lost no-generation cancellation responses cannot cancel later submitted tu
     })
     await entered[2].promise
     const thirdTurn = `pi-input:${request.attemptId}:input:no-generation-turn-three`
-    expect((await adapter.cancel(handle, noGenerationRequest)).state).toBe('running')
+    authority.updateProductFence(handle.handleId, { revision: 2, active: false })
+    const retry = await adapter.cancelFenced(handle, noGenerationRequest, async () => {
+      throw new Error('PI_LEAD_AUTHORITY_CONFLICT')
+    })
+    expect(retry.state).toBe('running')
     retained = adapter.journal.get(handle.handleId)
     expect(retained.state).toBe('running')
     expect(retained.detail.cancellationIntent).toBeUndefined()
