@@ -56,6 +56,7 @@ export const INTEGRATION_SHARDS = [
       {
         package: 'packages/database',
         files: [
+          'src/neon-ddl-probe.integration.test.mjs',
           'src/usage-store.integration.test.mjs',
           'src/memory-provenance-retention.integration.test.mjs',
           'src/retention-hold-owner-activation.integration.test.mjs',
