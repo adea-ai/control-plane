@@ -2,18 +2,18 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'bun:test'
-import { BACKGROUND_CONTEXT } from '../../pi-durable-adapter/node_modules/@earendil-works/chord/dist/context/index.js'
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import {
   CompactionEntry,
   createRegistry,
   Harness,
-} from '../../pi-durable-adapter/node_modules/@earendil-works/pi-durable/dist/index.js'
-import { openNodeSqliteStorage } from '../../pi-durable-adapter/node_modules/@earendil-works/pi-durable/dist/storage/sqlite/node.js'
-import { createModels } from '../../pi-durable-adapter/node_modules/@earendil-works/pi-ai/dist/models.js'
+} from '@earendil-works/pi-durable'
+import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
+import { createModels } from '@earendil-works/pi-ai/models'
 import {
   fauxAssistantMessage,
   fauxProvider,
-} from '../../pi-durable-adapter/node_modules/@earendil-works/pi-ai/dist/providers/faux.js'
+} from '@earendil-works/pi-ai/providers/faux'
 import { contextPackageSerializationFixtures, deriveContextPackage } from '@control-plane/context'
 import {
   ExecutionAttemptSchema,
