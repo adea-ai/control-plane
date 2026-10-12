@@ -42,7 +42,11 @@ function uniqueIdentifier(prefix) {
   return `${prefix}_${seed.slice(0, 26)}`
 }
 
-function resumeInput(checkpointId, threadId = 'thread-hosted-1') {
+function resumeInput(
+  checkpointId,
+  threadId = 'thread-hosted-1',
+  idempotencyKey = `hosted:legacy:resume:${threadId}`
+) {
   return {
     executionId,
     attemptId: 'att_01JABCDEF0123456789ABCDEFG',
@@ -52,7 +56,7 @@ function resumeInput(checkpointId, threadId = 'thread-hosted-1') {
     threadId,
     checkpointId,
     response: { action: 'approve' },
-    idempotencyKey: `hosted:legacy:resume:${threadId}`,
+    idempotencyKey,
   }
 }
 
@@ -169,7 +173,9 @@ describe.skipIf(!enabled)(
       })
       try {
         await expect(
-          runtime.activities.resumeGraphSegment(resumeInput('ckpt-maximum-thread', threadId))
+          runtime.activities.resumeGraphSegment(
+            resumeInput('ckpt-maximum-thread', threadId, 'hosted:legacy:maximum-thread:resume')
+          )
         ).rejects.toMatchObject({ code: 'LEGACY_DRAIN_FENCE_HELD' })
         await expect(
           runtime.activities.continueGraphSegment({
