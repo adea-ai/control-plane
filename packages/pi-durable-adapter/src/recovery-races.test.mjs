@@ -11,6 +11,25 @@ import { writeRecoverySourceOverride } from './recovery-races.fixture.mjs'
 
 const at = '2026-10-08T00:00:00.000Z'
 const interactionId = 'int_01JABCDEF0123456789ABCDEFG'
+
+const UNSAFE_JS_CHAR_MAP = {
+  '<': '\\u003C',
+  '>': '\\u003E',
+  '/': '\\u002F',
+  '\\': '\\\\',
+  '\b': '\\b',
+  '\f': '\\f',
+  '\n': '\\n',
+  '\r': '\\r',
+  '\t': '\\t',
+  '\0': '\\0',
+  '\u2028': '\\u2028',
+  '\u2029': '\\u2029',
+}
+
+function escapeUnsafeJsChars(value) {
+  return value.replace(/[<>\/\\\b\f\n\r\t\0\u2028\u2029]/g, (char) => UNSAFE_JS_CHAR_MAP[char] ?? char)
+}
 const result = {
   text: 'Scripted race result',
   submissionId: 'race-result',
@@ -301,7 +320,7 @@ setInterval(()=>{},1000);
 const admission=${JSON.stringify(prior.admission.admission)};
 const adapter=new PiDurableRuntimeAdapter({directory:${JSON.stringify(directory)},now:()=>${JSON.stringify(at)},
 resolveAdmission:async()=>admission,assertAuthority:async()=>{},
-resolveProvider:async()=>({...admission.selection,workspaceId:${JSON.stringify(setup.request.attemptBudget.workspaceId)},provider:'scripted',providerModel:'race-model',location:'remote_host',harness:'pi_durable',harnessVersion:'1.1.0',providerBinding:'pi_durable_models',withModels:async use=>use({})}),
+resolveProvider:async()=>({...admission.selection,workspaceId:${escapeUnsafeJsChars(JSON.stringify(setup.request.attemptBudget.workspaceId))},provider:'scripted',providerModel:'race-model',location:'remote_host',harness:'pi_durable',harnessVersion:'1.1.0',providerBinding:'pi_durable_models',withModels:async use=>use({})}),
 authorizeInference:async()=>({maxOutputTokens:10,maximumInputTokens:64,assertActive:async()=>{}}),settleUsage:async(_authority,_key,usage)=>usage,reconcileInference:async()=> 'unresolved',
 engineFactory:async()=>({run:async()=>(${JSON.stringify(result)}),cancel:async()=>{},close:async()=>{process.stdout.write(JSON.stringify({ownerPid:process.pid})+'\\n');await new Promise(()=>{});}})});
 await adapter.start(${JSON.stringify(setup.request)});
