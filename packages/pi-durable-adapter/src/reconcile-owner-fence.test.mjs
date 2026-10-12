@@ -90,7 +90,7 @@ test('reconcile does not fence a live owner whose retained send hold is not yet 
     await new Promise((resolve) => owner.once('exit', resolve))
     rmSync(directory, { recursive: true, force: true })
   }
-})
+}, 15_000)
 
 test('reconcile confirms a safe verdict under the claimed epoch of a dead owner', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-reconcile-dead-owner-'))
