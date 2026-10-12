@@ -125,6 +125,11 @@ The complete database budget-admission file runs on shard 1. In trusted-main run
 keeping three branch owners and every case. This addresses imbalance near the job
 deadline; actual runner billing and Neon cost savings remain unmeasured. See
 [the timing evidence](evidence/m11-neon-budget-balance-2026-10-04.md).
+The 2026-10-11 main run reached shard 2's 45-minute limit after its foundation,
+retention, and partial usage-store work. The candidate moves the measured tail
+files to shard 1 and the unmeasured workspace-scope file to shard 3; the censored
+durations remain lower bounds pending a complete hosted run. See
+[the shard rebalance evidence](evidence/m11-neon-shard-rebalance-2026-10-11.md).
 Preview cleanup resolves the exact run/attempt/shard name and validates the project, parent,
 protection flags, and complete listing before exporting a branch ID for deletion. Each listing
 page allows three attempts for transport failures or HTTP 408/429/500/502/503/504, with ten-second
@@ -134,20 +139,23 @@ retries leaves the workflow failed and requires follow-up cleanup. The one-day b
 is a fallback, not evidence that deletion succeeded. Cleanup retries do not repeat integration tests.
 A remote branch stretches tests that finish in
 seconds locally to tens of seconds and its pooler occasionally severs pooled connections, so the
-remote lane raises the per-test ceiling to 120 seconds and retries each file once in a fresh
-process; the local lane keeps the 30-second fast-fail ceiling with no per-file retry. Because an
-explicit bun `test()` timeout argument always overrides the CLI `--timeout` default, the
+remote lane raises the per-test ceiling to 120 seconds. Every integration file runs once in a fresh
+process. Connection-drop evidence, assertion failures, timeouts and all other errors fail the
+owning shard; no automatic file or slice rerun can turn a failed attempt green. The runner streams
+complete child output to the job log and retains only a 16 KiB tail per stream for bounded failure
+diagnostics. The local lane keeps the 30-second fast-fail ceiling. Because an explicit
+bun `test()` timeout argument always overrides the CLI `--timeout` default, the
 PostgreSQL integration suites author their explicit budgets through
 `integrationTestTimeout()` (`@control-plane/database/testing`), which the runner scales through
 `INTEGRATION_TEST_TIMEOUT_MS` — at least 120 seconds remotely, while preserving any longer
 authored budget. The Local runner preserves the authored local values.
 
-The workflow does not retry an entire slice after a later drill fails: the
-per-file retry already bounds remote connection recovery. A failed drill remains
-a failed check. The cloud remote drill uses a five-minute fixture validity window
-so remote setup does not consume its command deadline; its explicit post-deadline
-replay and new-command rejection checks still exercise expiration. This window is
-not a product timeout, resource budget or measured acceptance SLO.
+The workflow does not rerun an entire slice or individual file after a failure.
+A failed integration file or later drill remains a failed check. The cloud
+remote drill uses a five-minute fixture validity window so remote setup does not
+consume its command deadline; its explicit post-deadline replay and new-command
+rejection checks still exercise expiration. This window is not a product timeout,
+resource budget or measured acceptance SLO.
 
 ## M11 test architecture
 
@@ -218,7 +226,11 @@ Neon verification does not require a local Docker engine. Local runs preserve an
 already running PostgreSQL service. When the runner starts its own fixture and no
 `COMPOSE_PROJECT_NAME` was supplied, it records a unique project name before startup
 and removes that project's containers, network and volume in `finally`, including
-partial startup and test failures. The runner's Docker commands and the nested
+partial startup and test failures. Before startup, the runner and pull-request CI
+use `scripts/pull-postgres-image.mjs` to retry only a registry rate-limit response
+(`toomanyrequests`, HTTP 429, or pull-rate-limit text), with three bounded backoffs.
+`docker compose up --wait` and health checks then run once; startup errors are not
+retried. The runner's Docker commands and the nested
 PostgreSQL disruption/restore Docker calls have a 90-second process bound;
 SQL readiness probes have a five-second bound within the 30-second readiness window.
 Cleanup failure fails verification and preserves any original failure alongside it.

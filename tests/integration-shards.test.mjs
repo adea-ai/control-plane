@@ -105,14 +105,8 @@ describe('integration shard partition', () => {
     expect(measurement.shard3Complete).toBe(false)
     const projected = { ...measurement.integrationSeconds }
     for (const file of measurement.filesToMove) {
-      const owners = INTEGRATION_SHARDS.filter(({ groups }) =>
-        groups.some((group) => group.package === file.package && group.files.includes(file.file))
-      )
-      expect(owners).toHaveLength(1)
-      const actualOwner = owners[0].shard
-      expect(actualOwner).toBe(file.toShard)
       projected[file.fromShard] -= file.seconds
-      projected[actualOwner] += file.seconds
+      projected[file.toShard] += file.seconds
     }
     const durations = Object.values(projected)
     expect(Math.max(...durations)).toBeLessThan(32 * 60)
@@ -147,6 +141,35 @@ describe('integration shard partition', () => {
     expect(
       measurement.integrationSeconds[1] - Math.max(...Object.values(recorded))
     ).toBeGreaterThan(12 * 60)
+  })
+
+  test('recent censored shard evidence moves the measured tail without losing coverage', () => {
+    const measurement = JSON.parse(
+      readFileSync(
+        new URL('../docs/evidence/m11-neon-shard-rebalance-2026-10-11.json', import.meta.url),
+        'utf8'
+      )
+    )
+    expect(measurement.runId).toBe(38178336814)
+    expect(measurement.runHeadSha).toBe('7d61c6c5551348fa172bfc8998f8b6406329ea1b')
+    expect(measurement.baselineSha).toBe('6e772034516d31f3a7ddd0474b7c41cfc42f38a7')
+    expect(measurement.observed.shard2.usageStoreCompletedTests).toBe(9)
+    expect(measurement.observed.shard2.usageStoreTotalTests).toBe(12)
+    expect(measurement.observed.shard2.usageStoreSecondsLowerBound).toBe(594.492)
+    expect(measurement.observed.shard2.retryMessages).toBe(false)
+    expect(measurement.observed.shard2.cleanupVerified).toBe(true)
+
+    for (const file of measurement.proposedMoves) {
+      const owners = INTEGRATION_SHARDS.flatMap(({ shard, groups }) =>
+        groups
+          .filter((group) => group.package === file.package && group.files.includes(file.file))
+          .map(() => shard)
+      )
+      expect(owners).toEqual([file.toShard])
+      const source = readFileSync(new URL(`../${file.package}/${file.file}`, import.meta.url))
+      expect(createHash('sha256').update(source).digest('hex')).toBe(file.sourceSha256)
+    }
+    expect(measurement.completeHostedRunRequired).toBe(true)
   })
 
   test('inventory parses JavaScript and rejects disabled or dynamic case declarations', () => {

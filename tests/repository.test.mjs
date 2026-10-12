@@ -746,12 +746,16 @@ test('provides a documented isolated integration-test runner', async () => {
   assert.match(runner, /database system is accepting SQL connections/)
   assert.match(runner, /'test:integration', '--concurrency=1'/)
   assert.match(runner, /'stop', '--timeout', '60', 'postgres'/)
-  // The sharded remote lane survives Neon pooler connection drops: a raised
-  // per-test ceiling plus one fresh-process retry per file, and the ceiling
-  // reaches suites whose explicit bun test() timeouts override the CLI flag
-  // through INTEGRATION_TEST_TIMEOUT_MS.
+  // The sharded lane streams every file once and retains only bounded
+  // diagnostics; explicit test timeouts still scale for remote execution.
   assert.match(runner, /remoteDatabase \? '120000' : '30000'/)
-  assert.match(runner, /retrying once before failing the shard/)
+  assert.match(runner, /MAX_OUTPUT_TAIL_BYTES = 16 \* 1024/)
+  assert.match(runner, /appendBoundedOutputTail/)
+  assert.match(runner, /process\.stdout\.write\(chunk\)/)
+  assert.match(runner, /process\.stderr\.write\(chunk\)/)
+  assert.match(runner, /await runIntegrationFileStreaming/)
+  assert.doesNotMatch(runner, /isRetryableNeonConnectionFailure/)
+  assert.doesNotMatch(runner, /retrying it once/)
   assert.match(runner, /INTEGRATION_TEST_TIMEOUT_MS: remoteDatabase \? '120000' : undefined/)
   assert.match(database.scripts['test:integration'], /--timeout 30000/)
   assert.match(testing.scripts['test:integration'], /--timeout 30000/)
@@ -762,6 +766,7 @@ test('provides a documented isolated integration-test runner', async () => {
   assert.match(documentation, /integration/i)
   assert.match(documentation, /contract/i)
   assert.match(documentation, /failure-injection/i)
+  assert.match(documentation, /no automatic file or slice rerun/)
   assert.match(documentation, /end-to-end/i)
   assert.match(documentation, /80%/)
   assert.match(documentation, /LCOV/)

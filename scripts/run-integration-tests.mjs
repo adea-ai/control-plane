@@ -1,7 +1,7 @@
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
-import { runWithPullBackoff } from './docker-pull-backoff.mjs'
+import { pullPostgresImage } from './pull-postgres-image.mjs'
 import {
   integrationFileArguments,
   parseIntegrationShard,
@@ -39,25 +39,68 @@ function run(command, arguments_, options = {}) {
   return result.stdout ?? ''
 }
 
-// Starting the database pulls `postgres` from Docker Hub, which rate-limits
-// anonymous pulls from shared runners. Output is captured so the rate-limit
-// signature can be recognized; it is echoed once the attempt settles.
+// Retry only the digest-pinned image pull. Container startup and health checks
+// run once, so a startup failure cannot be hidden by repeating `compose up`.
 async function composeUpPostgres() {
-  const result = await runWithPullBackoff(() =>
-    spawnSync('docker', ['compose', 'up', '-d', '--wait', 'postgres'], {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-      stdio: 'pipe',
-      env: runnerEnvironment,
-      timeout: 90_000,
-    })
-  )
-  if (result.stdout) process.stdout.write(result.stdout)
-  if (result.stderr) process.stderr.write(result.stderr)
-  if (result.error) throw result.error
-  if (result.status !== 0) {
-    throw new Error(`docker exited with status ${String(result.status)}`)
+  await pullPostgresImage({ environment: runnerEnvironment })
+  run('docker', ['compose', 'up', '-d', '--wait', 'postgres'], {
+    environment: runnerEnvironment,
+  })
+}
+
+const MAX_OUTPUT_TAIL_BYTES = 16 * 1024
+
+function appendBoundedOutputTail(current, chunk, maxBytes = MAX_OUTPUT_TAIL_BYTES) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new RangeError('Output tail byte limit must be a non-negative safe integer')
   }
+  const combined = Buffer.concat([Buffer.from(current), Buffer.from(chunk)])
+  if (combined.length <= maxBytes) return combined.toString('utf8')
+
+  let start = combined.length - maxBytes
+  while (start < combined.length && (combined[start] & 0xc0) === 0x80) start += 1
+  return combined.subarray(start).toString('utf8')
+}
+
+function runStreaming(command, arguments_, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, arguments_, {
+      cwd: options.cwd ?? process.cwd(),
+      env: options.environment ?? runnerEnvironment,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdoutTail = ''
+    let stderrTail = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdoutTail = appendBoundedOutputTail(stdoutTail, chunk)
+      process.stdout.write(chunk)
+    })
+    child.stderr.on('data', (chunk) => {
+      stderrTail = appendBoundedOutputTail(stderrTail, chunk)
+      process.stderr.write(chunk)
+    })
+    child.once('error', reject)
+    child.once('close', (status, signal) => resolve({ status, signal, stdoutTail, stderrTail }))
+  })
+}
+
+function formatStreamingFailure(result) {
+  const tails = []
+  if (result.stdoutTail)
+    tails.push(`stdout tail (max ${MAX_OUTPUT_TAIL_BYTES} bytes):\n${result.stdoutTail}`)
+  if (result.stderrTail)
+    tails.push(`stderr tail (max ${MAX_OUTPUT_TAIL_BYTES} bytes):\n${result.stderrTail}`)
+  return tails.length === 0 ? '' : `\nBounded output diagnostics:\n${tails.join('\n')}`
+}
+
+async function runIntegrationFileStreaming(testArguments, options) {
+  const result = await runStreaming('bun', testArguments, options)
+  if (result.status === 0) return
+  throw new Error(
+    `bun test exited with status ${String(result.status)}${formatStreamingFailure(result)}`
+  )
 }
 
 async function waitForPostgres() {
@@ -231,9 +274,9 @@ try {
     // connection mid-run (CONNECTION_CLOSED / CONNECTION_ENDED), leaving
     // later queries blocked long enough to trip the per-test timeout. The
     // remote lane therefore raises the ceiling and runs every file in its
-    // own process with one retry, so a transient drop costs one file
-    // instead of poisoning the rest of the shard. The local lane keeps the
-    // fast-fail ceiling and the package-level sweep.
+    // own process. A transient drop remains a failed check rather than being
+    // retried into a pass. The local lane keeps the fast-fail ceiling and the
+    // package-level sweep.
     const perTestTimeoutMs = remoteDatabase ? '120000' : '30000'
     for (const group of selectIntegrationShard(integrationShard)) {
       if (
@@ -246,18 +289,10 @@ try {
       }
       for (const file of group.files) {
         const testArguments = integrationFileArguments(group, file, perTestTimeoutMs)
-        try {
-          run('bun', testArguments, {
-            cwd: group.package,
-            environment: integrationEnvironment,
-          })
-        } catch {
-          console.log(`Integration file ${file} failed; retrying once before failing the shard.`)
-          run('bun', testArguments, {
-            cwd: group.package,
-            environment: integrationEnvironment,
-          })
-        }
+        await runIntegrationFileStreaming(testArguments, {
+          cwd: group.package,
+          environment: integrationEnvironment,
+        })
       }
     }
   }
