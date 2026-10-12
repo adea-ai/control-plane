@@ -38,6 +38,13 @@
 // preserves tests, filters, timeout, and branch count. This review candidate
 // separately removes automatic per-file reruns. A complete hosted run must
 // qualify the new ownership.
+// Run 38198473355 (2026-10-12, head 149836981) completed with integration
+// steps of 791s/416s/1,047s on shards 1/2/3. The read-only LangGraph
+// retirement inventory test took 263.7s on shard 3. Move that whole file to
+// shard 2: the projection is 791s/680s/783s, leaving shard 1 as the long pole.
+// This is a historical projection, not qualification: post-merge run
+// 38209161123 showed shard 2 at 17m42s while shards 1 and 3 were still active.
+// Require a complete hosted run on this ownership before accepting it.
 
 const foundationCasesForShard2 =
   'retention|delet|sweep|retired command|retains|frees|pins|usage|evaluation|release decisions|proposal'
@@ -77,6 +84,10 @@ export const INTEGRATION_SHARDS = [
           'src/retention-ancestry.integration.test.mjs',
         ],
       },
+      {
+        package: '.',
+        files: ['./tests/langgraph-retirement-inventory-pg.integration.test.mjs'],
+      },
     ],
   },
   {
@@ -109,10 +120,6 @@ export const INTEGRATION_SHARDS = [
       {
         package: 'packages/langgraph-adapter',
         files: ['src/postgres-checkpointer.integration.test.mjs'],
-      },
-      {
-        package: '.',
-        files: ['./tests/langgraph-retirement-inventory-pg.integration.test.mjs'],
       },
       {
         package: 'apps/workflow-worker',

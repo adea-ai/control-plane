@@ -232,7 +232,7 @@ jobs:
 
       - name: Verify migrations and this shard's integration slice
         if: steps.credentials.outputs.available == 'true'
-        # The runner already retries each remote file once in a fresh process.
+        # The runner runs each assigned integration file once; failures fail the shard.
         # A later drill failure must not repeat a successful database slice.
         run: |
           bun --cwd=packages/database run db:check

@@ -610,7 +610,7 @@ describe('Neon preview cleanup lookup', () => {
         []
       ).length
     ).toBe(1)
-    // The runner owns per-file retries; the workflow invokes each command once.
+    // The workflow invokes the shard command once; assigned files run once with no retry.
     expect((step.match(/db:migrate/g) ?? []).length).toBe(1)
     expect(step).toContain(
       'bun --cwd=packages/database scripts/verify-neon-provider-compatibility.mjs'

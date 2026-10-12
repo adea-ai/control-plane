@@ -134,6 +134,16 @@ retention, and partial usage-store work. The candidate moves the measured tail
 files to shard 1 and the unmeasured workspace-scope file to shard 3; the censored
 durations remain lower bounds pending a complete hosted run. See
 [the shard rebalance evidence](evidence/m11-neon-shard-rebalance-2026-10-11.md).
+The complete trusted-main run [38198473355](https://github.com/adea-ai/control-plane/actions/runs/38198473355)
+measured 791s/416s/1,047s of integration work on shards 1/2/3. Moving the
+263.7s read-only LangGraph retirement inventory test from shard 3 to shard 2
+projects 791s/680s/783s while keeping all test files and three branch owners.
+This is a projection from the earlier complete run. The post-merge run
+[38209161123](https://github.com/adea-ai/control-plane/actions/runs/38209161123)
+was still running on shards 1 and 3 when this candidate was prepared; its shard
+2 integration step passed in 17m42s. A complete hosted run on the proposed
+ownership is still required to qualify the change. See the
+[2026-10-12 evidence](evidence/m11-neon-shard-rebalance-2026-10-12.md).
 Preview cleanup resolves the exact run/attempt/shard name and validates the project, parent,
 protection flags, and complete listing before exporting a branch ID for deletion. Each listing
 page allows three attempts for transport failures or HTTP 408/429/500/502/503/504, with ten-second
