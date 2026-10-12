@@ -588,6 +588,56 @@ describe('bounded report-horizon ordering', () => {
     expect(after.settled?.settlementRef).toBe('settlement:run:latest')
   })
 
+  test('sequence-free replay past the evicted content horizon fails closed', () => {
+    const ledger = new ChildUsageLedger({ maximumTrackedReportIds: 16 })
+    const identity = identityA()
+    for (let index = 1; index <= 18; index += 1) {
+      const receipt = ledger.recordReportedUsage(identity, reportedUsage(index * 1_000), {
+        reportId: reportIdFor(index),
+      })
+      expect(receipt.outcome).toBe('recorded')
+    }
+    settleLatest(ledger, identity)
+
+    const replay = ledger.recordReportedUsage(identity, reportedUsage(1_000), {
+      reportId: reportIdFor(1),
+    })
+    expect(replay.outcome).toBe('conflicting_report')
+    expect(ledger.status(identity)).toMatchObject({
+      costState: 'settled',
+      reported: { accounting: { chargedMicrounits: 18_000 } },
+      usageReportCount: 18,
+      settled: { settlementRef: 'settlement:run:latest' },
+    })
+  })
+
+  test('sequence-free eviction uncertainty survives snapshot and restore', () => {
+    const ledger = new ChildUsageLedger({ maximumTrackedReportIds: 16 })
+    const identity = identityA()
+    for (let index = 1; index <= 18; index += 1) {
+      ledger.recordReportedUsage(identity, reportedUsage(index * 1_000), {
+        reportId: reportIdFor(index),
+      })
+    }
+    settleLatest(ledger, identity)
+
+    const snapshot = ledger.snapshot()
+    expect(snapshot.entries[0].orderingUncertain).toBe(true)
+    const restored = new ChildUsageLedger({ maximumTrackedReportIds: 16 })
+    restored.restore(snapshot)
+
+    const replay = restored.recordReportedUsage(identity, reportedUsage(1_000), {
+      reportId: reportIdFor(1),
+    })
+    expect(replay.outcome).toBe('conflicting_report')
+    expect(restored.status(identity)).toMatchObject({
+      costState: 'settled',
+      reported: { accounting: { chargedMicrounits: 18_000 } },
+      usageReportCount: 18,
+      settled: { settlementRef: 'settlement:run:latest' },
+    })
+  })
+
   test('a redelivered canonical entry converges, a changed one conflicts, and a sequence-free report fails closed', () => {
     const ledger = new ChildUsageLedger({ maximumTrackedReportIds: 16 })
     const identity = identityA()

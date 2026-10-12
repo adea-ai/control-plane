@@ -6,7 +6,11 @@ import {
 } from '@control-plane/contracts'
 import type { AttemptId } from '@control-plane/contracts'
 import { ExecutionFailureClassificationSchema } from '@control-plane/domain'
-import type { DelegationEvent } from './delegation.js'
+import {
+  DelegationInteractionContextSchema,
+  type DelegationEvent,
+  type DelegationInteractionContext,
+} from './delegation.js'
 import { z } from 'zod'
 
 /**
@@ -374,20 +378,26 @@ function isTerminalPhase(phase: ChildProgressEvidenceEvent['phase']): boolean {
  * One chronological ordering rule for every evidence timestamp boundary.
  *
  * Evidence timestamps are schema-validated ISO-8601 instants with variable
- * fractional-second precision, and lexical order is not chronological across
- * that variation: `…T00:00:00Z` sorts after `…T00:00:00.100Z` even though it
- * is earlier. Comparing parsed instants (not raw strings) keeps a later
- * terminal observation able to supersede an earlier running snapshot. The
- * stored evidence strings, provenance and digests are unchanged — only the
- * comparison is normalized.
+ * fractional-second precision. `Date.parse` normalizes only to milliseconds,
+ * so distinct instants such as `.0001Z` and `.0009Z` compare equal. Parse the
+ * whole second for timezone normalization, then compare the decimal fractions
+ * exactly. Stored timestamp strings, provenance and digests remain unchanged.
  */
 function compareChronologicalTimestamps(left: string, right: string): number {
-  const a = Date.parse(left)
-  const b = Date.parse(right)
+  const fractionPattern = /\.(\d+)(?=(?:Z|[+-]\d{2}:\d{2})$)/
+  const leftFraction = (left.match(fractionPattern)?.[1] ?? '').replace(/0+$/, '')
+  const rightFraction = (right.match(fractionPattern)?.[1] ?? '').replace(/0+$/, '')
+  const wholeSecondPattern = /\.\d+(?=(?:Z|[+-]\d{2}:\d{2})$)/
+  const a = Date.parse(left.replace(wholeSecondPattern, ''))
+  const b = Date.parse(right.replace(wholeSecondPattern, ''))
   if (!Number.isFinite(a) || !Number.isFinite(b))
     throw new Error('CHILD_PROGRESS_EVIDENCE_TIMESTAMP_UNORDERABLE')
-  if (a === b) return 0
-  return a < b ? -1 : 1
+  if (a !== b) return a < b ? -1 : 1
+  const precision = Math.max(leftFraction.length, rightFraction.length)
+  const normalizedLeft = leftFraction.padEnd(precision, '0')
+  const normalizedRight = rightFraction.padEnd(precision, '0')
+  if (normalizedLeft === normalizedRight) return 0
+  return normalizedLeft < normalizedRight ? -1 : 1
 }
 
 /**
@@ -580,10 +590,13 @@ export class ChildProgressEvidenceBuffer {
     if (!this.#mergeSnapshot(parsed)) {
       sealedPacket = this.#sealToQueue() ?? sealedPacket
       if (!this.#mergeSnapshot(parsed)) {
-        throw new ChildProgressEvidenceError(
-          'BOUNDS_EXCEEDED',
-          `A single child snapshot exceeds the configured maximumBytes budget (${this.#maximumBytes})`
-        )
+        const hasMetrics = Object.keys(parsed.metrics ?? {}).length > 0
+        if (entry === undefined || hasMetrics || !this.#mergeSnapshot(parsed, true)) {
+          throw new ChildProgressEvidenceError(
+            'BOUNDS_EXCEEDED',
+            `A single child snapshot exceeds the configured maximumBytes budget (${this.#maximumBytes})`
+          )
+        }
       }
     }
     if (entry && !this.#appendEntry(entry)) {
@@ -769,7 +782,10 @@ export class ChildProgressEvidenceBuffer {
    * included) or the projected serialized packet would exceed the byte
    * budget; the caller seals and retries.
    */
-  #mergeSnapshot(event: ChildProgressEvidenceEvent): boolean {
+  #mergeSnapshot(
+    event: ChildProgressEvidenceEvent,
+    allowCriticalStateWithoutSnapshot = false
+  ): boolean {
     const window = this.#windows.get(event.delegationId)
     if (window === undefined || event.generation > window.generation) {
       const snapshot: ChildProgressSnapshot = {
@@ -785,7 +801,17 @@ export class ChildProgressEvidenceBuffer {
       if (
         !this.#canPlaceSnapshot(event.delegationId, snapshot, event.phase === 'running' ? 1 : 0)
       ) {
-        return false
+        if (!allowCriticalStateWithoutSnapshot) return false
+        // The retained critical entry is the authoritative observation. Keep
+        // its generation/terminal latch even when a fresh snapshot cannot fit;
+        // the earlier bounded packet already carries the cumulative metrics.
+        this.#windows.set(event.delegationId, {
+          generation: event.generation,
+          terminal: isTerminalPhase(event.phase),
+          attemptId: event.childAttemptId,
+          snapshot,
+        })
+        return true
       }
       this.#windows.set(event.delegationId, {
         generation: event.generation,
@@ -818,13 +844,23 @@ export class ChildProgressEvidenceBuffer {
       observedEventCount: window.snapshot.observedEventCount + 1,
       metrics: accumulateMetrics(window.snapshot.metrics, event.metrics),
     }
-    if (!this.#canPlaceSnapshot(event.delegationId, merged, 1)) return false
-    this.#windows.set(event.delegationId, {
+    const nextWindow = {
       generation: window.generation,
-      terminal: window.terminal || (supersedes && isTerminalPhase(event.phase)),
+      // A retained terminal observation closes the generation even when its
+      // timestamp is older than the newest snapshot. Keep snapshot chronology
+      // separate from the terminal latch: both facts must survive batching.
+      terminal: window.terminal || isTerminalPhase(event.phase),
       attemptId,
       snapshot: merged,
-    })
+    }
+    if (!this.#canPlaceSnapshot(event.delegationId, merged, 1)) {
+      if (!allowCriticalStateWithoutSnapshot) return false
+      // Retain the canonical generation state for a critical entry even when
+      // its cumulative metric snapshot is already at the packet byte ceiling.
+      this.#windows.set(event.delegationId, nextWindow)
+      return true
+    }
+    this.#windows.set(event.delegationId, nextWindow)
     this.#replaceSnapshotInOpenWindow(merged)
     this.#withOpenWindow((open) => {
       open.coalescedEventCount += 1
@@ -1364,13 +1400,25 @@ export function delegationEventToEvidenceEvent(input: {
   readonly eventId: string
   readonly generation: number
   readonly childAttemptId?: string
-  readonly interaction?: {
-    readonly interactionId: string
-    readonly kind: 'input' | 'approval' | 'grant' | 'runtime'
-  }
+  readonly interaction?: DelegationInteractionContext
   readonly metrics?: Record<string, number>
 }): ChildProgressEvidenceEvent {
   const details = input.event.details
+  const eventInteraction = DelegationInteractionContextSchema.optional().parse(
+    details['interaction']
+  )
+  const suppliedInteraction =
+    input.interaction === undefined
+      ? undefined
+      : DelegationInteractionContextSchema.parse(input.interaction)
+  if (
+    eventInteraction !== undefined &&
+    suppliedInteraction !== undefined &&
+    canonicalJsonStringify(eventInteraction) !== canonicalJsonStringify(suppliedInteraction)
+  ) {
+    throw new Error('DELEGATION_INTERACTION_CONTEXT_CONFLICT')
+  }
+  const interaction = eventInteraction ?? suppliedInteraction
   const state = typeof details['state'] === 'string' ? details['state'] : undefined
   const phase =
     input.event.type === 'delegation.completed'
@@ -1402,7 +1450,7 @@ export function delegationEventToEvidenceEvent(input: {
     ...(terminalResultRef ? { terminalResultRef } : {}),
     ...(failureCode ? { failure: { classification: 'unknown', code: failureCode } } : {}),
     ...(cancelReason !== undefined ? { cancelReason } : {}),
-    ...(input.interaction ? { interaction: input.interaction } : {}),
+    ...(interaction ? { interaction } : {}),
     ...(input.metrics ? { metrics: input.metrics } : {}),
   })
 }

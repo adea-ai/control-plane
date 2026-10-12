@@ -38,6 +38,16 @@ const ReferenceSchema = z
   .max(256)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/)
 
+/** Server-observed runtime interaction identity; prompts and payloads stay in the interaction store. */
+export const DelegationInteractionContextSchema = z
+  .object({
+    interactionId: IdentifierSchemas.interactionId,
+    kind: z.enum(['input', 'approval', 'grant', 'runtime']),
+  })
+  .strict()
+
+export type DelegationInteractionContext = z.output<typeof DelegationInteractionContextSchema>
+
 export const DelegationPolicySchema = z
   .object({
     cancellation: z.enum(['cascade', 'independent']),
@@ -53,6 +63,7 @@ export const ChildProgressInputSchema = z
     childAttemptId: IdentifierSchemas.attemptId,
     state: z.enum(['running', 'awaiting_input', 'completed', 'failed', 'cancelled']),
     observedAt: TimestampSchema,
+    interaction: DelegationInteractionContextSchema.optional(),
     terminalResultRef: IdentifierSchemas.artifactId.optional(),
     failure: z
       .object({
@@ -86,6 +97,18 @@ export const ChildProgressInputSchema = z
     }
     if (input.state !== 'failed' && input.failure) {
       context.addIssue({ code: 'custom', message: 'Only failed child may have failure metadata' })
+    }
+    if (input.state === 'awaiting_input' && input.interaction === undefined) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Awaiting-input child requires its canonical interaction context',
+      })
+    }
+    if (input.state !== 'awaiting_input' && input.interaction !== undefined) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Only awaiting-input child may carry interaction context',
+      })
     }
   })
 
@@ -318,6 +341,7 @@ export const DelegationEventSchema = z
         childAttemptId: IdentifierSchemas.attemptId.optional(),
         terminalResultRef: IdentifierSchemas.artifactId.optional(),
         failureCode: ReferenceSchema.optional(),
+        interaction: DelegationInteractionContextSchema.optional(),
         reason: z.literal('parent_cancelled').optional(),
         resolution: z
           .enum(['retry', 'fallback', 'continue_parent', 'manual_intervention', 'fail_parent'])
@@ -326,6 +350,16 @@ export const DelegationEventSchema = z
       .strict(),
   })
   .strict()
+  .superRefine((event, context) => {
+    const awaitingInput =
+      event.type === 'delegation.progress' && event.details.state === 'awaiting_input'
+    if (awaitingInput !== (event.details.interaction !== undefined)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Awaiting-input progress requires its canonical interaction context',
+      })
+    }
+  })
 
 export type DelegationErrorCode =
   | 'DELEGATION_NOT_FOUND'
@@ -598,6 +632,11 @@ export class DelegationService {
         throw new DelegationError('CHILD_ADMISSION_DENIED')
       }
     }
+    // Product admission is asynchronous. Re-read the live parent and child
+    // execution scopes after it returns and before retaining the child plan;
+    // an unchanged parent version does not prove that the caller's grant is
+    // still active.
+    if (childAdmission) await this.#assertCurrentScope(parsed, plan)
     await this.#plans.put(plan)
     const record = DelegationRecordSchema.parse({
       delegationId: parsed.delegationId,
@@ -677,11 +716,17 @@ export class DelegationService {
           execution: queuedExecution,
           attempt,
           delegation: record,
-          assertCurrent: () =>
-            this.#childAdmission!.assertCurrent(
+          assertCurrent: async () => {
+            await this.#childAdmission!.assertCurrent(
               structuredClone(childAdmission!.request),
               structuredClone(childAdmission!.receipt)
-            ),
+            )
+            // The storage adapter invokes this inside its allocation
+            // transaction, immediately before its first write. Product
+            // admission does not cover the caller's independently revocable
+            // execution-scope grant, so fence that authority here as well.
+            await this.#assertCurrentScope(parsed, plan)
+          },
         })
       } catch (error) {
         if (error instanceof ChildAdmissionAllocationError) {
@@ -1032,6 +1077,7 @@ export class DelegationService {
             : 'delegation.progress'
     await this.#publish(next, eventType, parsed.observedAt, {
       state,
+      ...(parsed.interaction ? { interaction: parsed.interaction } : {}),
       ...(resolution ? { resolution } : {}),
       ...(parsed.terminalResultRef ? { terminalResultRef: parsed.terminalResultRef } : {}),
       ...(parsed.failure ? { failureCode: parsed.failure.code } : {}),

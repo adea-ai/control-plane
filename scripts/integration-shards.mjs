@@ -109,11 +109,13 @@ export const INTEGRATION_SHARDS = [
           'src/validation-replay.integration.test.mjs',
           'src/budget-admission.integration.test.mjs',
           'src/marketplace-installation.integration.test.mjs',
+          'src/pi-durable/child-progress-scanner.integration.test.mjs',
         ],
       },
       {
         package: '.',
         files: [
+          './tests/child-progress-sqlite-feed-replay.integration.test.mjs',
           './tests/memory-process-loss.integration.test.mjs',
           './tests/runtime-node-credential-revocation.integration.test.mjs',
         ],

@@ -1,6 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { executionConstraintFixtures } from '@control-plane/domain'
@@ -343,7 +353,10 @@ describe('M11.5 probes: local secret file trust (STM-008/010/024)', () => {
   test('unsafe permissions, non-files, empty, and oversized values reject', async () => {
     await withScratchDirectory(async (root) => {
       await mkdir(join(root, 'provider'), { recursive: true })
-      await writeFile(join(root, 'provider', 'loose'), 'probe-secret-value-0003', { mode: 0o644 })
+      const loosePath = join(root, 'provider', 'loose')
+      await writeFile(loosePath, 'probe-secret-value-0003', { mode: 0o644 })
+      await chmod(loosePath, 0o644)
+      expect((await stat(loosePath)).mode & 0o777).toBe(0o644)
       await writeFile(join(root, 'provider', 'empty'), '', { mode: 0o600 })
       await writeFile(join(root, 'provider', 'oversized'), 'x'.repeat(MAX_SECRET_BYTES + 1), {
         mode: 0o600,

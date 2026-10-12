@@ -168,94 +168,138 @@ export async function seedDatabase(path, f) {
 }
 
 /** Opens (or reopens) every store from disk and wires the production-shaped gate over them. */
-export async function compose(directory, f, { counter, clock, wrapCalls } = {}) {
-  const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
-  await provider.migrate()
-  const workspaceId = f.intent.workspaceId
-  const interactions = new SqliteInteractionRepository(provider)
-  const baseCalls = new SqliteToolCallRepository(provider, workspaceId)
-  // Optional test-only interception of the reader-visible call repository. The
-  // authority re-read observes calls through this surface, so a barrier here
-  // lands in the exact window the await-window proofs target. Every method
-  // delegates unchanged; only `get` can be armed.
-  const calls = wrapCalls ? wrapCalls(baseCalls) : baseCalls
-  const registry = new ToolRegistry(new SqliteToolRegistryRepository(provider, workspaceId))
-  const store = new FilesystemObjectStore({
-    rootDirectory: join(directory, 'objects'),
-    maxObjectBytes: 65_536,
-  })
-  const writer = new ScopedObjectStoreJsonToolExecutor(store, executorRef, {
-    workspaceId,
-    projectId,
-  })
-  const gateway = new ToolGateway(registry)
-  gateway.registerExecutor('internal', executorRef, {
-    async execute(request, version, signal) {
-      counter.invocations += 1
-      if (counter.failNext) {
-        counter.failNext = false
-        throw new Error('OBJECT_STORE_UNREACHABLE')
-      }
-      const result = await writer.execute(request, version, signal)
-      // A real crash after the object write and before the receipt is recorded.
-      if (counter.crashAfterWrite) process.exit(137)
-      return result
-    },
-  })
-  const service = new PolicyControlledToolExecutionService({
-    gateway,
-    calls,
-    authorizer: new StaticToolPolicyAuthorizer({
-      effect: 'allow',
-      decisionId: 'fixture-allow',
-      policyVersion: 'fixture-policy-v1',
-      reasonCode: 'GRANTED',
-      requiresApproval: true,
-      evaluatedAt: at,
-    }),
-    approvals: new InteractionToolApprovalCoordinator(
-      new InteractionService(interactions),
-      interactions
-    ),
-    rateLimiter: new InMemoryToolRateLimiter(),
-    now: () => clock.now,
-  })
-  const authority = createPiDurableCurrentToolAuthority({
-    currentExecutionAuthority: f.host,
-    intents: {
-      getByAttempt: async (attemptId) =>
-        attemptId === f.intent.attemptId ? structuredClone(f.intent) : undefined,
-      marker: () => ({
-        state: 'ready',
-        actorPrincipalId: 'svc_transport',
-        workspaceId,
-        intent: structuredClone(f.intent),
-        planPin: {
-          executionPlanId: f.plan.executionPlanId,
-          contentDigest: f.plan.contentDigest,
-          schemaVersion: f.plan.schemaVersion,
-        },
+export async function compose(
+  directory,
+  f,
+  {
+    counter,
+    clock,
+    wrapCalls,
+    createProvider = (options) => new SqlitePersistenceProvider(options),
+    createEffectDatabase = (path) => new DatabaseSync(path),
+    createRunner = (options) => createRetainedApprovalWriteRunner(options),
+  } = {}
+) {
+  let provider
+  let effectDb
+  let resourcesClosed = false
+  const closeResources = () => {
+    if (resourcesClosed) return
+    resourcesClosed = true
+    let closeError
+    try {
+      effectDb?.close()
+    } catch (error) {
+      closeError = error
+    }
+    try {
+      provider?.close()
+    } catch (error) {
+      closeError ??= error
+    }
+    if (closeError) throw closeError
+  }
+
+  try {
+    provider = createProvider({ path: join(directory, 'state.sqlite') })
+    await provider.migrate()
+    const workspaceId = f.intent.workspaceId
+    const interactions = new SqliteInteractionRepository(provider)
+    const baseCalls = new SqliteToolCallRepository(provider, workspaceId)
+    // Optional test-only interception of the reader-visible call repository. The
+    // authority re-read observes calls through this surface, so a barrier here
+    // lands in the exact window the await-window proofs target. Every method
+    // delegates unchanged; only `get` can be armed.
+    const calls = wrapCalls ? wrapCalls(baseCalls) : baseCalls
+    const registry = new ToolRegistry(new SqliteToolRegistryRepository(provider, workspaceId))
+    const store = new FilesystemObjectStore({
+      rootDirectory: join(directory, 'objects'),
+      maxObjectBytes: 65_536,
+    })
+    const writer = new ScopedObjectStoreJsonToolExecutor(store, executorRef, {
+      workspaceId,
+      projectId,
+    })
+    const gateway = new ToolGateway(registry)
+    gateway.registerExecutor('internal', executorRef, {
+      async execute(request, version, signal) {
+        counter.invocations += 1
+        if (counter.failNext) {
+          counter.failNext = false
+          throw new Error('OBJECT_STORE_UNREACHABLE')
+        }
+        const result = await writer.execute(request, version, signal)
+        // A real crash after the object write and before the receipt is recorded.
+        if (counter.crashAfterWrite) process.exit(137)
+        return result
+      },
+    })
+    const service = new PolicyControlledToolExecutionService({
+      gateway,
+      calls,
+      authorizer: new StaticToolPolicyAuthorizer({
+        effect: 'allow',
+        decisionId: 'fixture-allow',
+        policyVersion: 'fixture-policy-v1',
+        reasonCode: 'GRANTED',
+        requiresApproval: true,
+        evaluatedAt: at,
       }),
-    },
-    executions: new SqliteExecutionRepository(provider),
-    plans: f.hostOptions.plans,
-    service,
-    interactions,
-    now: () => clock.now,
-  })
-  const effectDb = new DatabaseSync(join(directory, 'effect-gate.sqlite'))
-  const gate = new PiDurableEffectGate({
-    store: new SqliteDurableEffectGateStore(effectDb),
-    service,
-    assertAuthority: (request, boundary) => authority.assertCurrent(request, boundary),
-    now: () => clock.now,
-  })
-  return {
-    interactions,
-    runner: createRetainedApprovalWriteRunner({ effects: gate, interactions }),
-    close() {
-      effectDb.close()
-      provider.close()
-    },
+      approvals: new InteractionToolApprovalCoordinator(
+        new InteractionService(interactions),
+        interactions
+      ),
+      rateLimiter: new InMemoryToolRateLimiter(),
+      now: () => clock.now,
+    })
+    const authority = createPiDurableCurrentToolAuthority({
+      currentExecutionAuthority: f.host,
+      intents: {
+        getByAttempt: async (attemptId) =>
+          attemptId === f.intent.attemptId ? structuredClone(f.intent) : undefined,
+        marker: () => ({
+          state: 'ready',
+          actorPrincipalId: 'svc_transport',
+          workspaceId,
+          intent: structuredClone(f.intent),
+          planPin: {
+            executionPlanId: f.plan.executionPlanId,
+            contentDigest: f.plan.contentDigest,
+            schemaVersion: f.plan.schemaVersion,
+          },
+        }),
+      },
+      executions: new SqliteExecutionRepository(provider),
+      plans: f.hostOptions.plans,
+      service,
+      interactions,
+      now: () => clock.now,
+    })
+    effectDb = createEffectDatabase(join(directory, 'effect-gate.sqlite'))
+    const gate = new PiDurableEffectGate({
+      store: new SqliteDurableEffectGateStore(effectDb),
+      service,
+      assertAuthority: (request, boundary) => authority.assertCurrent(request, boundary),
+      now: () => clock.now,
+    })
+    const runner = createRunner({ effects: gate, interactions })
+    let sessionClosed = false
+    return {
+      interactions,
+      runner,
+      close() {
+        if (sessionClosed) return
+        sessionClosed = true
+        closeResources()
+      },
+    }
+  } catch (error) {
+    try {
+      closeResources()
+    } catch {
+      // Keep initialization failures as the reported cause while still closing
+      // every resource that was acquired before composition failed.
+    }
+    throw error
   }
 }

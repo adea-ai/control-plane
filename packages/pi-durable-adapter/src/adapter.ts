@@ -1178,6 +1178,13 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
                 ? 'failed'
                 : 'unknown'
           if (outcome.state === 'succeeded') fail('PI_CHILD_OUTCOME_INVALID', 'conflict')
+          let interaction: { interactionId: string; kind: 'approval' } | undefined
+          if (state === 'awaiting_input') {
+            const approvalInteractionId = request.approval?.interactionId
+            if (!approvalInteractionId || outcome.interactionId !== approvalInteractionId)
+              fail('PI_CHILD_OUTCOME_INVALID', 'conflict')
+            interaction = { interactionId: approvalInteractionId, kind: 'approval' }
+          }
           await assertCurrent()
           this.journal.update(
             record.handleId,
@@ -1217,7 +1224,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               { type: 'usage', data: { usage }, at: this.#now() },
               {
                 type: state === 'awaiting_input' ? 'interaction' : 'status',
-                data: { ...outcome, state },
+                data: { ...outcome, state, ...interaction },
                 at: this.#now(),
               },
             ]

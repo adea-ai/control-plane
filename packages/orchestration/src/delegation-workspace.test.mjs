@@ -185,6 +185,170 @@ test('governed child readiness denial occurs before child plan or allocation wri
   expect(f.events).toEqual([])
 })
 
+for (const boundary of ['prepare', 'assertCurrent']) {
+  test(`revocation during child admission ${boundary} denies before retaining the child plan`, async () => {
+    let grantActive = true
+    const f = await fixture({
+      authority: {
+        async readCurrent(input) {
+          return { ...currentSnapshot(input), grantActive }
+        },
+      },
+    })
+    const parentAttempt = await f.lifecycle.createAttempt({
+      executionId: ids.parentExecutionId,
+      attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+      expectedExecutionVersion: 1,
+      queuedAt: '2026-08-25T18:00:30.000Z',
+    })
+    const input = {
+      ...f.command,
+      parentIntentId: 'intent:workspace-parent',
+      parentAttemptId: parentAttempt.attemptId,
+      childAttemptId: ids.childAttemptId,
+      admittedToolCallId: 'tlc_01JABCDEF0123456789ABCDEFG',
+      initialDispatch: {
+        delegationId: ids.delegationId,
+        childAttemptId: ids.childAttemptId,
+        runtime: { runtimeConnectionId: 'rtc_01JABCDEF0123456789ABCDEFG' },
+        dispatchedAt: '2026-08-25T18:01:10.000Z',
+      },
+    }
+    const planWrites = []
+    let allocated = 0
+    const governed = new DelegationService({
+      ...f.options,
+      plans: {
+        get: (reference) => f.plans.get(reference),
+        async put(plan) {
+          planWrites.push(plan)
+          return f.plans.put(plan)
+        },
+      },
+      scopeAdmission: f.scopeAdmission,
+      childAdmission: {
+        async prepare(request) {
+          if (boundary === 'prepare') {
+            await Promise.resolve()
+            grantActive = false
+          }
+          return {
+            schemaVersion: 'pi-child-admission/v1',
+            ...request,
+            authorityRevision: 1,
+            productRevision: 'product:rev-1',
+            productReaderPrincipalId: 'svc_product-reader',
+            selectionRef: 'selection:workspace-child',
+            selectionRevision: 1,
+            expiresAt: '2026-08-25T18:09:00.000Z',
+          }
+        },
+        async assertCurrent() {
+          if (boundary === 'assertCurrent') {
+            await Promise.resolve()
+            grantActive = false
+          }
+        },
+      },
+      childAllocator: {
+        async allocate() {
+          allocated += 1
+          return true
+        },
+      },
+    })
+
+    await expect(governed.delegate(input)).rejects.toMatchObject({
+      code: 'SCOPE_ADMISSION_DENIED',
+    })
+    expect(planWrites).toEqual([])
+    expect(allocated).toBe(0)
+    expect(await f.executions.getExecution(ids.childExecutionId)).toBeUndefined()
+    expect(await f.delegations.listByParent(ids.parentExecutionId)).toEqual([])
+    expect(f.events).toEqual([])
+  })
+}
+
+test('rechecks live scope inside child allocation after plan retention', async () => {
+  let grantActive = true
+  const f = await fixture({
+    authority: {
+      async readCurrent(input) {
+        return { ...currentSnapshot(input), grantActive }
+      },
+    },
+  })
+  const parentAttempt = await f.lifecycle.createAttempt({
+    executionId: ids.parentExecutionId,
+    attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+    expectedExecutionVersion: 1,
+    queuedAt: '2026-08-25T18:00:30.000Z',
+  })
+  const input = {
+    ...f.command,
+    parentIntentId: 'intent:workspace-parent',
+    parentAttemptId: parentAttempt.attemptId,
+    childAttemptId: ids.childAttemptId,
+    admittedToolCallId: 'tlc_01JABCDEF0123456789ABCDEFG',
+    initialDispatch: {
+      delegationId: ids.delegationId,
+      childAttemptId: ids.childAttemptId,
+      runtime: { runtimeConnectionId: 'rtc_01JABCDEF0123456789ABCDEFG' },
+      dispatchedAt: '2026-08-25T18:01:10.000Z',
+    },
+  }
+  const planWrites = []
+  let allocationEntered = 0
+  let allocated = 0
+  const governed = new DelegationService({
+    ...f.options,
+    plans: {
+      get: (reference) => f.plans.get(reference),
+      async put(plan) {
+        planWrites.push(plan)
+        const retained = await f.plans.put(plan)
+        grantActive = false
+        return retained
+      },
+    },
+    scopeAdmission: f.scopeAdmission,
+    childAdmission: {
+      async prepare(request) {
+        return {
+          schemaVersion: 'pi-child-admission/v1',
+          ...request,
+          authorityRevision: 1,
+          productRevision: 'product:rev-1',
+          productReaderPrincipalId: 'svc_product-reader',
+          selectionRef: 'selection:workspace-child',
+          selectionRevision: 1,
+          expiresAt: '2026-08-25T18:09:00.000Z',
+        }
+      },
+      async assertCurrent() {},
+    },
+    childAllocator: {
+      async allocate({ assertCurrent }) {
+        allocationEntered += 1
+        await assertCurrent()
+        allocated += 1
+        return true
+      },
+    },
+  })
+
+  await expect(governed.delegate(input)).rejects.toMatchObject({
+    code: 'SCOPE_ADMISSION_DENIED',
+  })
+  expect(planWrites).toHaveLength(1)
+  expect(allocationEntered).toBe(1)
+  expect(allocated).toBe(0)
+  expect(await f.executions.getExecution(ids.childExecutionId)).toBeUndefined()
+  expect(await f.executions.listAttempts(ids.childExecutionId)).toEqual([])
+  expect(await f.delegations.listByParent(ids.parentExecutionId)).toEqual([])
+  expect(f.events).toEqual([])
+})
+
 test('governed child fails closed when the product admission/allocator ports are missing', async () => {
   const f = await fixture()
   const parentAttempt = await f.lifecycle.createAttempt({

@@ -888,6 +888,34 @@ describe('child progress evidence packets', () => {
     ])
   })
 
+  test('retains a terminal entry when a cumulative metric snapshot leaves no room to grow', () => {
+    const lengths = [256, 256, 256, 256, 256, 112]
+    const values = [
+      1_234_567_890, 1_234_567_890, 123_456_789, 123_456_789, 123_456_789, 123_456_789,
+    ]
+    const metrics = Object.fromEntries(
+      lengths.map((length, index) => [
+        `${String.fromCharCode(97 + index)}${'x'.repeat(length - 1)}`,
+        values[index],
+      ])
+    )
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId, maximumBytes: 2048 })
+
+    buffer.accept(runningEvent({ observedAt: at(0), metrics }))
+    const cancelled = buffer.accept(runningEvent({ phase: 'cancelled', observedAt: at(1_000) }))
+
+    expect(cancelled).toMatchObject({ outcome: 'retained', entryKind: 'terminal' })
+    expect(cancelled.sealedPacket).toBeDefined()
+    expect(serializedBytes(cancelled.sealedPacket)).toBe(2047)
+    const terminalPacket = buffer.flush()
+    expect(terminalPacket.entries).toHaveLength(1)
+    expect(terminalPacket.entries[0]).toMatchObject({ phase: 'cancelled' })
+    expect(terminalPacket.childSnapshots).toHaveLength(0)
+    expect(buffer.emitted.map(serializedBytes)).toEqual([2047, expect.any(Number)])
+    expect(buffer.emitted.every((packet) => serializedBytes(packet) <= 2048)).toBe(true)
+    expect(buffer.emitted.flatMap((packet) => packet.childSnapshots)[0].metrics).toEqual(metrics)
+  })
+
   test('keeps duplicate-counter growth inside the serialized byte budget', () => {
     const maximumBytes = 2048
     // Deterministic calibration: pad child A's metrics so a window holding
@@ -1152,13 +1180,28 @@ describe('delegation event adapter', () => {
     ).toMatchObject({ phase: 'running' })
     expect(
       delegationEventToEvidenceEvent({
-        event: delegationEvent({ details: { state: 'awaiting_input' } }),
+        event: delegationEvent({
+          details: {
+            state: 'awaiting_input',
+            interaction: { interactionId: ids.interactionId, kind: 'approval' },
+          },
+        }),
         eventId: eventId(),
         generation: 1,
         childAttemptId: ids.attemptIdA,
-        interaction: { interactionId: ids.interactionId, kind: 'approval' },
       })
-    ).toMatchObject({ phase: 'awaiting_input', childAttemptId: ids.attemptIdA })
+    ).toMatchObject({
+      phase: 'awaiting_input',
+      childAttemptId: ids.attemptIdA,
+      interaction: { interactionId: ids.interactionId, kind: 'approval' },
+    })
+    expect(() =>
+      delegationEventToEvidenceEvent({
+        event: delegationEvent({ details: { state: 'awaiting_input' } }),
+        eventId: eventId(),
+        generation: 1,
+      })
+    ).toThrow()
     expect(
       delegationEventToEvidenceEvent({
         event: delegationEvent({
@@ -1246,7 +1289,7 @@ describe('delegation event adapter', () => {
     ])
     const lastEventId = new Map()
 
-    const deliver = async (delegationId, input, adapter = {}) => {
+    const deliver = async (delegationId, input) => {
       // recordChildProgress requires the caller to assert the attempt identity.
       const childAttemptId = delegationId === ids.delegationIdA ? ids.attemptIdA : ids.attemptIdB
       const outcome = await fixture.service.recordChildProgress({
@@ -1265,7 +1308,6 @@ describe('delegation event adapter', () => {
           eventId: id,
           generation: outcome.record.revision,
           childAttemptId: outcome.record.childAttemptId,
-          ...adapter,
         })
       )
       return { outcome, receipt, eventId: id }
@@ -1279,16 +1321,18 @@ describe('delegation event adapter', () => {
       }
     }
     // Child B asks for approval: retained verbatim, packet flushed for the lead.
-    const approval = await deliver(
-      ids.delegationIdB,
-      { state: 'awaiting_input' },
-      { interaction: { interactionId: ids.interactionId, kind: 'approval' } }
-    )
+    const approval = await deliver(ids.delegationIdB, {
+      state: 'awaiting_input',
+      interaction: { interactionId: ids.interactionId, kind: 'approval' },
+    })
     expect(approval.receipt).toMatchObject({ outcome: 'retained', entryKind: 'awaiting_input' })
     const approvalPacket = buffer.flush()
     expect(approvalPacket.entries).toHaveLength(1)
-    expect(approvalPacket.entries[0].phase).toBe('awaiting_input')
-    expect(approvalPacket.entries[0].delegationId).toBe(ids.delegationIdB)
+    expect(approvalPacket.entries[0]).toMatchObject({
+      phase: 'awaiting_input',
+      delegationId: ids.delegationIdB,
+      interaction: { interactionId: ids.interactionId, kind: 'approval' },
+    })
 
     // Both children finish while batching continues; terminal outcomes survive.
     const completedA = await deliver(ids.delegationIdA, {
@@ -1929,6 +1973,60 @@ function parentPlanInput() {
 const zeroFractionSecond = '2026-08-25T18:05:00Z'
 const threeDigitSecond = '2026-08-25T18:05:00.100Z'
 const nextSecondZeroFraction = '2026-08-25T18:05:01Z'
+const submillisecondEarlier = '2026-08-25T18:05:00.0001Z'
+const submillisecondLater = '2026-08-25T18:05:00.0009Z'
+
+test('snapshot ordering preserves sub-millisecond timestamp precision', () => {
+  const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+  buffer.accept(runningEvent({ observedAt: submillisecondLater }))
+  buffer.accept(runningEvent({ observedAt: submillisecondEarlier }))
+
+  const packet = buffer.flush()
+  expect(packet.childSnapshots[0]).toMatchObject({
+    phase: 'running',
+    lastObservedAt: submillisecondLater,
+    observedEventCount: 2,
+  })
+})
+
+test('the observation window span retains sub-millisecond minimum and maximum', () => {
+  const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+  buffer.accept(runningEvent({ observedAt: submillisecondLater }))
+  buffer.accept(runningEvent({ observedAt: submillisecondEarlier }))
+
+  const packet = buffer.flush()
+  expect(packet.firstEventAt).toBe(submillisecondEarlier)
+  expect(packet.lastEventAt).toBe(submillisecondLater)
+})
+
+test('an accepted older terminal event latches without regressing the snapshot', () => {
+  const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+  const newestRunningAt = at(20_000)
+  const olderTerminalAt = at(10_000)
+  buffer.accept(runningEvent({ observedAt: newestRunningAt }))
+
+  expect(
+    buffer.accept(
+      runningEvent({
+        phase: 'completed',
+        observedAt: olderTerminalAt,
+        terminalResultRef: ids.resultRefA,
+      })
+    )
+  ).toMatchObject({ outcome: 'retained', entryKind: 'terminal' })
+
+  const packet = buffer.flush()
+  expect(packet.childSnapshots[0]).toMatchObject({
+    phase: 'running',
+    lastObservedAt: newestRunningAt,
+    observedEventCount: 2,
+  })
+  expect(packet.entries).toMatchObject([{ phase: 'completed', observedAt: olderTerminalAt }])
+  expect(buffer.accept(runningEvent({ observedAt: at(30_000) }))).toMatchObject({
+    outcome: 'rejected',
+    reason: 'terminated_generation',
+  })
+})
 
 test('a coarser-fraction terminal observation supersedes an earlier running snapshot chronologically', () => {
   const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })

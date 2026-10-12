@@ -44,6 +44,11 @@ function durablePublications() {
     async list() {
       return [...order]
     },
+    seedLegacyEvent(input) {
+      // Represents durable rows written by an older publisher before schema
+      // validation required interaction context for awaiting-input events.
+      order.push(input)
+    },
     get size() {
       return order.length
     },
@@ -161,6 +166,49 @@ describe('child progress lead feed over the canonical durable outlet', () => {
     expect(again).toEqual({ foldedEventCount: 0, duplicateEventCount: 2, rejectedEventCount: 0 })
     expect(second.feed.takeDeliveries()).toEqual([])
     expect(second.feed.stats().duplicateEventCount).toBe(2)
+  })
+
+  test('rejects one malformed legacy awaiting-input row and continues replaying later events', async () => {
+    const publications = durablePublications()
+    publications.seedLegacyEvent(event({ details: { state: 'awaiting_input' } }))
+    publications.seedLegacyEvent(
+      event({
+        type: 'delegation.completed',
+        details: { childAttemptId: ATT_A, terminalResultRef: ART_A },
+      })
+    )
+    const { feed } = createFeed(publications)
+
+    expect(await feed.replay()).toEqual({
+      foldedEventCount: 1,
+      duplicateEventCount: 0,
+      rejectedEventCount: 1,
+    })
+    const [delivery] = feed.takeDeliveries()
+    expect(delivery.packet.entries).toMatchObject([
+      { phase: 'completed', terminalResultRef: ART_A },
+    ])
+  })
+
+  test('propagates projection failures instead of counting them as invalid publications', async () => {
+    const publications = durablePublications()
+    publications.seedLegacyEvent(
+      event({
+        type: 'delegation.completed',
+        details: { childAttemptId: ATT_A, terminalResultRef: ART_A },
+      })
+    )
+    const feed = new ChildProgressLeadFeed({
+      publications,
+      dispatcher: {
+        acceptProgress() {
+          throw new Error('PROJECTION_FAILED')
+        },
+      },
+      generationOf: () => 1,
+    })
+
+    await expect(feed.replay()).rejects.toThrow('PROJECTION_FAILED')
   })
 
   test('human input reaches the outbox ahead of any routine batching', async () => {

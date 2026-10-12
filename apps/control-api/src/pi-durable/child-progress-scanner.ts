@@ -1,8 +1,10 @@
 import { canonicalJsonStringify, IdentifierSchemas } from '@control-plane/contracts'
 import {
+  DelegationInteractionContextSchema,
   DelegationRuntimeAdmissionRequestSchema,
   type CanonicalDelegationRuntimeBridge,
   type ChildProgressInput,
+  type DelegationInteractionContext,
 } from '@control-plane/orchestration'
 import {
   RuntimeExecutionHandleSchema,
@@ -84,13 +86,15 @@ export class PiDurableChildProgressScanner {
           continue
         }
         const target = status.state === 'timed_out' ? 'failed' : status.state
-        if (
+        const recoverRunningEvidence =
           (target === 'completed' || target === 'awaiting_input') &&
           ['queued', 'starting'].includes(record.canonicalState)
-        ) {
-          // A first poll can observe terminal before J1 has recorded running.
-          // Recover its actual committed running event rather than inventing a checkpoint.
-          let runningAt: string | undefined
+        let runningAt: string | undefined
+        let interaction: DelegationInteractionContext | undefined
+        if (target === 'awaiting_input' || recoverRunningEvidence) {
+          // An awaiting-input status is only useful to the lead when its exact
+          // server-observed interaction can be recovered from the runtime's
+          // authenticated progress stream. Never synthesize an interaction ID.
           let sequence = 0
           let occurredAt = 0
           let count = 0
@@ -108,7 +112,19 @@ export class PiDurableChildProgressScanner {
             occurredAt = Date.parse(event.occurredAt)
             if (!runningAt && event.type === 'status' && event.data['state'] === 'running')
               runningAt = event.occurredAt
+            if (event.type === 'interaction') {
+              const parsedInteraction = DelegationInteractionContextSchema.safeParse({
+                interactionId: event.data['interactionId'],
+                kind: event.data['kind'],
+              })
+              interaction = parsedInteraction.success ? parsedInteraction.data : undefined
+            }
           }
+        }
+        if (recoverRunningEvidence) {
+          // A first poll can observe a terminal/awaiting-input state before J1
+          // has recorded running. Recover its actual committed running event
+          // rather than inventing a checkpoint.
           await this.options.assertCurrent(structuredClone(record))
           if (!runningAt) throw new Error('PI_CHILD_PROGRESS_RUNNING_EVIDENCE_REQUIRED')
           await this.options.bridge.recordProgress(record.identity, {
@@ -145,7 +161,10 @@ export class PiDurableChildProgressScanner {
               retryable: false,
             },
           }
-        } else if (target === 'cancelled' || target === 'running' || target === 'awaiting_input') {
+        } else if (target === 'awaiting_input') {
+          if (!interaction) throw new Error('PI_CHILD_PROGRESS_INTERACTION_REQUIRED')
+          progress = { ...base, state: target, interaction }
+        } else if (target === 'cancelled' || target === 'running') {
           progress = { ...base, state: target }
         } else {
           skipped++

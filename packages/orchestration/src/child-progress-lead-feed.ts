@@ -1,6 +1,7 @@
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import { createHash } from 'node:crypto'
 import {
+  DelegationInteractionContextSchema,
   DelegationEventSchema,
   type DelegationEvent,
   type DelegationEventPublisher,
@@ -68,9 +69,9 @@ export interface ChildProgressLeadFeedStats {
  *   duplicate, and redelivery policy stays where it belongs — with the
  *   canonical publisher's idempotency contract.
  *
- * Human input never rides the event fold: the owner places it on the
- * dispatcher with `acceptHumanInput` in the same scheduling step that
- * accepted it, so no routine progress batching can delay it.
+ * Human input payloads never ride the event fold: awaiting-input progress
+ * carries only the authenticated interaction identity, while the owner places
+ * accepted human input on the dispatcher in its own scheduling step.
  */
 export class ChildProgressLeadFeed implements DelegationEventPublisher {
   #foldedEventCount = 0
@@ -97,8 +98,18 @@ export class ChildProgressLeadFeed implements DelegationEventPublisher {
    */
   async replay(): Promise<ChildProgressLeadFeedStats> {
     const before = this.#snapshotStats()
-    for (const event of await this.options.publications.list()) {
-      this.#fold(DelegationEventSchema.parse(event))
+    for (const candidate of await this.options.publications.list()) {
+      const parsed = DelegationEventSchema.safeParse(candidate)
+      if (!parsed.success) {
+        // A malformed or legacy event without authenticated interaction
+        // context cannot be projected. Reject only that row and keep replaying
+        // later canonical publications; never fabricate a reference.
+        this.#rejectedEventCount += 1
+        continue
+      }
+      // Keep projection errors visible to the caller; only schema-validation
+      // failures are rejected per row during replay.
+      this.#fold(parsed.data)
     }
     const after = this.#snapshotStats()
     return {
@@ -124,6 +135,9 @@ export class ChildProgressLeadFeed implements DelegationEventPublisher {
 
   #fold(event: DelegationEvent): void {
     const childAttemptId = event.details['childAttemptId']
+    const interaction = DelegationInteractionContextSchema.optional().parse(
+      event.details['interaction']
+    )
     const receipt = this.options.dispatcher.acceptProgress(
       delegationEventToEvidenceEvent({
         event,
@@ -132,6 +146,7 @@ export class ChildProgressLeadFeed implements DelegationEventPublisher {
         ...(typeof childAttemptId === 'string' && childAttemptId.length > 0
           ? { childAttemptId }
           : {}),
+        ...(interaction ? { interaction } : {}),
       })
     )
     if (receipt.outcome === 'duplicate') this.#duplicateEventCount += 1

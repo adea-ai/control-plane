@@ -196,3 +196,73 @@ test('unknown paid inference is skipped; unsuccessful outcome publishes a bounde
   expect(JSON.stringify(state.calls)).not.toContain('private-provider')
   expect(state.retained).toHaveLength(0)
 })
+
+test('awaiting-input scan publishes only the interaction recovered from the exact runtime event stream', async () => {
+  const { scanner, state, adapter, record } = fixture()
+  state.status = {
+    handle: structuredClone(record.handle),
+    state: 'awaiting_input',
+    observedAt: '2026-10-08T00:00:03.000Z',
+  }
+  state.events = [
+    {
+      handleId: record.handle.handleId,
+      sequence: 1,
+      occurredAt: '2026-10-08T00:00:01.000Z',
+      type: 'status',
+      data: { state: 'running' },
+    },
+    {
+      handleId: record.handle.handleId,
+      sequence: 2,
+      occurredAt: '2026-10-08T00:00:02.000Z',
+      type: 'interaction',
+      data: { interactionId: id('int'), kind: 'approval' },
+    },
+  ]
+
+  expect(await scanner.scan(adapter)).toMatchObject({ published: 1, blocked: [] })
+  expect(state.calls).toEqual([
+    {
+      delegationId: record.identity.delegationId,
+      childAttemptId: record.identity.childAttemptId,
+      state: 'running',
+      observedAt: state.events[0].occurredAt,
+    },
+    {
+      delegationId: record.identity.delegationId,
+      childAttemptId: record.identity.childAttemptId,
+      observedAt: state.status.observedAt,
+      state: 'awaiting_input',
+      interaction: { interactionId: id('int'), kind: 'approval' },
+    },
+  ])
+})
+
+test('awaiting-input scan fails closed when no canonical interaction event exists', async () => {
+  const { scanner, state, adapter, record } = fixture()
+  state.status = {
+    handle: structuredClone(record.handle),
+    state: 'awaiting_input',
+    observedAt: '2026-10-08T00:00:03.000Z',
+  }
+  state.events = [
+    {
+      handleId: record.handle.handleId,
+      sequence: 1,
+      occurredAt: '2026-10-08T00:00:01.000Z',
+      type: 'status',
+      data: { state: 'running' },
+    },
+  ]
+
+  expect(await scanner.scan(adapter)).toMatchObject({ published: 0, blocked: [expect.anything()] })
+  expect(state.calls).toEqual([
+    {
+      delegationId: record.identity.delegationId,
+      childAttemptId: record.identity.childAttemptId,
+      state: 'running',
+      observedAt: state.events[0].occurredAt,
+    },
+  ])
+})

@@ -236,7 +236,10 @@ interface ChildUsageEntry {
   highestPublication: number
   /** O(1) report id that owns the watermark above. */
   retainedReportId: string | undefined
-  /** True when a restored snapshot predates the ordering watermark. */
+  /**
+   * True when ordering is ambiguous because a restored snapshot predates the
+   * watermark or the bounded sequence-free replay history has evicted content.
+   */
   orderingUncertain: boolean
 }
 
@@ -404,7 +407,9 @@ export class ChildUsageLedger {
     // recorded against; a newer report supersedes both explicitly.
     entry.reconciled = undefined
     entry.settled = undefined
-    if (previous !== undefined) this.#trackSuperseded(entry, usageFingerprint(previous))
+    if (previous !== undefined) {
+      this.#trackSuperseded(entry, usageFingerprint(previous), sequence === undefined)
+    }
     if (sequence !== undefined) {
       entry.highestPublication = sequence
       entry.retainedReportId = reportId
@@ -646,12 +651,16 @@ export class ChildUsageLedger {
     }
   }
 
-  #trackSuperseded(entry: ChildUsageEntry, fingerprint: string): void {
+  #trackSuperseded(entry: ChildUsageEntry, fingerprint: string, sequenceFree: boolean): void {
     entry.supersededFingerprints.add(fingerprint)
     while (entry.supersededFingerprints.size > this.#maximumTrackedReportIds) {
       const oldest = entry.supersededFingerprints.values().next()
       if (oldest.done) break
       entry.supersededFingerprints.delete(oldest.value)
+      // Once sequence-free content history is evicted, an unseen delivery can
+      // no longer be distinguished from an old replay. Keep that uncertainty
+      // sticky across snapshots so such reports fail closed.
+      if (sequenceFree) entry.orderingUncertain = true
     }
   }
 
