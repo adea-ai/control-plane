@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
-import { isMigrationRelevantPath } from '../.github/scripts/neon-migration-gate.mjs'
+import { isNeonProofRelevantPath } from '../.github/scripts/neon-migration-gate.mjs'
 
 const workflow = readFileSync(
   new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
@@ -37,6 +37,12 @@ const neonCompatibilitySource = readFileSync(
 )
 const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
 const realNode = execFileSync('which', ['node'], { encoding: 'utf8' }).trim()
+const neonCompatibilityStep = 'Verify Neon provider compatibility'
+const branchCreateStep = 'Create Neon branch'
+const cleanupLookupStep = 'Find exact preview branch for cleanup'
+const deleteBranchStep = 'Delete Neon branch'
+const absenceStep = 'Verify Neon branch absence'
+const budgetStep = 'Enforce five-minute Neon verification budget'
 const migrationVerifyStep = "Verify migrations and this shard's integration slice"
 const conformanceStep = 'Verify cross-profile conformance matrix (Postgres)'
 const hostedGraphStep = 'Verify Hosted PostgreSQL and Restate graph'
@@ -56,6 +62,26 @@ function writeGateFile(repository, relativePath, value) {
 }
 
 function verifiedJobs() {
+  return {
+    jobs: [
+      {
+        name: 'Verify Neon provider compatibility',
+        status: 'completed',
+        conclusion: 'success',
+        steps: [
+          branchCreateStep,
+          neonCompatibilityStep,
+          cleanupLookupStep,
+          deleteBranchStep,
+          absenceStep,
+          budgetStep,
+        ].map((name) => ({ name, status: 'completed', conclusion: 'success' })),
+      },
+    ],
+  }
+}
+
+function legacyVerifiedJobs() {
   return {
     jobs: [1, 2, 3].map((shard) => ({
       name: `Verify Neon shard ${shard} (migrations and integration slice)`,
@@ -323,16 +349,17 @@ function cleanupOwner(overrides = {}) {
 }
 
 function cleanupOwnerJobs(overrides = {}) {
+  const { jobName = 'Verify Neon provider compatibility', ...responseOverrides } = overrides
   return {
     total_count: 1,
     jobs: [
       {
-        name: 'Verify Neon shard 1 (migrations and integration slice)',
+        name: jobName,
         status: 'completed',
         steps: [{ name: 'Create Neon branch', status: 'completed', conclusion: 'failure' }],
       },
     ],
-    ...overrides,
+    ...responseOverrides,
   }
 }
 
@@ -450,9 +477,8 @@ describe('Neon preview cleanup lookup', () => {
     expect(cleanupJob).toContain('run: *find_owned_preview_branch')
     expect(cleanupJob).toContain('run: *verify_owned_preview_absence')
     expect(workflow).toContain('preview/main-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}')
-    expect(workflow).toContain(
-      'name=preview/main-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-s${{ matrix.shard }}'
-    )
+    expect(workflow).toContain('name=preview/main-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-s1')
+    expect(workflow).toContain("SHARD: '1'")
     expect(workflow).toContain("date -u --date '+1 day'")
     expect(workflow).toContain("if: always() && steps.preview_branch.outputs.name != ''")
   })
@@ -474,6 +500,29 @@ describe('Neon preview cleanup lookup', () => {
     expect(result.requests[0].options.headers.Authorization).toBe('Bearer synthetic-github-token')
     expect(result.requests[2].options.headers.Authorization).toBe('Bearer synthetic-key')
     expect(result.writes[0].value).toBe('branch_id=br-synthetic-preview\n')
+  })
+
+  test('manual cleanup still resolves legacy shard 2 owners and branch suffixes', async () => {
+    const result = await findCleanupBranch(
+      [
+        { body: cleanupOwner() },
+        {
+          body: cleanupOwnerJobs({
+            jobName: 'Verify Neon shard 2 (migrations and integration slice)',
+          }),
+        },
+        {
+          body: {
+            branches: [{ ...previewBranch, name: 'preview/main-404-1-s2' }],
+          },
+        },
+      ],
+      { ...manualCleanupInputs, SHARD: '2' }
+    )
+    expect(result.requests[2].url).toContain('search=preview%2Fmain-404-1-s2')
+    expect(result.writes).toEqual([
+      { path: '/synthetic/output', value: 'branch_id=br-synthetic-preview\n' },
+    ])
   })
 
   test('manual cleanup refuses wrong or live owners before any Neon request', async () => {
@@ -586,41 +635,30 @@ describe('Neon preview cleanup lookup', () => {
     expect(observed.requests).toEqual([])
   })
 
-  test('partitions the suite across per-shard branches with the long pole on shard 1', () => {
-    expect(workflow).toContain('fail-fast: false')
-    expect(workflow).toContain('shard: [1, 2, 3]')
-    expect(workflow).toContain('timeout-minutes: 45')
-    expect(workflow).toContain('bun scripts/run-integration-tests.mjs --shard=${{ matrix.shard }}')
-    const conformance = workflow.split('      - name: Verify cross-profile conformance matrix')[1]
-    expect(conformance).toContain(
-      "if: steps.credentials.outputs.available == 'true' && matrix.shard == 1"
+  test('keeps Neon to one bounded provider proof while portable coverage remains local', () => {
+    expect(workflow).not.toContain('matrix:')
+    expect(workflow).not.toContain('bun scripts/run-integration-tests.mjs')
+    expect(workflow).not.toContain('db:migrate')
+    expect(workflow).not.toContain('bun run build')
+    expect(workflow).not.toContain('RUN_M10_POSTGRES_CONFORMANCE')
+    expect(workflow).toContain('timeout-minutes: 20')
+    expect(workflow).toContain(
+      'timeout --signal=TERM --kill-after=5s 90s bun --cwd=packages/database scripts/verify-neon-provider-compatibility.mjs'
     )
-    expect(workflow).toContain('SHARD: ${{ matrix.shard }}')
-  })
-
-  test('runs the integration slice once while preserving a failed verify step', () => {
-    const step = workflow
-      .split("      - name: Verify migrations and this shard's integration slice")[1]
+    const proof = workflow
+      .split(`      - name: ${neonCompatibilityStep}`)[1]
       ?.split('\n      - name:')[0]
-    expect(step).not.toContain('if bun scripts/run-integration-tests.mjs')
-    expect(step).not.toContain('retrying once for a transient Neon connection drop')
-    expect(
-      (
-        step.match(/bun scripts\/run-integration-tests\.mjs --shard=\$\{\{ matrix\.shard \}\}/g) ??
-        []
-      ).length
-    ).toBe(1)
-    // The workflow invokes the shard command once; assigned files run once with no retry.
-    expect((step.match(/db:migrate/g) ?? []).length).toBe(1)
-    expect(step).toContain(
-      'bun --cwd=packages/database scripts/verify-neon-provider-compatibility.mjs'
+    expect(proof).toContain('timeout-minutes: 2')
+    expect(workflow.indexOf('Start Neon verification budget')).toBeLessThan(
+      workflow.indexOf('Create Neon branch')
     )
-    expect(step).toContain('if [ "${{ matrix.shard }}" = "1" ]')
-    expect(
-      step.indexOf('bun --cwd=packages/database scripts/verify-neon-provider-compatibility.mjs')
-    ).toBeLessThan(
-      step.indexOf('bun scripts/run-integration-tests.mjs --shard=${{ matrix.shard }}')
+    expect(workflow.indexOf('Verify Neon branch absence')).toBeLessThan(
+      workflow.indexOf(budgetStep)
     )
+    expect(workflow).toContain('elapsed > 300')
+    expect(workflow).toContain('test -n "$DATABASE_MIGRATION_PASSWORD"')
+    expect(workflow).toContain('[[ "$NEON_PROJECT_ID" =~ ^[a-z0-9-]{1,60}$ ]]')
+    expect(workflow).not.toContain('NEON_CI_ADMIN_PASSWORD')
     expect(neonCompatibilitySource).toContain("role: 'control_plane_app'")
     expect(neonCompatibilitySource).toContain("role: 'control_plane_migrator'")
     expect(neonCompatibilitySource).toContain("url.searchParams.get('sslmode')")
@@ -628,10 +666,9 @@ describe('Neon preview cleanup lookup', () => {
     expect(neonCompatibilitySource).toContain('sql.begin(')
   })
 
-  test('keeps database credentials out of dependency installation, builds, and cleanup', () => {
+  test('keeps database credentials out of dependency installation and cleanup', () => {
     const urlSetupIndex = workflow.indexOf('      - name: Build restricted database URLs')
     expect(workflow.indexOf('run: bun install --frozen-lockfile')).toBeLessThan(urlSetupIndex)
-    expect(workflow.indexOf('run: bun run build')).toBeLessThan(urlSetupIndex)
 
     const cleanup = workflow.split('      - name: Find exact preview branch for cleanup')[1]
     const deleteBranch = workflow.split('      - name: Delete Neon branch')[1]
@@ -655,6 +692,9 @@ describe('Neon preview cleanup lookup', () => {
     expect(pullRequestWorkflow).toContain('local-admin-only')
     expect(pullRequestWorkflow).toContain('RUN_M10_POSTGRES_CONFORMANCE')
     expect(pullRequestWorkflow).toContain('bun test tests/cp1-embedded-durable-execution.test.mjs')
+    expect(
+      pullRequestWorkflow.split('bash scripts/run-hosted-graph-qualification.sh')
+    ).toHaveLength(2)
     expect(pullRequestWorkflow).not.toContain('bun run test:integration')
     expect(pullRequestWorkflow).toContain('docker compose up -d --wait postgres')
     expect(pullRequestWorkflow.indexOf('docker compose up -d --wait postgres')).toBeLessThan(
@@ -670,18 +710,16 @@ describe('Neon preview cleanup lookup', () => {
     expect(pullRequestWorkflow).not.toMatch(/\$\{\{[^}]*\bsecrets\b|^\s*secrets\s*:/m)
   })
 
-  test('scopes test database ownership setup to the freshly resolved preview administrator', () => {
+  test('uses restricted runtime and migrator URLs without an admin role or grants', () => {
     const setup = workflow
-      .split('      - name: Prepare isolated preview database ownership')[1]
-      ?.split("      - name: Verify migrations and this shard's integration slice")[0]
-    expect(setup).toContain('DATABASE_ADMIN_URL: ${{ steps.create_neon_branch.outputs.db_url }}')
-    expect(setup).toContain(
-      'PREVIEW_DATABASE_HOST: ${{ steps.create_neon_branch.outputs.db_host }}'
-    )
-    expect(setup).toContain('url.hostname !== process.env.PREVIEW_DATABASE_HOST')
-    expect(setup).toContain('url.username !== "neondb_owner"')
-    expect(setup).toContain('GRANT control_plane_migrator TO neondb_owner WITH SET TRUE')
-    expect(setup).not.toContain('GRANT control_plane_app')
+      .split('      - name: Build restricted database URLs')[1]
+      ?.split(`      - name: ${neonCompatibilityStep}`)[0]
+    expect(setup).toContain('control_plane_app')
+    expect(setup).toContain('control_plane_migrator')
+    expect(setup).toContain('DATABASE_URL_UNPOOLED')
+    expect(setup).not.toContain('control_plane_admin')
+    expect(setup).not.toContain('GRANT ')
+    expect(setup).not.toContain('DATABASE_ADMIN_PASSWORD')
   })
   test('treats a successfully verified absent preview as a no-op', async () => {
     expect(cleanupScript).toBeString()
@@ -904,7 +942,6 @@ function execute(overrides = {}) {
     DATABASE_HOST_POOLED: 'pool.example.invalid',
     DATABASE_APP_PASSWORD: 'synthetic@app:password',
     DATABASE_MIGRATION_PASSWORD: 'synthetic/migration?password',
-    DATABASE_ADMIN_PASSWORD: 'synthetic/admin?password',
     GITHUB_ENV: '/synthetic/github-env',
     ...overrides,
   }
@@ -949,12 +986,6 @@ describe('Neon restricted connection workflow', () => {
         'control_plane_migrator',
         'synthetic/migration?password',
       ],
-      [
-        'DATABASE_ADMIN_URL',
-        'direct.example.invalid',
-        'control_plane_admin',
-        'synthetic/admin?password',
-      ],
     ]) {
       const url = new URL(values[name])
       expect(url.hostname).toBe(host)
@@ -963,7 +994,7 @@ describe('Neon restricted connection workflow', () => {
       expect(url.searchParams.get('sslmode')).toBe('require')
       expect(masks).toContain(`::add-mask::${values[name]}`)
     }
-    expect(masks).toHaveLength(4)
+    expect(masks).toHaveLength(3)
   })
 
   test('fails closed when required connection inputs are absent', () => {
@@ -972,18 +1003,17 @@ describe('Neon restricted connection workflow', () => {
       'DATABASE_HOST_POOLED',
       'DATABASE_APP_PASSWORD',
       'DATABASE_MIGRATION_PASSWORD',
-      'DATABASE_ADMIN_PASSWORD',
       'GITHUB_ENV',
     ]) {
       expect(() => execute({ [name]: undefined })).toThrow(
-        'Neon migration connection inputs are unavailable'
+        'Neon compatibility connection inputs are unavailable'
       )
     }
   })
 })
 
 describe('Neon trusted-main migration gating', () => {
-  test('the shard matrix skips only an explicit successful classifier skip', () => {
+  test('the compatibility proof job skips only an explicit successful classifier skip', () => {
     const verifyJob = workflow.split('\n  verify_neon_preview:\n')[1]
     const conditionBlock = verifyJob.match(/^    if:\s*>-\n((?:      .*\n?)+)/m)?.[1]
     const condition = conditionBlock?.replace(/\s+/g, ' ').trim()
@@ -1046,7 +1076,7 @@ describe('Neon trusted-main migration gating', () => {
     expect(result.status).toBe(0)
     expect(result.output).toBe('verify=false\n')
     expect(result.stdout).toContain(
-      'pushed commit changes release metadata without changing migration-relevant content'
+      'pushed commit changes release metadata without changing Neon-proof-relevant content'
     )
     // Query exact-parent verification without consulting the stale listing.
     expect(result.ghCall).toContain('head_sha=')
@@ -1085,7 +1115,7 @@ describe('Neon trusted-main migration gating', () => {
   test('release metadata never hides failed or missing parent verification', () => {
     const credentialSkippedJobs = verifiedJobs()
     credentialSkippedJobs.jobs[0].steps.find(
-      (step) => step.name === migrationVerifyStep
+      (step) => step.name === neonCompatibilityStep
     ).conclusion = 'skipped'
     for (const options of [
       { parentResponse: { workflow_runs: [] } },
@@ -1120,7 +1150,7 @@ describe('Neon trusted-main migration gating', () => {
     })
     expect(result.status).toBe(0)
     expect(result.output).toBe('verify=false\n')
-    expect(result.stdout).toContain('without changing migration-relevant content')
+    expect(result.stdout).toContain('without changing Neon-proof-relevant content')
     expect(result.ghCall).toContain('head_sha=')
   }, 30_000)
 
@@ -1172,45 +1202,46 @@ describe('Neon trusted-main migration gating', () => {
     }
   }, 30_000)
 
-  test('rejects green workflow runs whose actual shard verification did not succeed', () => {
+  test('requires one complete successful provider proof and cleanup', () => {
     const skippedJobs = { jobs: [] }
-    const unavailableJobs = verifiedJobs()
-    unavailableJobs.jobs[0].steps.find((step) => step.name === migrationVerifyStep).conclusion =
+    const unavailableProof = verifiedJobs()
+    unavailableProof.jobs[0].steps.find((step) => step.name === neonCompatibilityStep).conclusion =
       'skipped'
-    const missingShardJobs = verifiedJobs()
-    missingShardJobs.jobs.pop()
-    const failedIntegrationJobs = verifiedJobs()
-    failedIntegrationJobs.jobs[2].steps.find(
-      (step) => step.name === migrationVerifyStep
-    ).conclusion = 'failure'
-    const failedConformanceJobs = verifiedJobs()
-    failedConformanceJobs.jobs[0].steps.find((step) => step.name === conformanceStep).conclusion =
-      'skipped'
-    const duplicateShardJobs = verifiedJobs()
-    duplicateShardJobs.jobs.push({ ...duplicateShardJobs.jobs[0] })
-    const missingHostedGraphJobs = verifiedJobs()
-    missingHostedGraphJobs.jobs[2].steps = missingHostedGraphJobs.jobs[2].steps.filter(
-      (step) => step.name !== hostedGraphStep
+    const failedProof = verifiedJobs()
+    failedProof.jobs[0].steps.find((step) => step.name === neonCompatibilityStep).conclusion =
+      'failure'
+    const missingCleanup = verifiedJobs()
+    missingCleanup.jobs[0].steps = missingCleanup.jobs[0].steps.filter(
+      (step) => step.name !== absenceStep
     )
-    const skippedHostedGraphJobs = verifiedJobs()
-    skippedHostedGraphJobs.jobs[2].steps.find((step) => step.name === hostedGraphStep).conclusion =
-      'skipped'
+    const failedBudget = verifiedJobs()
+    failedBudget.jobs[0].steps.find((step) => step.name === budgetStep).conclusion = 'failure'
+    const duplicateJob = verifiedJobs()
+    duplicateJob.jobs.push({ ...duplicateJob.jobs[0] })
+    const failedLegacyRun = legacyVerifiedJobs()
+    failedLegacyRun.jobs[2].steps.find((step) => step.name === migrationVerifyStep).conclusion =
+      'failure'
 
     for (const jobs of [
       skippedJobs,
-      unavailableJobs,
-      missingShardJobs,
-      failedIntegrationJobs,
-      failedConformanceJobs,
-      duplicateShardJobs,
-      missingHostedGraphJobs,
-      skippedHostedGraphJobs,
+      unavailableProof,
+      failedProof,
+      missingCleanup,
+      failedBudget,
+      duplicateJob,
+      failedLegacyRun,
     ]) {
       const result = runMigrationGate({ jobsResponses: { 42: jobs } })
       expect(result.status).toBe(0)
       expect(result.output).toBe('verify=true\n')
     }
   }, 60_000)
+
+  test('accepts historical complete three-shard runs as stronger baselines', () => {
+    const result = runMigrationGate({ jobsResponses: { 42: legacyVerifiedJobs() } })
+    expect(result.status).toBe(0)
+    expect(result.output).toBe('verify=false\n')
+  }, 30_000)
 
   test('finds an actual verified baseline below recent successful runs that skipped shards', () => {
     const result = runMigrationGate({
@@ -1293,13 +1324,13 @@ describe('Neon trusted-main migration gating', () => {
       'turbo.json',
       'tsconfig.json',
     ]) {
-      expect(isMigrationRelevantPath(changedPath)).toBe(true)
+      expect(isNeonProofRelevantPath(changedPath)).toBe(true)
     }
-    expect(isMigrationRelevantPath('docs/notes.md')).toBe(false)
-    expect(isMigrationRelevantPath('scripts/run-postgres-restore-drill.mjs')).toBe(false)
+    expect(isNeonProofRelevantPath('docs/notes.md')).toBe(false)
+    expect(isNeonProofRelevantPath('scripts/run-postgres-restore-drill.mjs')).toBe(false)
   })
 
-  test('a Release Please commit with migration-relevant changes still runs verification', () => {
+  test('a Release Please commit with proof-relevant changes still runs verification', () => {
     const result = runMigrationGate({
       changedPaths: ['packages/database/src/schema.ts'],
       headMessage: 'chore(main): release 1.71.2',

@@ -13,9 +13,9 @@ import {
 const COMPOSE_COMMAND = 'docker compose'
 
 // `--shard=<n>` (or INTEGRATION_SHARD) runs one explicit slice of the suite.
-// Trusted-main Neon runs pair each shard with its own disposable branch. The
-// local PR lane runs all three inventory-checked slices concurrently against
-// one runner-owned disposable PostgreSQL service.
+// The local PR lane runs all three inventory-checked slices concurrently
+// against one runner-owned disposable PostgreSQL service. Trusted-main Neon
+// verification does not invoke this full portable integration suite.
 const integrationShard = parseIntegrationShard(
   process.argv.find((argument) => argument.startsWith('--shard='))?.slice('--shard='.length) ??
     process.env.INTEGRATION_SHARD
@@ -107,14 +107,6 @@ async function runIntegrationFileStreaming(testArguments, options) {
 async function runIntegrationShardStreaming(shard, integrationEnvironment, remoteDatabase) {
   const perTestTimeoutMs = remoteDatabase ? '120000' : '30000'
   for (const group of selectIntegrationShard(shard)) {
-    if (
-      remoteDatabase &&
-      process.env.GITHUB_ACTIONS === 'true' &&
-      group.qualification === 'hosted-graph-restate'
-    ) {
-      console.log('Hosted PostgreSQL/Restate graph runs in its required qualification step.')
-      continue
-    }
     for (const file of group.files) {
       const testArguments = integrationFileArguments(group, file, perTestTimeoutMs)
       await runIntegrationFileStreaming(testArguments, {
@@ -273,7 +265,8 @@ try {
   }
   if (integrationShard === null && remoteDatabase) {
     // Preserve the full remote command for callers that do not select explicit
-    // Neon shards. The trusted-main workflow uses the sharded path below.
+    // integration shards; trusted-main provider compatibility is a separate
+    // bounded workflow and does not invoke this portable suite.
     run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1', '--log-order=stream'], {
       environment: integrationEnvironment,
     })
@@ -320,7 +313,7 @@ try {
     await runLocalIntegrationShards(integrationEnvironment)
   } else {
     // Explicit local shard runs need the same built package entrypoints as the
-    // default local lane. Neon callers build once before creating their shards.
+    // default local lane. Remote callers may build their shared source first.
     if (!remoteDatabase) run('bun', ['run', 'build'], { environment: integrationEnvironment })
     await runIntegrationShardStreaming(integrationShard, integrationEnvironment, remoteDatabase)
   }

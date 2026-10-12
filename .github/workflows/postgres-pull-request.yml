@@ -64,6 +64,11 @@ jobs:
       - name: Verify cross-profile conformance matrix (Postgres)
         run: bun test tests/cp1-embedded-durable-execution.test.mjs
 
+      - name: Verify Hosted PostgreSQL and Restate graph
+        # This scenario has one explicit owner and requires a live Restate
+        # process; the qualification script rejects skips and cleans its fixture.
+        run: bash scripts/run-hosted-graph-qualification.sh
+
       - name: Remove owned PostgreSQL fixture
         if: always()
         timeout-minutes: 3

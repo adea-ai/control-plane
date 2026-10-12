@@ -773,42 +773,25 @@ test('provides a documented isolated integration-test runner', async () => {
   assert.match(documentation, /parallel/i)
 })
 
-test('Neon slice failure does not rerun successful database work', async () => {
+test('Neon provider proof is bounded and cleanup precedes its budget check', async () => {
   const workflow = await readFile(
     new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
     'utf8'
   )
-  const slice = workflow
-    .split("- name: Verify migrations and this shard's integration slice")[1]
+  const proof = workflow
+    .split('- name: Verify Neon provider compatibility')[1]
     ?.split('- name: Find exact preview branch for cleanup')[0]
-  const body = slice?.split('run: |\n')[1]
-  assert.ok(body, 'Neon integration slice command is required')
-  const script = body
-    .split('\n')
-    .map((line) => line.slice(10))
-    .join('\n')
-    .replaceAll('${{ matrix.shard }}', '1')
-  const directory = await mkdtemp(join(tmpdir(), 'neon-slice-failure-'))
-  const log = join(directory, 'invocations')
-  try {
-    await writeFile(
-      join(directory, 'bun'),
-      '#!/bin/sh\ncase "$*" in\n  "scripts/run-integration-tests.mjs --shard=1") printf "slice\\n" >> "$NEON_SLICE_FIXTURE_LOG"; exit 1 ;;\n  *) exit 0 ;;\nesac\n',
-      { mode: 0o700 }
-    )
-    const result = spawnSync('/bin/bash', ['-e', '-c', script], {
-      encoding: 'utf8',
-      env: { PATH: `${directory}:/usr/bin:/bin`, NEON_SLICE_FIXTURE_LOG: log },
-    })
-    assert.equal(result.status, 1, 'The failed slice must remain a failed check')
-    assert.equal(
-      await readFile(log, 'utf8'),
-      'slice\n',
-      'Do not rerun the whole slice after its drill fails'
-    )
-  } finally {
-    await rm(directory, { recursive: true, force: true })
-  }
+  assert.ok(proof, 'The bounded Neon compatibility proof is required')
+  assert.match(proof, /timeout-minutes: 2/)
+  assert.match(proof, /timeout --signal=TERM --kill-after=5s 90s bun --cwd=packages\/database/)
+  assert.equal((proof.match(/verify-neon-provider-compatibility\.mjs/g) ?? []).length, 1)
+  assert.doesNotMatch(workflow, /run-integration-tests\.mjs|db:migrate|bun run build/)
+  assert.ok(
+    workflow.indexOf('- name: Verify Neon branch absence') <
+      workflow.indexOf('- name: Enforce five-minute Neon verification budget'),
+    'The elapsed-time check must run after deletion and absence verification'
+  )
+  assert.match(workflow, /if: always\(\) && steps\.preview_branch\.outputs\.name != ''/)
 })
 
 test('isolates credentialed Neon validation from pull-request source', async () => {
@@ -843,15 +826,22 @@ test('isolates credentialed Neon validation from pull-request source', async () 
     /if: github\.event_name == 'repository_dispatch' && github\.ref == 'refs\/heads\/main'/
   )
   assert.doesNotMatch(cleanupJob, /create-branch-action|bun install|bun run build|db:migrate/)
-  assert.match(neonWorkflow, /NEON_CI_ADMIN_PASSWORD/)
-  assert.match(neonWorkflow, /DATABASE_ADMIN_PASSWORD/)
-  assert.match(neonWorkflow, /control_plane_admin/)
-  assert.match(neonWorkflow, /"DATABASE_ADMIN_URL=" \+ adminUrl/)
+  assert.match(neonWorkflow, /name: Verify Neon provider compatibility/)
+  assert.match(neonWorkflow, /control_plane_app/)
+  assert.match(neonWorkflow, /control_plane_migrator/)
+  assert.doesNotMatch(
+    neonWorkflow,
+    /NEON_CI_ADMIN_PASSWORD|DATABASE_ADMIN_PASSWORD|control_plane_admin/
+  )
+  assert.match(neonWorkflow, /verify-neon-provider-compatibility\.mjs/)
+  assert.match(neonWorkflow, /90s bun --cwd=packages\/database/)
+  assert.match(neonWorkflow, /elapsed > 300/)
   assert.match(neonWorkflow, /preview\/main-/)
   assert.match(neonWorkflow, /expires_at: \$\{\{ env\.EXPIRES_AT \}\}/)
   assert.doesNotMatch(pullRequestWorkflow, /\$\{\{[^}]*\bsecrets\b|^\s*secrets\s*:/m)
   assert.match(pullRequestWorkflow, /RUN_M10_POSTGRES_CONFORMANCE/)
   assert.match(pullRequestWorkflow, /bun test tests\/cp1-embedded-durable-execution\.test\.mjs/)
+  assert.match(pullRequestWorkflow, /bash scripts\/run-hosted-graph-qualification\.sh/)
   assert.doesNotMatch(pullRequestWorkflow, /bun run test:integration/)
   assert.ok(validationJob)
   assert.match(validationJob, /uses: 0xPlayerOne\/code-foundry/)

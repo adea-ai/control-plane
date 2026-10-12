@@ -1,3 +1,8 @@
+> Historical proposal only: the LangGraph inventory-file move described below was not a qualified
+> fix for the five-minute trusted-main target. The current workflow keeps the portable suite on
+> local PostgreSQL and uses a bounded Neon provider-compatibility proof. See
+> [the current compatibility-budget evidence](m11-neon-compatibility-budget-2026-10-12.md).
+
 # Neon integration shard rebalance — 2026-10-12
 
 The completed trusted-main run [38198473355](https://github.com/adea-ai/control-plane/actions/runs/38198473355)
