@@ -6367,6 +6367,126 @@
       },
       "isRLSEnabled": false
     },
+    "public.runtime_node_credential_audit_events": {
+      "name": "runtime_node_credential_audit_events",
+      "schema": "",
+      "columns": {
+        "sequence": {
+          "name": "sequence",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "action": {
+          "name": "action",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "credential_id": {
+          "name": "credential_id",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "node_id": {
+          "name": "node_id",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revocation_version": {
+          "name": "revocation_version",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "principal_ref": {
+          "name": "principal_ref",
+          "type": "varchar(256)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "at": {
+          "name": "at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "runtime_node_credential_audit_events_workspace_index": {
+          "name": "runtime_node_credential_audit_events_workspace_index",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "sequence",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "runtime_node_credential_audit_events_credential_index": {
+          "name": "runtime_node_credential_audit_events_credential_index",
+          "columns": [
+            {
+              "expression": "credential_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "sequence",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "runtime_node_credential_audit_events_action_check": {
+          "name": "runtime_node_credential_audit_events_action_check",
+          "value": "\"runtime_node_credential_audit_events\".\"action\" = 'revoke'"
+        },
+        "runtime_node_credential_audit_events_outcome_check": {
+          "name": "runtime_node_credential_audit_events_outcome_check",
+          "value": "\"runtime_node_credential_audit_events\".\"outcome\" in ('applied', 'replayed', 'workspace_refused')"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.runtime_node_issued_credentials": {
       "name": "runtime_node_issued_credentials",
       "schema": "",
