@@ -23,6 +23,31 @@ test('durable dispatch reserves full input and fences a duplicate across SQLite 
   })
 })
 
+test('trusted no-send reconciliation reuses only the exact retained inference hold', async () => {
+  await withUsageAuthorityContext(async ({ bridge, authority, workspaceId, reopen }) => {
+    const key = 'pi-turn:one:pi-generation:2'
+    await bridge.authorizeInference(authority, key)
+    const { bridge: reopened, ledger: reopenedLedger } = await reopen()
+    await expect(
+      reopened.authorizeInference(authority, key, {
+        schemaVersion: 'pi-inference-resume-permit/v1',
+        inferenceKey: 'pi-turn:one:pi-generation:3',
+      })
+    ).rejects.toThrow('PI_INFERENCE_RESUME_PERMIT_MISMATCH')
+    await expect(
+      reopened.authorizeInference(authority, key, {
+        schemaVersion: 'pi-inference-resume-permit/v1',
+        inferenceKey: key,
+      })
+    ).resolves.toMatchObject({ maxOutputTokens: 32, maximumInputTokens: 64 })
+    expect(
+      (await reopenedLedger.entries(workspaceId, ids.executionId)).filter(
+        (entry) => entry.kind === 'model_reservation'
+      )
+    ).toHaveLength(1)
+  })
+})
+
 test('another process cannot redispatch an admitted native generation', async () => {
   await withUsageAuthorityContext(async ({ bridge, authority, directory, path, priceSnapshot }) => {
     const key = 'pi-turn:one:pi-generation:2'

@@ -25,7 +25,9 @@ import {
   SqliteDelegationRepository,
   SqliteDelegationToolAdmissionRepository,
   SqliteToolCallRepository,
+  SqliteDurableUsageStore,
 } from '@control-plane/sqlite-persistence'
+import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
   createFixture,
   delegationInput,
@@ -409,7 +411,29 @@ async function fixture({
       plans: new SqliteExecutionPlanRepository(provider),
       contexts: new SqliteContextPackageRepository(provider),
       delegations: new SqliteDelegationRepository(provider),
+      // Supply the current governed-child test authority without copying PR-owned production code.
+      scopeAdmission: {
+        authority: scopeAuthority,
+        now: () => state.now,
+        resolveCallerPrincipalId: async () => 'principal:original-actor',
+      },
+      childAdmission: {
+        async prepare(request) {
+          return {
+            schemaVersion: 'pi-child-admission/v1',
+            ...request,
+            authorityRevision: 1,
+            productRevision: 'product:rev-1',
+            productReaderPrincipalId: 'svc_product-reader',
+            selectionRef: 'selection:child-role',
+            selectionRevision: 1,
+            expiresAt: '2999-01-01T00:00:00.000Z',
+          }
+        },
+        async assertCurrent() {},
+      },
     }
+    storage.childAllocator = storage.delegations
     if (workspace)
       Object.assign(storage, {
         parentPlan: workspace.parentPlan,
@@ -438,6 +462,18 @@ async function fixture({
   }
   open()
   const base = await createFixture(undefined, storage)
+  const usageLedger = new DurableUsageLedger({
+    store: new SqliteDurableUsageStore(provider),
+    now: () => state.now,
+  })
+  await usageLedger.openBudget({
+    workspaceId: ids.workspaceId,
+    executionId: ids.parentExecutionId,
+    currency: 'USD',
+    maximumMicrounits: 10_000_000,
+    maximumTokens: 250_000,
+    source: { sourceId: 'continuation-fixture', idempotencyKey: 'parent-budget-open' },
+  })
   await base.lifecycle.createAttempt({
     executionId: ids.parentExecutionId,
     attemptId: parentAttemptId,
@@ -462,14 +498,17 @@ async function fixture({
   const command = workspace ? structuredClone(workspace.command) : delegationInput(base)
   command.parentAttemptId = parentAttemptId
   command.admittedToolCallId = id('tlc')
-  await storage.contexts.put(command.childPlan.contextPackage)
-  const delegated = await base.service.delegate(command)
+  command.parentIntentId = '11111111-1111-4111-8111-111111111112'
+  command.childAttemptId = ids.childAttemptId
   const dispatch = {
     delegationId: ids.delegationId,
     childAttemptId: ids.childAttemptId,
     runtime: { runtimeConnectionId: id('rtc') },
     dispatchedAt: '2026-08-25T18:02:00.000Z',
   }
+  command.initialDispatch = structuredClone(dispatch)
+  await storage.contexts.put(command.childPlan.contextPackage)
+  const delegated = await base.service.delegate(command)
   await base.service.dispatchChild(dispatch)
   await base.service.recordChildProgress({
     delegationId: ids.delegationId,

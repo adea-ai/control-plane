@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.31.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.30.1...control-api-v1.31.0) (2026-10-12)
+
+
+### Features
+
+* coalesce child progress into bounded evidence packets ([#973](https://github.com/adea-ai/control-plane/issues/973)) ([0df9d17](https://github.com/adea-ai/control-plane/commit/0df9d17ec3b0e167e081ad8a056bc2f21a194ccd))
+* **pi:** add typed retained approval-write task over the effect gate ([#939](https://github.com/adea-ai/control-plane/issues/939)) ([#1065](https://github.com/adea-ai/control-plane/issues/1065)) ([6e77203](https://github.com/adea-ai/control-plane/commit/6e772034516d31f3a7ddd0474b7c41cfc42f38a7))
+
+## [1.30.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.30.0...control-api-v1.30.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **control-api:** pin production BYO model eligibility to the Pi catalog ([#1079](https://github.com/adea-ai/control-plane/issues/1079)) ([fceb920](https://github.com/adea-ai/control-plane/commit/fceb920bc1b7401385f6e1b23b0e4a66f365a740)), refs [#931](https://github.com/adea-ai/control-plane/issues/931) (remaining scope is open)
+
+## [1.30.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.29.2...control-api-v1.30.0) (2026-10-10)
+
+
+### Features
+
+* m18-01-3-fence-v2-consumer ([#1066](https://github.com/adea-ai/control-plane/issues/1066)) ([c97e91d](https://github.com/adea-ai/control-plane/commit/c97e91d40570d85076796709fc8304909afe4fcb))
+* **operations:** audited admission controls, stuck-job inspection, retirement gates ([#1052](https://github.com/adea-ai/control-plane/issues/1052)) ([7451dec](https://github.com/adea-ai/control-plane/commit/7451dec27386f0ebde2edebbb2e01b670ccb44c0))
+
 ## [1.29.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.29.1...control-api-v1.29.2) (2026-10-10)
 
 

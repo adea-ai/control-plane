@@ -96,7 +96,7 @@ export interface CanonicalLeadMessageReader {
   readCurrent(intent: CanonicalLeadIntent): Promise<CanonicalLeadMessageAuthority | undefined>
 }
 
-export type CanonicalPiDurableAuthorityPurpose = 'inference' | 'read'
+export type CanonicalPiDurableAuthorityPurpose = 'inference' | 'read' | 'recovery'
 
 export interface CanonicalPiDurableAuthorityOptions {
   readonly intents: CanonicalLeadIntentReader
@@ -166,13 +166,34 @@ export class CanonicalPiDurableAuthority {
     })
   }
 
-  async #fromRequest(input: RuntimeStartRequest): Promise<CanonicalPiDurableAdmission> {
+  /** Revalidates retained state for observation without allocating a new budget or attempt. */
+  async assertReadAuthority(authority: DurableExecutionAuthority): Promise<void> {
+    return this.#safe(async () => {
+      const resolved = await this.#fromRequest(authority.request, 'read')
+      const admission = PiDurableAdmissionSchema.parse(authority.admission)
+      if (digest(resolved.admission) !== digest(admission)) reject()
+    })
+  }
+
+  /** Revalidates a retained execution against its existing canonical budget pin without allocation. */
+  async assertRecoveryAuthority(authority: DurableExecutionAuthority): Promise<void> {
+    return this.#safe(async () => {
+      const resolved = await this.#fromRequest(authority.request, 'recovery')
+      const admission = PiDurableAdmissionSchema.parse(authority.admission)
+      if (digest(resolved.admission) !== digest(admission)) reject()
+    })
+  }
+
+  async #fromRequest(
+    input: RuntimeStartRequest,
+    purpose: CanonicalPiDurableAuthorityPurpose = 'inference'
+  ): Promise<CanonicalPiDurableAdmission> {
     const request = RuntimeStartRequestSchema.parse(input)
     const intent = CanonicalLeadIntentSchema.parse(
       await this.options.intents.getByAttempt(request.attemptId)
     )
     if (intent.attemptId !== request.attemptId) reject()
-    const resolved = await this.#derive(intent)
+    const resolved = await this.#derive(intent, purpose)
     if (digest(resolved.startRequest) !== digest(request)) reject()
     return resolved
   }

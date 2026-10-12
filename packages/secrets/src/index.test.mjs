@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { constants } from 'node:fs'
-import { chmod, mkdtemp, open, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, open, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TextDecoder, TextEncoder } from 'node:util'
@@ -69,7 +69,10 @@ describe('Local and Hosted secrets providers', () => {
     temporaryRoots.push(root)
     await chmod(root, 0o700)
     await writeFile(join(root, 'safe'), 'private', { mode: 0o600 })
-    await writeFile(join(root, 'open'), 'unsafe', { mode: 0o644 })
+    const openPath = join(root, 'open')
+    await writeFile(openPath, 'unsafe', { mode: 0o644 })
+    await chmod(openPath, 0o644)
+    expect((await stat(openPath)).mode & 0o777).toBe(0o644)
     await symlink(join(root, 'safe'), join(root, 'link'))
     const provider = new PrivateFileSecretsProvider({ rootDirectory: root })
     providers.push(provider)

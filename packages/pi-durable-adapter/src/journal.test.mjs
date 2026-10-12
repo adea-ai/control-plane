@@ -79,6 +79,31 @@ test('a second dispatch key cannot give the same attempt another owner', () => {
   journal.close()
 })
 
+test('a stale claim release does not clear a newer owner fence', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-journal-release-'))
+  const path = join(directory, 'journal.sqlite')
+  try {
+    const journal = new SqliteDurableJournal(path)
+    journal.admit({
+      handleId: 'handle',
+      attemptId: 'attempt',
+      startKey: 'key',
+      admission: { selectionRef: 'opaque' },
+      at: '2026-10-08T00:00:00.000Z',
+    })
+    const staleClaim = journal.claimProcess('handle')
+    journal.releaseProcess('handle', staleClaim)
+    const newerClaim = journal.claimProcess('handle')
+    journal.releaseProcess('handle', staleClaim)
+    expect(journal.get('handle').detail.ownerPid).toBe(newerClaim.ownerPid)
+    expect(journal.get('handle').detail.ownerEpoch).toBe(newerClaim.ownerEpoch)
+    expect(journal.get('handle').detail.ownerClaimId).toBe(newerClaim.claimId)
+    journal.releaseProcess('handle', newerClaim)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('interaction transition checks the full snapshot and atomically commits epoch and cursor', () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-journal-interaction-'))
   const path = join(directory, 'journal.sqlite')

@@ -50,10 +50,22 @@ export class SqliteDelegationEventPublisher implements DelegationEventPublisher 
     return this.provider.transaction(async (transaction) => {
       const records = await transaction.list(namespace)
       return records.flatMap((record) => {
-        const receipt = record.value as { event?: unknown }
-        const event = DelegationEventSchema.parse(receipt.event)
-        return event.parentExecutionId === this.#parentExecutionId ? [event] : []
+        const receipt = asRecord(record.value)
+        const candidate = asRecord(receipt?.['event'])
+        // Filter by the stored owner before validation so another parent's
+        // malformed legacy row cannot poison this inbox's read.
+        if (candidate?.['parentExecutionId'] !== this.#parentExecutionId) return []
+        const parsed = DelegationEventSchema.safeParse(candidate)
+        // Older awaiting-input rows lack authenticated interaction context.
+        // Reject only that row and continue replaying valid publications.
+        return parsed.success ? [parsed.data] : []
       })
     })
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
 }

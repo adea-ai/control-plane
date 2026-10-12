@@ -90,6 +90,7 @@ export const start = (options: HostedControlPlaneStartOptions = {}) =>
         projectStateInitializationService: composition.projectStateInitializationService,
         contextPackageResolutionService: composition.contextPackageResolutionService,
         runtimeDiscoveryRepository: composition.runtimeDiscoveryRepository,
+        runtimeNodeCredentialRevocationService: composition.runtimeNodeCredentialRevocationService,
         serviceAuthenticator: authentication.authenticator,
         componentManifest: () => composition.manifest(),
         dependencyReadiness: () => hostedDependencyReadiness(composition),

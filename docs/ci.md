@@ -60,10 +60,12 @@ enumerating their internal parallel jobs.
 
 ## Neon preview lifecycle
 
-Pull requests receive database coverage through
-postgres-pull-request.yml. It uses the disposable local Compose PostgreSQL
-instance and synthetic local-only credentials; the checked-in workflow contains
-no repository-secret references and does not connect to Neon.
+Pull requests run the full general PostgreSQL integration suite in the required
+Code Foundry `Validation / Gate` against one runner-owned disposable local
+Compose PostgreSQL project. `postgres-pull-request.yml` keeps a separate local
+lane for migration and cross-profile conformance; it does not repeat that full
+integration suite. Both use synthetic local-only credentials and contain no
+Neon connection or credential references.
 
 This is a source-level guard, not repository-wide secret access control:
 repository secrets can be referenced by any workflow in the repository. If the
@@ -81,6 +83,11 @@ a read-only, paginated exact-name lookup using the
 [Neon branch-list API](https://api-docs.neon.tech/reference/listprojectbranches).
 A verified absent branch is a no-op; HTTP failures, malformed or incomplete
 listings, pagination loops and unsafe targets fail closed.
+
+After migrations, shard 1 checks the pooled runtime URL, direct runtime URL,
+and direct migrator URL against Neon. It verifies TLS configuration, role
+identity, and a transaction round trip through each endpoint before the broad
+integration shards run. Pull requests never receive these Neon credentials.
 
 This moves real-Neon migration/conformance verification to post-merge; the
 secretless local PostgreSQL workflow remains the pre-merge database gate.
@@ -102,7 +109,8 @@ validation, security, CodeQL, or draft-pull-request jobs.
 baseline. Code Foundry remains authoritative for generic formatting, lint, build, test, audit, CodeQL,
 and dependency-review behavior. The extension exists only for requirements generic CI cannot infer:
 accepted milestone ancestry, the Railway service manifest, and the shared service/migration container
-graph. Its core and container jobs run in parallel and converge on one gate.
+graph. Its ancestry and manifest checks run alongside Code Foundry's generic validation; its
+container and image-security jobs remain independent and converge on one gate.
 
 ## Extension policy
 

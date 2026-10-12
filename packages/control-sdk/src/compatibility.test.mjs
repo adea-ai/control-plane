@@ -61,6 +61,7 @@ describe('Control API generated contract', () => {
       '/v1/project-states/resolve',
       '/v1/runtime-connections/get',
       '/v1/runtime-connections/list',
+      '/v1/runtime-node-credentials/revoke',
       '/v1/runtimes/list',
       '/v3/pi-durable/lead-dispatches/cancel',
       '/v3/pi-durable/lead-dispatches/dispatch',

@@ -1,6 +1,7 @@
 // Child-process tests must read current workspace sources even when dist is stale.
 // Bun's test runner omits its --tsconfig-override flag from process.execArgv.
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import { createMemoryCommittedCancellationAuthority } from './cancellation-authority.test-fixture.mjs'
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -99,6 +100,7 @@ export function fixture(directory, overrides = {}) {
   }
   const options = {
     directory,
+    committedCancellationAuthority: createMemoryCommittedCancellationAuthority({ now: () => at }),
     now: () => at,
     resolveAdmission: async () => admission,
     assertAuthority: async () => {},

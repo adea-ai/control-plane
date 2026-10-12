@@ -1,5 +1,6 @@
 import { test, expect } from 'bun:test'
 import {
+  deferred,
   intentId,
   outsiderPrincipal,
   principal,
@@ -268,6 +269,51 @@ test('a retained receipt that no longer matches its admission, request, or handl
   })
 }, 60000)
 
+test('a receipt revision and handle change during the final fenced authority read is refused before observation', async () => {
+  await withLiveHarness(async (harness) => {
+    const { dispatchId } = await harness.admitInFlightRun()
+    const composition = harness.composition
+    harness.state.product = harness.fenceBody()
+    const original = harness.receiptRecord(dispatchId)
+    const realAssertFencedBinding = composition.admission.assertFencedBinding.bind(
+      composition.admission
+    )
+    let authorityReads = 0
+    composition.admission.assertFencedBinding = async (input) => {
+      await realAssertFencedBinding(input)
+      authorityReads += 1
+      if (authorityReads === 2) {
+        harness.writeReceiptRecord(dispatchId, {
+          ...original,
+          revision: original.revision + 1,
+          handle: {
+            ...original.handle,
+            externalSessionId: 'ses_01JABCDEF0123456789ABCDEFX',
+          },
+        })
+      }
+    }
+    let statusReads = 0
+    const realStatus = composition.adapter.status.bind(composition.adapter)
+    composition.adapter.status = async (handle) => {
+      statusReads += 1
+      return realStatus(handle)
+    }
+
+    await expectRefused(
+      composition.service.status(harness.read('pi-durable.lead.status', { dispatchId }), principal),
+      'PI_LEAD_AUTHORITY_CONFLICT'
+    )
+    expect(authorityReads).toBe(2)
+    expect(statusReads).toBe(0)
+    expect(harness.receiptRecord(dispatchId)).toMatchObject({
+      revision: original.revision + 1,
+      handle: { ...original.handle, externalSessionId: 'ses_01JABCDEF0123456789ABCDEFX' },
+    })
+    expect(composition.adapter.journal.list()[0].state).toBe('running')
+  })
+}, 60000)
+
 test('the fence is rechecked after each awaited effect, and a changed fence withholds the response', async () => {
   await withLiveHarness(async (harness) => {
     const { dispatchId } = await harness.admitInFlightRun()
@@ -295,20 +341,105 @@ test('the fence is rechecked after each awaited effect, and a changed fence with
 
     harness.state.product = harness.fenceBody()
     const realCancelFenced = adapter.cancelFenced.bind(adapter)
+    const cancelReachedResponseCheck = deferred()
+    const releaseResponseCheck = deferred()
+    let journalAtResponseCheck
     adapter.cancelFenced = async (handle, input, authorize) => {
       const result = await realCancelFenced(handle, input, authorize)
-      harness.state.product = harness.fenceBody({
-        scopeRef: `adea-product:sha256:${'f'.repeat(64)}`,
-      })
+      journalAtResponseCheck = adapter.journal.get(handle.handleId)
+      cancelReachedResponseCheck.resolve()
+      await releaseResponseCheck.promise
       return result
     }
+    const cancelPromise = cancelled(harness, dispatchId, 'live-fence:recheck')
     try {
-      await expectRefused(
-        cancelled(harness, dispatchId, 'live-fence:recheck'),
-        'PI_LEAD_AUTHORITY_CONFLICT'
+      await cancelReachedResponseCheck.promise
+      expect(harness.state.requests).toHaveLength(1)
+      expect(['cancelling', 'unknown']).toContain(journalAtResponseCheck.state)
+      expect(journalAtResponseCheck.detail.cancellationIntent).toBeDefined()
+
+      // The adapter has committed the intent and delivered the abort request, but the lead
+      // service is still parked before its response authorization check.
+      harness.state.product = harness.fenceBody({ authorityRevision: 9 })
+      releaseResponseCheck.resolve()
+
+      await expectRefused(cancelPromise, 'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN')
+      const retained = adapter.journal.get(journalAtResponseCheck.handleId)
+      expect(retained.detail.cancellationIntent).toEqual(
+        journalAtResponseCheck.detail.cancellationIntent
       )
+      expect(['cancelling', 'unknown']).toContain(retained.state)
+      expect(harness.state.requests).toHaveLength(1)
+      expect(harness.state.starts).toBe(1)
+      expect(harness.state.reconcileCalls).toBe(0)
     } finally {
+      releaseResponseCheck.resolve()
       adapter.cancelFenced = realCancelFenced
+    }
+  })
+}, 60000)
+
+test('ordinary cancellation reports an unknown outcome when authority changes after its abort returns', async () => {
+  await withLiveHarness(async (harness) => {
+    const { dispatchId } = await harness.admitInFlightRun()
+    const adapter = harness.composition.adapter
+    const realCancel = adapter.cancel.bind(adapter)
+    const cancelReachedResponseCheck = deferred()
+    const releaseResponseCheck = deferred()
+    let journalAtResponseCheck
+    adapter.cancel = async (handle, command) => {
+      const result = await realCancel(handle, command)
+      journalAtResponseCheck = adapter.journal.get(handle.handleId)
+      cancelReachedResponseCheck.resolve()
+      await releaseResponseCheck.promise
+      return result
+    }
+
+    const cancelPromise = cancelled(harness, dispatchId, 'live-fence:ordinary-cancel-recheck')
+    let cancelResult
+    const responseOutcome = cancelPromise.then(
+      (value) => ({ kind: 'resolved', value }),
+      (error) => {
+        cancelResult = error
+        return { kind: 'rejected', error }
+      }
+    )
+    try {
+      const adapterReturned = await Promise.race([
+        cancelReachedResponseCheck.promise.then(() => true),
+        responseOutcome.then(() => false),
+      ])
+      if (!adapterReturned)
+        throw new Error(`ORDINARY_CANCEL_FAILED_BEFORE_ADAPTER_RETURN:${cancelResult?.code}`)
+      await waitUntil(() => harness.state.streamsAborted === 1, 'ordinary abort delivered')
+      expect(harness.state.streamsAborted).toBe(1)
+      expect(journalAtResponseCheck.detail.cancellationIntent).toBeDefined()
+      expect(['cancelling', 'unknown']).toContain(journalAtResponseCheck.state)
+
+      // The ordinary adapter has committed its intent and delivered one abort. Revoke the
+      // product binding before the service's final response authorization check.
+      harness.state.product = harness.fenceBody({ authorityRevision: 9 })
+      releaseResponseCheck.resolve()
+
+      const result = await responseOutcome
+      expect(result.kind).toBe('rejected')
+      expect(cancelResult.code).toBe('PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN')
+      const retained = adapter.journal.get(journalAtResponseCheck.handleId)
+      expect(retained.detail.cancellationIntent).toEqual(
+        journalAtResponseCheck.detail.cancellationIntent
+      )
+      expect(['cancelling', 'unknown']).toContain(retained.state)
+      expect(harness.state.streamsAborted).toBe(1)
+      expect(harness.state.starts).toBe(1)
+      expect(harness.state.requests).toHaveLength(1)
+      expect(harness.state.reconcileCalls).toBe(0)
+      harness.state.gate.resolve()
+      await adapter.drain()
+    } finally {
+      releaseResponseCheck.resolve()
+      harness.state.gate.resolve()
+      await adapter.drain()
+      adapter.cancel = realCancel
     }
   })
 }, 60000)

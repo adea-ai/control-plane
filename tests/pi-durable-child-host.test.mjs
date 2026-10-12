@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test'
+import { afterEach, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -27,10 +27,89 @@ import {
 } from '../packages/orchestration/src/delegation-runtime.ts'
 import { ids } from '../packages/orchestration/src/delegation-fixtures.mjs'
 import {
-  createGovernedChildHostFixture as fixture,
+  createGovernedChildHostFixture,
   parentAttemptId,
   identity,
 } from './pi-durable-child-host.fixture.mjs'
+import { currentSnapshot as canonicalCurrentSnapshot } from '../packages/orchestration/src/delegation-workspace-fixtures.mjs'
+import { SqliteDurableUsageStore } from '../packages/sqlite-persistence/src/usage-store.ts'
+
+/**
+ * Every governed-child host run gets the canonical governed admission stack:
+ * a durable SQLite store (the only profile that ships the transactional
+ * ChildAdmissionAllocator), scope admission over the canonical snapshot, a
+ * child-admission authority that issues the retained receipt over the exact
+ * service-built request, and the durable parent budget the allocation
+ * transaction reserves on. No assertion or guard is relaxed — the in-memory
+ * repositories never provided the allocator CP1041 mandates.
+ */
+const storeCleanups = []
+afterEach(async () => {
+  for (const cleanup of storeCleanups.splice(0)) await cleanup()
+})
+
+function canonicalScopeAdmission() {
+  return {
+    authority: { readCurrent: async (input) => canonicalCurrentSnapshot(input) },
+    now: () => '2026-08-25T18:02:00.000Z',
+    resolveCallerPrincipalId: async () => 'user:original',
+  }
+}
+
+function canonicalChildAdmission() {
+  return {
+    async prepare(request) {
+      return {
+        schemaVersion: 'pi-child-admission/v1',
+        ...request,
+        authorityRevision: 1,
+        productRevision: 'product:rev-1',
+        productReaderPrincipalId: 'svc_product-reader',
+        selectionRef: 'selection:child-role',
+        selectionRevision: 1,
+        expiresAt: '2999-01-01T00:00:00.000Z',
+      }
+    },
+    async assertCurrent() {},
+  }
+}
+
+async function canonicalStorage(provider) {
+  return {
+    executions: new SqliteExecutionRepository(provider),
+    plans: new SqliteExecutionPlanRepository(provider),
+    contexts: new SqliteContextPackageRepository(provider),
+    delegations: new SqliteDelegationRepository(provider),
+    events: new SqliteDelegationEventPublisher(provider, ids.parentExecutionId),
+    calls: new SqliteToolCallRepository(provider, ids.workspaceId),
+    admissions: new SqliteDelegationToolAdmissionRepository(provider, ids.workspaceId),
+    usageStore: new SqliteDurableUsageStore(provider),
+    scopeAdmission: canonicalScopeAdmission(),
+    childAdmission: canonicalChildAdmission(),
+  }
+}
+
+async function fixture(options = {}) {
+  if (options.storage) {
+    // Injected storage (existing SQLite tests): attach the canonical ports it
+    // still needs before handing it to the composition.
+    const storage = options.storage
+    storage.childAllocator ??= storage.delegations
+    storage.scopeAdmission ??= canonicalScopeAdmission()
+    storage.childAdmission ??= canonicalChildAdmission()
+    return createGovernedChildHostFixture({ ...options, storage })
+  }
+  const directory = await mkdtemp(join(tmpdir(), 'pi-child-host-store-'))
+  const provider = new SqlitePersistenceProvider({ path: join(directory, 'canonical.sqlite') })
+  await provider.migrate()
+  const storage = await canonicalStorage(provider)
+  storage.childAllocator = storage.delegations
+  storeCleanups.push(async () => {
+    provider.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+  return createGovernedChildHostFixture({ ...options, storage })
+}
 
 for (const settings of [{ decision: 'deny' }, { approval: 'pending' }, { approval: 'denied' }]) {
   test(`governed child tool ${JSON.stringify(settings)} admits no child and sends no runtime effect`, async () => {
@@ -268,6 +347,7 @@ function persistentStorage(provider) {
     events: new SqliteDelegationEventPublisher(provider, ids.parentExecutionId),
     calls: new SqliteToolCallRepository(provider, ids.workspaceId),
     admissions: new SqliteDelegationToolAdmissionRepository(provider, ids.workspaceId),
+    usageStore: new SqliteDurableUsageStore(provider),
   }
 }
 
@@ -458,13 +538,13 @@ test('pending compiler receipt pins canonical parent execution and plan before a
 })
 
 test('reusable host compiler drives governed workspace lead to a real project child with original actor', async () => {
-  const { workspaceInput, currentSnapshot, actor, now } =
+  const { workspaceInput, actor, now } =
     await import('../packages/orchestration/src/delegation-workspace-fixtures.mjs')
   const workspace = workspaceInput()
   workspace.scopeAdmission = {
     now: () => now,
     resolveCallerPrincipalId: async () => actor,
-    authority: { readCurrent: async (input) => currentSnapshot(input) },
+    authority: { readCurrent: async (input) => canonicalCurrentSnapshot(input) },
   }
   const f = await fixture({ workspace, principalRef: actor })
   expect((await f.service.execute(f.request)).state).toBe('succeeded')
@@ -489,15 +569,16 @@ async function mutateCanonicalStartFence(f, mutation) {
       transitionedAt: '2026-08-25T18:02:01.000Z',
     })
   } else {
-    // Another canonical writer wins the latest-attempt fence during the host await.
-    expect(
-      await f.executions.compareAndSetExecution(execution.version, {
-        ...execution,
-        version: execution.version + 1,
-        latestAttemptId: 'att_01JCBCDEF0123456789ABCDEFG',
-        attemptCount: execution.attemptCount + 1,
-      })
-    ).toBe(true)
+    // Another canonical writer wins the latest-attempt fence during the host
+    // await by creating the real next attempt — the only writer path allowed
+    // to move latestAttemptId (compareAndSetExecution refuses a changed
+    // latestAttemptId by contract, and the durable store enforces it).
+    await f.lifecycle.createAttempt({
+      executionId,
+      attemptId: 'att_01JCBCDEF0123456789ABCDEFG',
+      expectedExecutionVersion: execution.version,
+      queuedAt: '2026-08-25T18:02:05.000Z',
+    })
   }
 }
 
@@ -532,7 +613,7 @@ for (const mutation of ['parent_cancelled', 'parent_latest_attempt', 'child_late
 }
 
 test('SQLite delegation admission rejects a composed child context that expands workspace ancestry', async () => {
-  const { workspaceInput, currentSnapshot, actor, now } =
+  const { workspaceInput, actor, now } =
     await import('../packages/orchestration/src/delegation-workspace-fixtures.mjs')
   const { composeProviderContextPackage } = await import('@control-plane/context')
   const { deriveExecutionPlanWithAuthority, assertExecutionPlanDerivedFrom } =
@@ -547,7 +628,7 @@ test('SQLite delegation admission rejects a composed child context that expands 
   workspace.scopeAdmission = {
     now: () => now,
     resolveCallerPrincipalId: async () => actor,
-    authority: { readCurrent: async (input) => currentSnapshot(input) },
+    authority: { readCurrent: async (input) => canonicalCurrentSnapshot(input) },
   }
   const plan = await deriveExecutionPlanWithAuthority(
     workspace.parentPlan,
@@ -565,9 +646,12 @@ test('SQLite delegation admission rejects a composed child context that expands 
     await storage.contexts.put(workspace.parentContext)
     await storage.contexts.put(expanded)
     const f = await fixture({ workspace, principalRef: actor, storage })
-    await expect(f.bridgeOptions.delegations.delegate(f.command.delegation)).rejects.toThrow(
-      'CHILD_SCOPE_EXPANSION'
-    )
+    await expect(
+      f.bridgeOptions.delegations.delegate({
+        ...f.command.delegation,
+        initialDispatch: f.command.dispatch,
+      })
+    ).rejects.toThrow('CHILD_SCOPE_EXPANSION')
     expect(await storage.delegations.listByParent(ids.parentExecutionId)).toEqual([])
     expect(f.starts).toHaveLength(0)
   } finally {

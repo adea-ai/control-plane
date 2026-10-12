@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.0](https://github.com/adea-ai/control-plane/compare/contracts-v1.19.1...contracts-v1.20.0) (2026-10-10)
+
+
+### Features
+
+* **operations:** audited admission controls, stuck-job inspection, retirement gates ([#1052](https://github.com/adea-ai/control-plane/issues/1052)) ([7451dec](https://github.com/adea-ai/control-plane/commit/7451dec27386f0ebde2edebbb2e01b670ccb44c0))
+
 ## [1.19.1](https://github.com/adea-ai/control-plane/compare/contracts-v1.19.0...contracts-v1.19.1) (2026-10-10)
 
 

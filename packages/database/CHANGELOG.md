@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.45.1](https://github.com/adea-ai/control-plane/compare/database-v1.45.0...database-v1.45.1) (2026-10-12)
+
+
+### Performance
+
+* **ci:** trim required integration critical path ([#1101](https://github.com/adea-ai/control-plane/issues/1101)) ([2085eeb](https://github.com/adea-ai/control-plane/commit/2085eebcf5e66afd50707158c50eb7db18db8a67))
+
+## [1.45.0](https://github.com/adea-ai/control-plane/compare/database-v1.44.0...database-v1.45.0) (2026-10-12)
+
+
+### Features
+
+* coalesce child progress into bounded evidence packets ([#973](https://github.com/adea-ai/control-plane/issues/973)) ([0df9d17](https://github.com/adea-ai/control-plane/commit/0df9d17ec3b0e167e081ad8a056bc2f21a194ccd))
+
+## [1.44.0](https://github.com/adea-ai/control-plane/compare/database-v1.43.0...database-v1.44.0) (2026-10-10)
+
+
+### Features
+
+* **operations:** audited admission controls, stuck-job inspection, retirement gates ([#1052](https://github.com/adea-ai/control-plane/issues/1052)) ([7451dec](https://github.com/adea-ai/control-plane/commit/7451dec27386f0ebde2edebbb2e01b670ccb44c0))
+
 ## [1.43.0](https://github.com/adea-ai/control-plane/compare/database-v1.42.0...database-v1.43.0) (2026-10-08)
 
 

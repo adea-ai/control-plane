@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/adea-ai/control-plane/compare/secrets-v1.3.1...secrets-v1.4.0) (2026-10-12)
+
+
+### Features
+
+* coalesce child progress into bounded evidence packets ([#973](https://github.com/adea-ai/control-plane/issues/973)) ([0df9d17](https://github.com/adea-ai/control-plane/commit/0df9d17ec3b0e167e081ad8a056bc2f21a194ccd))
+
 ## [1.3.1](https://github.com/adea-ai/control-plane/compare/secrets-v1.3.0...secrets-v1.3.1) (2026-10-01)
 
 

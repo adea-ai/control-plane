@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.8.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.7.1...pi-durable-adapter-v0.8.0) (2026-10-12)
+
+
+### Features
+
+* coalesce child progress into bounded evidence packets ([#973](https://github.com/adea-ai/control-plane/issues/973)) ([0df9d17](https://github.com/adea-ai/control-plane/commit/0df9d17ec3b0e167e081ad8a056bc2f21a194ccd))
+* **pi:** add typed retained approval-write task over the effect gate ([#939](https://github.com/adea-ai/control-plane/issues/939)) ([#1065](https://github.com/adea-ai/control-plane/issues/1065)) ([6e77203](https://github.com/adea-ai/control-plane/commit/6e772034516d31f3a7ddd0474b7c41cfc42f38a7))
+
+## [0.7.1](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.7.0...pi-durable-adapter-v0.7.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **control-api:** pin production BYO model eligibility to the Pi catalog ([#1079](https://github.com/adea-ai/control-plane/issues/1079)) ([fceb920](https://github.com/adea-ai/control-plane/commit/fceb920bc1b7401385f6e1b23b0e4a66f365a740)), refs [#931](https://github.com/adea-ai/control-plane/issues/931) (remaining scope is open)
+
+## [0.7.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.6.1...pi-durable-adapter-v0.7.0) (2026-10-10)
+
+
+### Features
+
+* **operations:** audited admission controls, stuck-job inspection, retirement gates ([#1052](https://github.com/adea-ai/control-plane/issues/1052)) ([7451dec](https://github.com/adea-ai/control-plane/commit/7451dec27386f0ebde2edebbb2e01b670ccb44c0))
+
 ## [0.6.1](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.6.0...pi-durable-adapter-v0.6.1) (2026-10-10)
 
 

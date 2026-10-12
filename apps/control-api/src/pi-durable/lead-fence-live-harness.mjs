@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -49,6 +49,56 @@ export const principal = {
 export const secondAllowedPrincipal = { ...principal, principalId: 'svc_pi-admission' }
 export const outsiderPrincipal = { ...principal, principalId: 'svc_other' }
 
+function createTestCancellationAuthority() {
+  const intents = new Map()
+  const acknowledged = new Set()
+  let version = 0
+  return {
+    async commit(proposal) {
+      const existing = intents.get(proposal.handleId)
+      if (existing) {
+        if (
+          existing.idempotencyKey !== proposal.idempotencyKey ||
+          existing.requestDigest !== proposal.requestDigest
+        )
+          throw new Error('PI_CANCELLATION_INTENT_CONFLICT')
+        return structuredClone(existing)
+      }
+      const intent = {
+        schemaVersion: 'pi-committed-cancellation/v1',
+        intentId: randomUUID(),
+        committedAuthorityVersion: ++version,
+        committedAt: at,
+        ...structuredClone(proposal),
+      }
+      intents.set(proposal.handleId, intent)
+      return structuredClone(intent)
+    },
+    async pendingHandles() {
+      return [
+        ...new Set(
+          [...intents.values()]
+            .filter((intent) => !acknowledged.has(intent.intentId))
+            .map((intent) => intent.handleId)
+        ),
+      ]
+    },
+    async pendingForHandle(handleId) {
+      return [...intents.values()]
+        .filter((intent) => intent.handleId === handleId && !acknowledged.has(intent.intentId))
+        .map((intent) => structuredClone(intent))
+    },
+    async pending() {
+      return [...intents.values()]
+        .filter((intent) => !acknowledged.has(intent.intentId))
+        .map((intent) => structuredClone(intent))
+    },
+    async acknowledge(committedIntentId) {
+      acknowledged.add(committedIntentId)
+    },
+  }
+}
+
 export function deferred() {
   let resolve
   const promise = new Promise((yes) => {
@@ -68,7 +118,13 @@ export async function waitUntil(predicate, label, timeoutMs = 15000) {
 
 const chunk = (value) => `data: ${JSON.stringify(value)}\n\n`
 
-export function createLiveHarness(directory, { scoped = false, preparation = false } = {}) {
+export function createLiveHarness(
+  directory,
+  { scoped = false, preparation = false, cancellationAuthority = true } = {}
+) {
+  const committedCancellationAuthority = cancellationAuthority
+    ? createTestCancellationAuthority()
+    : undefined
   const state = {
     requests: [],
     streamsStarted: 0,
@@ -81,12 +137,16 @@ export function createLiveHarness(directory, { scoped = false, preparation = fal
     budgetReserves: 0,
     fundingReads: 0,
     preparationReleases: 0,
-    executionReads: 0,
-    armedRead: undefined,
+    bindingRead: undefined,
+    authorityRequest: undefined,
+    armedBindingSnapshot: undefined,
+    armedAfterBindingValidation: undefined,
+    armedAfterCancelAuthorization: undefined,
     scopeReads: 0,
     armedScope: undefined,
     // The provider's answer when reconciliation probes a cancelled turn that may have reached it.
     reconcileDecision: 'unresolved',
+    reconcileCalls: 0,
   }
   const encoder = new TextEncoder()
   const providerServer = Bun.serve({
@@ -271,9 +331,25 @@ export function createLiveHarness(directory, { scoped = false, preparation = fal
         database.close()
       }
     },
-    /** Runs `action` after the next `after` executions reads have returned (1 = the next read). */
-    armExecutionRead(after, action) {
-      state.armedRead = { at: state.executionReads + after, action }
+    /** Runs `action` at a named retained binding checkpoint in the next service operation. */
+    armBindingSnapshot(phase, sample, action) {
+      if (!['lookup', 'pre-effect', 'post-effect'].includes(phase))
+        throw new Error('LIVE_FIXTURE_BINDING_PHASE_INVALID')
+      if (!['initial', 'final'].includes(sample))
+        throw new Error('LIVE_FIXTURE_BINDING_SAMPLE_INVALID')
+      state.armedBindingSnapshot = { phase, sample, action }
+    },
+    /** Runs after a named binding validation returns, before its caller's next authority read. */
+    armAfterBindingValidation(phase, action) {
+      if (!['lookup', 'pre-effect', 'post-effect'].includes(phase))
+        throw new Error('LIVE_FIXTURE_BINDING_PHASE_INVALID')
+      state.armedAfterBindingValidation = { phase, action }
+    },
+    /** Runs after the selected service authorization returns, before the adapter's next step. */
+    armAfterCancelAuthorization(action, checkpoint = 'first') {
+      if (!['first', 'final'].includes(checkpoint))
+        throw new Error('LIVE_FIXTURE_CANCEL_AUTHORIZATION_CHECKPOINT_INVALID')
+      state.armedAfterCancelAuthorization = { action, checkpoint }
     },
     /** Runs `action` during the next scope-authority read of the adapter. */
     armScopeRead(action) {
@@ -424,14 +500,33 @@ export function createLiveHarness(directory, { scoped = false, preparation = fal
     async open() {
       repositories = await openPersistence()
       realGetExecution = repositories.executions.getExecution.bind(repositories.executions)
-      repositories.executions.getExecution = async (executionId) => {
-        state.executionReads += 1
-        const value = await realGetExecution(executionId)
-        if (state.armedRead && state.executionReads === state.armedRead.at) {
-          const action = state.armedRead.action
-          state.armedRead = undefined
-          await action()
+      const realGetAttempt = repositories.executions.getAttempt.bind(repositories.executions)
+      const finishAuthorityRead = async (bindingRead, sample) => {
+        if (!bindingRead || !sample) return
+        bindingRead.completed[sample] += 1
+        if (bindingRead.completed[sample] !== 2) return
+        const armed = state.armedBindingSnapshot
+        if (armed?.phase === bindingRead.phase && armed.sample === sample) {
+          state.armedBindingSnapshot = undefined
+          await armed.action()
         }
+      }
+      repositories.executions.getExecution = async (executionId) => {
+        const bindingRead = state.bindingRead
+        const offset = bindingRead?.started ?? 4
+        if (bindingRead) bindingRead.started += 1
+        const sample = offset < 2 ? 'initial' : offset < 4 ? 'final' : undefined
+        const value = await realGetExecution(executionId)
+        await finishAuthorityRead(bindingRead, sample)
+        return value
+      }
+      repositories.executions.getAttempt = async (attemptId) => {
+        const bindingRead = state.bindingRead
+        const offset = bindingRead?.started ?? 4
+        if (bindingRead) bindingRead.started += 1
+        const sample = offset < 2 ? 'initial' : offset < 4 ? 'final' : undefined
+        const value = await realGetAttempt(attemptId)
+        await finishAuthorityRead(bindingRead, sample)
         return value
       }
       const budget = new DurableRuntimeBudgetAdmission({
@@ -440,6 +535,7 @@ export function createLiveHarness(directory, { scoped = false, preparation = fal
       })
       composition = await createNodePiDurableLeadComposition({
         directory,
+        ...(committedCancellationAuthority ? { committedCancellationAuthority } : {}),
         admission: {
           product: {
             readCurrent: async (input) => {
@@ -556,8 +652,62 @@ export function createLiveHarness(directory, { scoped = false, preparation = fal
             return use(models)
           },
         }),
-        reconcileInference: async () => state.reconcileDecision,
+        reconcileInference: async () => {
+          state.reconcileCalls += 1
+          return state.reconcileDecision
+        },
       })
+      const realAssertFencedBinding = composition.admission.assertFencedBinding.bind(
+        composition.admission
+      )
+      composition.admission.assertFencedBinding = async (input) => {
+        const previous = state.bindingRead
+        const request = state.authorityRequest
+        const ordinal = request ? ++request.validationOrdinal : 0
+        const phase = ordinal === 1 ? 'lookup' : ordinal === 2 ? 'pre-effect' : 'post-effect'
+        state.bindingRead = {
+          phase,
+          started: 0,
+          completed: { initial: 0, final: 0 },
+        }
+        try {
+          const result = await realAssertFencedBinding(input)
+          const armed = state.armedAfterBindingValidation
+          if (armed?.phase === phase) {
+            state.armedAfterBindingValidation = undefined
+            await armed.action()
+          }
+          return result
+        } finally {
+          state.bindingRead = previous
+        }
+      }
+      for (const phase of ['status', 'progress', 'cancel']) {
+        const realOperation = composition.service[phase].bind(composition.service)
+        composition.service[phase] = async (...args) => {
+          const previous = state.authorityRequest
+          state.authorityRequest = { phase, validationOrdinal: 0 }
+          try {
+            return await realOperation(...args)
+          } finally {
+            state.authorityRequest = previous
+          }
+        }
+      }
+      const realCancelFenced = composition.adapter.cancelFenced.bind(composition.adapter)
+      composition.adapter.cancelFenced = async (handle, command, authorize) => {
+        let authorizationCheckpoint = 0
+        return realCancelFenced(handle, command, async (retained) => {
+          await authorize(retained)
+          authorizationCheckpoint += 1
+          const checkpoint = authorizationCheckpoint === 1 ? 'first' : 'final'
+          const armed = state.armedAfterCancelAuthorization
+          if (armed?.checkpoint === checkpoint) {
+            state.armedAfterCancelAuthorization = undefined
+            await armed.action()
+          }
+        })
+      }
       const realStart = composition.adapter.start.bind(composition.adapter)
       composition.adapter.start = async (request) => {
         state.starts += 1

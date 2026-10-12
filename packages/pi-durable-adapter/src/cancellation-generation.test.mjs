@@ -103,15 +103,19 @@ test('cancellation pins the exact attempt and authorized inference until that ph
         .state
     ).toBe('cancelling')
     const intent = adapter.journal.get(handle.handleId).detail.cancellationIntent
-    expect(intent).toEqual({
+    const { authorityIntentId, ...intentWithoutAuthorityId } = intent
+    expect(intentWithoutAuthorityId).toEqual({
       schemaVersion: 'pi-cancellation-intent/v1',
       attemptId: request.attemptId,
       turnKey,
       requestedAt: at,
-      requestDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      requestDigest: intent.requestDigest,
       targetKind: 'active_generation',
       generation: beforeCancel.detail.activeInference,
     })
+    expect(typeof authorityIntentId).toBe('string')
+    expect(authorityIntentId).toMatch(/^[0-9a-f-]{36}$/)
+    expect(intent.requestDigest).toMatch(/^sha256:[a-f0-9]{64}$/)
     expect(cancellations).toBe(1)
     await adapter.drain()
     expect(sends).toBe(0)

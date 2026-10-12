@@ -314,6 +314,85 @@ export class SqliteDurableJournal {
     })
   }
 
+  /** Atomically classify and merge advisory metadata into the current record without changing its
+   * state or epoch. Use this for resolutions that may race a live owner: the callback runs against
+   * the row read inside the write transaction, and detail patches merge into that fresh row. */
+  updateCurrentMetadata<T>(
+    handleId: string,
+    operation: (current: JournalRecord) => {
+      readonly value: T
+      readonly detail?: Record<string, unknown>
+    }
+  ): { readonly record: JournalRecord; readonly value: T } {
+    return this.transaction(() => {
+      const current = this.get(handleId)
+      const mutation = operation(current)
+      if (mutation.detail === undefined) return { record: current, value: mutation.value }
+      const next = {
+        ...current,
+        detail: guardOwner({ ...current.detail, ...mutation.detail }, current.detail),
+      }
+      this.save(next)
+      return { record: next, value: mutation.value }
+    })
+  }
+
+  /** Atomically classify the current row and apply a state/detail transition to that same
+   * snapshot. Use this when a same-epoch metadata update can change the decision inputs. */
+  transitionCurrent<T>(
+    handleId: string,
+    operation: (current: JournalRecord) => {
+      readonly value: T
+      readonly change?: Partial<Pick<JournalRecord, 'epoch' | 'state' | 'detail'>>
+      readonly event?: JournalEvent | readonly JournalEvent[]
+    }
+  ): { readonly record: JournalRecord; readonly value: T } {
+    return this.transaction(() => {
+      const current = this.get(handleId)
+      const mutation = operation(current)
+      if (mutation.change === undefined) return { record: current, value: mutation.value }
+      const next = {
+        ...current,
+        ...mutation.change,
+        detail: guardOwner(mutation.change.detail ?? current.detail, current.detail),
+      }
+      this.save(next)
+      if (mutation.event)
+        for (const item of Array.isArray(mutation.event) ? mutation.event : [mutation.event])
+          this.event(handleId, item as JournalEvent)
+      return { record: next, value: mutation.value }
+    })
+  }
+
+  /** Recovery mutation committed only while the exact unique process claim and source state match. */
+  updateUnderProcessClaim(
+    handleId: string,
+    claim: ProcessClaim,
+    expected: Pick<JournalRecord, 'epoch' | 'state'>,
+    change: Partial<Pick<JournalRecord, 'state' | 'detail'>>,
+    event?: JournalEvent | readonly JournalEvent[]
+  ): JournalRecord | undefined {
+    return this.transaction(() => {
+      const stored = this.get(handleId)
+      if (
+        !holdsClaim(stored, claim) ||
+        stored.epoch !== expected.epoch ||
+        stored.state !== expected.state
+      )
+        return undefined
+      const next = {
+        ...stored,
+        ...change,
+        detail: guardOwner(change.detail ?? stored.detail, stored.detail),
+      }
+      this.save(next)
+      if (event)
+        for (const item of Array.isArray(event) ? event : [event])
+          this.event(handleId, item as JournalEvent)
+      return next
+    })
+  }
+
   events(handleId: string, afterSequence: number): Record<string, unknown>[] {
     return (
       this.database

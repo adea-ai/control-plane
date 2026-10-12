@@ -21,6 +21,7 @@ import type { PiDurableChildProgressScanner } from './child-progress-scanner.js'
 import { SqlitePiLeadRunningLifecycle } from './lead-running-lifecycle.js'
 import { SqlitePiLeadTerminalSettlement } from './lead-terminal-settlement.js'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
+import type { DelegationService } from '@control-plane/orchestration'
 
 export interface NodePiDurableLeadCompositionOptions {
   readonly onAdapterReady?: NodePiDurableCompositionOptions['onAdapterReady']
@@ -29,16 +30,28 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly usage: PiDurableUsageAuthorityOptions
   readonly provider: NodePiDurableCompositionOptions['resolveProvider']
   readonly reconcileInference: NodePiDurableCompositionOptions['reconcileInference']
+  readonly engineFactory?: NodePiDurableCompositionOptions['engineFactory']
+  /** Server-owned transaction/lease coordinator. Omit until product and CP owners share its CAS. */
+  readonly committedCancellationAuthority?: NodePiDurableCompositionOptions['committedCancellationAuthority']
   readonly verifyApproval?: NodePiDurableCompositionOptions['verifyApproval']
   readonly parentInbox?: NodePiDurableCompositionOptions['parentInbox']
   readonly consumeParentInbox?: NodePiDurableCompositionOptions['consumeParentInbox']
   readonly onParentInboxWake?: NodePiDurableCompositionOptions['onParentInboxWake']
   readonly tools?: NodePiDurableCompositionOptions['tools']
   readonly governedDelegateChild?: NodePiDurableCompositionOptions['governedDelegateChild']
+  /**
+   * Canonical governed management compiler (PiDurableGovernedManagementCallCompiler,
+   * CP PR1043 comment 6076653246): the host supplies the exact-call prepare
+   * and the caller execute; the retained caller keeps the full immutable
+   * request.
+   */
+  readonly governedManagementCall?: NodePiDurableCompositionOptions['governedManagementCall']
+  /** The same canonical service used by child admission/progress. */
+  readonly delegationService?: Pick<DelegationService, 'cancelChildren'>
   /** A child must independently reload its canonical lineage, selection and authority. */
   readonly childAuthority?: Pick<
     NodePiDurableCompositionOptions,
-    'resolveAdmission' | 'assertAuthority'
+    'resolveAdmission' | 'assertAuthority' | 'assertReadAuthority' | 'assertRecoveryAuthority'
   >
   readonly preparationAuthority?: PiLeadPreparationAuthority
   /** Server-bound canonical child scanner. No child identity is accepted from an HTTP payload. */
@@ -59,7 +72,8 @@ export async function createNodePiDurableLeadComposition(
     (!options.childAuthority ||
       !options.childProgress ||
       !options.parentInbox ||
-      !options.consumeParentInbox)
+      !options.consumeParentInbox ||
+      !options.delegationService)
   )
     throw new Error('PI_CHILD_COMPOSITION_REQUIRED')
   const recoveryIntervalMs = options.periodicRecoveryIntervalMs ?? 30_000
@@ -86,14 +100,21 @@ export async function createNodePiDurableLeadComposition(
       executions: options.admission.executions,
       assertAuthority: (authority) => admission.canonicalAuthority.assertAuthority(authority),
     })
-    runtime = await createNodePiDurableRuntime({
+    const runtimeOptions: NodePiDurableCompositionOptions = {
       ...(options.onAdapterReady ? { onAdapterReady: options.onAdapterReady } : {}),
       directory: options.directory,
+      ...(options.committedCancellationAuthority
+        ? { committedCancellationAuthority: options.committedCancellationAuthority }
+        : {}),
       ...(options.admission.now ? { now: options.admission.now } : {}),
       ...createPiLeadRuntimeAuthorityRouter(
         {
           resolveAdmission: (request) => admission.canonicalAuthority.resolveAdmission(request),
           assertAuthority: (authority) => admission.canonicalAuthority.assertAuthority(authority),
+          assertRecoveryAuthority: (authority) =>
+            admission.canonicalAuthority.assertRecoveryAuthority(authority),
+          assertReadAuthority: (authority) =>
+            admission.canonicalAuthority.assertReadAuthority(authority),
         },
         options.childAuthority
       ),
@@ -103,6 +124,7 @@ export async function createNodePiDurableLeadComposition(
           await leadLifecycle.onExecutionRunning(authority)
       },
       resolveProvider: options.provider,
+      ...(options.engineFactory ? { engineFactory: options.engineFactory } : {}),
       ...(options.admission.scopeAuthority
         ? { scopeAuthority: options.admission.scopeAuthority }
         : {}),
@@ -116,7 +138,11 @@ export async function createNodePiDurableLeadComposition(
       ...(options.governedDelegateChild
         ? { governedDelegateChild: options.governedDelegateChild }
         : {}),
-    })
+      ...(options.governedManagementCall
+        ? { governedManagementCall: options.governedManagementCall }
+        : {}),
+    }
+    runtime = await createNodePiDurableRuntime(runtimeOptions)
     const preparations = options.preparationAuthority
       ? new SqlitePiLeadPreparations(
           database,
@@ -153,6 +179,7 @@ export async function createNodePiDurableLeadComposition(
           runtime!.adapter.cancelFenced(handle, input, authorize),
       },
       ...(preparations ? { preparations } : {}),
+      ...(options.delegationService ? { delegationService: options.delegationService } : {}),
       ...(options.admission.now ? { now: options.admission.now } : {}),
     })
     // Created last: after every awaited step and the service, nothing can throw before the return, so a

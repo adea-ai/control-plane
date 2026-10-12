@@ -484,6 +484,13 @@
       "when": 1791435953382,
       "tag": "0068_workspace_execution_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1791615892446,
+      "tag": "0069_runtime_node_credential_revocation",
+      "breakpoints": true
     }
   ]
 }

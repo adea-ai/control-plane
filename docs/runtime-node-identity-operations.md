@@ -70,6 +70,29 @@ bun scripts/runtime-node-identity-admin-cli.mjs revoke-credential \
   --confirm revoke-credential --credential-id <credential-id>
 ```
 
+Hosted operators can also revoke through `POST /v1/runtime-node-credentials/revoke`
+(scope `credential:write`, envelope workspace bound). The route runs under the
+application role and calls the migration-owned `revoke_runtime_node_credential`
+function. Every applied, replayed, and workspace-refused outcome is written to
+`runtime_node_credential_audit_events`, an append-only table that the application
+role cannot read or write. Unknown credential identifiers return not found without
+an audit row.
+
+Privilege contract (migration 0069, SOURCE only; no live grant is made by the
+repository):
+
+```sql
+REVOKE ALL ON FUNCTION public.revoke_runtime_node_credential(varchar, varchar, varchar, timestamp with time zone) FROM PUBLIC;
+REVOKE ALL PRIVILEGES ON TABLE public.runtime_node_credential_audit_events FROM control_plane_app;
+GRANT EXECUTE ON FUNCTION public.revoke_runtime_node_credential(varchar, varchar, varchar, timestamp with time zone) TO control_plane_app;
+```
+
+The application role keeps the migration 0054 privileges: `SELECT` on both identity
+tables and `UPDATE (consumed_at)` on issued credentials. It gets no table write on
+`revoked_at` or `revocation_version`, so it cannot change the revocation columns
+except through the function. The migration owner runs the function as
+`SECURITY DEFINER` with `SET search_path = pg_catalog, public`.
+
 Retire a device verification key (all credentials bound to that key cease to
 authenticate):
 

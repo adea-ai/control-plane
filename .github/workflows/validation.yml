@@ -78,9 +78,10 @@ jobs:
     permissions:
       actions: read
       contents: read
+      issues: read
       packages: read
       security-events: write
-    uses: 0xPlayerOne/code-foundry/.github/workflows/validation.yml@v1.47.1
+    uses: 0xPlayerOne/code-foundry/.github/workflows/validation.yml@4480e8aed1dac8bbb3cb12d8d7fe086a13a8eb3b # proposed shared issue-read fix
     with:
       mode: ${{ needs.mode.outputs.mode }}
       runtime-repository: 0xPlayerOne/code-foundry

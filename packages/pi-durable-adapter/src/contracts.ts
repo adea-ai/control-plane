@@ -74,6 +74,101 @@ export interface PiDurableRunningAuthority extends DurableExecutionAuthority {
   readonly observedAt: string
 }
 
+const CancellationDigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
+
+export const PiDurableCancellationGenerationSchema = z
+  .strictObject({
+    schemaVersion: z.literal('pi-inference-generation/v1'),
+    attemptId: IdentifierSchemas.attemptId,
+    turnKey: z.string().min(1).max(4096),
+    inferenceId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/),
+    inferenceKey: z.string().min(1).max(8192),
+  })
+  .superRefine((generation, context) => {
+    if (generation.inferenceKey !== `${generation.turnKey}:${generation.inferenceId}`)
+      context.addIssue({ code: 'custom', path: ['inferenceKey'], message: 'invalid inference key' })
+  })
+
+const CancellationTargetFields = {
+  targetKind: z.enum(['active_generation', 'no_active_generation', 'untracked_generation']),
+  /** Turn snapshot targeted by this request, including when no generation was observed. */
+  turnKey: z.string().min(1).max(4096),
+  generation: PiDurableCancellationGenerationSchema.nullable(),
+}
+
+/** Server-created proposal. Its identifiers come from the retained adapter journal, never a
+ * request receipt. The owner reloads canonical product and control-plane authority by these IDs
+ * and compares the current versions in the same transaction that commits the outbox intent.
+ */
+export const PiDurableCancellationProposalSchema = z
+  .strictObject({
+    handleId: z.string().min(1).max(256),
+    executionId: IdentifierSchemas.executionId,
+    attemptId: IdentifierSchemas.attemptId,
+    workspaceId: IdentifierSchemas.workspaceId,
+    idempotencyKey: z.string().min(1).max(256),
+    requestedAt: z.iso.datetime(),
+    requestDigest: CancellationDigestSchema,
+    admissionDigest: CancellationDigestSchema,
+    ...CancellationTargetFields,
+  })
+  .superRefine((proposal, context) => {
+    if ((proposal.targetKind === 'active_generation') !== (proposal.generation !== null))
+      context.addIssue({ code: 'custom', path: ['generation'], message: 'invalid target binding' })
+    if (
+      proposal.generation &&
+      (proposal.generation.attemptId !== proposal.attemptId ||
+        proposal.generation.turnKey !== proposal.turnKey)
+    )
+      context.addIssue({ code: 'custom', path: ['generation'], message: 'mismatched target' })
+  })
+
+export const PiDurableCommittedCancellationIntentSchema = z
+  .strictObject({
+    schemaVersion: z.literal('pi-committed-cancellation/v1'),
+    intentId: z.uuid(),
+    committedAuthorityVersion: z.number().int().positive(),
+    committedAt: z.iso.datetime(),
+    ...PiDurableCancellationProposalSchema.shape,
+  })
+  .superRefine((intent, context) => {
+    if ((intent.targetKind === 'active_generation') !== (intent.generation !== null))
+      context.addIssue({ code: 'custom', path: ['generation'], message: 'invalid target binding' })
+    if (
+      intent.generation &&
+      (intent.generation.attemptId !== intent.attemptId ||
+        intent.generation.turnKey !== intent.turnKey)
+    )
+      context.addIssue({ code: 'custom', path: ['generation'], message: 'mismatched target' })
+  })
+
+export type PiDurableCancellationProposal = z.output<typeof PiDurableCancellationProposalSchema>
+export type PiDurableCommittedCancellationIntent = z.output<
+  typeof PiDurableCommittedCancellationIntentSchema
+>
+
+/** Trusted, server-owned capability. `commit` must perform the current product fence, execution,
+ * attempt, deadline, scope and idempotency checks in one serializable owner transaction, then write
+ * an immutable cancellation outbox record. The adapter never accepts this port from a request,
+ * receipt, or caller-supplied authorization boolean. Replays of one key/digest return one intent;
+ * a changed digest conflicts. `pendingHandles`/`pendingForHandle`/`acknowledge` make
+ * commit-before-journal crash recovery
+ * possible without silently dropping an intent whose commit response was lost. `acknowledge` must
+ * be idempotent because its response can be lost after the owner records the acknowledgement.
+ */
+export interface PiDurableCommittedCancellationAuthority {
+  readonly commit: (
+    proposal: PiDurableCancellationProposal
+  ) => Promise<PiDurableCommittedCancellationIntent>
+  /** List handles with unacknowledged intents without parsing their payloads. */
+  readonly pendingHandles: () => Promise<readonly string[]>
+  /** Read one handle's payloads so a malformed entry cannot block other handles. */
+  readonly pendingForHandle: (
+    handleId: string
+  ) => Promise<readonly PiDurableCommittedCancellationIntent[]>
+  readonly acknowledge: (intentId: string) => Promise<void>
+}
+
 export interface PiEngineResult {
   readonly text: string
   readonly submissionId: string
@@ -213,6 +308,14 @@ export interface PiDurableRuntimeOptions {
   readonly now?: () => string
   readonly resolveAdmission: (request: RuntimeStartRequest) => Promise<PiDurableAdmission>
   readonly assertAuthority: (authority: DurableExecutionAuthority) => Promise<void>
+  /** Missing in current production composition: cancellation then fails closed before any
+   * journal mutation or engine abort. This port must be wired only by a server-owned coordinator.
+   */
+  readonly committedCancellationAuthority?: PiDurableCommittedCancellationAuthority
+  /** Revalidates retained state for observation without allocating a new budget or attempt. */
+  readonly assertReadAuthority?: (authority: DurableExecutionAuthority) => Promise<void>
+  /** Revalidates retained recovery authority without allocating a new budget or attempt. */
+  readonly assertRecoveryAuthority?: (authority: DurableExecutionAuthority) => Promise<void>
   /** Synchronize canonical host lifecycle before constructing or resuming native tasks. */
   readonly onExecutionRunning?: (authority: PiDurableRunningAuthority) => Promise<void>
   /** Server-owned current scope read; required for every explicit plan2 scope. */
@@ -224,7 +327,8 @@ export interface PiDurableRuntimeOptions {
   /** Requires recorded spending authority and a trusted ledger hold; rechecked at the provider send boundary. */
   readonly authorizeInference: (
     authority: DurableExecutionAuthority,
-    key: string
+    key: string,
+    safeResume?: PiDurableInferenceResumePermit
   ) => Promise<{
     maxOutputTokens: number
     maximumInputTokens: number
@@ -271,4 +375,10 @@ export interface PiDurableRuntimeOptions {
     readonly governedDelegateChild?: PiDurableGovernedDelegateChildEnginePort
     readonly governedManagementCall?: PiDurableGovernedManagementCallEnginePort
   }) => Promise<DurablePiEngine>
+}
+
+/** Created only by runtime recovery after its trusted no-send reconciliation for this exact key. */
+export interface PiDurableInferenceResumePermit {
+  readonly schemaVersion: 'pi-inference-resume-permit/v1'
+  readonly inferenceKey: string
 }

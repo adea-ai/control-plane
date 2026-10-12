@@ -237,6 +237,7 @@ export type PiDurableLeadErrorCode =
   | 'PI_LEAD_PROVIDER_READINESS_REQUIRED'
   | 'PI_LEAD_MISSING'
   | 'PI_LEAD_AUTHORITY_CONFLICT'
+  | 'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN'
   | 'PI_LEAD_COMMAND_CONFLICT'
   | 'PI_LEAD_DISPATCH_CONFLICT'
   | 'PI_LEAD_DEADLINE_EXPIRED'
@@ -626,13 +627,19 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
         await this.options.adapter.cancel(requireHandle(receipt), command)
       )
     }
-    verifyRuntimeHandle(receipt, status.handle)
     // Ordinary lead-stop ends here: it never cascades to child jobs.
     // Child cancellation is a separately explicit authorized operation
     // (delegationService.cancelChildren, invoked directly with its own
     // authorization), never a lead-stop side effect — so independent
     // child work survives a normal parent stop by construction.
-    await this.#assertCurrent(lookup, principal, 'cancel')
+    verifyRuntimeHandle(receipt, status.handle)
+    try {
+      await this.#assertCurrent(lookup, principal, 'cancel')
+    } catch {
+      // Both adapter paths return after the cancellation intent and abort-delivery boundary. A
+      // failed final authority check cannot establish whether that abort took effect.
+      fail('PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN')
+    }
     return PiDurableLeadCancelResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
@@ -643,6 +650,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     )
   }
 
+  /** Admission path only: a fenced result is never admitted here (fails closed). */
   async #resolve(
     workspaceId: string,
     intentId: string,
@@ -771,6 +779,17 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     const fresh = await this.#fence().findRetainedAdmission(handle)
     if (!fresh || hash(fresh) !== hash(lookup.retained)) fail('PI_LEAD_AUTHORITY_CONFLICT')
     await this.#fencedAuthority()(fencedBinding(lookup.receipt, principal, operation, fresh))
+    // The authority read can overlap receipt reconciliation. Require the exact generation and
+    // runtime handle looked up by this operation to still be current before returning to an effect.
+    const receipt = await this.options.receipts.get(lookup.receipt.dispatchId)
+    if (
+      !receipt ||
+      receipt.revision !== lookup.receipt.revision ||
+      hash(receipt.handle) !== hash(lookup.receipt.handle) ||
+      receipt.deadlineAt !== lookup.receipt.deadlineAt
+    )
+      fail('PI_LEAD_AUTHORITY_CONFLICT')
+    if (Date.parse(receipt.deadlineAt) <= Date.parse(this.#now())) fail('PI_LEAD_DEADLINE_EXPIRED')
   }
 
   #fence(): PiDurableLeadFenceAdapter {

@@ -280,6 +280,91 @@ test('a SIGKILLed Pi lead run is adopted by a restarted composition with no rese
   if (failed) throw primaryFailure
 }, 120_000)
 
+test('a SIGKILL before HTTP dispatch resumes the same retained inference after composition restart', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pi-lead-restart-safe-'))
+  let initial
+  let recovery
+  let primaryFailure
+  let failed = false
+  try {
+    initial = spawnHost('before-send', directory)
+    const held = await readLabelled(initial, 'HELD')
+    expect(held.state).toBe('running')
+    expect(held.requests).toBe(0)
+    expect(held.inferenceKey).toMatch(/^pi-turn:att_[^:]+:initial:pi-generation:/)
+    initial.kill('SIGKILL')
+    await boundedWait(initial.exited, CHILD_EXIT_BOUND_MS, 'pre-send Pi lead host exit')
+    expect(initial.signalCode).toBe('SIGKILL')
+
+    recovery = spawnHost('recover-safe', directory)
+    const report = await readLabelled(recovery, 'REPORT')
+    expect(await boundedWait(recovery.exited, CHILD_EXIT_BOUND_MS, 'safe recovery host exit')).toBe(
+      0
+    )
+
+    expect(report.records).toHaveLength(1)
+    const [record] = report.records
+    expect(record.handleId).toBe(held.handleId)
+    expect(record.attemptId).toBe(held.attemptId)
+    expect(record.executionId).toBe(held.executionId)
+    expect(record.state).toBe('completed')
+    expect(record.inferencePending).toBe(false)
+    expect(record.inferenceKeys).toContain(held.inferenceKey)
+    expect(report.recoveryBlocked).toEqual([])
+    expect(report.requests).toBe(1)
+    expect(report.streams).toBe(1)
+    expect(report.resolvePlanCalls).toBe(0)
+    expect(report.authorizedInferenceKeys).toEqual([held.inferenceKey])
+    expect(report.reconcileEvidence).toEqual({
+      key: held.inferenceKey,
+      beforeDispatch: true,
+      alreadyForwarded: false,
+      decision: 'safe_to_resume',
+    })
+    expect(report.requestsAfterDuplicate).toBe(1)
+    expect(report.journalAfterDuplicate).toBe(1)
+    expect(report.duplicate).toEqual({ ok: true, dispatchId: held.dispatchId })
+
+    const evidence = (await readFile(join(directory, 'process-evidence.jsonl'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    const firstBoundary = evidence.find((entry) => entry.phase === 'before_dispatch')
+    const forwarded = evidence.filter((entry) => entry.phase === 'forwarded')
+    expect(firstBoundary.inferenceKey).toBe(held.inferenceKey)
+    expect(forwarded).toEqual([
+      { boundary: 'native_fetch', phase: 'forwarded', inferenceKey: held.inferenceKey },
+    ])
+  } catch (error) {
+    failed = true
+    primaryFailure = error
+  }
+  let cleanupFailure
+  try {
+    await cleanupHosts(
+      [
+        { label: 'pre-send Pi lead host exit', child: initial },
+        { label: 'safe recovery host exit', child: recovery },
+      ],
+      directory
+    )
+  } catch (error) {
+    cleanupFailure = error
+  }
+  if (cleanupFailure !== undefined) {
+    if (failed)
+      throw new AggregateError(
+        [primaryFailure, cleanupFailure],
+        'safe Pi lead restart proof failed',
+        {
+          cause: primaryFailure,
+        }
+      )
+    throw cleanupFailure
+  }
+  if (failed) throw primaryFailure
+}, 120_000)
+
 test('labelled child output releases its stdout reader on success and timeout', async () => {
   let successCancelled = false
   const successChild = {

@@ -1,9 +1,9 @@
 import { test, expect } from 'bun:test'
 import { afterExpiry, principal, waitUntil, withLiveHarness } from './lead-fence-live-harness.mjs'
 
-// Late-authority reproduction. Each case changes the fence, the retained deadline, or the superseded
-// attempt while one awaited read or effect of a fenced observation or cancel is in flight, and records
-// what happened before the refusal. These tests report current behavior; they do not change it.
+// Late-authority regressions. Each case changes the fence, retained deadline, or superseded attempt
+// while a fenced observation or cancel is in flight, and asserts refusal before a state-changing effect
+// or before an observation response is returned.
 
 const EARLIER_DEADLINE = '2026-10-08T08:30:00.000Z'
 const LATER_ATTEMPT = 'att_01JABCDEF0123456789ABCDEFH'
@@ -45,14 +45,13 @@ const cancelOf = (harness, dispatchId, key) =>
     principal
   )
 
-test('status: a fence change during the awaited binding read is caught before the adapter observes', async () => {
+test('status: a fence change during the lookup binding snapshot is caught before the adapter observes', async () => {
   await withLiveHarness(async (harness) => {
     const { dispatchId } = await harness.admitInFlightRun()
     const calls = counted(harness.composition)
     harness.state.product = harness.fenceBody()
-    // Read 1 is the lookup's binding; the change lands after read 1, so the pre-effect recheck
-    // (read 2) sees the new revision.
-    harness.armExecutionRead(1, async () => {
+    // Change the fence after the lookup's initial CP snapshot; its final product read must see it.
+    harness.armBindingSnapshot('lookup', 'initial', async () => {
       harness.state.product = harness.fenceBody({ authorityRevision: 9 })
     })
     await expectRefused(statusOf(harness, dispatchId), 'PI_LEAD_AUTHORITY_CONFLICT')
@@ -61,51 +60,48 @@ test('status: a fence change during the awaited binding read is caught before th
   })
 }, 60000)
 
-test('status: a fence change during the pre-effect recheck read is caught only after the adapter read', async () => {
+test('status: a fence change during the pre-effect authority refresh is caught before the adapter observes', async () => {
   await withLiveHarness(async (harness) => {
     const { dispatchId } = await harness.admitInFlightRun()
     const calls = counted(harness.composition)
     harness.state.product = harness.fenceBody()
-    // Read 2 is the pre-effect recheck; the change lands after its pins were checked.
-    harness.armExecutionRead(2, async () => {
+    // Change the fence after the pre-effect validation's initial CP snapshot.
+    harness.armBindingSnapshot('pre-effect', 'initial', async () => {
       harness.state.product = harness.fenceBody({ authorityRevision: 9 })
     })
     await expectRefused(statusOf(harness, dispatchId), 'PI_LEAD_AUTHORITY_CONFLICT')
-    // Observation only: the adapter read ran, but no record changed and nothing was aborted.
-    expect(calls.status).toBe(1)
+    expect(calls.status).toBe(0)
     expect(harness.composition.adapter.journal.list()[0].state).toBe('running')
     expect(harness.state.streamsAborted).toBe(0)
   })
 }, 60000)
 
-test('cancel: a fence change before the authorize read is caught before any effect', async () => {
+test('cancel: a fence change during the lookup refresh is caught before the adapter is entered', async () => {
   await withLiveHarness(async (harness) => {
     const { dispatchId } = await harness.admitInFlightRun()
     const calls = counted(harness.composition)
     harness.state.product = harness.fenceBody()
-    // Read 1 is the lookup's binding; the authorize recheck (read 2) then sees the new revision.
-    harness.armExecutionRead(1, async () => {
+    // The refreshed binding check sees the new revision before the adapter is entered.
+    harness.armBindingSnapshot('lookup', 'initial', async () => {
       harness.state.product = harness.fenceBody({ authorityRevision: 9 })
     })
     await expectRefused(
       cancelOf(harness, dispatchId, 'late:cancel-before-authorize'),
       'PI_LEAD_AUTHORITY_CONFLICT'
     )
-    // The adapter was reached, and the refusal came from the authorize recheck before any state change.
-    expect(calls.cancel).toBe(1)
+    expect(calls.cancel).toBe(0)
     expect(harness.composition.adapter.journal.list()[0].state).toBe('running')
     expect(harness.state.streamsAborted).toBe(0)
   })
 }, 60000)
 
-test('cancel: a fence change during the authorize read takes effect before the refusal', async () => {
+test('cancel: a fence change during the pre-effect authorize read is caught before cancellation', async () => {
   await withLiveHarness(async (harness) => {
     const { dispatchId } = await harness.admitInFlightRun()
     const calls = counted(harness.composition)
     harness.state.product = harness.fenceBody()
-    // Read 2 is the authorize recheck. Its pins were checked before the change lands, so the adapter
-    // proceeds to its state transition and to abort the held model turn.
-    harness.armExecutionRead(2, async () => {
+    // Change the fence after the adapter's pre-effect validation starts its CP snapshot.
+    harness.armBindingSnapshot('pre-effect', 'initial', async () => {
       harness.state.product = harness.fenceBody({ authorityRevision: 9 })
     })
     await expectRefused(
@@ -113,68 +109,128 @@ test('cancel: a fence change during the authorize read takes effect before the r
       'PI_LEAD_AUTHORITY_CONFLICT'
     )
     expect(calls.cancel).toBe(1)
-    // The effect happened: the run was driven into cancellation and its model turn was aborted.
-    expect(harness.composition.adapter.journal.list()[0].state).toBe('cancelling')
-    await waitUntil(
-      () => harness.state.streamsAborted >= 1,
-      'model turn aborted after refused cancel'
-    )
-    expect(harness.state.streamsAborted).toBe(1)
+    expect(harness.composition.adapter.journal.list()[0].state).toBe('running')
+    expect(harness.state.streamsAborted).toBe(0)
   })
 }, 60000)
 
-test('cancel: an execution deadline change during the authorize read takes effect before the refusal', async () => {
+test('cancel: an execution deadline change during the authorize read is caught before cancellation', async () => {
   await withLiveHarness(async (harness) => {
     const { dispatchId } = await harness.admitInFlightRun()
     const calls = counted(harness.composition)
     harness.state.product = harness.fenceBody()
-    harness.armExecutionRead(2, () => harness.setExecutionDeadline(EARLIER_DEADLINE))
+    // Change the deadline after the pre-effect validation's initial CP snapshot. The final sample
+    // must detect the changed record before the adapter writes cancellation.
+    harness.armBindingSnapshot('pre-effect', 'initial', () =>
+      harness.setExecutionDeadline(EARLIER_DEADLINE)
+    )
     await expectRefused(
       cancelOf(harness, dispatchId, 'late:deadline-during-authorize'),
       'PI_LEAD_AUTHORITY_CONFLICT'
     )
     expect(calls.cancel).toBe(1)
-    expect(harness.composition.adapter.journal.list()[0].state).toBe('cancelling')
-    await waitUntil(
-      () => harness.state.streamsAborted >= 1,
-      'model turn aborted after refused cancel'
-    )
+    expect(harness.composition.adapter.journal.list()[0].state).toBe('running')
+    expect(harness.state.streamsAborted).toBe(0)
   })
 }, 60000)
 
-test('cancel: a retained expiry that lands during the authorize read is still cancelled, because no time check follows the awaited reads', async () => {
+test('cancel: a retained expiry that lands during the authorize read blocks cancellation', async () => {
   await withLiveHarness(async (harness) => {
     const { dispatchId } = await harness.admitInFlightRun()
     harness.state.product = harness.fenceBody()
-    harness.armExecutionRead(2, async () => {
+    harness.armBindingSnapshot('pre-effect', 'initial', async () => {
       harness.state.clock = afterExpiry
     })
-    const response = await cancelOf(harness, dispatchId, 'late:expiry-during-authorize')
-    // Gap: the retained admission expired (clock past expiresAt) before the effect, yet the cancel
-    // is accepted and the held turn is aborted.
-    expect(response.data.state).toBe('cancelling')
+    await expectRefused(
+      cancelOf(harness, dispatchId, 'late:expiry-during-authorize'),
+      'PI_LEAD_DEADLINE_EXPIRED'
+    )
     expect(harness.state.clock).toBe(afterExpiry)
-    await waitUntil(
-      () => harness.state.streamsAborted >= 1,
-      'model turn aborted after accepted cancel'
-    )
+    expect(harness.composition.adapter.journal.list()[0].state).toBe('running')
+    expect(harness.state.streamsAborted).toBe(0)
   })
 }, 60000)
 
-test('status: a retained expiry that lands during the pre-effect read is still served', async () => {
+test('cancel: expiry after fenced validation blocks the adapter mutation', async () => {
+  await withLiveHarness(async (harness) => {
+    const { dispatchId } = await harness.admitInFlightRun()
+    const calls = counted(harness.composition)
+    harness.state.product = harness.fenceBody()
+    let deadlineHookRan = false
+    harness.armAfterBindingValidation('pre-effect', async () => {
+      deadlineHookRan = true
+      harness.state.clock = afterExpiry
+    })
+
+    await expectRefused(
+      cancelOf(harness, dispatchId, 'late:expiry-after-authorize'),
+      'PI_LEAD_DEADLINE_EXPIRED'
+    )
+    expect(deadlineHookRan).toBe(true)
+    expect(calls.cancel).toBe(1)
+    expect(harness.composition.adapter.journal.list()[0].state).toBe('running')
+    expect(harness.state.streamsAborted).toBe(0)
+  })
+}, 60000)
+
+test('status: a retained expiry that lands during the pre-effect read is refused before observation', async () => {
+  await withLiveHarness(async (harness) => {
+    const { dispatchId } = await harness.admitInFlightRun()
+    const calls = counted(harness.composition)
+    harness.state.product = harness.fenceBody()
+    harness.armBindingSnapshot('pre-effect', 'initial', async () => {
+      harness.state.clock = afterExpiry
+    })
+    await expectRefused(statusOf(harness, dispatchId), 'PI_LEAD_DEADLINE_EXPIRED')
+    expect(calls.status).toBe(0)
+    expect(harness.composition.adapter.journal.list()[0].state).toBe('running')
+  })
+}, 60000)
+
+test('status: an effective expiry during adapter observation withholds the response', async () => {
+  await withLiveHarness(async (harness) => {
+    const { dispatchId } = await harness.admitInFlightRun()
+    const calls = counted(harness.composition)
+    harness.state.product = harness.fenceBody()
+    const adapter = harness.composition.adapter
+    const realStatus = adapter.status.bind(adapter)
+    adapter.status = async (handle) => {
+      const status = await realStatus(handle)
+      harness.state.clock = afterExpiry
+      return status
+    }
+    try {
+      await expectRefused(statusOf(harness, dispatchId), 'PI_LEAD_DEADLINE_EXPIRED')
+    } finally {
+      adapter.status = realStatus
+    }
+    expect(calls.status).toBe(1)
+    expect(harness.composition.adapter.journal.list()[0].state).toBe('running')
+  })
+}, 60000)
+
+test('status: expiry during the final receipt read is checked before returning the observation', async () => {
   await withLiveHarness(async (harness) => {
     const { dispatchId } = await harness.admitInFlightRun()
     harness.state.product = harness.fenceBody()
-    harness.armExecutionRead(2, async () => {
-      harness.state.clock = afterExpiry
-    })
-    const response = await statusOf(harness, dispatchId)
-    // Gap: observation of a run whose retained admission expired is served.
-    expect(response.data.state).toBe('running')
+    const receipts = harness.composition.service.options.receipts
+    const realGet = receipts.get.bind(receipts)
+    let receiptReads = 0
+    receipts.get = async (id) => {
+      const receipt = await realGet(id)
+      receiptReads += 1
+      // Lookup, pre-observation recheck, then the final post-observation recheck.
+      if (receiptReads === 3) harness.state.clock = afterExpiry
+      return receipt
+    }
+
+    await expectRefused(statusOf(harness, dispatchId), 'PI_LEAD_DEADLINE_EXPIRED')
+    expect(receiptReads).toBe(3)
+    expect(harness.state.clock).toBe(afterExpiry)
   })
 }, 60000)
 
-test('scoped cancel: a fence change during the adapter execution-scope read takes effect before the refusal', async () => {
+test('scoped cancel: a fence change during the adapter execution-scope read is caught before cancellation', async () => {
   await withLiveHarness(
     async (harness) => {
       const { dispatchId } = await harness.admitInFlightRun()
@@ -189,17 +245,14 @@ test('scoped cancel: a fence change during the adapter execution-scope read take
         'PI_LEAD_AUTHORITY_CONFLICT'
       )
       expect(calls.cancel).toBe(1)
-      expect(harness.composition.adapter.journal.list()[0].state).toBe('cancelling')
-      await waitUntil(
-        () => harness.state.streamsAborted >= 1,
-        'scoped turn aborted after refused cancel'
-      )
+      expect(harness.composition.adapter.journal.list()[0].state).toBe('running')
+      expect(harness.state.streamsAborted).toBe(0)
     },
     { scoped: true }
   )
 }, 60000)
 
-test('scoped cancel: a retained expiry during the adapter execution-scope read is still cancelled', async () => {
+test('scoped cancel: a retained expiry during the adapter execution-scope read blocks cancellation', async () => {
   await withLiveHarness(
     async (harness) => {
       const { dispatchId } = await harness.admitInFlightRun()
@@ -207,13 +260,12 @@ test('scoped cancel: a retained expiry during the adapter execution-scope read i
       harness.armScopeRead(async () => {
         harness.state.clock = afterExpiry
       })
-      const response = await cancelOf(harness, dispatchId, 'late:scope-expiry')
-      // Gap: the scope grant and the admission are both past expiry at the effect, yet cancel succeeds.
-      expect(response.data.state).toBe('cancelling')
-      await waitUntil(
-        () => harness.state.streamsAborted >= 1,
-        'scoped turn aborted after accepted cancel'
+      await expectRefused(
+        cancelOf(harness, dispatchId, 'late:scope-expiry'),
+        'PI_AUTHORITY_EXPIRED'
       )
+      expect(harness.composition.adapter.journal.list()[0].state).toBe('running')
+      expect(harness.state.streamsAborted).toBe(0)
     },
     { scoped: true }
   )

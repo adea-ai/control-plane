@@ -186,12 +186,101 @@ function validatedMarker(input: unknown): LeadIntentMarker {
   }
 }
 
+/**
+ * Write-once record of the admission an ordinary, successfully authorized canonical admission
+ * produced for one marker: the exact projected admissionDigest, the canonical startRequest hash
+ * and the projected deadline, bound to marker, execution, attempt, plan pin, authority revision,
+ * scope and audience. `bindingDigest` self-digests the record so raw edits are refused on read.
+ */
+const AdmissionBindingRecordSchema = z
+  .object({
+    schemaVersion: z.literal('pi-lead-admission-binding/v1'),
+    intentId: z.uuid(),
+    workspaceId: IdentifierSchemas.workspaceId,
+    evidenceDigest: Digest,
+    executionId: IdentifierSchemas.executionId,
+    attemptId: IdentifierSchemas.attemptId,
+    planPin: ExecutionPlanPinSchema,
+    authorityRevision: z.number().int().positive(),
+    scopeRef: Ref,
+    allowedPrincipalIds: z.array(ServicePrincipalSchema.shape.principalId).min(1).max(64),
+    admissionDigest: Digest,
+    startDigest: Digest,
+    deadlineAt: z.iso.datetime(),
+    bindingDigest: Digest,
+  })
+  .strict()
+export type LeadAdmissionBinding = z.output<typeof AdmissionBindingRecordSchema>
+
+function validatedAdmissionBinding(input: unknown): LeadAdmissionBinding {
+  const result = AdmissionBindingRecordSchema.safeParse(input)
+  if (!result.success) conflict()
+  const { bindingDigest, ...record } = result.data
+  const audience = record.allowedPrincipalIds
+  if (
+    bindingDigest !== hash(record) ||
+    hash(audience) !== hash(audience.toSorted()) ||
+    new Set(audience).size !== audience.length
+  )
+    conflict()
+  return result.data
+}
+
+/** Builds the binding from the admission this call just authorized; refuses any mismatch. */
+function admissionBindingFor(
+  marker: LeadIntentMarker,
+  admission: PiDurableLeadAdmission
+): LeadAdmissionBinding {
+  const audience = [...marker.intent.allowedPrincipalIds].toSorted()
+  if (
+    admission.intentId !== marker.intentId ||
+    admission.workspaceId !== marker.workspaceId ||
+    admission.admittedAttempt.executionId !== marker.intent.executionId ||
+    admission.admittedAttempt.attemptId !== marker.intent.attemptId ||
+    hash([...admission.allowedPrincipalIds].toSorted()) !== hash(audience)
+  )
+    conflict()
+  const record = {
+    schemaVersion: 'pi-lead-admission-binding/v1' as const,
+    intentId: marker.intentId,
+    workspaceId: marker.workspaceId,
+    evidenceDigest: marker.evidenceDigest,
+    executionId: marker.intent.executionId,
+    attemptId: marker.intent.attemptId,
+    planPin: marker.planPin,
+    authorityRevision: marker.intent.authorityRevision,
+    scopeRef: marker.intent.scopeRef,
+    allowedPrincipalIds: audience,
+    admissionDigest: admission.admissionDigest,
+    startDigest: hash(admission.startRequest),
+    deadlineAt: admission.deadlineAt,
+  }
+  return validatedAdmissionBinding({ ...record, bindingDigest: hash(record) })
+}
+
+function admissionBindingMatchesMarker(
+  binding: LeadAdmissionBinding,
+  marker: LeadIntentMarker
+): boolean {
+  return (
+    binding.intentId === marker.intentId &&
+    binding.workspaceId === marker.workspaceId &&
+    binding.evidenceDigest === marker.evidenceDigest &&
+    binding.executionId === marker.intent.executionId &&
+    binding.attemptId === marker.intent.attemptId &&
+    hash(binding.planPin) === hash(marker.planPin) &&
+    binding.authorityRevision === marker.intent.authorityRevision &&
+    binding.scopeRef === marker.intent.scopeRef &&
+    hash(binding.allowedPrincipalIds) === hash([...marker.intent.allowedPrincipalIds].toSorted())
+  )
+}
+
 /** Immutable intent/plan marker precedes acceptance; only completion state may advance. */
 export class SqlitePiDurableLeadIntentStore implements CanonicalLeadIntentReader {
   #preparationCursor = ''
   constructor(readonly database: DatabaseSync) {
     database.exec(
-      'CREATE TABLE IF NOT EXISTS pi_lead_intent_admissions (intent_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, attempt_id TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, state TEXT NOT NULL, record TEXT NOT NULL); CREATE TABLE IF NOT EXISTS pi_lead_intent_budgets (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL)'
+      'CREATE TABLE IF NOT EXISTS pi_lead_intent_admissions (intent_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, attempt_id TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, state TEXT NOT NULL, record TEXT NOT NULL); CREATE TABLE IF NOT EXISTS pi_lead_intent_budgets (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL); CREATE TABLE IF NOT EXISTS pi_lead_intent_admission_bindings (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL)'
     )
   }
   marker(intentId: string): LeadIntentMarker | undefined {
@@ -264,6 +353,37 @@ export class SqlitePiDurableLeadIntentStore implements CanonicalLeadIntentReader
       ? RuntimeAttemptBudgetAuthoritySchema.parse(JSON.parse(String(row['record'])))
       : undefined
   }
+  /**
+   * Write-once admission binding. An identical replay is a no-op; any other record for the same
+   * intent conflicts and nothing is overwritten.
+   */
+  bindAdmission(binding: LeadAdmissionBinding): void {
+    const value = validatedAdmissionBinding(binding)
+    this.database
+      .prepare('INSERT OR IGNORE INTO pi_lead_intent_admission_bindings VALUES (?, ?)')
+      .run(value.intentId, JSON.stringify(value))
+    if (hash(this.admissionBinding(value.intentId)) !== hash(value)) conflict()
+  }
+  /** Retained admission binding, self-digest checked. Absent for legacy or unbound records. */
+  admissionBinding(intentId: string): LeadAdmissionBinding | undefined {
+    const row = this.database
+      .prepare(
+        'SELECT intent_id, record FROM pi_lead_intent_admission_bindings WHERE intent_id = ?'
+      )
+      .get(intentId)
+    if (!row) return undefined
+    const raw = row['record']
+    if (typeof raw !== 'string' || raw.length > 65536) conflict()
+    let input: unknown
+    try {
+      input = JSON.parse(raw)
+    } catch {
+      conflict()
+    }
+    const stored = validatedAdmissionBinding(input)
+    if (stored.intentId !== intentId || stored.intentId !== row['intent_id']) conflict()
+    return stored
+  }
   expiredPreparations(at: string): readonly LeadIntentMarker[] {
     const rows = this.database
       .prepare(
@@ -290,14 +410,32 @@ export class SqlitePiDurableLeadIntentStore implements CanonicalLeadIntentReader
       .run(marker.intentId, marker.evidenceDigest).changes
     if (changed !== 1 && this.marker(marker.intentId)?.state !== 'released') conflict()
   }
-  complete(marker: LeadIntentMarker): void {
+  /**
+   * Ready transition and exact binding publication in one SQLite transaction: the pending marker
+   * becomes ready only together with its binding. A failure rolls both back. Ready markers without a
+   * binding row are therefore legacy records only, never the product of an interrupted admission.
+   */
+  publishReady(marker: LeadIntentMarker, binding: LeadAdmissionBinding): void {
     this.budget(marker.intentId)
-    this.database
-      .prepare(
-        "UPDATE pi_lead_intent_admissions SET state = 'ready' WHERE intent_id = ? AND digest = ? AND state = 'pending'"
-      )
-      .run(marker.intentId, marker.evidenceDigest)
-    if (this.marker(marker.intentId)?.state !== 'ready') conflict()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const changed = this.database
+        .prepare(
+          "UPDATE pi_lead_intent_admissions SET state = 'ready' WHERE intent_id = ? AND digest = ? AND state = 'pending'"
+        )
+        .run(marker.intentId, marker.evidenceDigest).changes
+      if (changed !== 1) {
+        // Replay: the same admission already published. Its binding must already be durable, so a
+        // ready marker without one (a legacy record) is refused, never backfilled here.
+        if (this.marker(marker.intentId)?.state !== 'ready') conflict()
+        if (this.admissionBinding(marker.intentId) === undefined) conflict()
+      }
+      this.bindAdmission(binding)
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
   }
   async get(intentId: string): Promise<CanonicalLeadIntent | undefined> {
     const marker = this.marker(intentId)
@@ -349,7 +487,13 @@ export interface NodePiDurableLeadAdmissionOptions {
   }) => Promise<void>
   readonly now?: () => string
   readonly checkpoint?: (
-    boundary: 'after_marker' | 'after_accept' | 'after_attempt' | 'after_budget' | 'after_mapping'
+    boundary:
+      | 'after_marker'
+      | 'after_accept'
+      | 'after_attempt'
+      | 'after_budget'
+      | 'before_publish'
+      | 'after_mapping'
   ) => void | Promise<void>
 }
 
@@ -362,15 +506,28 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     this.#now = options.now ?? (() => new Date().toISOString())
     ServicePrincipalSchema.shape.principalId.parse(options.admissionPrincipalId)
     this.store = new SqlitePiDurableLeadIntentStore(options.database)
-    this.canonicalAuthority = new CanonicalPiDurableAuthority({
-      intents: this.store,
+    this.canonicalAuthority = this.#canonicalAuthority()
+  }
+
+  /**
+   * Canonical authority over the shared store. Public reads see ready intents only. An admission's own
+   * projection gets a private authority that can also read exactly its one pending marker.
+   */
+  #canonicalAuthority(pending?: LeadIntentMarker): CanonicalPiDurableAuthority {
+    const options = this.options
+    return new CanonicalPiDurableAuthority({
+      intents: pending ? this.#pendingReader(pending) : this.store,
       executions: options.executions,
       plans: options.plans,
       now: this.#now,
       messages: {
         readCurrent: async (intent) => {
           const marker = this.store.marker(intent.intentId)
-          if (!marker || marker.state !== 'ready') conflict()
+          const ownPending =
+            pending !== undefined &&
+            marker?.state === 'pending' &&
+            marker.intentId === pending.intentId
+          if (!marker || (marker.state !== 'ready' && !ownPending)) conflict()
           await this.#validateCurrentPlan(marker)
           const evidence = await this.#evidence(
             intent.workspaceId,
@@ -390,7 +547,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       },
       budgets: {
         resolve: async ({ execution, attempt, plan, purpose }) => {
-          if (purpose === 'read') {
+          if (purpose === 'read' || purpose === 'recovery') {
             const intent = await this.store.getByAttempt(attempt.attemptId)
             if (!intent) conflict()
             return this.store.budget(intent.intentId)
@@ -403,6 +560,18 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
         },
       },
     })
+  }
+
+  /** Reads one admission's own pending marker. The shared store never hands it out. */
+  #pendingReader(pending: LeadIntentMarker): CanonicalLeadIntentReader {
+    return {
+      get: async (intentId) =>
+        intentId === pending.intentId ? structuredClone(pending.intent) : this.store.get(intentId),
+      getByAttempt: async (attemptId) =>
+        attemptId === pending.intent.attemptId
+          ? structuredClone(pending.intent)
+          : this.store.getByAttempt(attemptId),
+    }
   }
 
   async resolveIntent(input: {
@@ -450,6 +619,8 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
           throw new PiDurableLeadError('PI_LEAD_WORKSPACE_SCOPE_UNSUPPORTED')
       } else if (!principal.projectIds.includes(evidence.projectId!)) denied()
       let marker = this.store.marker(input.intentId)
+      // Set only when this call authorizes the admission itself (marker becomes ready here).
+      let authorized: PiDurableLeadAdmission | undefined
       if (
         marker &&
         (input.operation === undefined ||
@@ -625,13 +796,29 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
         this.store.bindBudget(evidence.intentId, budget)
         await this.options.checkpoint?.('after_budget')
         this.#assertPreparationLive(marker)
-        this.store.complete(marker)
+        // Projection reads this still-pending marker through this call's private authority only. Ready
+        // and its exact binding then commit in one transaction, so a crash can leave only a pending
+        // marker (no binding) or both.
+        authorized = project(
+          await this.#canonicalAuthority(marker).get(
+            input.intentId,
+            input.workspaceId,
+            principal.principalId,
+            'inference'
+          ),
+          marker.intent,
+          marker.preparationDeadlineAt
+        )
+        await this.options.checkpoint?.('before_publish')
+        this.#assertPreparationLive(marker)
+        this.store.publishReady(marker, admissionBindingFor(marker, authorized))
         await this.options.checkpoint?.('after_mapping')
         this.#assertPreparationLive(marker)
       }
       marker = this.store.marker(input.intentId)
       if (!marker || hash({ evidence, planPin: marker.planPin }) !== marker.evidenceDigest)
         conflict()
+      if (authorized) return authorized
       return project(
         await this.canonicalAuthority.get(
           input.intentId,
@@ -999,6 +1186,9 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       )
       const marker = this.store.marker(input.intentId)
       if (marker?.state !== 'ready') throw new PiDurableLeadError('PI_LEAD_MISSING')
+      const binding = this.store.admissionBinding(input.intentId)
+      if (!binding) throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
+      if (!admissionBindingMatchesMarker(binding, marker)) conflict()
       const request = RuntimeStartRequestSchema.parse(input.retained.request)
       const admission = input.retained.admission
       const plan = assertExecutionPlanIntegrity(request.executionPlan)
@@ -1028,11 +1218,36 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       if (input.receipt.startDigest !== hash(request)) conflict()
       const allowed = [...marker.intent.allowedPrincipalIds].toSorted()
       if (hash(allowed) !== hash([...input.receipt.allowedPrincipalIds].toSorted())) conflict()
-      // The dispatch-time deadline is the canonical minimum of the same retained records.
+      // The dispatch-time deadline is the canonical minimum of the same retained records. These
+      // two CP samples must match: the first sample detects changes that overlap the second, and
+      // the second sample supplies the values used below. Product authority and CP records remain
+      // separate stores, so this is an optimistic consistency check, not a cross-store snapshot.
+      const [initialExecution, initialAttempt] = await Promise.all([
+        this.options.executions.getExecution(marker.intent.executionId),
+        this.options.executions.getAttempt(marker.intent.attemptId),
+      ])
       const [execution, attempt] = await Promise.all([
         this.options.executions.getExecution(marker.intent.executionId),
         this.options.executions.getAttempt(marker.intent.attemptId),
       ])
+      if (hash(initialExecution) !== hash(execution) || hash(initialAttempt) !== hash(attempt))
+        conflict()
+      const currentProduct = await this.#readUnion(
+        input.workspaceId,
+        input.intentId,
+        principal.principalId
+      )
+      if (currentProduct?.kind !== 'fenced') conflict()
+      this.#fencedResolve(
+        { workspaceId: input.workspaceId, intentId: input.intentId, operation: input.operation },
+        currentProduct.variant,
+        currentProduct.facts,
+        principal
+      )
+      const currentMarker = this.store.marker(input.intentId)
+      if (!currentMarker || hash(currentMarker) !== hash(marker)) conflict()
+      const currentBinding = this.store.admissionBinding(input.intentId)
+      if (!currentBinding || hash(currentBinding) !== hash(binding)) conflict()
       const executionView = ExecutionSchema.parse(execution)
       const attemptView = ExecutionAttemptSchema.parse(attempt)
       const base = earliestDeadline([
@@ -1060,10 +1275,15 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
               preparationDeadlineAt: marker.preparationDeadlineAt,
             })
       if (
+        binding.admissionDigest !== expectedDigest ||
+        binding.startDigest !== hash(request) ||
+        binding.deadlineAt !== expectedDeadline ||
         input.receipt.deadlineAt !== expectedDeadline ||
         input.receipt.admissionDigest !== expectedDigest
       )
         conflict()
+      if (Date.parse(expectedDeadline) <= Date.parse(this.#now()))
+        throw new PiDurableLeadError('PI_LEAD_DEADLINE_EXPIRED')
     })
   }
 

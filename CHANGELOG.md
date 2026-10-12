@@ -1,5 +1,49 @@
 # Changelog
 
+## [1.93.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.93.0...workspace-v1.93.1) (2026-10-12)
+
+
+### Performance
+
+* **ci:** trim required integration critical path ([#1101](https://github.com/adea-ai/control-plane/issues/1101)) ([2085eeb](https://github.com/adea-ai/control-plane/commit/2085eebcf5e66afd50707158c50eb7db18db8a67))
+
+## [1.93.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.92.2...workspace-v1.93.0) (2026-10-12)
+
+
+### Features
+
+* coalesce child progress into bounded evidence packets ([#973](https://github.com/adea-ai/control-plane/issues/973)) ([0df9d17](https://github.com/adea-ai/control-plane/commit/0df9d17ec3b0e167e081ad8a056bc2f21a194ccd))
+* **pi:** add typed retained approval-write task over the effect gate ([#939](https://github.com/adea-ai/control-plane/issues/939)) ([#1065](https://github.com/adea-ai/control-plane/issues/1065)) ([6e77203](https://github.com/adea-ai/control-plane/commit/6e772034516d31f3a7ddd0474b7c41cfc42f38a7))
+
+
+### Bug Fixes
+
+* **ci:** apply bounded Postgres pulls to Hosted Compose ([#1100](https://github.com/adea-ai/control-plane/issues/1100)) ([f2081ae](https://github.com/adea-ai/control-plane/commit/f2081ae9219a95defb72fb19cf31947e25c1b26d))
+* **ci:** isolate image pulls and rebalance Neon shards ([3f5f8d5](https://github.com/adea-ai/control-plane/commit/3f5f8d5577b215d6d4c249b282de371a7fa0f532))
+* **ci:** pre-pull Postgres for Hosted Compose acceptance ([f2081ae](https://github.com/adea-ai/control-plane/commit/f2081ae9219a95defb72fb19cf31947e25c1b26d))
+
+## [1.92.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.92.1...workspace-v1.92.2) (2026-10-11)
+
+
+### Bug Fixes
+
+* **tests:** recalibrate smoke watchdogs below spawn-bound fixture runtimes ([#1077](https://github.com/adea-ai/control-plane/issues/1077)) ([7d61c6c](https://github.com/adea-ai/control-plane/commit/7d61c6c5551348fa172bfc8998f8b6406329ea1b))
+
+## [1.92.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.92.0...workspace-v1.92.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **control-api:** pin production BYO model eligibility to the Pi catalog ([#1079](https://github.com/adea-ai/control-plane/issues/1079)) ([fceb920](https://github.com/adea-ai/control-plane/commit/fceb920bc1b7401385f6e1b23b0e4a66f365a740)), refs [#931](https://github.com/adea-ai/control-plane/issues/931) (remaining scope is open)
+
+## [1.92.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.91.4...workspace-v1.92.0) (2026-10-10)
+
+
+### Features
+
+* m18-01-3-fence-v2-consumer ([#1066](https://github.com/adea-ai/control-plane/issues/1066)) ([c97e91d](https://github.com/adea-ai/control-plane/commit/c97e91d40570d85076796709fc8304909afe4fcb))
+* **operations:** audited admission controls, stuck-job inspection, retirement gates ([#1052](https://github.com/adea-ai/control-plane/issues/1052)) ([7451dec](https://github.com/adea-ai/control-plane/commit/7451dec27386f0ebde2edebbb2e01b670ccb44c0))
+
 ## [1.91.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.91.3...workspace-v1.91.4) (2026-10-10)
 
 

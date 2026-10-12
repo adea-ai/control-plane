@@ -2,6 +2,8 @@
 // `initial` dispatches one run through the production service, waits until its model turn is held open,
 // reports it on stdout, and waits to be killed. `recover` opens the same directory on a fresh process.
 // Construction runs the production startup recovery; the composition is never asked to resend.
+import { appendFile, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { dispatchEnvelope, openRestartComposition, startScriptedModel } from './composition.mjs'
 import {
   intentId,
@@ -40,22 +42,55 @@ async function runWithCleanup(work, cleanup, label) {
   return result
 }
 
-async function runInitial(directory) {
+async function runInitial(directory, beforeSend) {
   const model = startScriptedModel({ gateOpen: false })
   let opened
+  let authorizedInferenceKey
+  let enterAuthorization
+  const authorizationEntered = new Promise((resolve) => {
+    enterAuthorization = resolve
+  })
+  const recordBoundary = async (phase, inferenceKey) => {
+    await appendFile(
+      join(directory, 'process-evidence.jsonl'),
+      `${JSON.stringify({ boundary: 'native_fetch', phase, inferenceKey })}\n`
+    )
+  }
+  const physicalFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(typeof input === 'string' ? input : input.url)
+    if (url.pathname !== '/v1/chat/completions') return physicalFetch(input, init)
+    if (typeof authorizedInferenceKey !== 'string')
+      throw new Error('RESTART_FIXTURE_INFERENCE_KEY_MISSING')
+    await recordBoundary('forwarded', authorizedInferenceKey)
+    return physicalFetch(input, init)
+  }
   await runWithCleanup(
     async () => {
-      opened = await openRestartComposition({ directory, seed: true, baseUrl: model.baseUrl })
+      opened = await openRestartComposition({
+        directory,
+        seed: true,
+        baseUrl: model.baseUrl,
+        holdBeforeNativeDispatch: beforeSend,
+        onNativeDispatchBoundary: async (inferenceKey) => {
+          authorizedInferenceKey = inferenceKey
+          await recordBoundary('before_dispatch', inferenceKey)
+          if (beforeSend) enterAuthorization(inferenceKey)
+        },
+      })
       const dispatched = (
         await opened.composition.service.dispatch(
           dispatchEnvelope('pi-durable.lead.dispatch', { intentId }, 'restart-proof:dispatch'),
           principal
         )
       ).data
-      await waitUntil(
-        () => model.counts.streamsStarted >= 1 && model.counts.requests >= 1,
-        'model turn held open'
-      )
+      const inferenceKey = beforeSend
+        ? await authorizationEntered
+        : (await waitUntil(
+            () => model.counts.streamsStarted >= 1 && model.counts.requests >= 1,
+            'model turn held open'
+          ),
+          authorizedInferenceKey)
       const [record] = opened.composition.adapter.journal.list()
       emit('HELD', {
         handleId: record.handleId,
@@ -64,6 +99,7 @@ async function runInitial(directory) {
         attemptId: record.attemptId,
         executionId: record.executionId ?? null,
         dispatchId: dispatched.dispatchId,
+        inferenceKey,
         requests: model.counts.requests,
       })
       // Hold the process open with the run in flight until the parent kills it.
@@ -77,9 +113,60 @@ async function runInitial(directory) {
 async function runRecovery(directory) {
   const model = startScriptedModel({ gateOpen: true })
   let opened
+  let reconcileEvidence
+  let authorizedInferenceKey
+  const authorizedInferenceKeys = []
+  const physicalFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(typeof input === 'string' ? input : input.url)
+    if (url.pathname !== '/v1/chat/completions') return physicalFetch(input, init)
+    if (typeof authorizedInferenceKey !== 'string')
+      throw new Error('RESTART_FIXTURE_INFERENCE_KEY_MISSING')
+    await appendFile(
+      join(directory, 'process-evidence.jsonl'),
+      `${JSON.stringify({ boundary: 'native_fetch', phase: 'forwarded', inferenceKey: authorizedInferenceKey })}\n`
+    )
+    return physicalFetch(input, init)
+  }
   await runWithCleanup(
     async () => {
-      opened = await openRestartComposition({ directory, seed: false, baseUrl: model.baseUrl })
+      opened = await openRestartComposition({
+        directory,
+        seed: false,
+        baseUrl: model.baseUrl,
+        onNativeDispatchBoundary: async (inferenceKey) => {
+          authorizedInferenceKey = inferenceKey
+          authorizedInferenceKeys.push(inferenceKey)
+          await appendFile(
+            join(directory, 'process-evidence.jsonl'),
+            `${JSON.stringify({ boundary: 'native_fetch', phase: 'before_dispatch', inferenceKey })}\n`
+          )
+        },
+        reconcileInference: async (_authority, key) => {
+          const text = await readFile(join(directory, 'process-evidence.jsonl'), 'utf8').catch(
+            (error) => {
+              if (error.code === 'ENOENT') return ''
+              throw error
+            }
+          )
+          const rows = text.trim()
+            ? text
+                .trim()
+                .split('\n')
+                .map((line) => JSON.parse(line))
+            : []
+          const beforeDispatch = rows.some(
+            (entry) => entry.phase === 'before_dispatch' && entry.inferenceKey === key
+          )
+          const alreadyForwarded = rows.some(
+            (entry) => entry.phase === 'forwarded' && entry.inferenceKey === key
+          )
+          const decision = beforeDispatch && !alreadyForwarded ? 'safe_to_resume' : 'unresolved'
+          reconcileEvidence = { key, beforeDispatch, alreadyForwarded, decision }
+          return decision
+        },
+      })
+      await opened.composition.adapter.drain()
       const records = opened.composition.adapter.journal.list().map((record) => ({
         handleId: record.handleId,
         state: record.state,
@@ -88,6 +175,7 @@ async function runRecovery(directory) {
         executionId: record.executionId ?? null,
         ownerPid: record.detail.ownerPid,
         inferencePending: record.detail.inferencePending ?? false,
+        inferenceKeys: Object.keys(record.detail.inferenceReceipts ?? {}),
       }))
       // A duplicate submission with the original idempotency key after restart. It must not reach the
       // model or admit a second run; the production service answers however it answers, and we report it.
@@ -107,6 +195,8 @@ async function runRecovery(directory) {
         requests: model.counts.requests,
         streams: model.counts.streamsStarted,
         resolvePlanCalls: opened.resolvePlanCalls,
+        authorizedInferenceKeys,
+        reconcileEvidence,
         duplicate,
         requestsAfterDuplicate: model.counts.requests,
         journalAfterDuplicate: opened.composition.adapter.journal.list().length,
@@ -117,9 +207,9 @@ async function runRecovery(directory) {
   )
 }
 
-if (mode === 'initial') {
-  await runInitial(restartDirectory)
-} else if (mode === 'recover') {
+if (mode === 'initial' || mode === 'before-send') {
+  await runInitial(restartDirectory, mode === 'before-send')
+} else if (mode === 'recover' || mode === 'recover-safe') {
   await runRecovery(restartDirectory)
 } else {
   process.stderr.write(`HOST_MODE_UNKNOWN ${mode}\n`)

@@ -17,6 +17,7 @@ export type RecoveryBlockCode =
   | 'PI_RECOVERY_AUTHORITY_BLOCKED'
   | 'PI_RECOVERY_UNAVAILABLE'
   | 'PI_RECOVERY_UNCLASSIFIED'
+  | 'PI_CANCELLATION_RECOVERY_UNAVAILABLE'
 
 export interface NodePiDurableCompositionOptions extends Omit<
   PiDurableRuntimeOptions,
@@ -64,6 +65,13 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
 
   async function recover(): Promise<void> {
     const blocked: Array<{ handleId: string; code: RecoveryBlockCode }> = []
+    const cancellationBlocked = await adapter.recoverCommittedCancellationIntents()
+    blocked.push(
+      ...cancellationBlocked.map((handleId) => ({
+        handleId,
+        code: 'PI_CANCELLATION_RECOVERY_UNAVAILABLE' as const,
+      }))
+    )
     if (options.parentInbox && options.consumeParentInbox) {
       await options.consumeParentInbox(await options.parentInbox.list())
       try {
@@ -73,6 +81,7 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
       }
     }
     for (const record of adapter.journal.list()) {
+      if (cancellationBlocked.includes(record.handleId)) continue
       const handle = (record.admission as { handle: Parameters<typeof adapter.reconcile>[0] })
         .handle
       if (['starting', 'running', 'unknown', 'cancelling'].includes(record.state)) {

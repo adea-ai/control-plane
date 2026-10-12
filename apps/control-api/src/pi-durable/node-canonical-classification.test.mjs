@@ -73,7 +73,12 @@ function faultyExecutions(executions, failure) {
 /** Concrete lead composition with real SQLite stores, canonical admission and a local HTTP model
  * transport. Verified product, budget and spending ports are scripted. */
 async function createNodeHarness(directory) {
-  const state = { requests: [] }
+  const state = {
+    requests: [],
+    budgetReserveCalls: 0,
+    onModelRequest: undefined,
+    modelResponseGate: undefined,
+  }
   const providerServer = Bun.serve({
     hostname: '127.0.0.1',
     port: 0,
@@ -81,6 +86,8 @@ async function createNodeHarness(directory) {
       if (new URL(request.url).pathname !== '/v1/chat/completions')
         return new Response('not found', { status: 404 })
       state.requests.push(await request.json())
+      state.onModelRequest?.()
+      if (state.modelResponseGate) await state.modelResponseGate
       const chunks = [
         {
           id: 'classification-chat',
@@ -247,6 +254,10 @@ async function createNodeHarness(directory) {
       const executions = executionsFailure
         ? faultyExecutions(repositories.executions, executionsFailure)
         : repositories.executions
+      const runtimeBudgetAdmission = new DurableRuntimeBudgetAdmission({
+        commands: repositories.commands,
+        store: repositories.usage,
+      })
       composition = await createNodePiDurableLeadComposition({
         directory,
         admission: {
@@ -263,10 +274,13 @@ async function createNodeHarness(directory) {
             catalog: { profiles: repositories.catalog, skills: repositories.catalog },
           }),
           executions,
-          budgetAdmission: new DurableRuntimeBudgetAdmission({
-            commands: repositories.commands,
-            store: repositories.usage,
-          }),
+          budgetAdmission: {
+            authorize: (input) => runtimeBudgetAdmission.authorize(input),
+            reserve: (input) => {
+              state.budgetReserveCalls += 1
+              return runtimeBudgetAdmission.reserve(input)
+            },
+          },
           admissionPrincipalId: 'svc_pi-admission',
           now: () => at,
         },
@@ -353,7 +367,7 @@ async function admitCompletedRun(node) {
   const first = (await node.composition.service.dispatch(dispatch, node.principal)).data
   await node.composition.adapter.drain()
   const [record] = node.composition.adapter.journal.list()
-  return { first, record }
+  return { first, record, handle: record.admission.handle }
 }
 
 // Recovery must consult canonical authority for the retained run, so the control-plane execution
@@ -465,6 +479,149 @@ test('an explicit canonical lifecycle denial persists the revocation marker unde
       detail: { ...retained.detail, recoveryBlocked: 'PI_RECOVERY_AUTHORITY_BLOCKED' },
     })
     expect(node.state.requests).toHaveLength(requestsBefore)
+  })
+}, 60000)
+
+test('recovery revalidates retained pins without entering the budget reservation path', async () => {
+  await withNode(async (node) => {
+    const { record } = await admitCompletedRun(node)
+    await reactivateExecution(node)
+    retainRunning(node, record)
+    const reserveCallsBeforeRecovery = node.state.budgetReserveCalls
+    await node.close()
+
+    await node.open({ reconcileInference: async () => 'unresolved' })
+
+    // The retained attempt already owns its canonical budget pin. Rechecking that pin during
+    // recovery must use a read-only authority path, never reserve again.
+    expect(node.state.budgetReserveCalls).toBe(reserveCallsBeforeRecovery)
+  })
+}, 60000)
+
+test('terminal reconciliation is read-only and accepts the retained terminal authority', async () => {
+  await withNode(async (node) => {
+    const { handle } = await admitCompletedRun(node)
+    const reserveCallsBefore = node.state.budgetReserveCalls
+
+    const status = await node.composition.adapter.reconcile(handle)
+
+    expect(status.state).toBe('completed')
+    expect(node.state.budgetReserveCalls).toBe(reserveCallsBefore)
+  })
+}, 60000)
+
+test('reconciling a retained pending approval reads authority without reserving its budget again', async () => {
+  await withNode(async (node) => {
+    const { record, handle } = await admitCompletedRun(node)
+    await reactivateExecution(node)
+    const current = node.composition.adapter.journal.get(record.handleId)
+    node.composition.adapter.journal.update(record.handleId, current.epoch, {
+      state: 'awaiting_input',
+      detail: {
+        ...current.detail,
+        result: undefined,
+        terminalUsage: undefined,
+        nativeToolBlocked: true,
+        pendingApproval: { interactionId: id('int'), effectId: 'effect:pending' },
+        inferencePending: false,
+      },
+    })
+    const reserveCallsBefore = node.state.budgetReserveCalls
+
+    const status = await node.composition.adapter.reconcile(handle)
+
+    expect(status.state).toBe('awaiting_input')
+    expect(node.state.budgetReserveCalls).toBe(reserveCallsBefore)
+  })
+}, 60000)
+
+test('observing a live process-owned run does not reserve its inference budget again', async () => {
+  await withNode(async (node) => {
+    await node.open()
+    let signalModelRequest
+    const modelRequest = new Promise((resolve) => {
+      signalModelRequest = resolve
+    })
+    let releaseModelResponse
+    node.state.onModelRequest = signalModelRequest
+    node.state.modelResponseGate = new Promise((resolve) => {
+      releaseModelResponse = resolve
+    })
+    const reserveCallsBeforeDispatch = node.state.budgetReserveCalls
+    const dispatch = node.envelope('pi-durable.lead.dispatch', { intentId })
+    await node.composition.service.dispatch(dispatch, node.principal)
+
+    try {
+      await modelRequest
+      const [record] = node.composition.adapter.journal.list()
+      expect(record.state).toBe('running')
+      expect(node.state.budgetReserveCalls).toBeGreaterThan(reserveCallsBeforeDispatch)
+      const reserveCallsBeforeObservation = node.state.budgetReserveCalls
+
+      const status = await node.composition.adapter.reconcile(record.admission.handle)
+
+      expect(status.state).toBe('running')
+      expect(node.state.budgetReserveCalls).toBe(reserveCallsBeforeObservation)
+    } finally {
+      releaseModelResponse()
+    }
+
+    await node.composition.adapter.drain()
+  })
+}, 60000)
+
+test('starting reconciliation uses a retained-pin preflight before the physical inference admission', async () => {
+  await withNode(async (node) => {
+    const { record, handle } = await admitCompletedRun(node)
+    await reactivateExecution(node)
+    const current = node.composition.adapter.journal.get(record.handleId)
+    node.composition.adapter.journal.update(record.handleId, current.epoch, {
+      state: 'starting',
+      detail: {
+        ...current.detail,
+        result: undefined,
+        terminalUsage: undefined,
+        inferenceTrackingVersion: 1,
+        engineRunStarted: false,
+        activeInference: undefined,
+        inferencePending: false,
+        reasonCode: undefined,
+      },
+    })
+    const authority = node.composition.admission.canonicalAuthority
+    const originalResolve = authority.options.budgets.resolve.bind(authority.options.budgets)
+    let firstResolve = true
+    let reachedResolve
+    let releaseResolve
+    const resolveReached = new Promise((resolve) => {
+      reachedResolve = resolve
+    })
+    const resolveGate = new Promise((resolve) => {
+      releaseResolve = resolve
+    })
+    authority.options.budgets.resolve = async (input) => {
+      const budget = await originalResolve(input)
+      if (firstResolve) {
+        firstResolve = false
+        reachedResolve(input.purpose)
+        await resolveGate
+      }
+      return budget
+    }
+    const reserveCallsBefore = node.state.budgetReserveCalls
+    let reconciliation
+    try {
+      reconciliation = node.composition.adapter.reconcile(handle)
+      const preflightPurpose = await resolveReached
+      expect(preflightPurpose).toBe('recovery')
+      expect(node.state.budgetReserveCalls).toBe(reserveCallsBefore)
+    } finally {
+      releaseResolve()
+    }
+
+    await reconciliation
+    await node.composition.adapter.drain()
+    expect(node.state.budgetReserveCalls).toBeGreaterThan(reserveCallsBefore)
   })
 }, 60000)
 

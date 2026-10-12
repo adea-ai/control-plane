@@ -776,6 +776,313 @@ test('a stale safe reconciliation cannot create an engine after concurrent cance
   }
 }, 10000)
 
+test('a late recovery result cannot write or schedule after its numeric claim epoch is reissued to a new token', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-reconcile-reissued-claim-'))
+  const reconciling = deferred(),
+    safe = deferred()
+  let engines = 0,
+    sends = 0
+  const setup = fixture(directory, {
+    engineFactory: async () => {
+      engines++
+      return {
+        run: async () => {
+          sends++
+          return result
+        },
+        close: async () => {},
+        cancel: async () => {},
+      }
+    },
+    reconcileInference: async () => {
+      reconciling.resolve()
+      return safe.promise
+    },
+  })
+  const adapter = new PiDurableRuntimeAdapter(setup.options)
+  let replacementClaim
+  let handleId
+  try {
+    const handle = await adapter.start(setup.request)
+    handleId = handle.handleId
+    await adapter.drain()
+    engines = 0
+    sends = 0
+    const completed = adapter.journal.get(handle.handleId)
+    adapter.journal.update(handle.handleId, completed.epoch, {
+      state: 'unknown',
+      detail: { inferencePending: false },
+    })
+
+    const recovery = adapter.reconcile(handle)
+    await reconciling.promise
+    const oldRecord = adapter.journal.get(handle.handleId)
+    const oldClaim = {
+      epoch: oldRecord.epoch,
+      ownerPid: oldRecord.detail.ownerPid,
+      ownerEpoch: oldRecord.detail.ownerEpoch,
+      claimId: oldRecord.detail.ownerClaimId,
+    }
+    adapter.journal.releaseRecoveryClaim(handle.handleId, oldClaim)
+    replacementClaim = adapter.journal.claimProcess(handle.handleId, {
+      epoch: oldClaim.epoch - 1,
+      state: oldRecord.state,
+    })
+    expect(replacementClaim.epoch).toBe(oldClaim.epoch)
+    expect(replacementClaim.claimId).not.toBe(oldClaim.claimId)
+    const replacementOwned = adapter.journal.get(handle.handleId)
+    const events = adapter.journal.events(handle.handleId, 0)
+
+    safe.resolve('safe_to_resume')
+    await recovery
+    await adapter.drain()
+
+    expect({ engines, sends }).toEqual({ engines: 0, sends: 0 })
+    expect(adapter.journal.get(handle.handleId)).toEqual(replacementOwned)
+    expect(adapter.journal.events(handle.handleId, 0)).toEqual(events)
+    expect(adapter.journal.holdsProcessClaim(handle.handleId, replacementClaim)).toBe(true)
+  } finally {
+    safe.resolve('safe_to_resume')
+    if (replacementClaim && handleId) adapter.journal.releaseProcess(handleId, replacementClaim)
+    await adapter.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+}, 10000)
+
+test('recovery rechecks expiry after its final awaited authority callback', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-reconcile-late-expiry-'))
+  const authorityEntered = deferred(),
+    finishAuthority = deferred()
+  let now = at
+  let authorityChecks = 0
+  let engineStarts = 0
+  const setup = fixture(directory, {
+    now: () => now,
+    assertRecoveryAuthority: async () => {
+      authorityChecks++
+      if (authorityChecks === 2) {
+        authorityEntered.resolve()
+        await finishAuthority.promise
+      }
+    },
+    reconcileInference: async () => 'safe_to_resume',
+    engineFactory: async () => {
+      engineStarts++
+      return { run: async () => result, close: async () => {}, cancel: async () => {} }
+    },
+  })
+  let adapter = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    const handle = await adapter.start(setup.request)
+    await adapter.drain()
+    engineStarts = 0
+    const completed = adapter.journal.get(handle.handleId)
+    adapter.journal.update(handle.handleId, completed.epoch, {
+      state: 'unknown',
+      detail: { inferencePending: false },
+    })
+    await adapter.close()
+
+    adapter = new PiDurableRuntimeAdapter(setup.options)
+    const retained = adapter.journal.get(handle.handleId)
+    const recovery = adapter.reconcile(handle)
+    await authorityEntered.promise
+    now = '2027-01-01T00:00:00.000Z'
+    finishAuthority.resolve()
+
+    await expect(recovery).rejects.toThrow('PI_AUTHORITY_EXPIRED')
+    await adapter.drain()
+    expect(engineStarts).toBe(0)
+    expect(adapter.journal.get(handle.handleId)).toEqual({
+      ...retained,
+      epoch: retained.epoch + 2,
+      detail: {
+        ...retained.detail,
+        recoveryBlocked: 'PI_RECOVERY_AUTHORITY_BLOCKED',
+      },
+    })
+  } finally {
+    finishAuthority.resolve()
+    await adapter.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+}, 10000)
+
+test('reconcile leaves a run to the live process that owns it', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-reconcile-live-owner-'))
+  const owner = Bun.spawn(['sleep', '60'])
+  let reconciliations = 0
+  const setup = fixture(directory, {
+    reconcileInference: async () => {
+      reconciliations++
+      return 'safe_to_resume'
+    },
+  })
+  const adapter = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    const handle = await adapter.start(setup.request)
+    await adapter.drain()
+    const prior = adapter.journal.get(handle.handleId)
+    adapter.journal.update(handle.handleId, prior.epoch, {
+      state: 'running',
+      detail: { ...prior.detail, result: undefined, ownerPid: owner.pid, ownerEpoch: prior.epoch },
+    })
+    const owned = adapter.journal.get(handle.handleId)
+    expect((await adapter.reconcile(handle)).state).toBe('running')
+    expect(reconciliations).toBe(0)
+    expect(adapter.journal.get(handle.handleId)).toEqual(owned)
+  } finally {
+    owner.kill()
+    await owner.exited
+    await adapter.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a claim handed to a run that fails validation is released and cannot wedge later recovery', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-reconcile-validation-release-'))
+  let adapter
+  let handle
+  let storedProviderDigest
+  let engineFactories = 0
+  let engineRuns = 0
+  let corrupt = true
+  const setup = fixture(directory, {
+    engineFactory: async () => {
+      engineFactories++
+      return {
+        run: async () => {
+          engineRuns++
+          return result
+        },
+        close: async () => {},
+        cancel: async () => {},
+      }
+    },
+    reconcileInference: async () => {
+      if (corrupt) {
+        corrupt = false
+        // Corrupt the stored admission after reconcile has validated it and before its claim, so
+        // reconcile's validation of the run it is about to start fails while it holds the claim.
+        const row = adapter.journal.database
+          .prepare('SELECT body FROM pi_admissions WHERE handle_id=?')
+          .get(handle.handleId)
+        const record = JSON.parse(row.body)
+        storedProviderDigest = record.admission.providerDigest
+        record.admission.providerDigest = 'sha256:invalid'
+        adapter.journal.database
+          .prepare('UPDATE pi_admissions SET body=? WHERE handle_id=?')
+          .run(JSON.stringify(record), handle.handleId)
+      }
+      return 'safe_to_resume'
+    },
+  })
+  adapter = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    handle = await adapter.start(setup.request)
+    await adapter.drain()
+    const runsBeforeRecovery = engineRuns
+    const prior = adapter.journal.get(handle.handleId)
+    adapter.journal.update(handle.handleId, prior.epoch, {
+      state: 'running',
+      detail: { ...prior.detail, result: undefined, ownerPid: undefined, ownerEpoch: undefined },
+    })
+    // The corrupted admission fails reconcile's validation of the run it is about to start, so
+    // reconcile rejects and the claim it holds must be given back before the error propagates.
+    await expect(adapter.reconcile(handle)).rejects.toThrow('PI_JOURNAL_AUTHORITY_INVALID')
+    await adapter.drain()
+    const failed = adapter.journal.get(handle.handleId)
+    expect(failed.state).toBe('unknown')
+    expect(failed.detail.reasonCode).toBe('PI_RUN_ABORTED_BEFORE_DRIVE')
+    expect(failed.detail.ownerPid).toBeUndefined()
+    expect(failed.detail.ownerEpoch).toBeUndefined()
+    expect(engineFactories).toBe(1)
+    expect(engineRuns).toBe(runsBeforeRecovery)
+    const repaired = adapter.journal.get(handle.handleId)
+    repaired.admission.providerDigest = storedProviderDigest
+    adapter.journal.database
+      .prepare('UPDATE pi_admissions SET body=? WHERE handle_id=?')
+      .run(JSON.stringify(repaired), handle.handleId)
+    const restored = adapter.journal.get(handle.handleId)
+    expect(restored.state).toBe('unknown')
+    expect(restored.detail.ownerPid).toBeUndefined()
+    expect(restored.detail.ownerEpoch).toBeUndefined()
+    await adapter.reconcile(handle)
+    await adapter.drain()
+    expect(engineFactories).toBe(2)
+    expect(engineRuns).toBe(runsBeforeRecovery + 1)
+    expect(adapter.journal.get(handle.handleId).state).toBe('completed')
+    expect(adapter.journal.get(handle.handleId).detail.ownerPid).toBeUndefined()
+  } finally {
+    await adapter.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('recovery stops before engine start when the retained admission changes after preflight', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-reconcile-admission-mutation-'))
+  let adapter
+  let handle
+  let mutateOnProviderResolution = false
+  let engineFactories = 0
+  let engineRuns = 0
+  const setup = fixture(directory, {
+    reconcileInference: async () => 'safe_to_resume',
+    engineFactory: async () => {
+      engineFactories++
+      return {
+        run: async () => {
+          engineRuns++
+          return result
+        },
+        close: async () => {},
+        cancel: async () => {},
+      }
+    },
+  })
+  const resolveProvider = setup.options.resolveProvider
+  setup.options.resolveProvider = async (...args) => {
+    const provider = await resolveProvider(...args)
+    if (mutateOnProviderResolution) {
+      mutateOnProviderResolution = false
+      const record = adapter.journal.get(handle.handleId)
+      record.admission.admission.prompt = 'Changed after recovery preflight'
+      adapter.journal.database
+        .prepare('UPDATE pi_admissions SET body=? WHERE handle_id=?')
+        .run(JSON.stringify(record), handle.handleId)
+    }
+    return provider
+  }
+  adapter = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    handle = await adapter.start(setup.request)
+    await adapter.drain()
+    expect(engineFactories).toBe(1)
+    expect(engineRuns).toBe(1)
+
+    const prior = adapter.journal.get(handle.handleId)
+    adapter.journal.update(handle.handleId, prior.epoch, {
+      state: 'running',
+      detail: { ...prior.detail, result: undefined, ownerPid: undefined, ownerEpoch: undefined },
+    })
+    mutateOnProviderResolution = true
+    await adapter.reconcile(handle)
+    await adapter.drain()
+
+    const failed = adapter.journal.get(handle.handleId)
+    expect(failed.state).toBe('unknown')
+    expect(failed.detail.ownerPid).toBeUndefined()
+    expect(failed.detail.ownerEpoch).toBeUndefined()
+    expect(failed.detail.ownerClaimId).toBeUndefined()
+    expect(engineFactories).toBe(1)
+    expect(engineRuns).toBe(1)
+    expect(failed.admission.admission.prompt).toBe('Changed after recovery preflight')
+  } finally {
+    await adapter.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('shutdown fences start paused at every asynchronous admission boundary', async () => {
   for (const boundary of ['resolveAdmission', 'assertAuthority', 'resolveProvider']) {
     const directory = mkdtempSync(join(tmpdir(), 'pi-close-admission-'))

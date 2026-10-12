@@ -22,6 +22,7 @@ import {
   SqlitePersistenceProvider,
 } from '@control-plane/sqlite-persistence'
 import { SqliteVersionedCatalogRepository } from '@control-plane/sqlite-persistence/catalog'
+import { createPiDurableEngine } from '@control-plane/pi-durable-adapter'
 import { DurableUsageLedger, PinnedModelPrice } from '@control-plane/usage-ledger'
 import { DurableRuntimeBudgetAdmission } from '@control-plane/workflow-worker'
 import { createModels, createProvider } from '@earendil-works/pi-ai/models'
@@ -142,7 +143,15 @@ export async function openRestartComposition(options) {
 
 async function openRestartCompositionWithPersistence(
   persistence,
-  { directory, seed, baseUrl, createLeadComposition = createNodePiDurableLeadComposition }
+  {
+    directory,
+    seed,
+    baseUrl,
+    reconcileInference = async () => 'unresolved',
+    holdBeforeNativeDispatch = false,
+    onNativeDispatchBoundary = async () => {},
+    createLeadComposition = createNodePiDurableLeadComposition,
+  }
 ) {
   await persistence.migrate()
   const repositories = {
@@ -236,6 +245,26 @@ async function openRestartCompositionWithPersistence(
   )
   const composition = await createLeadComposition({
     directory,
+    engineFactory: async (engineOptions) => {
+      let requestId
+      const engine = createPiDurableEngine({
+        ...engineOptions,
+        authorizeInference: async (request) => {
+          const allowance = await engineOptions.authorizeInference(request)
+          const inferenceKey = `${requestId}:${request.inferenceId}`
+          await onNativeDispatchBoundary(inferenceKey)
+          if (seed && holdBeforeNativeDispatch) await new Promise(() => {})
+          return allowance
+        },
+      })
+      return {
+        ...engine,
+        async run(request) {
+          requestId = request.requestId
+          return engine.run(request)
+        },
+      }
+    },
     admission: {
       product: {
         readCurrent: async (input) =>
@@ -312,8 +341,7 @@ async function openRestartCompositionWithPersistence(
         return use(models)
       },
     }),
-    // Settled as unresolved: the restarted process must not treat the uncertain send as safe to replay.
-    reconcileInference: async () => 'unresolved',
+    reconcileInference,
   })
   return {
     composition,
