@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.7.1...pi-durable-adapter-v0.8.0) (2026-10-12)
+
+
+### Features
+
+* coalesce child progress into bounded evidence packets ([#973](https://github.com/adea-ai/control-plane/issues/973)) ([0df9d17](https://github.com/adea-ai/control-plane/commit/0df9d17ec3b0e167e081ad8a056bc2f21a194ccd))
+* **pi:** add typed retained approval-write task over the effect gate ([#939](https://github.com/adea-ai/control-plane/issues/939)) ([#1065](https://github.com/adea-ai/control-plane/issues/1065)) ([6e77203](https://github.com/adea-ai/control-plane/commit/6e772034516d31f3a7ddd0474b7c41cfc42f38a7))
+
 ## [0.7.1](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.7.0...pi-durable-adapter-v0.7.1) (2026-10-11)
 
 

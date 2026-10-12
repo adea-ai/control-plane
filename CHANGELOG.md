@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.93.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.92.2...workspace-v1.93.0) (2026-10-12)
+
+
+### Features
+
+* coalesce child progress into bounded evidence packets ([#973](https://github.com/adea-ai/control-plane/issues/973)) ([0df9d17](https://github.com/adea-ai/control-plane/commit/0df9d17ec3b0e167e081ad8a056bc2f21a194ccd))
+* **pi:** add typed retained approval-write task over the effect gate ([#939](https://github.com/adea-ai/control-plane/issues/939)) ([#1065](https://github.com/adea-ai/control-plane/issues/1065)) ([6e77203](https://github.com/adea-ai/control-plane/commit/6e772034516d31f3a7ddd0474b7c41cfc42f38a7))
+
+
+### Bug Fixes
+
+* **ci:** apply bounded Postgres pulls to Hosted Compose ([#1100](https://github.com/adea-ai/control-plane/issues/1100)) ([f2081ae](https://github.com/adea-ai/control-plane/commit/f2081ae9219a95defb72fb19cf31947e25c1b26d))
+* **ci:** isolate image pulls and rebalance Neon shards ([3f5f8d5](https://github.com/adea-ai/control-plane/commit/3f5f8d5577b215d6d4c249b282de371a7fa0f532))
+* **ci:** pre-pull Postgres for Hosted Compose acceptance ([f2081ae](https://github.com/adea-ai/control-plane/commit/f2081ae9219a95defb72fb19cf31947e25c1b26d))
+
 ## [1.92.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.92.1...workspace-v1.92.2) (2026-10-11)
 
 
