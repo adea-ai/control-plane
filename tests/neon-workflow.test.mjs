@@ -1015,7 +1015,7 @@ describe('Neon restricted connection workflow', () => {
     }
   })
 
-  test('the migration role performs and removes a transactional app-schema DDL probe', async () => {
+  test('the migration role bootstraps an absent app schema and removes the transactional DDL probe', async () => {
     const statements = []
     let transactions = 0
     const sql = {
@@ -1024,6 +1024,7 @@ describe('Neon restricted connection workflow', () => {
         return operation({
           unsafe: async (query, values) => {
             statements.push({ query, values })
+            if (query.includes("to_regnamespace('app')")) return [{ schema_exists: false }]
             return query.startsWith('SELECT') ? [{ marker: 'ok' }] : []
           },
         })
@@ -1033,18 +1034,44 @@ describe('Neon restricted connection workflow', () => {
     await verifyNeonMigratorDdl(sql)
 
     expect(transactions).toBe(1)
-    expect(statements).toHaveLength(4)
-    const table = statements[0].query.match(/app\.(cp_neon_probe_[a-f0-9]{16})/)?.[1]
+    expect(statements).toHaveLength(7)
+    expect(statements[0].query).toContain("to_regnamespace('app')")
+    const table = statements[2].query.match(/app\.(cp_neon_probe_[a-f0-9]{16})/)?.[1]
     expect(table).toBeDefined()
     expect(statements.map(({ query }) => query.split(' ')[0])).toEqual([
+      'SELECT',
+      'CREATE',
       'CREATE',
       'INSERT',
       'SELECT',
       'DROP',
+      'DROP',
     ])
-    expect(statements.every(({ query }) => query.includes(`app.${table}`))).toBe(true)
-    expect(statements[1].values).toEqual([1, 'ok'])
-    expect(statements[2].values).toEqual([1])
+    expect(statements[1].query).toBe('CREATE SCHEMA app')
+    expect(statements[6].query).toBe('DROP SCHEMA app')
+    expect(statements.slice(2, 6).every(({ query }) => query.includes(`app.${table}`))).toBe(true)
+    expect(statements[3].values).toEqual([1, 'ok'])
+    expect(statements[4].values).toEqual([1])
+  })
+
+  test('leaves a pre-existing app schema in place', async () => {
+    const statements = []
+    const sql = {
+      begin: async (operation) =>
+        operation({
+          unsafe: async (query, values) => {
+            statements.push({ query, values })
+            if (query.includes("to_regnamespace('app')")) return [{ schema_exists: true }]
+            return query.startsWith('SELECT') ? [{ marker: 'ok' }] : []
+          },
+        }),
+    }
+
+    await verifyNeonMigratorDdl(sql)
+
+    expect(statements.some(({ query }) => query === 'CREATE SCHEMA app')).toBe(false)
+    expect(statements.some(({ query }) => query === 'DROP SCHEMA app')).toBe(false)
+    expect(statements.some(({ query }) => query.startsWith('DROP TABLE app.'))).toBe(true)
   })
 })
 
