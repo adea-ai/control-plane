@@ -1,12 +1,6 @@
-// Production-integration gap proof for the durable runtime-command fence (#941 / CP #1047):
-// production constructs SqliteRuntimeCommandRepository with ONLY the provider —
-// apps/runtime-gateway/src/composition.ts:272 and
-// apps/local-control-plane/src/local-api-composition.ts:140 (exposed as
-// LocalControlPlaneComposition.runtimeCommands) — while the delivery service passes credentialFence
-// into compareAndSet (runtime-command-delivery.ts:356). With no verifier installed, every fenced
-// inbound ACK/result settlement now fails closed; these sites must inject a host verifier (the
-// canonical node-credential authority for the profile) before fenced settlements can pass on
-// SQLite profiles. Disposable temp databases only.
+// The bare SQLite repository intentionally has no credential-fence authority and must fail closed.
+// Production composition can inject the host authority; its behavior is covered by
+// runtime-command-fence-authority.test.mjs. Disposable temp databases only.
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -57,14 +51,13 @@ function acknowledgedFrom(queued) {
   }
 }
 
-describe('runtime command fence production wiring (#1047)', () => {
-  test('provider-only production constructions reject fenced settlements until a verifier is injected', async () => {
+describe('SQLite runtime command credential fence defaults', () => {
+  test('a repository without an injected verifier rejects fenced settlements', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'gateway-runtime-commands-'))
     const provider = new SqlitePersistenceProvider({ path: join(directory, 'commands.sqlite') })
     try {
       await provider.migrate()
-      // Exactly as production composes it (provider only): fenced inbound
-      // settlements fail closed — the documented missing integration.
+      // A bare repository has no credential authority and fails closed.
       const runtimeCommands = new SqliteRuntimeCommandRepository(provider)
       const queued = queuedRecord('cmd_01ARZ3NDEKTSV4RRFFQ69G5FAA')
       await runtimeCommands.create(queued)
@@ -76,8 +69,8 @@ describe('runtime command fence production wiring (#1047)', () => {
         version: 1,
       })
 
-      // With a host verifier injected, the identical fenced settlement passes:
-      // the gap is precisely the missing validator at the composition sites.
+      // A verifier admits the identical fenced settlement. Production authority
+      // injection and revocation behavior are proven by the companion test.
       const wired = new SqliteRuntimeCommandRepository(provider, async () => {})
       expect(await wired.compareAndSet(1, acknowledgedFrom(queued), FENCE)).toBe(true)
       expect(await wired.get(queued.commandId)).toMatchObject({
