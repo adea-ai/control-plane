@@ -3,7 +3,16 @@ import { appendFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 const MAX_BASELINE_CANDIDATES = 25
-const VERIFY_STEP = "Verify migrations and this shard's integration slice"
+const CURRENT_JOB = 'Verify Neon provider compatibility'
+const CURRENT_PROOF_STEPS = [
+  'Create Neon branch',
+  'Verify Neon provider compatibility',
+  'Find exact preview branch for cleanup',
+  'Delete Neon branch',
+  'Verify Neon branch absence',
+  'Enforce five-minute Neon verification budget',
+]
+const LEGACY_VERIFY_STEP = "Verify migrations and this shard's integration slice"
 const CONFORMANCE_STEP = 'Verify cross-profile conformance matrix (Postgres)'
 const HOSTED_GRAPH_STEP = 'Verify Hosted PostgreSQL and Restate graph'
 
@@ -151,6 +160,24 @@ function hasSuccessfulVerificationJobs(repository, run) {
   }
 
   if (!Array.isArray(response?.jobs)) return false
+  const currentJobs = response.jobs.filter((job) => job?.name === CURRENT_JOB)
+  const legacyJobs = response.jobs.filter((job) =>
+    /^Verify Neon shard [123] \(migrations and integration slice\)$/.test(job?.name ?? '')
+  )
+
+  if (currentJobs.length === 1 && legacyJobs.length === 0) {
+    const job = currentJobs[0]
+    return (
+      job?.status === 'completed' &&
+      job?.conclusion === 'success' &&
+      CURRENT_PROOF_STEPS.every((step) => hasSuccessfulStep(job, step))
+    )
+  }
+
+  // Accept the historical full Neon suite as a stronger baseline while older
+  // successful runs remain in the bounded lookback window.
+  if (currentJobs.length !== 0 || legacyJobs.length !== 3) return false
+
   const verifiedShards = new Set()
   for (const job of response.jobs) {
     const match = /^Verify Neon shard ([123]) \(migrations and integration slice\)$/.exec(
@@ -162,7 +189,7 @@ function hasSuccessfulVerificationJobs(repository, run) {
       verifiedShards.has(shard) ||
       job?.status !== 'completed' ||
       job?.conclusion !== 'success' ||
-      !hasSuccessfulStep(job, VERIFY_STEP) ||
+      !hasSuccessfulStep(job, LEGACY_VERIFY_STEP) ||
       (shard === 1 && !hasSuccessfulStep(job, CONFORMANCE_STEP)) ||
       (shard === 3 && !hasSuccessfulStep(job, HOSTED_GRAPH_STEP))
     ) {
@@ -197,7 +224,7 @@ function findVerifiedBaseline(repository, response, requiredSha) {
   return undefined
 }
 
-export function isMigrationRelevantPath(path) {
+export function isNeonProofRelevantPath(path) {
   return (
     path.startsWith('apps/') ||
     path.startsWith('packages/') ||
@@ -218,7 +245,7 @@ function main() {
   }
 
   // A proven single-commit metadata push can reuse its exact parent's
-  // successful shard verification even when the recent-baseline listing is
+  // successful provider proof even when the recent-baseline listing is
   // stale. An unverified parent or missing event history retains the baseline
   // comparison, so a release cannot hide an earlier migration failure.
   const pushBefore = process.env.GITHUB_EVENT_BEFORE
@@ -246,7 +273,7 @@ function main() {
         isReleaseMetadata(path, parentSha, headSha)
       )
       const pushedRelevant = pushedPaths.find(
-        (path) => isMigrationRelevantPath(path) && !isReleaseMetadata(path, parentSha, headSha)
+        (path) => isNeonProofRelevantPath(path) && !isReleaseMetadata(path, parentSha, headSha)
       )
       if (pushedReleaseMetadata.length > 0 && !pushedRelevant) {
         const parentRuns = JSON.parse(
@@ -263,7 +290,7 @@ function main() {
           publishVerification(
             outputPath,
             'false',
-            'The pushed commit changes release metadata without changing migration-relevant content; its exact parent has successful Neon shard verification.'
+            'The pushed commit changes release metadata without changing Neon-proof-relevant content; its exact parent has a successful Neon proof.'
           )
           return
         }
@@ -285,7 +312,7 @@ function main() {
     )
     response = JSON.parse(body)
   } catch {
-    requireVerification(outputPath, 'The latest successful Neon workflow run could not be queried.')
+    requireVerification(outputPath, 'The latest successful Neon proof run could not be queried.')
     return
   }
 
@@ -293,7 +320,7 @@ function main() {
   if (!baseline) {
     requireVerification(
       outputPath,
-      'No recent successful Neon shard verification baseline is available.'
+      'No recent successful Neon provider proof baseline is available.'
     )
     return
   }
@@ -328,13 +355,13 @@ function main() {
     return
   }
 
-  const relevantChanges = changedPaths.filter(isMigrationRelevantPath)
+  const relevantChanges = changedPaths.filter(isNeonProofRelevantPath)
   const relevant = relevantChanges.find((path) => !isReleaseMetadata(path, baseline, headSha))
   if (relevantChanges.length > 0 && !relevant) {
     publishVerification(
       outputPath,
       'false',
-      'Only version metadata and changelogs changed; the migration-relevant baseline is unchanged.'
+      'Only version metadata and changelogs changed; the Neon-proof baseline is unchanged.'
     )
     return
   }
@@ -343,7 +370,7 @@ function main() {
     publishVerification(
       outputPath,
       'true',
-      `Migration-relevant changes since the last successful verification (first: ${relevant}).`
+      `Neon-proof-relevant changes since the last successful proof (first: ${relevant}).`
     )
     return
   }
@@ -351,7 +378,7 @@ function main() {
   publishVerification(
     outputPath,
     'false',
-    'No migration-relevant changes since the last successful verification.'
+    'No Neon-proof-relevant changes since the last successful proof.'
   )
 }
 

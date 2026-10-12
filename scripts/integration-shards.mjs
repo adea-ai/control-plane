@@ -1,11 +1,9 @@
-// Explicit shard assignment for the remote (Neon) integration lane.
-//
-// The trusted-main Neon verification used to run the whole integration suite
-// serially in one job (measured 2,327s of migrations plus test work). Sharding
-// at the file level keeps every guarantee that motivated the serialization
-// (b5028c10, #146): within a shard, files still run one at a time against
-// isolated per-case databases, and each shard provisions its own disposable
-// Neon branch so no two shards ever share a compute instance.
+// Explicit shard assignment for the disposable-local-PostgreSQL integration lane.
+// The file-level partition preserves the serialization guarantees that
+// motivated the original Neon sharding (b5028c10, #146): each shard runs files
+// one at a time and test cases use isolated databases. The historical Neon
+// timing notes below describe earlier remote runs; current trusted-main Neon
+// verification owns only provider compatibility.
 //
 // Run 37155172856 (2026-10-03) spent 2,339s on 55 of 65 foundation cases before
 // shard 1 reached its 45-minute job limit. Recovery and evidence cases share shard 2's
@@ -38,6 +36,10 @@
 // preserves tests, filters, timeout, and branch count. This review candidate
 // separately removes automatic per-file reruns. A complete hosted run must
 // qualify the new ownership.
+// The trusted-main Neon workflow now runs only a bounded provider-compatibility
+// proof. Full integration coverage and the single Hosted Restate qualification
+// owner run in pull-request lanes on disposable local PostgreSQL; see the
+// current compatibility-budget evidence.
 
 const foundationCasesForShard2 =
   'retention|delet|sweep|retired command|retains|frees|pins|usage|evaluation|release decisions|proposal'
@@ -144,12 +146,18 @@ export const INTEGRATION_SHARDS = [
           'src/reconciliation-projection.integration.test.mjs',
         ],
       },
-      {
-        package: 'apps/hosted-control-plane',
-        files: ['src/hosted-graph.integration.test.mjs'],
-        qualification: 'hosted-graph-restate',
-      },
     ],
+  },
+]
+
+// This real Hosted PostgreSQL/Restate scenario needs a live Restate process
+// and strict no-skip assertions, so its sole owner is the dedicated local-DB
+// qualification step rather than an ordinary shard.
+export const DEDICATED_INTEGRATION_QUALIFICATIONS = [
+  {
+    file: 'apps/hosted-control-plane/src/hosted-graph.integration.test.mjs',
+    workflow: '.github/workflows/postgres-pull-request.yml',
+    command: 'bash scripts/run-hosted-graph-qualification.sh',
   },
 ]
 

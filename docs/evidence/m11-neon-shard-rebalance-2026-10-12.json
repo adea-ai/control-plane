@@ -1,0 +1,58 @@
+{
+  "runId": 38198473355,
+  "runHeadSha": "149836981090cef18ebb10643148629cba5b82af",
+  "currentMainSha": "7f12f8aa36a6978cfb5900dbf61cf02aa4fb8f86",
+  "observed": {
+    "shard1": {
+      "integrationSeconds": 791,
+      "jobSeconds": 907,
+      "conclusion": "success"
+    },
+    "shard2": {
+      "integrationSeconds": 416,
+      "jobSeconds": 452,
+      "conclusion": "success"
+    },
+    "shard3": {
+      "integrationSeconds": 1047,
+      "jobSeconds": 1114,
+      "conclusion": "success"
+    }
+  },
+  "proposedMove": {
+    "file": "tests/langgraph-retirement-inventory-pg.integration.test.mjs",
+    "fromShard": 3,
+    "toShard": 2,
+    "durationSeconds": 263.7,
+    "gitBlobSha": "7f6d172287b11f5be9c909f7a7372bffd7dba0a7",
+    "sha256": "d48973efe369018ab4f8cc450d8354b46a053a729afdb7365438bcbd635ee3c6"
+  },
+  "projection": {
+    "integrationSecondsByShard": {
+      "1": 791,
+      "2": 679.7,
+      "3": 783.3
+    },
+    "jobSecondsByShard": {
+      "1": 907,
+      "2": 715.7,
+      "3": 850.3
+    },
+    "projectedMaxJobSeconds": 907,
+    "baselineMaxJobSeconds": 1114,
+    "projectedReductionSeconds": 207.3
+  },
+  "postMergeRun": {
+    "runId": 38209161123,
+    "headSha": "2085eebcf5e66afd50707158c50eb7db18db8a67",
+    "capturedAt": "2026-10-12T06:20:07Z",
+    "shard2IntegrationSeconds": 1062,
+    "shard2Conclusion": "success",
+    "shard2CleanupVerified": true,
+    "shard1Conclusion": "in_progress",
+    "shard3Conclusion": "in_progress",
+    "complete": false
+  },
+  "completeHostedRunRequired": true,
+  "scope": "file ownership only; test source and qualifications unchanged"
+}
