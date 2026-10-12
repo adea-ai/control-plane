@@ -62,6 +62,7 @@ export interface ProductionChildRecord {
 
 const LiveExecution = new Set(['accepted', 'queued', 'starting', 'running', 'awaiting_input'])
 const LiveAttempt = new Set(['queued', 'starting', 'running', 'awaiting_input'])
+const Completed = 'completed'
 const LiveDelegation = new Set(['requested', 'dispatched', 'running', 'awaiting_input'])
 const AdmittedToolCall = new Set(['authorized', 'executing', 'succeeded'])
 const DelegateOperation = 'delegate-child'
@@ -134,14 +135,21 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
   /** The retained parent: execution, attempt, lead intent, ready marker, audience and selection. */
   async function parent(
     input: { executionId: string; attemptId: string; plan: Pin },
-    canonical: ChildAdmissionReader = repositoryReader
+    canonical: ChildAdmissionReader = repositoryReader,
+    lifecycle: 'live' | 'retained-child' = 'live'
   ) {
     const at = nowMs()
     const execution = ExecutionSchema.parse(await canonical.getExecution(input.executionId))
     const attempt = ExecutionAttemptSchema.parse(await canonical.getAttempt(input.attemptId))
+    const live = LiveExecution.has(execution.state) && LiveAttempt.has(attempt.state)
+    // A retained child may resume or recheck funding after its parent completed. This
+    // narrow exception still requires the exact canonical completed pair; cancelled,
+    // failed, expired and mixed execution/attempt states remain denied. New allocation
+    // preflight uses the default live-only lifecycle below.
+    const completedChildContinuation =
+      lifecycle === 'retained-child' && execution.state === Completed && attempt.state === Completed
     if (
-      !LiveExecution.has(execution.state) ||
-      !LiveAttempt.has(attempt.state) ||
+      (!live && !completedChildContinuation) ||
       execution.latestAttemptId !== attempt.attemptId ||
       attempt.executionId !== execution.executionId ||
       execution.executionPlan.executionPlanId !== input.plan.executionPlanId ||
@@ -254,11 +262,18 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
       delegation.parentExecutionPlanDigest !== parentPin.contentDigest
     )
       deny()
-    const actor = await parent({
-      executionId: delegation.parentExecutionId,
-      attemptId: delegation.parentAttemptId,
-      plan: { executionPlanId: parentPin.executionPlanId, contentDigest: parentPin.contentDigest },
-    })
+    const actor = await parent(
+      {
+        executionId: delegation.parentExecutionId,
+        attemptId: delegation.parentAttemptId,
+        plan: {
+          executionPlanId: parentPin.executionPlanId,
+          contentDigest: parentPin.contentDigest,
+        },
+      },
+      repositoryReader,
+      'retained-child'
+    )
     if (actor.workspaceId !== plan.correlation.workspaceId) deny()
     await assertAdmittedCall(delegation.admittedToolCallId, {
       executionId: delegation.parentExecutionId,

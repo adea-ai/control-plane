@@ -992,40 +992,54 @@ test('child authority reads go through the allocation transaction reader and mat
 
 test('an unrelated reader stays outside an open child allocation fence until it commits', async () => {
   const f = await fixture()
+  const gate = createReleaseGate()
+  let allocation
+  let unrelated
+  let failure
   try {
     const child = await f.childAdmission()
-    let fenceEntered
-    const entered = new Promise((resolve) => (fenceEntered = resolve))
-    let release
-    const parked = new Promise((resolve) => (release = resolve))
-    const allocation = child.allocator.allocate({
-      request: child.request,
-      receipt: child.receipt,
-      execution: child.childExecution,
-      attempt: child.childAttempt,
-      delegation: child.delegation,
-      assertCurrent: async (reader) => {
-        await reader.getExecution(child.request.parentExecutionId)
-        fenceEntered()
-        await parked
-      },
-    })
-    await entered
+    allocation = observeOperation(
+      child.allocator.allocate({
+        request: child.request,
+        receipt: child.receipt,
+        execution: child.childExecution,
+        attempt: child.childAttempt,
+        delegation: child.delegation,
+        assertCurrent: async (reader) => {
+          await reader.getExecution(child.request.parentExecutionId)
+          await gate.pause()
+        },
+      })
+    )
+    await waitForGateOrOperation(gate.entered, allocation, 'child allocation')
     let unrelatedSettled = false
-    const unrelated = child.executionRepository
-      .getExecution(child.childIds.childExecutionId)
-      .then((value) => {
+    unrelated = observeOperation(
+      child.executionRepository.getExecution(child.childIds.childExecutionId).then((value) => {
         unrelatedSettled = true
         return value
       })
+    )
     await pause(25)
     expect(unrelatedSettled).toBe(false)
-    release()
-    await expect(allocation).resolves.toBe(true)
-    expect(await unrelated).toBeDefined()
-  } finally {
-    await f.close()
+    gate.release()
+    const allocated = await settleOperation(allocation, 'child allocation')
+    if (allocated.status === 'rejected') throw allocated.error
+    expect(allocated.value).toBe(true)
+    const read = await settleOperation(unrelated, 'unrelated reader')
+    if (read.status === 'rejected') throw read.error
+    expect(read.value).toBeDefined()
+  } catch (error) {
+    failure = error
   }
+  try {
+    await settleOwnedOperationsAndClose(f, gate, [
+      [allocation, 'child allocation'],
+      [unrelated, 'unrelated reader'],
+    ])
+  } catch (error) {
+    failure ??= error
+  }
+  if (failure) throw failure
 })
 
 test('a refused child fence leaves no canonical rows after restart', async () => {
