@@ -39,6 +39,8 @@ describe.skipIf(!enabled)('Neon migrator DDL probe', () => {
       migrationUrl.pathname = `/${isolated.name}`
       let application
       let migration
+      let testFailed = false
+      let testError
 
       try {
         application = postgres(applicationUrl.href, { max: 1, prepare: false })
@@ -81,24 +83,33 @@ describe.skipIf(!enabled)('Neon migrator DDL probe', () => {
         await migration`grant usage on schema app to ${migration(applicationRole)}`
         const table = `cp_neon_application_denied_${randomUUID().replaceAll('-', '')}`
         await assertDdlDenied(application, `create table app.${table} (id integer)`)
-      } finally {
-        const closeResults = await Promise.allSettled([
-          application?.end({ timeout: 5 }),
-          migration?.end({ timeout: 5 }),
-        ])
-        let disposeError
-        try {
-          await isolated.dispose()
-        } catch (error) {
-          disposeError = error
-        }
-        const closeErrors = closeResults.flatMap((result) =>
-          result.status === 'rejected' ? [result.reason] : []
-        )
-        if (disposeError) closeErrors.push(disposeError)
-        if (closeErrors.length > 0)
-          throw new AggregateError(closeErrors, 'NEON_DDL_PROBE_TEST_CLEANUP_FAILED')
+      } catch (error) {
+        testFailed = true
+        testError = error
       }
+
+      const closeResults = await Promise.allSettled([
+        Promise.resolve().then(() => application?.end({ timeout: 5 })),
+        Promise.resolve().then(() => migration?.end({ timeout: 5 })),
+      ])
+      const cleanupErrors = closeResults.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : []
+      )
+      try {
+        await isolated.dispose()
+      } catch (error) {
+        cleanupErrors.push(error)
+      }
+
+      if (testFailed && cleanupErrors.length > 0)
+        throw new AggregateError(
+          [testError, ...cleanupErrors],
+          'NEON_DDL_PROBE_TEST_AND_CLEANUP_FAILED',
+          { cause: testError }
+        )
+      if (testFailed) throw testError
+      if (cleanupErrors.length > 0)
+        throw new AggregateError(cleanupErrors, 'NEON_DDL_PROBE_TEST_CLEANUP_FAILED')
     },
     integrationTestTimeout(60_000)
   )
