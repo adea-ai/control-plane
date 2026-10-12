@@ -1,9 +1,8 @@
 // CP1025 (#1025) self-hosted-server profile wake/replay boundary check.
 //
-// This is not a wake/replay proof. It records the current public product boundary:
-// the hosted-server composition exposes no profile-wake API, and the profile
-// adapters package exports the binder but no wake topology-guard factory. A
-// successful replay proof through the supported product path remains unproven.
+// This is not a wake/replay proof. The package has a retained-record binder, but
+// the hosted-server composition still exposes no profile-wake API or trusted
+// topology-guard factory. A successful product-path replay proof remains unproven.
 
 import { describe, expect, test } from 'bun:test'
 import * as profileAdapters from '@control-plane/profile-adapters'
@@ -21,6 +20,6 @@ describe('self-hosted-server profile wake/replay boundary (#1025)', () => {
     const wakeExports = Object.keys(profileAdapters)
       .filter((name) => /wake/i.test(name))
       .toSorted()
-    expect(wakeExports).toEqual(['bindProfileWorkflowWake'])
+    expect(wakeExports).toEqual(['bindProfileWorkflowWake', 'bindRetainedProfileWorkflowWake'])
   })
 })

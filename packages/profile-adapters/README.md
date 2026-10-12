@@ -68,12 +68,33 @@ and from the immutable plan requirements before `start`. An absent required
 capability fails closed. The package does not add capabilities or infer
 eligibility from method presence.
 
-`bindProfileWorkflowWake` accepts only the dispatcher for the exact canonical
-profile (`embedded-sqlite-queue` for Local, `restate-ingress` otherwise). It
-does not create a dispatcher or retry through a different profile. Its
-server-owned topology guard verifies the exact dispatcher instance; profile
-and wake-kind labels alone are not proof. Current authority and residency are
-checked before and after each submit.
+`bindRetainedProfileWorkflowWake` is the production submit boundary. It accepts
+only the dispatcher for the exact canonical profile (`embedded-sqlite-queue`
+for Local, `restate-ingress` otherwise), resolves the command, execution, and
+any latest attempt from server repositories, cross-checks the plan, scope,
+graph payload and workspace against the stored plan and the retained deadline,
+and admits only accepted or reconciliation-required executions with zero
+attempts. Existing attempts fail closed. A historical execution without a
+retained deadline fails closed; the binder does not infer an unbounded deadline
+from missing legacy data. It re-reads command and execution generations after
+current authority/residency checks and immediately before submit. The same
+retained admission snapshot is passed to all pre-submit and post-submit
+`workflow.wake` authority and residency callbacks. The post-submit callback
+receives the admission snapshot, not a claim that the execution still has zero
+attempts after dispatch. Its server-owned topology guard verifies the exact
+dispatcher instance; profile and wake-kind labels alone are not proof. The
+command's `callerPrincipalId` is retained for service admission and is not
+treated as the original product actor. Composition must supply guards that
+independently bind that actor to current grants and trusted residency. The
+hosted-server composition has no such actor or residency source and is not
+wired to this binder, so its wake/replay path remains unqualified. This
+generation check does not make separate stores and dispatcher effects atomic,
+and it does not prove active-attempt crash replay.
+
+`bindProfileWorkflowWake` remains a lower-level adapter-binding primitive for
+compositions whose server-side authority and residency checks are already
+bound. It does not resolve retained records itself and is not sufficient as a
+production submit path.
 
 ## Source basis
 

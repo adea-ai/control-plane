@@ -119,10 +119,19 @@ Owners are existing issues. Where no open issue names a gap, the row says so.
 3. **Self-hosted-server profile wake/replay** (PostgreSQL + Restate) is unproven.
    `tests/profile-recovery-selfhosted-server-wake-replay.boundary.test.mjs` only
    checks that the composition prototype exposes no profile-wake member and the
-   package exports no wake topology-guard factory. It is a missing-wiring
-   boundary check, not a successful wake/replay proof. The self-hosted server
-   path has no SIGKILL wake/replay test. Self-hosted simple wake and replay after
-   close/reopen, checkpoint restore, and SIGKILL is proven by
+   package has no wake topology-guard factory. `bindRetainedProfileWorkflowWake`
+   now provides a reusable submit boundary that resolves the retained command,
+   execution, and any latest attempt; it admits zero-attempt recovery only and
+   fences the submit to current command/execution versions. Historical execution
+   records without a retained deadline fail closed; missing legacy deadlines are
+   not treated as unbounded. The same admission snapshot is supplied to
+   pre-submit and post-submit workflow-wake guards. It is not wired into
+   hosted-server composition. The retained
+   command only identifies a `svc_*` service principal; there is no original
+   product-actor/current-grant source or trusted residency/placement source to
+   compose the required guards. The self-hosted-server path has no SIGKILL
+   wake/replay test, and active-attempt crash replay remains unproven.
+   Self-hosted simple wake and replay after close/reopen, checkpoint restore, and SIGKILL is proven by
    `tests/profile-recovery-self-hosted-simple.integration.test.mjs` and
    `tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs`.
    Owner: #1025 (child of #942).
