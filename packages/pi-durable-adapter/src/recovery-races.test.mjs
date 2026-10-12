@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import { RuntimeAdapterError } from '@control-plane/runtime-sdk'
 import { PiDurableRuntimeAdapter } from './adapter.ts'
@@ -203,21 +204,20 @@ test('another process retaining a completed generation owner blocks new interact
     const prior = seed.journal.get(handle.handleId)
     seed.journal.update(handle.handleId, prior.epoch, { state: 'starting', detail: {} })
     await seed.close()
-    const path = join(directory, 'owned-generation.mjs')
+    const path = join(directory, 'owned-generation.json')
+    const roundTripProbe =
+      'quote:"; backslash:\\; newline:\n; tab:\t; NUL:\0; separators:\u2028\u2029; </script>; ${globalThis.__probe}'
     writeFileSync(
       path,
-      `
-import { PiDurableRuntimeAdapter } from ${JSON.stringify(new URL('./adapter.ts', import.meta.url).href)};
-setInterval(()=>{},1000);
-const admission=${JSON.stringify(prior.admission.admission)};
-const adapter=new PiDurableRuntimeAdapter({directory:${JSON.stringify(directory)},now:()=>${JSON.stringify(at)},
-resolveAdmission:async()=>admission,assertAuthority:async()=>{},
-resolveProvider:async()=>({...admission.selection,workspaceId:${JSON.stringify(setup.request.attemptBudget.workspaceId)},provider:'scripted',providerModel:'race-model',location:'remote_host',harness:'pi_durable',harnessVersion:'1.1.0',providerBinding:'pi_durable_models',withModels:async use=>use({})}),
-authorizeInference:async()=>({maxOutputTokens:10,maximumInputTokens:64,assertActive:async()=>{}}),settleUsage:async(_authority,_key,usage)=>usage,reconcileInference:async()=> 'unresolved',
-engineFactory:async()=>({run:async()=>(${JSON.stringify(result)}),cancel:async()=>{},close:async()=>{process.stdout.write(JSON.stringify({ownerPid:process.pid})+'\\n');await new Promise(()=>{});}})});
-await adapter.start(${JSON.stringify(setup.request)});
-await adapter.drain();
-`
+      JSON.stringify({
+        directory,
+        at,
+        admission: prior.admission.admission,
+        request: setup.request,
+        result,
+        roundTripProbe,
+      }),
+      { mode: 0o600 }
     )
     const overrideIndex = process.execArgv.indexOf('--tsconfig-override')
     const inlineOverride = process.execArgv
@@ -229,7 +229,8 @@ await adapter.drain();
       (overrideIndex < 0 ? undefined : process.execArgv[overrideIndex + 1]) ??
       writeRecoverySourceOverride(directory)
     const sourceResolution = ['--tsconfig-override', sourceOverride]
-    worker = Bun.spawn([process.execPath, ...sourceResolution, path], {
+    const workerPath = fileURLToPath(new URL('./recovery-races.worker.mjs', import.meta.url))
+    worker = Bun.spawn([process.execPath, ...sourceResolution, workerPath, path], {
       stdout: 'pipe',
       stderr: 'pipe',
     })
@@ -241,6 +242,7 @@ await adapter.drain();
       output += new TextDecoder().decode(next.value)
     }
     const owner = JSON.parse(output.trim())
+    expect(owner.roundTripProbe).toBe(roundTripProbe)
     observer = new PiDurableRuntimeAdapter(setup.options)
     const retained = observer.journal.get(handle.handleId)
     expect(retained.state).toBe('completed')

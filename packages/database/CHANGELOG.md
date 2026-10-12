@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.46.1](https://github.com/adea-ai/control-plane/compare/database-v1.46.0...database-v1.46.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **database:** handle absent app schema in Neon probe ([#1105](https://github.com/adea-ai/control-plane/issues/1105)) ([d0f8aa6](https://github.com/adea-ai/control-plane/commit/d0f8aa650d07d6a831ec4a652ec8236c74d2828b))
+
 ## [1.46.0](https://github.com/adea-ai/control-plane/compare/database-v1.45.1...database-v1.46.0) (2026-10-12)
 
 
