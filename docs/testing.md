@@ -116,20 +116,26 @@ PostgreSQL service, and runs the three `test:integration` shards from
 `scripts/integration-shards.mjs` concurrently against it. Files remain serial within each shard;
 bounded test cases create isolated databases. The separate local PostgreSQL pull-request workflow
 checks migration/schema consistency, the PostgreSQL profile conformance matrix, and Hosted
-PostgreSQL/Restate graph behavior. New integration files must be assigned to one shard or to the
-explicit dedicated-qualification manifest, which `tests/integration-shards.test.mjs` enforces. The
-expanded database foundation file has complementary case filters on shards 1 and 2. The partition
-check uses the development-only Acorn JavaScript parser (independent of the TypeScript compiler API)
-to inventory literal test names, bounds each slice, and executes those names through Bun using the
-runner's actual arguments to reject missing or duplicate selection. The local integration lane runs
+PostgreSQL/Restate graph behavior. The ruleset check is `Validation / Gate`; it depends on the mode,
+Code Foundry runtime, and PostgreSQL qualification results, and fails closed if any dependency is
+not successful, including when a dependency is skipped or cancelled. New integration files must be
+assigned to one shard or to the explicit dedicated-qualification manifest, which
+`tests/integration-shards.test.mjs` enforces. The expanded database foundation file has
+complementary case filters on shards 1 and 2. The partition check uses the development-only Acorn
+JavaScript parser (independent of the TypeScript compiler API) to inventory literal test names,
+bounds each slice, and executes those names through Bun using the runner's actual arguments to
+reject missing or duplicate selection. The local integration lane runs
 cloud-remote and PostgreSQL recovery drills once after all shards finish.
 
 The trusted-main Neon lane creates one short-lived branch and checks pooled and direct application
-connections plus the direct migrator role, TLS, and transaction round trips. It does not run the
-portable integration suite, migrations, build, profile matrix, or Hosted Restate qualification on
-Neon. Its five-minute budget starts before branch creation and ends after exact branch lookup,
-deletion, and absence verification; the compatibility command itself has a 90-second timeout. A
-successful baseline requires the compatibility proof and every cleanup/budget step to succeed.
+connections plus the direct migrator role, TLS, and transaction round trips. The compatibility
+check also runs a transaction as the migrator that creates a uniquely named table in `app`, writes
+and reads a marker, then drops the table. This narrow DDL probe checks provider permissions; it does
+not apply the application migration set. The lane does not run the portable integration suite,
+migrations, build, profile matrix, or Hosted Restate qualification on Neon. Its five-minute budget
+starts before branch creation and ends after exact branch lookup, deletion, and absence verification;
+the compatibility command itself has a 90-second timeout. A successful baseline requires the
+compatibility proof and every cleanup/budget step to succeed.
 Complete historical three-shard Neon runs remain accepted as stronger baselines while they are in
 the classifier lookback window. New full-suite files still need their single local owner, recorded
 in `tests/integration-shards.test.mjs`.
@@ -159,7 +165,7 @@ Preview cleanup resolves the exact run/attempt/branch name and validates the pro
 protection flags, and complete listing before exporting a branch ID for deletion. Each listing
 page allows three attempts for transport failures or HTTP 408/429/500/502/503/504, with ten-second
 request deadlines and 500/1000 ms backoff. Other HTTP failures and invalid metadata fail closed.
-The lookup step has a twelve-minute ceiling, including the existing twenty-page limit; exhausting
+The lookup step has a two-minute ceiling, including the existing twenty-page limit; exhausting
 retries leaves the workflow failed and requires follow-up cleanup. The one-day branch expiration
 is a fallback, not evidence that deletion succeeded. Cleanup retries do not repeat integration tests.
 A remote branch stretches tests that finish in seconds locally to tens of seconds and its pooler
