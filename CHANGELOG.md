@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.96.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.95.0...workspace-v1.96.0) (2026-10-13)
+
+
+### Features
+
+* **orchestration:** retain governed Pi child mappings and recovery proofs ([#1111](https://github.com/adea-ai/control-plane/issues/1111)) ([ba0846d](https://github.com/adea-ai/control-plane/commit/ba0846d5fd6a4919d9e80fae7cca05b60427e57c))
+
 ## [1.95.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.94.2...workspace-v1.95.0) (2026-10-13)
 
 
