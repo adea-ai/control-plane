@@ -435,7 +435,9 @@ export class PolicyControlledToolExecutionService {
       })
       return { state: 'succeeded', call, result }
     } catch (error) {
-      const ambiguous = error instanceof ToolGatewayError && error.effectState !== 'none'
+      // Only this gateway's typed no-effect proof can settle an invocation as failed.
+      // Foreign module copies and unrecognized throws cannot prove no effect occurred.
+      const ambiguous = !(error instanceof ToolGatewayError) || error.effectState !== 'none'
       call = await this.#transition(
         call,
         ambiguous ? 'reconciliation_required' : 'failed',

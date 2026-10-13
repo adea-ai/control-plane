@@ -628,3 +628,73 @@ describe('policy-controlled durable tool execution', () => {
     }
   })
 })
+
+for (const kind of ['plain', 'primitive', 'foreign-unknown', 'foreign-none', 'forged-none'])
+  test(`unrecognized post-invocation ${kind} error remains conservative across replay`, async () => {
+    const { ToolGatewayError: PackageError } = await import('@control-plane/tool-execution')
+    const { ToolGatewayError: SourceError } = await import('./tool-registry.ts')
+    const error =
+      kind === 'plain'
+        ? new Error('lost response')
+        : kind === 'primitive'
+          ? 'lost response'
+          : kind === 'forged-none'
+            ? Object.assign(new Error('untrusted'), {
+                name: 'ToolGatewayError',
+                code: 'EXECUTION_FAILED',
+                effectState: 'none',
+                executorCode: 'NO_EFFECT',
+              })
+            : new PackageError(
+                'EXECUTION_FAILED',
+                false,
+                kind === 'foreign-none' ? 'none' : 'unknown',
+                'FOREIGN_CODE'
+              )
+    if (kind.startsWith('foreign')) expect(error instanceof SourceError).toBe(false)
+    const { service, calls } = await fixture({
+      versionOverrides: { operations: [{ ...version().operations[0], approvalMode: 'never' }] },
+    })
+    let invocations = 0
+    service.gateway.invoke = async () => {
+      invocations++
+      throw error
+    }
+    const outcome = await service.execute(request())
+    expect(outcome).toMatchObject({
+      state: 'reconciliation_required',
+      call: { status: 'reconciliation_required', errorCode: 'EXECUTOR_ERROR' },
+    })
+    const retained = await calls.get(ids.call)
+    expect(await service.execute(request())).toMatchObject({
+      state: 'reconciliation_required',
+      call: retained,
+    })
+    expect(await calls.get(ids.call)).toEqual(retained)
+    expect(invocations).toBe(1)
+  })
+
+for (const effectState of ['none', 'unknown', 'committed'])
+  test(`genuine typed ${effectState} error preserves intended classification and executor code`, async () => {
+    const { ToolGatewayError } = await import('./tool-registry.ts')
+    const { service, calls } = await fixture({
+      versionOverrides: { operations: [{ ...version().operations[0], approvalMode: 'never' }] },
+    })
+    let invocations = 0
+    service.gateway.invoke = async () => {
+      invocations++
+      throw new ToolGatewayError('EXECUTION_FAILED', false, effectState, 'NATIVE_RECEIPT_CODE')
+    }
+    if (effectState === 'none')
+      await expect(service.execute(request())).rejects.toThrow('TOOL_EXECUTION_FAILED')
+    else expect((await service.execute(request())).state).toBe('reconciliation_required')
+    const retained = await calls.get(ids.call)
+    expect(retained.status).toBe(effectState === 'none' ? 'failed' : 'reconciliation_required')
+    expect(retained.errorCode).toBe('NATIVE_RECEIPT_CODE')
+    expect(await service.execute(request())).toMatchObject({
+      state: retained.status,
+      call: retained,
+    })
+    expect(await calls.get(ids.call)).toEqual(retained)
+    expect(invocations).toBe(1)
+  })
