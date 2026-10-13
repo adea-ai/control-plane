@@ -141,3 +141,22 @@ credential lease or runtime start; current publication authorization remains a
 separate required gate. This is candidate lifecycle code, not a qualified running
 path. Startup/HTTP wiring, full lifecycle integration and physical-source proof
 remain outstanding, and Adea's foreign-Agent guard remains enabled.
+
+### Candidate source publication checkpoint
+
+`PiLeadSourcePublicationSchema` joins the retained host/source execution binding
+to the existing CP publication proof, requiring exact source workspace, intent,
+original human, execution/attempt/native session and model pins. The execution
+binding now carries the fixed canonical `intentExpiresAt`; publication cannot
+renew it. `createSourcePiLeadPublicationReader` reads retained metadata without
+calling Adea, rechecks existing CP publication authority after awaited metadata,
+then requires a combined current CP host-service/source-principal/grant/payer
+fence for synchronous acceptance. Fresh CP proof expiry is capped at the original
+intent deadline and rechecked after fence acquisition. No output is returned.
+
+The running candidate regression exercises real prepare/admission/SQLite/native
+generation/progress/reopen and the real retained publication service, including
+callback-free metadata and denied publication after revocation. Its host/source
+and funding authority ports remain synthetic. Production combined fences,
+Adea delivery integration and the existing authorized physical source tool
+destination remain unqualified; this evidence is not a physical-source proof.

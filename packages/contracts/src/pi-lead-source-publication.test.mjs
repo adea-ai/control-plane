@@ -36,6 +36,7 @@ function fixture() {
   const binding = {
     schemaVersion: 'pi-lead-source-execution-binding/v1',
     authority,
+    intentExpiresAt: '2026-10-13T12:04:00.000Z',
     profileVersionId: id('pfv', '4'),
     profileContentDigest: `sha256:${'b'.repeat(64)}`,
     selectionRef: `msel_${'c'.repeat(32)}`,
@@ -94,5 +95,10 @@ test.each([
     canonicalActorPrincipalId: `user:${uuid('8')}`,
   }
   value.publication[pin] = substitutions[pin]
+  expect(PiLeadSourcePublicationSchema.safeParse(value).success).toBe(false)
+})
+test('publication cannot renew the fixed canonical intent deadline', () => {
+  const value = fixture()
+  value.publication.expiresAt = '2026-10-13T12:04:00.001Z'
   expect(PiLeadSourcePublicationSchema.safeParse(value).success).toBe(false)
 })

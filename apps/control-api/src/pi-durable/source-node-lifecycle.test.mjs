@@ -29,6 +29,9 @@ import { createProductionSourceLeadProductAuthority } from '../models/production
 import { ContextPackageCompiler } from '@control-plane/context'
 import { piLeadConversationAgentContextRef } from '@control-plane/contracts'
 import { DatabaseSync } from 'node:sqlite'
+import { PiLeadPublicationService } from './publication-current.service.ts'
+import { createSqlitePiLeadPublicationReader } from './sqlite-publication-reader.ts'
+import { createSourcePiLeadPublicationReader } from './source-publication-current.ts'
 import { deterministicPiLeadIntentIds } from './node-admission.ts'
 
 const at = '2026-10-08T09:00:00.000Z'
@@ -517,6 +520,7 @@ test('candidate source composition retains host/source pins through prepare, nat
     await composition.adapter.drain()
     const sourceBinding = await composition.readRetainedSourceExecutionBinding(intentId)
     expect(sourceBinding.authority).toEqual(sourceAuthority)
+    expect(sourceBinding.intentExpiresAt).toBe(expiresAt)
     expect(sourceBinding.runtimeSessionId).toBe(first.runtimeSessionId)
     expect(sourceBinding.profileVersionId).toBe(plan.profile.profileVersionId)
     expect(sourceBinding.selectionRef).toBe(evidence.selectionRef)
@@ -585,6 +589,46 @@ test('candidate source composition retains host/source pins through prepare, nat
     expect(await repositories.executions.listAttempts(ids.executionId)).toHaveLength(1)
     expect(state.requests).toHaveLength(1)
     expect(await composition.readRetainedSourceExecutionBinding(intentId)).toEqual(sourceBinding)
+    const sourcePublication = createSourcePiLeadPublicationReader({
+      core: new PiLeadPublicationService({
+        readRetained: createSqlitePiLeadPublicationReader({
+          database: composition.admission.store.database,
+          adapter: composition.adapter,
+        }),
+        assertCurrent: async (binding, currentPrincipal) => {
+          expect(binding.workspaceId).toBe(sourceAuthority.source.workspaceId)
+          expect(binding.canonicalActorPrincipalId).toBe(
+            sourceAuthority.host.canonicalActorPrincipalId
+          )
+          expect(currentPrincipal.principalId).toBe(principal.principalId)
+          if (state.revoked) throw new Error('SYNTHETIC_SOURCE_PUBLICATION_REVOKED')
+          return {
+            authorityRevision: 1,
+            expiresAt: new Date(Date.parse(at) + 30_000).toISOString(),
+          }
+        },
+        now: () => at,
+      }),
+      readBinding: (currentIntentId) =>
+        composition.readRetainedSourceExecutionBinding(currentIntentId),
+      withCurrentAuthorization: async (_input, accept) => {
+        // Synthetic same-realm fence; real production CP authority is unqualified.
+        if (state.revoked) throw new Error('SYNTHETIC_SOURCE_PUBLICATION_REVOKED')
+        return accept()
+      },
+      now: () => at,
+    })
+    const publicationQuery = read('pi-durable.lead.publication.current', {
+      dispatchId: first.dispatchId,
+      preparationRef: prepared.preparationRef,
+    })
+    const beforePublication = state.productReads
+    const proof = await sourcePublication.current(publicationQuery, principal)
+    expect(proof.binding).toEqual(sourceBinding)
+    expect(proof.publication.resultContentDigest).toBe(
+      `sha256:${createHash('sha256').update('Canonical node answer', 'utf8').digest('hex')}`
+    )
+    expect(state.productReads).toBe(beforePublication)
     state.revoked = true
     await expect(composition.service.status(statusRequest, principal)).rejects.toThrow(
       'PI_LEAD_UNAVAILABLE'
@@ -593,6 +637,9 @@ test('candidate source composition retains host/source pins through prepare, nat
       'PI_LEAD_UNAVAILABLE'
     )
     expect(state.requests).toHaveLength(1)
+    await expect(sourcePublication.current(publicationQuery, principal)).rejects.toThrow(
+      'SYNTHETIC_SOURCE_PUBLICATION_REVOKED'
+    )
     const reads = state.productReads
     expect(await composition.readRetainedSourceExecutionBinding(intentId)).toEqual(sourceBinding)
     expect(state.productReads).toBe(reads)

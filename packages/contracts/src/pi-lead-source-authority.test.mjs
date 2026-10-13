@@ -43,6 +43,7 @@ function bindingFixture() {
   return {
     schemaVersion: 'pi-lead-source-execution-binding/v1',
     authority: sourceAuthorityFixture(),
+    intentExpiresAt: '2026-10-13T12:04:00.000Z',
     profileVersionId: id('pfv', '4'),
     profileContentDigest: `sha256:${'b'.repeat(64)}`,
     selectionRef: `msel_${'c'.repeat(32)}`,

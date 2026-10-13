@@ -21,7 +21,8 @@ export const PiLeadSourcePublicationSchema = z
       publication.attemptId !== binding.attemptId ||
       publication.runtimeSessionId !== binding.runtimeSessionId ||
       publication.selectionRef !== binding.selectionRef ||
-      publication.selectionRevision !== binding.selectionRevision
+      publication.selectionRevision !== binding.selectionRevision ||
+      Date.parse(publication.expiresAt) > Date.parse(binding.intentExpiresAt)
     )
       context.addIssue({ code: 'custom', message: 'Host/source publication binding mismatch' })
   })

@@ -94,6 +94,8 @@ export const PiLeadHostSourceAuthoritySchema = z
 export const PiLeadSourceExecutionBindingSchema = z.strictObject({
   schemaVersion: z.literal('pi-lead-source-execution-binding/v1'),
   authority: PiLeadHostSourceAuthoritySchema,
+  /** Fixed canonical intent deadline; reading or publishing never renews it. */
+  intentExpiresAt: z.iso.datetime(),
   profileVersionId: IdentifierSchemas.profileVersionId,
   profileContentDigest: Digest,
   selectionRef: ModelSelectionRefSchema,

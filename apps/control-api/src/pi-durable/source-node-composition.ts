@@ -197,6 +197,7 @@ export async function createProductionSourceNodeComposition(
       return PiLeadSourceExecutionBindingSchema.parse({
         schemaVersion: 'pi-lead-source-execution-binding/v1',
         authority: source.authority,
+        intentExpiresAt: source.expiresAt,
         profileVersionId: source.profileVersionId,
         profileContentDigest: source.profileContentDigest,
         selectionRef: source.selectionRef,
