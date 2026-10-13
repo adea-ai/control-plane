@@ -845,7 +845,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       if (digest(provider.binding) !== authority.providerDigest)
         fail('PI_PROVIDER_BINDING_CHANGED', 'conflict')
       const governance =
-        plan.constraints.limits.childExecutions.maximumTotal === 1 &&
+        plan.constraints.limits.childExecutions.maximumTotal > 0 &&
         authority.admission.canonicalActorPrincipalId
           ? this.#options.governedDelegateChild
           : undefined

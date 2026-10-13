@@ -239,7 +239,7 @@ export class GovernedDelegateChildExecutor implements ToolExecutor {
       !['running', 'awaiting_input'].includes(parent.state) ||
       parent.correlation.workspaceId !== request.workspaceId ||
       parentPlan.profile.profileId !== request.profileId ||
-      parentPlan.constraints.limits.childExecutions.maximumTotal !== 1
+      parentPlan.constraints.limits.childExecutions.maximumTotal < 1
     )
       deny()
     const command = await this.options.resolveCommand(structuredClone(request))

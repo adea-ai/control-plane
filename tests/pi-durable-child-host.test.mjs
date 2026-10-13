@@ -1,3 +1,15 @@
+import { createModels, createProvider } from '@earendil-works/pi-ai/models'
+import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
+import { ExecutionPlanCompiler } from '@control-plane/execution-plan'
+import { DurableUsageLedger, PinnedModelPrice } from '@control-plane/usage-ledger'
+import {
+  ChildProgressEvidenceBuffer,
+  ChildProgressLeadDispatcher,
+  ChildProgressLeadFeed,
+} from '@control-plane/orchestration'
+import { createNodePiDurableRuntime } from '../packages/pi-durable-adapter/src/composition.ts'
+import { createPiDurableUsageAuthority } from '../packages/pi-durable-adapter/src/usage-authority.ts'
+import { PiDurableChildProgressScanner } from '../apps/control-api/src/pi-durable/child-progress-scanner.ts'
 import { afterEach, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -25,7 +37,7 @@ import {
   DelegationRuntimeAdmissionRequestSchema,
   GovernedDelegateChildExecutor,
 } from '../packages/orchestration/src/delegation-runtime.ts'
-import { ids } from '../packages/orchestration/src/delegation-fixtures.mjs'
+import { ids, parentPlanInput } from '../packages/orchestration/src/delegation-fixtures.mjs'
 import {
   createGovernedChildHostFixture,
   parentAttemptId,
@@ -659,3 +671,362 @@ test('SQLite delegation admission rejects a composed child context that expands 
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+const at = '2026-08-25T18:02:00.000Z'
+const siblingId = (prefix, letter) => `${prefix}_01J${letter}BCDEF0123456789ABCDEFG`
+
+function siblingAdmission(first, letter) {
+  const admission = structuredClone(first)
+  admission.sourceKey = `pi-tool:${letter.toLowerCase().repeat(64)}`
+  Object.assign(admission.request, {
+    requestId: siblingId('req', letter),
+    toolCallId: siblingId('tlc', letter),
+    idempotencyKey: `sibling:${letter}`,
+  })
+  admission.request.approval.interactionId = siblingId('int', letter)
+  Object.assign(admission.command.delegation, {
+    delegationId: siblingId('dlg', letter),
+    childExecutionId: siblingId('exe', letter),
+    childAttemptId: siblingId('att', letter),
+    admittedToolCallId: admission.request.toolCallId,
+  })
+  Object.assign(admission.command.delegation.childPlan.correlation, {
+    taskId: siblingId('tsk', letter),
+    requestId: siblingId('req', letter),
+  })
+  Object.assign(admission.command.dispatch, {
+    delegationId: admission.command.delegation.delegationId,
+    childAttemptId: admission.command.delegation.childAttemptId,
+  })
+  return admission
+}
+
+// Actual Pi engines and SQLite journals; only the provider and external product/
+// spending authority are loopback fixtures. Usage is read from provider receipts
+// and priced/retained by the production usage authority, never invented on cancel.
+test('separately governed siblings run Pi concurrently, retain responsive input and survive terminal restart', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pi-sibling-dispatch-'))
+  const provider = new SqlitePersistenceProvider({ path: join(directory, 'canonical.sqlite') })
+  const arrived = [Promise.withResolvers(), Promise.withResolvers()]
+  const release = [Promise.withResolvers(), Promise.withResolvers()]
+  const requests = []
+  const server = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    async fetch(request) {
+      const index = requests.length
+      requests.push(await request.json())
+      arrived[index]?.resolve()
+      await release[index]?.promise
+      const chunks = [
+        {
+          choices: [
+            {
+              index: 0,
+              delta: { role: 'assistant', content: `Sibling ${index} result` },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+        },
+      ].map((chunk) => ({
+        id: `chat_${index}`,
+        object: 'chat.completion.chunk',
+        created: 1,
+        model: 'sibling-loopback',
+        ...chunk,
+      }))
+      return new Response(
+        chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n',
+        { headers: { 'content-type': 'text/event-stream' } }
+      )
+    },
+  })
+  let runtime
+  try {
+    await provider.migrate()
+    const publications = new SqliteDelegationEventPublisher(provider, ids.parentExecutionId)
+    const makeFeed = () =>
+      new ChildProgressLeadFeed({
+        publications,
+        dispatcher: new ChildProgressLeadDispatcher({
+          buffer: new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId }),
+        }),
+        generationOf: () => 1,
+      })
+    const feed = makeFeed()
+    const records = new SqliteDelegationRepository(provider)
+    const ledger = new DurableUsageLedger({
+      store: new SqliteDurableUsageStore(provider),
+      now: () => at,
+    })
+    const storage = {
+      executions: new SqliteExecutionRepository(provider),
+      plans: new SqliteExecutionPlanRepository(provider),
+      contexts: new SqliteContextPackageRepository(provider),
+      delegations: records,
+      events: feed,
+      calls: new SqliteToolCallRepository(provider, ids.workspaceId),
+      admissions: new SqliteDelegationToolAdmissionRepository(provider, ids.workspaceId),
+      usageStore: new SqliteDurableUsageStore(provider),
+      childAllocator: records,
+      scopeAdmission: {
+        authority: { readCurrent: async (input) => canonicalCurrentSnapshot(input) },
+        now: () => at,
+        resolveCallerPrincipalId: async () => 'user:original',
+      },
+      childAdmission: {
+        prepare: async (request) => ({
+          schemaVersion: 'pi-child-admission/v1',
+          ...request,
+          authorityRevision: 1,
+          productRevision: 'product:1',
+          productReaderPrincipalId: 'svc_product-reader',
+          selectionRef: 'selection:sibling',
+          selectionRevision: 1,
+          expiresAt: '2999-01-01T00:00:00.000Z',
+        }),
+        assertCurrent: async () => {},
+      },
+    }
+    const planInput = parentPlanInput()
+    planInput.constraints.limits.childExecutions.maximumTotal = 2
+    planInput.profile.definition.capabilityRequirements = []
+    planInput.skills[0].manifest.requiredCapabilities = []
+    const parentPlan = new ExecutionPlanCompiler('1.0.0').compile(planInput)
+    const host = await createGovernedChildHostFixture({
+      storage,
+      workspace: { parentPlan },
+      runtimeAdapter: { start: (request) => runtime.adapter.start(request) },
+      reserveChildBudget: async (admission) => {
+        const budget = {
+          schemaVersion: 1,
+          workspaceId: ids.workspaceId,
+          executionId: admission.record.childExecutionId,
+          attemptId: admission.attempt.attemptId,
+          executionPlanId: admission.plan.executionPlanId,
+          executionPlanDigest: admission.plan.contentDigest,
+          reservationKey: `runtime-attempt:${admission.attempt.attemptId}`,
+          currency: 'USD',
+          maximumMicrounits: 500000,
+          maximumTokens: 5000,
+        }
+        const {
+          schemaVersion: _schemaVersion,
+          executionPlanId: _planId,
+          executionPlanDigest: _planDigest,
+          currency: _currency,
+          ...reservation
+        } = budget
+        await ledger.reserve({
+          ...reservation,
+          source: { sourceId: budget.reservationKey, idempotencyKey: budget.reservationKey },
+        })
+        return budget
+      },
+    })
+    const price = new PinnedModelPrice(
+      {
+        schemaVersion: 1,
+        deploymentId: 'sibling-fixture',
+        provider: 'sibling-loopback',
+        model: 'sibling-loopback',
+        version: 'price:1',
+        currency: 'USD',
+        fundingSource: 'byo_api',
+        validFrom: at,
+        validUntil: '2027-01-01T00:00:00.000Z',
+        maximumInputTokens: 1024,
+        maximumOutputTokens: 32,
+        ratesMicrounitsPerMillionTokens: { input: 1000000, cachedInput: 500000, output: 2000000 },
+      },
+      { now: () => at }
+    )
+    const usage = createPiDurableUsageAuthority({
+      ledger,
+      resolvePrice: async () => ({ price, maximumOutputTokens: 32 }),
+      assertSpendingAuthorized: async () => ({
+        authorizationRef: 'spend:sibling-fixture',
+        evidenceDigest: `sha256:${'e'.repeat(64)}`,
+        assertActive: async () => {},
+      }),
+    })
+    const baseUrl = `${server.url}v1`
+    const options = {
+      directory: join(directory, 'runtime'),
+      now: () => at,
+      resolveAdmission: async (request) => ({
+        schemaVersion: 'pi-durable-admission/v1',
+        prompt: request.executionId,
+        selection: { selectionRef: `msel_${'a'.repeat(32)}`, selectionRevision: 1 },
+        authority: {
+          revision: 1,
+          principalRef: 'user:original',
+          scopeRef: 'scope:sibling',
+          expiresAt: '2027-01-01T00:00:00.000Z',
+        },
+      }),
+      assertAuthority: async () => {},
+      reconcileInference: async () => 'unresolved',
+      authorizeInference: usage.authorizeInference,
+      settleUsage: usage.settleUsage,
+      resolveProvider: async (selection) => ({
+        ...selection,
+        workspaceId: ids.workspaceId,
+        provider: 'sibling-loopback',
+        providerModel: 'sibling-loopback',
+        location: 'remote_host',
+        harness: 'pi_durable',
+        harnessVersion: '1.1.0',
+        providerBinding: 'pi_durable_models',
+        withModels: async (use) => {
+          const models = createModels()
+          models.setProvider(
+            createProvider({
+              id: 'sibling-loopback',
+              baseUrl,
+              auth: {
+                apiKey: {
+                  name: 'Loopback fixture',
+                  resolve: async () => ({ auth: { apiKey: 'fixture-no-paid-account' } }),
+                },
+              },
+              models: [
+                {
+                  id: 'sibling-loopback',
+                  provider: 'sibling-loopback',
+                  name: 'Loopback',
+                  api: 'openai-completions',
+                  baseUrl,
+                  reasoning: false,
+                  input: ['text'],
+                  contextWindow: 1024,
+                  maxTokens: 32,
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                },
+              ],
+              api: openAICompletionsApi(),
+            })
+          )
+          return use(models)
+        },
+      }),
+    }
+    runtime = await createNodePiDurableRuntime(options)
+    const second = siblingAdmission(host.admission, 'C')
+    await host.admissions.retain(second)
+    const outcomes = await Promise.all([
+      host.service.execute(host.request),
+      host.service.execute(second.request),
+    ])
+    expect(outcomes.map((outcome) => outcome.state)).toEqual(['succeeded', 'succeeded'])
+    expect(await host.service.execute(host.request)).toEqual(outcomes[0])
+    expect(await host.service.execute(second.request)).toEqual(outcomes[1])
+    expect(host.starts).toHaveLength(2)
+    await Promise.all(arrived.map((item) => item.promise))
+    const handles = host.starts.map(
+      (request) =>
+        runtime.adapter.journal.list().find((row) => row.attemptId === request.attemptId).admission
+          .handle
+    )
+    expect(new Set(handles.map((handle) => handle.externalSessionId)).size).toBe(2)
+    expect(
+      await Promise.all(handles.map(async (handle) => (await runtime.adapter.status(handle)).state))
+    ).toEqual(['running', 'running'])
+    const scanner = new PiDurableChildProgressScanner({
+      now: () => at,
+      bridge: host.bridge,
+      listRetainedChildren: async () =>
+        Promise.all(
+          (await records.listByParent(ids.parentExecutionId)).map(async (record) => ({
+            identity: {
+              schemaVersion: 'delegation-runtime-admission/v1',
+              parentExecutionId: record.parentExecutionId,
+              parentAttemptId: record.parentAttemptId,
+              delegationId: record.delegationId,
+              childAttemptId: record.childAttemptId,
+            },
+            handle: handles.find((handle) => handle.attemptId === record.childAttemptId),
+            canonicalState: (await storage.executions.getAttempt(record.childAttemptId)).state,
+          }))
+        ),
+      assertCurrent: async (record) =>
+        expect((await records.get(record.identity.delegationId)).childAttemptId).toBe(
+          record.handle.attemptId
+        ),
+      retainTerminalResult: async (record, result) => {
+        await provider.transaction(async (tx) =>
+          tx.put({ namespace: 'sibling-results', id: record.handle.attemptId, value: result })
+        )
+        return siblingId('art', record.handle.attemptId.includes('01JC') ? 'C' : 'B')
+      },
+    })
+    expect((await scanner.scan(runtime.adapter)).blocked).toEqual([])
+    expect(feed.takeDeliveries()).toEqual([])
+    feed.acceptHumanInput({ interactionId: siblingId('int', 'D'), kind: 'input', receivedAt: at })
+    expect(feed.takeDeliveries()[0].kind).toBe('human_input')
+    const third = siblingAdmission(host.admission, 'D')
+    await host.admissions.retain(third)
+    expect((await host.service.execute(third.request)).state).not.toBe('succeeded')
+    expect(host.starts).toHaveLength(2)
+    expect(
+      (
+        await runtime.adapter.cancel(handles[0], {
+          idempotencyKey: 'cancel:first',
+          requestedAt: at,
+        })
+      ).state
+    ).toBe('cancelling')
+    release.forEach((item) => item.resolve())
+    await runtime.adapter.drain()
+    expect((await runtime.adapter.status(handles[1])).state).toBe('completed')
+    expect((await scanner.scan(runtime.adapter)).blocked).toEqual([])
+    const packets = feed
+      .takeDeliveries()
+      .filter((delivery) => delivery.kind === 'evidence')
+      .map((delivery) => delivery.packet)
+    expect((await runtime.adapter.status(handles[0])).state).toBe('cancelling')
+    expect(
+      runtime.adapter.journal.get(handles[0].handleId).detail.cancellationIntent
+    ).toMatchObject({ targetKind: 'active_generation' })
+    expect(packets.flatMap((packet) => packet.entries).map((entry) => entry.phase)).toContain(
+      'completed'
+    )
+    const entries = await Promise.all(
+      host.starts.map((request) => ledger.entries(ids.workspaceId, request.executionId))
+    )
+    expect(entries[0].filter((entry) => entry.kind === 'model_usage')).toEqual([])
+    expect(entries[0].some((entry) => entry.kind === 'model_reservation')).toBe(true)
+    expect(entries[1].filter((entry) => entry.kind === 'model_usage')).toMatchObject([
+      { quantity: { value: 8, unit: 'tokens' }, costMicrounits: 11 },
+    ])
+    await runtime.close()
+    runtime = await createNodePiDurableRuntime(options)
+    expect(
+      await Promise.all(host.starts.map((request) => runtime.adapter.findExistingHandle(request)))
+    ).toEqual(handles)
+    expect(
+      await Promise.all(handles.map(async (handle) => (await runtime.adapter.status(handle)).state))
+    ).toEqual(['cancelling', 'completed'])
+    const restartedFeed = makeFeed()
+    await restartedFeed.replay()
+    expect(restartedFeed.takeDeliveries().length).toBeGreaterThan(0)
+    await restartedFeed.replay()
+    expect(restartedFeed.takeDeliveries()).toEqual([])
+    expect(
+      await Promise.all(
+        host.starts.map((request) => ledger.entries(ids.workspaceId, request.executionId))
+      )
+    ).toEqual(entries)
+    expect(requests).toHaveLength(2)
+  } finally {
+    release.forEach((item) => item.resolve())
+    await runtime?.close()
+    await server.stop(true)
+    provider.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+}, 30000)
