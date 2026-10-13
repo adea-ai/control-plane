@@ -118,7 +118,10 @@ bounded test cases create isolated databases. The separate local PostgreSQL pull
 checks migration/schema consistency, the PostgreSQL profile conformance matrix, and Hosted
 PostgreSQL/Restate graph behavior. The ruleset check is `Validation / Gate`; it depends on the mode,
 Code Foundry runtime, and PostgreSQL qualification results, and fails closed if any dependency is
-not successful, including when a dependency is skipped or cancelled. New integration files must be
+not successful, including when a dependency is skipped or cancelled. The local aggregate uses
+the canonical `validation` job ID required by Code Foundry doctor and retains the full
+`Validation / Gate` check name; the reusable caller stays `validation_runtime` so its nested
+gate cannot publish a competing required context. New integration files must be
 assigned to one shard or to the explicit dedicated-qualification manifest, which
 `tests/integration-shards.test.mjs` enforces. The expanded database foundation file has
 complementary case filters on shards 1 and 2. The partition check uses the development-only Acorn
