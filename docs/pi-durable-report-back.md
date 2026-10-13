@@ -98,12 +98,22 @@ one `delegate-child` operation (Pi-facing name `delegate_child`). Its strict mod
 input is only `{ objective }`. A server compiler resolves the originating recorded
 tool call and stable IDs, timestamps and bounded context for the trusted request;
 it supplies neither inherited credentials nor model funding. Lead plans on this
-path allow exactly one child. SQLite enforces the sibling cap inside its writer
+path allow a positive bounded child count. Each separately admitted tool call
+starts its own canonical child attempt and Pi session without waiting for other
+children to finish. SQLite enforces the sibling cap inside its writer
 transaction even when a caller saw stale state. Register this executor only behind
 `PolicyControlledToolExecutionService` and the runtime owner's full-request effect
 gate. Generic Pi native tools remain disabled. No runtime registry or production
 composition is enabled by this increment. Model-driven child qualification and
 current audience-authorized Adea publication remain separate composed gates.
+
+The sibling dispatch qualification runs two actual Pi engines concurrently against
+a gated local provider, forwards human input through the existing lead feed, and
+retains completed results and provider-reported usage through the canonical ledger.
+Cancellation during an unresolved physical send remains `cancelling` with its hold
+retained after runtime restart; no usage or terminal cancellation is invented.
+Production `node-composition.ts` integration remains dependent on CP #1048; this
+dispatch change does not modify its cancellation behavior or CP #1022 mappings.
 
 The tested persistence profile for this increment is the existing SQLite provider
 on a local filesystem. Eleven persistence and fault-injection tests physically close and reopen all

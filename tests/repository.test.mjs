@@ -277,6 +277,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/child-progress-two-siblings-composition.test.mjs',
     'tests/pi-child-continuation-sqlite.test.mjs',
     'tests/pi-durable-child-host.test.mjs',
+    'tests/pi-durable-child-mapping-recovery.test.mjs',
     'tests/pi-durable-delegation-recovery.test.mjs',
     'tests/pi-durable-canonical-authority.test.mjs',
     'tests/pi-durable-production-child-composition.test.mjs',
@@ -888,12 +889,14 @@ test('isolates credentialed Neon validation from pull-request source', async () 
   assert.doesNotMatch(pullRequestWorkflow, /bun run test:integration/)
   assert.match(validationWorkflow, /uses: \.\/\.github\/workflows\/postgres-pull-request\.yml/)
   assert.match(validationWorkflow, /name: Validation \/ Gate/)
-  const gate = validationWorkflow.split('  validation_gate:\n')[1]
+  const gate = validationWorkflow.split('  validation:\n')[1]
   assert.match(gate, /needs: \[mode, validation_runtime, postgres_qualification\]/)
+  assert.match(gate, /MODE_RESULT: \$\{\{ needs\.mode\.result \}\}/)
   assert.match(gate, /VALIDATION_RESULT: \$\{\{ needs\.validation_runtime\.result \}\}/)
   assert.match(gate, /POSTGRES_RESULT: \$\{\{ needs\.postgres_qualification\.result \}\}/)
   assert.match(gate, /\$POSTGRES_RESULT" != success/)
   assert.match(gate, /\$VALIDATION_RESULT" != success/)
+  assert.match(gate, /\$MODE_RESULT" != success/)
   assert.ok(validationJob)
   assert.match(validationJob, /uses: 0xPlayerOne\/code-foundry/)
   // The reusable-workflow call forwards exactly two sanctioned secrets
@@ -901,6 +904,46 @@ test('isolates credentialed Neon validation from pull-request source', async () 
   const secretRefs = validationJob.match(/\$\{\{[^}]*\bsecrets\b[^}]*\}\}/g) ?? []
   for (const ref of secretRefs) {
     assert.match(ref, /secrets\.(TURBO_TOKEN|NEXTAUTH_SECRET)\b/)
+  }
+})
+
+test('the canonical validation job keeps the doctor contract and fails closed', async () => {
+  const workflow = await readFile(
+    new URL('../.github/workflows/validation.yml', import.meta.url),
+    'utf8'
+  )
+  // Code Foundry 1.45.2 and 1.47.1 doctor both require this caller shape.
+  assert.match(workflow, /^  validation:\n    name: Validation/m)
+  const gate = workflow.split('\n  validation:\n')[1]?.split('\n  default-branch-codeql:')[0]
+  assert.ok(gate)
+  assert.match(gate, /^    name: Validation \/ Gate$/m)
+  assert.equal((workflow.match(/^    name: Validation \/ Gate$/gm) ?? []).length, 1)
+  assert.match(gate, /always\(\)/)
+  assert.match(gate, /github\.event\.pull_request\.draft == false/)
+  assert.match(gate, /permissions: \{\}/)
+  assert.doesNotMatch(gate, /continue-on-error/)
+  const script = gate.match(/        run: \|\n((?:          .*(?:\n|$))+)/)?.[1]
+  assert.ok(script, 'the aggregate must execute its fail-closed result check')
+  const results = ['success', 'failure', 'cancelled', 'skipped', '', 'unknown']
+  for (const mode of results) {
+    for (const validation of results) {
+      for (const postgres of results) {
+        const result = spawnSync('bash', ['-e', '-c', script], {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            MODE_RESULT: mode,
+            VALIDATION_RESULT: validation,
+            POSTGRES_RESULT: postgres,
+          },
+        })
+        assert.equal(
+          result.status,
+          mode === 'success' && validation === 'success' && postgres === 'success' ? 0 : 1,
+          `mode=${mode} validation=${validation} postgres=${postgres}: ${result.stderr}`
+        )
+      }
+    }
   }
 })
 

@@ -374,6 +374,13 @@ function isTerminalPhase(phase: ChildProgressEvidenceEvent['phase']): boolean {
   return TERMINAL_PHASES.has(phase)
 }
 
+/** Each trailing zero is inspected once, without regex backtracking. */
+function trimFractionTrailingZeros(fraction: string): string {
+  let end = fraction.length
+  while (end > 0 && fraction.charCodeAt(end - 1) === 48) end--
+  return fraction.slice(0, end)
+}
+
 /**
  * One chronological ordering rule for every evidence timestamp boundary.
  *
@@ -385,8 +392,8 @@ function isTerminalPhase(phase: ChildProgressEvidenceEvent['phase']): boolean {
  */
 function compareChronologicalTimestamps(left: string, right: string): number {
   const fractionPattern = /\.(\d+)(?=(?:Z|[+-]\d{2}:\d{2})$)/
-  const leftFraction = (left.match(fractionPattern)?.[1] ?? '').replace(/0+$/, '')
-  const rightFraction = (right.match(fractionPattern)?.[1] ?? '').replace(/0+$/, '')
+  const leftFraction = trimFractionTrailingZeros(left.match(fractionPattern)?.[1] ?? '')
+  const rightFraction = trimFractionTrailingZeros(right.match(fractionPattern)?.[1] ?? '')
   const wholeSecondPattern = /\.\d+(?=(?:Z|[+-]\d{2}:\d{2})$)/
   const a = Date.parse(left.replace(wholeSecondPattern, ''))
   const b = Date.parse(right.replace(wholeSecondPattern, ''))
@@ -1024,7 +1031,12 @@ export class ChildProgressEvidenceBuffer {
       firstEventAt: open.firstEventAt,
       lastEventAt: open.lastEventAt,
       entries: open.entries,
-      childSnapshots: open.childSnapshots,
+      // Sealed snapshots belong to the caller; retained windows keep their
+      // own snapshot and metric counters for subsequent observations.
+      childSnapshots: open.childSnapshots.map((snapshot) => ({
+        ...snapshot,
+        metrics: { ...snapshot.metrics },
+      })),
       coalescedEventCount: open.coalescedEventCount,
       duplicateEventCount: open.duplicateEventCount,
       rejectedEventCount: open.rejectedEventCount,

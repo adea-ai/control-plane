@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/adea-ai/control-plane/compare/telemetry-v1.6.0...telemetry-v1.7.0) (2026-10-13)
+
+
+### Features
+
+* **telemetry:** add bounded runtime measurement lifecycle ([#1030](https://github.com/adea-ai/control-plane/issues/1030)) ([#1109](https://github.com/adea-ai/control-plane/issues/1109)) ([2eec6f3](https://github.com/adea-ai/control-plane/commit/2eec6f3ca37fe861d94688b8063e70a1fc73c1ff))
+
 ## [1.6.0](https://github.com/adea-ai/control-plane/compare/telemetry-v1.5.6...telemetry-v1.6.0) (2026-10-09)
 
 

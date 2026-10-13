@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.96.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.95.0...workspace-v1.96.0) (2026-10-13)
+
+
+### Features
+
+* **orchestration:** retain governed Pi child mappings and recovery proofs ([#1111](https://github.com/adea-ai/control-plane/issues/1111)) ([ba0846d](https://github.com/adea-ai/control-plane/commit/ba0846d5fd6a4919d9e80fae7cca05b60427e57c))
+
+## [1.95.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.94.2...workspace-v1.95.0) (2026-10-13)
+
+
+### Features
+
+* **telemetry:** add bounded runtime measurement lifecycle ([#1030](https://github.com/adea-ai/control-plane/issues/1030)) ([#1109](https://github.com/adea-ai/control-plane/issues/1109)) ([2eec6f3](https://github.com/adea-ai/control-plane/commit/2eec6f3ca37fe861d94688b8063e70a1fc73c1ff))
+
+## [1.94.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.94.1...workspace-v1.94.2) (2026-10-13)
+
+
+### Bug Fixes
+
+* **ci:** align local validation aggregate with doctor contract ([#1112](https://github.com/adea-ai/control-plane/issues/1112)) ([7fd65d5](https://github.com/adea-ai/control-plane/commit/7fd65d5b998b38fbdbd0d959f9b6fd225f232655))
+
 ## [1.94.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.94.0...workspace-v1.94.1) (2026-10-12)
 
 

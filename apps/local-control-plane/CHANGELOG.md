@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.33.0...local-control-plane-v1.34.0) (2026-10-13)
+
+
+### Features
+
+* **telemetry:** add bounded runtime measurement lifecycle ([#1030](https://github.com/adea-ai/control-plane/issues/1030)) ([#1109](https://github.com/adea-ai/control-plane/issues/1109)) ([2eec6f3](https://github.com/adea-ai/control-plane/commit/2eec6f3ca37fe861d94688b8063e70a1fc73c1ff))
+
 ## [1.33.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.32.0...local-control-plane-v1.33.0) (2026-10-12)
 
 
