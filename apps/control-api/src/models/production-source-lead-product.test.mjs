@@ -55,11 +55,12 @@ function fixture(database) {
     profileReads: [],
     modelReads: [],
     defaults: 0,
+    clock: '2026-10-13T12:00:00.000Z',
   }
   const selection = { selectionRef: `msel_${'c'.repeat(32)}`, selectionRevision: 2 }
   const options = {
     database,
-    now: () => '2026-10-13T12:00:00.000Z',
+    now: () => state.clock,
     product: { readCurrent: async () => structuredClone(state.snapshot) },
     assertHostService: async (host) => {
       expect(host.workspaceId).toBe(authority.host.workspaceId)
@@ -70,6 +71,13 @@ function fixture(database) {
       expect(source.workspaceId).toBe(authority.source.workspaceId)
       expect(source.canonicalActorPrincipalId).toBe(authority.host.canonicalActorPrincipalId)
       if (state.sourceRevoked) throw new Error('SOURCE_REVOKED')
+    },
+    withCurrentAuthorization: async (_input, accept) => {
+      // Test-only same-realm fence; production must bind canonical authority
+      // locks, not infer this guarantee from sequential assertions.
+      if (state.hostRevoked) throw new Error('HOST_REVOKED')
+      if (state.sourceRevoked) throw new Error('SOURCE_REVOKED')
+      return accept()
     },
     profiles: {
       resolveImmutable: async (pin) => {
@@ -164,12 +172,78 @@ test('host selector, missing profile and source grant loss during profile lookup
     await expect(f.reader.readCurrent(f.input)).rejects.toThrow()
     expect(f.state.modelReads).toHaveLength(0)
     f.state.snapshot.authority.source.profileId = 'source-profile'
-    f.options.profiles.resolveImmutable = async () => {
+    // Profile and model readiness both succeed; only current source authority
+    // can reject the mid-profile revocation in this case.
+    f.options.selections.assertReady = async () => {}
+    f.options.profiles.resolveImmutable = async (pin) => {
       f.state.sourceRevoked = true
-      return undefined
+      return {
+        ...pin,
+        profileVersionId: id('pfv', '4'),
+        profileContentDigest: `sha256:${'b'.repeat(64)}`,
+      }
     }
-    await expect(f.reader.readCurrent(f.input)).rejects.toThrow()
-    expect(f.state.modelReads).toHaveLength(0)
+    await expect(f.reader.readCurrent(f.input)).rejects.toThrow('SOURCE_REVOKED')
+  } finally {
+    database.close()
+  }
+})
+test('expiry during the final source authorization wait denies without renewing the intent deadline', async () => {
+  const database = new DatabaseSync(':memory:')
+  try {
+    const f = fixture(database)
+    let checks = 0
+    f.options.assertSourceAuthority = async () => {
+      if (++checks === 3) f.state.clock = f.state.snapshot.expiresAt
+    }
+    await expect(f.reader.readCurrent(f.input)).rejects.toThrow('PI_LEAD_SOURCE_PRODUCT_DENIED')
+    expect(checks).toBe(3)
+    expect(f.reader.readRetained(f.input)).toBeUndefined()
+  } finally {
+    database.close()
+  }
+})
+test('host revocation during the final source wait denies instead of trusting the earlier host assertion', async () => {
+  const database = new DatabaseSync(':memory:')
+  try {
+    const f = fixture(database)
+    let checks = 0
+    f.options.assertSourceAuthority = async () => {
+      if (++checks === 3) f.state.hostRevoked = true
+    }
+    await expect(f.reader.readCurrent(f.input)).rejects.toThrow('HOST_REVOKED')
+    expect(checks).toBe(3)
+    expect(f.reader.readRetained(f.input)).toBeUndefined()
+  } finally {
+    database.close()
+  }
+})
+test('the final combined fence rejects authority loss or expiry before synchronous acceptance', async () => {
+  for (const fault of ['host', 'source', 'expiry']) {
+    const database = new DatabaseSync(':memory:')
+    try {
+      const f = fixture(database)
+      f.options.withCurrentAuthorization = async (_input, accept) => {
+        if (fault === 'host') throw new Error('HOST_REVOKED')
+        if (fault === 'source') throw new Error('SOURCE_REVOKED')
+        f.state.clock = f.state.snapshot.expiresAt
+        return accept()
+      }
+      await expect(f.reader.readCurrent(f.input)).rejects.toThrow()
+      expect(f.reader.readRetained(f.input)).toBeUndefined()
+    } finally {
+      database.close()
+    }
+  }
+})
+test('sequential assertion ports alone cannot configure source acceptance', () => {
+  const database = new DatabaseSync(':memory:')
+  try {
+    const f = fixture(database)
+    const { withCurrentAuthorization: _fence, ...unfenced } = f.options
+    expect(() => createProductionSourceLeadProductAuthority(unfenced)).toThrow(
+      'PI_LEAD_SOURCE_AUTHORITY_REQUIRED'
+    )
   } finally {
     database.close()
   }

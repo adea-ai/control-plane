@@ -54,12 +54,24 @@ export function createProductionSourceLeadProductAuthority(
       canonicalActorPrincipalId: string
       authority: PiLeadHostSourceAuthority
     }): Promise<void>
+    /** Must hold current canonical host service and source actor/principal/grant
+     * authority together while invoking this synchronous acceptance callback.
+     * Sequential remote assertions are not an implementation of this fence.
+     */
+    withCurrentAuthorization<T>(
+      input: {
+        principalId: string
+        authority: PiLeadHostSourceAuthority
+      },
+      accept: () => T
+    ): Promise<T>
   }
 ) {
   if (
     typeof options.product?.readCurrent !== 'function' ||
     typeof options.assertHostService !== 'function' ||
-    typeof options.assertSourceAuthority !== 'function'
+    typeof options.assertSourceAuthority !== 'function' ||
+    typeof options.withCurrentAuthorization !== 'function'
   )
     throw new Error('PI_LEAD_SOURCE_AUTHORITY_REQUIRED')
   options.database.exec(
@@ -88,6 +100,16 @@ export function createProductionSourceLeadProductAuthority(
       canonicalActorPrincipalId: authority.host.canonicalActorPrincipalId,
       authority: structuredClone(authority),
     })
+    // Source authorization can await after the first host check. Revalidate
+    // host standing and the original absolute deadline after those waits.
+    // Final acceptance below additionally requires the combined canonical fence.
+    await options.assertHostService({
+      workspaceId: authority.host.workspaceId,
+      principalId: input.principalId,
+      authority: structuredClone(authority),
+    })
+    if (Date.parse(snapshot.expiresAt) <= Date.parse(now()))
+      throw new Error('PI_LEAD_SOURCE_PRODUCT_DENIED')
     return snapshot
   }
   const readRetained = (input: Pick<Input, 'workspaceId' | 'intentId'>) => {
@@ -142,21 +164,33 @@ export function createProductionSourceLeadProductAuthority(
         verified.scopeRef !== `adea-source:${digest(current)}`
       )
         throw new Error('PI_LEAD_SOURCE_BINDING_CHANGED')
-      const proposed = Retained.parse({
-        authority: current.authority,
-        evidenceDigest: digest(verified),
-        profileVersionId: verified.profileVersionId,
-        profileContentDigest: verified.profileContentDigest,
-        selectionRef: verified.selectionRef,
-        selectionRevision: verified.selectionRevision,
-      })
-      options.database
-        .prepare('INSERT OR IGNORE INTO pi_source_lead_product_bindings VALUES (?,?,?)')
-        .run(input.workspaceId, input.intentId, canonicalJsonStringify(proposed))
-      const retained = readRetained(input)
-      if (!retained || digest(retained) !== digest(proposed))
-        throw new Error('PI_LEAD_SOURCE_BINDING_CHANGED')
-      return verified
+      return options.withCurrentAuthorization(
+        {
+          principalId: input.principalId,
+          authority: structuredClone(current.authority),
+        },
+        () => {
+          // No await separates this deadline check, fenced acceptance and return.
+          // Expiry is supplied by the canonical intent; this read never renews it.
+          if (Date.parse(current.expiresAt) <= Date.parse(now()))
+            throw new Error('PI_LEAD_SOURCE_PRODUCT_DENIED')
+          const proposed = Retained.parse({
+            authority: current.authority,
+            evidenceDigest: digest(verified),
+            profileVersionId: verified.profileVersionId,
+            profileContentDigest: verified.profileContentDigest,
+            selectionRef: verified.selectionRef,
+            selectionRevision: verified.selectionRevision,
+          })
+          options.database
+            .prepare('INSERT OR IGNORE INTO pi_source_lead_product_bindings VALUES (?,?,?)')
+            .run(input.workspaceId, input.intentId, canonicalJsonStringify(proposed))
+          const retained = readRetained(input)
+          if (!retained || digest(retained) !== digest(proposed))
+            throw new Error('PI_LEAD_SOURCE_BINDING_CHANGED')
+          return verified
+        }
+      )
     },
   }
 }

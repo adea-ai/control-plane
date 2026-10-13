@@ -109,3 +109,13 @@ or replacement enlistment. Retained metadata is not authorization: every current
 read still checks both required authority ports. Startup remains unchanged;
 source lifecycle integration and physical effect qualification are subsequent
 checkpoints.
+
+Review repair: source product reads recheck the fixed intent deadline after
+authorization waits and immediately before synchronous acceptance. Final
+acceptance requires a `withCurrentAuthorization` port that holds canonical host
+service and source actor/principal/grant authority together; sequential assertion
+ports alone cannot configure this candidate. A production lock-backed port is
+still an integration requirement. Fake-clock and revocation regressions cross
+the final source wait and combined acceptance boundary. The mid-profile
+revocation test now returns a valid profile and successful model readiness, so
+only current source authorization can deny that case.
