@@ -36,12 +36,7 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly onParentInboxWake?: NodePiDurableCompositionOptions['onParentInboxWake']
   readonly tools?: NodePiDurableCompositionOptions['tools']
   readonly governedDelegateChild?: NodePiDurableCompositionOptions['governedDelegateChild']
-  /**
-   * Canonical governed management compiler (PiDurableGovernedManagementCallCompiler,
-   * CP PR1043 comment 6076653246): the host supplies the exact-call prepare
-   * and the caller execute; the retained caller keeps the full immutable
-   * request.
-   */
+  /** Host prepare plus retained execute for governed management calls. */
   readonly governedManagementCall?: NodePiDurableCompositionOptions['governedManagementCall']
   /** The same canonical service used by child admission/progress. */
   readonly delegationService?: Pick<DelegationService, 'cancelChildren'>
@@ -97,7 +92,7 @@ export async function createNodePiDurableLeadComposition(
       executions: options.admission.executions,
       assertAuthority: (authority) => admission.canonicalAuthority.assertAuthority(authority),
     })
-    const runtimeOptions: NodePiDurableCompositionOptions = {
+    runtime = await createNodePiDurableRuntime({
       ...(options.onAdapterReady ? { onAdapterReady: options.onAdapterReady } : {}),
       directory: options.directory,
       ...(options.admission.now ? { now: options.admission.now } : {}),
@@ -130,8 +125,7 @@ export async function createNodePiDurableLeadComposition(
       ...(options.governedManagementCall
         ? { governedManagementCall: options.governedManagementCall }
         : {}),
-    }
-    runtime = await createNodePiDurableRuntime(runtimeOptions)
+    })
     const preparations = options.preparationAuthority
       ? new SqlitePiLeadPreparations(
           database,

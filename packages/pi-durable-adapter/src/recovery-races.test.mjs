@@ -3,11 +3,13 @@ import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { PiDurableRuntimeAdapter } from './adapter.ts'
 import { createNodePiDurableRuntime } from './composition.ts'
 import { writeRecoverySourceOverride } from './recovery-races.fixture.mjs'
+import { createSubprocessFixtureProbe } from './subprocess-fixture-data.fixture.mjs'
 
 const at = '2026-10-08T00:00:00.000Z'
 const interactionId = 'int_01JABCDEF0123456789ABCDEFG'
@@ -284,30 +286,36 @@ test('cancelled attempts remain final after reopen and cannot reopen interaction
 test('another process retaining a completed generation owner blocks new interaction claims', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-input-remote-owner-'))
   const setup = fixture(directory)
+  const probe = createSubprocessFixtureProbe()
+  const resolveAdmission = setup.options.resolveAdmission
+  setup.options.resolveAdmission = async (...args) => ({
+    ...(await resolveAdmission(...args)),
+    prompt: probe,
+  })
   const seed = new PiDurableRuntimeAdapter(setup.options)
   let worker, observer
   try {
     const handle = await seed.start(setup.request)
     await seed.drain()
     const prior = seed.journal.get(handle.handleId)
+    expect(prior.admission.admission.prompt).toBe(probe)
     seed.journal.update(handle.handleId, prior.epoch, { state: 'starting', detail: {} })
     await seed.close()
-    const path = join(directory, 'owned-generation.mjs')
+    const inputPath = join(directory, 'owned-generation-input.json')
     writeFileSync(
-      path,
-      `
-import { PiDurableRuntimeAdapter } from ${JSON.stringify(new URL('./adapter.ts', import.meta.url).href)};
-setInterval(()=>{},1000);
-const admission=${JSON.stringify(prior.admission.admission)};
-const adapter=new PiDurableRuntimeAdapter({directory:${JSON.stringify(directory)},now:()=>${JSON.stringify(at)},
-resolveAdmission:async()=>admission,assertAuthority:async()=>{},
-resolveProvider:async()=>({...admission.selection,workspaceId:${JSON.stringify(setup.request.attemptBudget.workspaceId)},provider:'scripted',providerModel:'race-model',location:'remote_host',harness:'pi_durable',harnessVersion:'1.1.0',providerBinding:'pi_durable_models',withModels:async use=>use({})}),
-authorizeInference:async()=>({maxOutputTokens:10,maximumInputTokens:64,assertActive:async()=>{}}),settleUsage:async(_authority,_key,usage)=>usage,reconcileInference:async()=> 'unresolved',
-engineFactory:async()=>({run:async()=>(${JSON.stringify(result)}),cancel:async()=>{},close:async()=>{process.stdout.write(JSON.stringify({ownerPid:process.pid})+'\\n');await new Promise(()=>{});}})});
-await adapter.start(${JSON.stringify(setup.request)});
-await adapter.drain();
-`
+      inputPath,
+      JSON.stringify({
+        admission: prior.admission.admission,
+        at,
+        directory,
+        probe,
+        request: setup.request,
+        result,
+        workspaceId: setup.request.attemptBudget.workspaceId,
+      }),
+      { mode: 0o600 }
     )
+    const childFixture = fileURLToPath(new URL('./recovery-races-owner.child.mjs', import.meta.url))
     const overrideIndex = process.execArgv.indexOf('--tsconfig-override')
     const inlineOverride = process.execArgv
       .find((argument) => argument.startsWith('--tsconfig-override='))
@@ -318,7 +326,7 @@ await adapter.drain();
       (overrideIndex < 0 ? undefined : process.execArgv[overrideIndex + 1]) ??
       writeRecoverySourceOverride(directory)
     const sourceResolution = ['--tsconfig-override', sourceOverride]
-    worker = Bun.spawn([process.execPath, ...sourceResolution, path], {
+    worker = Bun.spawn([process.execPath, ...sourceResolution, childFixture, inputPath], {
       stdout: 'pipe',
       stderr: 'pipe',
     })
@@ -330,6 +338,8 @@ await adapter.drain();
       output += new TextDecoder().decode(next.value)
     }
     const owner = JSON.parse(output.trim())
+    expect(owner.probe).toBe(probe)
+    expect(owner.admissionPrompt).toBe(probe)
     observer = new PiDurableRuntimeAdapter(setup.options)
     const retained = observer.journal.get(handle.handleId)
     expect(retained.state).toBe('completed')

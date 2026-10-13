@@ -1,8 +1,10 @@
 import { expect, test } from 'bun:test'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createPiDurableUsageAuthority } from './usage-authority.ts'
 import { withUsageAuthorityContext, at, ids } from './usage-authority.fixture.mjs'
+import { createSubprocessFixtureProbe } from './subprocess-fixture-data.fixture.mjs'
 
 test('durable dispatch reserves full input and fences a duplicate across SQLite reopen', async () => {
   await withUsageAuthorityContext(async ({ bridge, authority, ledger, workspaceId, reopen }) => {
@@ -26,33 +28,32 @@ test('durable dispatch reserves full input and fences a duplicate across SQLite 
 test('another process cannot redispatch an admitted native generation', async () => {
   await withUsageAuthorityContext(async ({ bridge, authority, directory, path, priceSnapshot }) => {
     const key = 'pi-turn:one:pi-generation:2'
+    const probe = createSubprocessFixtureProbe()
+    authority.admission.prompt = probe
     await bridge.authorizeInference(authority, key)
-    const script = join(directory, 'dispatch-replay.mjs')
-    await writeFile(
-      script,
-      `
-import { DurableUsageLedger, PinnedModelPrice } from ${JSON.stringify(import.meta.resolve('@control-plane/usage-ledger'))};
-import { SqlitePersistenceProvider, SqliteDurableUsageStore } from ${JSON.stringify(import.meta.resolve('@control-plane/sqlite-persistence'))};
-import { createPiDurableUsageAuthority } from ${JSON.stringify(new URL('./usage-authority.ts', import.meta.url).href)};
-const provider = new SqlitePersistenceProvider({path:${JSON.stringify(path)}});
-await provider.migrate();
-try {
-  const ledger = new DurableUsageLedger({store:new SqliteDurableUsageStore(provider),now:()=>${JSON.stringify(at)}});
-  const price = new PinnedModelPrice(${JSON.stringify(priceSnapshot)},{now:()=>${JSON.stringify(at)}});
-  const bridge = createPiDurableUsageAuthority({ledger,resolvePrice:async()=>({price,maximumOutputTokens:32}),assertSpendingAuthorized:async()=>({authorizationRef:'model-spend:fixture',evidenceDigest:'sha256:${'e'.repeat(64)}',assertActive:async()=>{}})});
-  await bridge.authorizeInference(${JSON.stringify(authority)},${JSON.stringify(key)});
-  process.stdout.write('DISPATCH_ALLOWED');
-} catch(error) { process.stdout.write(error.message); } finally { provider.close(); }
-`
+    const inputPath = join(directory, 'dispatch-replay-input.json')
+    await writeFile(inputPath, JSON.stringify({ at, authority, key, path, priceSnapshot, probe }), {
+      mode: 0o600,
+    })
+    const childFixture = fileURLToPath(
+      new URL('./usage-authority-dispatch-replay.child.mjs', import.meta.url)
     )
-    const worker = Bun.spawn([process.execPath, script], { stdout: 'pipe', stderr: 'pipe' })
+    const worker = Bun.spawn([process.execPath, childFixture, inputPath], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
     try {
       const output = await new Response(worker.stdout).text()
       const error = await new Response(worker.stderr).text()
       expect(await worker.exited, error).toBe(0)
-      expect(output).toBe('MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED')
+      expect(JSON.parse(output)).toEqual({
+        status: 'MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED',
+        probe,
+        admissionPrompt: probe,
+      })
     } finally {
       worker.kill()
+      await worker.exited
     }
   })
 }, 15000)

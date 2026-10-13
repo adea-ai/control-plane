@@ -716,15 +716,15 @@ export class DelegationService {
           execution: queuedExecution,
           attempt,
           delegation: record,
-          assertCurrent: async () => {
+          assertCurrent: async (reader) => {
             await this.#childAdmission!.assertCurrent(
               structuredClone(childAdmission!.request),
-              structuredClone(childAdmission!.receipt)
+              structuredClone(childAdmission!.receipt),
+              reader
             )
             // The storage adapter invokes this inside its allocation
-            // transaction, immediately before its first write. Product
-            // admission does not cover the caller's independently revocable
-            // execution-scope grant, so fence that authority here as well.
+            // transaction. Fence the caller's independently revocable scope
+            // grant in the same critical section.
             await this.#assertCurrentScope(parsed, plan)
           },
         })

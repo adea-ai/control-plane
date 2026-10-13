@@ -34,6 +34,27 @@ export const ProductionChildModelRequestSchema = z.strictObject({
   requestedSelection: ModelSelectionReferenceSchema.optional(),
 })
 
+/** The one child selection resolution: lead product pin, child request digest and requested role. */
+export function resolveChildModelSelection(
+  product: Pick<ReturnType<typeof createProductionLeadProductAuthority>, 'resolveChildSelection'>,
+  child: z.output<typeof ProductionChildModelRequestSchema>
+) {
+  return product.resolveChildSelection(
+    {
+      schemaVersion: 'pi-lead-intent/v1',
+      workspaceId: child.workspaceId,
+      intentId: child.parentIntentId,
+      principalId: child.productReaderPrincipalId,
+    },
+    {
+      childRequestId: child.childRequestId,
+      childRequestDigest: `sha256:${createHash('sha256').update(canonicalJsonStringify(child)).digest('hex')}`,
+      canonicalActorPrincipalId: child.canonicalActorPrincipalId,
+      ...(child.requestedSelection ? { requestedSelection: child.requestedSelection } : {}),
+    }
+  )
+}
+
 /** Inject into Node's existing childAuthority port. The host independently verifies canonical
  * lineage/approval/current grant. No model selection grants a budget, funds or credentials.
  */
@@ -72,20 +93,7 @@ export function createProductionChildModelAuthority(options: {
   }
   const resolve = async (raw: RuntimeStartRequest) => {
     const { request, child } = await readCanonical(raw)
-    const selection = await options.product.resolveChildSelection(
-      {
-        schemaVersion: 'pi-lead-intent/v1',
-        workspaceId: child.workspaceId,
-        intentId: child.parentIntentId,
-        principalId: child.productReaderPrincipalId,
-      },
-      {
-        childRequestId: child.childRequestId,
-        childRequestDigest: `sha256:${createHash('sha256').update(canonicalJsonStringify(child)).digest('hex')}`,
-        canonicalActorPrincipalId: child.canonicalActorPrincipalId,
-        ...(child.requestedSelection ? { requestedSelection: child.requestedSelection } : {}),
-      }
-    )
+    const selection = await resolveChildModelSelection(options.product, child)
     const fresh = await readCanonical(request)
     if (canonicalJsonStringify(fresh.child) !== canonicalJsonStringify(child))
       throw new Error('PI_CHILD_MODEL_AUTHORITY_CHANGED')
