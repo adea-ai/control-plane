@@ -77,3 +77,22 @@ loopback PostgreSQL database after 52 canonical migrations and a deterministic
 rerun (7 lead-product tests; 73 additional group/lead tests). Existing databases
 were not changed. These checks do not qualify physical source tool effects or
 live provider execution; full dual-authority execution remains outstanding.
+
+### Additive source contract checkpoint
+
+`PiLeadHostSourceAuthoritySchema` binds canonical host conversation, original
+actor, message, audience digest and enlistment pins to a separately qualified
+source workspace/Agent and immutable profile pins. Its context reference is a
+deterministic identity for the host conversation plus qualified source Agent,
+independent of per-turn message/version pins. `PiLeadSourceExecutionBindingSchema`
+retains that authority with exact source profile/model and execution/attempt/native
+session pins. Neither parsing nor the digest confers source authorization.
+
+The initial abuse cases are host scope substituted for source scope, source
+identity omitted, forged authorization fields, cross-group/native-context reuse,
+same-name Agent conflation and changed actor/audience/enlistment/profile pins.
+Strict parsing and comparison to fresh canonical metadata deny these substitutions.
+Existing principal/grant, model, tool and payer authorization must independently
+qualify the source before a lifecycle adapter may execute. These additive schemas
+are not wired to startup or the existing single-workspace evidence endpoint;
+Adea's foreign-Agent guard remains enabled.
