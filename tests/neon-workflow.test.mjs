@@ -1015,37 +1015,50 @@ describe('Neon restricted connection workflow', () => {
     }
   })
 
-  test('the migration role performs and removes a transactional app-schema DDL probe', async () => {
-    const statements = []
-    let transactions = 0
-    const sql = {
-      begin: async (operation) => {
-        transactions += 1
-        return operation({
-          unsafe: async (query, values) => {
-            statements.push({ query, values })
-            return query.startsWith('SELECT') ? [{ marker: 'ok' }] : []
-          },
-        })
-      },
+  test.each([
+    ['existing', true],
+    ['newly created', false],
+  ])(
+    'the migration role probes the %s app schema and removes only probe-owned objects',
+    async (_label, schemaExists) => {
+      const statements = []
+      let transactions = 0
+      const sql = {
+        begin: async (operation) => {
+          transactions += 1
+          return operation({
+            unsafe: async (query, values) => {
+              statements.push({ query, values })
+              if (query === "SELECT to_regnamespace('app') IS NOT NULL AS schema_exists")
+                return [{ schema_exists: schemaExists }]
+              return query.startsWith('SELECT') ? [{ marker: 'ok' }] : []
+            },
+          })
+        },
+      }
+
+      await verifyNeonMigratorDdl(sql)
+
+      expect(transactions).toBe(1)
+      expect(statements).toHaveLength(schemaExists ? 5 : 7)
+      const tableIndex = schemaExists ? 1 : 2
+      const table = statements[tableIndex].query.match(/app\.(cp_neon_probe_[a-f0-9]{16})/)?.[1]
+      expect(table).toBeDefined()
+      expect(statements.map(({ query }) => query)).toEqual([
+        "SELECT to_regnamespace('app') IS NOT NULL AS schema_exists",
+        ...(!schemaExists ? ['CREATE SCHEMA app'] : []),
+        `CREATE TABLE app.${table} (id integer PRIMARY KEY, marker text NOT NULL)`,
+        `INSERT INTO app.${table} (id, marker) VALUES ($1, $2)`,
+        `SELECT marker FROM app.${table} WHERE id = $1`,
+        `DROP TABLE app.${table}`,
+        ...(!schemaExists ? ['DROP SCHEMA app'] : []),
+      ])
+      const tableStatements = statements.slice(tableIndex, tableIndex + 4)
+      expect(tableStatements.every(({ query }) => query.includes(`app.${table}`))).toBe(true)
+      expect(tableStatements[1].values).toEqual([1, 'ok'])
+      expect(tableStatements[2].values).toEqual([1])
     }
-
-    await verifyNeonMigratorDdl(sql)
-
-    expect(transactions).toBe(1)
-    expect(statements).toHaveLength(4)
-    const table = statements[0].query.match(/app\.(cp_neon_probe_[a-f0-9]{16})/)?.[1]
-    expect(table).toBeDefined()
-    expect(statements.map(({ query }) => query.split(' ')[0])).toEqual([
-      'CREATE',
-      'INSERT',
-      'SELECT',
-      'DROP',
-    ])
-    expect(statements.every(({ query }) => query.includes(`app.${table}`))).toBe(true)
-    expect(statements[1].values).toEqual([1, 'ok'])
-    expect(statements[2].values).toEqual([1])
-  })
+  )
 })
 
 describe('Neon trusted-main migration gating', () => {
