@@ -1,12 +1,55 @@
-import { DatabaseSync } from 'node:sqlite'
+import { Worker } from 'node:worker_threads'
 import { OperationsMeasurementLifecycle, type MetricAdapter } from '@control-plane/telemetry'
 import {
-  createSqliteMeasurementReader,
-  measureOperations,
   OperationsMeasurementBaselineSchema,
   operationsMeasurementOptionsSchema,
   type OperationsMeasurementOptions,
 } from './operator-measurements.js'
+import type { OperationsMetricPoint } from '@control-plane/telemetry'
+
+export function runtimeMeasurementWorkerUrl(): URL {
+  // Bun source execution must not race a build rewriting the dist worker.
+  if (process.versions['bun'] !== undefined && import.meta.url.endsWith('.ts'))
+    return new URL('./runtime-measurements-worker.ts', import.meta.url)
+  return new URL(
+    import.meta.url.endsWith('.ts')
+      ? '../dist/runtime-measurements-worker.js'
+      : './runtime-measurements-worker.js',
+    import.meta.url
+  )
+}
+
+interface WorkerResult {
+  readonly points: readonly OperationsMetricPoint[]
+  readonly baselineReport?: unknown
+}
+
+function sampleInWorker(
+  databasePath: string,
+  measurement: OperationsMeasurementOptions
+): Promise<WorkerResult> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(runtimeMeasurementWorkerUrl(), {
+      workerData: { databasePath, measurement },
+    })
+    let result: WorkerResult | undefined
+    let failed = false
+    worker.on('message', (message: { ok: boolean; result?: WorkerResult }) => {
+      if (!message.ok || result !== undefined) failed = true
+      else result = message.result
+    })
+    worker.on('error', () => {
+      failed = true
+    })
+    // A posted result is not proof that Bun released the SQLite statements.
+    // Wait for the thread to exit before emission or persistence shutdown.
+    worker.once('exit', (code) => {
+      if (code !== 0 || failed || result === undefined)
+        reject(new Error('RUNTIME_MEASUREMENTS_WORKER_FAILED'))
+      else resolve(result)
+    })
+  })
+}
 
 export interface LocalRuntimeMeasurementsOptions {
   readonly databasePath: string
@@ -18,7 +61,7 @@ export interface LocalRuntimeMeasurementsOptions {
 
 /**
  * Local/Hosted Simple SQLite adapter. Open a separate read-only handle for each
- * pass so no measurement observes uncommitted application writes. A read
+ * pass in a worker so no measurement observes uncommitted application writes. A read
  * transaction holds one consistent WAL snapshot across all report namespaces.
  * Retain only the complete storage baseline, never correlation rows or payloads.
  */
@@ -33,23 +76,15 @@ export function createLocalRuntimeMeasurements(
     adapter: options.adapter,
     serviceName: 'local-control-plane',
     intervalMs: options.intervalMs,
-    measure: () => {
-      const database = new DatabaseSync(options.databasePath, { readOnly: true })
-      try {
-        database.exec('BEGIN')
-        const report = measureOperations(createSqliteMeasurementReader(database), {
-          ...measurement,
-          now: (options.now?.() ?? new Date()).toISOString(),
-          ...(baselineReport === undefined ? {} : { baselineReport }),
-        })
-        database.exec('COMMIT')
-        if (report.measurements.storage.complete) {
-          baselineReport = OperationsMeasurementBaselineSchema.parse(report)
-        }
-        return report.telemetry
-      } finally {
-        database.close()
-      }
+    measure: async () => {
+      const result = await sampleInWorker(options.databasePath, {
+        ...measurement,
+        now: (options.now?.() ?? new Date()).toISOString(),
+        ...(baselineReport === undefined ? {} : { baselineReport }),
+      })
+      if (result.baselineReport !== undefined)
+        baselineReport = OperationsMeasurementBaselineSchema.parse(result.baselineReport)
+      return result.points
     },
   })
 }

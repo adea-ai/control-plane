@@ -44,4 +44,3 @@ export type {
   TraceAdapter,
   TraceContext,
 } from './types.js'
-

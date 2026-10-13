@@ -18,8 +18,12 @@ already emit measurements. The offline report and existing emitter are unchanged
   most 512 points per pass by default (configurable from 1 to 1024). Concurrent
   passes coalesce instead of queueing unbounded scans.
 
-The SQLite adapter opens a separate read-only handle for each pass and measures
-inside one read transaction. It retains only the last complete storage baseline.
+The SQLite adapter opens a separate read-only handle in a worker for each pass
+and measures inside one read transaction. The pass resolves only after the
+worker exits, so Bun's retained native statements cannot keep a read snapshot
+alive during checkpointed shutdown. Bun source runs select the source worker
+even when a concurrent build has produced a compiled worker. Installed Node
+execution uses the compiled worker. It retains only the last complete storage baseline.
 The first pass has no growth point; later complete snapshots may emit signed
 growth through the existing gauge path. The report still suppresses points from
 partial or unsafe sources. Neither correlations nor errors become metric labels.
@@ -44,8 +48,12 @@ unpriced unless an operator supplies the existing report price option.
 
 ## Validation
 
-Focused suites: `bun test packages/telemetry/src/operations-lifecycle.test.mjs`
-and `bun test apps/local-control-plane/src/runtime-measurements.test.mjs`.
+Focused suites: `bun test ./packages/telemetry/src/operations-lifecycle.test.mjs`
+and `bun test ./apps/local-control-plane/src/runtime-measurements.test.mjs`.
 Run the existing operations emitter and offline report suites as regressions,
 then repository format, lint, build and type checks before readiness. This slice
 does not satisfy all #1030 acceptance clauses or authorize closing the issue.
+
+This slice qualifies completed-pass draining and SQLite checkpoint cleanup;
+it adds no producer abort, worker deadline, exporter flush or general shutdown
+deadline. Hosted PostgreSQL acquisition/commit behavior remains outside its scope.
