@@ -12,6 +12,11 @@
       "types": "./dist/index.d.ts",
       "node": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./read-scope": {
+      "types": "./dist/read-scope.d.ts",
+      "node": "./dist/read-scope.js",
+      "default": "./dist/read-scope.js"
     }
   },
   "scripts": {
