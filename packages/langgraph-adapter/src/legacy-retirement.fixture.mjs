@@ -160,6 +160,7 @@ export async function writePlanRecord(provider, executionPlanId, value) {
       namespace: LEGACY_EXECUTION_PLAN_NAMESPACE,
       id: executionPlanId,
       value: {
+        schemaVersion: 2,
         ...value,
         correlation: value.correlation ?? {
           workspaceId: request.workspaceId,
