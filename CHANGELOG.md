@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.95.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.94.2...workspace-v1.95.0) (2026-10-13)
+
+
+### Features
+
+* **telemetry:** add bounded runtime measurement lifecycle ([#1030](https://github.com/adea-ai/control-plane/issues/1030)) ([#1109](https://github.com/adea-ai/control-plane/issues/1109)) ([2eec6f3](https://github.com/adea-ai/control-plane/commit/2eec6f3ca37fe861d94688b8063e70a1fc73c1ff))
+
 ## [1.94.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.94.1...workspace-v1.94.2) (2026-10-13)
 
 
