@@ -1,4 +1,7 @@
 import { expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { deriveContextPackage } from '@control-plane/context'
 import {
   ExecutionLifecycleService,
@@ -10,6 +13,7 @@ import {
   SqliteDelegationRepository,
   SqliteToolCallRepository,
 } from '@control-plane/sqlite-persistence'
+import { DelegationRecordSchema } from '@control-plane/orchestration'
 import {
   InMemoryToolRateLimiter,
   InMemoryToolRegistryRepository,
@@ -80,7 +84,7 @@ function functionCallResponse() {
   )
 }
 
-function childrenFactory() {
+function childrenFactory({ denyCurrentScopeRead = true, selfComposed = false } = {}) {
   return async ({
     persistence,
     repositories,
@@ -135,7 +139,7 @@ function childrenFactory() {
     gateway.registerExecutor('connector', 'production-child-fixture-v1', {
       async execute() {
         state.toolExecutorCalls++
-        return { accepted: true }
+        return { output: { accepted: true } }
       },
     })
     const interactions = new InMemoryInteractionRepository()
@@ -150,7 +154,7 @@ function childrenFactory() {
         async authorize() {
           state.toolAuthorizationCalls++
           // The canonical helper's final current-authority read must deny this effect.
-          state.denyNextScopeAuthorityRead = true
+          if (denyCurrentScopeRead) state.denyNextScopeAuthorityRead = true
           return {
             effect: 'allow',
             decisionId: 'production-child-policy-decision',
@@ -167,6 +171,7 @@ function childrenFactory() {
     })
     state.toolService = service
     const delegationRecords = new SqliteDelegationRepository(persistence)
+    state.delegationRecords = delegationRecords
     const lifecycle = new ExecutionLifecycleService(repositories.executions)
     const events = {
       async publish(event, key) {
@@ -187,15 +192,48 @@ function childrenFactory() {
       resolveCallerPrincipalId: async () => actorPrincipalId,
       now: () => at,
     }
-    return {
-      authority: {
-        readCurrent: async () => undefined,
-        admit: async () => {
-          throw new Error('CHILD_RUNTIME_NOT_EXPECTED')
+    state.prepareChildToolRequest = async (authority, verified) => {
+      expect(verified.objective).toBe('Inspect the bounded child objective')
+      const requestId = id('req')
+      state.toolCallId = id('tlc')
+      return {
+        toolCallId: state.toolCallId,
+        idempotencyKey: `pi-child:${verified.sourceKey.slice(-48)}`,
+        requestedAt: at,
+        policySnapshotRef: 'policy://production-child-fixture/v1',
+        requestId,
+        executionId: authority.request.executionId,
+        attemptId: authority.request.attemptId,
+        workspaceId,
+        profileId: authority.request.executionPlan.profile.profileId,
+        toolDefinitionId,
+        toolVersionId,
+        operation: 'delegate-child',
+        input: { objective: verified.objective },
+        grant: {
+          workspaceId,
+          profileId: authority.request.executionPlan.profile.profileId,
+          toolDefinitionId,
+          toolVersionId,
+          operations: ['delegate-child'],
+          expiresAt: new Date(Date.parse(at) + 240_000).toISOString(),
         },
-        assertCurrent: async () => {},
-      },
-      forgetCanonicalModels: () => {},
+        audit: { principalRef: actorPrincipalId, traceId: id('trc') },
+      }
+    }
+    return {
+      ...(selfComposed
+        ? {}
+        : {
+            authority: {
+              readCurrent: async () => undefined,
+              admit: async () => {
+                throw new Error('CHILD_RUNTIME_NOT_EXPECTED')
+              },
+              assertCurrent: async () => {},
+            },
+            forgetCanonicalModels: () => {},
+          }),
       tools: { service, interactions },
       delegation: {
         records: delegationRecords,
@@ -203,7 +241,7 @@ function childrenFactory() {
         plans: repositories.plans,
         events,
         scopeAdmission,
-        readCurrent: async () => undefined,
+        ...(selfComposed ? {} : { readCurrent: async () => undefined }),
       },
       createGovernedDelegateChild(delegationService) {
         state.governedDelegationService = delegationService
@@ -214,43 +252,21 @@ function childrenFactory() {
         }
         return {
           async prepare(authority, verified) {
-            expect(verified.objective).toBe('Inspect the bounded child objective')
-            const requestId = id('req')
-            state.toolCallId = id('tlc')
-            return {
-              toolCallId: state.toolCallId,
-              idempotencyKey: `pi-child:${verified.sourceKey.slice(-48)}`,
-              requestedAt: at,
-              policySnapshotRef: 'policy://production-child-fixture/v1',
-              requestId,
-              executionId: authority.request.executionId,
-              attemptId: authority.request.attemptId,
-              workspaceId,
-              profileId: authority.request.executionPlan.profile.profileId,
-              toolDefinitionId,
-              toolVersionId,
-              operation: 'delegate-child',
-              input: { objective: verified.objective },
-              grant: {
-                workspaceId,
-                profileId: authority.request.executionPlan.profile.profileId,
-                toolDefinitionId,
-                toolVersionId,
-                operations: ['delegate-child'],
-                expiresAt: new Date(Date.parse(at) + 240_000).toISOString(),
-              },
-              audit: { principalRef: actorPrincipalId, traceId: id('trc') },
-            }
+            return state.prepareChildToolRequest(authority, verified)
           },
         }
       },
       modelAuthority: {
-        forExecution: async () => {
-          throw new Error('CHILD_MODEL_NOT_EXPECTED')
-        },
-        readRecordedDecision: async () => {
-          throw new Error('CHILD_MODEL_NOT_EXPECTED')
-        },
+        ...(selfComposed
+          ? {}
+          : {
+              forExecution: async () => {
+                throw new Error('CHILD_MODEL_NOT_EXPECTED')
+              },
+              readRecordedDecision: async () => {
+                throw new Error('CHILD_MODEL_NOT_EXPECTED')
+              },
+            }),
         leasePrincipalRef,
         modelAlias: 'reasoning.standard',
       },
@@ -275,6 +291,376 @@ async function waitFor(predicate, label) {
   }
   throw new Error(`TEST_WAIT_TIMEOUT:${label}`)
 }
+
+test('retained child model funding can resume after its parent and attempt complete', async () => {
+  const providerReached = deferred()
+  const releaseProvider = deferred()
+  let host
+  host = await createProductionFactoryFixture({
+    childrenFactory: childrenFactory({ denyCurrentScopeRead: false, selfComposed: true }),
+    physicalResponder: async () => {
+      providerReached.resolve()
+      await releaseProvider.promise
+      throw new Error('TEST_PARENT_PROVIDER_RELEASED')
+    },
+  })
+  try {
+    const intentId = host.setIntent()
+    const prepared = (
+      await host.composition.piDurableLeadService.prepare(
+        host.command('pi-durable.lead.prepare', { intentId }),
+        host.principal
+      )
+    ).data
+    const dispatch = (
+      await host.composition.piDurableLeadService.dispatch(
+        host.command('pi-durable.lead.dispatch', {
+          intentId,
+          preparationRef: prepared.preparationRef,
+        }),
+        host.principal
+      )
+    ).data
+    await providerReached.promise
+
+    const parentPlan = host.parentPlanForIntent(intentId)
+    const parentContext = await host.repositories.contexts.get(parentPlan.contextPackage)
+    const parent = await host.repositories.executions.getExecution(dispatch.executionId)
+    const parentAttemptId = parent.latestAttemptId
+    expect(parent.state).toBe('running')
+
+    // Use the production child tool request builder and durable tool service so the
+    // retained delegation points at an actually authorized, succeeded call.
+    const toolRequest = await host.state.prepareChildToolRequest(
+      {
+        request: {
+          executionId: dispatch.executionId,
+          attemptId: parentAttemptId,
+          executionPlan: parentPlan,
+        },
+      },
+      {
+        objective: 'Inspect the bounded child objective',
+        sourceKey: 'source:completed-parent-child',
+      }
+    )
+    const toolOutcome = await host.state.toolService.execute(toolRequest)
+    expect(toolOutcome.state).toBe('succeeded')
+    expect(toolOutcome.call).toMatchObject({
+      toolCallId: host.state.toolCallId,
+      status: 'succeeded',
+    })
+
+    const childExecutionId = id('exe', childSuffix)
+    const childAttemptId = id('att', childSuffix)
+    const childDispatch = {
+      delegationId: id('dlg', childSuffix),
+      childAttemptId,
+      runtime: { runtimeConnectionId: id('rtc', childSuffix) },
+      dispatchedAt: host.at,
+    }
+    const childPlanContext = deriveContextPackage(parentContext, {
+      objective: 'Inspect the bounded child objective',
+      allowedStateItemIds: [],
+      allowedArtifactIds: [],
+      budgets: parentContext.budgets,
+      successCriteria: parentContext.successCriteria,
+      returnContract: parentContext.returnContract,
+      compiledAt: host.at,
+    })
+    const childInput = {
+      delegationId: childDispatch.delegationId,
+      parentExecutionId: dispatch.executionId,
+      parentAttemptId,
+      childExecutionId,
+      role: 'researcher',
+      profileVersionId: parentPlan.profile.profileVersionId,
+      objective: 'Inspect the bounded child objective',
+      parentPlan,
+      childPlan: {
+        correlation: {
+          ...parentPlan.correlation,
+          taskId: id('tsk', childSuffix),
+          requestId: id('req', childSuffix),
+        },
+        contextPackage: childPlanContext,
+        constraints: structuredClone(parentPlan.constraints),
+        runtimeRequirements: structuredClone(parentPlan.runtimeRequirements),
+        outputContract: structuredClone(parentPlan.outputContract),
+        compiledAt: host.at,
+      },
+      policy: {
+        cancellation: 'cascade',
+        deadline: 'bounded_by_parent',
+        failure: 'manual',
+        maximumRetries: 0,
+      },
+      acceptedAt: host.at,
+      ...(parent.deadlineAt ? { deadlineAt: parent.deadlineAt } : {}),
+    }
+    await host.repositories.contexts.put(childPlanContext)
+    const selections = host.composition.modelConnectionService.selections
+    const defaults = await selections.getDefaults(host.workspaceId)
+    await selections.setDefaults(defaults.revision, {
+      ...defaults,
+      revision: defaults.revision + 1,
+      child: {
+        connectionRef: host.models.refs.connectionRef,
+        providerModel: host.models.refs.providerModel,
+      },
+    })
+    const proposedChildPlan = host.state.governedDelegationService.deriveChildPlan(
+      parentPlan,
+      childInput.childPlan
+    )
+    const parentBeforeAllocation = await host.repositories.executions.getExecution(
+      dispatch.executionId
+    )
+    await host.composition.childAuthorityCurrent.readAdmission({
+      workspaceId: host.workspaceId,
+      parentIntentId: intentId,
+      parentExecutionId: dispatch.executionId,
+      parentAttemptId,
+      parentExecutionVersion: parentBeforeAllocation.version,
+      parentPlan: {
+        executionPlanId: parentPlan.executionPlanId,
+        contentDigest: parentPlan.contentDigest,
+        schemaVersion: parentPlan.schemaVersion,
+      },
+      admittedToolCallId: host.state.toolCallId,
+      delegationId: childDispatch.delegationId,
+      childRequestId: proposedChildPlan.correlation.requestId,
+      childExecutionId,
+      childAttemptId,
+      childDispatch,
+      childPlan: {
+        executionPlanId: proposedChildPlan.executionPlanId,
+        contentDigest: proposedChildPlan.contentDigest,
+        schemaVersion: proposedChildPlan.schemaVersion,
+      },
+      role: childInput.role,
+      profileVersionId: childInput.profileVersionId,
+      originalActorPrincipalId: host.actorPrincipalId,
+      childRequestDigest: `sha256:${'c'.repeat(64)}`,
+      acceptedAt: childInput.acceptedAt,
+    })
+    const lifecycle = new ExecutionLifecycleService(host.repositories.executions)
+    await host.repositories.plans.put(proposedChildPlan)
+    await lifecycle.createExecution({
+      executionId: childExecutionId,
+      correlation: proposedChildPlan.correlation,
+      executionPlan: {
+        executionPlanId: proposedChildPlan.executionPlanId,
+        contentDigest: proposedChildPlan.contentDigest,
+        schemaVersion: proposedChildPlan.schemaVersion,
+      },
+      parentExecutionId: dispatch.executionId,
+      acceptedAt: host.at,
+      ...(parent.deadlineAt ? { deadlineAt: parent.deadlineAt } : {}),
+    })
+    await lifecycle.createAttempt({
+      executionId: childExecutionId,
+      attemptId: childAttemptId,
+      expectedExecutionVersion: 1,
+      queuedAt: host.at,
+      runtime: childDispatch.runtime,
+      ...(parent.deadlineAt ? { deadlineAt: parent.deadlineAt } : {}),
+    })
+    const acceptedChild = await host.repositories.executions.getExecution(childExecutionId)
+    await lifecycle.transitionExecution({
+      executionId: childExecutionId,
+      expectedVersion: acceptedChild.version,
+      to: 'queued',
+      transitionedAt: host.at,
+    })
+    const retainedDelegation = DelegationRecordSchema.parse({
+      delegationId: childDispatch.delegationId,
+      parentExecutionId: dispatch.executionId,
+      parentAttemptId,
+      admittedToolCallId: host.state.toolCallId,
+      childExecutionId,
+      childAttemptId,
+      parentExecutionPlanId: parentPlan.executionPlanId,
+      parentExecutionPlanDigest: parentPlan.contentDigest,
+      childExecutionPlanId: proposedChildPlan.executionPlanId,
+      childExecutionPlanDigest: proposedChildPlan.contentDigest,
+      contextPackageId: proposedChildPlan.contextPackage.contextPackageId,
+      contextPackageDigest: proposedChildPlan.contextPackage.contentDigest,
+      role: childInput.role,
+      profileVersionId: childInput.profileVersionId,
+      objective: childInput.objective,
+      policy: childInput.policy,
+      state: 'dispatched',
+      runtimeConnectionId: childDispatch.runtime.runtimeConnectionId,
+      retryCount: 0,
+      inputDigest: `sha256:${'d'.repeat(64)}`,
+      revision: 1,
+      acceptedAt: host.at,
+      ...(parent.deadlineAt ? { deadlineAt: parent.deadlineAt } : {}),
+      updatedAt: host.at,
+    })
+    expect(await host.state.delegationRecords.insert(retainedDelegation)).toBe(true)
+    const currentParent = await host.repositories.executions.getExecution(dispatch.executionId)
+    const completedAt = new Date(Date.parse(host.at) + 10).toISOString()
+    const completedParent = await lifecycle.transitionExecution({
+      executionId: dispatch.executionId,
+      expectedVersion: currentParent.version,
+      to: 'completed',
+      transitionedAt: completedAt,
+      terminalResultRef: id('art', childSuffix),
+    })
+    const currentAttempt = await host.repositories.executions.getAttempt(parentAttemptId)
+    const completedAttempt = await lifecycle.transitionAttempt({
+      attemptId: parentAttemptId,
+      expectedVersion: currentAttempt.version,
+      to: 'completed',
+      transitionedAt: completedAt,
+      terminalResultRef: id('art', childSuffix),
+    })
+    expect(completedParent.state).toBe('completed')
+    expect(completedAttempt.state).toBe('completed')
+
+    // A completed parent cannot allocate a new child; only its already-retained child
+    // may pass the continuation/current-funding path.
+    const refusedSuffix = '01JDDDDEF0123456789ABCDEFG'
+    await expect(
+      host.composition.childAuthorityCurrent.readAdmission({
+        workspaceId: host.workspaceId,
+        parentIntentId: intentId,
+        parentExecutionId: dispatch.executionId,
+        parentAttemptId,
+        parentExecutionVersion: completedParent.version,
+        parentPlan: {
+          executionPlanId: parentPlan.executionPlanId,
+          contentDigest: parentPlan.contentDigest,
+          schemaVersion: parentPlan.schemaVersion,
+        },
+        admittedToolCallId: host.state.toolCallId,
+        delegationId: id('dlg', refusedSuffix),
+        childRequestId: id('req', refusedSuffix),
+        childExecutionId: id('exe', refusedSuffix),
+        childAttemptId: id('att', refusedSuffix),
+        childDispatch: {
+          delegationId: id('dlg', refusedSuffix),
+          childAttemptId: id('att', refusedSuffix),
+          runtime: { runtimeConnectionId: id('rtc', refusedSuffix) },
+          dispatchedAt: host.at,
+        },
+        childPlan: {
+          executionPlanId: proposedChildPlan.executionPlanId,
+          contentDigest: proposedChildPlan.contentDigest,
+          schemaVersion: proposedChildPlan.schemaVersion,
+        },
+        role: 'researcher',
+        profileVersionId: parentPlan.profile.profileVersionId,
+        originalActorPrincipalId: host.actorPrincipalId,
+        childRequestDigest: `sha256:${'b'.repeat(64)}`,
+        acceptedAt: host.at,
+      })
+    ).rejects.toThrow('PI_CHILD_MODEL_AUTHORITY_DENIED')
+
+    const request = {
+      executionId: childExecutionId,
+      attemptId: childAttemptId,
+      idempotencyKey: 'completed-parent-retained-child-model',
+      executionPlan: proposedChildPlan,
+    }
+    const binding = await host.composition.childModelBinding({
+      executionId: childExecutionId,
+      attemptId: childAttemptId,
+    })
+    const parentFunding = host.records.get(intentId)
+    const decision = structuredClone(parentFunding.decision)
+    const ownerRef = 'payer:completed-parent-retained-child'
+    const fundingOwner = { ...decision.fundingOwner, ownerRef }
+    decision.executionPlanId = binding.executionPlanId
+    decision.executionPlanDigest = binding.executionPlanDigest
+    decision.selectionRef = binding.selectionRef
+    decision.selectionRevision = binding.selectionRevision
+    decision.canonicalActorPrincipalId = binding.canonicalActorPrincipalId
+    decision.authorityRevision = binding.authorityRevision
+    decision.fundingOwner = fundingOwner
+    decision.grant = {
+      ...decision.grant,
+      authorizationId: 'fixture-child-spend:completed-parent',
+      evidenceRef: 'fixture-child-decision:completed-parent',
+      workspaceId: binding.workspaceId,
+      executionId: binding.executionId,
+      attemptId: binding.attemptId,
+      principalRef: binding.principalRef,
+      alias: binding.modelAlias,
+      policySnapshotDigest: binding.policySnapshotDigest,
+    }
+    const fundingDirectory = join(host.directory, 'private-funding')
+    const recordDirectory = join(fundingDirectory, binding.workspaceId, binding.executionId)
+    const payerDirectory = join(fundingDirectory, binding.workspaceId, 'payers')
+    await mkdir(recordDirectory, { recursive: true, mode: 0o700 })
+    await mkdir(payerDirectory, { recursive: true, mode: 0o700 })
+    await writeFile(
+      join(recordDirectory, `${binding.attemptId}.json`),
+      JSON.stringify({
+        schemaVersion: 'recorded-funding-host/v1',
+        binding,
+        decision,
+        status: 'active',
+        expiresAt: host.expiresAt,
+      }),
+      { mode: 0o600 }
+    )
+    await writeFile(
+      join(payerDirectory, `${createHash('sha256').update(ownerRef).digest('hex')}.json`),
+      JSON.stringify({
+        schemaVersion: 'recorded-funding-payer/v1',
+        workspaceId: binding.workspaceId,
+        authorizationRef: decision.grant.authorizationId,
+        fundingOwner,
+        status: 'active',
+        expiresAt: host.expiresAt,
+      }),
+      { mode: 0o600 }
+    )
+
+    const admission = await host.composition.childAuthority.resolveAdmission(request)
+    expect(admission.prompt).toBe('Inspect the bounded child objective')
+    expect(admission.selection).toEqual({
+      selectionRef: binding.selectionRef,
+      selectionRevision: binding.selectionRevision,
+    })
+
+    const readExecution = host.repositories.executions.getExecution.bind(
+      host.repositories.executions
+    )
+    const readAttempt = host.repositories.executions.getAttempt.bind(host.repositories.executions)
+    host.repositories.executions.getExecution = async (executionId) => {
+      const current = await readExecution(executionId)
+      if (executionId !== dispatch.executionId) return current
+      const { terminalResultRef: _result, ...withoutResult } = current
+      return { ...withoutResult, state: 'cancelled' }
+    }
+    host.repositories.executions.getAttempt = async (attemptId) => {
+      const current = await readAttempt(attemptId)
+      if (attemptId !== parentAttemptId) return current
+      const { terminalResultRef: _result, ...withoutResult } = current
+      return { ...withoutResult, state: 'cancelled' }
+    }
+    try {
+      await expect(
+        host.composition.childAuthority.assertAuthority({ request, admission })
+      ).rejects.toThrow('PI_CHILD_MODEL_AUTHORITY_DENIED')
+    } finally {
+      host.repositories.executions.getExecution = readExecution
+      host.repositories.executions.getAttempt = readAttempt
+    }
+
+    host.state.revoked = true
+    await expect(
+      host.composition.childAuthority.assertAuthority({ request, admission })
+    ).rejects.toThrow('PI_CHILD_MODEL_AUTHORITY_DENIED')
+  } finally {
+    releaseProvider.resolve()
+    await host.close()
+  }
+}, 30000)
 
 test('actual production composition uses the canonical Pi tool authority and shared delegation service for durable child-stop publication', async () => {
   const providerReached = deferred()

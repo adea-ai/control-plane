@@ -474,6 +474,9 @@ export async function createProductionFactoryFixture(options = {}) {
       ...(options.committedCancellationAuthority
         ? { committedCancellationAuthority: options.committedCancellationAuthority }
         : {}),
+      ...(options.governedManagementCall
+        ? { governedManagementCall: options.governedManagementCall }
+        : {}),
       directory,
       fundingDirectory,
       modelConnections: models.modelConnections,

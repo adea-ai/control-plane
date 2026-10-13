@@ -10,6 +10,7 @@ import { PiDurableRuntimeAdapter } from './adapter.ts'
 import { authoritativeDenial } from './authority-outcome.ts'
 import { createNodePiDurableRuntime } from './composition.ts'
 import { at, fixture, result, writeRecoverySourceOverride } from './recovery-races.fixture.mjs'
+import { createSubprocessFixtureProbe } from './subprocess-fixture-data.fixture.mjs'
 
 const interactionId = 'int_01JABCDEF0123456789ABCDEFG'
 function deferred() {
@@ -196,29 +197,39 @@ test('cancelled attempts remain final after reopen and cannot reopen interaction
 test('another process retaining a completed generation owner blocks new interaction claims', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-input-remote-owner-'))
   const setup = fixture(directory)
+  const probe = createSubprocessFixtureProbe()
+  const resolveAdmission = setup.options.resolveAdmission
+  setup.options.resolveAdmission = async (...args) => ({
+    ...(await resolveAdmission(...args)),
+    prompt: probe,
+  })
   const seed = new PiDurableRuntimeAdapter(setup.options)
   let worker, observer
   try {
     const handle = await seed.start(setup.request)
     await seed.drain()
     const prior = seed.journal.get(handle.handleId)
+    expect(prior.admission.admission.prompt).toBe(probe)
     seed.journal.update(handle.handleId, prior.epoch, { state: 'starting', detail: {} })
     await seed.close()
-    const path = join(directory, 'owned-generation.json')
+    const inputPath = join(directory, 'owned-generation-input.json')
     const roundTripProbe =
       'quote:"; backslash:\\; newline:\n; tab:\t; NUL:\0; separators:\u2028\u2029; </script>; ${globalThis.__probe}'
     writeFileSync(
-      path,
+      inputPath,
       JSON.stringify({
-        directory,
-        at,
         admission: prior.admission.admission,
+        at,
+        directory,
+        probe,
         request: setup.request,
         result,
         roundTripProbe,
+        workspaceId: setup.request.attemptBudget.workspaceId,
       }),
       { mode: 0o600 }
     )
+    const childFixture = fileURLToPath(new URL('./recovery-races-owner.child.mjs', import.meta.url))
     const overrideIndex = process.execArgv.indexOf('--tsconfig-override')
     const inlineOverride = process.execArgv
       .find((argument) => argument.startsWith('--tsconfig-override='))
@@ -229,8 +240,7 @@ test('another process retaining a completed generation owner blocks new interact
       (overrideIndex < 0 ? undefined : process.execArgv[overrideIndex + 1]) ??
       writeRecoverySourceOverride(directory)
     const sourceResolution = ['--tsconfig-override', sourceOverride]
-    const workerPath = fileURLToPath(new URL('./recovery-races.worker.mjs', import.meta.url))
-    worker = Bun.spawn([process.execPath, ...sourceResolution, workerPath, path], {
+    worker = Bun.spawn([process.execPath, ...sourceResolution, childFixture, inputPath], {
       stdout: 'pipe',
       stderr: 'pipe',
     })
@@ -242,6 +252,8 @@ test('another process retaining a completed generation owner blocks new interact
       output += new TextDecoder().decode(next.value)
     }
     const owner = JSON.parse(output.trim())
+    expect(owner.probe).toBe(probe)
+    expect(owner.admissionPrompt).toBe(probe)
     expect(owner.roundTripProbe).toBe(roundTripProbe)
     observer = new PiDurableRuntimeAdapter(setup.options)
     const retained = observer.journal.get(handle.handleId)
