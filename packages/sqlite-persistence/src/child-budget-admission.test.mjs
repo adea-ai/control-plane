@@ -768,6 +768,89 @@ for (const scenario of retryAdmissionRaces) {
   })
 }
 
+test('child admission retains one mapping and receipt across duplicate allocation and reopen', async () => {
+  const f = await fixture()
+  let reopened
+  try {
+    const child = await f.childAdmission()
+    const input = {
+      request: child.request,
+      receipt: child.receipt,
+      execution: child.childExecution,
+      attempt: child.childAttempt,
+      delegation: child.delegation,
+      assertCurrent: async () => undefined,
+    }
+    expect(await child.allocator.allocate(input)).toBe(true)
+    expect(await child.allocator.allocate(input)).toBe(false)
+    const retained = { request: child.request, receipt: child.receipt }
+    expect(await child.allocator.getAdmissionReceipt(child.request.delegationId)).toEqual(retained)
+    await f.provider.close()
+    reopened = new SqlitePersistenceProvider({ path: join(f.directory, 'state.sqlite') })
+    await reopened.migrate()
+    const repository = new SqliteDelegationRepository(reopened)
+    expect(await repository.getAdmissionReceipt(child.request.delegationId)).toEqual(retained)
+    expect(await repository.getChildMapping(child.request.childAttemptId)).toEqual({
+      workspaceId: ids.workspaceId,
+      parentExecutionId: ids.parentExecutionId,
+      delegationId: child.request.delegationId,
+      childExecutionId: child.request.childExecutionId,
+      childAttemptId: child.request.childAttemptId,
+      runtimeConnectionId: child.request.childDispatch.runtime.runtimeConnectionId,
+    })
+    const receipt = await repository.getAdmissionReceipt(child.request.delegationId)
+    receipt.request.role = 'mutated'
+    expect(await repository.getAdmissionReceipt(child.request.delegationId)).toEqual(retained)
+  } finally {
+    await reopened?.close()
+    await f.close()
+  }
+})
+
+test('native child session binding is attempt-fenced and cannot rebind a retained session', async () => {
+  const f = await fixture()
+  try {
+    const child = await f.childAdmission()
+    const { delegations } = await retryableChild(f, child)
+    const current = await delegations.get(child.request.delegationId)
+    const mapping = {
+      ...(await delegations.getChildMapping(child.request.childAttemptId)),
+      externalSessionId: 'ses_01JABCDEF0123456789ABCDEFG',
+    }
+    await expect(delegations.bindChildSession(current.revision - 1, mapping)).rejects.toThrow(
+      'DELEGATION_CHILD_MAPPING_STALE'
+    )
+    for (const patch of [
+      { workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' },
+      { runtimeConnectionId: 'rtc_01JBBCDEF0123456789ABCDEFG' },
+      { childAttemptId: 'att_01JDBCDEF0123456789ABCDEFG' },
+    ])
+      await expect(
+        delegations.bindChildSession(current.revision, { ...mapping, ...patch })
+      ).rejects.toThrow('DELEGATION_CHILD_MAPPING_STALE')
+    expect(await delegations.bindChildSession(current.revision, mapping)).toEqual(mapping)
+    expect(await delegations.bindChildSession(current.revision, mapping)).toEqual(mapping)
+    expect(
+      await delegations.findChildBySession(mapping.runtimeConnectionId, mapping.externalSessionId)
+    ).toEqual(mapping)
+    expect(
+      await delegations.findChildBySession(
+        'rtc_01JBBCDEF0123456789ABCDEFG',
+        mapping.externalSessionId
+      )
+    ).toBeUndefined()
+    await expect(
+      delegations.bindChildSession(current.revision, {
+        ...mapping,
+        externalSessionId: 'ses_01JBBCDEF0123456789ABCDEFG',
+      })
+    ).rejects.toThrow('DELEGATION_CHILD_MAPPING_CONFLICT')
+    expect(await delegations.getChildMapping(child.request.childAttemptId)).toEqual(mapping)
+  } finally {
+    await f.close()
+  }
+})
+
 test('child admission transaction rolls back execution and budget when current authority denies', async () => {
   const f = await fixture()
   try {
@@ -789,6 +872,8 @@ test('child admission transaction rolls back execution and budget when current a
     ).toBeUndefined()
     expect(await child.executionRepository.getAttempt(child.request.childAttemptId)).toBeUndefined()
     expect(await child.allocator.get(child.childIds.delegationId)).toBeUndefined()
+    expect(await child.allocator.getAdmissionReceipt(child.childIds.delegationId)).toBeUndefined()
+    expect(await child.allocator.getChildMapping(child.request.childAttemptId)).toBeUndefined()
     await expect(
       child.usageStore.transaction(ids.workspaceId, (tx) =>
         tx.getBudget(child.childIds.childExecutionId)
@@ -1703,6 +1788,89 @@ test('a child authority reader is unusable after its fence returns', async () =>
     await expect(captured.getToolCall(child.request.admittedToolCallId)).rejects.toThrow(
       'CHILD_ADMISSION_READER_CLOSED'
     )
+  } finally {
+    await f.close()
+  }
+})
+
+test('a failed admission receipt write rolls back the mapping, execution and budget reservation', async () => {
+  const f = await fixture()
+  try {
+    const child = await f.childAdmission()
+    const repository = new SqliteDelegationRepository({
+      transaction(operation) {
+        return f.provider.transaction((tx) =>
+          operation(
+            new Proxy(tx, {
+              get(target, key) {
+                if (key === 'put')
+                  return async (write) => {
+                    if (write.namespace === 'delegation-admission-receipts')
+                      throw new Error('receipt write failed')
+                    return target.put(write)
+                  }
+                const value = target[key]
+                return typeof value === 'function' ? value.bind(target) : value
+              },
+            })
+          )
+        )
+      },
+    })
+    await expect(
+      repository.allocate({
+        request: child.request,
+        receipt: child.receipt,
+        execution: child.childExecution,
+        attempt: child.childAttempt,
+        delegation: child.delegation,
+        assertCurrent: async () => undefined,
+      })
+    ).rejects.toThrow('receipt write failed')
+    expect(await child.allocator.getAdmissionReceipt(child.request.delegationId)).toBeUndefined()
+    expect(await child.allocator.getChildMapping(child.request.childAttemptId)).toBeUndefined()
+    expect(
+      await child.executionRepository.getExecution(child.request.childExecutionId)
+    ).toBeUndefined()
+    const budget = await child.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(ids.parentExecutionId)
+    )
+    expect(budget.reservations).toEqual([])
+  } finally {
+    await f.close()
+  }
+})
+
+test('one native session cannot be assigned to two canonical child attempts', async () => {
+  const f = await fixture({
+    maximumTotal: 2,
+    maximumParallel: 2,
+    parentBudget: { maximumMicrounits: 20_000_000, maximumTokens: 500_000 },
+  })
+  try {
+    const first = await f.childAdmission()
+    const second = await f.childAdmission()
+    const { delegations } = await retryableChild(f, first)
+    await retryableChild(f, second)
+    const mapping = {
+      ...(await delegations.getChildMapping(first.request.childAttemptId)),
+      externalSessionId: 'ses_01JABCDEF0123456789ABCDEFG',
+    }
+    await delegations.bindChildSession(
+      (await delegations.get(first.request.delegationId)).revision,
+      mapping
+    )
+    const secondMapping = await delegations.getChildMapping(second.request.childAttemptId)
+    await expect(
+      delegations.bindChildSession((await delegations.get(second.request.delegationId)).revision, {
+        ...secondMapping,
+        externalSessionId: mapping.externalSessionId,
+      })
+    ).rejects.toThrow('DELEGATION_CHILD_MAPPING_CONFLICT')
+    expect(await delegations.getChildMapping(second.request.childAttemptId)).toEqual(secondMapping)
+    expect(
+      await delegations.findChildBySession(mapping.runtimeConnectionId, mapping.externalSessionId)
+    ).toEqual(mapping)
   } finally {
     await f.close()
   }

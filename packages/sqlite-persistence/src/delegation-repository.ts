@@ -10,15 +10,34 @@ import { assertExecutionPlanDerivedFrom } from '@control-plane/execution-plan'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
   ChildAdmissionAllocationError,
+  ChildAdmissionReceiptSchema,
+  ChildAdmissionRequestSchema,
   assertChildAdmissionReceiptMatches,
   DelegationRecordSchema,
   type ChildAdmissionAllocator,
   type DelegationRecord,
   type DelegationRepository,
+  type DelegationEventPublisher,
 } from '@control-plane/orchestration'
 import { json, recordId } from './record-storage.js'
 import { assertSqliteStoredPlanReference } from './repositories.js'
 import { SqliteDurableUsageStore } from './usage-store.js'
+import {
+  ChildJobMappingSchema,
+  childAdmissionNamespace,
+  childMappingNamespace,
+  childSessionNamespace,
+  retainChildAdmission,
+  retainChildMapping,
+  type ChildJobMapping,
+  type StoredChildAdmissionReceipt,
+} from './delegation-child-mapping.js'
+import {
+  retainTerminalReceipt,
+  terminalReceipt,
+  terminalReceiptNamespace,
+  type DelegationTerminalReceipt,
+} from './delegation-terminal-receipt.js'
 
 const namespace = 'delegations'
 const childIndex = 'delegation-by-child'
@@ -42,6 +61,153 @@ const immutable = (record: DelegationRecord) =>
 /** Canonical delegation state, including recovery intent, shares the execution store. */
 export class SqliteDelegationRepository implements DelegationRepository, ChildAdmissionAllocator {
   constructor(readonly provider: PersistenceProvider) {}
+
+  async getTerminalReceipt(delegationId: string): Promise<DelegationTerminalReceipt | undefined> {
+    IdentifierSchemas.delegationId.parse(delegationId)
+    return this.provider.transaction(async (tx) => {
+      const row = await tx.get(terminalReceiptNamespace, recordId(delegationId))
+      if (!row) return undefined
+      const stored = await tx.get(namespace, recordId(delegationId))
+      const record = stored ? DelegationRecordSchema.parse(stored.value) : undefined
+      const receipt = record ? terminalReceipt(record) : undefined
+      if (
+        !receipt ||
+        record?.delegationId !== delegationId ||
+        canonicalJsonStringify(row.value) !== canonicalJsonStringify(receipt)
+      )
+        throw new Error('DELEGATION_TERMINAL_RECEIPT_CONFLICT')
+      return receipt
+    })
+  }
+
+  /** Repairs CAS-before-publish and publish-before-ack crashes using only retained evidence.
+   * The supplied publisher must durably deduplicate the retained key before returning.
+   */
+  async recoverTerminalPublication(
+    delegationId: string,
+    publisher: DelegationEventPublisher
+  ): Promise<DelegationRecord> {
+    IdentifierSchemas.delegationId.parse(delegationId)
+    const record = await this.provider.transaction(async (tx) => {
+      const row = await tx.get(namespace, recordId(delegationId))
+      const current = row ? DelegationRecordSchema.parse(row.value) : undefined
+      if (!current || current.delegationId !== delegationId || !current.terminalPublication)
+        throw new Error('DELEGATION_TERMINAL_RECEIPT_MISSING')
+      // Existing pending terminalPublication is already a durable recovery intent.
+      // Backfill its complete receipt without inventing outcomes for legacy rows lacking it.
+      await retainTerminalReceipt(tx, current, current)
+      return current
+    })
+    const receipt = terminalReceipt(record)!
+    if (receipt.status === 'published') return record
+    await publisher.publish(receipt.event, receipt.idempotencyKey)
+    const acknowledged = DelegationRecordSchema.parse({
+      ...record,
+      revision: record.revision + 1,
+      terminalPublication: { ...record.terminalPublication, status: 'published' },
+    })
+    if (await this.compareAndSet(record.revision, acknowledged)) return acknowledged
+    const replay = await this.getTerminalReceipt(delegationId)
+    if (replay?.status !== 'published') throw new Error('DELEGATION_TERMINAL_RECEIPT_CONFLICT')
+    return (await this.get(delegationId))!
+  }
+
+  /** Historical allocation evidence, never a reusable authorization grant. */
+  async getAdmissionReceipt(
+    delegationId: string
+  ): Promise<StoredChildAdmissionReceipt | undefined> {
+    IdentifierSchemas.delegationId.parse(delegationId)
+    return this.provider.transaction(async (tx) => {
+      const row = await tx.get(childAdmissionNamespace, recordId(delegationId))
+      if (!row) return undefined
+      const stored = row.value as unknown as StoredChildAdmissionReceipt
+      const request = ChildAdmissionRequestSchema.parse(stored.request)
+      const receipt = ChildAdmissionReceiptSchema.parse(stored.receipt)
+      assertChildAdmissionReceiptMatches(request, receipt, request.acceptedAt)
+      if (request.delegationId !== delegationId)
+        throw new Error('DELEGATION_STORAGE_SCOPE_MISMATCH')
+      return { request, receipt }
+    })
+  }
+
+  async getChildMapping(childAttemptId: string): Promise<ChildJobMapping | undefined> {
+    IdentifierSchemas.attemptId.parse(childAttemptId)
+    return this.provider.transaction(async (tx) => {
+      const row = await tx.get(childMappingNamespace, recordId(childAttemptId))
+      if (!row) return undefined
+      const mapping = ChildJobMappingSchema.parse(row.value)
+      if (mapping.childAttemptId !== childAttemptId)
+        throw new Error('DELEGATION_STORAGE_SCOPE_MISMATCH')
+      return mapping
+    })
+  }
+
+  async findChildBySession(
+    runtimeConnectionId: string,
+    externalSessionId: string
+  ): Promise<ChildJobMapping | undefined> {
+    IdentifierSchemas.runtimeConnectionId.parse(runtimeConnectionId)
+    IdentifierSchemas.externalSessionId.parse(externalSessionId)
+    return this.provider.transaction(async (tx) => {
+      const row = await tx.get(
+        childSessionNamespace,
+        recordId(canonicalJsonStringify([runtimeConnectionId, externalSessionId]))
+      )
+      if (!row) return undefined
+      const mapping = ChildJobMappingSchema.parse(row.value)
+      const canonical = await tx.get(childMappingNamespace, recordId(mapping.childAttemptId))
+      if (
+        mapping.runtimeConnectionId !== runtimeConnectionId ||
+        mapping.externalSessionId !== externalSessionId ||
+        !canonical ||
+        canonicalJsonStringify(canonical.value) !== canonicalJsonStringify(mapping)
+      )
+        throw new Error('DELEGATION_STORAGE_SCOPE_MISMATCH')
+      return mapping
+    })
+  }
+
+  /** Trusted dispatch callers bind their returned handle under the current attempt fence. */
+  async bindChildSession(
+    expectedRevision: number,
+    input: ChildJobMapping
+  ): Promise<ChildJobMapping> {
+    const mapping = ChildJobMappingSchema.parse(input)
+    if (!mapping.externalSessionId) throw new Error('DELEGATION_CHILD_SESSION_REQUIRED')
+    return this.provider.transaction(async (tx) => {
+      const row = await tx.get(namespace, recordId(mapping.delegationId))
+      const record = row ? DelegationRecordSchema.parse(row.value) : undefined
+      const executionRow = await tx.get('executions', recordId(mapping.childExecutionId))
+      const attemptRow = await tx.get('execution-attempts', recordId(mapping.childAttemptId))
+      const execution = ExecutionSchema.safeParse(executionRow?.value)
+      const attempt = ExecutionAttemptSchema.safeParse(attemptRow?.value)
+      if (
+        !record ||
+        record.revision !== expectedRevision ||
+        record.parentExecutionId !== mapping.parentExecutionId ||
+        record.childExecutionId !== mapping.childExecutionId ||
+        record.childAttemptId !== mapping.childAttemptId ||
+        record.runtimeConnectionId !== mapping.runtimeConnectionId ||
+        !execution.success ||
+        !attempt.success ||
+        execution.data.executionId !== mapping.childExecutionId ||
+        execution.data.correlation.workspaceId !== mapping.workspaceId ||
+        execution.data.parentExecutionId !== mapping.parentExecutionId ||
+        execution.data.latestAttemptId !== mapping.childAttemptId ||
+        execution.data.executionPlan.executionPlanId !== record.childExecutionPlanId ||
+        execution.data.executionPlan.contentDigest !== record.childExecutionPlanDigest ||
+        attempt.data.attemptId !== mapping.childAttemptId ||
+        attempt.data.executionId !== mapping.childExecutionId ||
+        attempt.data.sequence !== execution.data.attemptCount ||
+        attempt.data.runtime?.runtimeConnectionId !== mapping.runtimeConnectionId ||
+        (attempt.data.runtime.externalSessionId !== undefined &&
+          attempt.data.runtime.externalSessionId !== mapping.externalSessionId)
+      )
+        throw new Error('DELEGATION_CHILD_MAPPING_STALE')
+      await retainChildMapping(tx, mapping)
+      return mapping
+    })
+  }
 
   async allocate(input: Parameters<ChildAdmissionAllocator['allocate']>[0]): Promise<boolean> {
     const execution = ExecutionSchema.parse(input.execution)
@@ -203,6 +369,7 @@ export class SqliteDelegationRepository implements DelegationRepository, ChildAd
         id: childExecutionId,
         value: { delegationId: record.delegationId },
       })
+      await retainChildAdmission(tx, { request, receipt: input.receipt })
       return true
     })
   }
@@ -285,6 +452,7 @@ export class SqliteDelegationRepository implements DelegationRepository, ChildAd
         canonicalJsonStringify(immutable(current)) !== canonicalJsonStringify(immutable(record))
       )
         return false
+      await retainTerminalReceipt(tx, current, record)
       await tx.put({ namespace, id, expectedRevision: stored.revision, value: json(record) })
       return true
     })
