@@ -311,6 +311,31 @@ test('a sibling still unsettled beyond the cleanup window preserves the director
 }, 30_000)
 
 test(
+  'a restarted child reports an effect-store startup lock without writing and can retry after release',
+  () =>
+    withState(async (directory, f) => {
+      await runChild(directory, 'run')
+      await respond(directory, f)
+      const blocked = await runChild(directory, 'compose-busy')
+      expect(blocked.code, blocked.stderr).toBe(0)
+      expect(blocked.result, blocked.stderr).toEqual({
+        error: 'PI_EFFECT_STORE_CONFLICT',
+        invocations: 0,
+      })
+      expect(await objectCount(directory)).toBe(0)
+      const invalid = await runChild(directory, 'compose-invalid')
+      expect(invalid.code, invalid.stderr).toBe(0)
+      expect(invalid.result, invalid.stderr).toEqual({ error: 'ERR_SQLITE_ERROR', invocations: 0 })
+      expect(await objectCount(directory)).toBe(0)
+      const settled = await runChild(directory, 'run')
+      expect(settled.code, settled.stderr).toBe(0)
+      expect(settled.result).toMatchObject({ outcome: { state: 'succeeded' }, invocations: 1 })
+      expect(await objectCount(directory)).toBe(1)
+    }),
+  120_000
+)
+
+test(
   'one logical settlement: concurrent restarted processes for one approved task execute and settle once',
   () =>
     withState(async (directory, f) => {
@@ -325,6 +350,8 @@ test(
       expect(executed).toHaveLength(1)
       expect(executed[0].result.outcome).toMatchObject({ state: 'succeeded' })
       for (const r of results) {
+        expect(r.code, r.stderr).toBe(0)
+        expect(r.result, r.stderr).toBeDefined()
         if (r.result?.outcome) {
           expect(['succeeded', 'reconciliation_required']).toContain(r.result.outcome.state)
           if (r.result.outcome.state === 'reconciliation_required')
