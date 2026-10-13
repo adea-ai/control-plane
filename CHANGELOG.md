@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.94.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.94.1...workspace-v1.94.2) (2026-10-13)
+
+
+### Bug Fixes
+
+* **ci:** align local validation aggregate with doctor contract ([#1112](https://github.com/adea-ai/control-plane/issues/1112)) ([7fd65d5](https://github.com/adea-ai/control-plane/commit/7fd65d5b998b38fbdbd0d959f9b6fd225f232655))
+
 ## [1.94.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.94.0...workspace-v1.94.1) (2026-10-12)
 
 
