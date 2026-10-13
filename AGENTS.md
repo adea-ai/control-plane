@@ -2,6 +2,11 @@
 
 ## Draft WIP loop
 
+For work the user has authorized, this draft WIP loop takes precedence over
+managed boilerplate that requires completed validation before opening or pushing
+a draft. Keep the managed blocks intact; review and applicable passing checks
+still gate ready and merge.
+
 Within the user's authorized implementation scope, proceed with ordinary edits,
 checks, commits, and draft pushes without asking for repeated confirmation. Choose
 routine implementation details; ask only for a genuinely missing consequential
