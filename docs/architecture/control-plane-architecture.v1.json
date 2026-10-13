@@ -3328,7 +3328,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:23753926c8e3648496efbe5478e915c1613bbccae1d828bd822057c09691f8f0"
+      "sourceDigest": "sha256:2ffe2a459592d70238deb96596a3503cb7f5c552c7c93a7afe5cc58fb92396b9"
     },
     {
       "id": "hosted-simple",

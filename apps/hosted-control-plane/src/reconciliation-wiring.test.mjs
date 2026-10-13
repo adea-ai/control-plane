@@ -208,6 +208,251 @@ describe('hosted composition reconciliation wiring', () => {
     }
   })
 
+  for (const heldStage of [
+    'connection.check',
+    'wake.bind',
+    'graph.start',
+    'endpoint.create',
+    'endpoint.run',
+    'workflow.start',
+    'remote.start',
+  ]) {
+    test(`close drains startup held at ${heldStage} and refuses restart`, async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'hosted-start-close-'))
+      const entered = Promise.withResolvers()
+      const release = Promise.withResolvers()
+      const calls = []
+      const stages = [
+        'connection.check',
+        'wake.bind',
+        'graph.start',
+        'endpoint.create',
+        'endpoint.run',
+        'workflow.start',
+        'remote.start',
+      ]
+      const stage = async (name) => {
+        calls.push(name)
+        if (name === heldStage) {
+          entered.resolve()
+          await release.promise
+        }
+      }
+      let watchdog
+      let composition
+      let starting
+      let closing
+      await withPrototypeOverrides(
+        [
+          {
+            prototype: HostedServerGraphRuntime.prototype,
+            method: 'start',
+            value: () => stage('graph.start'),
+          },
+          {
+            prototype: HostedServerGraphRuntime.prototype,
+            method: 'close',
+            value: async () => calls.push('graph.close'),
+          },
+        ],
+        async () => {
+          try {
+            const configuration = retainedWakeConfiguration()
+            configuration.guards.residency.assertCurrent = () => stage('wake.bind')
+            composition = new HostedServerControlPlaneComposition({
+              dataDirectory: directory,
+              databaseUrl: 'postgresql://app:secret@postgres/control_plane',
+              requestIdentityPublicKey: identityPublicKey,
+              connection: {
+                database: {},
+                check: () => stage('connection.check'),
+                close: async () => calls.push('connection.close'),
+              },
+              hostedGraphEnabled: true,
+              hostedGraphToolConfiguration: {
+                schemaVersion: 1,
+                toolDefinitionId: 'tld_01JABCDEF0123456789ABCDEFG',
+                toolVersionId: 'tlv_01JABCDEF0123456789ABCDEFG',
+                currency: 'USD',
+                costMicrounits: 1,
+                createdAt: '2026-08-23T12:00:00.000Z',
+                publishedAt: '2026-08-23T12:00:00.000Z',
+              },
+              workflowRuntime: {
+                profile: 'hosted-server',
+                start: () => stage('workflow.start'),
+                stop: async () => calls.push('workflow.stop'),
+                health: async () => ({ ready: true, component: 'workflow', version: 'test' }),
+              },
+              remoteControl: {
+                start: () => stage('remote.start'),
+                stop: async () => calls.push('remote.stop'),
+                health: async () => ({ ready: true, component: 'remote', version: 'test' }),
+              },
+              endpointFactory: {
+                create: async () => {
+                  await stage('endpoint.create')
+                  return {
+                    run: () => stage('endpoint.run'),
+                    shutdown: async () => calls.push('endpoint.shutdown'),
+                  }
+                },
+              },
+              reconciliation: { projection: 'observation', intervalMs: 1_000, batchLimit: 10 },
+              profileWorkflowWake: configuration,
+            })
+            starting = composition.start().then(
+              () => undefined,
+              (error) => error
+            )
+            await Promise.race([
+              entered.promise,
+              new Promise((_, reject) => {
+                watchdog = setTimeout(() => reject(new Error('STARTUP_STAGE_NOT_ENTERED')), 1000)
+              }),
+            ])
+            clearTimeout(watchdog)
+            closing = composition.close()
+            const concurrent = composition.close()
+            let closed = false
+            const completion = closing.then(() => {
+              closed = true
+            })
+            await new Promise((resolve) => setImmediate(resolve))
+            expect(closed).toBe(false)
+            expect(concurrent).toBe(closing)
+            expect(calls).not.toContain('connection.close')
+            release.resolve()
+            const startupError = await starting
+            expect(startupError?.message).toBe('HOSTED_CONTROL_PLANE_CLOSED')
+            await Promise.all([completion, concurrent])
+            expect(closed).toBe(true)
+            expect(calls.filter((name) => stages.includes(name))).toEqual(
+              stages.slice(0, stages.indexOf(heldStage) + 1)
+            )
+            expect(calls).toContain('connection.close')
+            expect(calls).toContain('graph.close')
+            if (stages.indexOf(heldStage) >= stages.indexOf('endpoint.create')) {
+              expect(calls).toContain('endpoint.shutdown')
+              expect(calls.indexOf('endpoint.shutdown')).toBeLessThan(
+                calls.indexOf('connection.close')
+              )
+            }
+            await expectRetainedWakeUnbound(composition)
+            expect(composition.close()).toBe(closing)
+            const atClose = [...calls]
+            await expect(composition.start()).rejects.toThrow('HOSTED_CONTROL_PLANE_CLOSED')
+            await new Promise((resolve) => setImmediate(resolve))
+            expect(calls).toEqual(atClose)
+          } finally {
+            clearTimeout(watchdog)
+            release.resolve()
+            await starting
+            await composition?.close()
+            await rm(directory, { recursive: true, force: true })
+          }
+        }
+      )
+    }, 30000)
+  }
+
+  test('close waits for failed-start cleanup, preserves errors and shares its rejection', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'hosted-start-close-errors-'))
+    const entered = Promise.withResolvers()
+    const release = Promise.withResolvers()
+    const cleanupEntered = Promise.withResolvers()
+    const cleanupRelease = Promise.withResolvers()
+    const startupError = new Error('endpoint creation failed')
+    const cleanupError = new Error('workflow cleanup failed')
+    const calls = []
+    let stops = 0
+    let watchdog
+    const composition = new HostedServerControlPlaneComposition({
+      dataDirectory: directory,
+      databaseUrl: 'postgresql://app:secret@postgres/control_plane',
+      requestIdentityPublicKey: identityPublicKey,
+      connection: { ...fakeConnection(), close: async () => calls.push('connection.close') },
+      workflowRuntime: {
+        profile: 'hosted-server',
+        start: async () => calls.push('workflow.start'),
+        stop: async () => {
+          calls.push('workflow.stop')
+          if (++stops === 1) {
+            cleanupEntered.resolve()
+            await cleanupRelease.promise
+          }
+          throw cleanupError
+        },
+        health: async () => ({ ready: true, component: 'workflow', version: 'test' }),
+      },
+      remoteControl: {
+        start: async () => calls.push('remote.start'),
+        stop: async () => calls.push('remote.stop'),
+        health: async () => ({ ready: true, component: 'remote', version: 'test' }),
+      },
+      endpointFactory: {
+        create: async () => {
+          entered.resolve()
+          await release.promise
+          throw startupError
+        },
+      },
+      reconciliation: { projection: 'observation', intervalMs: 1_000, batchLimit: 10 },
+      profileWorkflowWake: retainedWakeConfiguration(),
+    })
+    const starting = composition.start().then(
+      () => undefined,
+      (error) => error
+    )
+    let closing
+    try {
+      const timeout = new Promise((_, reject) => {
+        watchdog = setTimeout(() => reject(new Error('STARTUP_OR_CLEANUP_NOT_ENTERED')), 1000)
+      })
+      await Promise.race([entered.promise, timeout])
+      closing = composition.close()
+      const concurrent = composition.close()
+      const concurrentOutcome = concurrent.catch((error) => error)
+      const outcome = closing.then(
+        () => undefined,
+        (error) => error
+      )
+      expect(concurrent).toBe(closing)
+      release.resolve()
+      await Promise.race([cleanupEntered.promise, timeout])
+      clearTimeout(watchdog)
+      let closed = false
+      const completion = outcome.then((error) => {
+        closed = true
+        return error
+      })
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(closed).toBe(false)
+      expect(calls).not.toContain('connection.close')
+      cleanupRelease.resolve()
+      expect(await starting).toBe(startupError)
+      expect(await completion).toBe(cleanupError)
+      expect(await concurrentOutcome).toBe(cleanupError)
+      expect(calls.filter((name) => name === 'remote.stop')).toHaveLength(2)
+      expect(calls.filter((name) => name === 'connection.close')).toHaveLength(1)
+      expect(calls).not.toContain('workflow.start')
+      expect(calls).not.toContain('remote.start')
+      await expectRetainedWakeUnbound(composition)
+      const atClose = [...calls]
+      expect(composition.close()).toBe(closing)
+      await expect(composition.start()).rejects.toThrow('HOSTED_CONTROL_PLANE_CLOSED')
+      expect(calls).toEqual(atClose)
+    } finally {
+      clearTimeout(watchdog)
+      release.resolve()
+      cleanupRelease.resolve()
+      await starting
+      await closing?.catch(() => undefined)
+      await composition.close().catch(() => undefined)
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 30000)
+
   test('clears the retained wake after graph startup fails', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-hosted-profile-graph-failure-'))
     const originalStart = HostedServerGraphRuntime.prototype.start

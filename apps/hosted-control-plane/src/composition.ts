@@ -301,6 +301,9 @@ export class HostedServerControlPlaneComposition {
   readonly #retentionSweep: RetentionSweep | undefined
   #endpoint: RestateEndpointHandle | undefined
   #started = false
+  #starting: Promise<void> | undefined
+  #closing: Promise<void> | undefined
+  #closed = false
 
   constructor(options: HostedServerCompositionOptions) {
     const memoryWriteback = resolveMemoryWriteConfiguration(options.memoryWriteback)
@@ -728,12 +731,28 @@ export class HostedServerControlPlaneComposition {
     })
   }
 
-  async start(): Promise<void> {
-    if (this.#started) throw new Error('HOSTED_CONTROL_PLANE_ALREADY_STARTED')
+  start(): Promise<void> {
+    if (this.#closed) return Promise.reject(new Error('HOSTED_CONTROL_PLANE_CLOSED'))
+    if (this.#started || this.#starting !== undefined) {
+      return Promise.reject(new Error('HOSTED_CONTROL_PLANE_ALREADY_STARTED'))
+    }
+    this.#starting = this.#start().finally(() => {
+      this.#starting = undefined
+    })
+    return this.#starting
+  }
+
+  #assertStartupOpen(): void {
+    if (this.#closed) throw new Error('HOSTED_CONTROL_PLANE_CLOSED')
+  }
+
+  async #start(): Promise<void> {
     this.#profileWorkflowWake = undefined
     try {
       await mkdir(this.dataDirectory, { recursive: true, mode: 0o700 })
+      this.#assertStartupOpen()
       await this.connection.check()
+      this.#assertStartupOpen()
       if (this.#profileWorkflowWakeConfiguration !== undefined) {
         const driver = this.#profileWorkflowWakeDriver
         const topology = this.#profileWorkflowWakeTopology
@@ -741,7 +760,7 @@ export class HostedServerControlPlaneComposition {
         if (driver === undefined || topology === undefined || retainedRecords === undefined) {
           throw new Error('HOSTED_PROFILE_WORKFLOW_WAKE_CONFIGURATION_INVALID')
         }
-        this.#profileWorkflowWake = await bindRetainedProfileWorkflowWake({
+        const wake = await bindRetainedProfileWorkflowWake({
           profile: ExecutionProfiles.selfHosted,
           deployment: {
             profile: DeploymentProfiles.hostedServer,
@@ -754,12 +773,19 @@ export class HostedServerControlPlaneComposition {
           topology,
           retainedRecords,
         })
+        this.#assertStartupOpen()
+        this.#profileWorkflowWake = wake
       }
       await this.#hostedGraphRuntime?.start()
+      this.#assertStartupOpen()
       this.#endpoint = await this.#endpointFactory.create()
+      this.#assertStartupOpen()
       await this.#endpoint.run()
+      this.#assertStartupOpen()
       await this.workflow.start()
+      this.#assertStartupOpen()
       await this.remoteControl?.start()
+      this.#assertStartupOpen()
       this.#retentionSweep?.start()
       this.#reconciliationScheduler?.start()
       this.#started = true
@@ -827,7 +853,16 @@ export class HostedServerControlPlaneComposition {
     }
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    this.#closed = true
+    this.#closing ??= this.#close()
+    return this.#closing
+  }
+
+  async #close(): Promise<void> {
+    // Startup owns its failure cleanup; it must never wait for this close.
+    // Drain it first so late acquisitions are released before storage closes.
+    await this.#starting?.catch(() => undefined)
     this.#started = false
     let closeError: unknown
     let failed = false
