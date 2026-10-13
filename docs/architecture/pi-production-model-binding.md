@@ -96,3 +96,16 @@ Existing principal/grant, model, tool and payer authorization must independently
 qualify the source before a lifecycle adapter may execute. These additive schemas
 are not wired to startup or the existing single-workspace evidence endpoint;
 Adea's foreign-Agent guard remains enabled.
+
+`createProductionSourceLeadProductAuthority` adds a separate candidate product
+composition. It independently verifies existing host service authority and source
+execution authority for the original human, resolves profile/model in source
+scope through the existing production authority, and retains both host/source
+metadata plus exact profile/model pins in SQLite. The execution evidence's
+`scopeRef` binds the complete canonical source snapshot; the existing admission
+and runtime paths retain that scope digest. Snapshot changes during awaited
+profile/model reads deny, and SQLite reopen cannot adopt a changed source default
+or replacement enlistment. Retained metadata is not authorization: every current
+read still checks both required authority ports. Startup remains unchanged;
+source lifecycle integration and physical effect qualification are subsequent
+checkpoints.
