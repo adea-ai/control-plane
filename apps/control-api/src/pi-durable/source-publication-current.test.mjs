@@ -169,3 +169,27 @@ test('the final combined CP fence is required and expiry can lapse while it acqu
     'PI_LEAD_SOURCE_PUBLICATION_UNAVAILABLE'
   )
 })
+test.each([0, 30_001])(
+  'publication at now + %d milliseconds is rejected at final acceptance',
+  async (offset) => {
+    const f = fixture()
+    f.publication.expiresAt = new Date(Date.parse(f.state.now) + offset).toISOString()
+    await expect(f.reader.current(f.input, f.principal)).rejects.toThrow(
+      'PI_LEAD_SOURCE_PUBLICATION_UNAVAILABLE'
+    )
+  }
+)
+test('publication expiry crossing a delayed final authorization fence denies exactly at expiry', async () => {
+  const f = fixture()
+  let waited = false
+  f.options.withCurrentAuthorization = async (_input, accept) => {
+    await Promise.resolve()
+    waited = true
+    f.state.now = f.publication.expiresAt
+    return accept()
+  }
+  await expect(f.reader.current(f.input, f.principal)).rejects.toThrow(
+    'PI_LEAD_SOURCE_PUBLICATION_UNAVAILABLE'
+  )
+  expect(waited).toBe(true)
+})
