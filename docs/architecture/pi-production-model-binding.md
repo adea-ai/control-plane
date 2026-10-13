@@ -51,3 +51,29 @@ Qualification remains separate from the merged fixture journey. Deployment trust
 immutable profile mappings, lock-safe CP authority integration, live provider,
 device and full restart/cancellation/publication fault qualification remain open.
 Missing configuration leaves production lead and publication unavailable.
+
+## Source-authority review checkpoint (#1178, 2026-10-13)
+
+The current contract carries one workspace through product evidence, immutable
+profile/model resolution, execution and publication. Companion Adea draft
+[#1327](https://github.com/adea-ai/adea/pull/1327) withholds foreign-Agent evidence;
+this CP draft retains that boundary and changes no production contract.
+
+The proposed next slice is recorded in Adea's
+[`pi-lead-product-composition.md`](https://github.com/adea-ai/adea/blob/fix/1178-foreign-lead-execution-evidence/docs/architecture/pi-lead-product-composition.md).
+Review it before shared-contract edits: retain host conversation/product and
+publication scope separately from canonical source Agent/profile/model/tool and
+existing funding authority, through preparation, retry/restart, dispatch,
+continuation and publication. A host-scoped service assertion or enlistment does
+not authorize source execution. Missing source authority must remain blocked,
+without host profile/model fallback. Context stays isolated per host conversation
+and qualified source Agent using upstream Pi-native execution.
+
+Fresh product/HTTP tests on published CP head
+`bc1d84647d62babd5f8241bfcdd0b24087f815ff` passed 13 tests, 0 failed. Adea's
+published head `5c32e220dac26b0aac6cf0487fe2a8957b02e937` passed its prepared
+foreign-source propagation/context/revocation regression in a fresh disposable
+loopback PostgreSQL database after 52 canonical migrations and a deterministic
+rerun (7 lead-product tests; 73 additional group/lead tests). Existing databases
+were not changed. These checks do not qualify physical source tool effects or
+live provider execution; full dual-authority execution remains outstanding.
