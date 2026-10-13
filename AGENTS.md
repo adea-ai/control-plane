@@ -1,5 +1,23 @@
 # Agent Instructions
 
+## Draft WIP loop
+
+Within the user's authorized implementation scope, proceed with ordinary edits,
+checks, commits, and draft pushes without asking for repeated confirmation. Choose
+routine implementation details; ask only for a genuinely missing consequential
+decision or authority.
+
+- Use the existing suitable draft PR and its branch; otherwise create one focused
+  draft PR for this repository.
+- Commit and push WIP directly to that draft branch throughout the task and before
+  stopping or handing off. Verify the remote SHA after each push.
+- Incomplete work or failing checks do not block draft pushes; record the failures
+  and remaining work in the PR. Review and applicable passing checks gate ready
+  and merge.
+- Keep draft auto-merge off. Never force-push over others or push unreviewed work
+  to an auto-merge head.
+
+
 Production-shaped TypeScript monorepo for the Control Plane: a modular monolith with independently deployable workers and gateways.
 
 ## Quick reference
