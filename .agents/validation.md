@@ -14,7 +14,7 @@ bun run build            # TypeScript build via Turborepo
 bun run test             # Build + parallel unit, E2E and smoke groups
 bun run openapi:check    # OpenAPI contract validation (control-api only)
 bun run db:check         # Drizzle migration-schema validation
-bun run test:acceptance  # Complete M1 foundation, Terraform, and container acceptance
+bun run test:acceptance  # Foundation validation, Railway manifest, and container acceptance
 ```
 
 `bun test` (bare) is scoped to `tests/` via `bunfig.toml`. Root `bun run test` builds, then runs the unit, E2E and smoke groups through `scripts/run-bun-test-group.mjs`; the runner selects tests from `apps/`, `packages/` and `tests/`.
