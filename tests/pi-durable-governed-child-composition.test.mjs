@@ -466,3 +466,60 @@ test(
     ),
   30000
 )
+
+test(
+  'native mapping acknowledgement loss preserves typed unknown classification without another child effect',
+  () =>
+    fixture(
+      async (f) => {
+        const { ToolGateway, ToolGatewayError } = await import('@control-plane/tool-execution')
+        expect(f.host.service.gateway instanceof ToolGateway).toBe(true)
+        const invoke = f.host.service.gateway.invoke.bind(f.host.service.gateway)
+        let observed
+        f.host.service.gateway.invoke = async (...args) => {
+          try {
+            return await invoke(...args)
+          } catch (error) {
+            observed = error
+            throw error
+          }
+        }
+        // Fault only the CP acknowledgement after the actual native start has returned.
+        let mappingFaults = 0
+        f.host.executor.options.bridge.options.childReceipts = new Proxy(f.storage.delegations, {
+          get(target, property) {
+            if (property === 'bindChildSession')
+              return async () => {
+                mappingFaults++
+                throw new Error('TEST_MAPPING_ACK_LOST')
+              }
+            const value = target[property]
+            return typeof value === 'function' ? value.bind(target) : value
+          },
+        })
+        await f.leadRuntime.adapter.start(f.leadRequest)
+        await f.leadRuntime.adapter.drain()
+        await f.childRuntime.adapter.drain()
+        expect(mappingFaults).toBe(1)
+        expect(
+          (await f.storage.delegations.getChildRuntimeStart(f.ids.delegationId)).receipt.request
+        ).toEqual(f.host.starts[0])
+        expect(observed instanceof ToolGatewayError).toBe(true)
+        expect(observed.effectState).toBe('unknown')
+        const call = await f.storage.calls.get(f.host.request.toolCallId)
+        expect(call.status).toBe('reconciliation_required')
+        expect(call.errorCode).toBe('EXECUTOR_ERROR')
+        expect(f.host.starts).toHaveLength(1)
+        expect(f.child.requests).toHaveLength(1)
+        const usage = await f.ledger.entries(f.ids.workspaceId, f.ids.childExecutionId)
+        expect(usage.filter((entry) => entry.kind === 'model_usage')).toHaveLength(1)
+        expect((await f.host.service.execute(f.host.request)).state).toBe('reconciliation_required')
+        expect(await f.storage.calls.get(f.host.request.toolCallId)).toEqual(call)
+        expect(await f.ledger.entries(f.ids.workspaceId, f.ids.childExecutionId)).toEqual(usage)
+        expect(f.host.starts).toHaveLength(1)
+        expect(f.child.requests).toHaveLength(1)
+      },
+      { transactionalChildAdmission: true }
+    ),
+  30000
+)

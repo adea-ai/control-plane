@@ -27,4 +27,10 @@ export * from './child-usage-outcome-repository.js'
 export * from './credential-secret-store.js'
 export * from './delegation-event-publisher.js'
 export * from './delegation-repository.js'
+export type { DelegationTerminalReceipt } from './delegation-terminal-receipt.js'
+export {
+  ChildJobMappingSchema,
+  type ChildJobMapping,
+  type StoredChildAdmissionReceipt,
+} from './delegation-child-mapping.js'
 export * from './delegation-tool-admission-repository.js'

@@ -1,3 +1,17 @@
+import { createModels, createProvider } from '@earendil-works/pi-ai/models'
+import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
+import { ExecutionPlanCompiler } from '@control-plane/execution-plan'
+import { ToolGatewayError as PackageToolGatewayError } from '@control-plane/tool-execution'
+import { DurableUsageLedger, PinnedModelPrice } from '@control-plane/usage-ledger'
+import {
+  ChildProgressEvidenceBuffer,
+  ChildProgressLeadDispatcher,
+  ChildProgressLeadFeed,
+} from '@control-plane/orchestration'
+import { createNodePiDurableRuntime } from '../packages/pi-durable-adapter/src/composition.ts'
+import { createGovernedChildCompositionFixture } from './pi-durable-governed-child-composition.fixture.mjs'
+import { createPiDurableUsageAuthority } from '../packages/pi-durable-adapter/src/usage-authority.ts'
+import { PiDurableChildProgressScanner } from '../apps/control-api/src/pi-durable/child-progress-scanner.ts'
 import { afterEach, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -25,7 +39,7 @@ import {
   DelegationRuntimeAdmissionRequestSchema,
   GovernedDelegateChildExecutor,
 } from '../packages/orchestration/src/delegation-runtime.ts'
-import { ids } from '../packages/orchestration/src/delegation-fixtures.mjs'
+import { ids, parentPlanInput } from '../packages/orchestration/src/delegation-fixtures.mjs'
 import {
   createGovernedChildHostFixture,
   parentAttemptId,
@@ -658,4 +672,719 @@ test('SQLite delegation admission rejects a composed child context that expands 
     await provider.close()
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+const at = '2026-08-25T18:02:00.000Z'
+const siblingId = (prefix, letter) => `${prefix}_01J${letter}BCDEF0123456789ABCDEFG`
+
+function siblingAdmission(first, letter) {
+  const admission = structuredClone(first)
+  admission.sourceKey = `pi-tool:${letter.toLowerCase().repeat(64)}`
+  Object.assign(admission.request, {
+    requestId: siblingId('req', letter),
+    toolCallId: siblingId('tlc', letter),
+    idempotencyKey: `sibling:${letter}`,
+  })
+  admission.request.approval.interactionId = siblingId('int', letter)
+  Object.assign(admission.command.delegation, {
+    delegationId: siblingId('dlg', letter),
+    childExecutionId: siblingId('exe', letter),
+    childAttemptId: siblingId('att', letter),
+    admittedToolCallId: admission.request.toolCallId,
+  })
+  Object.assign(admission.command.delegation.childPlan.correlation, {
+    taskId: siblingId('tsk', letter),
+    requestId: siblingId('req', letter),
+  })
+  Object.assign(admission.command.dispatch, {
+    delegationId: admission.command.delegation.delegationId,
+    childAttemptId: admission.command.delegation.childAttemptId,
+  })
+  return admission
+}
+
+// Actual Pi engines and SQLite journals; only the provider and external product/
+// spending authority are loopback fixtures. Usage is read from provider receipts
+// and priced/retained by the production usage authority, never invented on cancel.
+test('separately governed siblings run Pi concurrently, retain responsive input and survive terminal restart', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pi-sibling-dispatch-'))
+  const provider = new SqlitePersistenceProvider({ path: join(directory, 'canonical.sqlite') })
+  const arrived = [Promise.withResolvers(), Promise.withResolvers()]
+  const release = [Promise.withResolvers(), Promise.withResolvers()]
+  const requests = []
+  const server = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    async fetch(request) {
+      const index = requests.length
+      requests.push(await request.json())
+      arrived[index]?.resolve()
+      await release[index]?.promise
+      const chunks = [
+        {
+          choices: [
+            {
+              index: 0,
+              delta: { role: 'assistant', content: `Sibling ${index} result` },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+        },
+      ].map((chunk) => ({
+        id: `chat_${index}`,
+        object: 'chat.completion.chunk',
+        created: 1,
+        model: 'sibling-loopback',
+        ...chunk,
+      }))
+      return new Response(
+        chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n',
+        { headers: { 'content-type': 'text/event-stream' } }
+      )
+    },
+  })
+  let runtime
+  let reopenedCanonical
+  let failTerminalPublication = false
+  try {
+    await provider.migrate()
+    const publications = new SqliteDelegationEventPublisher(provider, ids.parentExecutionId)
+    const makeFeed = (inbox = publications) =>
+      new ChildProgressLeadFeed({
+        publications: inbox,
+        dispatcher: new ChildProgressLeadDispatcher({
+          buffer: new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId }),
+        }),
+        generationOf: () => 1,
+      })
+    const feed = makeFeed()
+    const records = new SqliteDelegationRepository(provider)
+    const ledger = new DurableUsageLedger({
+      store: new SqliteDurableUsageStore(provider),
+      now: () => at,
+    })
+    const storage = {
+      executions: new SqliteExecutionRepository(provider),
+      plans: new SqliteExecutionPlanRepository(provider),
+      contexts: new SqliteContextPackageRepository(provider),
+      delegations: records,
+      events: {
+        async publish(event, key) {
+          if (failTerminalPublication && event.type === 'delegation.completed') {
+            failTerminalPublication = false
+            throw new Error('crash after terminal CAS before publication')
+          }
+          return feed.publish(event, key)
+        },
+      },
+      childReceipts: records,
+      terminalPublisher: feed,
+      calls: new SqliteToolCallRepository(provider, ids.workspaceId),
+      admissions: new SqliteDelegationToolAdmissionRepository(provider, ids.workspaceId),
+      usageStore: new SqliteDurableUsageStore(provider),
+      childAllocator: records,
+      scopeAdmission: {
+        authority: { readCurrent: async (input) => canonicalCurrentSnapshot(input) },
+        now: () => at,
+        resolveCallerPrincipalId: async () => 'user:original',
+      },
+      childAdmission: {
+        prepare: async (request) => ({
+          schemaVersion: 'pi-child-admission/v1',
+          ...request,
+          authorityRevision: 1,
+          productRevision: 'product:1',
+          productReaderPrincipalId: 'svc_product-reader',
+          selectionRef: 'selection:sibling',
+          selectionRevision: 1,
+          expiresAt: '2999-01-01T00:00:00.000Z',
+        }),
+        assertCurrent: async () => {},
+      },
+    }
+    const planInput = parentPlanInput()
+    planInput.constraints.limits.childExecutions.maximumTotal = 2
+    planInput.profile.definition.capabilityRequirements = []
+    planInput.skills[0].manifest.requiredCapabilities = []
+    const parentPlan = new ExecutionPlanCompiler('1.0.0').compile(planInput)
+    const host = await createGovernedChildHostFixture({
+      storage,
+      workspace: { parentPlan },
+      runtimeAdapter: { start: (request) => runtime.adapter.start(request) },
+      reserveChildBudget: async (admission) => {
+        const budget = {
+          schemaVersion: 1,
+          workspaceId: ids.workspaceId,
+          executionId: admission.record.childExecutionId,
+          attemptId: admission.attempt.attemptId,
+          executionPlanId: admission.plan.executionPlanId,
+          executionPlanDigest: admission.plan.contentDigest,
+          reservationKey: `runtime-attempt:${admission.attempt.attemptId}`,
+          currency: 'USD',
+          maximumMicrounits: 500000,
+          maximumTokens: 5000,
+        }
+        const {
+          schemaVersion: _schemaVersion,
+          executionPlanId: _planId,
+          executionPlanDigest: _planDigest,
+          currency: _currency,
+          ...reservation
+        } = budget
+        await ledger.reserve({
+          ...reservation,
+          source: { sourceId: budget.reservationKey, idempotencyKey: budget.reservationKey },
+        })
+        return budget
+      },
+    })
+    const price = new PinnedModelPrice(
+      {
+        schemaVersion: 1,
+        deploymentId: 'sibling-fixture',
+        provider: 'sibling-loopback',
+        model: 'sibling-loopback',
+        version: 'price:1',
+        currency: 'USD',
+        fundingSource: 'byo_api',
+        validFrom: at,
+        validUntil: '2027-01-01T00:00:00.000Z',
+        maximumInputTokens: 1024,
+        maximumOutputTokens: 32,
+        ratesMicrounitsPerMillionTokens: { input: 1000000, cachedInput: 500000, output: 2000000 },
+      },
+      { now: () => at }
+    )
+    const usage = createPiDurableUsageAuthority({
+      ledger,
+      resolvePrice: async () => ({ price, maximumOutputTokens: 32 }),
+      assertSpendingAuthorized: async () => ({
+        authorizationRef: 'spend:sibling-fixture',
+        evidenceDigest: `sha256:${'e'.repeat(64)}`,
+        assertActive: async () => {},
+      }),
+    })
+    const baseUrl = `${server.url}v1`
+    const options = {
+      directory: join(directory, 'runtime'),
+      now: () => at,
+      resolveAdmission: async (request) => ({
+        schemaVersion: 'pi-durable-admission/v1',
+        prompt: request.executionId,
+        selection: { selectionRef: `msel_${'a'.repeat(32)}`, selectionRevision: 1 },
+        authority: {
+          revision: 1,
+          principalRef: 'user:original',
+          scopeRef: 'scope:sibling',
+          expiresAt: '2027-01-01T00:00:00.000Z',
+        },
+      }),
+      assertAuthority: async () => {},
+      reconcileInference: async () => 'unresolved',
+      authorizeInference: usage.authorizeInference,
+      settleUsage: usage.settleUsage,
+      resolveProvider: async (selection) => ({
+        ...selection,
+        workspaceId: ids.workspaceId,
+        provider: 'sibling-loopback',
+        providerModel: 'sibling-loopback',
+        location: 'remote_host',
+        harness: 'pi_durable',
+        harnessVersion: '1.1.0',
+        providerBinding: 'pi_durable_models',
+        withModels: async (use) => {
+          const models = createModels()
+          models.setProvider(
+            createProvider({
+              id: 'sibling-loopback',
+              baseUrl,
+              auth: {
+                apiKey: {
+                  name: 'Loopback fixture',
+                  resolve: async () => ({ auth: { apiKey: 'fixture-no-paid-account' } }),
+                },
+              },
+              models: [
+                {
+                  id: 'sibling-loopback',
+                  provider: 'sibling-loopback',
+                  name: 'Loopback',
+                  api: 'openai-completions',
+                  baseUrl,
+                  reasoning: false,
+                  input: ['text'],
+                  contextWindow: 1024,
+                  maxTokens: 32,
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                },
+              ],
+              api: openAICompletionsApi(),
+            })
+          )
+          return use(models)
+        },
+      }),
+    }
+    runtime = await createNodePiDurableRuntime(options)
+    const second = siblingAdmission(host.admission, 'C')
+    await host.admissions.retain(second)
+    const outcomes = await Promise.all([
+      host.service.execute(host.request),
+      host.service.execute(second.request),
+    ])
+    expect(outcomes.map((outcome) => outcome.state)).toEqual(['succeeded', 'succeeded'])
+    expect(await host.service.execute(host.request)).toEqual(outcomes[0])
+    expect(await host.service.execute(second.request)).toEqual(outcomes[1])
+    expect(host.starts).toHaveLength(2)
+    await Promise.all(arrived.map((item) => item.promise))
+    const handles = host.starts.map(
+      (request) =>
+        runtime.adapter.journal.list().find((row) => row.attemptId === request.attemptId).admission
+          .handle
+    )
+    expect(new Set(handles.map((handle) => handle.externalSessionId)).size).toBe(2)
+    const returnedMappings = await Promise.all(
+      outcomes.map(async (outcome) => {
+        const output = outcome.result.output
+        const mapping = await records.getChildMapping(output.childAttemptId)
+        expect(mapping).toEqual({
+          workspaceId: ids.workspaceId,
+          parentExecutionId: ids.parentExecutionId,
+          delegationId: output.delegationId,
+          childExecutionId: output.childExecutionId,
+          childAttemptId: output.childAttemptId,
+          runtimeConnectionId: host.bridgeOptions.runtimeConnectionId,
+          externalSessionId: output.externalSessionId,
+        })
+        expect(
+          handles.find((handle) => handle.attemptId === output.childAttemptId).externalSessionId
+        ).toBe(mapping.externalSessionId)
+        expect(
+          await records.findChildBySession(mapping.runtimeConnectionId, mapping.externalSessionId)
+        ).toEqual(mapping)
+        return mapping
+      })
+    )
+    expect(
+      await Promise.all(handles.map(async (handle) => (await runtime.adapter.status(handle)).state))
+    ).toEqual(['running', 'running'])
+    const scanner = new PiDurableChildProgressScanner({
+      now: () => at,
+      bridge: host.bridge,
+      listRetainedChildren: async () =>
+        Promise.all(
+          (await records.listByParent(ids.parentExecutionId)).map(async (record) => ({
+            identity: {
+              schemaVersion: 'delegation-runtime-admission/v1',
+              parentExecutionId: record.parentExecutionId,
+              parentAttemptId: record.parentAttemptId,
+              delegationId: record.delegationId,
+              childAttemptId: record.childAttemptId,
+            },
+            handle: handles.find((handle) => handle.attemptId === record.childAttemptId),
+            canonicalState: (await storage.executions.getAttempt(record.childAttemptId)).state,
+          }))
+        ),
+      assertCurrent: async (record) =>
+        expect((await records.get(record.identity.delegationId)).childAttemptId).toBe(
+          record.handle.attemptId
+        ),
+      retainTerminalResult: async (record, result) => {
+        await provider.transaction(async (tx) =>
+          tx.put({ namespace: 'sibling-results', id: record.handle.attemptId, value: result })
+        )
+        return siblingId('art', record.handle.attemptId.includes('01JC') ? 'C' : 'B')
+      },
+    })
+    expect((await scanner.scan(runtime.adapter)).blocked).toEqual([])
+    expect(feed.takeDeliveries()).toEqual([])
+    feed.acceptHumanInput({ interactionId: siblingId('int', 'D'), kind: 'input', receivedAt: at })
+    expect(feed.takeDeliveries()[0].kind).toBe('human_input')
+    const third = siblingAdmission(host.admission, 'D')
+    await host.admissions.retain(third)
+    expect((await host.service.execute(third.request)).state).not.toBe('succeeded')
+    expect(host.starts).toHaveLength(2)
+    expect(
+      (
+        await runtime.adapter.cancel(handles[0], {
+          idempotencyKey: 'cancel:first',
+          requestedAt: at,
+        })
+      ).state
+    ).toBe('cancelling')
+    release.forEach((item) => item.resolve())
+    await runtime.adapter.drain()
+    expect((await runtime.adapter.status(handles[1])).state).toBe('completed')
+    failTerminalPublication = true
+    expect((await scanner.scan(runtime.adapter)).blocked).toEqual([
+      {
+        delegationId: second.command.delegation.delegationId,
+        childAttemptId: second.command.dispatch.childAttemptId,
+        code: 'PI_CHILD_PROGRESS_BLOCKED',
+      },
+    ])
+    const pending = await records.getTerminalReceipt(second.command.delegation.delegationId)
+    expect(pending.status).toBe('pending')
+    expect((await records.get(second.command.delegation.delegationId)).state).toBe('completed')
+    expect(
+      (await publications.list()).filter((event) => event.type === 'delegation.completed')
+    ).toEqual([])
+    reopenedCanonical = new SqlitePersistenceProvider({ path: join(directory, 'canonical.sqlite') })
+    await reopenedCanonical.migrate()
+    const recoveryRecords = new SqliteDelegationRepository(reopenedCanonical)
+    const recoveryInbox = new SqliteDelegationEventPublisher(
+      reopenedCanonical,
+      ids.parentExecutionId
+    )
+    for (const mapping of returnedMappings)
+      expect(
+        await recoveryRecords.findChildBySession(
+          mapping.runtimeConnectionId,
+          mapping.externalSessionId
+        )
+      ).toEqual(mapping)
+    const recoveryBridge = new CanonicalDelegationRuntimeBridge({
+      ...host.bridgeOptions,
+      records: recoveryRecords,
+      childReceipts: recoveryRecords,
+      terminalPublisher: makeFeed(recoveryInbox),
+      runtime: {
+        async start() {
+          throw new Error('recovery must not start a child')
+        },
+      },
+      async assertAuthority() {
+        throw new Error('recovery must not request dispatch authority')
+      },
+      async reserveBudget() {
+        throw new Error('recovery must not reserve another budget')
+      },
+    })
+    const completedIdentity = {
+      schemaVersion: 'delegation-runtime-admission/v1',
+      parentExecutionId: ids.parentExecutionId,
+      parentAttemptId,
+      delegationId: second.command.delegation.delegationId,
+      childAttemptId: second.command.dispatch.childAttemptId,
+    }
+    await expect(
+      recoveryBridge.recoverTerminalPublication({
+        ...completedIdentity,
+        parentAttemptId: siblingId('att', 'D'),
+      })
+    ).rejects.toThrow('DELEGATION_RUNTIME_ADMISSION_DENIED')
+    const usageBeforeRepair = await Promise.all(
+      host.starts.map((request) => ledger.entries(ids.workspaceId, request.executionId))
+    )
+    await Promise.all([
+      recoveryBridge.recoverTerminalPublication(completedIdentity),
+      recoveryBridge.recoverTerminalPublication(completedIdentity),
+    ])
+    expect((await recoveryRecords.getTerminalReceipt(completedIdentity.delegationId)).status).toBe(
+      'published'
+    )
+    expect(
+      (await recoveryInbox.list()).filter((event) => event.type === 'delegation.completed')
+    ).toEqual([pending.event])
+    expect(
+      await Promise.all(
+        host.starts.map((request) => ledger.entries(ids.workspaceId, request.executionId))
+      )
+    ).toEqual(usageBeforeRepair)
+    await feed.replay()
+    const packets = feed
+      .takeDeliveries()
+      .filter((delivery) => delivery.kind === 'evidence')
+      .map((delivery) => delivery.packet)
+    expect((await runtime.adapter.status(handles[0])).state).toBe('cancelling')
+    expect(
+      runtime.adapter.journal.get(handles[0].handleId).detail.cancellationIntent
+    ).toMatchObject({ targetKind: 'active_generation' })
+    expect(packets.flatMap((packet) => packet.entries).map((entry) => entry.phase)).toContain(
+      'completed'
+    )
+    const entries = await Promise.all(
+      host.starts.map((request) => ledger.entries(ids.workspaceId, request.executionId))
+    )
+    expect(entries[0].filter((entry) => entry.kind === 'model_usage')).toEqual([])
+    expect(entries[0].some((entry) => entry.kind === 'model_reservation')).toBe(true)
+    expect(entries[1].filter((entry) => entry.kind === 'model_usage')).toMatchObject([
+      { quantity: { value: 8, unit: 'tokens' }, costMicrounits: 11 },
+    ])
+    await runtime.close()
+    runtime = await createNodePiDurableRuntime(options)
+    expect(
+      await Promise.all(host.starts.map((request) => runtime.adapter.findExistingHandle(request)))
+    ).toEqual(handles)
+    expect(
+      await Promise.all(handles.map(async (handle) => (await runtime.adapter.status(handle)).state))
+    ).toEqual(['cancelling', 'completed'])
+    const restartedFeed = makeFeed()
+    await restartedFeed.replay()
+    expect(restartedFeed.takeDeliveries().length).toBeGreaterThan(0)
+    await restartedFeed.replay()
+    expect(restartedFeed.takeDeliveries()).toEqual([])
+    expect(
+      await Promise.all(
+        host.starts.map((request) => ledger.entries(ids.workspaceId, request.executionId))
+      )
+    ).toEqual(entries)
+    expect(requests).toHaveLength(2)
+  } finally {
+    release.forEach((item) => item.resolve())
+    await runtime?.close()
+    await server.stop(true)
+    await reopenedCanonical?.close()
+    provider.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+}, 30000)
+
+test('child native-start-to-mapping recovery retains metadata without another runtime effect', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pi-child-mapping-gap-'))
+  let f
+  let reopenedCanonical
+  try {
+    f = await createGovernedChildCompositionFixture(directory, {
+      transactionalChildAdmission: true,
+    })
+    let mappingFaults = 0
+    const failFirstMapping = new Proxy(f.storage.delegations, {
+      get(target, key) {
+        if (key === 'bindChildSession')
+          return async (...args) => {
+            if (++mappingFaults === 1) throw new Error('CRASH_AFTER_NATIVE_START_BEFORE_CP_MAPPING')
+            return target.bindChildSession(...args)
+          }
+        const value = target[key]
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    const faultBridge = new CanonicalDelegationRuntimeBridge({
+      ...f.host.bridgeOptions,
+      childReceipts: failFirstMapping,
+      terminalPublisher: f.storage.events,
+    })
+    // Only the receipt writer is faulted. Existing grants, compiler admission,
+    // approvals, provider transport, funding and pricing are unchanged.
+    f.host.executor.options.bridge = faultBridge
+    let gatewayFailure
+    const invoke = f.host.service.gateway.invoke.bind(f.host.service.gateway)
+    f.host.service.gateway.invoke = async (...args) => {
+      try {
+        return await invoke(...args)
+      } catch (error) {
+        gatewayFailure = {
+          effectState: error.effectState,
+          packageErrorIdentity: error instanceof PackageToolGatewayError,
+        }
+        throw error
+      }
+    }
+    await f.leadRuntime.adapter.start(f.leadRequest)
+    await f.leadRuntime.adapter.drain()
+    await f.childRuntime.adapter.drain()
+    expect(mappingFaults).toBe(1)
+    expect(f.host.starts).toHaveLength(1)
+    expect(f.child.requests).toHaveLength(1)
+    const startRequest = f.host.starts[0]
+    const nativeHandle = await f.childRuntime.adapter.findExistingHandle(startRequest)
+    expect(nativeHandle.externalSessionId).toBeDefined()
+    const mappingBefore = await f.storage.delegations.getChildMapping(f.ids.childAttemptId)
+    expect(mappingBefore.externalSessionId).toBeUndefined()
+    const callBefore = await f.storage.calls.get(f.host.request.toolCallId)
+    expect(gatewayFailure).toEqual({ effectState: 'unknown', packageErrorIdentity: true })
+    expect(callBefore.status).toBe('reconciliation_required')
+    // The composed gateway and service share typed error identity. Metadata repair
+    // preserves the conservative tool outcome; CP935 still owns reconciliation.
+    console.log(
+      'native mapping fault evidence',
+      JSON.stringify({
+        toolStatus: callBefore.status,
+        childRequests: f.child.requests.length,
+        gatewayFailure,
+      })
+    )
+    const compilerReceipt = await f.storage.admissions.getByRequestId(f.host.request.requestId)
+    const replay = await f.host.service.execute(compilerReceipt.request)
+    expect(replay.state).toBe('reconciliation_required')
+    expect(replay.call).toEqual(callBefore)
+    expect(f.host.starts).toHaveLength(1)
+    const usageBefore = await f.ledger.entries(f.ids.workspaceId, f.ids.childExecutionId)
+    expect(usageBefore.filter((entry) => entry.kind === 'model_usage')).toHaveLength(1)
+    await f.reopenChild()
+    reopenedCanonical = new SqlitePersistenceProvider({ path: join(directory, 'canonical.sqlite') })
+    await reopenedCanonical.migrate()
+    const records = new SqliteDelegationRepository(reopenedCanonical)
+    const calls = new SqliteToolCallRepository(reopenedCanonical, f.ids.workspaceId)
+    expect(await f.childRuntime.adapter.findExistingHandle(startRequest)).toEqual(nativeHandle)
+    expect(await records.getChildMapping(f.ids.childAttemptId)).toEqual(mappingBefore)
+    expect(await calls.get(f.host.request.toolCallId)).toEqual(callBefore)
+    expect(f.child.requests).toHaveLength(1)
+    expect(await f.ledger.entries(f.ids.workspaceId, f.ids.childExecutionId)).toEqual(usageBefore)
+    let readChecks = 0
+    const forbiddenEffect = async () => {
+      throw new Error('METADATA_REPAIR_MUST_NOT_DISPATCH_OR_SPEND')
+    }
+    const nativeReceiptReader = {
+      runtimeConnectionId: f.host.bridgeOptions.runtimeConnectionId,
+      findExistingHandle: (request) => f.childRuntime.adapter.findExistingHandle(request),
+    }
+    const recoveryBridge = new CanonicalDelegationRuntimeBridge({
+      ...f.host.bridgeOptions,
+      records,
+      childReceipts: records,
+      plans: new SqliteExecutionPlanRepository(reopenedCanonical),
+      lifecycle: new ExecutionLifecycleService(new SqliteExecutionRepository(reopenedCanonical)),
+      terminalPublisher: f.storage.events,
+      runtime: { start: forbiddenEffect },
+      assertAuthority: forbiddenEffect,
+      reserveBudget: forbiddenEffect,
+      // Test-only qualified host read authority. Production composition must
+      // independently authenticate/qualify its implementation; schema cannot.
+      nativeReceiptReader,
+      receiptReadAuthority: {
+        readerPrincipalId: 'svc_product-reader',
+        audienceRef: 'scope:workspace-lead',
+        now: () => '2026-08-25T18:02:00.000Z',
+        async assertQualified(scope) {
+          expect(scope.nativeReceiptReader).toBe(nativeReceiptReader)
+          expect(scope.workspaceId).toBe(f.ids.workspaceId)
+          expect(scope.runtimeConnectionId).toBe(f.host.bridgeOptions.runtimeConnectionId)
+          if (!f.state.active.lead || !f.state.active.child)
+            throw new Error('CHILD_RECEIPT_READ_UNQUALIFIED')
+        },
+        async assertCurrent(receipt, reader) {
+          readChecks++
+          const call = reader
+            ? await reader.getToolCall(f.host.request.toolCallId)
+            : await calls.get(f.host.request.toolCallId)
+          expect(receipt.originalActorPrincipalId).toBe(call.principalRef)
+          expect(receipt.originalActorPrincipalId).toBe(f.actor)
+          expect(receipt.workspaceId).toBe(f.ids.workspaceId)
+          if (reader)
+            expect((await reader.getAttempt(f.ids.childAttemptId)).executionId).toBe(
+              f.ids.childExecutionId
+            )
+          if (!f.state.active.lead || !f.state.active.child)
+            throw new Error('CHILD_RECEIPT_READ_REVOKED')
+          return {
+            workspaceId: receipt.workspaceId,
+            runtimeConnectionId: receipt.runtimeConnectionId,
+            originalActorPrincipalId: receipt.originalActorPrincipalId,
+            readerPrincipalId: 'svc_product-reader',
+            audienceRef: 'scope:workspace-lead',
+            authorityRevision: 1,
+            expiresAt: '2999-01-01T00:00:00.000Z',
+          }
+        },
+      },
+    })
+    const repaired = await recoveryBridge.recoverChildSession(f.identity)
+    expect(repaired.handle).toEqual(nativeHandle)
+    expect(repaired.mapping).toEqual({
+      ...mappingBefore,
+      externalSessionId: nativeHandle.externalSessionId,
+    })
+    expect(await records.getChildMapping(f.ids.childAttemptId)).toEqual(repaired.mapping)
+    expect(await recoveryBridge.recoverChildSession(f.identity)).toEqual(repaired)
+    expect(readChecks).toBeGreaterThanOrEqual(2)
+    expect(await calls.get(f.host.request.toolCallId)).toEqual(callBefore)
+    expect(await f.ledger.entries(f.ids.workspaceId, f.ids.childExecutionId)).toEqual(usageBefore)
+    expect(f.child.requests).toHaveLength(1)
+    expect(f.host.starts).toHaveLength(1)
+  } finally {
+    await reopenedCanonical?.close()
+    await f?.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+}, 30000)
+
+for (const revoked of ['host grant', 'tool approval'])
+  test(`receipt retention await rechecks revoked ${revoked} before native start`, async () => {
+    const arrived = Promise.withResolvers()
+    const release = Promise.withResolvers()
+    let allowed = true
+    let budgets = 0
+    let retainedRequest
+    const f = await fixture({
+      async onBudget() {
+        budgets++
+      },
+      async onAuthority() {
+        if (!allowed) throw new Error('TEST_HOST_GRANT_REVOKED')
+        const approval = await f.service.approvals.review({
+          interactionId: f.request.approval.interactionId,
+        })
+        if (approval.state !== 'approved') throw new Error('TEST_TOOL_APPROVAL_REVOKED')
+      },
+    })
+    f.bridgeOptions.childReceipts = new Proxy(f.delegations, {
+      get(target, property) {
+        if (property === 'retainChildRuntimeStart')
+          return async (input) => {
+            await target.retainChildRuntimeStart(input)
+            retainedRequest = structuredClone(input.request)
+            arrived.resolve()
+            await release.promise
+          }
+        const value = target[property]
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    const before = await f.lifecycle.getExecution(ids.parentExecutionId)
+    const pending = f.service.execute(f.request)
+    await arrived.promise
+    const parent = await f.lifecycle.getExecution(ids.parentExecutionId)
+    const child = await f.lifecycle.getExecution(ids.childExecutionId)
+    expect(parent.latestAttemptId).toBe(before.latestAttemptId)
+    if (revoked === 'host grant') allowed = false
+    else
+      f.service.approvals.review = async () => ({
+        state: 'revoked',
+        interactionId: f.request.approval.interactionId,
+      })
+    release.resolve()
+    const outcome = await pending
+    expect(outcome.state).toBe('reconciliation_required')
+    expect(f.starts).toHaveLength(0)
+    expect(f.sessions.size).toBe(0)
+    expect(budgets).toBe(1)
+    expect(await f.lifecycle.getExecution(ids.parentExecutionId)).toEqual(parent)
+    expect(await f.lifecycle.getExecution(ids.childExecutionId)).toEqual(child)
+    expect((await f.delegations.getChildRuntimeStart(ids.delegationId)).receipt.request).toEqual(
+      retainedRequest
+    )
+  })
+
+test('receipt retention refresh rechecks canonical cancellation after the new authority await', async () => {
+  const arrived = Promise.withResolvers()
+  const release = Promise.withResolvers()
+  let checks = 0
+  let budgets = 0
+  const f = await fixture({
+    async onBudget() {
+      budgets++
+    },
+    async onAuthority() {
+      if (++checks === 3) {
+        arrived.resolve()
+        await release.promise
+      }
+    },
+  })
+  f.bridgeOptions.childReceipts = f.delegations
+  const pending = f.service.execute(f.request)
+  await arrived.promise
+  await mutateCanonicalStartFence(f, 'parent_cancelled')
+  release.resolve()
+  expect((await pending).state).toBe('reconciliation_required')
+  expect(checks).toBe(3)
+  expect(budgets).toBe(1)
+  expect(f.starts).toHaveLength(0)
+  expect(f.sessions.size).toBe(0)
 })
