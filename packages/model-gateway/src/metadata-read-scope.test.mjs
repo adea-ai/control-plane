@@ -2,14 +2,16 @@ import { test, expect } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PersistentModelSelectionRepository } from '../../model-gateway/src/selection-repository.ts'
+import { PersistentModelSelectionRepository } from './selection-repository.ts'
 import {
   readPersistenceTransaction,
   withPersistenceReadScope,
   writePersistenceTransaction,
 } from '@control-plane/deployment/read-scope'
-import { SqlitePersistenceProvider } from './provider.ts'
-import { SqliteCredentialVaultRepository } from './credential-vault-repository.ts'
+import {
+  SqliteCredentialVaultRepository,
+  SqlitePersistenceProvider,
+} from '@control-plane/sqlite-persistence'
 
 const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
 const credentialId = 'crd_01JABCDEF0123456789ABCDEFG'

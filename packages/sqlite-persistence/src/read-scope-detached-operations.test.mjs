@@ -6,10 +6,8 @@ import { SqlitePersistenceProvider } from './provider.ts'
 import {
   readPersistenceTransaction,
   withPersistenceReadScope,
-} from '../../deployment/src/read-scope.ts'
+} from '@control-plane/deployment/read-scope'
 
-// Imports the separate source delta directly: it does not resolve the previously
-// built deployment/read-scope entry or modify the preserved package output.
 test('actual SQLite allocation rolls back when the callback abandons a pending get', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'sqlite-detached-read-'))
   const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
