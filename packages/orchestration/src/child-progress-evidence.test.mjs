@@ -1976,6 +1976,128 @@ const nextSecondZeroFraction = '2026-08-25T18:05:01Z'
 const submillisecondEarlier = '2026-08-25T18:05:00.0001Z'
 const submillisecondLater = '2026-08-25T18:05:00.0009Z'
 
+for (const delivery of ['flush', 'readyPackets', 'sealedPacket']) {
+  for (const mutation of ['chronology', 'metrics']) {
+    test(`${delivery} snapshot ${mutation} mutation cannot change retained evidence`, () => {
+      const options = {
+        parentExecutionId: ids.parentExecutionId,
+        maximumChildren: 1,
+        maximumBytes: 2048,
+      }
+      const buffer = new ChildProgressEvidenceBuffer(options)
+      const control = new ChildProgressEvidenceBuffer(options)
+      const first = runningEvent({
+        childAttemptId: ids.attemptIdA,
+        observedAt: submillisecondEarlier,
+        metrics: { 'steps.completed': 3 },
+      })
+      const pressure = runningEvent({
+        delegationId: ids.delegationIdB,
+        childExecutionId: ids.childExecutionIdB,
+        observedAt: submillisecondEarlier,
+      })
+      const deliver = (target) => {
+        expect(target.accept(first).outcome).toBe('coalesced')
+        if (delivery === 'flush') return target.flush()
+        const receipt = target.accept(pressure)
+        expect(receipt.outcome).toBe('coalesced')
+        const queued = target.readyPackets()
+        expect(queued).toHaveLength(1)
+        expect(queued[0]).toBe(receipt.sealedPacket)
+        expect(target.readyPackets()).toEqual([])
+        return delivery === 'readyPackets' ? queued[0] : receipt.sealedPacket
+      }
+      const packet = deliver(buffer)
+      const original = deliver(control)
+      expect(packet).toEqual(original)
+      expect(parseChildProgressEvidencePacket(packet)).toEqual(packet)
+      expect(serializedBytes(packet)).toBeLessThanOrEqual(options.maximumBytes)
+      if (mutation === 'chronology') {
+        packet.childSnapshots[0].lastObservedAt = submillisecondLater
+      } else {
+        packet.childSnapshots[0].metrics['steps.completed'] = 1_000_000
+        packet.childSnapshots[0].metrics['caller.injected'] = 9
+      }
+
+      const next = runningEvent({
+        childAttemptId: ids.attemptIdA,
+        observedAt: '2026-08-25T18:05:00.0002Z',
+        metrics: { 'steps.completed': 2 },
+      })
+      expect(buffer.accept(next)).toEqual(control.accept(next))
+      expect(buffer.accept(next)).toEqual(control.accept(next))
+      expect(buffer.readyPackets()).toEqual(control.readyPackets())
+      const final = buffer.flush()
+      expect(final).toEqual(control.flush())
+      expect(final.childSnapshots[0]).toMatchObject({
+        lastObservedAt: next.observedAt,
+        observedEventCount: 2,
+        metrics: { 'steps.completed': 5 },
+      })
+      expect(final.childSnapshots[0].metrics).not.toHaveProperty('caller.injected')
+      expect(parseChildProgressEvidencePacket(final)).toEqual(final)
+      expect(serializedBytes(final)).toBeLessThanOrEqual(options.maximumBytes)
+    })
+  }
+}
+
+test('maximum-length zero suffixes compare as equivalent fractions without changing evidence', () => {
+  for (const [short, long] of [
+    [zeroFractionSecond, `2026-08-25T18:05:00.${'0'.repeat(43)}Z`],
+    [threeDigitSecond, `2026-08-25T18:05:00.1${'0'.repeat(42)}Z`],
+  ]) {
+    expect(long).toHaveLength(64)
+    for (const [first, second] of [
+      [short, long],
+      [long, short],
+    ]) {
+      const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+      buffer.accept(runningEvent({ observedAt: first }))
+      buffer.accept(runningEvent({ observedAt: second }))
+      const packet = buffer.flush()
+      expect(packet.firstEventAt).toBe(first)
+      expect(packet.lastEventAt).toBe(first)
+      expect(packet.childSnapshots[0].lastObservedAt).toBe(second)
+      expect(parseChildProgressEvidencePacket(packet)).toEqual(packet)
+    }
+  }
+})
+
+test('maximum fractional precision orders nonzero suffixes exactly and preserves the digest', () => {
+  const earlier = `2026-08-25T18:05:00.${'0'.repeat(42)}1Z`
+  const later = `2026-08-25T18:05:00.${'0'.repeat(42)}2Z`
+  expect(earlier).toHaveLength(64)
+  expect(Date.parse(earlier)).toBe(Date.parse(later))
+  for (const timestamps of [
+    [later, earlier],
+    [earlier, later],
+  ]) {
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+    for (const observedAt of timestamps) buffer.accept(runningEvent({ observedAt }))
+    const packet = buffer.flush()
+    expect(packet.firstEventAt).toBe(earlier)
+    expect(packet.lastEventAt).toBe(later)
+    expect(packet.childSnapshots[0].lastObservedAt).toBe(later)
+    expect(parseChildProgressEvidencePacket(packet)).toEqual(packet)
+  }
+})
+
+test('a fractional timestamp beyond the 64-character bound leaves evidence unchanged', () => {
+  const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+  buffer.accept(runningEvent({ observedAt: threeDigitSecond }))
+  const oversized = `2026-08-25T18:05:00.${'0'.repeat(43)}1Z`
+  expect(oversized).toHaveLength(65)
+  expect(() => buffer.accept(runningEvent({ observedAt: oversized }))).toThrow(
+    'Evidence timestamp exceeds the ingestible length bound (64)'
+  )
+  const packet = buffer.flush()
+  expect(packet.firstEventAt).toBe(threeDigitSecond)
+  expect(packet.lastEventAt).toBe(threeDigitSecond)
+  expect(packet.childSnapshots[0].observedEventCount).toBe(1)
+  expect(packet.rejectedEventCount).toBe(0)
+  expect(parseChildProgressEvidencePacket(packet)).toEqual(packet)
+})
+
 test('snapshot ordering preserves sub-millisecond timestamp precision', () => {
   const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
   buffer.accept(runningEvent({ observedAt: submillisecondLater }))
