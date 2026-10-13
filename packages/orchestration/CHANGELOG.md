@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/adea-ai/control-plane/compare/orchestration-v1.9.0...orchestration-v1.10.0) (2026-10-13)
+
+
+### Features
+
+* **orchestration:** retain governed Pi child mappings and recovery proofs ([#1111](https://github.com/adea-ai/control-plane/issues/1111)) ([ba0846d](https://github.com/adea-ai/control-plane/commit/ba0846d5fd6a4919d9e80fae7cca05b60427e57c))
+
 ## [1.9.0](https://github.com/adea-ai/control-plane/compare/orchestration-v1.8.0...orchestration-v1.9.0) (2026-10-12)
 
 

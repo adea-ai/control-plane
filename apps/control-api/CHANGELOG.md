@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.31.0...control-api-v1.32.0) (2026-10-13)
+
+
+### Features
+
+* **orchestration:** retain governed Pi child mappings and recovery proofs ([#1111](https://github.com/adea-ai/control-plane/issues/1111)) ([ba0846d](https://github.com/adea-ai/control-plane/commit/ba0846d5fd6a4919d9e80fae7cca05b60427e57c))
+
 ## [1.31.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.30.1...control-api-v1.31.0) (2026-10-12)
 
 
