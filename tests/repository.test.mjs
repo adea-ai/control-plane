@@ -902,9 +902,7 @@ test('the canonical validation job keeps the doctor contract and fails closed', 
   )
   // Code Foundry 1.45.2 and 1.47.1 doctor both require this caller shape.
   assert.match(workflow, /^  validation:\n    name: Validation/m)
-  const gate = workflow
-    .split('\n  validation:\n')[1]
-    ?.split('\n  default-branch-codeql:')[0]
+  const gate = workflow.split('\n  validation:\n')[1]?.split('\n  default-branch-codeql:')[0]
   assert.ok(gate)
   assert.match(gate, /^    name: Validation \/ Gate$/m)
   assert.equal((workflow.match(/^    name: Validation \/ Gate$/gm) ?? []).length, 1)
