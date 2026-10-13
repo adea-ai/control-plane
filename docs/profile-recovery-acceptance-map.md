@@ -62,6 +62,25 @@ files above:
   that the inference did not reach HTTP dispatch. Production reconciliation
   evidence wiring remains unqualified.
 
+## Bounded lifecycle and cancellation evidence
+
+At reviewed code head `eb4b1a802f241f21f78aeec31e54af15130eea11`:
+
+- `apps/control-api/src/pi-durable/node-composition-lifecycle.test.mjs` holds a
+  periodic scan while close waits, checks shared close completion, and refuses
+  recovery/store access after close. This is teardown ordering, not Pi task drain.
+- `apps/hosted-control-plane/src/reconciliation-wiring.test.mjs` covers close
+  during seven awaited startup boundaries, release of late endpoint acquisition,
+  shared close completion/rejection, original startup-error preservation, refusal
+  to restart after terminal close, and draining accepted reconciliation before
+  clearing its retained wake. Database/runtime/authority ports are fixtures;
+  this does not prove PostgreSQL + Restate recovery or full transport drain.
+- `tests/pi-durable-child-host.test.mjs` exercises sibling cancellation and
+  runtime reopen with the existing test-only SQLite committed-cancellation owner.
+  Its binding comes from retained admission and CP execution/attempt records.
+  Existing sibling, usage and replay assertions remain. This proves the fixture
+  owner path; production cross-store cancellation authority remains gap 11.
+
 ## Clause map
 
 | #1025 clause                                     | Proof in this PR                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
@@ -112,9 +131,11 @@ Owners are existing issues. Where no open issue names a gap, the row says so.
    needs an upstream-owned upgrade entry point. Owner: #1025 upgrade clause
    (child of #942); no open issue names an upgrade executor. Closed #930 checks
    "upgrade behavior" for the Pi runtime; that does not prove this executor.
-2. **Drain is partly proven.** Only scheduled-reconciliation drain at Local
-   composition close is tested. Workflow-queue stop, runtime-transport drain,
-   and Restate drain are unproven. Owner: #1025 drain clause. Operator admission
+2. **Drain is partly proven.** Local scheduled-reconciliation drain is tested.
+   Hosted wiring also tests accepted-reconciliation drain and startup/close
+   cleanup using injected ports (see the bounded lifecycle evidence above).
+   These do not establish workflow-queue stop, runtime-transport drain, Restate
+   drain or Pi-owned task drain. Owner: #1025 drain clause. Operator admission
    stops are #1029 (under #943). Legacy-work drain is #940, which depends on #939.
 3. **Self-hosted-server profile wake/replay** (PostgreSQL + Restate) is unproven.
    `tests/profile-recovery-selfhosted-server-wake-replay.boundary.test.mjs` only
@@ -186,3 +207,13 @@ Owners are existing issues. Where no open issue names a gap, the row says so.
    that names it; root to assign an owner.
 10. **PostgreSQL restore in GitHub CI** has not run. The disposable local run passes
     (4 tests). Owner: #1025 PR integration lane.
+11. **Production committed-cancellation authority is unqualified.** The adapter
+    requires a server-owned committed intent/outbox port; without it, ordinary
+    and fenced cancellation refuse before mutation or abort, and inspected
+    capabilities omit cancellation. Optional injection and the test-only SQLite
+    coordinator prove ordering, idempotency, generation targeting and replay.
+    They do not supply a production owner coordinating current product authority,
+    CP execution/attempt versions and deadlines through a shared serializable
+    transaction or fencing lease. The default production wiring has no such
+    owner. Independent reads and final rechecks do not close that race. Owner:
+    #935, with the recovery acceptance boundary retained by #1025/#942.
