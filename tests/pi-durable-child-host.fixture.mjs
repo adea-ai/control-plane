@@ -24,7 +24,7 @@ import {
   StaticToolPolicyAuthorizer,
   ToolGateway,
   ToolRegistry,
-} from '../packages/tool-execution/src/index.ts'
+} from '@control-plane/tool-execution'
 
 // Test-only server compiler recipe. Runtime/provider/authority ports are explicit
 // injected host dependencies; default runtime is a scripted fixture, not Pi.
@@ -144,6 +144,12 @@ export async function createGovernedChildHostFixture({
     delegations: f.service,
     runtime,
     runtimeConnectionId: connectionId,
+    ...(storage.childReceipts
+      ? {
+          childReceipts: storage.childReceipts,
+          terminalPublisher: storage.terminalPublisher ?? storage.events,
+        }
+      : {}),
     async assertAuthority(admission) {
       const call = await calls.get(admission.record.admittedToolCallId)
       if (

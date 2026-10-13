@@ -41,9 +41,17 @@ leaves the intent pending. Existing pending intents can acquire the complete
 receipt; legacy terminal rows without an intent are never published by inference.
 
 The ordinary `DelegationService` terminal replay continues to work through the
-same repository CAS seam. Dispatch calls and automatic lifecycle recovery
-scheduling are separate composition work (#1019 and #1048). These APIs do not
-start a runtime, create an engine session, or deliver a product timeline event.
+same repository CAS seam. `CanonicalDelegationRuntimeBridge` can opt in with
+`childReceipts: repository` and a durable `terminalPublisher`. Its `startChild`
+binds the parsed returned native handle to the current canonical attempt; its
+`recoverTerminalPublication(identity)` verifies the retained parent/attempt
+binding and delivers the receipt without starting a runtime or requesting new
+budget/dispatch authority. The two-sibling host fixture exercises these ports
+with real Pi sessions and a fresh canonical SQLite connection after a failed
+terminal publication. Hosted/Local composition and automatic lifecycle recovery scheduling remain
+owned by #1048; sibling dispatch remains owned by #1019. Repository receipt
+operations and the bridge terminal-recovery entry point do not start a runtime,
+create an engine session, or deliver a product timeline event.
 
 The added namespaces use the existing generic record table, with no schema
 migration or credential changes. Receipt retention/deletion scheduling is not

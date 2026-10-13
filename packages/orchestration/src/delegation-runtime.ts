@@ -20,12 +20,21 @@ import {
 } from '@control-plane/tool-sdk'
 import { z } from 'zod'
 import {
+  ChildReceiptReadBindingSchema,
+  type ChildReceiptReadAuthority,
+  type ChildRuntimeLookupReceipt,
+  type ChildRuntimeLookupSnapshot,
+  type RecoveredChildSessionMapping,
+} from './child-runtime-receipt.js'
+import type { ChildAdmissionReader } from './child-admission.js'
+import {
   ChildProgressInputSchema,
   DelegateInputSchema,
   DispatchInputSchema,
   type DelegationRecord,
   type DelegationRepository,
   type DelegationService,
+  type DelegationEventPublisher,
 } from './delegation.js'
 
 /** Trusted host identity. No model, credential, audience or current-attempt inference. */
@@ -52,6 +61,37 @@ export interface CanonicalDelegationAdmission {
   readonly attempt: ExecutionAttempt
 }
 
+/** Storage-owned receipt seam. Retaining evidence grants no runtime or spend authority. */
+export interface DelegationRuntimeReceiptRepository {
+  retainChildRuntimeStart(input: {
+    delegationId: string
+    request: RuntimeStartRequest
+  }): Promise<void>
+  getChildRuntimeStart(delegationId: string): Promise<ChildRuntimeLookupSnapshot>
+  bindRecoveredChildSession(input: {
+    snapshot: ChildRuntimeLookupSnapshot
+    externalSessionId: string
+    assertCurrent: (reader: ChildAdmissionReader) => Promise<void>
+  }): Promise<RecoveredChildSessionMapping>
+
+  bindChildSession(
+    expectedRevision: number,
+    mapping: {
+      workspaceId: string
+      parentExecutionId: string
+      delegationId: string
+      childExecutionId: string
+      childAttemptId: string
+      runtimeConnectionId: string
+      externalSessionId: string
+    }
+  ): Promise<unknown>
+  recoverTerminalPublication(
+    delegationId: string,
+    publisher: DelegationEventPublisher
+  ): Promise<DelegationRecord>
+}
+
 export class DelegationRuntimeAdmissionError extends Error {
   constructor() {
     super('DELEGATION_RUNTIME_ADMISSION_DENIED')
@@ -76,6 +116,15 @@ export class CanonicalDelegationRuntimeBridge {
       readonly delegations: Pick<DelegationService, 'recordChildProgress'>
       readonly runtime: Pick<RuntimeAdapter, 'start'>
       readonly runtimeConnectionId: string
+      /** Configure together for canonical native-session retention and terminal replay. */
+      readonly childReceipts?: DelegationRuntimeReceiptRepository
+      readonly terminalPublisher?: DelegationEventPublisher
+      /** Host wiring must independently authenticate/qualify this port; JSON/schema is not authentication. */
+      readonly receiptReadAuthority?: ChildReceiptReadAuthority
+      readonly nativeReceiptReader?: {
+        readonly runtimeConnectionId: string
+        findExistingHandle(request: RuntimeStartRequest): Promise<unknown>
+      }
       /** Re-read originating tool call/approval, actor, policy, provider and funding. */
       readonly assertAuthority: (admission: CanonicalDelegationAdmission) => Promise<void>
       /** Must recover the same separately authorized reservation on replay. */
@@ -85,6 +134,7 @@ export class CanonicalDelegationRuntimeBridge {
     }
   ) {
     IdentifierSchemas.runtimeConnectionId.parse(options.runtimeConnectionId)
+    if ((options.childReceipts === undefined) !== (options.terminalPublisher === undefined)) deny()
   }
 
   async resolve(input: unknown): Promise<CanonicalDelegationAdmission> {
@@ -169,11 +219,140 @@ export class CanonicalDelegationRuntimeBridge {
   }
 
   async startChild(input: unknown, signal?: AbortSignal) {
-    const request = await this.resolveStart(input, signal)
+    const identity = DelegationRuntimeAdmissionRequestSchema.parse(input)
+    const request = await this.resolveStart(identity, signal)
+    if (this.options.childReceipts) {
+      await this.options.childReceipts.retainChildRuntimeStart({
+        delegationId: identity.delegationId,
+        request,
+      })
+      assertNotAborted(signal)
+      const retained = await this.resolve(identity)
+      assertNotAborted(signal)
+      // Retention awaits after resolveStart's authority check. Refresh the host
+      // proof without reserving again, then fence canonical state after its await.
+      await this.options.assertAuthority(structuredClone(retained))
+      assertNotAborted(signal)
+      await this.resolve(identity)
+    }
     assertNotAborted(signal)
     const handle = RuntimeExecutionHandleSchema.parse(await this.options.runtime.start(request))
     if (handle.attemptId !== request.attemptId) deny()
+    if (this.options.childReceipts) {
+      if (!handle.externalSessionId) deny()
+      const record = await this.options.records.get(identity.delegationId)
+      if (
+        !record ||
+        record.parentExecutionId !== identity.parentExecutionId ||
+        record.parentAttemptId !== identity.parentAttemptId ||
+        record.childExecutionId !== request.executionId ||
+        record.childAttemptId !== handle.attemptId
+      )
+        deny()
+      // A native effect has already returned. Retain that evidence without asking
+      // for new spending/dispatch authority; storage fences this exact current attempt.
+      await this.options.childReceipts.bindChildSession(record.revision, {
+        workspaceId: ExecutionPlanSchema.parse(request.executionPlan).correlation.workspaceId,
+        parentExecutionId: identity.parentExecutionId,
+        delegationId: record.delegationId,
+        childExecutionId: request.executionId,
+        childAttemptId: handle.attemptId,
+        runtimeConnectionId: this.options.runtimeConnectionId,
+        externalSessionId: handle.externalSessionId,
+      })
+    }
     return handle
+  }
+
+  async recoverChildSession(input: unknown) {
+    const identity = DelegationRuntimeAdmissionRequestSchema.parse(input)
+    const store = this.options.childReceipts
+    const reader = this.options.nativeReceiptReader
+    const authority = this.options.receiptReadAuthority
+    if (
+      !store ||
+      !reader ||
+      !authority ||
+      typeof authority.assertQualified !== 'function' ||
+      typeof authority.assertCurrent !== 'function' ||
+      typeof authority.now !== 'function'
+    )
+      deny()
+    const snapshot = await store.getChildRuntimeStart(identity.delegationId)
+    const r = snapshot.receipt
+    if (
+      r.parentExecutionId !== identity.parentExecutionId ||
+      r.parentAttemptId !== identity.parentAttemptId ||
+      r.childAttemptId !== identity.childAttemptId ||
+      r.runtimeConnectionId !== this.options.runtimeConnectionId ||
+      reader.runtimeConnectionId !== r.runtimeConnectionId
+    )
+      deny()
+    const first = await this.#receiptRead(r, authority, reader)
+    // This reader is metadata-only. No start/resolveStart, spending or inference path is called.
+    const untrusted = await reader.findExistingHandle(structuredClone(r.request))
+    const after = await this.#receiptRead(r, authority, reader)
+    if (canonicalJsonStringify(first) !== canonicalJsonStringify(after)) deny()
+    if (untrusted === undefined) throw new Error('CHILD_NATIVE_RECEIPT_MISSING')
+    const handle = RuntimeExecutionHandleSchema.parse(untrusted)
+    if (handle.attemptId !== r.childAttemptId || !handle.externalSessionId) deny()
+    const mapping = await store.bindRecoveredChildSession({
+      snapshot,
+      externalSessionId: handle.externalSessionId,
+      assertCurrent: async (transactionReader) => {
+        const final = await this.#receiptRead(r, authority, reader, transactionReader)
+        if (canonicalJsonStringify(first) !== canonicalJsonStringify(final)) deny()
+      },
+    })
+    return { mapping, handle }
+  }
+
+  async #receiptRead(
+    receipt: ChildRuntimeLookupReceipt,
+    authority: ChildReceiptReadAuthority,
+    nativeReceiptReader: object,
+    reader?: ChildAdmissionReader
+  ) {
+    const scope = {
+      workspaceId: receipt.workspaceId,
+      runtimeConnectionId: receipt.runtimeConnectionId,
+      nativeReceiptReader,
+    }
+    await authority.assertQualified(scope)
+    const binding = ChildReceiptReadBindingSchema.parse(
+      await authority.assertCurrent(structuredClone(receipt), reader)
+    )
+    await authority.assertQualified(scope)
+    if (
+      binding.workspaceId !== receipt.workspaceId ||
+      binding.runtimeConnectionId !== receipt.runtimeConnectionId ||
+      binding.originalActorPrincipalId !== receipt.originalActorPrincipalId ||
+      binding.readerPrincipalId !== authority.readerPrincipalId ||
+      binding.audienceRef !== authority.audienceRef ||
+      !Number.isFinite(Date.parse(authority.now())) ||
+      Date.parse(binding.expiresAt) <= Date.parse(authority.now())
+    )
+      deny()
+    return binding
+  }
+
+  /** Terminal replay is receipt delivery only: it must not start a runtime or refresh authority. */
+  async recoverTerminalPublication(identityInput: unknown): Promise<DelegationRecord> {
+    const identity = DelegationRuntimeAdmissionRequestSchema.parse(identityInput)
+    const record = await this.options.records.get(identity.delegationId)
+    const receipts = this.options.childReceipts
+    const publisher = this.options.terminalPublisher
+    if (
+      !receipts ||
+      !publisher ||
+      !record ||
+      record.parentExecutionId !== identity.parentExecutionId ||
+      record.parentAttemptId !== identity.parentAttemptId ||
+      record.childAttemptId !== identity.childAttemptId ||
+      !record.terminalPublication
+    )
+      deny()
+    return receipts.recoverTerminalPublication(record.delegationId, publisher)
   }
 
   async recordProgress(identityInput: unknown, progressInput: unknown) {
@@ -239,7 +418,7 @@ export class GovernedDelegateChildExecutor implements ToolExecutor {
       !['running', 'awaiting_input'].includes(parent.state) ||
       parent.correlation.workspaceId !== request.workspaceId ||
       parentPlan.profile.profileId !== request.profileId ||
-      parentPlan.constraints.limits.childExecutions.maximumTotal !== 1
+      parentPlan.constraints.limits.childExecutions.maximumTotal < 1
     )
       deny()
     const command = await this.options.resolveCommand(structuredClone(request))

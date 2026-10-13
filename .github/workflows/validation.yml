@@ -122,7 +122,9 @@ jobs:
   # Keep the required ruleset context (Validation / Gate) and fail closed if
   # either the reusable validation runtime or strict PostgreSQL qualification
   # fails, is skipped, or cannot report a result.
-  validation_gate:
+  # Keep the canonical `validation` job ID for Code Foundry doctor. The local
+  # aggregate owns the complete check name instead of relying on nesting.
+  validation:
     name: Validation / Gate
     needs: [mode, validation_runtime, postgres_qualification]
     if: >-

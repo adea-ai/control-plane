@@ -43,7 +43,7 @@ test('governed child tool remains absent without explicit host compiler configur
     ).toBe(false)
   }))
 
-test('a plan outside the single-child bound receives no native delegation port', () =>
+test('a zero-child plan receives no native delegation port', () =>
   fixture(async ({ request, open, state }) => {
     const inputs = createExecutionPlanTestFixtureInputs({
       profileCapabilityRequirements: [],
@@ -66,6 +66,32 @@ test('a plan outside the single-child bound receives no native delegation port',
     expect(state.ports[0].governedDelegateChild).toBeUndefined()
     expect(state.preparations).toHaveLength(0)
     expect(state.effects).toBe(0)
+    expect((await runtime.adapter.status(handle)).state).toBe('completed')
+  }))
+
+test('a bounded multi-child plan receives the governed native delegation port', () =>
+  fixture(async ({ request, open, state }) => {
+    const inputs = createExecutionPlanTestFixtureInputs({
+      profileCapabilityRequirements: [],
+      skillRequiredCapabilities: [],
+    })
+    inputs.constraints.limits.childExecutions.maximumTotal = 2
+    inputs.profile.definition.executionConstraints.limits.childExecutions.maximumTotal = 2
+    const plan = new ExecutionPlanCompiler('1.0.0').compile(inputs)
+    state.approved = true
+    const runtime = await open()
+    const handle = await runtime.adapter.start({
+      ...request,
+      executionPlan: plan,
+      attemptBudget: {
+        ...request.attemptBudget,
+        executionPlanId: plan.executionPlanId,
+        executionPlanDigest: plan.contentDigest,
+      },
+    })
+    await runtime.adapter.drain()
+    expect(state.ports[0].governedDelegateChild).toBeDefined()
+    expect(state.preparations).toHaveLength(1)
     expect((await runtime.adapter.status(handle)).state).toBe('completed')
   }))
 

@@ -4,6 +4,7 @@ import {
   IdentifierSchemas,
 } from '@control-plane/contracts'
 import type { PersistenceProvider, PersistenceTransaction } from '@control-plane/deployment'
+import { RuntimeStartRequestSchema } from '@control-plane/runtime-sdk'
 import { createSqliteChildAdmissionReader } from './child-admission-reader.js'
 import { ExecutionAttemptSchema, ExecutionSchema } from '@control-plane/domain'
 import { assertExecutionPlanDerivedFrom } from '@control-plane/execution-plan'
@@ -18,7 +19,15 @@ import {
   type DelegationRecord,
   type DelegationRepository,
   type DelegationEventPublisher,
+  type ChildRuntimeLookupSnapshot,
+  type ChildRuntimeLookupReceipt,
+  type ChildAdmissionReader,
+  type RecoveredChildSessionMapping,
 } from '@control-plane/orchestration'
+import {
+  readChildRuntimeContext,
+  childRuntimeLookupNamespace,
+} from './delegation-runtime-receipt.js'
 import { json, recordId } from './record-storage.js'
 import { assertSqliteStoredPlanReference } from './repositories.js'
 import { SqliteDurableUsageStore } from './usage-store.js'
@@ -61,6 +70,70 @@ const immutable = (record: DelegationRecord) =>
 /** Canonical delegation state, including recovery intent, shares the execution store. */
 export class SqliteDelegationRepository implements DelegationRepository, ChildAdmissionAllocator {
   constructor(readonly provider: PersistenceProvider) {}
+
+  async retainChildRuntimeStart(input: {
+    delegationId: string
+    request: ChildRuntimeLookupReceipt['request']
+  }): Promise<void> {
+    IdentifierSchemas.delegationId.parse(input.delegationId)
+    const request = RuntimeStartRequestSchema.parse(input.request)
+    await this.provider.transaction(async (tx) => {
+      const snapshot = await readChildRuntimeContext(tx, input.delegationId, request)
+      const id = recordId(snapshot.receipt.childAttemptId)
+      if (!(await tx.get(childRuntimeLookupNamespace, id)))
+        await tx.put({ namespace: childRuntimeLookupNamespace, id, value: json(snapshot.receipt) })
+    })
+  }
+
+  async getChildRuntimeStart(delegationId: string): Promise<ChildRuntimeLookupSnapshot> {
+    IdentifierSchemas.delegationId.parse(delegationId)
+    return this.provider.transaction((tx) => readChildRuntimeContext(tx, delegationId))
+  }
+
+  async bindRecoveredChildSession(input: {
+    snapshot: ChildRuntimeLookupSnapshot
+    externalSessionId: string
+    assertCurrent: (reader: ChildAdmissionReader) => Promise<void>
+  }): Promise<RecoveredChildSessionMapping> {
+    const externalSessionId = IdentifierSchemas.externalSessionId.parse(input.externalSessionId)
+    return this.provider.transaction(async (tx) => {
+      const snapshot = await readChildRuntimeContext(tx, input.snapshot.receipt.delegationId)
+      if (
+        snapshot.fence !== input.snapshot.fence ||
+        canonicalJsonStringify(snapshot.receipt) !== canonicalJsonStringify(input.snapshot.receipt)
+      )
+        throw new Error('CHILD_RUNTIME_LOOKUP_STALE')
+      const reader = createSqliteChildAdmissionReader(tx, snapshot.receipt.workspaceId)
+      try {
+        await input.assertCurrent(reader)
+      } finally {
+        reader.close()
+      }
+      // The port may await; canonical tuple must still match in this locked transaction.
+      const final = await readChildRuntimeContext(tx, snapshot.receipt.delegationId)
+      if (final.fence !== snapshot.fence) throw new Error('CHILD_RUNTIME_LOOKUP_STALE')
+      const r = snapshot.receipt
+      const attempt = ExecutionAttemptSchema.parse(
+        (await tx.get('execution-attempts', recordId(r.childAttemptId)))?.value
+      )
+      if (
+        attempt.runtime?.externalSessionId !== undefined &&
+        attempt.runtime.externalSessionId !== externalSessionId
+      )
+        throw new Error('DELEGATION_CHILD_MAPPING_STALE')
+      const mapping = {
+        workspaceId: r.workspaceId,
+        parentExecutionId: r.parentExecutionId,
+        delegationId: r.delegationId,
+        childExecutionId: r.childExecutionId,
+        childAttemptId: r.childAttemptId,
+        runtimeConnectionId: r.runtimeConnectionId,
+        externalSessionId,
+      }
+      await retainChildMapping(tx, mapping)
+      return mapping
+    })
+  }
 
   async getTerminalReceipt(delegationId: string): Promise<DelegationTerminalReceipt | undefined> {
     IdentifierSchemas.delegationId.parse(delegationId)
