@@ -733,11 +733,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
   }
 
   async getExecution(executionId: string): Promise<Execution | undefined> {
-    ExecutionSchema.shape.executionId.parse(executionId)
-    return this.provider.transaction(async (transaction) => {
-      const record = await transaction.get(namespaces.executions, recordId(executionId))
-      return record === undefined ? undefined : ExecutionSchema.parse(record.value)
-    })
+    return this.provider.transaction((transaction) => readExecutionIn(transaction, executionId))
   }
 
   compareAndSet(expectedVersion: number, commandInput: CommandInboxRecord): Promise<boolean> {
@@ -1356,11 +1352,7 @@ export class SqliteExecutionRepository implements ExecutionRepository {
   }
 
   async getExecution(executionId: string): Promise<Execution | undefined> {
-    ExecutionSchema.shape.executionId.parse(executionId)
-    return this.provider.transaction(async (transaction) => {
-      const record = await transaction.get(namespaces.executions, recordId(executionId))
-      return record === undefined ? undefined : ExecutionSchema.parse(record.value)
-    })
+    return this.provider.transaction((transaction) => readExecutionIn(transaction, executionId))
   }
 
   compareAndSetExecution(expectedVersion: number, executionInput: Execution): Promise<boolean> {
@@ -1435,11 +1427,7 @@ export class SqliteExecutionRepository implements ExecutionRepository {
   }
 
   async getAttempt(attemptId: string): Promise<ExecutionAttempt | undefined> {
-    ExecutionAttemptSchema.shape.attemptId.parse(attemptId)
-    return this.provider.transaction(async (transaction) => {
-      const record = await transaction.get(namespaces.attempts, recordId(attemptId))
-      return record === undefined ? undefined : ExecutionAttemptSchema.parse(record.value)
-    })
+    return this.provider.transaction((transaction) => readAttemptIn(transaction, attemptId))
   }
 
   listAttempts(executionId: string): Promise<readonly ExecutionAttempt[]> {
@@ -1898,6 +1886,26 @@ const canonicalInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 /** Canonical stored instant strictly before `now`; anything else is not a candidate. */
 function expiredAt(value: string, now: Date): boolean {
   return canonicalInstant.test(value) && Date.parse(value) < now.getTime()
+}
+
+/** Canonical execution read inside a transaction; repositories and transaction-bound readers share it. */
+export async function readExecutionIn(
+  transaction: PersistenceTransaction,
+  executionId: string
+): Promise<Execution | undefined> {
+  ExecutionSchema.shape.executionId.parse(executionId)
+  const record = await transaction.get(namespaces.executions, recordId(executionId))
+  return record === undefined ? undefined : ExecutionSchema.parse(record.value)
+}
+
+/** Canonical attempt read inside a transaction; repositories and transaction-bound readers share it. */
+export async function readAttemptIn(
+  transaction: PersistenceTransaction,
+  attemptId: string
+): Promise<ExecutionAttempt | undefined> {
+  ExecutionAttemptSchema.shape.attemptId.parse(attemptId)
+  const record = await transaction.get(namespaces.attempts, recordId(attemptId))
+  return record === undefined ? undefined : ExecutionAttemptSchema.parse(record.value)
 }
 
 function recordId(value: string): string {

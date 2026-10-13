@@ -74,7 +74,7 @@
     {
       "name": "@control-plane/contracts",
       "path": "packages/contracts",
-      "version": "1.19.0",
+      "version": "1.20.0",
       "lockVersion": "1.19.0",
       "kind": "package",
       "private": false,
@@ -89,8 +89,8 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.27.0",
-      "lockVersion": "1.27.0",
+      "version": "1.31.0",
+      "lockVersion": "1.27.1",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -176,7 +176,7 @@
     {
       "name": "@control-plane/database",
       "path": "packages/database",
-      "version": "1.43.0",
+      "version": "1.45.1",
       "lockVersion": "1.43.0",
       "kind": "package",
       "private": true,
@@ -265,7 +265,7 @@
     {
       "name": "@control-plane/execution-plan",
       "path": "packages/execution-plan",
-      "version": "1.9.0",
+      "version": "1.9.1",
       "lockVersion": "1.9.0",
       "kind": "package",
       "private": true,
@@ -285,7 +285,7 @@
     {
       "name": "@control-plane/hosted-control-plane",
       "path": "apps/hosted-control-plane",
-      "version": "1.19.0",
+      "version": "1.20.0",
       "lockVersion": "1.19.0",
       "kind": "application",
       "private": true,
@@ -354,8 +354,8 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.30.0",
-      "lockVersion": "1.30.0",
+      "version": "1.32.0",
+      "lockVersion": "1.31.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -438,7 +438,7 @@
     {
       "name": "@control-plane/model-gateway",
       "path": "packages/model-gateway",
-      "version": "1.5.0",
+      "version": "1.5.2",
       "lockVersion": "1.5.0",
       "kind": "package",
       "private": true,
@@ -479,7 +479,7 @@
     {
       "name": "@control-plane/orchestration",
       "path": "packages/orchestration",
-      "version": "1.7.0",
+      "version": "1.8.0",
       "lockVersion": "1.7.0",
       "kind": "package",
       "private": true,
@@ -501,7 +501,7 @@
     {
       "name": "@control-plane/pi-cloudflare-host",
       "path": "packages/pi-cloudflare-host",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "lockVersion": "0.6.0",
       "kind": "package",
       "private": true,
@@ -520,8 +520,8 @@
     {
       "name": "@control-plane/pi-durable-adapter",
       "path": "packages/pi-durable-adapter",
-      "version": "0.4.0",
-      "lockVersion": "0.4.0",
+      "version": "0.8.0",
+      "lockVersion": "0.4.1",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -550,7 +550,7 @@
     {
       "name": "@control-plane/policy",
       "path": "packages/policy",
-      "version": "1.4.1",
+      "version": "1.4.2",
       "lockVersion": "1.4.1",
       "kind": "package",
       "private": true,
@@ -580,8 +580,8 @@
     {
       "name": "@control-plane/profile-adapters",
       "path": "packages/profile-adapters",
-      "version": "1.0.0",
-      "lockVersion": "1.0.0",
+      "version": "1.1.0",
+      "lockVersion": "1.1.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -657,7 +657,7 @@
     {
       "name": "@control-plane/runtime-gateway",
       "path": "apps/runtime-gateway",
-      "version": "1.7.3",
+      "version": "1.7.4",
       "lockVersion": "1.7.3",
       "kind": "application",
       "private": true,
@@ -701,7 +701,7 @@
     {
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
-      "version": "1.14.0",
+      "version": "1.15.1",
       "lockVersion": "1.14.0",
       "kind": "package",
       "private": false,
@@ -757,7 +757,7 @@
     {
       "name": "@control-plane/sdk",
       "path": "packages/control-sdk",
-      "version": "1.16.0",
+      "version": "1.18.0",
       "lockVersion": "1.16.0",
       "kind": "package",
       "private": false,
@@ -772,7 +772,7 @@
     {
       "name": "@control-plane/secrets",
       "path": "packages/secrets",
-      "version": "1.3.1",
+      "version": "1.4.0",
       "lockVersion": "1.3.1",
       "kind": "package",
       "private": true,
@@ -787,7 +787,7 @@
     {
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
-      "version": "1.35.0",
+      "version": "1.37.0",
       "lockVersion": "1.35.0",
       "kind": "package",
       "private": true,
@@ -811,14 +811,18 @@
       ],
       "externalDependencies": ["drizzle-orm"],
       "developmentWorkspaceDependencies": ["@control-plane/config"],
-      "developmentExternalDependencies": [],
+      "developmentExternalDependencies": [
+        "@earendil-works/chord",
+        "@earendil-works/pi-ai",
+        "@earendil-works/pi-durable"
+      ],
       "layer": "adapter-infrastructure"
     },
     {
       "name": "@control-plane/telemetry",
       "path": "packages/telemetry",
-      "version": "1.5.6",
-      "lockVersion": "1.5.6",
+      "version": "1.6.0",
+      "lockVersion": "1.6.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -939,8 +943,8 @@
     {
       "name": "@control-plane/workflow-worker",
       "path": "apps/workflow-worker",
-      "version": "1.15.0",
-      "lockVersion": "1.15.0",
+      "version": "1.16.1",
+      "lockVersion": "1.16.0",
       "kind": "application",
       "private": true,
       "browser": false,

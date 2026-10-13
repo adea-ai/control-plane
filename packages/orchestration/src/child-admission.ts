@@ -119,9 +119,24 @@ export type ChildAdmissionReceipt = z.output<typeof ChildAdmissionReceiptSchema>
  * transaction; it must fail closed on missing, stale, expired, or revoked
  * state. The port must not perform allocation itself.
  */
+/**
+ * Canonical reads a child authority recheck may make. The allocator hands the recheck the reader of its
+ * own open transaction, so every read in the fence sees that transaction and never re-enters the store.
+ * A reader is valid only while its fence is running.
+ */
+export interface ChildAdmissionReader {
+  getExecution(executionId: string): Promise<unknown | undefined>
+  getAttempt(attemptId: string): Promise<unknown | undefined>
+  getToolCall(toolCallId: string): Promise<unknown | undefined>
+}
+
 export interface ChildAdmissionAuthority {
   prepare(request: ChildAdmissionRequest): Promise<unknown>
-  assertCurrent(request: ChildAdmissionRequest, receipt: ChildAdmissionReceipt): Promise<void>
+  assertCurrent(
+    request: ChildAdmissionRequest,
+    receipt: ChildAdmissionReceipt,
+    reader?: ChildAdmissionReader
+  ): Promise<void>
 }
 
 /**
@@ -139,7 +154,7 @@ export interface ChildAdmissionAllocator {
     readonly execution: Execution
     readonly attempt: ExecutionAttempt
     readonly delegation: DelegationRecord
-    readonly assertCurrent: () => Promise<void>
+    readonly assertCurrent: (reader: ChildAdmissionReader) => Promise<void>
   }): Promise<boolean>
 }
 

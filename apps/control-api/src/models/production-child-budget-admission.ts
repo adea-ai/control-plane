@@ -9,6 +9,7 @@ import {
   ChildAdmissionReceiptSchema,
   type ChildAdmissionAuthority,
   type ChildAdmissionReceipt,
+  type ChildAdmissionReader,
 } from '@control-plane/orchestration'
 import {
   RuntimeProviderSelectionSchema,
@@ -101,17 +102,21 @@ function assertCurrentMatchesRequest(
  */
 export function createProductionChildBudgetAdmissionAuthority(options: {
   readonly product: ChildProductResolver
-  readCurrent(request: z.output<typeof ChildAdmissionRequestSchema>): Promise<unknown>
+  readCurrent(
+    request: z.output<typeof ChildAdmissionRequestSchema>,
+    reader?: ChildAdmissionReader
+  ): Promise<unknown>
   readonly now?: () => string
 }): ChildAdmissionAuthority {
   const now = options.now ?? (() => new Date().toISOString())
 
   const resolve = async (
-    requestInput: z.output<typeof ChildAdmissionRequestSchema>
+    requestInput: z.output<typeof ChildAdmissionRequestSchema>,
+    reader?: ChildAdmissionReader
   ): Promise<ChildAdmissionReceipt> => {
     const request = ChildAdmissionRequestSchema.parse(requestInput)
     const current = ProductionChildBudgetCurrentSchema.parse(
-      await options.readCurrent(structuredClone(request))
+      await options.readCurrent(structuredClone(request), reader)
     )
     assertCurrentMatchesRequest(request, current, now())
 
@@ -139,7 +144,7 @@ export function createProductionChildBudgetAdmissionAuthority(options: {
     // Re-read the server-owned request after product/profile/readiness work to
     // reject mutation while the asynchronous resolver was running.
     const fresh = ProductionChildBudgetCurrentSchema.parse(
-      await options.readCurrent(structuredClone(request))
+      await options.readCurrent(structuredClone(request), reader)
     )
     assertCurrentMatchesRequest(request, fresh, now())
     if (canonicalJsonStringify(fresh) !== canonicalJsonStringify(current)) {
@@ -167,9 +172,9 @@ export function createProductionChildBudgetAdmissionAuthority(options: {
     prepare(request) {
       return resolve(request)
     },
-    async assertCurrent(request, receiptInput) {
+    async assertCurrent(request, receiptInput, reader?: ChildAdmissionReader) {
       const receipt = ChildAdmissionReceiptSchema.parse(receiptInput)
-      const current = await resolve(request)
+      const current = await resolve(request, reader)
       if (canonicalJsonStringify(current) !== canonicalJsonStringify(receipt)) {
         throw new Error('PI_CHILD_MODEL_AUTHORITY_CHANGED')
       }

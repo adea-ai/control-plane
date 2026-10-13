@@ -2,6 +2,11 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'bun:test'
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
+import { CompactionEntry, createRegistry, Harness } from '@earendil-works/pi-durable'
+import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
+import { createModels } from '@earendil-works/pi-ai/models'
+import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux'
 import { contextPackageSerializationFixtures, deriveContextPackage } from '@control-plane/context'
 import {
   ExecutionAttemptSchema,
@@ -11,12 +16,14 @@ import {
 } from '@control-plane/domain'
 import { deriveExecutionPlan, ExecutionPlanCompiler } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
+import { DelegationService } from '@control-plane/orchestration'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import { SqliteDelegationRepository } from './delegation-repository.ts'
 import { SqliteContextPackageRepository } from './repositories-extra.ts'
 import { SqliteExecutionPlanRepository } from './repositories.ts'
 import { SqliteExecutionRepository } from './repositories.ts'
 import { SqlitePersistenceProvider } from './provider.ts'
+import { createSqliteChildAdmissionReader } from './child-admission-reader.ts'
 import { SqliteDurableUsageStore } from './usage-store.ts'
 
 const digest = (character) => `sha256:${character.repeat(64)}`
@@ -38,6 +45,7 @@ async function fixture({
   parentBudget = { maximumMicrounits: 10_000_000, maximumTokens: 250_000 },
   maximumTotal = 1,
   maximumParallel = 1,
+  maximumDepth = 2,
   startParent = true,
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'sqlite-child-budget-admission-'))
@@ -49,7 +57,7 @@ async function fixture({
   parentInput.correlation.taskId = 'tsk_01JABCDEF0123456789ABCDEFG'
   parentInput.correlation.requestId = 'req_01JABCDEF0123456789ABCDEFG'
   parentInput.constraints.limits.childExecutions.maximumTotal = maximumTotal
-  parentInput.constraints.limits.childExecutions.maximumDepth = 2
+  parentInput.constraints.limits.childExecutions.maximumDepth = maximumDepth
   parentInput.constraints.limits.concurrency.maximumParallel = maximumParallel
   const canonicalParentPlan = compiler.compile(parentInput)
   const parentContextPackage = contextPackageSerializationFixtures.futurePi
@@ -279,6 +287,7 @@ async function fixture({
   return {
     directory,
     provider,
+    executions,
     canonicalParentPlan,
     parentAttempt,
     parentAttemptVersion,
@@ -289,6 +298,474 @@ async function fixture({
       await rm(directory, { recursive: true, force: true })
     },
   }
+}
+
+function createReleaseGate() {
+  let resolveEntered
+  let releaseParked
+  let enteredState
+  let released = false
+  const entered = new Promise((resolve) => (resolveEntered = resolve))
+  const parked = new Promise((resolve) => (releaseParked = resolve))
+  return {
+    entered,
+    async pause() {
+      if (!released && enteredState === undefined) {
+        enteredState = 'entered'
+        resolveEntered(enteredState)
+      }
+      await parked
+    },
+    release() {
+      if (released) return
+      released = true
+      if (enteredState === undefined) {
+        enteredState = 'released'
+        resolveEntered(enteredState)
+      }
+      releaseParked()
+    },
+  }
+}
+
+function gateProviderBeforeTransaction(provider) {
+  const gate = createReleaseGate()
+  let armed = true
+  const gatedProvider = new Proxy(provider, {
+    get(target, property) {
+      if (property === 'transaction') {
+        return async (operation) => {
+          if (armed) {
+            armed = false
+            await gate.pause()
+          }
+          return target.transaction(operation)
+        }
+      }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  return { provider: gatedProvider, entered: gate.entered, release: gate.release }
+}
+
+function gateBeforeRetryCommit(repository) {
+  const gate = createReleaseGate()
+  let armed = true
+  const gatedRepository = new Proxy(repository, {
+    get(target, property) {
+      if (property === 'compareAndSet') {
+        return async (expectedRevision, record) => {
+          if (armed && record.state === 'requested' && record.retryCount === 1) {
+            armed = false
+            // Pause before the SQLite repository call opens its transaction.
+            await gate.pause()
+          }
+          return target.compareAndSet(expectedRevision, record)
+        }
+      }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  return { repository: gatedRepository, entered: gate.entered, release: gate.release }
+}
+
+const raceWaitLimitMs = 5_000
+
+function observeOperation(promise) {
+  const outcome = Promise.resolve(promise).then(
+    (value) => ({ status: 'fulfilled', value }),
+    (error) => ({ status: 'rejected', error })
+  )
+  return { promise, outcome }
+}
+
+async function raceWithLimit(promises, label) {
+  let timer
+  let settleTimeout
+  const timeout = new Promise((resolve) => {
+    settleTimeout = resolve
+    timer = setTimeout(() => resolve({ status: 'timeout' }), raceWaitLimitMs)
+  })
+  try {
+    const outcome = await Promise.race([...promises, timeout])
+    if (outcome.status === 'timeout') {
+      throw new Error(`${label} did not settle within ${raceWaitLimitMs}ms`)
+    }
+    return outcome
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+    settleTimeout({ status: 'cancelled' })
+  }
+}
+
+async function waitForGateOrOperation(entered, operation, label) {
+  const outcome = await raceWithLimit(
+    [
+      entered.then((state) => ({ status: state })),
+      operation.outcome.then((result) => ({ status: 'operation', result })),
+    ],
+    `${label} gate`
+  )
+  if (outcome.status === 'entered') return
+  if (outcome.status === 'released') {
+    throw new Error(`${label} gate was released before the operation entered it`)
+  }
+  if (outcome.result.status === 'rejected') throw outcome.result.error
+  throw new Error(`${label} settled before its gate was entered`)
+}
+
+async function settleOperation(operation, label) {
+  return raceWithLimit([operation.outcome], label)
+}
+
+async function settleOwnedOperationsAndClose(f, gate, operations) {
+  gate?.release()
+  let failed = false
+  let failure
+  const unsettled = []
+  const rememberFailure = (error) => {
+    if (!failed) {
+      failed = true
+      failure = error
+    }
+  }
+
+  for (const [operation, label] of operations) {
+    if (!operation) continue
+    try {
+      await settleOperation(operation, label)
+    } catch (error) {
+      rememberFailure(error)
+      unsettled.push([operation, label])
+    }
+  }
+  let closeOperation
+  try {
+    closeOperation = observeOperation(Promise.resolve().then(() => f.close()))
+    const closeOutcome = await settleOperation(closeOperation, 'fixture close')
+    if (closeOutcome.status === 'rejected') throw closeOutcome.error
+  } catch (error) {
+    rememberFailure(error)
+    if (closeOperation) unsettled.push([closeOperation, 'fixture close'])
+  }
+  for (const [operation, label] of unsettled) {
+    try {
+      const outcome = await settleOperation(operation, `${label} after fixture close`)
+      if (label === 'fixture close' && outcome.status === 'rejected') {
+        rememberFailure(outcome.error)
+      }
+    } catch (error) {
+      rememberFailure(error)
+    }
+  }
+  if (failed) throw failure
+}
+
+test('cleanup releases an entered gate and settles its operation after assertion failure', async () => {
+  const gate = createReleaseGate()
+  const operation = observeOperation(
+    (async () => {
+      await gate.pause()
+      return 'released'
+    })()
+  )
+  await expect(gate.entered).resolves.toBe('entered')
+
+  const assertionFailure = new Error('injected assertion failure')
+  let observedFailure
+  try {
+    throw assertionFailure
+  } catch (error) {
+    observedFailure = error
+  }
+
+  let closed = false
+  await settleOwnedOperationsAndClose(
+    {
+      async close() {
+        closed = true
+      },
+    },
+    gate,
+    [[operation, 'gated operation']]
+  )
+  expect(observedFailure).toBe(assertionFailure)
+  expect(await operation.outcome).toEqual({ status: 'fulfilled', value: 'released' })
+  expect(await gate.entered).toBe('entered')
+  expect(closed).toBe(true)
+})
+
+test('cleanup settles an unused gate signal when an operation finishes early', async () => {
+  const gate = createReleaseGate()
+  const operationFailure = new Error('operation finished before reaching the gate')
+  const operation = observeOperation(Promise.reject(operationFailure))
+  let observedFailure
+  try {
+    await waitForGateOrOperation(gate.entered, operation, 'early operation')
+  } catch (error) {
+    observedFailure = error
+  }
+
+  let closed = false
+  await settleOwnedOperationsAndClose(
+    {
+      async close() {
+        closed = true
+      },
+    },
+    gate,
+    [[operation, 'early operation']]
+  )
+  expect(observedFailure).toBe(operationFailure)
+  expect(await gate.entered).toBe('released')
+  expect(await operation.outcome).toEqual({ status: 'rejected', error: operationFailure })
+  expect(closed).toBe(true)
+})
+
+async function retryableChild(f, child) {
+  const delegation = {
+    ...child.delegation,
+    policy: { ...child.delegation.policy, maximumRetries: 1 },
+  }
+  await child.allocator.allocate({
+    request: child.request,
+    receipt: child.receipt,
+    execution: child.childExecution,
+    attempt: child.childAttempt,
+    delegation,
+    assertCurrent: async () => undefined,
+  })
+
+  const delegations = new SqliteDelegationRepository(f.provider)
+  const lifecycle = new ExecutionLifecycleService(new SqliteExecutionRepository(f.provider))
+  const createService = (delegationRepository = delegations) =>
+    new DelegationService({
+      delegations: delegationRepository,
+      lifecycle,
+      plans: new SqliteExecutionPlanRepository(f.provider),
+      events: { async publish() {} },
+    })
+  const service = createService()
+  await service.dispatchChild(child.request.childDispatch)
+  await service.recordChildProgress({
+    delegationId: child.childIds.delegationId,
+    childAttemptId: child.request.childAttemptId,
+    state: 'running',
+    observedAt: '2026-10-09T12:00:10.000Z',
+  })
+  return { service, createService, delegations, lifecycle }
+}
+
+async function expectSiblingDenialLeavesNoRows(f, sibling, expectedCode, budgetBefore, allocation) {
+  const repository = new SqliteDelegationRepository(f.provider)
+  const result =
+    allocation ??
+    sibling.allocator.allocate({
+      request: sibling.request,
+      receipt: sibling.receipt,
+      execution: sibling.childExecution,
+      attempt: sibling.childAttempt,
+      delegation: sibling.delegation,
+      assertCurrent: async () => undefined,
+    })
+  await expect(result).rejects.toMatchObject({ code: expectedCode })
+  expect(await f.executions.getExecution(sibling.childIds.childExecutionId)).toBeUndefined()
+  expect(await f.executions.getAttempt(sibling.request.childAttemptId)).toBeUndefined()
+  expect(await repository.get(sibling.childIds.delegationId)).toBeUndefined()
+  expect(await repository.findByChild(sibling.childIds.childExecutionId)).toBeUndefined()
+  await expect(
+    f.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(sibling.childIds.childExecutionId)
+    )
+  ).resolves.toBeUndefined()
+  await expect(
+    f.usageStore.transaction(ids.workspaceId, (tx) => tx.getBudget(ids.childExecutionId))
+  ).resolves.toEqual(budgetBefore)
+  await expect(repository.listByParent(ids.parentExecutionId)).resolves.toHaveLength(1)
+}
+
+const retryAdmissionRaces = [
+  {
+    limit: 'total',
+    maximumTotal: 1,
+    maximumParallel: 2,
+    code: 'DELEGATION_LIMIT_EXCEEDED',
+  },
+  {
+    limit: 'parallel',
+    maximumTotal: 2,
+    maximumParallel: 1,
+    code: 'DELEGATION_CONCURRENCY_LIMIT_EXCEEDED',
+  },
+]
+
+for (const scenario of retryAdmissionRaces) {
+  test(`retrying child remains counted against the ${scenario.limit} limit when retry commits first`, async () => {
+    const f = await fixture(scenario)
+    let gate
+    let allocation
+    let retryProgress
+    let failed = false
+    let failure
+    try {
+      const childA = await f.childAdmission()
+      const childB = await f.childAdmission()
+      const retry = await retryableChild(f, childA)
+      const budgetBefore = await f.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(childA.childIds.childExecutionId)
+      )
+      gate = gateProviderBeforeTransaction(f.provider)
+      const sibling = {
+        ...childB,
+        allocator: new SqliteDelegationRepository(gate.provider),
+      }
+      allocation = observeOperation(
+        sibling.allocator.allocate({
+          request: sibling.request,
+          receipt: sibling.receipt,
+          execution: sibling.childExecution,
+          attempt: sibling.childAttempt,
+          delegation: sibling.delegation,
+          assertCurrent: async () => undefined,
+        })
+      )
+      await waitForGateOrOperation(gate.entered, allocation, 'sibling allocation')
+      retryProgress = observeOperation(
+        retry.service.recordChildProgress({
+          delegationId: childA.childIds.delegationId,
+          childAttemptId: childA.request.childAttemptId,
+          state: 'failed',
+          observedAt: '2026-10-09T12:00:20.000Z',
+          failure: {
+            classification: 'runtime_unavailable',
+            code: 'RUNTIME_LOST',
+            retryable: true,
+          },
+        })
+      )
+      const retryOutcome = await settleOperation(retryProgress, 'retry commit')
+      if (retryOutcome.status === 'rejected') throw retryOutcome.error
+      expect(retryOutcome.value).toMatchObject({
+        resolution: 'retry',
+        record: { state: 'requested', retryCount: 1 },
+      })
+      gate.release()
+      await expectSiblingDenialLeavesNoRows(
+        f,
+        sibling,
+        scenario.code,
+        budgetBefore,
+        allocation.promise
+      )
+    } catch (error) {
+      failed = true
+      failure = error
+    }
+    try {
+      await settleOwnedOperationsAndClose(f, gate, [
+        [allocation, 'sibling allocation cleanup'],
+        [retryProgress, 'retry commit cleanup'],
+      ])
+    } catch (cleanupError) {
+      if (!failed) {
+        failed = true
+        failure = cleanupError
+      } else {
+        console.error(
+          'retry admission test cleanup failed after its assertion failed',
+          cleanupError
+        )
+      }
+    }
+    if (failed) throw failure
+  })
+
+  test(`sibling admission sees the active child during a paused ${scenario.limit} retry commit`, async () => {
+    const f = await fixture(scenario)
+    let gate
+    let allocation
+    let retryProgress
+    let failed = false
+    let failure
+    try {
+      const childA = await f.childAdmission()
+      const childB = await f.childAdmission()
+      const retry = await retryableChild(f, childA)
+      const budgetBefore = await f.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(childA.childIds.childExecutionId)
+      )
+      gate = gateBeforeRetryCommit(retry.delegations)
+      const service = retry.createService(gate.repository)
+      retryProgress = observeOperation(
+        service.recordChildProgress({
+          delegationId: childA.childIds.delegationId,
+          childAttemptId: childA.request.childAttemptId,
+          state: 'failed',
+          observedAt: '2026-10-09T12:00:20.000Z',
+          failure: {
+            classification: 'runtime_unavailable',
+            code: 'RUNTIME_LOST',
+            retryable: true,
+          },
+        })
+      )
+      await waitForGateOrOperation(gate.entered, retryProgress, 'retry transition')
+      expect(await retry.delegations.get(childA.childIds.delegationId)).toMatchObject({
+        state: 'running',
+        retryCount: 0,
+        pendingProgress: { state: 'failed' },
+      })
+      expect(await f.executions.getAttempt(childA.request.childAttemptId)).toMatchObject({
+        state: 'failed',
+      })
+      allocation = observeOperation(
+        childB.allocator.allocate({
+          request: childB.request,
+          receipt: childB.receipt,
+          execution: childB.childExecution,
+          attempt: childB.childAttempt,
+          delegation: childB.delegation,
+          assertCurrent: async () => undefined,
+        })
+      )
+      await expectSiblingDenialLeavesNoRows(
+        f,
+        childB,
+        scenario.code,
+        budgetBefore,
+        allocation.promise
+      )
+      gate.release()
+      const retryOutcome = await settleOperation(retryProgress, 'retry commit')
+      if (retryOutcome.status === 'rejected') throw retryOutcome.error
+      expect(retryOutcome.value).toMatchObject({
+        resolution: 'retry',
+        record: { state: 'requested', retryCount: 1 },
+      })
+    } catch (error) {
+      failed = true
+      failure = error
+    }
+    try {
+      await settleOwnedOperationsAndClose(f, gate, [
+        [allocation, 'sibling allocation cleanup'],
+        [retryProgress, 'retry transition cleanup'],
+      ])
+    } catch (cleanupError) {
+      if (!failed) {
+        failed = true
+        failure = cleanupError
+      } else {
+        console.error(
+          'retry admission test cleanup failed after its assertion failed',
+          cleanupError
+        )
+      }
+    }
+    if (failed) throw failure
+  })
 }
 
 test('child admission transaction rolls back execution and budget when current authority denies', async () => {
@@ -478,6 +955,157 @@ test('child budget exhaustion rolls back the child execution and delegation in t
     ).resolves.toBeUndefined()
   } finally {
     await f.close()
+  }
+})
+
+test('SQLite child admission fences preserve the parent budget across total, parallel, and depth denials', async () => {
+  const fixtures = []
+  const allocate = (child) =>
+    child.allocator.allocate({
+      request: child.request,
+      receipt: child.receipt,
+      execution: child.childExecution,
+      attempt: child.childAttempt,
+      delegation: child.delegation,
+      assertCurrent: async () => undefined,
+    })
+  try {
+    const total = await fixture({ maximumTotal: 1, maximumParallel: 2 })
+    fixtures.push(total)
+    const parallel = await fixture({ maximumTotal: 2, maximumParallel: 1 })
+    fixtures.push(parallel)
+    const depth = await fixture({ maximumTotal: 2, maximumParallel: 2, maximumDepth: 0 })
+    fixtures.push(depth)
+
+    const totalAdmitted = await total.childAdmission()
+    const totalSibling = await total.childAdmission()
+    await allocate(totalAdmitted)
+    const totalBudgetBefore = await total.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(ids.parentExecutionId)
+    )
+    await expect(allocate(totalSibling)).rejects.toMatchObject({
+      code: 'DELEGATION_LIMIT_EXCEEDED',
+    })
+    await expect(
+      total.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(totalAdmitted.childIds.childExecutionId)
+      )
+    ).resolves.toBeDefined()
+    await expect(
+      total.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(totalSibling.childIds.childExecutionId)
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      total.usageStore.transaction(ids.workspaceId, (tx) => tx.getBudget(ids.parentExecutionId))
+    ).resolves.toEqual(totalBudgetBefore)
+
+    const parallelAdmitted = await parallel.childAdmission()
+    const parallelSibling = await parallel.childAdmission()
+    await allocate(parallelAdmitted)
+    const parallelBudgetBefore = await parallel.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(ids.parentExecutionId)
+    )
+    await expect(allocate(parallelSibling)).rejects.toMatchObject({
+      code: 'DELEGATION_CONCURRENCY_LIMIT_EXCEEDED',
+    })
+    await expect(
+      parallel.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(parallelAdmitted.childIds.childExecutionId)
+      )
+    ).resolves.toBeDefined()
+    await expect(
+      parallel.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(parallelSibling.childIds.childExecutionId)
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      parallel.usageStore.transaction(ids.workspaceId, (tx) => tx.getBudget(ids.parentExecutionId))
+    ).resolves.toEqual(parallelBudgetBefore)
+
+    const tooDeep = await depth.childAdmission()
+    const depthBudgetBefore = await depth.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(ids.parentExecutionId)
+    )
+    await expect(allocate(tooDeep)).rejects.toMatchObject({
+      code: 'DELEGATION_DEPTH_EXCEEDED',
+    })
+    await expect(
+      depth.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(tooDeep.childIds.childExecutionId)
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      depth.usageStore.transaction(ids.workspaceId, (tx) => tx.getBudget(ids.parentExecutionId))
+    ).resolves.toEqual(depthBudgetBefore)
+  } finally {
+    await Promise.all(fixtures.map((item) => item.close()))
+  }
+})
+
+test('manual Pi compaction persists its explicit summary in SQLite', async () => {
+  const compactionDirectory = await mkdtemp(join(tmpdir(), 'pi-manual-compaction-'))
+  const compactionStorage = await openNodeSqliteStorage(join(compactionDirectory, 'pi.sqlite'))
+  const models = createModels()
+  const faux = fauxProvider()
+  models.setProvider(faux.provider)
+  faux.setResponses([
+    fauxAssistantMessage('The parent turn is recorded before compaction.'),
+    fauxAssistantMessage('The recorded parent turn remains preserved in this summary.'),
+  ])
+  let harness
+  try {
+    harness = await Harness.open(
+      compactionStorage,
+      {
+        models,
+        registry: createRegistry(),
+        settings: {
+          compaction: {
+            enabled: false,
+            keepRecentTokens: 1,
+            reserveTokens: 128,
+            backgroundTokens: 0,
+          },
+          retry: { enabled: false, maxRetries: 0 },
+        },
+      },
+      BACKGROUND_CONTEXT
+    )
+    const root = await harness.root(BACKGROUND_CONTEXT, {
+      agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+    })
+    const firstTurn = await root.submit(
+      {
+        type: 'input',
+        requestId: 'manual-compaction-child-fences:turn:1',
+        content: 'Record the parent turn before manual compaction.',
+      },
+      BACKGROUND_CONTEXT
+    )
+    expect((await firstTurn.wait(BACKGROUND_CONTEXT)).status).toBe('done')
+    expect(faux.state.callCount).toBe(1)
+
+    const taskId = await root.compact('Preserve the recorded parent turn.', BACKGROUND_CONTEXT)
+    const task = await harness.waitForTask(taskId, BACKGROUND_CONTEXT)
+    expect(task.state.status).toBe('terminal')
+    expect(task.state.outcome.status).toBe('completed')
+    expect(task.state.outcome.result.submissionId).toBeDefined()
+    const compactionSubmission = await harness.submission(
+      task.state.outcome.result.submissionId,
+      BACKGROUND_CONTEXT
+    )
+    expect(compactionSubmission).toBeDefined()
+    expect((await compactionSubmission.wait(BACKGROUND_CONTEXT)).status).toBe('done')
+    expect(faux.state.callCount).toBe(2)
+    const compacted = await root.context(BACKGROUND_CONTEXT)
+    const summary = compacted.entries.find((entry) => entry.kind === CompactionEntry.kind)
+    expect(summary).toBeDefined()
+    expect(JSON.stringify(summary)).toContain('recorded parent turn')
+  } finally {
+    await harness?.close(BACKGROUND_CONTEXT)
+    await compactionStorage.close(BACKGROUND_CONTEXT)
+    await rm(compactionDirectory, { recursive: true, force: true })
   }
 })
 
@@ -822,5 +1450,260 @@ test('cancelling an admitted child persists consistently across a store restart'
   } finally {
     await restarted?.provider.close()
     await rm(f.directory, { recursive: true, force: true })
+  }
+})
+
+test('child authority reads go through the allocation transaction reader and match the repositories', async () => {
+  const f = await fixture()
+  try {
+    const child = await f.childAdmission()
+    const parentBefore = await child.executionRepository.getExecution(
+      child.request.parentExecutionId
+    )
+    const attemptBefore = await child.executionRepository.getAttempt(child.request.parentAttemptId)
+    let observed
+    await expect(
+      child.allocator.allocate({
+        request: child.request,
+        receipt: child.receipt,
+        execution: child.childExecution,
+        attempt: child.childAttempt,
+        delegation: child.delegation,
+        assertCurrent: async (reader) => {
+          observed = {
+            execution: await reader.getExecution(child.request.parentExecutionId),
+            attempt: await reader.getAttempt(child.request.parentAttemptId),
+            toolCall: await reader.getToolCall(child.request.admittedToolCallId),
+          }
+        },
+      })
+    ).resolves.toBe(true)
+    expect(observed.execution).toEqual(parentBefore)
+    expect(observed.attempt).toEqual(attemptBefore)
+    expect(observed.toolCall).toBeUndefined()
+    expect(
+      await child.executionRepository.getExecution(child.childIds.childExecutionId)
+    ).toBeDefined()
+  } finally {
+    await f.close()
+  }
+})
+
+test('an unrelated reader stays outside an open child allocation fence until it commits', async () => {
+  const f = await fixture()
+  const gate = createReleaseGate()
+  let allocation
+  let unrelated
+  let failed = false
+  let failure
+  try {
+    const child = await f.childAdmission()
+    allocation = observeOperation(
+      child.allocator.allocate({
+        request: child.request,
+        receipt: child.receipt,
+        execution: child.childExecution,
+        attempt: child.childAttempt,
+        delegation: child.delegation,
+        assertCurrent: async (reader) => {
+          await reader.getExecution(child.request.parentExecutionId)
+          await gate.pause()
+        },
+      })
+    )
+    await waitForGateOrOperation(gate.entered, allocation, 'child allocation fence')
+    unrelated = observeOperation(
+      Promise.resolve().then(() =>
+        child.executionRepository.getExecution(child.childIds.childExecutionId)
+      )
+    )
+    const readerRace = await raceWithLimit(
+      [
+        unrelated.outcome.then((result) => ({ status: 'operation', result })),
+        new Promise((resolve) => setTimeout(() => resolve({ status: 'observation-window' }), 25)),
+      ],
+      'unrelated reader fence observation'
+    )
+    expect(readerRace.status).toBe('observation-window')
+    expect(await gate.entered).toBe('entered')
+    gate.release()
+    const allocationOutcome = await settleOperation(allocation, 'child allocation')
+    if (allocationOutcome.status === 'rejected') throw allocationOutcome.error
+    expect(allocationOutcome.value).toBe(true)
+    const unrelatedOutcome = await settleOperation(unrelated, 'unrelated reader')
+    if (unrelatedOutcome.status === 'rejected') throw unrelatedOutcome.error
+    expect(unrelatedOutcome.value).toBeDefined()
+  } catch (error) {
+    failed = true
+    failure = error
+  }
+  try {
+    await settleOwnedOperationsAndClose(f, gate, [
+      [allocation, 'child allocation cleanup'],
+      [unrelated, 'unrelated reader cleanup'],
+    ])
+  } catch (cleanupError) {
+    if (!failed) {
+      failed = true
+      failure = cleanupError
+    } else {
+      console.error('allocation-fence cleanup failed after its assertion failed', cleanupError)
+    }
+  }
+  if (failed) throw failure
+})
+
+test('allocation-fence cleanup releases parked work and preserves the original assertion failure', async () => {
+  const f = await fixture()
+  const gate = createReleaseGate()
+  let allocation
+  let unrelated
+  let observedFailure
+  const assertionFailure = new Error('injected allocation-fence assertion failure')
+  try {
+    const child = await f.childAdmission()
+    allocation = observeOperation(
+      child.allocator.allocate({
+        request: child.request,
+        receipt: child.receipt,
+        execution: child.childExecution,
+        attempt: child.childAttempt,
+        delegation: child.delegation,
+        assertCurrent: async (reader) => {
+          await reader.getExecution(child.request.parentExecutionId)
+          await gate.pause()
+        },
+      })
+    )
+    await waitForGateOrOperation(gate.entered, allocation, 'fault-path allocation fence')
+    unrelated = observeOperation(
+      Promise.resolve().then(() =>
+        child.executionRepository.getExecution(child.childIds.childExecutionId)
+      )
+    )
+    throw assertionFailure
+  } catch (error) {
+    observedFailure = error
+  }
+
+  let cleanupFailure
+  try {
+    await settleOwnedOperationsAndClose(f, gate, [
+      [allocation, 'fault-path allocation cleanup'],
+      [unrelated, 'fault-path unrelated reader cleanup'],
+    ])
+  } catch (error) {
+    cleanupFailure = error
+  }
+  expect(observedFailure).toBe(assertionFailure)
+  expect(cleanupFailure).toBeUndefined()
+  expect(await allocation.outcome).toMatchObject({ status: 'fulfilled', value: true })
+  expect(await unrelated.outcome).toMatchObject({ status: 'fulfilled' })
+  expect(await gate.entered).toBe('entered')
+})
+
+test('a refused child fence leaves no canonical rows after restart', async () => {
+  const f = await fixture()
+  try {
+    const child = await f.childAdmission()
+    await expect(
+      child.allocator.allocate({
+        request: child.request,
+        receipt: child.receipt,
+        execution: child.childExecution,
+        attempt: child.childAttempt,
+        delegation: child.delegation,
+        assertCurrent: async (reader) => {
+          await reader.getExecution(child.request.parentExecutionId)
+          throw new Error('revoked child audience')
+        },
+      })
+    ).rejects.toThrow('revoked child audience')
+    await f.provider.close()
+    const reopened = new SqlitePersistenceProvider({ path: join(f.directory, 'state.sqlite') })
+    await reopened.migrate()
+    try {
+      expect(
+        await new SqliteExecutionRepository(reopened).getExecution(child.childIds.childExecutionId)
+      ).toBeUndefined()
+      expect(
+        await new SqliteExecutionRepository(reopened).getAttempt(child.request.childAttemptId)
+      ).toBeUndefined()
+      expect(
+        await new SqliteDelegationRepository(reopened).get(child.childIds.delegationId)
+      ).toBeUndefined()
+    } finally {
+      await reopened.close()
+    }
+  } finally {
+    await rm(f.directory, { recursive: true, force: true })
+  }
+})
+
+test('a committed child allocation and its transaction-bound reads survive restart', async () => {
+  const f = await fixture()
+  try {
+    const child = await f.childAdmission()
+    await expect(
+      child.allocator.allocate({
+        request: child.request,
+        receipt: child.receipt,
+        execution: child.childExecution,
+        attempt: child.childAttempt,
+        delegation: child.delegation,
+        assertCurrent: async () => {},
+      })
+    ).resolves.toBe(true)
+    await f.provider.close()
+    const reopened = new SqlitePersistenceProvider({ path: join(f.directory, 'state.sqlite') })
+    await reopened.migrate()
+    try {
+      const persisted = await new SqliteExecutionRepository(reopened).getExecution(
+        child.childIds.childExecutionId
+      )
+      expect(persisted).toBeDefined()
+      expect(
+        await new SqliteDelegationRepository(reopened).findByChild(child.childIds.childExecutionId)
+      ).toMatchObject({ delegationId: child.childIds.delegationId })
+      const seen = await reopened.transaction(async (transaction) => {
+        const reader = createSqliteChildAdmissionReader(transaction, ids.workspaceId)
+        try {
+          return await reader.getExecution(child.childIds.childExecutionId)
+        } finally {
+          reader.close()
+        }
+      })
+      expect(seen).toEqual(persisted)
+    } finally {
+      await reopened.close()
+    }
+  } finally {
+    await rm(f.directory, { recursive: true, force: true })
+  }
+})
+
+test('a child authority reader is unusable after its fence returns', async () => {
+  const f = await fixture()
+  try {
+    const child = await f.childAdmission()
+    let captured
+    await child.allocator.allocate({
+      request: child.request,
+      receipt: child.receipt,
+      execution: child.childExecution,
+      attempt: child.childAttempt,
+      delegation: child.delegation,
+      assertCurrent: async (reader) => {
+        captured = reader
+      },
+    })
+    await expect(captured.getExecution(child.request.parentExecutionId)).rejects.toThrow(
+      'CHILD_ADMISSION_READER_CLOSED'
+    )
+    await expect(captured.getToolCall(child.request.admittedToolCallId)).rejects.toThrow(
+      'CHILD_ADMISSION_READER_CLOSED'
+    )
+  } finally {
+    await f.close()
   }
 })

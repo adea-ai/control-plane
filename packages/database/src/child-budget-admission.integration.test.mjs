@@ -15,6 +15,7 @@ import { PostgresDelegationRepository } from './delegation-repository.ts'
 import { PostgresContextPackageRepository } from './context-package-repository.ts'
 import { PostgresExecutionPlanRepository } from './execution-plan-repository.ts'
 import { PostgresExecutionRepository } from './execution-repository.ts'
+import { PostgresToolCallRepository } from './tool-repositories.ts'
 import { createIsolatedTestDatabase } from './testing.ts'
 import { PostgresDurableUsageStore } from './usage-store.ts'
 
@@ -92,6 +93,29 @@ describe.skipIf(!enabled)('PostgreSQL child budget admission', () => {
         maximumTokens: 100_000,
         source: { sourceId: 'child-admission-parent-budget', idempotencyKey: 'parent-open' },
       })
+
+      const toolCalls = new PostgresToolCallRepository(isolated.application, workspaceId)
+      const parentToolCall = {
+        toolCallId: 'tlc_01JABCDEF0123456789ABCDEFG',
+        requestDigest: digest('a'),
+        executionId: parentExecutionId,
+        attemptId: parentAttemptId,
+        workspaceId,
+        profileId: 'prf_01JABCDEF0123456789ABCDEFG',
+        principalRef: 'service:runtime-worker',
+        toolDefinitionId: 'tld_01JABCDEF0123456789ABCDEFG',
+        toolVersionId: 'tlv_01JABCDEF0123456789ABCDEFG',
+        operation: 'records.write',
+        inputDigest: digest('b'),
+        policySnapshotRef: 'policy://workspace/v1',
+        executor: { type: 'connector', reference: 'records-v1' },
+        idempotencyKey: 'child-admission-parent-tool-call-0001',
+        status: 'requested',
+        revision: 1,
+        requestedAt: acceptedAt,
+        history: [{ status: 'requested', at: acceptedAt }],
+      }
+      expect(await toolCalls.insert(parentToolCall)).toBe(true)
 
       const delegations = new PostgresDelegationRepository(isolated.application)
       let ordinal = 0
@@ -269,11 +293,20 @@ describe.skipIf(!enabled)('PostgreSQL child budget admission', () => {
       ).toEqual([])
 
       const contenders = [await candidate(), await candidate()]
+      let transactionReader
+      let observedByReader
       const results = await Promise.allSettled(
         contenders.map((childCandidate) =>
           delegations.allocate({
             ...childCandidate,
-            assertCurrent: async () => undefined,
+            assertCurrent: async (reader) => {
+              transactionReader = reader
+              observedByReader = {
+                execution: await reader.getExecution(parentExecutionId),
+                attempt: await reader.getAttempt(parentAttemptId),
+                toolCall: await reader.getToolCall(parentToolCall.toolCallId),
+              }
+            },
           })
         )
       )
@@ -304,6 +337,20 @@ describe.skipIf(!enabled)('PostgreSQL child budget admission', () => {
       ).toHaveLength(1)
 
       const winner = contenders[winnerIndex]
+      expect(observedByReader).toEqual({
+        execution: await executions.getExecution(parentExecutionId),
+        attempt: await executions.getAttempt(parentAttemptId),
+        toolCall: await toolCalls.get(parentToolCall.toolCallId),
+      })
+      await expect(transactionReader.getExecution(parentExecutionId)).rejects.toThrow(
+        'CHILD_ADMISSION_READER_CLOSED'
+      )
+      await expect(transactionReader.getAttempt(parentAttemptId)).rejects.toThrow(
+        'CHILD_ADMISSION_READER_CLOSED'
+      )
+      await expect(transactionReader.getToolCall(parentToolCall.toolCallId)).rejects.toThrow(
+        'CHILD_ADMISSION_READER_CLOSED'
+      )
       const retainedWinner = await delegations.get(winner.delegationId)
       expect(retainedWinner).toMatchObject({
         state: 'requested',

@@ -52,7 +52,10 @@
     "drizzle-orm": "0.45.3"
   },
   "devDependencies": {
-    "@control-plane/config": "workspace:*"
+    "@control-plane/config": "workspace:*",
+    "@earendil-works/chord": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-durable": "1.1.0"
   },
   "engines": {
     "bun": ">=1.4.0 <2",

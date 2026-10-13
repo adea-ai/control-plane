@@ -72,13 +72,20 @@ stay wired to the canonical durable paths rather than a parallel ledger.
 - The governed runtime executor keeps its single-child guard
   (`childExecutions.maximumTotal === 1`); coordinator-admitted siblings do not
   start Pi runtimes on this branch, because the bridge's `startChild` seam
-  exists only behind that executor. Two live runtimes under one parent require
-  the transactional child admission from adea-ai/control-plane#1041
-  (`ChildAdmissionAllocator`: child execution + parent-budget reservation +
-  child budget + delegation record in one transaction) plus a per-branch
-  runtime dispatch seam — a coordination decision, not a guard relaxation.
-  Until then, sibling reservations are canonical but sequential around
-  admission, not atomic with it.
+  exists only behind that executor. The transactional child admission allocator
+  from adea-ai/control-plane#1041 now writes the child execution, parent-budget
+  reservation, child budget, and delegation record in one transaction while
+  enforcing total, depth, and concurrency limits. The allocator does not wire
+  coordinator siblings to separate Pi runtimes; that per-branch runtime dispatch
+  seam remains outstanding.
+- Same-parent compaction and child-admission behavior is not yet integrated in a
+  regression test. The manual compaction test in
+  `packages/sqlite-persistence/src/child-budget-admission.test.mjs` uses Pi's
+  standalone `pi.sqlite` harness, while its admission fixtures (previously in
+  that test) used separate `state.sqlite` stores. It now proves only that Pi
+  compaction persists its summary; it does not prove that one parent's child
+  budget, depth, total, or concurrency fences remain enforced after compaction.
+  That combined proof remains open acceptance evidence.
 - `reported`/`reconciled`/`settled` cost states are exercised where a real
   model settlement exists (the governed composition); compositions without a
   provider settlement stay at `reserved` — no usage report is ever fabricated.
