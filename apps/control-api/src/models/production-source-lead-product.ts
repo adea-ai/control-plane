@@ -21,8 +21,12 @@ const Snapshot = z.strictObject({
   expiresAt: z.iso.datetime(),
   requestedModelSelections: RequestedRoleModelSelectionsSchema.optional(),
 })
-const Retained = z.strictObject({
+const RetainedFields = z.strictObject({
   authority: PiLeadHostSourceAuthoritySchema,
+  scopeRef: z.string().regex(/^adea-source:sha256:[a-f0-9]{64}$/),
+  promptDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  expiresAt: z.iso.datetime(),
+  requestedModelSelections: RequestedRoleModelSelectionsSchema.optional(),
   evidenceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   profileVersionId: IdentifierSchemas.profileVersionId,
   profileContentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
@@ -33,6 +37,23 @@ type Input = Parameters<PiLeadProductAuthorityPort['readCurrent']>[0]
 type ProductOptions = Parameters<typeof createProductionLeadProductAuthority>[0]
 const digest = (value: unknown) =>
   `sha256:${createHash('sha256').update(canonicalJsonStringify(value)).digest('hex')}`
+const sourceScopeRef = (snapshot: {
+  authority: PiLeadHostSourceAuthority
+  promptDigest: string
+  expiresAt: string
+  requestedModelSelections?: z.output<typeof RequestedRoleModelSelectionsSchema> | undefined
+}) =>
+  `adea-source:${digest({
+    authority: snapshot.authority,
+    promptDigest: snapshot.promptDigest,
+    expiresAt: snapshot.expiresAt,
+    ...(snapshot.requestedModelSelections
+      ? { requestedModelSelections: snapshot.requestedModelSelections }
+      : {}),
+  })}`
+const Retained = RetainedFields.refine((record) => record.scopeRef === sourceScopeRef(record), {
+  message: 'Retained host/source scope digest mismatch',
+})
 
 /** Candidate composition only; startup and Adea's foreign-Agent guard stay unchanged.
  * Host product/service authority and source execution authority are independent
@@ -137,7 +158,7 @@ export function createProductionSourceLeadProductAuthority(
           authorityRevision: authority.host.conversationVersion,
           principalRef: actor,
           canonicalActorPrincipalId: actor,
-          scopeRef: `adea-source:${digest(snapshot)}`,
+          scopeRef: sourceScopeRef({ ...snapshot, promptDigest: digest(snapshot.prompt) }),
           expiresAt,
           allowedPrincipalIds: [input.principalId],
           prompt,
@@ -161,7 +182,7 @@ export function createProductionSourceLeadProductAuthority(
       if (
         !current ||
         digest(first) !== digest(current) ||
-        verified.scopeRef !== `adea-source:${digest(current)}`
+        verified.scopeRef !== sourceScopeRef({ ...current, promptDigest: digest(current.prompt) })
       )
         throw new Error('PI_LEAD_SOURCE_BINDING_CHANGED')
       return options.withCurrentAuthorization(
@@ -176,6 +197,12 @@ export function createProductionSourceLeadProductAuthority(
             throw new Error('PI_LEAD_SOURCE_PRODUCT_DENIED')
           const proposed = Retained.parse({
             authority: current.authority,
+            scopeRef: verified.scopeRef,
+            promptDigest: digest(current.prompt),
+            expiresAt: current.expiresAt,
+            ...(current.requestedModelSelections
+              ? { requestedModelSelections: current.requestedModelSelections }
+              : {}),
             evidenceDigest: digest(verified),
             profileVersionId: verified.profileVersionId,
             profileContentDigest: verified.profileContentDigest,

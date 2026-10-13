@@ -248,6 +248,26 @@ test('sequential assertion ports alone cannot configure source acceptance', () =
     database.close()
   }
 })
+test('raw retained host/context edits cannot be joined to a legitimate source runtime marker', async () => {
+  const database = new DatabaseSync(':memory:')
+  try {
+    const f = fixture(database)
+    await f.reader.readCurrent(f.input)
+    const retained = f.reader.readRetained(f.input)
+    retained.authority.host.conversationId = uuid('8')
+    retained.authority.contextRef = piLeadConversationAgentContextRef(retained.authority)
+    database
+      .prepare(
+        'UPDATE pi_source_lead_product_bindings SET record=? WHERE workspace_id=? AND intent_id=?'
+      )
+      .run(JSON.stringify(retained), f.input.workspaceId, f.input.intentId)
+    expect(() => f.reader.readRetained(f.input)).toThrow(
+      'Retained host/source scope digest mismatch'
+    )
+  } finally {
+    database.close()
+  }
+})
 test('SQLite reopen retains both bindings and profile/model pins without adopting changed source defaults', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'source-lead-product-'))
   let database = new DatabaseSync(join(directory, 'source.sqlite'))

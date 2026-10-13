@@ -119,3 +119,25 @@ still an integration requirement. Fake-clock and revocation regressions cross
 the final source wait and combined acceptance boundary. The mid-profile
 revocation test now returns a valid profile and successful model readiness, so
 only current source authorization can deny that case.
+
+### Candidate Node lifecycle composition
+
+`createProductionSourceNodeComposition` wraps the existing Node admission,
+preparation, journal, usage and Pi-native runtime. It requires an existing source
+transport principal, the source product authority and an independent host-context
+qualifier. Compiled plans must use source workspace scope and the exact qualified
+Agent/profile; host workspace, legacy project and changed immutable pins deny.
+Provider resolution and governed effect boundaries recheck the retained source
+binding. Effects resolve the exact native journal attempt and require source
+workspace/profile/grant scope before invoking existing current tool authority.
+Unqualified child wiring is refused for this bounded slice.
+
+The source sidecar now retains a verifiable host/source scope digest, prompt
+digest and original expiry without copying prompt/history. Raw host/context edits
+cannot be joined to an unchanged runtime marker. Its retained execution-binding
+reader derives execution/attempt/session from the canonical marker, exact plan,
+budget and existing native handle. It performs no product callback, reservation,
+credential lease or runtime start; current publication authorization remains a
+separate required gate. This is candidate lifecycle code, not a qualified running
+path. Startup/HTTP wiring, full lifecycle integration and physical-source proof
+remain outstanding, and Adea's foreign-Agent guard remains enabled.
