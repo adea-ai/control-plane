@@ -4,8 +4,8 @@
 
 For work the user has authorized, this draft WIP loop takes precedence over
 managed boilerplate that requires completed validation before opening or pushing
-a draft. Keep the managed blocks intact; review and applicable passing checks
-still gate ready and merge.
+a draft. Keep the managed blocks intact. Full personal review of the exact head
+permits readiness to trigger CI; applicable passing checks and protections gate merge.
 
 Within the user's authorized implementation scope, proceed with ordinary edits,
 checks, commits, and draft pushes without asking for repeated confirmation. Choose
@@ -17,8 +17,9 @@ decision or authority.
 - Commit and push WIP directly to that draft branch throughout the task and before
   stopping or handing off. Verify the remote SHA after each push.
 - Incomplete work or failing checks do not block draft pushes; record the failures
-  and remaining work in the PR. Review and applicable passing checks gate ready
-  and merge.
+  and remaining work in the PR. A draft whose exact head has been fully personally
+  reviewed may be marked ready to trigger CI before checks pass. Applicable
+  passing checks and protections gate merge.
 - Keep draft auto-merge off. Never force-push over others or push unreviewed work
   to an auto-merge head.
 
@@ -59,10 +60,13 @@ Nested `AGENTS.md` files and project documentation take precedence for their dir
 
 Sync the latest official Code Foundry core first, then add repository guidance
 outside its managed blocks. Keep every generated block and its markers intact.
-For an AGENTS-only task, preview `sync --target PATH --dry-run` in a disposable
-repository copy, then run the exported `syncRepository` with
-`configureHooks: false` there and bring back only `AGENTS.md`. The normal sync
-also generates CI/config files; those belong to a separately scoped update.
+For an AGENTS-only task, let `SOURCE_PATH` name the official Code Foundry
+checkout and `TARGET_PATH` the disposable repository copy. Preview with
+`node SOURCE_PATH/src/cli.mjs sync --target TARGET_PATH --dry-run`.
+Then import `syncRepository` from `SOURCE_PATH/src/commands/sync.mjs` and call
+`syncRepository({ source: SOURCE_PATH, target: TARGET_PATH, configureHooks: false })`
+with those directory paths as strings. Bring back only `AGENTS.md`; normal sync
+also generates CI/config files, which belong to a separately scoped update.
 
 The core here was verified against official Code Foundry v1.47.3, source commit
 `f016be30c4f3b3573d9564c070c9e791f84154e0`. Both the disposable sync and the
