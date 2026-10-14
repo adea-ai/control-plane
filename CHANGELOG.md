@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.98.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.98.0...workspace-v1.98.1) (2026-10-14)
+
+
+### Tests
+
+* **pi:** let the factory fixture state the child allowance only on the lead profile ([#1131](https://github.com/adea-ai/control-plane/issues/1131)) ([7d36f9b](https://github.com/adea-ai/control-plane/commit/7d36f9bb78e32be9cb2e508884f010a9ad670c6b))
+
 ## [1.98.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.97.0...workspace-v1.98.0) (2026-10-14)
 
 
