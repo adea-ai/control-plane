@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 import { SqliteExecutionPlanRepository } from '@control-plane/sqlite-persistence'
+import { ExecutionLifecycleService } from '@control-plane/domain'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
   DurableChildRuntimeBudgetAdmission,
@@ -257,6 +258,55 @@ test('allocation after the lead attempt settled still funds a child only up to t
     expect(await childAdmission(f).reserve(delegated)).toMatchObject({
       executionId: first.childIds.childExecutionId,
       maximumMicrounits: 4_000_000 - 1_600_000,
+    })
+  } finally {
+    await f.close()
+  }
+})
+
+test('once the lead attempt has ended the allocator refuses before any funding is considered', async () => {
+  const f = await fixture({
+    maximumTotal: 2,
+    maximumParallel: 2,
+    maximumDepth: 2,
+    childAllowance: allowance,
+  })
+  try {
+    const ledger = await runningLead(f)
+    await ledger.settle({
+      workspaceId: ids.workspaceId,
+      executionId: ids.parentExecutionId,
+      reservationKey: parentAttemptKey,
+      source: { sourceId: 'lead-settle', idempotencyKey: 'lead-settle' },
+    })
+    await new ExecutionLifecycleService(f.executions).transitionAttempt({
+      attemptId: ids.parentAttemptId,
+      expectedVersion: f.parentAttemptVersion,
+      to: 'cancelled',
+      transitionedAt: '2026-10-09T12:00:10.000Z',
+    })
+    const child = await f.childAdmission()
+    // The production path needs an active parent attempt, so the ledger cap is a second line of
+    // defence for the window where the usage reservation is settled but the attempt has not ended.
+    await expect(
+      child.allocator.allocate({
+        request: child.request,
+        receipt: child.receipt,
+        execution: child.childExecution,
+        attempt: child.childAttempt,
+        delegation: child.delegation,
+        assertCurrent: async () => undefined,
+      })
+    ).rejects.toMatchObject({ code: 'CHILD_ADMISSION_DENIED' })
+    expect(await f.executions.getExecution(child.childIds.childExecutionId)).toBeUndefined()
+    await expect(
+      f.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(child.childIds.childExecutionId)
+      )
+    ).resolves.toBeUndefined()
+    expect(await summaryOf(ledger, ids.parentExecutionId)).toMatchObject({
+      availableMicrounits: 10_000_000,
+      reservedMicrounits: 0,
     })
   } finally {
     await f.close()

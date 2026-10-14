@@ -133,9 +133,19 @@ what it spent.
 - **Cap:** child allocation passes the parent plan's statement (`parentChildAllowance`) to
   `openBudget`, which funds the child at the smallest of its requested ceiling, the parent's
   available balance and the unfunded allowance, and fails with `BUDGET_EXHAUSTED` when either
-  resource has none left. The cap holds when the lead's attempt has already settled and released its
-  envelope: balance freed later is never available to children beyond the allowance. The statement
-  is a constant of the parent's accepted plan, so a replayed opening is identical.
+  resource has none left. The cap is an invariant of the parent's budget ledger, not of the lead's
+  attempt: it counts funding still open at its ceiling and funding already settled at what it
+  spent, so it bounds outstanding funding plus spend, not a one-off total. A child that settles
+  below its ceiling returns the difference to the allowance for later siblings. The statement is a
+  constant of the parent's accepted plan, so a replayed opening is identical.
+- **Lifecycle:** the production allocators (SQLite and PostgreSQL) also require the parent
+  execution to be running and its latest attempt running or awaiting input, so after the lead's
+  attempt ends no child is allocated at all. The cap is the second, independent line of defence for
+  the window where the lead's usage reservation has settled but its attempt record has not moved
+  on: balance released then is never available to children beyond the allowance. Both are tested
+  (`tests/child-runtime-budget-admission.test.mjs`, the ledger and worker suites, and the
+  PostgreSQL child allocator suite). No reachable production path is claimed beyond the lifecycle
+  fence; the ledger-level cap does not depend on it.
 - The allowance must be below both execution ceilings, so the execution keeps a nonzero share, and
   it needs at least one child and one level of depth. Plans that omit it keep their exact shape and
   digest, and their children are funded from whatever is available as before.
@@ -165,6 +175,33 @@ delegation bridge. A delegated child has no accepted command, so it checks the d
 the allocator's opening receipt (whose fingerprint covers the parent plan's statement) and the
 parent's funding reservation before reserving the same envelope. A child's own budget is opened with its own reservations: nothing it spends or reserves
 changes its parent's attempt envelope.
+
+#### Composition contract for `DurableChildRuntimeBudgetAdmission`
+
+No composition root builds `CanonicalDelegationRuntimeBridge` in this repository yet, so the class
+is exported but unused. A root that builds the bridge wires it as follows; this contract is for the
+Local and Hosted composition owners (CP #1047, #1048):
+
+```ts
+new CanonicalDelegationRuntimeBridge({
+  // ...records, lifecycle, plans, delegations, runtime, runtimeConnectionId, assertAuthority...
+  reserveBudget: new DurableChildRuntimeBudgetAdmission({ store: usageStore, plans }).reserve,
+})
+```
+
+- `store` is the same `DurableUsageStore` the root's child allocator opens child budgets in
+  (`SqliteDurableUsageStore` for Local, `PostgresDurableUsageStore` for Hosted and Cloud). A
+  different store sees no child budget and denies.
+- `plans` is the same `ExecutionPlanRepository` the bridge reads. It supplies the parent plan whose
+  statement the opening receipt was fingerprinted with.
+- Pass `.reserve` itself, unwrapped. It denies with `RuntimeBudgetAdmissionError`
+  (`RUNTIME_BUDGET_ADMISSION_DENIED`) and never partially reserves; it is replay-safe, so recovery
+  may call it again for the same delegation and attempt and receives the same envelope.
+- The bridge calls it after `assertAuthority` and before `runtime.start`, so a denial starts no
+  runtime. The reservation is allocation authority, not a charge. Child usage settlement and
+  `finalizeBudget` stay with the existing child-completion path.
+- The root's lead admission remains `DurableRuntimeBudgetAdmission`; neither class replaces the
+  other.
 
 ### Model-request holds inside an attempt
 
