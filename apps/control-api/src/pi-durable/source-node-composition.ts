@@ -1,8 +1,5 @@
 import { z } from 'zod'
-import {
-  ServicePrincipalSchema,
-  executionScopeOf,
-} from '@control-plane/contracts'
+import { ServicePrincipalSchema, executionScopeOf } from '@control-plane/contracts'
 import {
   PiLeadHostSourceAuthoritySchema,
   PiLeadSourceExecutionBindingSchema,
