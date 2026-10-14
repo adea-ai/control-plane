@@ -21,6 +21,7 @@ import {
   delegationReceiptNamespaces,
   delegationReceiptRetentionClass,
   prepareReceiptOwnerPins,
+  RECEIPT_PIN_BACKFILL_MAX_WRITES,
   RECEIPT_PIN_BACKFILL_PAGE,
   readDelegationReceiptPins,
   receiptOwnerPinNamespace,
@@ -746,7 +747,7 @@ describe('delegation receipt retention (#1022)', () => {
         // Before: one transaction read all 3,000 rows. Now none reads more than a page.
         for (const stat of pages) {
           expect(stat.rowsRead).toBeLessThanOrEqual(RECEIPT_PIN_BACKFILL_PAGE)
-          // Two executions per row at most, plus the cursor.
+          // These rows name two executions each; plan-bearing pages are covered below.
           expect(stat.puts).toBeLessThanOrEqual(2 * RECEIPT_PIN_BACKFILL_PAGE + 1)
         }
         expect(pages.reduce((sum, stat) => sum + stat.rowsRead, 0)).toBe(count)
@@ -766,6 +767,7 @@ describe('delegation receipt retention (#1022)', () => {
           'receipt backfill lock measurements',
           JSON.stringify({
             rows: count,
+            rowShape: 'two executions, no plans',
             transactions: pages.length,
             maximumRowsPerTransaction: Math.max(...pages.map((stat) => stat.rowsRead)),
             maximumWritesPerTransaction: Math.max(...pages.map((stat) => stat.puts)),
@@ -801,6 +803,107 @@ describe('delegation receipt retention (#1022)', () => {
         expect(Object.keys(await pinSources(provider))).toHaveLength(2 * count)
       })
     }, 120000)
+
+    // Rows that also name plans write more pins per page than the rows above.
+    const planBearing = {
+      // Well formed: two executions and two plans.
+      admission: (index) => ({
+        request: {
+          parentExecutionId: `exe_wide_parent_${index}`,
+          childExecutionId: `exe_wide_child_${index}`,
+          parentPlan: { executionPlanId: `pln_wide_parent_${index}` },
+          childPlan: { executionPlanId: `pln_wide_child_${index}` },
+        },
+        receipt: {
+          parentExecutionId: `exe_wide_parent_${index}`,
+          childExecutionId: `exe_wide_child_${index}`,
+        },
+      }),
+      // Worst case a damaged legacy row can name: four executions and two plans.
+      damagedAdmission: (index) => ({
+        request: {
+          parentExecutionId: `exe_wide_request_parent_${index}`,
+          childExecutionId: `exe_wide_request_child_${index}`,
+          parentPlan: { executionPlanId: `pln_wide_parent_${index}` },
+          childPlan: { executionPlanId: `pln_wide_child_${index}` },
+        },
+        receipt: {
+          parentExecutionId: `exe_wide_receipt_parent_${index}`,
+          childExecutionId: `exe_wide_receipt_child_${index}`,
+        },
+      }),
+      lookup: (index) => ({
+        parentExecutionId: `exe_wide_parent_${index}`,
+        childExecutionId: `exe_wide_child_${index}`,
+        request: {
+          executionId: `exe_wide_child_${index}`,
+          executionPlan: { executionPlanId: `pln_wide_child_${index}` },
+        },
+      }),
+    }
+
+    for (const [shape, namespace, writes] of [
+      ['admission', 'delegation-admission-receipts', 4 * RECEIPT_PIN_BACKFILL_PAGE + 1],
+      ['damagedAdmission', 'delegation-admission-receipts', RECEIPT_PIN_BACKFILL_MAX_WRITES],
+      ['lookup', 'delegation-runtime-lookups', 3 * RECEIPT_PIN_BACKFILL_PAGE + 1],
+    ])
+      test(`full pages of ${shape} rows write at most ${writes} records per transaction`, async () => {
+        const pages = 5
+        const count = pages * RECEIPT_PIN_BACKFILL_PAGE
+        await withProvider(async (provider) => {
+          await provider.transaction(async (transaction) => {
+            for (let index = 0; index < count; index += 1)
+              await transaction.put({
+                namespace,
+                id: `wide-${String(index).padStart(4, '0')}`,
+                value: planBearing[shape](index),
+              })
+          })
+          const measured = measuredProvider(provider)
+          await prepareReceiptOwnerPins(measured.provider, { dryRun: false })
+          const written = measured.transactions.map((stat) => stat.puts)
+          for (const stat of measured.transactions)
+            expect(stat.rowsRead).toBeLessThanOrEqual(RECEIPT_PIN_BACKFILL_PAGE)
+          // The full pages reach the expected write count; none exceeds the documented bound.
+          expect(Math.max(...written)).toBe(writes)
+          expect(Math.max(...written)).toBeLessThanOrEqual(RECEIPT_PIN_BACKFILL_MAX_WRITES)
+          expect(await missingPins(provider)).toEqual({})
+          const sources = await pinSources(provider)
+          expect(Object.keys(sources).filter((key) => key.startsWith('plan:'))).toHaveLength(
+            shape === 'lookup' ? count : 2 * count
+          )
+          console.info(
+            'receipt backfill plan-bearing page',
+            JSON.stringify({ shape, maximumWritesPerTransaction: Math.max(...written) })
+          )
+        })
+      }, 120000)
+
+    test('a dry run over plan-bearing rows still pins their plans and writes nothing', async () => {
+      await withProvider(async (provider) => {
+        await provider.transaction(async (transaction) => {
+          for (let index = 0; index < 200; index += 1)
+            await transaction.put({
+              namespace: 'delegation-admission-receipts',
+              id: `wide-${String(index).padStart(4, '0')}`,
+              value: planBearing.admission(index),
+            })
+        })
+        const measured = measuredProvider(provider)
+        const reader = await prepareReceiptOwnerPins(measured.provider, { dryRun: true })
+        for (const stat of measured.transactions) {
+          expect(stat.rowsRead).toBeLessThanOrEqual(RECEIPT_PIN_BACKFILL_PAGE)
+          expect(stat.puts).toBe(0)
+        }
+        expect(await provider.transaction((tx) => tx.list(receiptOwnerPinNamespace))).toEqual([])
+        expect(await provider.transaction((tx) => reader.hasPlan(tx, 'pln_wide_child_199'))).toBe(
+          true
+        )
+        expect(await provider.transaction((tx) => reader.hasPlan(tx, 'pln_wide_child_200'))).toBe(
+          false
+        )
+      })
+    })
 
     test('a dry run reads legacy rows in bounded pages and writes nothing', async () => {
       const count = 600

@@ -74,8 +74,14 @@ cannot hide behind another writer naming the same owner. Rows retained before th
 index existed are indexed by the first applying sweep, outside the candidate loop,
 one page of 64 rows per transaction with the cursor persisted in the same
 transaction, so no transaction holds the write lock for more than a page and an
-interrupted backfill resumes where it stopped (a dry run writes nothing and reads
-the same rows in read-only pages). The index is append-only like the receipts it
+interrupted backfill resumes where it stopped. A page writes at most 257 records
+for well-formed admission rows (two executions and two plans each) and at most
+`RECEIPT_PIN_BACKFILL_MAX_WRITES` (385) for the widest row a damaged legacy
+admission row can be. A dry run writes nothing and reads the same rows in
+bounded pages, but it is not lock-free: every SQLite provider transaction begins
+as `BEGIN IMMEDIATE`, so each page still takes the write lock for the length of
+one bounded read, and so does the marker read and every candidate's exact-key
+reads. The bounds shorten each hold; they do not remove it. The index is append-only like the receipts it
 mirrors. A pending terminal publication intent and a native-start lookup receipt
 are therefore never swept away before their repair path has read them, and a
 published receipt is retained as well.

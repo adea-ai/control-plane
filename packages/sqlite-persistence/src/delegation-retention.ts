@@ -125,8 +125,23 @@ export function receiptOwnerPins(
  * receipts it mirrors: nothing releases a pin.
  */
 export const receiptOwnerPinNamespace = 'delegation-receipt-owner-pins'
-/** Rows read, and so pins written, by one backfill transaction. */
+/** Rows read by one backfill transaction. */
 export const RECEIPT_PIN_BACKFILL_PAGE = 64
+/**
+ * Most records one backfill transaction can write: every row naming the largest
+ * number of distinct owners and plans its namespace can carry (a damaged legacy
+ * admission row can name four executions and two plans), plus the cursor. A
+ * well-formed admission row names two executions and two plans, so a full page
+ * of those writes 257.
+ */
+export const RECEIPT_PIN_BACKFILL_MAX_WRITES =
+  RECEIPT_PIN_BACKFILL_PAGE *
+    Math.max(
+      ...delegationReceiptNamespaces.map(
+        (namespace) => executionPaths[namespace].length + planPaths[namespace].length
+      )
+    ) +
+  1
 const backfillStateId = recordId('backfill-state')
 
 const pinId = (kind: 'execution' | 'plan', identity: string) => recordId(`${kind}:${identity}`)
@@ -227,7 +242,11 @@ async function backfillOnePage(provider: PersistenceProvider): Promise<boolean> 
   })
 }
 
-/** Read-only paged scan for a dry run over a store that has not been backfilled. */
+/**
+ * Paged scan for a dry run over a store that has not been backfilled. It writes
+ * nothing, but every SQLite provider transaction begins as BEGIN IMMEDIATE, so
+ * each page still takes the write lock for the length of one bounded page.
+ */
 async function scanLegacyPins(provider: PersistenceProvider): Promise<DelegationReceiptPins> {
   const executionIds = new Set<string>()
   const planIds = new Set<string>()
