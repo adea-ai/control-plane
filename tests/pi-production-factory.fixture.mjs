@@ -171,8 +171,15 @@ export async function createProductionFactoryFixture(options = {}) {
       .find((model) => model.id === 'gpt-5').contextWindow
     base.constraints.limits.tokens.maximumTotal = nativeContextWindow + 24
     if (options.childrenFactory) {
-      base.constraints.limits.childExecutions.maximumTotal = 1
+      // One child unless the caller asks for more, so a journey can allocate siblings that share the
+      // stated allowance. The concurrency limit follows so it is never what refuses them.
+      const maximumChildren = options.maximumChildren ?? 1
+      base.constraints.limits.childExecutions.maximumTotal = maximumChildren
       base.constraints.limits.childExecutions.maximumDepth = 1
+      base.constraints.limits.concurrency.maximumParallel = Math.max(
+        base.constraints.limits.concurrency.maximumParallel,
+        maximumChildren
+      )
       // The plan states what is held back for the child. The lead's attempt keeps the rest, which
       // still covers the conservative native request bound, so the child is funded from the
       // unreserved balance instead of finding nothing left.
