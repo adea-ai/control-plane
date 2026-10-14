@@ -13,6 +13,7 @@ import {
 import { createProductionFactoryFixture } from './pi-production-factory.fixture.mjs'
 
 const leadInteractionId = 'int_01JABCDEF0123456789ABCDEFG'
+const leadQuestion = 'Synthetic actual factory question'
 const summary = 'COMPACTED-LEAD-SUMMARY: the lead task and its child limits are preserved.'
 
 function eventStream(events) {
@@ -231,10 +232,27 @@ test('governed child dispatch after native compaction and reopen runs once with 
       return row && (await adapter.status(row.admission.handle)).state === 'completed'
     }, 'child completed')
 
-    // The lead's second request carries the native summary instead of the replayed first turn.
+    // The lead's second request replaces the replayed first turn with the native summary. The
+    // original question is gone; only the summary, the native recent tail (the lead's last answer)
+    // and the new input remain.
+    const firstRequest = JSON.stringify(sent.lead[0].input)
     const compactedRequest = JSON.stringify(sent.lead[1].input)
+    expect(firstRequest).toContain(leadQuestion)
+    expect(firstRequest).not.toContain('COMPACTED-LEAD-SUMMARY')
     expect(compactedRequest).toContain('COMPACTED-LEAD-SUMMARY')
-    expect(JSON.stringify(sent.lead[0].input)).not.toContain('COMPACTED-LEAD-SUMMARY')
+    expect(compactedRequest).not.toContain(leadQuestion)
+    expect(
+      sent.lead[1].input.map((item) =>
+        item.content
+          .map((part) => part.text ?? '')
+          .join('')
+          .replace(/\s+/g, ' ')
+      )
+    ).toEqual([
+      expect.stringContaining('COMPACTED-LEAD-SUMMARY'),
+      'Lead turn one answer.',
+      'Delegate the bounded objective.',
+    ])
     // Lead: first turn, delegating turn and the turn that reads the child receipt. Child: one send.
     expect(sent.lead).toHaveLength(3)
     expect(sent.child).toHaveLength(1)
