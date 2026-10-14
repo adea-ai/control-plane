@@ -73,8 +73,8 @@ Composition contract:
   semantics. It needs only `SELECT` on the measured tables and works through a
   transaction-mode pooler because the whole pass stays on one connection.
 - Each source runs under its own savepoint, so one unreadable table degrades
-  that source only. A worst-case pass is bounded by the number of sources (11)
-  times the statement timeout.
+  that source only. Each measurement statement is subject to the configured
+  statement timeout; this is not a deadline for the full pass.
 
 Integration shape for the Hosted composition (illustrative; not applied here):
 

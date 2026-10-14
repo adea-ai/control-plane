@@ -1041,6 +1041,37 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
   )
 
   test(
+    'a statement timeout degrades only its source and does not commit a baseline',
+    async () => {
+      const lock = await holdExclusiveLock('usage_operation_receipts')
+      try {
+        const result = await producerFor(WORKSPACE_A, {
+          statementTimeoutMs: 2000,
+          lockTimeoutMs: 5000,
+        }).measureDetailed()
+        expect(result.sources['usage-effects']).toEqual({
+          status: 'unavailable',
+          reason: 'timeout',
+        })
+        for (const namespace of postgresMeasuredNamespaces) {
+          if (namespace === 'usage-effects') continue
+          expect(result.sources[namespace]).toEqual({ status: 'complete' })
+        }
+        expect(result.baselineCommitted).toBe(false)
+        expect(
+          valueOf(result.points, operationsMetricNames.activeObjectCount, {
+            object_kind: 'execution',
+          })
+        ).toBe(3)
+      } finally {
+        lock.release()
+        await lock.done
+      }
+    },
+    timeout
+  )
+
+  test(
     'join-anchored sources plan nested loops from the bounded executions, never merge or hash joins (even when nested loops are discouraged)',
     async () => {
       // A merge or hash join would read other tenants' child rows to find this
