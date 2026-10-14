@@ -9,7 +9,7 @@ import { RuntimeStartRequestSchema } from '@control-plane/runtime-sdk'
 import { createSqliteChildAdmissionReader } from './child-admission-reader.js'
 import { ExecutionAttemptSchema, ExecutionSchema } from '@control-plane/domain'
 import { assertExecutionPlanDerivedFrom } from '@control-plane/execution-plan'
-import { DurableUsageLedger } from '@control-plane/usage-ledger'
+import { childAllowanceStatementOf, DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
   ChildAdmissionAllocationError,
   ChildAdmissionReceiptSchema,
@@ -431,6 +431,7 @@ export class SqliteDelegationRepository implements DelegationRepository, ChildAd
           currency: childPlan.constraints.limits.budget.currency,
           maximumMicrounits: childPlan.constraints.limits.budget.maximumMicrounits,
           maximumTokens: childPlan.constraints.limits.tokens.maximumTotal,
+          ...parentChildAllowanceOf(parentPlan.constraints.limits),
           source: {
             sourceId: `child-budget:${record.delegationId}`,
             idempotencyKey: `child-budget-open:${record.delegationId}`,
@@ -590,4 +591,10 @@ async function assertReferences(
     )
       throw new Error('DELEGATION_REFERENCE_INVALID')
   }
+}
+
+/** The parent plan's child allowance, so a child is never funded beyond it from freed balance. */
+function parentChildAllowanceOf(limits: Parameters<typeof childAllowanceStatementOf>[0]) {
+  const parentChildAllowance = childAllowanceStatementOf(limits)
+  return parentChildAllowance === undefined ? {} : { parentChildAllowance }
 }
