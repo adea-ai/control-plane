@@ -1146,10 +1146,13 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
         storageUsdPerGiBMonth: 1,
         now: () => NOW,
       })
-      lifecycle.start()
-      await lifecycle.sample()
-      await lifecycle.sample()
-      await lifecycle.close()
+      try {
+        lifecycle.start()
+        await lifecycle.sample()
+        await lifecycle.sample()
+      } finally {
+        await lifecycle.close()
+      }
       expect(recorded.length).toBeGreaterThan(40)
       const serialized = JSON.stringify(recorded)
       for (const forbidden of [
@@ -1201,29 +1204,34 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
         prepare: false,
         connect_timeout: 1,
       })
-      const producer = createPostgresOperationsMeasurementProducer({
-        database: drizzle(dead, { schema }),
-        workspaceId: WORKSPACE_A,
-        now: () => NOW,
-      })
-      await expect(producer.measure()).resolves.toBeUndefined()
-      await expect(producer.measureDetailed()).resolves.toBeUndefined()
-      await dead.end({ timeout: 1 })
-
       const recorded = []
-      const lifecycle = createPostgresRuntimeMeasurements({
-        database: drizzle(dead, { schema }),
-        adapter: {
-          add: (...args) => recorded.push(args),
-          record: (...args) => recorded.push(args),
-          recordGauge: (...args) => recorded.push(args),
-        },
-        intervalMs: 3_600_000,
-        workspaceId: WORKSPACE_A,
-      })
-      lifecycle.start()
-      await lifecycle.sample()
-      await lifecycle.close()
+      let lifecycle
+      try {
+        const producer = createPostgresOperationsMeasurementProducer({
+          database: drizzle(dead, { schema }),
+          workspaceId: WORKSPACE_A,
+          now: () => NOW,
+        })
+        await expect(producer.measure()).resolves.toBeUndefined()
+        await expect(producer.measureDetailed()).resolves.toBeUndefined()
+        await dead.end({ timeout: 1 })
+
+        lifecycle = createPostgresRuntimeMeasurements({
+          database: drizzle(dead, { schema }),
+          adapter: {
+            add: (...args) => recorded.push(args),
+            record: (...args) => recorded.push(args),
+            recordGauge: (...args) => recorded.push(args),
+          },
+          intervalMs: 3_600_000,
+          workspaceId: WORKSPACE_A,
+        })
+        lifecycle.start()
+        await lifecycle.sample()
+      } finally {
+        await lifecycle?.close()
+        await dead.end({ timeout: 1 })
+      }
       expect(recorded).toEqual([])
     },
     timeout
@@ -1240,24 +1248,38 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
         recordGauge: (...args) => recorded.push(args),
       }
       const lock = await holdExclusiveLock('usage_operation_receipts')
-      const lifecycle = createPostgresRuntimeMeasurements({
-        database: drizzle(pool, { schema }),
-        adapter,
-        intervalMs: 3_600_000,
-        workspaceId: WORKSPACE_A,
-        lockTimeoutMs: 400,
-        now: () => NOW,
-      })
-      lifecycle.start()
-      const closing = lifecycle.close()
-      await closing
-      const emitted = recorded.length
-      expect(emitted).toBeGreaterThan(0)
-      lock.release()
-      await lock.done
-      await lifecycle.sample()
-      expect(recorded.length).toBe(emitted)
-      await pool.end({ timeout: 5 })
+      let lifecycle
+      try {
+        lifecycle = createPostgresRuntimeMeasurements({
+          database: drizzle(pool, { schema }),
+          adapter,
+          intervalMs: 3_600_000,
+          workspaceId: WORKSPACE_A,
+          lockTimeoutMs: 400,
+          now: () => NOW,
+        })
+        lifecycle.start()
+        await lifecycle.close()
+        const emitted = recorded.length
+        expect(emitted).toBeGreaterThan(0)
+        lock.release()
+        await lock.done
+        await lifecycle.sample()
+        expect(recorded.length).toBe(emitted)
+      } finally {
+        // Cleanup never depends on the assertions above: release the table lock, drain the
+        // lifecycle, then end the pool, each step tolerating the others having run.
+        lock.release()
+        try {
+          await lock.done
+        } finally {
+          try {
+            await lifecycle?.close()
+          } finally {
+            await pool.end({ timeout: 5 })
+          }
+        }
+      }
       const open = await migrationSql`select count(*)::int as n from pg_stat_activity
         where datname = ${isolated.name} and usename = ${new URL(applicationUrl).username}
           and state like 'idle in transaction%'`
