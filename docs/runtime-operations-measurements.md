@@ -100,13 +100,20 @@ Scope and bounds:
   subquery, which cannot plan as a merge or hash join. Commands and events must
   also carry the selected `workspace_id`, so a record stamped with another
   workspace on an in-scope execution counts for neither tenant.
-- `maxScanRows` (default 10,000, up to 1,000,000) bounds the rows each source
-  examines. A source that reaches it, or whose executions bound was reached, is
+- `maxScanRows` (default 10,000, up to 1,000,000) bounds candidate rows returned
+  from each source subquery to its aggregate, with one extra row as a truncation
+  sentinel. A source that reaches it, or whose executions bound was reached, is
   `incomplete` (`row_budget_reached`) and every point derived from it is
   suppressed; nothing is reported as a lower bound.
-- The bounds hold when the planner uses the existing workspace-leading and
-  `execution_id` indexes. `statement_timeout` is the backstop if statistics
-  push a plan elsewhere; the source then reports `timeout`.
+- This returned-row bound is not a bound on physical planner reads. PostgreSQL
+  may inspect more heap or index tuples and pages to find the bounded rows,
+  depending on the selected plan and data distribution. `statement_timeout` is a
+  per-statement backstop for elapsed database execution, not a deterministic
+  I/O/CPU bound or a deadline for the full pass.
+- The `usage-budgets` source expands each selected row's `reservations` JSON
+  array to validate and sum its entries. `maxScanRows` limits budget rows, not
+  the number of reservation elements within one row; there is no separate
+  per-array expansion cap, so a large reservation array can increase work.
 
 Honest results:
 
@@ -117,10 +124,13 @@ Honest results:
   metric or thrown error. Damaged budget JSON, any reservation whose charged
   amount is not a nonnegative whole number, an external-session read model whose
   `state` is missing, null, not a string or outside the contract's states, and
-  sums beyond the safe-integer range are `incomplete`, never summed or counted
-  as "not active". Enumerated columns (execution, attempt, interaction, command
-  and event states) are constrained by PostgreSQL itself, so only the JSON
-  models need this check.
+  per-source sums beyond the safe-integer range are `incomplete`, never summed
+  or counted as "not active". Aggregate retained/growth and priced storage
+  points are suppressed if cross-namespace sums or computed microunits exceed
+  the safe-integer range; safe per-namespace points remain available.
+  Enumerated columns (execution, attempt, interaction, command and event states)
+  are constrained by PostgreSQL itself, so only the JSON models need this
+  validation.
 - A pass in which nothing could be read, or no transaction could be opened,
   returns `undefined`, so the lifecycle emits nothing instead of zeros. A
   workspace with no rows is a complete pass with zero counts and no latency
@@ -154,11 +164,14 @@ Storage and growth:
   the producer. It is replaced only when every measured namespace was complete
   in a pass whose transaction committed; a partial or failed pass leaves the
   previous baseline intact, and the first pass has no growth point. Growth is a
-  signed delta (shrinkage is negative) per complete namespace, and the total
-  delta is emitted only when the whole snapshot is complete.
+  signed delta (shrinkage is negative) per complete namespace. Aggregate
+  retained bytes and total growth are emitted only when their safe-integer sums
+  fit; unsafe aggregate totals do not suppress safe per-namespace points.
 - Storage cost is priced only with an explicit `storageUsdPerGiBMonth` over a
-  complete snapshot. The total operating cost additionally needs budgets that
-  parse cleanly in a single USD currency. No provider pricing is inferred.
+  complete snapshot whose retained total and computed microunits fit the
+  safe-integer range. The total operating cost additionally needs budgets that
+  parse cleanly in a single USD currency and a safe-integer combined sum. No
+  provider pricing is inferred.
 
 Not claimed: this producer does not wire a composition root, install an
 exporter, configure credentials, network access or prices, change roles or

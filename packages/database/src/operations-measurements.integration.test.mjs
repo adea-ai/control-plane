@@ -29,6 +29,23 @@ const usd = (microunits) => microunits / 1_000_000
 let counter = 0
 const id = (prefix) => `${prefix}_01JABCDEF0123456789ABC${String(++counter).padStart(4, '0')}`
 
+async function cleanupIntegrationResources(clients, disposeDatabase) {
+  const closeResults = await Promise.allSettled(
+    clients.map((client) => Promise.resolve().then(() => client.end({ timeout: 5 })))
+  )
+  const failures = closeResults
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason)
+  try {
+    await disposeDatabase()
+  } catch (error) {
+    failures.push(error)
+  }
+  if (failures.length === 1) throw failures[0]
+  if (failures.length > 1)
+    throw new AggregateError(failures, 'Failed to clean up measurement integration resources')
+}
+
 describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', () => {
   let isolated
   let application
@@ -61,8 +78,7 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
   }, timeout)
 
   afterAll(async () => {
-    for (const client of clients) await client.end({ timeout: 5 })
-    await isolated?.dispose()
+    await cleanupIntegrationResources(clients, () => isolated?.dispose())
   }, timeout)
 
   afterEach(async () => {
@@ -456,7 +472,56 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
     return { release, done }
   }
 
+  async function waitForBackendLockWait(pidFor, timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const pid = pidFor()
+      if (pid !== undefined) {
+        const [activity] = await application.execute(sql`
+          select state, wait_event_type from pg_stat_activity where pid = ${pid}
+        `)
+        if (activity?.state === 'active' && activity.wait_event_type === 'Lock') return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    throw new Error('measurement did not reach the expected database lock wait')
+  }
+
   // ---- Tests -----------------------------------------------------------------
+
+  test('integration cleanup attempts every client close and database disposal after failures', async () => {
+    const attempts = []
+    const closeFailure = new Error('client close failed')
+    const disposeFailure = new Error('database disposal failed')
+    let failure
+    try {
+      await cleanupIntegrationResources(
+        [
+          {
+            end: async () => {
+              attempts.push('first-client')
+              throw closeFailure
+            },
+          },
+          {
+            end: async () => {
+              attempts.push('second-client')
+            },
+          },
+        ],
+        async () => {
+          attempts.push('database')
+          throw disposeFailure
+        }
+      )
+    } catch (error) {
+      failure = error
+    }
+
+    expect(attempts.sort()).toEqual(['database', 'first-client', 'second-client'])
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect(failure.errors).toEqual([closeFailure, disposeFailure])
+  })
 
   test(
     'measures exact scoped values for the selected workspace only',
@@ -1066,6 +1131,77 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
       } finally {
         lock.release()
         await lock.done
+      }
+    },
+    timeout
+  )
+
+  test(
+    'all source results share one snapshot when a writer commits between source queries',
+    async () => {
+      const lock = await holdExclusiveLock('execution_events')
+      let updated = false
+      let measurementResult
+      let subject
+      try {
+        let measurementPid
+        const snapshotDatabase = {
+          transaction: (callback, config) =>
+            application.transaction(async (transaction) => {
+              const [backend] = await transaction.execute(sql`select pg_backend_pid() as pid`)
+              measurementPid = backend.pid
+              return callback(transaction)
+            }, config),
+        }
+        subject = producerFor(WORKSPACE_A, {
+          database: snapshotDatabase,
+          statementTimeoutMs: 60_000,
+          lockTimeoutMs: 10_000,
+        })
+        measurementResult = subject.measureDetailed().then(
+          (value) => ({ value }),
+          (error) => ({ error })
+        )
+        await waitForBackendLockWait(() => measurementPid)
+
+        const changed = await migrationSql`
+          update executions set state = 'completed'
+          where execution_id = ${executionsA.running}
+          returning execution_id
+        `
+        expect(changed).toHaveLength(1)
+        updated = true
+
+        lock.release()
+        await lock.done
+        const firstPass = await measurementResult
+        if ('error' in firstPass) throw firstPass.error
+        expect(firstPass.value).toBeDefined()
+        expect(
+          valueOf(firstPass.value.points, operationsMetricNames.activeObjectCount, {
+            object_kind: 'execution',
+          })
+        ).toBe(3)
+        const [{ state }] = await migrationSql`
+          select state::text as state from executions where execution_id = ${executionsA.running}
+        `
+        expect(state).toBe('completed')
+
+        const nextPass = await subject.measureDetailed()
+        expect(
+          valueOf(nextPass.points, operationsMetricNames.activeObjectCount, {
+            object_kind: 'execution',
+          })
+        ).toBe(2)
+      } finally {
+        lock.release()
+        await lock.done
+        if (measurementResult !== undefined) await measurementResult
+        if (updated)
+          await migrationSql`
+            update executions set state = 'running', updated_at = ${ago(30)}
+            where execution_id = ${executionsA.running}
+          `
       }
     },
     timeout

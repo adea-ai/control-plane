@@ -28,10 +28,12 @@ import type { ControlPlaneDatabase } from './connection.js'
  * - Workspace scope. Every source is anchored on the selected workspace id —
  *   either on its own `workspace_id` column or through that workspace's
  *   executions — and never scans another tenant's rows to find its own.
- * - Bounded. Each source examines at most `maxScanRows + 1` rows (and, for
- *   sources joined through executions, at most that many executions). A source
- *   that reaches the bound is reported incomplete and every point derived from
- *   it is suppressed rather than emitted as a lower bound.
+ * - Bounded. Each source subquery returns at most `maxScanRows + 1` candidate
+ *   rows (and joined sources start from at most that many executions). This
+ *   does not bound physical planner reads or reservation elements expanded
+ *   inside a JSON value. A source that reaches the row bound is incomplete and
+ *   every point derived from it is suppressed rather than emitted as a lower
+ *   bound.
  * - Honest. A source that cannot be read (timeout, lock, permission, damaged
  *   JSON, overflow) is `unavailable` or `incomplete`; dependent points are
  *   suppressed, never zero-filled. A pass where nothing could be read returns
@@ -287,6 +289,18 @@ function wholeNumber(value: unknown): number {
   if (parsed > BigInt(Number.MAX_SAFE_INTEGER) || parsed < BigInt(Number.MIN_SAFE_INTEGER))
     throw new UnsafeTotal()
   return Number(parsed)
+}
+
+function safeIntegerSum(values: Iterable<number>): number | undefined {
+  let total = 0n
+  const minimum = BigInt(Number.MIN_SAFE_INTEGER)
+  const maximum = BigInt(Number.MAX_SAFE_INTEGER)
+  for (const value of values) {
+    if (!Number.isSafeInteger(value)) return undefined
+    total += BigInt(value)
+    if (total < minimum || total > maximum) return undefined
+  }
+  return Number(total)
 }
 
 function stats(row: Row, alias: string): LatencyStats | null {
@@ -792,7 +806,6 @@ export function assemblePostgresOperationsPoints(
   // Storage: per complete namespace, then the measured-set total only when every
   // measured namespace is complete. Rewritten bytes exist only for namespaces
   // with a last-write timestamp, so no total is claimed for them.
-  let totalBytes = 0
   let allComplete = true
   const bytesByNamespace = new Map<PostgresMeasuredNamespace, number>()
   for (const namespace of postgresMeasuredNamespaces) {
@@ -803,7 +816,6 @@ export function assemblePostgresOperationsPoints(
     }
     const { storage: namespaceStorage } = outcome.facts as { storage: StorageFacts }
     bytesByNamespace.set(namespace, namespaceStorage.bytes)
-    totalBytes += namespaceStorage.bytes
     points.push({
       name: operationsMetricNames.storageRetainedBytes,
       value: namespaceStorage.bytes,
@@ -823,20 +835,24 @@ export function assemblePostgresOperationsPoints(
         labels: { namespace },
       })
   }
-  if (allComplete) {
+  const totalBytes = allComplete ? safeIntegerSum(bytesByNamespace.values()) : undefined
+  if (totalBytes !== undefined) {
     points.push({
       name: operationsMetricNames.storageRetainedBytes,
       value: totalBytes,
       labels: { namespace: 'total' },
     })
     if (baseline !== undefined) {
-      let baselineTotal = 0
-      for (const value of baseline.values()) baselineTotal += value
-      points.push({
-        name: operationsMetricNames.storageGrowthBytes,
-        value: totalBytes - baselineTotal,
-        labels: { namespace: 'total' },
-      })
+      const baselineTotal = safeIntegerSum(baseline.values())
+      if (baselineTotal !== undefined) {
+        const totalGrowth = totalBytes - baselineTotal
+        if (Number.isSafeInteger(totalGrowth))
+          points.push({
+            name: operationsMetricNames.storageGrowthBytes,
+            value: totalGrowth,
+            labels: { namespace: 'total' },
+          })
+      }
     }
   }
 
@@ -859,29 +875,31 @@ export function assemblePostgresOperationsPoints(
 
   // Operating cost: storage is priced only with an explicit rate over a complete
   // snapshot; the total additionally needs a clean single-currency USD budget.
-  if (storageUsdPerGiBMonth !== undefined && allComplete) {
+  if (storageUsdPerGiBMonth !== undefined && totalBytes !== undefined) {
     const storageMicrounits = Math.round(
       (totalBytes / BYTES_PER_GIB) * storageUsdPerGiBMonth * MICROUNITS_PER_USD
     )
-    points.push({
-      name: operationsMetricNames.operatingCostUsd,
-      value: storageMicrounits / MICROUNITS_PER_USD,
-      labels: { component: 'storage' },
-    })
-    const budgets = facts('usage-budgets')
-    if (
-      budgets !== undefined &&
-      budgets.records > 0 &&
-      budgets.currencies.length === 1 &&
-      budgets.usdSpentMicrounits !== null
-    ) {
-      const total = budgets.usdSpentMicrounits + storageMicrounits
-      if (Number.isSafeInteger(total))
-        points.push({
-          name: operationsMetricNames.operatingCostUsd,
-          value: total / MICROUNITS_PER_USD,
-          labels: { component: 'total' },
-        })
+    if (Number.isSafeInteger(storageMicrounits)) {
+      points.push({
+        name: operationsMetricNames.operatingCostUsd,
+        value: storageMicrounits / MICROUNITS_PER_USD,
+        labels: { component: 'storage' },
+      })
+      const budgets = facts('usage-budgets')
+      if (
+        budgets !== undefined &&
+        budgets.records > 0 &&
+        budgets.currencies.length === 1 &&
+        budgets.usdSpentMicrounits !== null
+      ) {
+        const total = budgets.usdSpentMicrounits + storageMicrounits
+        if (Number.isSafeInteger(total))
+          points.push({
+            name: operationsMetricNames.operatingCostUsd,
+            value: total / MICROUNITS_PER_USD,
+            labels: { component: 'total' },
+          })
+      }
     }
   }
 

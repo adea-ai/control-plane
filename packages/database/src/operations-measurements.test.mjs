@@ -98,6 +98,69 @@ describe('assemblePostgresOperationsPoints', () => {
     expect(growth('total')).toBe(6600 - 11 * 1000)
   })
 
+  test('suppresses aggregate bytes and growth when the cross-namespace sum is unsafe', () => {
+    const outcomes = completeOutcomes({
+      executions: {
+        status: 'complete',
+        facts: {
+          active: 3,
+          reconciliation: stats(10),
+          storage: storage(Number.MAX_SAFE_INTEGER, 5),
+        },
+      },
+    })
+    const baseline = new Map(postgresMeasuredNamespaces.map((namespace) => [namespace, 1000]))
+    const { points, nextBaseline } = assemblePostgresOperationsPoints(outcomes, baseline, 2)
+
+    expect(
+      find(points, operationsMetricNames.storageRetainedBytes, { namespace: 'executions' })[0].value
+    ).toBe(Number.MAX_SAFE_INTEGER)
+    expect(
+      find(points, operationsMetricNames.storageRetainedBytes, { namespace: 'total' })
+    ).toHaveLength(0)
+    expect(
+      find(points, operationsMetricNames.storageGrowthBytes, { namespace: 'total' })
+    ).toHaveLength(0)
+    expect(find(points, operationsMetricNames.operatingCostUsd)).toHaveLength(0)
+    expect(nextBaseline?.size).toBe(postgresMeasuredNamespaces.length)
+  })
+
+  test('suppresses total growth when the baseline aggregate is unsafe', () => {
+    const baseline = new Map(
+      postgresMeasuredNamespaces.map((namespace) => [namespace, Number.MAX_SAFE_INTEGER])
+    )
+    const { points } = assemblePostgresOperationsPoints(completeOutcomes(), baseline, undefined)
+
+    expect(
+      find(points, operationsMetricNames.storageRetainedBytes, { namespace: 'total' })[0].value
+    ).toBe(6600)
+    expect(
+      find(points, operationsMetricNames.storageGrowthBytes, { namespace: 'executions' })
+    ).toHaveLength(1)
+    expect(
+      find(points, operationsMetricNames.storageGrowthBytes, { namespace: 'total' })
+    ).toHaveLength(0)
+  })
+
+  test('suppresses priced storage points when computed microunits are unsafe', () => {
+    const outcomes = completeOutcomes({
+      executions: {
+        status: 'complete',
+        facts: {
+          active: 3,
+          reconciliation: stats(10),
+          storage: storage(1_000_000_000_000_000, 5),
+        },
+      },
+    })
+    const { points } = assemblePostgresOperationsPoints(outcomes, undefined, 100_000)
+
+    expect(
+      find(points, operationsMetricNames.storageRetainedBytes, { namespace: 'total' })
+    ).toHaveLength(1)
+    expect(find(points, operationsMetricNames.operatingCostUsd)).toHaveLength(0)
+  })
+
   test('a source that is not complete suppresses its points, the total, cost and baseline', () => {
     const outcomes = completeOutcomes({
       'runtime-commands': { status: 'incomplete', reason: 'row_budget_reached' },
