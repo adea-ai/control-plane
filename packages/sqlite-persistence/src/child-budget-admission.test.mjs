@@ -1443,6 +1443,60 @@ test('a refused child fence leaves no canonical rows after restart', async () =>
   }
 })
 
+test('an omitted child allowance keeps settled lead balance available while its attempt is still running', async () => {
+  const f = await fixture()
+  try {
+    const ledger = new DurableUsageLedger({ store: f.usageStore, now: () => acceptedAt })
+    const reservationKey = `runtime-attempt:${ids.parentAttemptId}`
+    await ledger.reserve({
+      workspaceId: ids.workspaceId,
+      executionId: ids.parentExecutionId,
+      attemptId: ids.parentAttemptId,
+      reservationKey,
+      maximumMicrounits: 10_000_000,
+      maximumTokens: 250_000,
+      source: { sourceId: 'settled-lead-reservation', idempotencyKey: 'settled-lead-reserve' },
+    })
+    const settled = await ledger.settle({
+      workspaceId: ids.workspaceId,
+      executionId: ids.parentExecutionId,
+      reservationKey,
+      source: { sourceId: 'settled-lead-reservation', idempotencyKey: 'settled-lead-settle' },
+    })
+    expect(settled.releasedMicrounits).toBe(10_000_000)
+    await expect(f.executions.getExecution(ids.parentExecutionId)).resolves.toMatchObject({
+      state: 'running',
+    })
+    await expect(f.executions.getAttempt(ids.parentAttemptId)).resolves.toMatchObject({
+      state: 'running',
+    })
+
+    const child = await f.childAdmission()
+    await expect(
+      child.allocator.allocate({
+        request: child.request,
+        receipt: child.receipt,
+        execution: child.childExecution,
+        attempt: child.childAttempt,
+        delegation: child.delegation,
+        assertCurrent: async () => undefined,
+      })
+    ).resolves.toBe(true)
+    const childBudget = await f.usageStore.transaction(ids.workspaceId, (tx) =>
+      tx.getBudget(child.childIds.childExecutionId)
+    )
+    expect(childBudget).toMatchObject({
+      maximumMicrounits: 10_000_000,
+      maximumTokens: 250_000,
+    })
+
+    // Zero cannot express a different accepted-plan policy: allowance fields are positive-only.
+    expect(() => f.parentPlanStating({ maximumMicrounits: 0, maximumTokens: 0 })).toThrow()
+  } finally {
+    await f.close()
+  }
+})
+
 test('a committed child allocation and its transaction-bound reads survive restart', async () => {
   const f = await fixture()
   try {

@@ -51,15 +51,60 @@ const noRows = (rows) =>
   })
 
 describe.skipIf(!enabled)('PostgreSQL child allowance', () => {
-  test('after the lead settled, outstanding funding and settled spending bound later siblings', async () => {
+  test('an omitted allowance can fund from a settled lead reservation while its attempt is still running', async () => {
+    await withFixture({ maximumTotal: 2 }, async (f) => {
+      expect(f.parentPlan.constraints.limits.childExecutions).not.toHaveProperty('budgetAllowance')
+      await f.ledger.reserve({
+        workspaceId,
+        executionId: parentExecutionId,
+        attemptId: parentAttemptId,
+        reservationKey: parentAttemptKey,
+        maximumMicrounits: 10_000_000,
+        maximumTokens: 250_000,
+        source: source('omitted-lead-reserve'),
+      })
+      const settled = await f.ledger.settle({
+        workspaceId,
+        executionId: parentExecutionId,
+        reservationKey: parentAttemptKey,
+        source: source('omitted-lead-settle'),
+      })
+      expect(settled.releasedMicrounits).toBe(10_000_000)
+      await expect(f.executions.getExecution(parentExecutionId)).resolves.toMatchObject({
+        state: 'running',
+      })
+      await expect(f.executions.getAttempt(parentAttemptId)).resolves.toMatchObject({
+        state: 'running',
+      })
+
+      const child = await f.candidate()
+      await f.allocate(child)
+      expect(await summaryOf(f, child.childExecutionId)).toMatchObject({
+        maximumMicrounits: 10_000_000,
+        maximumTokens: 250_000,
+      })
+
+      // Zero cannot express a separate accepted-plan policy: allowance values must be positive.
+      expect(() =>
+        new ExecutionPlanCompiler('1.0.0').compile(
+          f.parentInput({ maximumMicrounits: 0, maximumTokens: 0 })
+        )
+      ).toThrow()
+    })
+  }, 90_000)
+
+  test('after the lead reservation settles while its attempt remains running, funding and spend bound siblings', async () => {
     await withFixture({ maximumTotal: 4, allowance }, async (f, admission) => {
-      // The lead's attempt ends first: its whole envelope is released and 10M is available again.
+      // The lead's reservation settles before its attempt transitions: the full envelope is
+      // released while the parent execution and attempt remain running.
       await f.ledger.settle({
         workspaceId,
         executionId: parentExecutionId,
         reservationKey: parentAttemptKey,
         source: source('lead-settle'),
       })
+      expect(await f.executions.getExecution(parentExecutionId)).toMatchObject({ state: 'running' })
+      expect(await f.executions.getAttempt(parentAttemptId)).toMatchObject({ state: 'running' })
       expect(await summaryOf(f, parentExecutionId)).toMatchObject({
         availableMicrounits: 10_000_000,
         availableTokens: 250_000,

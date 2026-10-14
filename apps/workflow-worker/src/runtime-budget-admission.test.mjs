@@ -515,7 +515,7 @@ describe('durable runtime budget admission', () => {
     })
   })
 
-  test('a lead whose attempt settled first still cannot give children more than the allowance', async () => {
+  test('a settled lead reservation still cannot give children more than the stated allowance', async () => {
     const childAllowance = { maximumMicrounits: 4_000_000, maximumTokens: 100_000 }
     const store = new TransactionalMemoryStore()
     const fixture = await acceptedExecution(
@@ -528,7 +528,7 @@ describe('durable runtime budget admission', () => {
     const guard = makeAdmission(store, fixture.repository)
     const attempt = await guard.reserve(admissionInput(fixture))
     const ledger = new DurableUsageLedger({ store, now: () => acceptedAt })
-    // The attempt ends and releases its whole envelope: everything is available again.
+    // Settling the lead reservation releases its whole envelope; this test does not transition the attempt.
     await ledger.settle({
       workspaceId: allowance.workspaceId,
       executionId: allowance.executionId,
@@ -642,7 +642,7 @@ describe('durable runtime budget admission', () => {
     ).toMatchObject({ maximumMicrounits: 1, maximumTokens: 1 })
   })
 
-  test('a plan that allows children but states no allowance cannot fund one', async () => {
+  test('a plan that allows children but states no allowance cannot fund one while its full lead reservation is open', async () => {
     const store = new TransactionalMemoryStore()
     const inputs = createExecutionPlanTestFixtureInputs()
     inputs.constraints.limits.childExecutions = { maximumTotal: 1, maximumDepth: 1 }

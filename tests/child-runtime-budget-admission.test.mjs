@@ -262,7 +262,7 @@ test('the child admission binds the parent plan statement the allocator funded u
   }
 })
 
-test('allocation after the lead attempt settled still funds a child only up to the stated allowance', async () => {
+test('allocation after the lead reservation settles while its attempt remains running respects the stated allowance', async () => {
   const f = await fixture({
     maximumTotal: 2,
     maximumParallel: 2,
@@ -271,13 +271,18 @@ test('allocation after the lead attempt settled still funds a child only up to t
   })
   try {
     const ledger = await runningLead(f)
-    // The lead's attempt ends first: its whole envelope is released and 10M is available again.
+    // The lead's reservation settles before its attempt transitions: the full envelope is released
+    // while the parent execution and attempt remain running.
     await ledger.settle({
       workspaceId: ids.workspaceId,
       executionId: ids.parentExecutionId,
       reservationKey: parentAttemptKey,
       source: { sourceId: 'lead-settle', idempotencyKey: 'lead-settle' },
     })
+    expect(await f.executions.getExecution(ids.parentExecutionId)).toMatchObject({
+      state: 'running',
+    })
+    expect(await f.executions.getAttempt(ids.parentAttemptId)).toMatchObject({ state: 'running' })
     expect(await summaryOf(ledger, ids.parentExecutionId)).toMatchObject({
       availableMicrounits: 10_000_000,
       availableTokens: 250_000,

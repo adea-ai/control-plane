@@ -140,19 +140,25 @@ what it spent.
   constant of the parent's accepted plan, so a replayed opening is identical.
 - **Lifecycle:** the production allocators (SQLite and PostgreSQL) also require the parent
   execution to be running and its latest attempt running or awaiting input, so after the lead's
-  attempt ends no child is allocated at all. The cap is the second, independent line of defence for
-  the window where the lead's usage reservation has settled but its attempt record has not moved
-  on: balance released then is never available to children beyond the allowance. Both are tested
+  attempt ends no child is allocated at all. When a plan states an allowance, its cap is the second,
+  independent line of defence for the window where the lead's usage reservation has settled but its
+  attempt record has not moved on: released balance cannot fund children beyond that allowance.
+  When a plan omits the allowance, no cap is applied in that window and released balance can fund
+  children under the legacy behavior described below. Both paths are tested
   (`tests/child-runtime-budget-admission.test.mjs`, the ledger and worker suites, and the
-  PostgreSQL child allocator suite). No reachable production path is claimed beyond the lifecycle
-  fence; the ledger-level cap does not depend on it.
-- The allowance must be below both execution ceilings, so the execution keeps a nonzero share, and
-  it needs at least one child and one level of depth. Plans that omit it keep their exact shape and
-  digest, and their children are funded from whatever is available as before.
+  PostgreSQL child allocator suite). The lifecycle fence remains the allocator's boundary after
+  the parent attempt ends.
+- A stated allowance must be positive, below both execution ceilings so the execution keeps a
+  nonzero share, and needs at least one child and one level of depth. Plans that omit it keep their
+  exact shape and digest and retain their prior funding behavior.
 
-- **Omitted:** a plan that allows children but states no allowance reserves everything left in its
-  attempt, so no child can be funded (`BUDGET_EXHAUSTED`). Nothing invents a default share; the plan
-  has to state one.
+- **Omitted:** no balance is held back for children. While the lead's full attempt reservation is
+  open, no unreserved balance remains for child funding. If that reservation settles while the
+  parent execution is running and its latest attempt is running or awaiting input, the released
+  balance becomes available to children
+  without an allowance cap; this preserves the behavior of existing plans. Zero is not a valid
+  stated allowance, and no default share is invented. A plan that needs a holdback and cap must
+  state a positive allowance.
 - **Layers:** constraint layers on one execution (profile and request) compose to the smaller stated
   allowance, a layer that states none has no opinion, and the result is clamped under the composed
   ceilings or dropped when no child remains.
@@ -183,13 +189,13 @@ PostgreSQL: `apps/workflow-worker/src/child-runtime-budget-admission.integration
 `packages/database/src/child-budget-admission.integration.test.mjs` for the cap and the denial
 cleanup.
 
-| Case                                                                                            | SQLite                                                             | PostgreSQL                     |
-| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------ |
-| Allocation after the lead's reservation settled is capped at the allowance                      | yes                                                                | yes                            |
-| An outstanding child funding exhausts the allowance for a sibling (`BUDGET_EXHAUSTED`, no rows) | yes                                                                | yes                            |
-| Settled child spend frees only the unspent difference                                           | yes                                                                | yes                            |
-| The child admission binds the parent plan's statement (a different or absent statement denies)  | different and absent statement, foreign plan, receipt and identity | different and absent statement |
-| Cancelled lead attempt is refused by the allocator (`CHILD_ADMISSION_DENIED`, no rows)          | yes                                                                | yes                            |
+| Case                                                                                                                 | SQLite                                                             | PostgreSQL                     |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------ |
+| With a stated allowance, allocation after the lead's reservation settles while its attempt remains running is capped | yes                                                                | yes                            |
+| An outstanding child funding exhausts the allowance for a sibling (`BUDGET_EXHAUSTED`, no rows)                      | yes                                                                | yes                            |
+| Settled child spend frees only the unspent difference                                                                | yes                                                                | yes                            |
+| The child admission binds the parent plan's statement (a different or absent statement denies)                       | different and absent statement, foreign plan, receipt and identity | different and absent statement |
+| Cancelled lead attempt is refused by the allocator (`CHILD_ADMISSION_DENIED`, no rows)                               | yes                                                                | yes                            |
 
 The allowance bounds outstanding child funding plus settled spend, not a lifetime allocation: in the
 PostgreSQL test a 4M allowance funds a 4M child, the child spends 1M and settles, and the next
