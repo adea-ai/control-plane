@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.96.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.4...workspace-v1.96.5) (2026-10-14)
+
+
+### Tests
+
+* **pi:** qualify child admission after native compaction ([#1127](https://github.com/adea-ai/control-plane/issues/1127)) ([1500ebb](https://github.com/adea-ai/control-plane/commit/1500ebb9cc05d61f9d19189986e1060cd48204e0))
+
+## [1.96.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.3...workspace-v1.96.4) (2026-10-14)
+
+
+### Bug Fixes
+
+* **pi-durable:** preflight retained approval tool pins ([#1124](https://github.com/adea-ai/control-plane/issues/1124)) ([128b396](https://github.com/adea-ai/control-plane/commit/128b396eca07f45185c6abf2ab476612b922968a))
+
+## [1.96.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.2...workspace-v1.96.3) (2026-10-14)
+
+
+### Tests
+
+* **models:** characterize source profile scope ([#1178](https://github.com/adea-ai/control-plane/issues/1178) WIP) ([#1118](https://github.com/adea-ai/control-plane/issues/1118)) ([cc5dd03](https://github.com/adea-ai/control-plane/commit/cc5dd03f5f4a5f12f70aeefa3cb55fa9adf1e47a))
+
 ## [1.96.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.1...workspace-v1.96.2) (2026-10-14)
 
 

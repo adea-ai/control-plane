@@ -123,7 +123,10 @@ export const INTEGRATION_SHARDS = [
       },
       {
         package: 'apps/workflow-worker',
-        files: ['src/runtime-budget-admission.integration.test.mjs'],
+        files: [
+          'src/child-runtime-budget-admission.integration.test.mjs',
+          'src/runtime-budget-admission.integration.test.mjs',
+        ],
       },
       {
         package: 'apps/control-api',

@@ -56,6 +56,8 @@ export {
   DurableRuntimeBudgetAdmission,
   RuntimeBudgetAdmissionError,
 } from './runtime-budget-admission.js'
+export { DurableChildRuntimeBudgetAdmission } from './child-runtime-budget-admission.js'
+export type { DurableChildRuntimeBudgetAdmissionOptions } from './child-runtime-budget-admission.js'
 export type {
   DurableRuntimeBudgetAdmissionOptions,
   RuntimeBudgetAdmissionPort,

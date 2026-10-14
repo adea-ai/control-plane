@@ -368,6 +368,77 @@ describe('immutable ExecutionPlan compilation', () => {
     }
   })
 
+  test("treats the child allowance as the child's own, not as an inherited restriction", () => {
+    const input = baseInput()
+    input.profile.definition.executionConstraints.limits.childExecutions = {
+      maximumTotal: 3,
+      maximumDepth: 2,
+      budgetAllowance: { maximumMicrounits: 4_000_000, maximumTokens: 100_000 },
+    }
+    const parent = compile(input)
+    expect(parent.constraints.limits.childExecutions.budgetAllowance).toEqual({
+      maximumMicrounits: 4_000_000,
+      maximumTokens: 100_000,
+    })
+    const childContext = deriveContextPackage(contextPackageSerializationFixtures.futurePi, {
+      objective: 'Complete the focused child task',
+      allowedStateItemIds: [],
+      allowedArtifactIds: [],
+      budgets: { maximumBytes: 512, maximumTokens: 128 },
+      successCriteria: ['Return focused output'],
+      returnContract: { contractRef: 'contract://adapter-result/v1' },
+      compiledAt: '2026-08-23T12:30:00.000Z',
+    })
+    const narrowed = (childExecutions) => {
+      const constraints = globalThis.structuredClone(parent.constraints)
+      constraints.limits.budget.maximumMicrounits = 1_000_000
+      constraints.limits.tokens.maximumTotal = 10_000
+      constraints.limits.childExecutions = childExecutions
+      return constraints
+    }
+
+    // A child that states nothing holds nothing back, and one that states its own share keeps it:
+    // neither is the parent's number, which is larger than the child's whole budget.
+    const omitted = deriveExecutionPlan(
+      parent,
+      childInput(narrowed({ maximumTotal: 1, maximumDepth: 1 }), childContext)
+    )
+    expect(omitted.constraints.limits.childExecutions).not.toHaveProperty('budgetAllowance')
+    const stated = { maximumMicrounits: 300_000, maximumTokens: 3_000 }
+    const own = deriveExecutionPlan(
+      parent,
+      childInput(
+        narrowed({ maximumTotal: 1, maximumDepth: 1, budgetAllowance: stated }),
+        childContext
+      )
+    )
+    expect(own.constraints.limits.childExecutions.budgetAllowance).toEqual(stated)
+
+    // The child's own schema still keeps its share below its own ceilings.
+    expect(() =>
+      deriveExecutionPlan(
+        parent,
+        childInput(
+          narrowed({
+            maximumTotal: 1,
+            maximumDepth: 1,
+            budgetAllowance: { maximumMicrounits: 1_000_000, maximumTokens: 3_000 },
+          }),
+          childContext
+        )
+      )
+    ).toThrow()
+    // Every other child limit is still compared exactly: more children or depth is an expansion.
+    for (const childExecutions of [
+      { maximumTotal: 4, maximumDepth: 1 },
+      { maximumTotal: 1, maximumDepth: 3 },
+    ]) {
+      expect(() =>
+        deriveExecutionPlan(parent, childInput(narrowed(childExecutions), childContext))
+      ).toThrow('CHILD_AUTHORITY_EXPANSION')
+    }
+  })
+
   test('revalidates child plan authority, inherited pins, and resolved context pins', () => {
     const parent = compile(baseInput())
     const parentContext = contextPackageSerializationFixtures.futurePi

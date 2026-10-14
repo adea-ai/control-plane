@@ -117,6 +117,40 @@ test('missing or changed profile and original actor cannot replace an accepted w
     database.close()
   }
 })
+
+test('a private source-owned profile is not replaced by a host lookup or host model default', async () => {
+  const database = new DatabaseSync(':memory:')
+  try {
+    const fixture = make(database)
+    const sourceWorkspaceId = 'wsp_01JBBCDEF0123456789ABCDEFG'
+    const sourceProfileId = 'prf_01JBBCDEF0123456789ABCDEFG'
+    fixture.state.product.profileId = sourceProfileId
+    const reads = []
+    fixture.ports.profiles.resolveImmutable = async (profileInput) => {
+      reads.push(structuredClone(profileInput))
+      return profileInput.workspaceId === sourceWorkspaceId &&
+        profileInput.profileId === sourceProfileId
+        ? { ...profile, profileId: sourceProfileId }
+        : undefined
+    }
+    await expect(fixture.authority.readCurrent(input)).rejects.toThrow(
+      'PI_PRODUCTION_PROFILE_UNAVAILABLE'
+    )
+    // Characterize the existing single-workspace contract. Adea must withhold
+    // foreign-Agent evidence until source authority has a separate binding.
+    expect(reads).toEqual([
+      {
+        workspaceId: input.workspaceId,
+        profileId: sourceProfileId,
+        profileVersion: evidence.profileVersion,
+        profileRevision: evidence.profileRevision,
+      },
+    ])
+    expect(fixture.state.selects).toBe(0)
+  } finally {
+    database.close()
+  }
+})
 test('readiness rejects missing, malformed or mismatched original actors before forwarding', async () => {
   let calls = 0
   const ready = createProductionLeadReadiness(async () => {

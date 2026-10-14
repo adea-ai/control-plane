@@ -1058,8 +1058,23 @@ function assertChildConstraints(
   } catch {
     fail('CHILD_AUTHORITY_EXPANSION')
   }
-  if (canonical(normalizeConstraints(intersection)) !== canonical(normalizeConstraints(child))) {
+  // The child allowance is what an execution holds back for its own children. It grants no
+  // authority: a grandchild is funded only from the child's budget, which the parent already
+  // bounded. So it is not an inherited restriction, and each plan's schema keeps its own below
+  // that plan's ceilings. Every other limit is still compared exactly.
+  if (
+    canonical(normalizeConstraints(withoutChildBudgetAllowance(intersection))) !==
+    canonical(normalizeConstraints(withoutChildBudgetAllowance(child)))
+  ) {
     fail('CHILD_AUTHORITY_EXPANSION')
+  }
+}
+
+function withoutChildBudgetAllowance(constraints: ExecutionConstraintSet): ExecutionConstraintSet {
+  const { budgetAllowance: _held, ...childExecutions } = constraints.limits.childExecutions
+  return {
+    ...constraints,
+    limits: { ...constraints.limits, childExecutions },
   }
 }
 
