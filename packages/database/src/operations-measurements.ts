@@ -1,4 +1,7 @@
-import { IdentifierSchemas } from '@control-plane/contracts'
+import {
+  ExternalSessionDiscoveryReadModelSchema,
+  IdentifierSchemas,
+} from '@control-plane/contracts'
 import {
   OperationsMeasurementLifecycle,
   operationsMetricNames,
@@ -53,6 +56,12 @@ const BYTES_PER_GIB = 1024 * 1024 * 1024
 const MICROUNITS_PER_USD = 1_000_000
 const TERMINAL_STATES = sql.raw(`('completed','failed','cancelled','timed_out')`)
 const ACTIVE_JOB_STATUSES = sql.raw(`('queued','dispatched','acknowledged')`)
+// Lifecycle states of an external-session read model. The model is JSON, so the database
+// does not constrain `state`; a row outside this set is damage or a newer producer.
+const EXTERNAL_SESSION_STATES = sql.join(
+  ExternalSessionDiscoveryReadModelSchema.shape.state.options.map((state) => sql`${state}`),
+  sql`, `
+)
 
 /**
  * PostgreSQL storage namespaces this producer measures, named like the SQLite
@@ -521,14 +530,23 @@ const sources: { readonly [K in PostgresMeasuredNamespace]: SourceSpec<K> } = {
     query: (context) => sql`
       select count(*)::text as scanned,
         count(*) filter (where active)::text as active,
+        count(*) filter (where malformed)::text as malformed,
         ${bytesSelect(context, true)}
       from (
-        select (p.model ->> 'state' = 'active') as active, pg_column_size(p.*) as bytes, p.updated_at as written_at
+        select (p.model ->> 'state' = 'active') as active,
+          (jsonb_typeof(p.model -> 'state') is distinct from 'string'
+            or coalesce(p.model ->> 'state' not in (${EXTERNAL_SESSION_STATES}), true)) as malformed,
+          pg_column_size(p.*) as bytes, p.updated_at as written_at
         from runtime_discovery_projections p
         where p.workspace_id = ${context.workspaceId} and p.kind::text = 'external_session'
         limit ${context.maxRows + 1}
       ) scoped`,
-    parse: (row) => ({ active: wholeNumber(row['active']), storage: storage(row, true) }),
+    parse: (row) => {
+      // A missing, null, non-string or unknown state is not "not active": the active count
+      // cannot be trusted, so the source is incomplete and its points are suppressed.
+      if (wholeNumber(row['malformed']) > 0) throw new MalformedRow()
+      return { active: wholeNumber(row['active']), storage: storage(row, true) }
+    },
   },
   'runtime-discovery-connections': {
     namespace: 'runtime-discovery-connections',

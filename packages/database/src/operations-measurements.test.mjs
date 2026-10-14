@@ -345,6 +345,7 @@ describe('createPostgresOperationsMeasurementProducer', () => {
         'runtime-commands': { active: 'not-a-number' },
         'usage-ledger-entries': { usd_entries: '1', usd_exact: '9007199254740993' },
         'usage-budgets': { malformed: '1' },
+        'runtime-discovery-sessions': { malformed: '2' },
       }),
     })
     const { sources } = await producer(database).measureDetailed()
@@ -365,6 +366,10 @@ describe('createPostgresOperationsMeasurementProducer', () => {
       reason: 'unsafe_total',
     })
     expect(sources['usage-budgets']).toEqual({ status: 'incomplete', reason: 'malformed_records' })
+    expect(sources['runtime-discovery-sessions']).toEqual({
+      status: 'incomplete',
+      reason: 'malformed_records',
+    })
     expect(sources.executions).toEqual({ status: 'complete' })
   })
 

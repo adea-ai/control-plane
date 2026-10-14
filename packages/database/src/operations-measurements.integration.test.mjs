@@ -20,6 +20,7 @@ const timeout = integrationTestTimeout(60_000)
 const NOW = new Date('2026-10-14T12:00:00.000Z')
 const WORKSPACE_A = 'wsp_01JABCDEF0123456789ABCDEFA'
 const WORKSPACE_B = 'wsp_01JABCDEF0123456789ABCDEFB'
+const WORKSPACE_C = 'wsp_01JABCDEF0123456789ABCDEFC'
 const SECRET = 'sk-live-HOSTED-MEASUREMENT-SECRET'
 const DIGEST = `sha256:${'a'.repeat(64)}`
 const ago = (minutes) => new Date(NOW.getTime() - minutes * 60_000)
@@ -146,9 +147,11 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
   }
 
   async function insertProjection(workspaceId, kind, model) {
+    const resourceId = id('res')
     await migrationSql`insert into runtime_discovery_projections
       (kind, resource_id, workspace_id, model, updated_at)
-      values (${kind}, ${id('res')}, ${workspaceId}, ${migrationSql.json(model)}, ${ago(5)})`
+      values (${kind}, ${resourceId}, ${workspaceId}, ${migrationSql.json(model)}, ${ago(5)})`
+    return resourceId
   }
 
   async function insertPlan(workspaceId) {
@@ -694,6 +697,123 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
           object_kind: 'execution',
         })
       ).toHaveLength(0)
+    },
+    timeout
+  )
+
+  test(
+    'a missing, null or unknown session state is incomplete evidence, never a zero-active result',
+    async () => {
+      const sessionPoints = (points) =>
+        pointsOf(points, operationsMetricNames.activeObjectCount, { object_kind: 'session' })
+      const models = [
+        {},
+        { state: null },
+        { state: 'bogus' },
+        { state: 'ACTIVE' },
+        { state: 5 },
+        { state: ['active'] },
+        'active',
+        [],
+      ]
+
+      // A workspace whose only sessions are damaged must not report "0 active sessions".
+      const damagedIds = []
+      for (const model of models) {
+        damagedIds.push(await insertProjection(WORKSPACE_C, 'external_session', model))
+      }
+      try {
+        const lonely = await producerFor(WORKSPACE_C).measureDetailed()
+        expect(lonely.sources['runtime-discovery-sessions']).toEqual({
+          status: 'incomplete',
+          reason: 'malformed_records',
+        })
+        expect(sessionPoints(lonely.points)).toHaveLength(0)
+        expect(lonely.baselineCommitted).toBe(false)
+        // Unaffected sources still report, and the connection projection is untouched.
+        expect(lonely.sources.executions).toEqual({ status: 'complete' })
+      } finally {
+        await migrationSql`delete from runtime_discovery_projections where workspace_id = ${WORKSPACE_C}`
+      }
+
+      // Every damaged shape, next to valid sessions, suppresses the count and the baseline.
+      const producer = producerFor(WORKSPACE_A)
+      const clean = await producer.measureDetailed()
+      expect(clean.sources['runtime-discovery-sessions']).toEqual({ status: 'complete' })
+      expect(clean.baselineCommitted).toBe(true)
+      expect(
+        valueOf(clean.points, operationsMetricNames.activeObjectCount, { object_kind: 'session' })
+      ).toBe(2)
+      const cleanTotal = valueOf(clean.points, operationsMetricNames.storageRetainedBytes, {
+        namespace: 'total',
+      })
+
+      for (const model of models) {
+        const resourceId = await insertProjection(WORKSPACE_A, 'external_session', model)
+        try {
+          const result = await producer.measureDetailed()
+          expect(result.sources['runtime-discovery-sessions']).toEqual({
+            status: 'incomplete',
+            reason: 'malformed_records',
+          })
+          expect(sessionPoints(result.points)).toHaveLength(0)
+          expect(
+            pointsOf(result.points, operationsMetricNames.storageRetainedBytes, {
+              namespace: 'runtime-discovery-sessions',
+            })
+          ).toHaveLength(0)
+          expect(result.baselineCommitted).toBe(false)
+          expect(
+            valueOf(result.points, operationsMetricNames.storageRetainedBytes, {
+              namespace: 'total',
+            })
+          ).toBeUndefined()
+        } finally {
+          await migrationSql`delete from runtime_discovery_projections where resource_id = ${resourceId}`
+        }
+      }
+
+      // Valid, in-contract states are all accepted, and the damaged passes did not move the
+      // baseline: growth is still measured against the last complete snapshot.
+      const validIds = []
+      for (const state of [
+        'active',
+        'closed',
+        'stale',
+        'offline',
+        'runtime_missing',
+        'capability_changed',
+        'removed',
+        'revoked',
+      ]) {
+        validIds.push(await insertProjection(WORKSPACE_A, 'external_session', { state }))
+      }
+      try {
+        const recovered = await producer.measureDetailed()
+        expect(recovered.sources['runtime-discovery-sessions']).toEqual({ status: 'complete' })
+        expect(recovered.baselineCommitted).toBe(true)
+        expect(
+          valueOf(recovered.points, operationsMetricNames.activeObjectCount, {
+            object_kind: 'session',
+          })
+        ).toBe(3)
+        const recoveredTotal = valueOf(
+          recovered.points,
+          operationsMetricNames.storageRetainedBytes,
+          {
+            namespace: 'total',
+          }
+        )
+        expect(
+          valueOf(recovered.points, operationsMetricNames.storageGrowthBytes, {
+            namespace: 'total',
+          })
+        ).toBe(recoveredTotal - cleanTotal)
+      } finally {
+        for (const resourceId of validIds) {
+          await migrationSql`delete from runtime_discovery_projections where resource_id = ${resourceId}`
+        }
+      }
     },
     timeout
   )
