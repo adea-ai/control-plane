@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { InteractionService, type InteractionRepository } from '@control-plane/domain'
+import type { ToolRegistry } from '@control-plane/tool-execution'
 import { DurableToolCallRequestSchema, type DurableToolCallRequest } from '@control-plane/tool-sdk'
 
 /**
@@ -17,7 +18,12 @@ import { DurableToolCallRequestSchema, type DurableToolCallRequest } from '@cont
 export const RETAINED_APPROVAL_WRITE_SCHEMA = 'retained-approval-write/v1'
 
 export class RetainedApprovalWriteError extends Error {
-  constructor(readonly code: 'RETAINED_TASK_INVALID' | 'RETAINED_TASK_KEY_MISMATCH') {
+  constructor(
+    readonly code:
+      | 'RETAINED_TASK_INVALID'
+      | 'RETAINED_TASK_KEY_MISMATCH'
+      | 'RETAINED_TOOL_PIN_UNAVAILABLE'
+  ) {
     super(code)
     this.name = 'RetainedApprovalWriteError'
   }
@@ -62,22 +68,38 @@ export interface RetainedApprovalWriteEffects {
  * outcome: awaiting approval, a settled receipt, a denial, or reconciliation. Replays return
  * the retained outcome and never repeat the write.
  *
- * The approval subject is requested as the task's first step, idempotently by interaction id.
- * The current-authority reader requires the interaction to exist at admission, before the gate
- * reviews it, so the gate's own create-on-review path is never reached for a retained task.
- * Revocation, expiry, and any audience, detail, or timing mismatch then fail closed in the gate.
+ * The exact registry pins are checked read-only before requesting approval. This preflight
+ * prevents approval records for unavailable work, but it is not execution authority: the effect
+ * gate still rechecks current tool and approval authority at its own admission/effect boundaries.
  */
 export function createRetainedApprovalWriteRunner(options: {
   readonly effects: RetainedApprovalWriteEffects
   readonly interactions: InteractionRepository
+  readonly registry: Pick<ToolRegistry, 'readVersion'>
 }) {
   const approvals = new InteractionService(options.interactions)
   return {
     async run(input: unknown): Promise<unknown> {
       const task = parseRetainedApprovalWriteTask(input)
+      await preflightToolPin(options.registry, task.request)
       await requestApprovalOnce(options.interactions, approvals, task)
       return options.effects.execute(task.request)
     },
+  }
+}
+
+async function preflightToolPin(
+  registry: Pick<ToolRegistry, 'readVersion'>,
+  request: DurableToolCallRequest
+): Promise<void> {
+  const version = await registry.readVersion(request.toolVersionId, request.workspaceId)
+  if (
+    version.toolVersionId !== request.toolVersionId ||
+    version.toolDefinitionId !== request.toolDefinitionId ||
+    (version.lifecycle !== 'published' && version.lifecycle !== 'deprecated') ||
+    !version.operations.some(({ name }) => name === request.operation)
+  ) {
+    throw new RetainedApprovalWriteError('RETAINED_TOOL_PIN_UNAVAILABLE')
   }
 }
 
