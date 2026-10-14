@@ -246,6 +246,40 @@ test('preparation discloses ready funding without accepting caller grants or run
   expect(calls).toHaveLength(2)
 })
 
+test('the client surfaces the child allowance disclosure and still parses a control plane that omits it', async () => {
+  const childAllowance = {
+    schemaVersion: 'pi-lead-child-allowance/v1',
+    executionPlanDigest: `sha256:${'e'.repeat(64)}`,
+    profile: {
+      profileId: id('prf'),
+      profileVersionId: id('pfv'),
+      version: 2,
+      revision: 3,
+    },
+    state: 'stated',
+    currency: 'USD',
+    maximumMicrounits: 400_000,
+    maximumTokens: 40_000,
+  }
+  const prepare = (data) =>
+    new ControlPlaneClient({
+      baseUrl: 'https://control-plane.example',
+      credential: 'test-service-credential',
+      fetch: async () => Response.json(response(data)),
+    }).preparePiDurableLead(requests.preparePiDurableLead)
+  const base = responses.preparePiDurableLead
+  expect((await prepare({ ...base, childAllowance })).data.childAllowance).toEqual(childAllowance)
+  const none = { ...childAllowance, state: 'not_stated' }
+  delete none.currency
+  delete none.maximumMicrounits
+  delete none.maximumTokens
+  expect((await prepare({ ...base, childAllowance: none })).data.childAllowance).toEqual(none)
+  expect((await prepare(base)).data.childAllowance).toBeUndefined()
+  await expect(
+    prepare({ ...base, childAllowance: { ...childAllowance, maximumTokens: 0 } })
+  ).rejects.toThrow()
+})
+
 test('preparation rejects blocked, mismatched or capability-bearing funding disclosures', async () => {
   let data
   const client = new ControlPlaneClient({

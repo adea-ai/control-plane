@@ -398,6 +398,58 @@ test('the compiled lead plan takes its child allowance from the pinned profile v
   }
 })
 
+test('preparation discloses the child allowance the pinned profile version states, or that it states none', async () => {
+  for (const source of ['profile', 'request-and-profile', 'none']) {
+    const host = await createProductionFactoryFixture({ childAllowanceSource: source })
+    try {
+      const intentId = host.setIntent()
+      const prepare = () =>
+        host.composition.piDurableLeadService.prepare(
+          host.command('pi-durable.lead.prepare', { intentId }),
+          host.principal
+        )
+      const { data } = await prepare()
+      const plan = host.parentPlanForIntent(intentId)
+      const catalog = host.profile.definition.executionConstraints.limits.childExecutions
+      // Read from the accepted plan and bound to it and to the pinned profile version.
+      expect(data.childAllowance).toMatchObject({
+        schemaVersion: 'pi-lead-child-allowance/v1',
+        executionPlanDigest: plan.contentDigest,
+        profile: {
+          profileId: host.profile.profileId,
+          profileVersionId: host.profile.profileVersionId,
+          version: host.profile.version,
+          revision: host.profile.revision,
+        },
+      })
+      if (source === 'none') {
+        expect(catalog.budgetAllowance).toBeUndefined()
+        expect(data.childAllowance.state).toBe('not_stated')
+        expect(Object.keys(data.childAllowance)).not.toContain('maximumMicrounits')
+      } else {
+        expect(data.childAllowance).toMatchObject({
+          state: 'stated',
+          currency: 'USD',
+          maximumMicrounits: catalog.budgetAllowance.maximumMicrounits,
+          maximumTokens: catalog.budgetAllowance.maximumTokens,
+        })
+        expect(data.childAllowance.maximumMicrounits).toBe(
+          plan.constraints.limits.childExecutions.budgetAllowance.maximumMicrounits
+        )
+      }
+      // A replay of the retained preparation discloses the same statement.
+      const replay = (await prepare()).data
+      expect(replay.replayed).toBe(true)
+      expect(replay.childAllowance).toEqual(data.childAllowance)
+      // Disclosure only: no runtime start, no provider work.
+      expect(host.state.physicalSends).toBe(0)
+      expect(host.composition.adapter.journal.list()).toHaveLength(0)
+    } finally {
+      await host.close()
+    }
+  }
+})
+
 test('actual factory current original actor and account denial never mint a canonical admission or start native work', async () => {
   const host = await createProductionFactoryFixture()
   try {
