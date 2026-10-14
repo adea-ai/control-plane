@@ -269,6 +269,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-local-native-terminal-usage.test.mjs',
     'tests/m11-standalone-e2e.test.mjs',
     'tests/child-progress-two-siblings-composition.test.mjs',
+    'tests/child-runtime-budget-admission.test.mjs',
     'tests/pi-child-continuation-sqlite.test.mjs',
     'tests/pi-durable-child-host.test.mjs',
     'tests/pi-durable-child-mapping-recovery.test.mjs',

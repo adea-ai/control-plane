@@ -124,17 +124,36 @@ receipts remain verifiable; extensions must not reuse the current maxima as that
 A child is funded only from its parent's unreserved balance, and a runtime attempt reserves
 everything that is left. A plan therefore states what it holds back for children:
 `limits.childExecutions.budgetAllowance` (`maximumMicrounits`, `maximumTokens`). The attempt
-reservation in `DurableRuntimeBudgetAdmission` is the available balance minus the part of that
-allowance no child has been funded from yet; an open child funding counts at its ceiling and a
-settled one at what it spent. The allowance must be below both execution ceilings, so the
-execution keeps a nonzero share, and it needs at least one child and one level of depth. Plans
-that omit it keep their exact shape and digest, and their attempts reserve everything left, so a
-plan that allows children but states no allowance cannot fund one (`BUDGET_EXHAUSTED`).
-Constraint layers compose to the smaller stated allowance, a layer that states none has no
-opinion, and the result is clamped under the composed ceilings or dropped when no child remains.
-A retry reserves only what is released, never a share a child was already funded from, and a
-child's own budget is opened with its own reservations: nothing it spends or reserves changes the
-parent's attempt envelope.
+reservation is the available balance minus the part of that allowance no child has been funded from
+yet; an open child funding counts at its ceiling and a settled one at what it spent. The allowance
+must be below both execution ceilings, so the execution keeps a nonzero share, and it needs at least
+one child and one level of depth. Plans that omit it keep their exact shape and digest.
+
+- **Omitted:** a plan that allows children but states no allowance reserves everything left in its
+  attempt, so no child can be funded (`BUDGET_EXHAUSTED`). Nothing invents a default share; the plan
+  has to state one.
+- **Layers:** constraint layers on one execution (profile and request) compose to the smaller stated
+  allowance, a layer that states none has no opinion, and the result is clamped under the composed
+  ceilings or dropped when no child remains.
+- **Nested:** the allowance is the execution's own, not an inherited restriction. A child plan states
+  its own allowance for its own children or none; it is not compared with its parent's, because a
+  grandchild is funded only from the child's budget, which the parent already bounded. Every other
+  child limit is still compared exactly.
+- **Clamped:** a child is funded at the smaller of its requested ceiling and what its parent has
+  available, so its budget can be below its plan's ceiling. Its allowance scales by the same ratio
+  and rounds down, so the plan keeps the share it asked for and a nonzero budget always leaves a
+  nonzero attempt envelope. A root budget is never clamped.
+- **Siblings:** siblings share one allowance. Each is clamped to what is left, and once the allowance
+  is funded or spent no further child can be opened. A settled child counts at what it spent, so its
+  unused funding is available again to a sibling and to a later attempt.
+- **Retries:** a retry reserves only what is released, never a share a child was already funded from.
+
+`DurableRuntimeBudgetAdmission` applies this to a root execution accepted by a command.
+`DurableChildRuntimeBudgetAdmission` is the production `reserveBudget` implementation for the
+delegation bridge. A delegated child has no accepted command, so it checks the delegation record,
+the allocator's opening receipt, and the parent's funding reservation before reserving the same
+envelope. A child's own budget is opened with its own reservations: nothing it spends or reserves
+changes its parent's attempt envelope.
 
 ### Model-request holds inside an attempt
 
