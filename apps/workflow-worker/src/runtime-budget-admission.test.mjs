@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { CommandInboxService, InMemoryCommandAcceptanceRepository } from '@control-plane/domain'
-import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
-import { executionPlanBudgetAllowance } from '@control-plane/execution-plan'
+import {
+  createExecutionPlanTestFixture,
+  createExecutionPlanTestFixtureInputs,
+} from '@control-plane/execution-plan/testing'
+import { ExecutionPlanCompiler, executionPlanBudgetAllowance } from '@control-plane/execution-plan'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import { DurableRuntimeBudgetAdmission } from './runtime-budget-admission.ts'
 
@@ -301,6 +304,122 @@ describe('durable runtime budget admission', () => {
     ).rejects.toThrow('RUNTIME_BUDGET_ADMISSION_DENIED')
   })
 
+  test('holds the plan child allowance out of the attempt envelope so a child can be funded', async () => {
+    const childAllowance = { maximumMicrounits: 4_000_000, maximumTokens: 100_000 }
+    const store = new TransactionalMemoryStore()
+    const fixture = await acceptedExecution(
+      store,
+      ids.executionId,
+      {},
+      planWithChildAllowance(childAllowance)
+    )
+    const allowance = await openAcceptedBudget(store, fixture)
+    const guard = makeAdmission(store, fixture.repository)
+    const authority = await guard.reserve(admissionInput(fixture))
+    expect(authority).toMatchObject({
+      maximumMicrounits: allowance.maximumMicrounits - childAllowance.maximumMicrounits,
+      maximumTokens: allowance.maximumTokens - childAllowance.maximumTokens,
+    })
+    const ledger = new DurableUsageLedger({ store, now: () => acceptedAt })
+    expect(await ledger.summary(allowance.workspaceId, allowance.executionId)).toMatchObject({
+      maximumMicrounits: allowance.maximumMicrounits,
+      reservedMicrounits: authority.maximumMicrounits,
+      availableMicrounits: childAllowance.maximumMicrounits,
+      availableTokens: childAllowance.maximumTokens,
+    })
+    // Replay reuses the same envelope and writes nothing.
+    const entries = await ledger.entries(allowance.workspaceId, allowance.executionId)
+    expect(await guard.reserve(admissionInput(fixture))).toEqual(authority)
+    expect(await ledger.entries(allowance.workspaceId, allowance.executionId)).toEqual(entries)
+
+    // The child is funded from the held-back share and cannot take more than it.
+    const openChild = (maximumMicrounits, maximumTokens, source) =>
+      ledger.openBudget({
+        workspaceId: allowance.workspaceId,
+        executionId: ids.childExecutionId,
+        parentExecutionId: allowance.executionId,
+        currency: 'USD',
+        maximumMicrounits,
+        maximumTokens,
+        source: { sourceId: source, idempotencyKey: source },
+      })
+    expect(await openChild(8_000_000, 200_000, 'child-funding')).toMatchObject({
+      maximumMicrounits: childAllowance.maximumMicrounits,
+      maximumTokens: childAllowance.maximumTokens,
+    })
+    expect(await ledger.summary(allowance.workspaceId, allowance.executionId)).toMatchObject({
+      reservedMicrounits: allowance.maximumMicrounits,
+      availableMicrounits: 0,
+      availableTokens: 0,
+    })
+    // The child's budget is its own: the parent's attempt envelope never moved.
+    expect(
+      store.workspaces
+        .get(allowance.workspaceId)
+        .budgets.get(ids.executionId)
+        .reservations.find((value) => value.attemptId === ids.attemptId)
+    ).toMatchObject({
+      maximumMicrounits: authority.maximumMicrounits,
+      maximumTokens: authority.maximumTokens,
+    })
+  })
+
+  test('a later attempt keeps holding back only the part no child has been funded from yet', async () => {
+    const childAllowance = { maximumMicrounits: 4_000_000, maximumTokens: 100_000 }
+    const store = new TransactionalMemoryStore()
+    const fixture = await acceptedExecution(
+      store,
+      ids.executionId,
+      {},
+      planWithChildAllowance(childAllowance)
+    )
+    const allowance = await openAcceptedBudget(store, fixture)
+    const guard = makeAdmission(store, fixture.repository)
+    const first = await guard.reserve(admissionInput(fixture))
+    const ledger = new DurableUsageLedger({ store, now: () => acceptedAt })
+    await ledger.openBudget({
+      workspaceId: allowance.workspaceId,
+      executionId: ids.childExecutionId,
+      parentExecutionId: allowance.executionId,
+      currency: 'USD',
+      maximumMicrounits: 1_000_000,
+      maximumTokens: 25_000,
+      source: { sourceId: 'child-funding', idempotencyKey: 'child-funding' },
+    })
+    await ledger.settle({
+      workspaceId: allowance.workspaceId,
+      executionId: allowance.executionId,
+      reservationKey: first.reservationKey,
+      source: { sourceId: 'first-settle', idempotencyKey: 'first-settle' },
+    })
+    const retry = admissionInput(fixture)
+    retry.attemptId = ids.wrongAttemptId
+    retry.execution.latestAttemptId = ids.wrongAttemptId
+    const second = await guard.reserve(retry)
+    // 10M ceiling, 1M funded to the child, 3M of the allowance still held back.
+    expect(second).toMatchObject({
+      maximumMicrounits: allowance.maximumMicrounits - 1_000_000 - 3_000_000,
+      maximumTokens: allowance.maximumTokens - 25_000 - 75_000,
+    })
+    expect(await ledger.summary(allowance.workspaceId, allowance.executionId)).toMatchObject({
+      availableMicrounits: 3_000_000,
+      availableTokens: 75_000,
+    })
+  })
+
+  test('without a child allowance the attempt still reserves everything that is left', async () => {
+    const store = new TransactionalMemoryStore()
+    const fixture = await acceptedExecution(store, ids.executionId)
+    expect(fixture.plan.constraints.limits.childExecutions.budgetAllowance).toBeUndefined()
+    const allowance = await openAcceptedBudget(store, fixture)
+    expect(
+      await makeAdmission(store, fixture.repository).reserve(admissionInput(fixture))
+    ).toMatchObject({
+      maximumMicrounits: allowance.maximumMicrounits,
+      maximumTokens: allowance.maximumTokens,
+    })
+  })
+
   test('denies a stale or malformed attempt identity', async () => {
     const store = new TransactionalMemoryStore()
     const fixture = await acceptedExecution(store, ids.executionId)
@@ -316,8 +435,19 @@ describe('durable runtime budget admission', () => {
   })
 })
 
-async function acceptedExecution(store, executionId, extra = {}) {
-  const plan = createExecutionPlanTestFixture()
+function planWithChildAllowance(budgetAllowance) {
+  const inputs = createExecutionPlanTestFixtureInputs()
+  inputs.constraints.limits.childExecutions = { maximumTotal: 1, maximumDepth: 1, budgetAllowance }
+  inputs.profile.definition.executionConstraints = structuredClone(inputs.constraints)
+  return new ExecutionPlanCompiler('1.0.0').compile(inputs)
+}
+
+async function acceptedExecution(
+  store,
+  executionId,
+  extra = {},
+  plan = createExecutionPlanTestFixture()
+) {
   const repository = new InMemoryCommandAcceptanceRepository()
   const accepted = await new CommandInboxService({
     repository,

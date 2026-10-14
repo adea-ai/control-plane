@@ -173,6 +173,14 @@ export async function createProductionFactoryFixture(options = {}) {
     if (options.childrenFactory) {
       base.constraints.limits.childExecutions.maximumTotal = 1
       base.constraints.limits.childExecutions.maximumDepth = 1
+      // The plan states what is held back for the child. The lead's attempt keeps the rest, which
+      // still covers the conservative native request bound, so the child is funded from the
+      // unreserved balance instead of finding nothing left.
+      base.constraints.limits.tokens.maximumTotal = 2 * (nativeContextWindow + 24)
+      base.constraints.limits.childExecutions.budgetAllowance = {
+        maximumMicrounits: Math.floor(base.constraints.limits.budget.maximumMicrounits / 2),
+        maximumTokens: nativeContextWindow + 24,
+      }
     }
     base.profile.definition.executionConstraints = structuredClone(base.constraints)
     base.profile.definition.skills = []

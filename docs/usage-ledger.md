@@ -119,6 +119,23 @@ replay verifies the operation-bound terminal settlement and validated settled ro
 Future budget extensions must retain original opening authority so those historical
 receipts remain verifiable; extensions must not reuse the current maxima as that history.
 
+### Child allowance in the accepted plan
+
+A child is funded only from its parent's unreserved balance, and a runtime attempt reserves
+everything that is left. A plan therefore states what it holds back for children:
+`limits.childExecutions.budgetAllowance` (`maximumMicrounits`, `maximumTokens`). The attempt
+reservation in `DurableRuntimeBudgetAdmission` is the available balance minus the part of that
+allowance no child has been funded from yet; an open child funding counts at its ceiling and a
+settled one at what it spent. The allowance must be below both execution ceilings, so the
+execution keeps a nonzero share, and it needs at least one child and one level of depth. Plans
+that omit it keep their exact shape and digest, and their attempts reserve everything left, so a
+plan that allows children but states no allowance cannot fund one (`BUDGET_EXHAUSTED`).
+Constraint layers compose to the smaller stated allowance, a layer that states none has no
+opinion, and the result is clamped under the composed ceilings or dropped when no child remains.
+A retry reserves only what is released, never a share a child was already funded from, and a
+child's own budget is opened with its own reservations: nothing it spends or reserves changes the
+parent's attempt envelope.
+
 ### Model-request holds inside an attempt
 
 `reserveModelRequest` subdivides an existing open attempt reservation. The caller

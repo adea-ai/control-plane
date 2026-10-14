@@ -12,6 +12,7 @@ import {
   DurableUsageBudgetSchema,
   DurableUsageEffectSchema,
   UsageLedgerEntrySchema,
+  type DurableUsageBudget,
   type DurableUsageStore,
   type DurableUsageTransaction,
   type UsageLedgerEntry,
@@ -168,10 +169,18 @@ export class DurableRuntimeBudgetAdmission implements RuntimeBudgetAdmissionPort
           ) {
             denyAdmission()
           }
+          // The plan may hold back part of the ceiling for children. Children already funded count
+          // against that part, so only the still-unfunded rest stays out of the attempt envelope.
+          const heldBack = childAllowanceHeldBack(
+            budget,
+            input.executionPlan.constraints.limits.childExecutions.budgetAllowance
+          )
+          const attemptMicrounits = Math.max(0, summary.availableMicrounits - heldBack.microunits)
+          const attemptTokens = Math.max(0, summary.availableTokens - heldBack.tokens)
           if (
             existing === undefined &&
-            ((budget.maximumMicrounits > 0 && summary.availableMicrounits === 0) ||
-              (budget.maximumTokens > 0 && summary.availableTokens === 0))
+            ((budget.maximumMicrounits > 0 && attemptMicrounits === 0) ||
+              (budget.maximumTokens > 0 && attemptTokens === 0))
           ) {
             denyAdmission()
           }
@@ -186,8 +195,8 @@ export class DurableRuntimeBudgetAdmission implements RuntimeBudgetAdmissionPort
               },
             },
           })
-          const maximumMicrounits = existing?.maximumMicrounits ?? summary.availableMicrounits
-          const maximumTokens = existing?.maximumTokens ?? summary.availableTokens
+          const maximumMicrounits = existing?.maximumMicrounits ?? attemptMicrounits
+          const maximumTokens = existing?.maximumTokens ?? attemptTokens
           await mutationLedger.reserve({
             workspaceId: allowance.workspaceId,
             executionId: allowance.executionId,
@@ -221,6 +230,26 @@ export class DurableRuntimeBudgetAdmission implements RuntimeBudgetAdmissionPort
       throw new RuntimeBudgetAdmissionError()
     }
   }
+}
+
+/**
+ * The part of the plan's child allowance that no child has been funded from yet. A child's funding
+ * counts at its full ceiling while it is open and at what it actually spent once settled.
+ */
+function childAllowanceHeldBack(
+  budget: DurableUsageBudget,
+  allowance: ExecutionPlan['constraints']['limits']['childExecutions']['budgetAllowance']
+): { readonly microunits: number; readonly tokens: number } {
+  if (allowance === undefined) return { microunits: 0, tokens: 0 }
+  let microunits = allowance.maximumMicrounits
+  let tokens = allowance.maximumTokens
+  for (const reservation of budget.reservations) {
+    if (reservation.childExecutionId === undefined) continue
+    const open = reservation.status === 'open'
+    microunits -= open ? reservation.maximumMicrounits : reservation.chargedMicrounits
+    tokens -= open ? reservation.maximumTokens : reservation.chargedTokens
+  }
+  return { microunits: Math.max(0, microunits), tokens: Math.max(0, tokens) }
 }
 
 /** Validate trusted admission composition before forwarding an immutable copy. */
