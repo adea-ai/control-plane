@@ -1287,9 +1287,7 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
       expect(observed[1].writeCode).toBe('25006')
       const [{ n }] = await migrationSql`select count(*)::int as n from executions`
       expect(n).toBe(observed[1].before)
-      const open = await migrationSql`select count(*)::int as n from pg_stat_activity
-        where datname = ${isolated.name} and state like 'idle in transaction%'`
-      expect(open[0].n).toBe(0)
+      expect(await openApplicationTransactions()).toBe(0)
     },
     timeout
   )
@@ -1447,10 +1445,136 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
           }
         }
       }
-      const open = await migrationSql`select count(*)::int as n from pg_stat_activity
-        where datname = ${isolated.name} and usename = ${new URL(applicationUrl).username}
-          and state like 'idle in transaction%'`
-      expect(open[0].n).toBe(0)
+      expect(await openApplicationTransactions()).toBe(0)
+    },
+    timeout
+  )
+
+  /**
+   * Other backends of the application role that are not idle. Counted through the
+   * application connection itself: PostgreSQL hides other roles' activity details.
+   */
+  async function busyApplicationBackends() {
+    const rows = await application.execute(sql`select count(*)::int as n from pg_stat_activity
+      where datname = current_database() and usename = current_user
+        and pid <> pg_backend_pid() and state <> 'idle'`)
+    return rows[0].n
+  }
+
+  /** Application-role backends left inside a transaction, counted through the application role. */
+  async function openApplicationTransactions() {
+    const rows = await application.execute(sql`select count(*)::int as n from pg_stat_activity
+      where datname = current_database() and usename = current_user
+        and pid <> pg_backend_pid() and state like 'idle in transaction%'`)
+    return rows[0].n
+  }
+
+  async function untilNoBusyBackends(timeoutMs = 8000) {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if ((await busyApplicationBackends()) === 0) return
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    throw new Error('abandoned measurement backends did not finish')
+  }
+
+  test(
+    'an aborted pass stuck on a lock returns promptly, rolls back and promotes no baseline',
+    async () => {
+      const producer = producerFor(WORKSPACE_A, { lockTimeoutMs: 8000, statementTimeoutMs: 9000 })
+      const first = await producer.measureDetailed()
+      expect(first.baselineCommitted).toBe(true)
+
+      const lock = await holdExclusiveLock('usage_operation_receipts')
+      const controller = new AbortController()
+      try {
+        const pending = producer.measureDetailed(controller.signal)
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        const abortedAt = Date.now()
+        controller.abort()
+        await expect(
+          Promise.race([pending, new Promise((resolve) => setTimeout(() => resolve('hung'), 2000))])
+        ).resolves.toBeUndefined()
+        expect(Date.now() - abortedAt).toBeLessThan(1000)
+
+        // The abandoned transaction is still waiting on the lock: no pass starts on top
+        // of it, so abandoned work never accumulates connections.
+        await expect(producer.measureDetailed()).resolves.toBeUndefined()
+        expect(await busyApplicationBackends()).toBe(1)
+      } finally {
+        lock.release()
+        await lock.done
+      }
+      await untilNoBusyBackends()
+
+      // The producer recovers; the aborted pass promoted nothing, and the baseline is
+      // still the last complete snapshot (data is unchanged, so growth is exactly zero).
+      let recovered
+      const deadline = Date.now() + 5000
+      while (recovered === undefined && Date.now() < deadline) {
+        recovered = await producer.measureDetailed()
+        if (recovered === undefined) await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      expect(recovered?.baselineCommitted).toBe(true)
+      expect(
+        valueOf(recovered.points, operationsMetricNames.storageGrowthBytes, { namespace: 'total' })
+      ).toBe(0)
+      expect(await openApplicationTransactions()).toBe(0)
+    },
+    timeout
+  )
+
+  test(
+    'lifecycle pass and close deadlines bound a database stalled on a lock, then the pool ends cleanly',
+    async () => {
+      const pool = postgres(applicationUrl, { max: 2, prepare: false })
+      const recorded = []
+      const adapter = {
+        add: (...args) => recorded.push(args),
+        record: (...args) => recorded.push(args),
+        recordGauge: (...args) => recorded.push(args),
+      }
+      const lock = await holdExclusiveLock('usage_operation_receipts')
+      let lifecycle
+      try {
+        lifecycle = createPostgresRuntimeMeasurements({
+          database: drizzle(pool, { schema }),
+          adapter,
+          intervalMs: 3_600_000,
+          workspaceId: WORKSPACE_A,
+          lockTimeoutMs: 8000,
+          statementTimeoutMs: 9000,
+          passTimeoutMs: 150,
+          closeTimeoutMs: 150,
+          now: () => NOW,
+        })
+        lifecycle.start()
+        const sampleStarted = Date.now()
+        await lifecycle.sample()
+        expect(Date.now() - sampleStarted).toBeLessThan(2000)
+
+        const closeStarted = Date.now()
+        const closing = lifecycle.close()
+        expect(lifecycle.close()).toBe(closing)
+        await closing
+        await lifecycle.close()
+        expect(Date.now() - closeStarted).toBeLessThan(2000)
+        expect(recorded).toEqual([])
+      } finally {
+        // Release the lock, drain what is still abandoned, then end the pool.
+        lock.release()
+        try {
+          await lock.done
+        } finally {
+          try {
+            await lifecycle?.close()
+            await untilNoBusyBackends()
+          } finally {
+            await pool.end({ timeout: 5 })
+          }
+        }
+      }
+      expect(recorded).toEqual([])
     },
     timeout
   )

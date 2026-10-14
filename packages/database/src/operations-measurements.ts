@@ -138,10 +138,19 @@ export interface PostgresOperationsMeasurementProducer {
    * One scoped pass. Resolves `undefined` when the substrate is unavailable
    * (no transaction, nothing readable); never rejects and never throws driver
    * errors. Concurrent callers share the in-flight pass.
+   *
+   * `signal` cancels the pass the caller starts (a sharing caller inherits that
+   * pass): once aborted it resolves `undefined` promptly, issues no further
+   * source query, never promotes the growth baseline, and a result that arrives
+   * late is discarded. The statement already running is bounded by
+   * `statementTimeoutMs`/`lockTimeoutMs` and then rolls back; no new pass
+   * starts until it has, so an abandoned pass cannot pile up connections.
    */
-  measureDetailed(): Promise<PostgresOperationsMeasurementResult | undefined>
+  measureDetailed(signal?: AbortSignal): Promise<PostgresOperationsMeasurementResult | undefined>
   /** The `OperationsMeasurementLifecycle` producer contract. */
-  measure(): Promise<readonly OperationsMetricPoint[] | undefined>
+  measure(context?: {
+    readonly signal?: AbortSignal
+  }): Promise<readonly OperationsMetricPoint[] | undefined>
 }
 
 interface ResolvedOptions {
@@ -924,14 +933,54 @@ function sourceStatuses(
   ) as Record<PostgresMeasuredNamespace, PostgresMeasurementSourceStatus>
 }
 
+class MeasurementAborted extends Error {}
+
+const ABORTED = Symbol('aborted')
+
+/** Resolves with the work's result, or ABORTED as soon as the signal aborts first. */
+function untilAborted<T>(
+  work: Promise<T>,
+  signal: AbortSignal | undefined
+): Promise<T | typeof ABORTED> {
+  if (signal === undefined) return work
+  if (signal.aborted) {
+    // The abandoned work may still reject; it must not surface as unhandled.
+    work.catch(() => undefined)
+    return Promise.resolve(ABORTED)
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => resolve(ABORTED)
+    signal.addEventListener('abort', onAbort, { once: true })
+    work.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      }
+    )
+  })
+}
+
 export function createPostgresOperationsMeasurementProducer(
   options: PostgresOperationsMeasurementOptions
 ): PostgresOperationsMeasurementProducer {
   const resolved = resolveOptions(options)
   let baseline: Baseline | undefined
   let inFlight: Promise<PostgresOperationsMeasurementResult | undefined> | undefined
+  // The database transaction of the latest pass, until it has really finished.
+  // An aborted pass returns early while its transaction rolls back; no new pass
+  // starts meanwhile, so abandoned work never accumulates connections.
+  let transactionOpen = false
 
-  async function pass(): Promise<PostgresOperationsMeasurementResult | undefined> {
+  async function pass(
+    signal: AbortSignal | undefined
+  ): Promise<PostgresOperationsMeasurementResult | undefined> {
+    // Read through a function: the signal can abort between any two awaits.
+    const aborted = (): boolean => signal?.aborted === true
+    if (aborted() || transactionOpen) return undefined
     const nowMs = resolved.now().getTime()
     if (!Number.isFinite(nowMs)) return undefined
     const context: QueryContext = {
@@ -940,26 +989,43 @@ export function createPostgresOperationsMeasurementProducer(
       since: new Date(nowMs - resolved.windowSeconds * 1000).toISOString(),
       maxRows: resolved.maxScanRows,
     }
+    transactionOpen = true
+    const snapshot = (async (): Promise<SourceOutcomes> => {
+      try {
+        return await resolved.database.transaction(
+          async (transaction) => {
+            await transaction.execute(sql`select
+              set_config('statement_timeout', ${String(resolved.statementTimeoutMs)}, true),
+              set_config('lock_timeout', ${String(resolved.lockTimeoutMs)}, true),
+              set_config('idle_in_transaction_session_timeout', ${String(IDLE_IN_TRANSACTION_TIMEOUT_MS)}, true)`)
+            const collected: Record<string, Outcome<unknown>> = {}
+            for (const namespace of postgresMeasuredNamespaces) {
+              // An aborted pass stops at the next source boundary and rolls back.
+              if (aborted()) throw new MeasurementAborted()
+              collected[namespace] = await readSource(transaction, sources[namespace], context)
+            }
+            return collected as unknown as SourceOutcomes
+          },
+          { isolationLevel: 'repeatable read', accessMode: 'read only' }
+        )
+      } finally {
+        transactionOpen = false
+      }
+    })()
     let outcomes: SourceOutcomes
     try {
-      outcomes = await resolved.database.transaction(
-        async (transaction) => {
-          await transaction.execute(sql`select
-            set_config('statement_timeout', ${String(resolved.statementTimeoutMs)}, true),
-            set_config('lock_timeout', ${String(resolved.lockTimeoutMs)}, true),
-            set_config('idle_in_transaction_session_timeout', ${String(IDLE_IN_TRANSACTION_TIMEOUT_MS)}, true)`)
-          const collected: Record<string, Outcome<unknown>> = {}
-          for (const namespace of postgresMeasuredNamespaces)
-            collected[namespace] = await readSource(transaction, sources[namespace], context)
-          return collected as unknown as SourceOutcomes
-        },
-        { isolationLevel: 'repeatable read', accessMode: 'read only' }
-      )
+      const raced = await untilAborted(snapshot, signal)
+      if (raced === ABORTED) return undefined
+      outcomes = raced
     } catch {
       // No snapshot could be established or committed: the substrate is
       // unavailable, and nothing about it is claimed.
       return undefined
     }
+    // Checked synchronously with the baseline promotion below: a pass that was
+    // aborted, even after its transaction committed, promotes nothing and
+    // reports nothing, so the baseline only ever reflects emitted snapshots.
+    if (aborted()) return undefined
     if (
       postgresMeasuredNamespaces.every((namespace) => outcomes[namespace].status === 'unavailable')
     )
@@ -979,9 +1045,11 @@ export function createPostgresOperationsMeasurementProducer(
     }
   }
 
-  const measureDetailed = (): Promise<PostgresOperationsMeasurementResult | undefined> => {
+  const measureDetailed = (
+    signal?: AbortSignal
+  ): Promise<PostgresOperationsMeasurementResult | undefined> => {
     if (inFlight !== undefined) return inFlight
-    const current = pass().finally(() => {
+    const current = pass(signal).finally(() => {
       if (inFlight === current) inFlight = undefined
     })
     inFlight = current
@@ -990,20 +1058,25 @@ export function createPostgresOperationsMeasurementProducer(
 
   return {
     measureDetailed,
-    measure: async () => (await measureDetailed())?.points,
+    measure: async (context) => (await measureDetailed(context?.signal))?.points,
   }
 }
 
 export interface PostgresRuntimeMeasurementsOptions extends PostgresOperationsMeasurementOptions {
   readonly adapter: MetricAdapter
   readonly intervalMs: number
+  /** Longest one pass may run before it is aborted and its result discarded. */
+  readonly passTimeoutMs?: number
+  /** Longest `close()` waits for an active pass before aborting it and returning. */
+  readonly closeTimeoutMs?: number
 }
 
 /**
  * Hosted PostgreSQL counterpart of `createLocalRuntimeMeasurements`: a bounded
  * `OperationsMeasurementLifecycle` over the scoped producer above. The
  * composition owns `start()` after migrations and runtime startup, and must
- * `close()` before it ends the database pool; close drains an active pass.
+ * `close()` before it ends the database pool; close drains an active pass for
+ * at most `closeTimeoutMs`, then aborts it and returns.
  */
 export function createPostgresRuntimeMeasurements(
   options: PostgresRuntimeMeasurementsOptions
@@ -1013,6 +1086,8 @@ export function createPostgresRuntimeMeasurements(
     adapter: options.adapter,
     serviceName: 'hosted-control-plane',
     intervalMs: options.intervalMs,
-    measure: () => producer.measure(),
+    ...(options.passTimeoutMs === undefined ? {} : { passTimeoutMs: options.passTimeoutMs }),
+    ...(options.closeTimeoutMs === undefined ? {} : { closeTimeoutMs: options.closeTimeoutMs }),
+    measure: (context) => producer.measure(context),
   })
 }

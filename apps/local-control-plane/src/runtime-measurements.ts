@@ -26,14 +26,26 @@ interface WorkerResult {
 
 function sampleInWorker(
   databasePath: string,
-  measurement: OperationsMeasurementOptions
+  measurement: OperationsMeasurementOptions,
+  signal: AbortSignal
 ): Promise<WorkerResult> {
   return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error('RUNTIME_MEASUREMENTS_ABORTED'))
+      return
+    }
     const worker = new Worker(runtimeMeasurementWorkerUrl(), {
       workerData: { databasePath, measurement },
     })
     let result: WorkerResult | undefined
     let failed = false
+    // Abort stops the worker thread; the pass still settles only after the
+    // thread has exited, so its read snapshot is released before shutdown.
+    const onAbort = (): void => {
+      failed = true
+      void worker.terminate()
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
     worker.on('message', (message: { ok: boolean; result?: WorkerResult }) => {
       if (!message.ok || result !== undefined) failed = true
       else result = message.result
@@ -44,6 +56,7 @@ function sampleInWorker(
     // A posted result is not proof that Bun released the SQLite statements.
     // Wait for the thread to exit before emission or persistence shutdown.
     worker.once('exit', (code) => {
+      signal.removeEventListener('abort', onAbort)
       if (code !== 0 || failed || result === undefined)
         reject(new Error('RUNTIME_MEASUREMENTS_WORKER_FAILED'))
       else resolve(result)
@@ -57,6 +70,10 @@ export interface LocalRuntimeMeasurementsOptions {
   readonly intervalMs: number
   readonly measurement: Omit<OperationsMeasurementOptions, 'baselineReport' | 'now'>
   readonly now?: () => Date
+  /** Longest one pass may run before its worker is terminated and its result discarded. */
+  readonly passTimeoutMs?: number
+  /** Longest `close()` waits for an active pass before aborting it and returning. */
+  readonly closeTimeoutMs?: number
 }
 
 /**
@@ -76,12 +93,20 @@ export function createLocalRuntimeMeasurements(
     adapter: options.adapter,
     serviceName: 'local-control-plane',
     intervalMs: options.intervalMs,
-    measure: async () => {
-      const result = await sampleInWorker(options.databasePath, {
-        ...measurement,
-        now: (options.now?.() ?? new Date()).toISOString(),
-        ...(baselineReport === undefined ? {} : { baselineReport }),
-      })
+    ...(options.passTimeoutMs === undefined ? {} : { passTimeoutMs: options.passTimeoutMs }),
+    ...(options.closeTimeoutMs === undefined ? {} : { closeTimeoutMs: options.closeTimeoutMs }),
+    measure: async ({ signal }) => {
+      const result = await sampleInWorker(
+        options.databasePath,
+        {
+          ...measurement,
+          now: (options.now?.() ?? new Date()).toISOString(),
+          ...(baselineReport === undefined ? {} : { baselineReport }),
+        },
+        signal
+      )
+      // An aborted pass promotes nothing, even if its result raced the abort.
+      if (signal.aborted) return undefined
       if (result.baselineReport !== undefined)
         baselineReport = OperationsMeasurementBaselineSchema.parse(result.baselineReport)
       return result.points

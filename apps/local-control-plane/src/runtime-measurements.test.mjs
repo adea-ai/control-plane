@@ -232,3 +232,43 @@ test('built Node adapter uses its compiled worker and completes measurement befo
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('a pass past its deadline terminates the worker and emits nothing; close stays bounded', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'runtime-measurements-'))
+  const databasePath = join(directory, 'control-plane.sqlite')
+  const database = new DatabaseSync(databasePath)
+  database.exec(`CREATE TABLE control_plane_records (
+    namespace TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL,
+    value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (namespace, id)
+  ) STRICT`)
+  database.close()
+  const observed = []
+  const record = (name, value, attributes) => observed.push({ name, value, attributes })
+  // The minimum deadline is shorter than starting a worker thread, so the pass is
+  // abandoned while (or before) the worker runs; its result can never be emitted.
+  const lifecycle = createLocalRuntimeMeasurements({
+    databasePath,
+    adapter: { add: record, record, recordGauge: record },
+    intervalMs: 1000,
+    measurement: { workspaceId },
+    now: () => new Date('2026-10-13T00:00:00.000Z'),
+    passTimeoutMs: 10,
+    closeTimeoutMs: 10,
+  })
+  try {
+    lifecycle.start()
+    const started = Date.now()
+    await lifecycle.sample()
+    assert.ok(Date.now() - started < 2000)
+    const closing = lifecycle.close()
+    assert.equal(lifecycle.close(), closing)
+    await closing
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    assert.deepEqual(observed, [])
+    await lifecycle.sample()
+    assert.deepEqual(observed, [])
+  } finally {
+    await lifecycle.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

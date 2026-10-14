@@ -506,6 +506,265 @@ describe('createPostgresOperationsMeasurementProducer', () => {
   })
 })
 
+/** A database whose transaction can be held open and whose sources count their reads. */
+function controllableDatabase({ onSource } = {}) {
+  const state = { transactions: 0, reads: 0, finished: 0, bytes: 100, gate: undefined }
+  const database = {
+    state,
+    transaction: async (callback) => {
+      state.transactions += 1
+      try {
+        if (state.gate !== undefined) await state.gate
+        let read = 0
+        return await callback({
+          execute: async () => [],
+          transaction: async (inner) =>
+            inner({
+              execute: async () => {
+                const index = read
+                read += 1
+                state.reads += 1
+                onSource?.(index)
+                return [baseRow({ bytes: String(state.bytes) })]
+              },
+            }),
+        })
+      } finally {
+        state.finished += 1
+      }
+    },
+  }
+  return database
+}
+
+/** Fails a hung promise as 'hung' instead of letting a regression stall the suite. */
+const promptly = (promise, ms = 1000) =>
+  Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve('hung'), ms))])
+
+const totalGrowth = (result) =>
+  result.points.find(
+    (point) =>
+      point.name === operationsMetricNames.storageGrowthBytes && point.labels.namespace === 'total'
+  )?.value
+
+describe('producer cancellation', () => {
+  const producer = (database, extra = {}) =>
+    createPostgresOperationsMeasurementProducer({
+      database,
+      workspaceId: WORKSPACE,
+      now: () => NOW,
+      ...extra,
+    })
+
+  test('an already aborted pass issues no query and claims nothing', async () => {
+    const database = controllableDatabase()
+    const controller = new AbortController()
+    controller.abort()
+    const subject = producer(database)
+    await expect(subject.measureDetailed(controller.signal)).resolves.toBeUndefined()
+    await expect(subject.measure({ signal: controller.signal })).resolves.toBeUndefined()
+    expect(database.state.transactions).toBe(0)
+  })
+
+  test('aborting between sources stops further reads, rolls back and promotes no baseline', async () => {
+    const controller = new AbortController()
+    let abortAfter = -1
+    const database = controllableDatabase({
+      onSource: (index) => {
+        if (index === abortAfter) controller.abort()
+      },
+    })
+    const subject = producer(database)
+    await subject.measureDetailed()
+    expect(database.state.reads).toBe(postgresMeasuredNamespaces.length)
+
+    database.state.bytes = 999
+    database.state.reads = 0
+    abortAfter = 2
+    await expect(subject.measureDetailed(controller.signal)).resolves.toBeUndefined()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(database.state.reads).toBe(3)
+    expect(database.state.finished).toBe(2)
+
+    // The aborted snapshot never became the baseline: growth is against 100.
+    database.state.bytes = 130
+    const next = await subject.measureDetailed()
+    expect(totalGrowth(next)).toBe(30 * postgresMeasuredNamespaces.length)
+  })
+
+  test('a pass aborted during its last source reports nothing and promotes no baseline', async () => {
+    const controller = new AbortController()
+    const database = controllableDatabase({
+      onSource: (index) => {
+        if (index === postgresMeasuredNamespaces.length - 1 && controller.signal.aborted === false)
+          controller.abort()
+      },
+    })
+    const subject = producer(database)
+    // First pass is complete but aborted before it can report.
+    await expect(subject.measureDetailed(controller.signal)).resolves.toBeUndefined()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(database.state.finished).toBe(1)
+
+    // No baseline was promoted, so the next complete pass has no growth point.
+    const next = await subject.measureDetailed()
+    expect(next.baselineCommitted).toBe(true)
+    expect(totalGrowth(next)).toBeUndefined()
+  })
+
+  test('abort observed after the transaction committed still promotes no baseline', async () => {
+    // The abort event never fires for this signal, so the race cannot catch it: only the
+    // synchronous check made right before promotion stands between the snapshot and the baseline.
+    let aborted = false
+    const signal = {
+      get aborted() {
+        return aborted
+      },
+      addEventListener() {},
+      removeEventListener() {},
+    }
+    const database = controllableDatabase({
+      onSource: (index) => {
+        if (index === postgresMeasuredNamespaces.length - 1) aborted = true
+      },
+    })
+    const subject = producer(database)
+    await expect(subject.measureDetailed(signal)).resolves.toBeUndefined()
+    expect(database.state.finished).toBe(1)
+
+    aborted = false
+    database.state.bytes = 130
+    const next = await subject.measureDetailed()
+    expect(next.baselineCommitted).toBe(true)
+    expect(totalGrowth(next)).toBeUndefined()
+  })
+
+  test('a stalled transaction returns promptly on abort; its late result is discarded', async () => {
+    const database = controllableDatabase()
+    let release
+    database.state.gate = new Promise((resolve) => {
+      release = resolve
+    })
+    const subject = producer(database)
+    const controller = new AbortController()
+    const pending = subject.measureDetailed(controller.signal)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(database.state.transactions).toBe(1)
+    controller.abort()
+    await expect(promptly(pending)).resolves.toBeUndefined()
+
+    // The database transaction is still open: no second one is started on top.
+    await expect(promptly(subject.measureDetailed())).resolves.toBeUndefined()
+    expect(database.state.transactions).toBe(1)
+
+    // The late transaction continues, notices the abort, reads nothing, rolls back.
+    database.state.gate = undefined
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(database.state.reads).toBe(0)
+    expect(database.state.finished).toBe(1)
+
+    // The producer recovers, and nothing late was promoted as a baseline.
+    const next = await subject.measureDetailed()
+    expect(next.baselineCommitted).toBe(true)
+    expect(totalGrowth(next)).toBeUndefined()
+    expect(database.state.transactions).toBe(2)
+  })
+
+  test('a transaction that fails after abandonment does not surface an unhandled rejection', async () => {
+    const unhandled = []
+    const onUnhandled = (reason) => unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      let fail
+      const database = {
+        transaction: () =>
+          new Promise((_resolve, reject) => {
+            fail = reject
+          }),
+      }
+      const subject = producer(database)
+      const controller = new AbortController()
+      const pending = subject.measureDetailed(controller.signal)
+      controller.abort()
+      await expect(promptly(pending)).resolves.toBeUndefined()
+      fail(new Error('connection terminated postgres://user:pw-leaky-secret@host/db'))
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
+
+  test('callers without a signal behave exactly as before', async () => {
+    const database = controllableDatabase()
+    const result = await producer(database).measureDetailed()
+    expect(result.baselineCommitted).toBe(true)
+    expect(database.state.reads).toBe(postgresMeasuredNamespaces.length)
+  })
+})
+
+describe('runtime measurement deadlines', () => {
+  const adapterFor = (recorded) => ({
+    add: () => {},
+    record: (name, value) => recorded.push({ name, value }),
+    recordGauge: (name, value) => recorded.push({ name, value }),
+  })
+
+  test('a stalled database is bounded by the pass deadline and emits nothing late', async () => {
+    const recorded = []
+    const database = controllableDatabase()
+    let release
+    database.state.gate = new Promise((resolve) => {
+      release = resolve
+    })
+    const lifecycle = createPostgresRuntimeMeasurements({
+      database,
+      adapter: adapterFor(recorded),
+      intervalMs: 3_600_000,
+      workspaceId: WORKSPACE,
+      now: () => NOW,
+      passTimeoutMs: 20,
+    })
+    lifecycle.start()
+    const started = Date.now()
+    await lifecycle.sample()
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(recorded).toEqual([])
+    database.state.gate = undefined
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(recorded).toEqual([])
+    await lifecycle.close()
+  })
+
+  test('close returns within its deadline against a stalled database, repeatedly', async () => {
+    const recorded = []
+    const database = controllableDatabase()
+    database.state.gate = new Promise(() => undefined)
+    const lifecycle = createPostgresRuntimeMeasurements({
+      database,
+      adapter: adapterFor(recorded),
+      intervalMs: 3_600_000,
+      workspaceId: WORKSPACE,
+      now: () => NOW,
+      closeTimeoutMs: 30,
+    })
+    lifecycle.start()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const started = Date.now()
+    const first = lifecycle.close()
+    const second = lifecycle.close()
+    expect(second).toBe(first)
+    await first
+    await lifecycle.close()
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(recorded).toEqual([])
+    await lifecycle.sample()
+    expect(database.state.transactions).toBe(1)
+  })
+})
+
 describe('createPostgresRuntimeMeasurements', () => {
   test('feeds the shared lifecycle under the hosted service name and drains on close', async () => {
     const recorded = []
