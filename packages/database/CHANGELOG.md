@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.48.0](https://github.com/adea-ai/control-plane/compare/database-v1.47.0...database-v1.48.0) (2026-10-14)
+
+
+### Features
+
+* **telemetry:** add Hosted PostgreSQL operations measurement producer ([#1030](https://github.com/adea-ai/control-plane/issues/1030)) ([#1122](https://github.com/adea-ai/control-plane/issues/1122)) ([8f40281](https://github.com/adea-ai/control-plane/commit/8f4028196e1fcef6f41e52c77d7e6ee25156c27c))
+
 ## [1.47.0](https://github.com/adea-ai/control-plane/compare/database-v1.46.1...database-v1.47.0) (2026-10-14)
 
 
