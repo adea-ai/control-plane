@@ -212,6 +212,56 @@ test('refuses a child whose funding, opening receipt or identity does not match 
   }
 })
 
+test('the child admission binds the parent plan statement the allocator funded under', async () => {
+  const f = await fixture({
+    maximumTotal: 2,
+    maximumParallel: 2,
+    maximumDepth: 2,
+    childAllowance: allowance,
+  })
+  try {
+    const ledger = await runningLead(f)
+    const admission = childAdmission(f)
+    const child = await f.childAdmission()
+    const delegated = await allocated(child)
+    const before = await entriesOf(ledger, child.childIds.childExecutionId)
+    const plans = new SqliteExecutionPlanRepository(f.provider)
+    // Parent plans that differ only in the statement they make: a smaller allowance, and none.
+    for (const statement of [{ maximumMicrounits: 3_000_000, maximumTokens: 100_000 }, null]) {
+      const other = f.parentPlanStating(statement)
+      expect(other.contentDigest).not.toBe(f.canonicalParentPlan.contentDigest)
+      await plans.put(other)
+      // Pointing the delegation at the other plan changes the statement the opening fingerprint is
+      // recomputed with, so the allocator's receipt no longer matches.
+      await expect(
+        admission.reserve({
+          ...delegated,
+          record: {
+            ...delegated.record,
+            parentExecutionPlanId: other.executionPlanId,
+            parentExecutionPlanDigest: other.contentDigest,
+          },
+          plan: {
+            ...delegated.plan,
+            parentExecutionPlan: {
+              ...delegated.plan.parentExecutionPlan,
+              executionPlanId: other.executionPlanId,
+              contentDigest: other.contentDigest,
+            },
+          },
+        })
+      ).rejects.toThrow(RuntimeBudgetAdmissionError)
+      expect(await entriesOf(ledger, child.childIds.childExecutionId)).toEqual(before)
+    }
+    // The plan the child was actually funded under is accepted.
+    expect(await admission.reserve(delegated)).toMatchObject({
+      executionId: child.childIds.childExecutionId,
+    })
+  } finally {
+    await f.close()
+  }
+})
+
 test('allocation after the lead attempt settled still funds a child only up to the stated allowance', async () => {
   const f = await fixture({
     maximumTotal: 2,

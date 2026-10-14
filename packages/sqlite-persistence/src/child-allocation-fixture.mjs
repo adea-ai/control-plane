@@ -46,18 +46,22 @@ export async function fixture({
   const directory = await mkdtemp(join(tmpdir(), 'sqlite-child-budget-admission-'))
   const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
   await provider.migrate()
-  const parentInput = createExecutionPlanTestFixtureInputs()
   const compiler = new ExecutionPlanCompiler('1.0.0')
-  parentInput.correlation.workspaceId = ids.workspaceId
-  parentInput.correlation.taskId = 'tsk_01JABCDEF0123456789ABCDEFG'
-  parentInput.correlation.requestId = 'req_01JABCDEF0123456789ABCDEFG'
-  parentInput.constraints.limits.childExecutions.maximumTotal = maximumTotal
-  parentInput.constraints.limits.childExecutions.maximumDepth = maximumDepth
-  parentInput.constraints.limits.concurrency.maximumParallel = maximumParallel
-  if (childAllowance !== undefined) {
-    parentInput.constraints.limits.childExecutions.budgetAllowance = childAllowance
+  // The parent plan, optionally stating a different child allowance (or none, with `null`).
+  const parentPlanStating = (statedAllowance) => {
+    const parentInput = createExecutionPlanTestFixtureInputs()
+    parentInput.correlation.workspaceId = ids.workspaceId
+    parentInput.correlation.taskId = 'tsk_01JABCDEF0123456789ABCDEFG'
+    parentInput.correlation.requestId = 'req_01JABCDEF0123456789ABCDEFG'
+    parentInput.constraints.limits.childExecutions.maximumTotal = maximumTotal
+    parentInput.constraints.limits.childExecutions.maximumDepth = maximumDepth
+    parentInput.constraints.limits.concurrency.maximumParallel = maximumParallel
+    if (statedAllowance !== null && statedAllowance !== undefined) {
+      parentInput.constraints.limits.childExecutions.budgetAllowance = statedAllowance
+    }
+    return compiler.compile(parentInput)
   }
-  const canonicalParentPlan = compiler.compile(parentInput)
+  const canonicalParentPlan = parentPlanStating(childAllowance)
   const parentContextPackage = contextPackageSerializationFixtures.futurePi
   const executionPlans = new SqliteExecutionPlanRepository(provider)
   const contexts = new SqliteContextPackageRepository(provider)
@@ -287,6 +291,7 @@ export async function fixture({
     provider,
     executions,
     canonicalParentPlan,
+    parentPlanStating,
     parentAttempt,
     parentAttemptVersion,
     usageStore,

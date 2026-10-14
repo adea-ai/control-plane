@@ -176,6 +176,26 @@ the allocator's opening receipt (whose fingerprint covers the parent plan's stat
 parent's funding reservation before reserving the same envelope. A child's own budget is opened with its own reservations: nothing it spends or reserves
 changes its parent's attempt envelope.
 
+#### Where each case is tested
+
+The same cases run over both stores. SQLite: `tests/child-runtime-budget-admission.test.mjs`.
+PostgreSQL: `apps/workflow-worker/src/child-runtime-budget-admission.integration.test.mjs`, with
+`packages/database/src/child-budget-admission.integration.test.mjs` for the cap and the denial
+cleanup.
+
+| Case                                                                                            | SQLite                                                             | PostgreSQL                     |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------ |
+| Allocation after the lead's reservation settled is capped at the allowance                      | yes                                                                | yes                            |
+| An outstanding child funding exhausts the allowance for a sibling (`BUDGET_EXHAUSTED`, no rows) | yes                                                                | yes                            |
+| Settled child spend frees only the unspent difference                                           | yes                                                                | yes                            |
+| The child admission binds the parent plan's statement (a different or absent statement denies)  | different and absent statement, foreign plan, receipt and identity | different and absent statement |
+| Cancelled lead attempt is refused by the allocator (`CHILD_ADMISSION_DENIED`, no rows)          | yes                                                                | yes                            |
+
+The allowance bounds outstanding child funding plus settled spend, not a lifetime allocation: in the
+PostgreSQL test a 4M allowance funds a 4M child, the child spends 1M and settles, and the next
+sibling is funded 3M (its 3M of unspent funding returned) after which the allowance is exhausted
+again (1M spent plus 3M outstanding).
+
 #### Composition contract for `DurableChildRuntimeBudgetAdmission`
 
 No composition root builds `CanonicalDelegationRuntimeBridge` in this repository yet, so the class
