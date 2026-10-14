@@ -78,6 +78,7 @@ export const INTEGRATION_SHARDS = [
           'src/retention-reference-windows.integration.test.mjs',
           'src/retention-hold-activation.integration.test.mjs',
           'src/retention-ancestry.integration.test.mjs',
+          'src/operations-measurements.integration.test.mjs',
         ],
       },
     ],
