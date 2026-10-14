@@ -213,7 +213,7 @@
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
+      "exports": [".", "./read-scope"],
       "workspaceDependencies": [],
       "externalDependencies": [],
       "developmentWorkspaceDependencies": [],

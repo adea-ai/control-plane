@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.38.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.38.0...sqlite-persistence-v1.38.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **persistence:** fence allocation and recovery metadata read scopes ([#1116](https://github.com/adea-ai/control-plane/issues/1116)) ([082c2c3](https://github.com/adea-ai/control-plane/commit/082c2c33ccd57aeb555c17d5d88b83d9c9e6d3e0))
+
 ## [1.38.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.37.0...sqlite-persistence-v1.38.0) (2026-10-13)
 
 
