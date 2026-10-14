@@ -254,6 +254,7 @@ const baseRow = (overrides = {}) => ({
   waiting_n: '0',
   dispatch_n: '0',
   usd_entries: '0',
+  negative_entries: '0',
   usd_exact: '0',
   usd_inexact: '0',
   malformed: '0',

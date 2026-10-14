@@ -811,6 +811,36 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
         await migrationSql`delete from executions where execution_id = ${damaged}`
       }
 
+      // A negative or fractional charge is malformed per reservation: it can never offset a
+      // valid charge in the sum or surface as a negative cost metric.
+      for (const charges of [[-1_000_000, 5_000_000], [-5_000_000], [2_000_000, 0.5]]) {
+        const invalid = await insertExecution(WORKSPACE_A, {
+          state: 'completed',
+          updatedAt: ago(3),
+        })
+        await insertBudget(WORKSPACE_A, invalid, budgetState(WORKSPACE_A, invalid, 'USD', charges))
+        try {
+          const result = await producerFor(WORKSPACE_A, {
+            storageUsdPerGiBMonth: 1,
+          }).measureDetailed()
+          expect(result.sources['usage-budgets']).toEqual({
+            status: 'incomplete',
+            reason: 'malformed_records',
+          })
+          for (const point of result.points) {
+            if (point.name === operationsMetricNames.operatingCostUsd) {
+              expect(point.value).toBeGreaterThanOrEqual(0)
+            }
+          }
+          expect(
+            valueOf(result.points, operationsMetricNames.operatingCostUsd, { component: 'total' })
+          ).toBeUndefined()
+        } finally {
+          await migrationSql`delete from usage_budget_states where execution_id = ${invalid}`
+          await migrationSql`delete from executions where execution_id = ${invalid}`
+        }
+      }
+
       // Safe-integer overflow is detected, not wrapped.
       const huge = await insertExecution(WORKSPACE_A, { state: 'completed', updatedAt: ago(3) })
       await insertLedger(WORKSPACE_A, huge, {
@@ -835,6 +865,32 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
       } finally {
         await migrationSql`delete from usage_ledger_entries where execution_id = ${huge}`
         await migrationSql`delete from executions where execution_id = ${huge}`
+      }
+
+      // A negative ledger amount is damage, never a credit that offsets other spend.
+      const negative = await insertExecution(WORKSPACE_A, { state: 'completed', updatedAt: ago(3) })
+      await insertLedger(WORKSPACE_A, negative, {
+        currency: 'USD',
+        cost: 3_000_000,
+        exact: true,
+        recordedAt: ago(1),
+      })
+      await insertLedger(WORKSPACE_A, negative, {
+        currency: 'USD',
+        cost: -2_000_000,
+        exact: true,
+        recordedAt: ago(2),
+      })
+      try {
+        const result = await producerFor(WORKSPACE_A).measureDetailed()
+        expect(result.sources['usage-ledger-entries']).toEqual({
+          status: 'incomplete',
+          reason: 'malformed_records',
+        })
+        expect(pointsOf(result.points, operationsMetricNames.usageCostUsd)).toHaveLength(0)
+      } finally {
+        await migrationSql`delete from usage_ledger_entries where execution_id = ${negative}`
+        await migrationSql`delete from executions where execution_id = ${negative}`
       }
     },
     timeout

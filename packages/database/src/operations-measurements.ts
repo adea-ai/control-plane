@@ -562,6 +562,7 @@ const sources: { readonly [K in PostgresMeasuredNamespace]: SourceSpec<K> } = {
     query: (context) => sql`
       select count(*)::text as scanned,
         count(*) filter (where in_window and currency = 'USD')::text as usd_entries,
+        count(*) filter (where cost_microunits < 0)::text as negative_entries,
         coalesce(sum(cost_microunits) filter (where in_window and currency = 'USD' and cost_exact), 0)::text as usd_exact,
         coalesce(sum(cost_microunits) filter (where in_window and currency = 'USD' and not cost_exact), 0)::text as usd_inexact,
         ${bytesSelect(context, true)}
@@ -572,13 +573,17 @@ const sources: { readonly [K in PostgresMeasuredNamespace]: SourceSpec<K> } = {
         where l.workspace_id = ${context.workspaceId}
         limit ${context.maxRows + 1}
       ) scoped`,
-    parse: (row) => ({
-      usd:
-        wholeNumber(row['usd_entries']) === 0
-          ? null
-          : { exact: wholeNumber(row['usd_exact']), inexact: wholeNumber(row['usd_inexact']) },
-      storage: storage(row, true),
-    }),
+    parse: (row) => {
+      // Ledger amounts are nonnegative by contract; a negative row is damage, not a credit.
+      if (wholeNumber(row['negative_entries']) > 0) throw new MalformedRow()
+      return {
+        usd:
+          wholeNumber(row['usd_entries']) === 0
+            ? null
+            : { exact: wholeNumber(row['usd_exact']), inexact: wholeNumber(row['usd_inexact']) },
+        storage: storage(row, true),
+      }
+    },
   },
   'usage-budgets': {
     namespace: 'usage-budgets',
@@ -599,9 +604,15 @@ const sources: { readonly [K in PostgresMeasuredNamespace]: SourceSpec<K> } = {
             or r.bad > 0) as malformed
         from usage_budget_states b
         cross join lateral (
-          select coalesce(sum((x ->> 'chargedMicrounits')::numeric) filter (where jsonb_typeof(x -> 'chargedMicrounits') = 'number'), 0) as spent,
-            count(*) filter (where jsonb_typeof(x -> 'chargedMicrounits') is distinct from 'number') as bad
-          from jsonb_array_elements(case when jsonb_typeof(b.state -> 'reservations') = 'array' then b.state -> 'reservations' else '[]'::jsonb end) x
+          select coalesce(sum((x ->> 'chargedMicrounits')::numeric) filter (where valid), 0) as spent,
+            count(*) filter (where not valid) as bad
+          from (
+            select x, case when jsonb_typeof(x -> 'chargedMicrounits') = 'number'
+                then (x ->> 'chargedMicrounits')::numeric >= 0
+                  and (x ->> 'chargedMicrounits')::numeric = trunc((x ->> 'chargedMicrounits')::numeric)
+                else false end as valid
+            from jsonb_array_elements(case when jsonb_typeof(b.state -> 'reservations') = 'array' then b.state -> 'reservations' else '[]'::jsonb end) x
+          ) v
         ) r
         where b.workspace_id = ${context.workspaceId}
         limit ${context.maxRows + 1}

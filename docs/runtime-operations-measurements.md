@@ -114,8 +114,9 @@ Honest results:
   reason codes only: `row_budget_reached`, `malformed_records`, `unsafe_total`,
   `timeout`, `lock_timeout`, `permission_denied`, `query_failed`. Driver
   messages, SQL, table names and connection details never reach a result,
-  metric or thrown error. Damaged budget JSON, non-integer values and sums
-  beyond the safe-integer range are `incomplete`, never summed.
+  metric or thrown error. Damaged budget JSON, any reservation whose charged
+  amount is not a nonnegative whole number, and sums beyond the safe-integer
+  range are `incomplete`, never summed.
 - A pass in which nothing could be read, or no transaction could be opened,
   returns `undefined`, so the lifecycle emits nothing instead of zeros. A
   workspace with no rows is a complete pass with zero counts and no latency
