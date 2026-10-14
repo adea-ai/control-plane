@@ -52,6 +52,120 @@ immutable profile mappings, lock-safe CP authority integration, live provider,
 device and full restart/cancellation/publication fault qualification remain open.
 Missing configuration leaves production lead and publication unavailable.
 
+## Source-authority review checkpoint (#1178, 2026-10-13)
+
+Verified characterization and the physical/profile qualification still required by
+Adea #1178 are separated in
+[`pi-source-authority-qualification.md`](pi-source-authority-qualification.md). Nothing
+below is physical qualification.
+
+The current contract carries one workspace through product evidence, immutable
+profile/model resolution, execution and publication. Companion Adea draft
+[#1327](https://github.com/adea-ai/adea/pull/1327) withholds foreign-Agent evidence;
+this CP draft retains that boundary and changes no production contract.
+
+The proposed next slice is recorded in Adea's
+[`pi-lead-product-composition.md`](https://github.com/adea-ai/adea/blob/fix/1178-foreign-lead-execution-evidence/docs/architecture/pi-lead-product-composition.md).
+Review it before shared-contract edits: retain host conversation/product and
+publication scope separately from canonical source Agent/profile/model/tool and
+existing funding authority, through preparation, retry/restart, dispatch,
+continuation and publication. A host-scoped service assertion or enlistment does
+not authorize source execution. Missing source authority must remain blocked,
+without host profile/model fallback. Context stays isolated per host conversation
+and qualified source Agent using upstream Pi-native execution.
+
+Fresh product/HTTP tests on published CP head
+`bc1d84647d62babd5f8241bfcdd0b24087f815ff` passed 13 tests, 0 failed. Adea's
+published head `5c32e220dac26b0aac6cf0487fe2a8957b02e937` passed its prepared
+foreign-source propagation/context/revocation regression in a fresh disposable
+loopback PostgreSQL database after 52 canonical migrations and a deterministic
+rerun (7 lead-product tests; 73 additional group/lead tests). Existing databases
+were not changed. These checks do not qualify physical source tool effects or
+live provider execution; full dual-authority execution remains outstanding.
+
+### Additive source contract checkpoint
+
+`PiLeadHostSourceAuthoritySchema` binds canonical host conversation, original
+actor, message, audience digest and enlistment pins to a separately qualified
+source workspace/Agent and immutable profile pins. Its context reference is a
+deterministic identity for the host conversation plus qualified source Agent,
+independent of per-turn message/version pins. `PiLeadSourceExecutionBindingSchema`
+retains that authority with exact source profile/model and execution/attempt/native
+session pins. Neither parsing nor the digest confers source authorization.
+
+The initial abuse cases are host scope substituted for source scope, source
+identity omitted, forged authorization fields, cross-group/native-context reuse,
+same-name Agent conflation and changed actor/audience/enlistment/profile pins.
+Strict parsing and comparison to fresh canonical metadata deny these substitutions.
+Existing principal/grant, model, tool and payer authorization must independently
+qualify the source before a lifecycle adapter may execute. These additive schemas
+are not wired to startup or the existing single-workspace evidence endpoint;
+Adea's foreign-Agent guard remains enabled.
+
+`createProductionSourceLeadProductAuthority` adds a separate candidate product
+composition. It independently verifies existing host service authority and source
+execution authority for the original human, resolves profile/model in source
+scope through the existing production authority, and retains both host/source
+metadata plus exact profile/model pins in SQLite. The execution evidence's
+`scopeRef` binds the complete canonical source snapshot; the existing admission
+and runtime paths retain that scope digest. Snapshot changes during awaited
+profile/model reads deny, and SQLite reopen cannot adopt a changed source default
+or replacement enlistment. Retained metadata is not authorization: every current
+read still checks both required authority ports. Startup remains unchanged;
+source lifecycle integration and physical effect qualification are subsequent
+checkpoints.
+
+Review repair: source product reads recheck the fixed intent deadline after
+authorization waits and immediately before synchronous acceptance. Final
+acceptance requires a `withCurrentAuthorization` port that holds canonical host
+service and source actor/principal/grant authority together; sequential assertion
+ports alone cannot configure this candidate. A production lock-backed port is
+still an integration requirement. Fake-clock and revocation regressions cross
+the final source wait and combined acceptance boundary. The mid-profile
+revocation test now returns a valid profile and successful model readiness, so
+only current source authorization can deny that case.
+
+### Candidate Node lifecycle composition
+
+`createProductionSourceNodeComposition` wraps the existing Node admission,
+preparation, journal, usage and Pi-native runtime. It requires an existing source
+transport principal, the source product authority and an independent host-context
+qualifier. Compiled plans must use source workspace scope and the exact qualified
+Agent/profile; host workspace, legacy project and changed immutable pins deny.
+Provider resolution and governed effect boundaries recheck the retained source
+binding. Effects resolve the exact native journal attempt and require source
+workspace/profile/grant scope before invoking existing current tool authority.
+Unqualified child wiring is refused for this bounded slice.
+
+The source sidecar now retains a verifiable host/source scope digest, prompt
+digest and original expiry without copying prompt/history. Raw host/context edits
+cannot be joined to an unchanged runtime marker. Its retained execution-binding
+reader derives execution/attempt/session from the canonical marker, exact plan,
+budget and existing native handle. It performs no product callback, reservation,
+credential lease or runtime start; current publication authorization remains a
+separate required gate. This is candidate lifecycle code, not a qualified running
+path. Startup/HTTP wiring, full lifecycle integration and physical-source proof
+remain outstanding, and Adea's foreign-Agent guard remains enabled.
+
+### Candidate source publication checkpoint
+
+`PiLeadSourcePublicationSchema` joins the retained host/source execution binding
+to the existing CP publication proof, requiring exact source workspace, intent,
+original human, execution/attempt/native session and model pins. The execution
+binding now carries the fixed canonical `intentExpiresAt`; publication cannot
+renew it. `createSourcePiLeadPublicationReader` reads retained metadata without
+calling Adea, rechecks existing CP publication authority after awaited metadata,
+then requires a combined current CP host-service/source-principal/grant/payer
+fence for synchronous acceptance. Fresh CP proof expiry is capped at the original
+intent deadline and rechecked after fence acquisition. No output is returned.
+
+The running candidate regression exercises real prepare/admission/SQLite/native
+generation/progress/reopen and the real retained publication service, including
+callback-free metadata and denied publication after revocation. Its host/source
+and funding authority ports remain synthetic. Production combined fences,
+Adea delivery integration and the existing authorized physical source tool
+destination remain unqualified; this evidence is not a physical-source proof.
+
 Child allocation repeats product and model readiness while holding its canonical
 allocation transaction. Model and vault metadata stored on that same persistence
 provider use `@control-plane/deployment/read-scope` to read through the open
