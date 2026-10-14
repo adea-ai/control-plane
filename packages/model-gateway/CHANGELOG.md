@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.3](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.5.2...model-gateway-v1.5.3) (2026-10-14)
+
+
+### Bug Fixes
+
+* **persistence:** fence allocation and recovery metadata read scopes ([#1116](https://github.com/adea-ai/control-plane/issues/1116)) ([082c2c3](https://github.com/adea-ai/control-plane/commit/082c2c33ccd57aeb555c17d5d88b83d9c9e6d3e0))
+
 ## [1.5.2](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.5.1...model-gateway-v1.5.2) (2026-10-11)
 
 
