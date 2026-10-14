@@ -15,10 +15,13 @@ import {
   SqlitePersistenceProvider,
 } from './index.js'
 import { SqliteDelegationRepository } from './delegation-repository.ts'
+import { retainChildAdmission, retainChildMapping } from './delegation-child-mapping.ts'
+import { missingPins, pinSources } from './receipt-pin-sources.fixture.mjs'
 import {
   delegationReceiptNamespaces,
   delegationReceiptRetentionClass,
   prepareReceiptOwnerPins,
+  RECEIPT_PIN_BACKFILL_PAGE,
   readDelegationReceiptPins,
   receiptOwnerPinNamespace,
   retainReceiptOwnerPins,
@@ -121,16 +124,24 @@ async function seedReceipt(provider, namespace, id, value) {
 }
 
 // Wraps a provider so each transaction reports what it read from the receipt
-// namespaces and the owner pin index.
-function measuredProvider(provider) {
+// namespaces and the owner pin index, and how much it wrote.
+function measuredProvider(provider, { failOnTransaction } = {}) {
   const receiptNamespaces = new Set([...delegationReceiptNamespaces, receiptOwnerPinNamespace])
   const transactions = []
   return {
     transactions,
     provider: {
       async transaction(operation) {
-        const stat = { scans: 0, pinGets: 0, otherReceiptGets: 0, startedAt: performance.now() }
+        const stat = {
+          scans: 0,
+          rowsRead: 0,
+          puts: 0,
+          pinGets: 0,
+          otherReceiptGets: 0,
+          startedAt: performance.now(),
+        }
         transactions.push(stat)
+        if (transactions.length === failOnTransaction) throw new Error('interrupted')
         try {
           return await provider.transaction((transaction) =>
             operation(
@@ -139,11 +150,20 @@ function measuredProvider(provider) {
                   const member = target[key]
                   if (typeof member !== 'function') return member
                   return (namespace, ...rest) => {
+                    if (key === 'put') stat.puts += 1
                     if (key === 'get' && namespace === receiptOwnerPinNamespace) stat.pinGets += 1
                     else if (key === 'get' && receiptNamespaces.has(namespace))
                       stat.otherReceiptGets += 1
-                    else if ((key === 'list' || key === 'scan') && receiptNamespaces.has(namespace))
+                    else if (
+                      (key === 'list' || key === 'scan') &&
+                      receiptNamespaces.has(namespace)
+                    ) {
                       stat.scans += 1
+                      return member.call(target, namespace, ...rest).then((rows) => {
+                        stat.rowsRead += rows.length
+                        return rows
+                      })
+                    }
                     return member.call(target, namespace, ...rest)
                   }
                 },
@@ -531,6 +551,8 @@ describe('delegation receipt retention (#1022)', () => {
           .toSorted()
       expect(indexedIdentities('execution')).toEqual([...scanned.executionIds].toSorted())
       expect(indexedIdentities('plan')).toEqual([...scanned.planIds].toSorted())
+      // And no writer relies on another having pinned the same owner.
+      expect(await missingPins(f.provider)).toEqual({})
       const future = new Date('2030-01-01T00:00:00.000Z')
 
       await sweepSqliteRetention(f.provider, future)
@@ -588,5 +610,217 @@ describe('delegation receipt retention (#1022)', () => {
         expect(pins.planIds.size).toBe(0)
       })
     })
+  })
+  // Each writer is run alone against an empty pin index, so a missing pin cannot
+  // be hidden by another writer naming the same owners.
+  describe('each receipt writer pins its own owners', () => {
+    const mappingSource = 'delegation-child-mappings'
+    const sessionSource = 'delegation-native-sessions'
+    const admissionSource = 'delegation-admission-receipts'
+
+    function mappingOf(child, externalSessionId) {
+      return {
+        workspaceId: child.request.workspaceId,
+        parentExecutionId: child.request.parentExecutionId,
+        delegationId: child.request.delegationId,
+        childExecutionId: child.request.childExecutionId,
+        childAttemptId: child.request.childAttemptId,
+        runtimeConnectionId: child.request.childDispatch.runtime.runtimeConnectionId,
+        ...(externalSessionId ? { externalSessionId } : {}),
+      }
+    }
+
+    test('the mapping writer pins both executions and nothing else', async () => {
+      const f = await fixture()
+      try {
+        const child = await f.childAdmission()
+        await f.provider.transaction((tx) => retainChildMapping(tx, mappingOf(child)))
+        expect(await pinSources(f.provider)).toEqual({
+          [`execution:${child.request.parentExecutionId}`]: [mappingSource],
+          [`execution:${child.request.childExecutionId}`]: [mappingSource],
+        })
+        expect(await missingPins(f.provider)).toEqual({})
+      } finally {
+        await f.close()
+      }
+    })
+
+    test('the native session writer pins both executions on top of the mapping', async () => {
+      const f = await fixture()
+      try {
+        const child = await f.childAdmission()
+        await f.provider.transaction((tx) =>
+          retainChildMapping(tx, mappingOf(child, 'ses_01JABCDEF0123456789ABCDEFG'))
+        )
+        const sources = await pinSources(f.provider)
+        for (const executionId of [child.request.parentExecutionId, child.request.childExecutionId])
+          expect(sources[`execution:${executionId}`]).toEqual([mappingSource, sessionSource])
+        expect(await missingPins(f.provider)).toEqual({})
+      } finally {
+        await f.close()
+      }
+    })
+
+    test('the admission writer pins both executions and both plans', async () => {
+      const f = await fixture()
+      try {
+        const child = await f.childAdmission()
+        await f.provider.transaction((tx) =>
+          retainChildAdmission(tx, { request: child.request, receipt: child.receipt })
+        )
+        const sources = await pinSources(f.provider)
+        // Admission writes the mapping too; the plans are named by admission alone.
+        for (const executionId of [child.request.parentExecutionId, child.request.childExecutionId])
+          expect(sources[`execution:${executionId}`]).toEqual([admissionSource, mappingSource])
+        expect(sources[`plan:${child.request.parentPlan.executionPlanId}`]).toEqual([
+          admissionSource,
+        ])
+        expect(sources[`plan:${child.request.childPlan.executionPlanId}`]).toEqual([
+          admissionSource,
+        ])
+        expect(await missingPins(f.provider)).toEqual({})
+      } finally {
+        await f.close()
+      }
+    })
+
+    test('a writer that skips its pin is reported even when another writer pinned the owner', async () => {
+      await withProvider(async (provider) => {
+        // The mapping row is retained without its pin; the terminal writer pins the same owners.
+        await provider.transaction(async (transaction) => {
+          await transaction.put({
+            namespace: 'delegation-child-mappings',
+            id: 'unpinned',
+            value: receiptRows['delegation-child-mappings'](),
+          })
+          await retainReceiptOwnerPins(
+            transaction,
+            'delegation-terminal-receipts',
+            receiptRows['delegation-terminal-receipts']()
+          )
+        })
+        expect(await missingPins(provider)).toEqual({
+          [`execution:${parentExecutionId}`]: ['delegation-child-mappings'],
+          [`execution:${childExecutionId}`]: ['delegation-child-mappings'],
+        })
+      })
+    })
+  })
+
+  describe('the legacy backfill holds the write lock for one page at a time', () => {
+    // Rows retained by an earlier version: no pins, distinct owners per row.
+    async function seedLegacy(provider, count) {
+      for (let start = 0; start < count; start += 500)
+        await provider.transaction(async (transaction) => {
+          for (let index = start; index < Math.min(count, start + 500); index += 1) {
+            const namespace =
+              delegationReceiptNamespaces[index % delegationReceiptNamespaces.length]
+            await transaction.put({
+              namespace,
+              id: `legacy-${String(index).padStart(5, '0')}`,
+              value: {
+                parentExecutionId: `exe_legacy_parent_${index}`,
+                childExecutionId: `exe_legacy_child_${index}`,
+                request: {
+                  executionId: `exe_legacy_child_${index}`,
+                  parentExecutionId: `exe_legacy_parent_${index}`,
+                  childExecutionId: `exe_legacy_child_${index}`,
+                },
+                event: {
+                  parentExecutionId: `exe_legacy_parent_${index}`,
+                  childExecutionId: `exe_legacy_child_${index}`,
+                },
+              },
+            })
+          }
+        })
+    }
+
+    test('3,000 legacy rows are indexed in bounded pages, then never scanned again', async () => {
+      const count = 3_000
+      await withProvider(async (provider) => {
+        await seedLegacy(provider, count)
+        const measured = measuredProvider(provider)
+        await prepareReceiptOwnerPins(measured.provider, { dryRun: false })
+        const pages = measured.transactions
+        // Before: one transaction read all 3,000 rows. Now none reads more than a page.
+        for (const stat of pages) {
+          expect(stat.rowsRead).toBeLessThanOrEqual(RECEIPT_PIN_BACKFILL_PAGE)
+          // Two executions per row at most, plus the cursor.
+          expect(stat.puts).toBeLessThanOrEqual(2 * RECEIPT_PIN_BACKFILL_PAGE + 1)
+        }
+        expect(pages.reduce((sum, stat) => sum + stat.rowsRead, 0)).toBe(count)
+        // One marker read, one page per 64 rows, and at most one short page per namespace.
+        const fullPages = Math.ceil(count / RECEIPT_PIN_BACKFILL_PAGE)
+        expect(pages.length).toBeLessThanOrEqual(1 + fullPages + delegationReceiptNamespaces.length)
+        expect(await missingPins(provider)).toEqual({})
+        const sources = await pinSources(provider)
+        expect(Object.keys(sources)).toHaveLength(2 * count)
+
+        // Once complete, a later sweep preparation is a single marker read.
+        const again = measuredProvider(provider)
+        await prepareReceiptOwnerPins(again.provider, { dryRun: false })
+        expect(again.transactions).toHaveLength(1)
+        expect(again.transactions[0].scans).toBe(0)
+        console.info(
+          'receipt backfill lock measurements',
+          JSON.stringify({
+            rows: count,
+            transactions: pages.length,
+            maximumRowsPerTransaction: Math.max(...pages.map((stat) => stat.rowsRead)),
+            maximumWritesPerTransaction: Math.max(...pages.map((stat) => stat.puts)),
+            slowestMilliseconds: Math.max(...pages.map((stat) => stat.milliseconds)),
+          })
+        )
+      })
+    }, 120000)
+
+    test('an interrupted backfill resumes at its cursor instead of rescanning', async () => {
+      const count = 5 * 200
+      await withProvider(async (provider) => {
+        await seedLegacy(provider, count)
+        const perNamespace = count / delegationReceiptNamespaces.length
+        // Transaction 1 reads the marker, 2 and 3 index 64 admission rows each, 4 fails
+        // part way through the namespace.
+        const interrupted = measuredProvider(provider, { failOnTransaction: 4 })
+        await expect(
+          prepareReceiptOwnerPins(interrupted.provider, { dryRun: false })
+        ).rejects.toThrow('interrupted')
+        const done = interrupted.transactions.reduce((sum, stat) => sum + stat.rowsRead, 0)
+        expect(done).toBe(2 * RECEIPT_PIN_BACKFILL_PAGE)
+        const pinnedBefore = Object.keys(await pinSources(provider)).length
+        expect(pinnedBefore).toBe(2 * done)
+
+        const resumed = measuredProvider(provider)
+        await prepareReceiptOwnerPins(resumed.provider, { dryRun: false })
+        const rescanned = resumed.transactions.reduce((sum, stat) => sum + stat.rowsRead, 0)
+        // Only the rows after the persisted cursor are read again.
+        expect(rescanned).toBe(count - done)
+        expect(perNamespace).toBeGreaterThan(done)
+        expect(await missingPins(provider)).toEqual({})
+        expect(Object.keys(await pinSources(provider))).toHaveLength(2 * count)
+      })
+    }, 120000)
+
+    test('a dry run reads legacy rows in bounded pages and writes nothing', async () => {
+      const count = 600
+      await withProvider(async (provider) => {
+        await seedLegacy(provider, count)
+        const measured = measuredProvider(provider)
+        const reader = await prepareReceiptOwnerPins(measured.provider, { dryRun: true })
+        for (const stat of measured.transactions) {
+          expect(stat.rowsRead).toBeLessThanOrEqual(RECEIPT_PIN_BACKFILL_PAGE)
+          expect(stat.puts).toBe(0)
+        }
+        expect(measured.transactions.reduce((sum, stat) => sum + stat.rowsRead, 0)).toBe(count)
+        expect(await provider.transaction((tx) => tx.list(receiptOwnerPinNamespace))).toEqual([])
+        expect(
+          await provider.transaction((tx) => reader.hasExecution(tx, 'exe_legacy_child_7'))
+        ).toBe(true)
+        expect(
+          await provider.transaction((tx) => reader.hasExecution(tx, 'exe_legacy_child_9999'))
+        ).toBe(false)
+      })
+    }, 120000)
   })
 })

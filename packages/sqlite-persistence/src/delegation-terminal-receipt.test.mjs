@@ -14,6 +14,7 @@ import { SqliteDelegationRepository } from './delegation-repository.ts'
 import { SqliteDelegationEventPublisher } from './delegation-event-publisher.ts'
 import { recordId } from './record-storage.ts'
 import { snapshotNamespaces, sweepSqliteRetention } from './retention-sweep.fixture.mjs'
+import { missingPins, pinSources } from './receipt-pin-sources.fixture.mjs'
 
 const ids = {
   parentExecutionId: 'exe_01JABCDEF0123456789ABCDEFG',
@@ -171,6 +172,35 @@ test('CAS-before-publication crash retains the exact terminal receipt and repair
     expect((await f.repository.getTerminalReceipt(ids.delegationId)).status).toBe('published')
     await f.service(f.inbox).recordChildProgress(outcome)
     expect(await f.inbox.list()).toEqual([receipt.event])
+  } finally {
+    await f.close()
+  }
+})
+
+test('the terminal writer alone pins the lead and the child, before and after publication', async () => {
+  const f = await fixture()
+  try {
+    // Delegating and dispatching write no admission, mapping or lookup receipt here,
+    // so the terminal writer is the only source of these pins.
+    expect(await pinSources(f.provider)).toEqual({})
+    await expect(
+      f
+        .service({
+          async publish() {
+            throw new Error('crash before publication')
+          },
+        })
+        .recordChildProgress(outcome)
+    ).rejects.toThrow('crash before publication')
+    const expected = {
+      [`execution:${ids.parentExecutionId}`]: ['delegation-terminal-receipts'],
+      [`execution:${ids.childExecutionId}`]: ['delegation-terminal-receipts'],
+    }
+    expect(await pinSources(f.provider)).toEqual(expected)
+    await f.repository.recoverTerminalPublication(ids.delegationId, f.inbox)
+    expect((await f.repository.getTerminalReceipt(ids.delegationId)).status).toBe('published')
+    expect(await pinSources(f.provider)).toEqual(expected)
+    expect(await missingPins(f.provider)).toEqual({})
   } finally {
     await f.close()
   }

@@ -67,13 +67,18 @@ lookup receipts also name the plans), and the existing `executions` and
 `execution-plans` retention classes refuse to delete an owner while any of these
 rows still names it, whether or not the `delegations` row is still present
 (`delegation-retention.ts`). The receipt writers record those owners in the same
-transaction in `delegation-receipt-owner-pins`, so a retention candidate costs one
-exact-key read per owner instead of a scan of every retained receipt. Rows
-retained before the index existed are indexed once by the first applying sweep
-(a dry run writes nothing and reads them once instead). The index is append-only
-like the receipts it mirrors. A pending terminal publication intent and a
-native-start lookup receipt are therefore never swept away before their repair
-path has read them, and a published receipt is retained as well.
+transaction in `delegation-receipt-owner-pins`, together with the namespace that
+named each owner, so a retention candidate costs one exact-key read per owner
+instead of a scan of every retained receipt, and a writer that skips its pin
+cannot hide behind another writer naming the same owner. Rows retained before the
+index existed are indexed by the first applying sweep, outside the candidate loop,
+one page of 64 rows per transaction with the cursor persisted in the same
+transaction, so no transaction holds the write lock for more than a page and an
+interrupted backfill resumes where it stopped (a dry run writes nothing and reads
+the same rows in read-only pages). The index is append-only like the receipts it
+mirrors. A pending terminal publication intent and a native-start lookup receipt
+are therefore never swept away before their repair path has read them, and a
+published receipt is retained as well.
 
 The owner decided which existing class governs their eventual deletion (#1022)
 (`delegationReceiptRetentionClass`): admission, mapping, native-session and

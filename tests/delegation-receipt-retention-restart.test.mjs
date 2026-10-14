@@ -1,4 +1,6 @@
 import { expect, test } from 'bun:test'
+import { canonicalJsonStringify } from '@control-plane/contracts'
+import { recordId } from '../packages/sqlite-persistence/src/record-storage.ts'
 import { CanonicalDelegationRuntimeBridge } from '../packages/orchestration/src/delegation-runtime.ts'
 import { ExecutionLifecycleService } from '@control-plane/domain'
 import {
@@ -17,6 +19,11 @@ import {
   delegationReceiptNamespaces,
   delegationReceiptRetentionClass,
 } from '../packages/sqlite-persistence/src/delegation-retention.ts'
+import {
+  missingPins,
+  pinSources,
+} from '../packages/sqlite-persistence/src/receipt-pin-sources.fixture.mjs'
+import { receiptOwnerPinNamespace } from '../packages/sqlite-persistence/src/delegation-retention.ts'
 import { withChildMappingRecovery } from './pi-durable-child-mapping-recovery.fixture.mjs'
 
 test('the package sweep list mirrors the operator retention registry', () => {
@@ -33,6 +40,51 @@ test('the receipt classes have no registered deletion path yet', () => {
   for (const classId of new Set(Object.values(delegationReceiptRetentionClass)))
     expect(retentionClasses[classId]).toBeUndefined()
 })
+
+// The native-start lookup writer, run alone: with the pin index emptied and the
+// lookup row removed, retaining the same start request again is the only writer
+// that runs, so the owners and the plan can only be pinned by the lookup.
+test(
+  'the runtime lookup writer alone pins the lead, the child and the child plan',
+  () =>
+    withChildMappingRecovery(async (x) => {
+      const lookupNamespace = 'delegation-runtime-lookups'
+      const lookups = await x.provider.transaction((tx) => tx.list(lookupNamespace))
+      expect(lookups).toHaveLength(1)
+      const { parentExecutionId, childExecutionId, request } = lookups[0].value
+      expect(await missingPins(x.provider)).toEqual({})
+      await x.provider.transaction(async (tx) => {
+        for (const row of await tx.list(receiptOwnerPinNamespace))
+          await tx.delete(receiptOwnerPinNamespace, row.id, row.revision)
+        await tx.delete(lookupNamespace, lookups[0].id, lookups[0].revision)
+      })
+      expect(await pinSources(x.provider)).toEqual({})
+      // Restating the start needs the canonical call to be live, as in the
+      // immutable-receipt tests of the recovery suite; the call state is the only thing set.
+      await x.provider.transaction(async (tx) => {
+        const callNamespace = `tool-calls-${recordId(x.f.ids.workspaceId)}`
+        const identity = canonicalJsonStringify([x.f.ids.workspaceId, x.f.host.request.toolCallId])
+        const row = await tx.get(callNamespace, recordId(identity))
+        await tx.put({
+          namespace: callNamespace,
+          id: row.id,
+          expectedRevision: row.revision,
+          value: { ...row.value, call: { ...row.value.call, status: 'executing' } },
+        })
+      })
+
+      await x.records.retainChildRuntimeStart({ delegationId: x.f.ids.delegationId, request })
+
+      expect(await pinSources(x.provider)).toEqual({
+        [`execution:${parentExecutionId}`]: [lookupNamespace],
+        [`execution:${childExecutionId}`]: [lookupNamespace],
+        [`plan:${request.executionPlan.executionPlanId}`]: [lookupNamespace],
+      })
+      // The other writers' rows are still there; their pins are what is absent now.
+      expect(Object.keys(await missingPins(x.provider)).length).toBeGreaterThan(0)
+    }),
+  30000
+)
 
 const watched = [
   ...delegationReceiptNamespaces,

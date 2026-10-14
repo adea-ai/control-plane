@@ -119,23 +119,34 @@ export function receiptOwnerPins(
 
 /**
  * Owner pin index. Each receipt writer records the executions and plans its row
- * names in the same transaction as the row, so a retention candidate costs one
- * exact-key read per owner instead of a scan of every retained receipt. The index
- * is append-only like the receipts it mirrors: nothing releases a pin.
+ * names in the same transaction as the row, together with the namespace that
+ * named them, so a retention candidate costs one exact-key read per owner
+ * instead of a scan of every retained receipt. The index is append-only like the
+ * receipts it mirrors: nothing releases a pin.
  */
 export const receiptOwnerPinNamespace = 'delegation-receipt-owner-pins'
-const backfillMarker = 'backfill-complete'
+/** Rows read, and so pins written, by one backfill transaction. */
+export const RECEIPT_PIN_BACKFILL_PAGE = 64
+const backfillStateId = recordId('backfill-state')
 
 const pinId = (kind: 'execution' | 'plan', identity: string) => recordId(`${kind}:${identity}`)
 
 async function putPin(
   transaction: PersistenceTransaction,
   kind: 'execution' | 'plan',
-  identity: string
+  identity: string,
+  source: ReceiptNamespace
 ): Promise<void> {
   const id = pinId(kind, identity)
-  if ((await transaction.get(receiptOwnerPinNamespace, id)) === undefined)
-    await transaction.put({ namespace: receiptOwnerPinNamespace, id, value: { kind, identity } })
+  const existing = await transaction.get(receiptOwnerPinNamespace, id)
+  const sources = (existing?.value as { sources?: readonly string[] } | undefined)?.sources ?? []
+  if (existing !== undefined && sources.includes(source)) return
+  await transaction.put({
+    namespace: receiptOwnerPinNamespace,
+    id,
+    ...(existing === undefined ? {} : { expectedRevision: existing.revision }),
+    value: { kind, identity, sources: [...sources, source].toSorted() },
+  })
 }
 
 /** Writers call this right after retaining a receipt row, in the same transaction. */
@@ -145,14 +156,14 @@ export async function retainReceiptOwnerPins(
   value: unknown
 ): Promise<void> {
   const pins = receiptOwnerPins(namespace, value)
-  for (const executionId of pins.executionIds) await putPin(transaction, 'execution', executionId)
-  for (const planId of pins.planIds) await putPin(transaction, 'plan', planId)
+  for (const executionId of pins.executionIds)
+    await putPin(transaction, 'execution', executionId, namespace)
+  for (const planId of pins.planIds) await putPin(transaction, 'plan', planId, namespace)
 }
 
 /**
- * Full scan of the receipt namespaces. Only the one-time index backfill and a
- * read-only assessment of a store that has not been backfilled use it; no
- * per-candidate path does.
+ * Full scan of the receipt namespaces in one transaction. Only tests use it, as
+ * the oracle the index is compared with; sweeps page instead.
  */
 export async function readDelegationReceiptPins(
   transaction: PersistenceTransaction,
@@ -169,6 +180,78 @@ export async function readDelegationReceiptPins(
   return { executionIds, planIds }
 }
 
+interface BackfillState {
+  readonly complete: boolean
+  readonly namespace: number
+  readonly afterId?: string
+}
+
+/**
+ * Indexes one page of rows retained before the index existed. The cursor is
+ * persisted with the page, so a crash resumes where it stopped and no
+ * transaction holds the write lock for more than one page.
+ */
+async function backfillOnePage(provider: PersistenceProvider): Promise<boolean> {
+  return provider.transaction(async (transaction) => {
+    const row = await transaction.get(receiptOwnerPinNamespace, backfillStateId)
+    const state: BackfillState = (row?.value as BackfillState | undefined) ?? {
+      complete: false,
+      namespace: 0,
+    }
+    if (state.complete) return true
+    const namespace = delegationReceiptNamespaces[state.namespace]!
+    const page = await transaction.scan(namespace, {
+      limit: RECEIPT_PIN_BACKFILL_PAGE,
+      ...(state.afterId === undefined ? {} : { afterId: state.afterId }),
+    })
+    for (const record of page) {
+      const pins = receiptOwnerPins(namespace, record.value)
+      for (const executionId of pins.executionIds)
+        await putPin(transaction, 'execution', executionId, namespace)
+      for (const planId of pins.planIds) await putPin(transaction, 'plan', planId, namespace)
+    }
+    const namespaceDone = page.length < RECEIPT_PIN_BACKFILL_PAGE
+    const next: BackfillState = namespaceDone
+      ? {
+          complete: state.namespace + 1 >= delegationReceiptNamespaces.length,
+          namespace: state.namespace + 1,
+        }
+      : { complete: false, namespace: state.namespace, afterId: page.at(-1)!.id }
+    await transaction.put({
+      namespace: receiptOwnerPinNamespace,
+      id: backfillStateId,
+      ...(row === undefined ? {} : { expectedRevision: row.revision }),
+      value: { ...next },
+    })
+    return next.complete
+  })
+}
+
+/** Read-only paged scan for a dry run over a store that has not been backfilled. */
+async function scanLegacyPins(provider: PersistenceProvider): Promise<DelegationReceiptPins> {
+  const executionIds = new Set<string>()
+  const planIds = new Set<string>()
+  for (const namespace of delegationReceiptNamespaces) {
+    let afterId: string | undefined
+    for (;;) {
+      const page = await provider.transaction((transaction) =>
+        transaction.scan(namespace, {
+          limit: RECEIPT_PIN_BACKFILL_PAGE,
+          ...(afterId === undefined ? {} : { afterId }),
+        })
+      )
+      for (const record of page) {
+        const pins = receiptOwnerPins(namespace, record.value)
+        for (const executionId of pins.executionIds) executionIds.add(executionId)
+        for (const planId of pins.planIds) planIds.add(planId)
+      }
+      if (page.length < RECEIPT_PIN_BACKFILL_PAGE) break
+      afterId = page.at(-1)!.id
+    }
+  }
+  return { executionIds, planIds }
+}
+
 export interface ReceiptOwnerPinReader {
   hasExecution(transaction: PersistenceTransaction, executionId: string): Promise<boolean>
   hasPlan(transaction: PersistenceTransaction, planId: string): Promise<boolean>
@@ -176,33 +259,23 @@ export interface ReceiptOwnerPinReader {
 
 /**
  * Resolves the pin reader for one sweep. Rows written before the index existed
- * are indexed once, here, outside the candidate loop; a dry run writes nothing
- * and falls back to one read-only scan of the legacy rows. Either way every
- * candidate afterwards needs only exact-key reads inside its own transaction,
- * which also see pins written by receipt writers after this point.
+ * are indexed here, outside the candidate loop, one bounded page per
+ * transaction; a dry run writes nothing and reads them in bounded pages
+ * instead. Either way every candidate afterwards needs only exact-key reads
+ * inside its own transaction, which also see pins written by receipt writers
+ * after this point.
  */
 export async function prepareReceiptOwnerPins(
   provider: PersistenceProvider,
   options: { readonly dryRun: boolean }
 ): Promise<ReceiptOwnerPinReader> {
-  const complete = (transaction: PersistenceTransaction) =>
-    transaction.get(receiptOwnerPinNamespace, recordId(backfillMarker))
   let legacy: DelegationReceiptPins | undefined
-  if ((await provider.transaction(complete)) === undefined) {
-    if (options.dryRun) legacy = await provider.transaction(readDelegationReceiptPins)
-    else
-      await provider.transaction(async (transaction) => {
-        if ((await complete(transaction)) !== undefined) return
-        const pins = await readDelegationReceiptPins(transaction)
-        for (const executionId of pins.executionIds)
-          await putPin(transaction, 'execution', executionId)
-        for (const planId of pins.planIds) await putPin(transaction, 'plan', planId)
-        await transaction.put({
-          namespace: receiptOwnerPinNamespace,
-          id: recordId(backfillMarker),
-          value: { backfilled: true },
-        })
-      })
+  const state = await provider.transaction((transaction) =>
+    transaction.get(receiptOwnerPinNamespace, backfillStateId)
+  )
+  if ((state?.value as BackfillState | undefined)?.complete !== true) {
+    if (options.dryRun) legacy = await scanLegacyPins(provider)
+    else while (!(await backfillOnePage(provider)));
   }
   const indexed = async (
     transaction: PersistenceTransaction,
