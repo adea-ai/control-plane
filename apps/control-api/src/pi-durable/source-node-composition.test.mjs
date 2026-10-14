@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { ContextPackageCompiler } from '@control-plane/context'
 import { ExecutionPlanCompiler } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
-import { piLeadConversationAgentContextRef } from '@control-plane/contracts'
+import { piLeadConversationAgentContextRef } from './source-authority-contract.ts'
 import {
   assertSourceLeadExecutionPlan,
   createProductionSourceNodeComposition,

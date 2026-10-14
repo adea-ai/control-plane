@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { PiLeadPublicationSchema } from './pi-lead-publication.js'
-import { PiLeadSourceExecutionBindingSchema } from './pi-lead-source-authority.js'
+import { PiLeadPublicationSchema } from '@control-plane/contracts'
+import { PiLeadSourceExecutionBindingSchema } from './source-authority-contract.js'
 
 /** Additive metadata-only candidate delivery proof. Host audience and current
  * source CP grants/payer must independently authorize delivery; no output or

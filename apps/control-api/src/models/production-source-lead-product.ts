@@ -2,12 +2,14 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import {
   canonicalJsonStringify,
-  PiLeadHostSourceAuthoritySchema,
   RequestedRoleModelSelectionsSchema,
   IdentifierSchemas,
   ModelSelectionRefSchema,
-  type PiLeadHostSourceAuthority,
 } from '@control-plane/contracts'
+import {
+  PiLeadHostSourceAuthoritySchema,
+  type PiLeadHostSourceAuthority,
+} from '../pi-durable/source-authority-contract.js'
 import { createProductionLeadProductAuthority } from './production-lead-product.js'
 import type { PiLeadProductAuthorityPort } from '../pi-durable/node-admission.js'
 

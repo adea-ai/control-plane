@@ -4,7 +4,7 @@ import {
   PiLeadSourceExecutionBindingSchema,
   piLeadConversationAgentContextRef,
   assertPiLeadSourceExecutionBindingCurrent,
-} from './pi-lead-source-authority.ts'
+} from './source-authority-contract.ts'
 
 const id = (prefix, char) => `${prefix}_${char.repeat(26)}`
 const uuid = (char) =>

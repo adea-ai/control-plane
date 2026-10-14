@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { canonicalJsonStringify } from './canonical-json.js'
-import { IdentifierSchemas } from './identifiers.js'
-import { ModelSelectionRefSchema } from './model-connections.js'
+import {
+  canonicalJsonStringify,
+  IdentifierSchemas,
+  ModelSelectionRefSchema,
+} from '@control-plane/contracts'
 
 const Digest = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 const ProductId = z.uuid().regex(/^[a-f0-9-]+$/)

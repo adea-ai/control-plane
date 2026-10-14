@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
-import { piLeadConversationAgentContextRef } from './pi-lead-source-authority.ts'
-import { PiLeadSourcePublicationSchema } from './pi-lead-source-publication.ts'
+import { piLeadConversationAgentContextRef } from './source-authority-contract.ts'
+import { PiLeadSourcePublicationSchema } from './source-publication-contract.ts'
 
 const id = (kind, char) => `${kind}_${char.repeat(26)}`
 const uuid = (char) =>

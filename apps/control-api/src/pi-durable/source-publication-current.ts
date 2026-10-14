@@ -1,12 +1,14 @@
 import {
   PiLeadPublicationRequestSchema,
   PiLeadPublicationResponseSchema,
-  PiLeadSourceExecutionBindingSchema,
-  PiLeadSourcePublicationSchema,
-  type PiLeadSourceExecutionBinding,
   type PiLeadPublication,
   type ServicePrincipal,
 } from '@control-plane/contracts'
+import {
+  PiLeadSourceExecutionBindingSchema,
+  type PiLeadSourceExecutionBinding,
+} from './source-authority-contract.js'
+import { PiLeadSourcePublicationSchema } from './source-publication-contract.js'
 import type { PiLeadPublicationService } from './publication-current.service.js'
 
 /** Candidate metadata-only join, using the existing current publication service.

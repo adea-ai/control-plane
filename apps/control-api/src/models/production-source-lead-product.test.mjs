@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { piLeadConversationAgentContextRef } from '@control-plane/contracts'
+import { piLeadConversationAgentContextRef } from '../pi-durable/source-authority-contract.ts'
 import { createProductionSourceLeadProductAuthority } from './production-source-lead-product.ts'
 
 const id = (kind, char) => `${kind}_${char.repeat(26)}`

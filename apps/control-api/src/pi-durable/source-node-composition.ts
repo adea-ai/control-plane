@@ -1,11 +1,13 @@
 import { z } from 'zod'
 import {
-  PiLeadHostSourceAuthoritySchema,
-  PiLeadSourceExecutionBindingSchema,
   ServicePrincipalSchema,
   executionScopeOf,
-  type PiLeadHostSourceAuthority,
 } from '@control-plane/contracts'
+import {
+  PiLeadHostSourceAuthoritySchema,
+  PiLeadSourceExecutionBindingSchema,
+  type PiLeadHostSourceAuthority,
+} from './source-authority-contract.js'
 import { assertExecutionPlanIntegrity, type ExecutionPlan } from '@control-plane/execution-plan'
 import { RuntimeStartRequestSchema } from '@control-plane/runtime-sdk'
 import {

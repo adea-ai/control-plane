@@ -19,5 +19,3 @@ export const packageName = 'contracts'
 
 export * from './model-connections.js'
 export * from './pi-lead-publication.js'
-export * from './pi-lead-source-authority.js'
-export * from './pi-lead-source-publication.js'

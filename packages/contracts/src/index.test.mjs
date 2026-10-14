@@ -24,6 +24,18 @@ import {
   assessContractCompatibility,
   negotiateContractVersion,
 } from './index.ts'
+import * as PublicContracts from './index.ts'
+
+test('source authority candidate metadata stays private to its product integration', () => {
+  for (const name of [
+    'PiLeadHostSourceAuthoritySchema',
+    'PiLeadSourceExecutionBindingSchema',
+    'PiLeadSourcePublicationSchema',
+    'piLeadConversationAgentContextRef',
+    'assertPiLeadSourceExecutionBindingCurrent',
+  ])
+    expect(name in PublicContracts).toBe(false)
+})
 
 describe('canonical identifiers', () => {
   test('accepts only the canonical opaque prefix for each identifier kind', () => {

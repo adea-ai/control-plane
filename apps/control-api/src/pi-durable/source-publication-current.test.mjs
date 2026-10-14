@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { piLeadConversationAgentContextRef } from '@control-plane/contracts'
+import { piLeadConversationAgentContextRef } from './source-authority-contract.ts'
 import { createSourcePiLeadPublicationReader } from './source-publication-current.ts'
 
 const id = (kind, char) => `${kind}_${char.repeat(26)}`

@@ -27,7 +27,7 @@ import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completio
 import { createProductionSourceNodeComposition } from './source-node-composition.ts'
 import { createProductionSourceLeadProductAuthority } from '../models/production-source-lead-product.ts'
 import { ContextPackageCompiler } from '@control-plane/context'
-import { piLeadConversationAgentContextRef } from '@control-plane/contracts'
+import { piLeadConversationAgentContextRef } from './source-authority-contract.ts'
 import { DatabaseSync } from 'node:sqlite'
 import { PiLeadPublicationService } from './publication-current.service.ts'
 import { createSqlitePiLeadPublicationReader } from './sqlite-publication-reader.ts'
