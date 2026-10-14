@@ -1,4 +1,9 @@
 import {
+  readPersistenceTransaction,
+  writePersistenceTransaction,
+  type PersistenceReader,
+} from '@control-plane/deployment/read-scope'
+import {
   CredentialAuditEventSchema,
   CredentialCommandReceiptSchema,
   CredentialLeaseSchema,
@@ -46,7 +51,7 @@ export class SqliteCredentialVaultRepository implements CredentialVaultRepositor
     const credential = StoredCredentialSchema.parse(input)
     const receipt =
       receiptInput === undefined ? undefined : CredentialCommandReceiptSchema.parse(receiptInput)
-    return this.provider.transaction(async (transaction) => {
+    return writePersistenceTransaction(this.provider, async (transaction) => {
       if (receipt !== undefined && (await readReceipt(transaction, receipt)) !== undefined) {
         return 'receipt_exists'
       }
@@ -58,14 +63,16 @@ export class SqliteCredentialVaultRepository implements CredentialVaultRepositor
   }
 
   getCredential(credentialId: string): Promise<StoredCredential | undefined> {
-    return this.provider.transaction((transaction) => readCredential(transaction, credentialId))
+    return readPersistenceTransaction(this.provider, (transaction) =>
+      readCredential(transaction, credentialId)
+    )
   }
 
   findCredentialByConnector(
     workspaceId: string,
     connectorRef: string
   ): Promise<StoredCredential | undefined> {
-    return this.provider.transaction(async (transaction) => {
+    return readPersistenceTransaction(this.provider, async (transaction) => {
       const binding = await transaction.get(ns.connectors, connectorId(workspaceId, connectorRef))
       if (binding === undefined) return undefined
       const boundId = (binding.value as { readonly credentialId?: unknown }).credentialId
@@ -90,7 +97,7 @@ export class SqliteCredentialVaultRepository implements CredentialVaultRepositor
     if (!Number.isSafeInteger(page.limit) || page.limit < 1 || page.limit > 1_000) {
       throw new RangeError('CREDENTIAL_PAGE_LIMIT_INVALID')
     }
-    return this.provider.transaction(async (transaction) =>
+    return readPersistenceTransaction(this.provider, async (transaction) =>
       (await transaction.list(ns.credentials))
         .map((record) => StoredCredentialSchema.parse(record.value))
         .filter(
@@ -119,7 +126,7 @@ export class SqliteCredentialVaultRepository implements CredentialVaultRepositor
       options.receipt === undefined
         ? undefined
         : CredentialCommandReceiptSchema.parse(options.receipt)
-    return this.provider.transaction(async (transaction) => {
+    return writePersistenceTransaction(this.provider, async (transaction) => {
       if (receipt !== undefined && (await readReceipt(transaction, receipt)) !== undefined) {
         return 'receipt_exists'
       }
@@ -166,12 +173,14 @@ export class SqliteCredentialVaultRepository implements CredentialVaultRepositor
   }
 
   getCommandReceipt(scope: CredentialCommandScope): Promise<CredentialCommandReceipt | undefined> {
-    return this.provider.transaction((transaction) => readReceipt(transaction, scope))
+    return readPersistenceTransaction(this.provider, (transaction) =>
+      readReceipt(transaction, scope)
+    )
   }
 
   insertLease(input: CredentialLease): Promise<boolean> {
     const lease = CredentialLeaseSchema.parse(input)
-    return this.provider.transaction(async (transaction) => {
+    return writePersistenceTransaction(this.provider, async (transaction) => {
       if (
         (await transaction.get(ns.leaseIds, lease.credentialLeaseId)) !== undefined ||
         (await transaction.get(ns.leases, leaseRecordId(lease.capabilityRef))) !== undefined
@@ -193,7 +202,7 @@ export class SqliteCredentialVaultRepository implements CredentialVaultRepositor
   }
 
   getLease(capabilityRef: string): Promise<CredentialLease | undefined> {
-    return this.provider.transaction(async (transaction) => {
+    return readPersistenceTransaction(this.provider, async (transaction) => {
       const record = await transaction.get(ns.leases, leaseRecordId(capabilityRef))
       if (record === undefined) return undefined
       const lease = CredentialLeaseSchema.parse(record.value)
@@ -204,7 +213,7 @@ export class SqliteCredentialVaultRepository implements CredentialVaultRepositor
 
   transitionLease(input: CredentialLease): Promise<boolean> {
     const next = CredentialLeaseSchema.parse(input)
-    return this.provider.transaction(async (transaction) => {
+    return writePersistenceTransaction(this.provider, async (transaction) => {
       const record = await transaction.get(ns.leases, leaseRecordId(next.capabilityRef))
       if (record === undefined) return false
       const current = CredentialLeaseSchema.parse(record.value)
@@ -222,7 +231,7 @@ export class SqliteCredentialVaultRepository implements CredentialVaultRepositor
   }
 
   appendAudit(input: CredentialAuditEventInput): Promise<void> {
-    return this.provider.transaction((transaction) =>
+    return writePersistenceTransaction(this.provider, (transaction) =>
       appendSqliteCredentialAudit(transaction, input)
     )
   }
@@ -230,7 +239,7 @@ export class SqliteCredentialVaultRepository implements CredentialVaultRepositor
   listAudit(
     filter: { readonly workspaceId?: string; readonly credentialId?: string } = {}
   ): Promise<readonly CredentialAuditEvent[]> {
-    return this.provider.transaction(async (transaction) =>
+    return readPersistenceTransaction(this.provider, async (transaction) =>
       (await transaction.list(ns.audit))
         .toSorted((left, right) => (left.id < right.id ? -1 : 1))
         .map((record) => CredentialAuditEventSchema.parse(record.value))
@@ -311,7 +320,7 @@ export async function appendSqliteCredentialAudit(
 }
 
 async function readCredential(
-  transaction: PersistenceTransaction,
+  transaction: PersistenceReader,
   credentialId: string
 ): Promise<StoredCredential | undefined> {
   const record = await transaction.get(ns.credentials, credentialId)
@@ -324,7 +333,7 @@ async function readCredential(
 }
 
 async function readReceipt(
-  transaction: PersistenceTransaction,
+  transaction: PersistenceReader,
   scope: CredentialCommandScope
 ): Promise<CredentialCommandReceipt | undefined> {
   const record = await transaction.get(ns.commands, recordId(credentialCommandKey(scope)))

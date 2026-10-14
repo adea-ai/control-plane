@@ -160,3 +160,30 @@ callback-free metadata and denied publication after revocation. Its host/source
 and funding authority ports remain synthetic. Production combined fences,
 Adea delivery integration and the existing authorized physical source tool
 destination remain unqualified; this evidence is not a physical-source proof.
+
+Child allocation repeats product and model readiness while holding its canonical
+allocation transaction. Model and vault metadata stored on that same persistence
+provider use `@control-plane/deployment/read-scope` to read through the open
+transaction during this fence. The scope is bound to the exact provider and async
+caller; unrelated callers still serialize normally. It exposes no writes or
+credential leases, expires when the check returns, and rejects detached pending
+reads before allocation can commit. Pending tracking covers each `get`, `list`
+and `scan` promise even if its metadata callback has already returned. Nested
+scopes over the same provider and transaction also retain that read in the
+ancestor scope, so catching an inner rejection cannot permit an outer commit.
+The entire same-transaction nested callback is tracked from entry, even before
+its first read. An expired ancestor closes every descendant read and refuses
+new same-transaction scopes from that expired async context.
+Ambient ancestry survives interposed providers and transactions. Only the exact
+provider/transaction pair shares pending lifetime fences; independent transactions
+remain usable after an unrelated ancestor closes. Fresh metadata reads and writes
+find the nearest matching provider scope, without reviving an expired scope or
+allowing a captured reader to cross its original caller context.
+Recovered child-session binding applies the same read fence around its current
+authority callback, retaining the canonical before/after tuple checks and reader
+closure. Metadata reads cannot queue behind that callback's own transaction, and
+metadata writes cannot join it.
+Readers captured from another provider or an expired nested scope refuse before
+accessing the transaction. Metadata writes attempted in the fence fail
+closed. Product, account, quota, revocation, lineage and expiry checks still run;
+no accepted selection or authority result is cached to bypass a current read.
