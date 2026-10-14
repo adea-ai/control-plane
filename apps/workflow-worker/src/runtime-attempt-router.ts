@@ -66,22 +66,34 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
     // Accepted-harness hard filter (#678) runs on the eligible set BEFORE
     // ranking: only candidates exposing the exact pinned harness id survive.
     // An empty set with a pin is a typed NO_COMPATIBLE_RUNTIME denial.
-    const eligible = selectRuntimesExposingHarness(
+    const live = selectRuntimesExposingHarness(
       discovered
         .map((connection) => candidate(connection, input.executionPlan, evaluatedAt))
         .filter((value) => value !== undefined)
         .map((value) => ({ ...value, harnessIds: harnessIdsOf(value.connection) })),
       this.#pinnedHarnessId
     )
+    // TDD-A377: a local location the plan could use, that is not live-eligible right now, is never
+    // silently replaced by a remote runtime. While one exists the choice is restricted to local
+    // candidates, so a healthy local runtime still wins over a remote one that merely ranks first,
+    // and an empty local set is a typed denial instead of an implicit cloud reroute.
+    const liveIds = new Set(live.map(({ connection }) => connection.runtimeConnectionId))
+    const localFenced = discovered.some(
+      (connection) =>
+        !liveIds.has(connection.runtimeConnectionId) &&
+        fencedLocalRuntime(connection, input.executionPlan, this.#pinnedHarnessId)
+    )
+    const eligible = localFenced
+      ? live.filter(({ connection }) => !isRemoteLocation(connection))
+      : live
     const candidates = eligible.toSorted(compareCandidates)
     const selected = candidates[0]
-    if (selected === undefined) throw new Error('WORKFLOW_RUNTIME_UNAVAILABLE')
-    // TDD-A377: an offline or revoked local location is never silently replaced by a remote runtime.
-    if (
-      isRemoteLocation(selected.connection) &&
-      discovered.some((connection) => fencedLocalRuntime(connection, input.executionPlan))
-    ) {
-      throw new Error('WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK')
+    if (selected === undefined) {
+      throw new Error(
+        localFenced && live.length > 0
+          ? 'WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK'
+          : 'WORKFLOW_RUNTIME_UNAVAILABLE'
+      )
     }
     const inputDigest = digest({
       executionId: input.execution.executionId,
@@ -210,31 +222,28 @@ function locationAllowed(
 }
 
 /**
- * A local-location runtime the plan could have used, but which is offline or revoked. While one exists,
- * a remote runtime must not be chosen in its place: that would be an implicit cloud reroute.
+ * A local-location runtime the plan could have used, but which is not usable right now. While one
+ * exists, a remote runtime must not be chosen in its place: that would be an implicit cloud reroute.
+ *
+ * Only runtimes that are statically unusable for this plan are exempt: a disallowed family or
+ * location, missing capability, an unpinned harness, a denied entitlement, or a compatibility state
+ * of `incompatible` or `capability_missing`. Everything else that keeps a connection out of the live
+ * candidate set (offline, stale, reconnecting, unknown health, revoked or missing grant, revoked or
+ * unavailable compatibility, no node, ineligible) is an unavailable location, not a different one.
  */
 function fencedLocalRuntime(
   connection: RuntimeConnectionDiscoveryReadModel,
-  plan: ExecutionPlan
+  plan: ExecutionPlan,
+  pinnedHarnessId: string | undefined
 ): boolean {
   return (
     !isRemoteLocation(connection) &&
     locationAllowed(connection, plan.constraints.runtime.allowedLocations) &&
     runtimeFamilyAllowed(connection.family, plan.constraints.runtime.allowedFamilies) &&
-    isOfflineOrRevoked(connection) &&
+    (pinnedHarnessId === undefined || harnessIdsOf(connection).includes(pinnedHarnessId)) &&
+    connection.access.entitlement.state !== 'denied' &&
+    !['incompatible', 'capability_missing'].includes(connection.compatibility.state) &&
     capabilityDecisionOf(connection, plan).eligible
-  )
-}
-
-function isOfflineOrRevoked(connection: RuntimeConnectionDiscoveryReadModel): boolean {
-  return (
-    connection.status === 'revoked' ||
-    connection.node?.status === 'offline' ||
-    connection.node?.status === 'revoked' ||
-    connection.node?.health === 'offline' ||
-    connection.node?.health === 'revoked' ||
-    ['disconnected', 'expired', 'revoked'].includes(connection.connection.status) ||
-    ['offline', 'revoked'].includes(connection.connection.availability)
   )
 }
 

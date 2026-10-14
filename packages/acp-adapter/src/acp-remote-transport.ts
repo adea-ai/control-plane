@@ -440,18 +440,11 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
       // the device replay ledger returns the recorded outcome instead of repeating the effect.
       throw remoteDenialError(denyRemote('response_unknown'))
     }
-    // Current-authority recheck after the send await: revocation, an expired window, or an abort
-    // that landed while the command was on the wire must stop the reply from being opened and
-    // published to the caller.
-    this.#assertFenced()
-    const receivedWindow = evaluateCommandWindow({
-      issuedAt: command.issuedAt,
-      expiresAt: command.expiresAt,
-      now: this.#now(),
-      clockSkewMs: ACP_REMOTE_CLOCK_SKEW_MS,
-      maxLifetimeMs: ACP_REMOTE_MAX_COMMAND_LIFETIME_MS,
-    })
-    if (receivedWindow.outcome === 'denied') throw remoteDenialError(receivedWindow)
+    // Current-authority recheck after the send await: revocation or an abort that landed while the
+    // command was on the wire must stop the reply from being opened and published to the caller.
+    // The window is rechecked only when an exchange is opened: a signed device denial (for example
+    // `command_expired`, with nothing executed) is the more accurate answer and is surfaced as is.
+    this.#assertFencedAfterDelivery()
     if (signalAborted(signal)) throw timeoutError()
     return this.#openReply(reply, header, returnKey)
   }
@@ -459,6 +452,41 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
   #assertFenced(): void {
     const decision = this.fenceDecision()
     if (decision.outcome === 'denied') throw remoteDenialError(decision)
+  }
+
+  /**
+   * Fence check once a reply is in hand. The command definitely reached the device, so the wire
+   * going offline afterwards says nothing about authority and must not be reported as
+   * `device_offline` (which callers read as "never delivered"). Revocation, staleness and a broken
+   * clock still stop the reply from being published.
+   */
+  #assertFencedAfterDelivery(): void {
+    const decision = this.fenceDecision()
+    if (decision.outcome === 'denied' && decision.reason !== 'device_offline') {
+      throw remoteDenialError(decision)
+    }
+  }
+
+  /**
+   * Window check once the command may have executed. An expiry observed now does not mean nothing
+   * ran, so it is reported as an unknown outcome (retryable on the same command identity, whose
+   * recorded outcome the device replays) rather than as a non-retryable `command_expired`.
+   */
+  #assertWindowAfterDelivery(command: {
+    readonly issuedAt: string
+    readonly expiresAt: string
+  }): void {
+    const window = evaluateCommandWindow({
+      issuedAt: command.issuedAt,
+      expiresAt: command.expiresAt,
+      now: this.#now(),
+      clockSkewMs: ACP_REMOTE_CLOCK_SKEW_MS,
+      maxLifetimeMs: ACP_REMOTE_MAX_COMMAND_LIFETIME_MS,
+    })
+    if (window.outcome !== 'denied') return
+    throw remoteDenialError(
+      window.reason === 'command_expired' ? denyRemote('response_unknown') : window
+    )
   }
 
   async #openReply(
@@ -499,15 +527,8 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
     }
     // Current-authority recheck after the decrypt await: authority that changed while the sealed
     // reply was opening must stop the exchange from reaching the caller.
-    this.#assertFenced()
-    const openedWindow = evaluateCommandWindow({
-      issuedAt: command.issuedAt,
-      expiresAt: command.expiresAt,
-      now: this.#now(),
-      clockSkewMs: ACP_REMOTE_CLOCK_SKEW_MS,
-      maxLifetimeMs: ACP_REMOTE_MAX_COMMAND_LIFETIME_MS,
-    })
-    if (openedWindow.outcome === 'denied') throw remoteDenialError(openedWindow)
+    this.#assertFencedAfterDelivery()
+    this.#assertWindowAfterDelivery(command)
     const decoded = ExchangeSchema.safeParse(exchange)
     if (!decoded.success) throw untrusted()
     return {
@@ -838,7 +859,7 @@ export class SecureAcpDeviceEndpoint {
       if (inflight.identity !== identity) return { kind: 'denial', reason: 'command_conflict' }
       const outcome = await inflight.outcome
       const fenced = this.#commandFenceReason(header)
-      if (fenced !== undefined) return { kind: 'denial', reason: fenced }
+      if (fenced !== undefined) return withholdExchange(fenced, outcome)
       return outcome
     }
     const pipeline = this.#pipeline(header, command, identity)
@@ -862,8 +883,8 @@ export class SecureAcpDeviceEndpoint {
       const stored = await this.#stateStore.readLedger(header.commandId)
       // Recorded outcomes replay only after the durable fence confirms current authority.
       const fencedAfterRead = await this.#currentCommandFence(header)
-      if (fencedAfterRead !== undefined) return { kind: 'denial', reason: fencedAfterRead }
       const replayed = replayOutcome(stored, identity)
+      if (fencedAfterRead !== undefined) return withholdExchange(fencedAfterRead, replayed)
       if (replayed !== undefined) return replayed
       const fencedBeforeClaim = this.#commandFenceReason(header)
       if (fencedBeforeClaim !== undefined) return { kind: 'denial', reason: fencedBeforeClaim }
@@ -877,6 +898,11 @@ export class SecureAcpDeviceEndpoint {
           identity,
           channelGeneration: header.channelGeneration,
           capacity: this.#ledgerCapacity,
+          // Retention: a record whose delivery window has closed can never be replayed (the window
+          // fence denies it first), so claims prune such records instead of letting the durable
+          // ledger fill permanently.
+          expiresAtMs: Date.parse(header.expiresAt),
+          pruneExpiredAtOrBeforeMs: this.#now().getTime() - ACP_REMOTE_CLOCK_SKEW_MS,
         })
       } catch {
         return { kind: 'denial', reason: 'state_unavailable' }
@@ -894,8 +920,8 @@ export class SecureAcpDeviceEndpoint {
         // Another delivery recorded this command first; replay its record instead of executing.
         const winner = await this.#stateStore.readLedger(header.commandId)
         const fencedAfterRace = await this.#currentCommandFence(header)
-        if (fencedAfterRace !== undefined) return { kind: 'denial', reason: fencedAfterRace }
         const raced = replayOutcome(winner, identity)
+        if (fencedAfterRace !== undefined) return withholdExchange(fencedAfterRace, raced)
         return raced ?? { kind: 'denial', reason: 'state_unavailable' }
       }
       this.#highestGeneration = Math.max(this.#highestGeneration, header.channelGeneration)
@@ -904,13 +930,16 @@ export class SecureAcpDeviceEndpoint {
       // observes dispatches nothing and is recorded as the outcome. A failed read is not an authority
       // decision, so it is not recorded: the claim stays unrecorded, and a later delivery that reaches the
       // ledger reads it as outcome_uncertain. A commit landing after the read's snapshot is not observed.
-      const refused = await this.#refreshFence()
-      if (refused !== undefined) return { kind: 'denial', reason: refused }
-      const fencedBeforeEffect = this.#commandFenceReason(header)
-      if (fencedBeforeEffect !== undefined) {
-        const recorded: AcpRemoteDeviceOutcome = { kind: 'denial', reason: fencedBeforeEffect }
-        await this.#recordOutcome(header.commandId, recorded)
-        return recorded
+      const refused = (await this.#refreshFence()) ?? this.#commandFenceReason(header)
+      if (refused !== undefined) {
+        const denial: AcpRemoteDeviceOutcome = { kind: 'denial', reason: refused }
+        // Nothing was dispatched. Only a terminal revocation is recorded as the command's outcome;
+        // every other pre-effect refusal (expired window, superseded generation, stale trust
+        // record, clock or storage failure) is transient for the command id, so the claim is
+        // released and a later delivery with a fresh window can still run it once.
+        if (refused === 'device_revoked') await this.#recordOutcome(header.commandId, denial)
+        else await this.#abandonClaim(header.commandId, identity)
+        return denial
       }
       const outcome = await this.#execute(command)
       if (outcome === undefined) return { kind: 'denial', reason: 'outcome_uncertain' }
@@ -920,6 +949,14 @@ export class SecureAcpDeviceEndpoint {
       return outcome
     } catch {
       return { kind: 'denial', reason: 'state_unavailable' }
+    }
+  }
+
+  async #abandonClaim(commandId: string, identity: string): Promise<void> {
+    try {
+      await this.#stateStore.abandonClaim(commandId, identity)
+    } catch {
+      // The claim stays pending and a later delivery reads it as outcome_uncertain: fail closed.
     }
   }
 
@@ -956,7 +993,7 @@ export class SecureAcpDeviceEndpoint {
     // freshly sealed exchange are both device publications, so current authority, window, and
     // generation must hold at serve time — not only when the effect first ran.
     const beforePublish = await this.#currentCommandFence(header)
-    if (beforePublish !== undefined) return this.#refuse(header, beforePublish)
+    if (beforePublish !== undefined) return this.#withhold(header, beforePublish, outcome)
     const cached = this.#delivered.get(header.commandId)
     if (
       cached !== undefined &&
@@ -970,7 +1007,7 @@ export class SecureAcpDeviceEndpoint {
     // being sealed discards the sealed exchange. The recorded outcome stays durable for replay, so
     // the effect is never repeated to produce another response.
     const afterSeal = await this.#currentCommandFence(header)
-    if (afterSeal !== undefined) return this.#refuse(header, afterSeal)
+    if (afterSeal !== undefined) return this.#withhold(header, afterSeal, outcome)
     if (!this.#delivered.has(header.commandId) && this.#delivered.size >= this.#ledgerCapacity) {
       const oldest = this.#delivered.keys().next().value
       if (oldest !== undefined) this.#delivered.delete(oldest)
@@ -981,6 +1018,16 @@ export class SecureAcpDeviceEndpoint {
       response,
     })
     return response
+  }
+
+  /** Refusal at a publication boundary; see `withholdExchange` for how a ran effect is reported. */
+  #withhold(
+    header: AcpRemoteCommandHeader,
+    reason: AcpRemoteDenialReason,
+    outcome: AcpRemoteDeviceOutcome
+  ): Promise<AcpRemoteSealedResponse> {
+    const withheld = withholdExchange(reason, outcome)
+    return this.#sealOutcome(withheld, header)
   }
 
   #refuse(
@@ -1043,6 +1090,23 @@ function replayOutcome(
   if (stored.identity !== identity) return { kind: 'denial', reason: 'command_conflict' }
   if (stored.outcome !== undefined) return stored.outcome
   return { kind: 'denial', reason: 'outcome_uncertain' }
+}
+
+/**
+ * Denial for a publication fence that failed after the command's outcome exists. When that outcome
+ * is an exchange the effect already ran, so a transient reason (`command_expired`,
+ * `stale_channel_generation`, ...) must not read as "nothing ran": it becomes `response_unknown`
+ * (retryable on the same command identity, which replays the recorded outcome). A terminal
+ * revocation is reported as itself. Denial outcomes ran nothing, so their reason stays.
+ */
+function withholdExchange(
+  reason: AcpRemoteDenialReason,
+  outcome: AcpRemoteDeviceOutcome | undefined
+): AcpRemoteDeviceOutcome & { readonly kind: 'denial' } {
+  if (outcome?.kind === 'exchange' && reason !== 'device_revoked') {
+    return { kind: 'denial', reason: 'response_unknown' }
+  }
+  return { kind: 'denial', reason }
 }
 
 /** Re-reads the abort flag so narrowing from an earlier check cannot treat an abort as dead code. */

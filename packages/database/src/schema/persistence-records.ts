@@ -2,9 +2,10 @@ import { integer, jsonb, pgTable, primaryKey, text, varchar } from 'drizzle-orm/
 
 /**
  * Generic record store behind the `PersistenceProvider` interface (namespaces of revisioned JSON
- * records with optimistic create-if-absent/CAS semantics). The Hosted `hosted-server` (PostgreSQL)
- * profile uses it wherever the Local profiles use the SQLite record store — e.g. the secure ACP
- * device fence/ledger state — so the same provider contract and conflict semantics apply.
+ * records with optimistic create-if-absent/CAS semantics). `PostgresPersistenceProvider` implements
+ * the same provider contract over it so the Hosted `hosted-server` (PostgreSQL) profile can use it
+ * wherever the Local profiles use the SQLite record store, e.g. the secure ACP device fence/ledger
+ * state. Only tests construct it today; no Hosted composition is wired to it yet.
  */
 export const persistenceRecords = pgTable(
   'persistence_records',

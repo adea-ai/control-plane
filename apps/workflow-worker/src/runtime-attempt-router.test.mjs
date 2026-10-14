@@ -368,6 +368,98 @@ describe('no implicit cloud rerouting (TDD-A377)', () => {
 
     expect(selected.runtimeConnectionId).toBe(cloud.runtimeConnectionId)
   })
+
+  test('a local device that stopped heartbeating (stale, unknown health) is never rerouted to the cloud', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const staleLocal = localDevice({
+      freshness: { state: 'stale', observedAt: '2026-08-28T11:00:00.000Z' },
+      node: runtimeNode({ location: 'local_device', health: 'unknown' }),
+      connection: { status: 'connected', health: 'healthy', availability: 'healthy' },
+    })
+    const router = new RuntimeDiscoveryAttemptRouter({
+      discovery: { listRuntimeConnections: async () => [staleLocal, cloudRuntime()] },
+      now: () => '2026-08-28T12:00:00.000Z',
+    })
+
+    await expect(
+      router.resolve({ execution: execution(plan), executionPlan: plan })
+    ).rejects.toThrow('WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK')
+  })
+
+  test('a local device with a revoked project grant, or no node, is never rerouted to the cloud', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const revokedGrant = localDevice({
+      access: {
+        localProjectGrant: { required: true, state: 'revoked' },
+        entitlement: { state: 'allowed' },
+      },
+    })
+    const noNode = localDevice({ node: undefined })
+    for (const fenced of [revokedGrant, noNode]) {
+      const router = new RuntimeDiscoveryAttemptRouter({
+        discovery: { listRuntimeConnections: async () => [fenced, cloudRuntime()] },
+        now: () => '2026-08-28T12:00:00.000Z',
+      })
+      await expect(
+        router.resolve({ execution: execution(plan), executionPlan: plan })
+      ).rejects.toThrow('WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK')
+    }
+  })
+
+  test('a healthy local device wins over a remote runtime that ranks first while another local is offline', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const healthyLocal = localDevice({ runtimeConnectionId: 'rtc_01JABCDEF0123456789ABCDEFZ' })
+    const offline = offlineLocalDevice({ runtimeConnectionId: 'rtc_01JABCDEF0123456789ABCDEFC' })
+    const cloud = cloudRuntime('rtc_01JABCDEF0123456789ABCDEFB')
+    const router = new RuntimeDiscoveryAttemptRouter({
+      discovery: { listRuntimeConnections: async () => [cloud, offline, healthyLocal] },
+      now: () => '2026-08-28T12:00:00.000Z',
+    })
+
+    const selected = await router.resolve({ execution: execution(plan), executionPlan: plan })
+
+    expect(selected.runtimeConnectionId).toBe(healthyLocal.runtimeConnectionId)
+    expect(selected.routingDecision.candidateCount).toBe(1)
+  })
+
+  test('an offline local device that is incompatible, entitlement-denied, or lacks the pinned harness does not block a remote runtime', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const cloud = cloudRuntime()
+    const exempt = [
+      offlineLocalDevice({ compatibility: { state: 'incompatible', limitations: [] } }),
+      offlineLocalDevice({
+        access: {
+          localProjectGrant: { required: true, state: 'granted' },
+          entitlement: { state: 'denied' },
+        },
+      }),
+    ]
+    for (const local of exempt) {
+      const router = new RuntimeDiscoveryAttemptRouter({
+        discovery: { listRuntimeConnections: async () => [local, cloud] },
+        now: () => '2026-08-28T12:00:00.000Z',
+      })
+      const selected = await router.resolve({ execution: execution(plan), executionPlan: plan })
+      expect(selected.runtimeConnectionId).toBe(cloud.runtimeConnectionId)
+    }
+
+    // A pin the offline local runtime does not expose: it could never have served this attempt.
+    const multiFamilyPlan = createExecutionPlanTestFixture({
+      runtimeFamilies: ['pi', 'managed-pi'],
+    })
+    const pinned = new RuntimeDiscoveryAttemptRouter({
+      discovery: {
+        listRuntimeConnections: async () => [offlineLocalDevice({ family: 'managed-pi' }), cloud],
+      },
+      now: () => '2026-08-28T12:00:00.000Z',
+      pinnedHarnessId: 'pi',
+    })
+    const selected = await pinned.resolve({
+      execution: execution(multiFamilyPlan),
+      executionPlan: multiFamilyPlan,
+    })
+    expect(selected.runtimeConnectionId).toBe(cloud.runtimeConnectionId)
+  })
 })
 
 function localDevice(overrides = {}) {

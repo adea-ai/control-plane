@@ -380,6 +380,27 @@ test('workspace child narrowing retains lineage and rechecks parent authority at
     'INVALID_EXECUTION_PLAN_REFERENCE'
   )
   expect(repository.executionCount).toBe(0)
+  // A version 1 grandchild (same project, scope omitted) is derived from the scoped child. It carries
+  // no scope itself, but it must not escape the lineage recheck: the inactive root grant stops it.
+  const legacyCorrelation = { ...child.correlation }
+  delete legacyCorrelation.executionScope
+  const grandchild = deriveExecutionPlan(child, {
+    correlation: legacyCorrelation,
+    contextPackage: childContext,
+    constraints: child.constraints,
+    runtimeRequirements: child.runtimeRequirements,
+    outputContract: child.outputContract,
+    compiledAt: child.compiledAt,
+  })
+  expect(grandchild.schemaVersion).toBe(1)
+  expect(grandchild.parentExecutionPlan?.executionPlanId).toBe(child.executionPlanId)
+  await plans.put(grandchild)
+  expect(await validator.validate(admission(grandchild))).toBe(false)
+  expect(await validator.authorize(admission(grandchild))).toBe(false)
+  parentActive = true
+  expect(await validator.validate(admission(grandchild))).toBe(true)
+  expect(await validator.authorize(admission(grandchild))).toBe(true)
+  parentActive = false
   for (const override of [
     { projectWorkspaceId: id('wsp', 'H') },
     { grantActive: false },

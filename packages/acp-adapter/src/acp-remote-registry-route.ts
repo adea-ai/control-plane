@@ -10,7 +10,8 @@ import { AcpRemoteDeviceRouteSchema, type AcpRemoteDeviceRoute } from './acp-rem
  * fields: the input surface has no command, payload, or request context by construction, so a
  * routed command can never mint or widen its own route.
  *
- * This is a pure derivation used by controller composition; it performs no I/O, provisions no
+ * This is a pure derivation intended for controller composition (no production caller constructs the
+ * controller transport yet, #1023); it performs no I/O, provisions no
  * keys, and enrolls nothing. Key material must already exist in server-owned configuration.
  */
 

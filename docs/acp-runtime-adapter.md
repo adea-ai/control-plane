@@ -59,8 +59,14 @@ authenticated, encrypted ACP route between the Control Plane and a device-side e
 are HPKE-sealed (X25519/HKDF-SHA256/AES-128-GCM) to the registered device recipient key with the
 cleartext header bound as associated data and signed by the controller's Ed25519 key; replies are
 sealed to a per-command ephemeral return key and signed by the device identity key. The shared route
-record is a public-key-only strict schema, so credential or private-key fields cannot enter it, and
-inventory replies are bound to a per-request nonce with a freshness bound.
+record is a public-key-only strict schema, so credential or private-key fields cannot enter it.
+Inventory has two wire modes. In the default mode the device signs each inventory reply over a
+per-request nonce, and the controller verifies the signature, route and nonce within a 60-second
+freshness bound. In `channel-authenticated` mode the wire supplies an already-pushed inventory that the
+authenticated gateway channel vouches for: it is not device-signed and no request nonce is checked, the
+controller checks only node/workspace identity, a 60-second freshness bound, and that the reply's channel
+generation equals the generation the same wire reports. That mode therefore trusts the channel and the
+wire object that selects it, and is not a replay defence on its own (see incomplete milestones).
 
 Authority checks are current-authority: the route fence (revocation, trust-record staleness, finite
 clock) and the command's window/channel-generation gates are evaluated before decryption and
@@ -70,7 +76,13 @@ sealing at the device — with every reply publication (fresh, sealed, or cached
 persisted fence, and the persisted fence enforced atomically inside the durable claim transaction.
 A revocation or superseded generation durable before a claim refuses that command atomically, and any
 revocation, superseded generation, expired window, or broken clock in force at the final read refuses
-the reply (see the response authorization boundary below). After a successful claim, a fresh durable
+the reply (see the response authorization boundary below). A command whose effect may have run is never
+reported as undelivered: once a reply is in hand the controller ignores a wire that has since gone
+offline and maps a window that closed afterwards to `response_unknown`, and the device reports a
+transient publication refusal (expired window, superseded generation) after an exchange was recorded
+as `response_unknown` rather than as the pre-effect denial. Only revocation is reported as itself.
+`response_unknown` is retryable on the same command identity, whose recorded outcome the device
+replays. After a successful claim, a fresh durable
 fence read immediately before dispatch refuses the command before the executor is called (see the
 pre-dispatch boundary below). A non-finite clock or malformed window fails
 closed. Unauthenticated input receives no signed reply, so an intermediary cannot harvest a device
@@ -103,14 +115,29 @@ a revocation committed afterwards is not reflected in bytes already returned. A 
 never repeats the effect; the outcome recorded at execution stays durable.
 
 **Pre-dispatch boundary:** after a successful claim, the last durable fence read before the executor is
-called decides whether the effect runs. A denial it observes (revocation, supersession, expiry, or a
-broken clock) is recorded as the command's outcome, and nothing is dispatched. A store failure at that
-read also dispatches nothing, but it is not an authority decision: the claim stays unrecorded, so a later
-delivery of the same identity that reaches the ledger reads `outcome_uncertain` and nothing re-runs. A
+called decides whether the effect runs. A denial it observes is not dispatched. Revocation is terminal and is recorded as the
+command's outcome. Every other pre-dispatch refusal (expiry, supersession, stale trust record, broken clock) is
+specific to that delivery, so the claim is released (`abandonClaim`) instead of being stored: a later
+delivery of the same command id with a fresh window and current generation runs once. A store failure at that
+read also dispatches nothing and releases the claim when the store can; if the release itself fails the
+claim stays unrecorded, so a later delivery of the same identity reads `outcome_uncertain` and nothing
+re-runs. A
 retry on the same return key receives the byte-identical reply it already got. The read is point-in-time.
 No await separates its completion from the dispatch call, but a commit landing after its snapshot is not
 observed by it. This does not make the executor's side effects or any network delivery atomic with the
 read, and a revocation committed after the read cannot stop a dispatch already in progress.
+
+**Ledger retention:** the replay ledger bounds live replay protection, it is not a lifetime cap. Each
+claim retains its delivery-window end; when a route's ledger is at capacity (default 1,024), the claim
+transaction first prunes entries whose window ended more than the clock-skew bound ago, then re-checks
+the bound. Those commands are refused by the window fence before any ledger read, so pruning cannot
+reopen a replay. Entries written before retention existed carry no window and are never pruned. While
+every entry is still inside its window a new command is refused `replay_ledger_full`.
+
+**Device key rotation:** device state is scoped by the device key id. Re-enrolling the device with a new
+signing key id starts a fresh fence and ledger; a still-valid captured command is only safe because the
+route's encryption key, controller key and short command window bound it. Rotation procedure and any
+carry-over of the old fence are not defined yet (see incomplete milestones).
 
 **Production construction is wired (no documented-gap substitute):**
 `createPersistentSecureAcpDeviceEndpoint` always builds the scoped
@@ -134,13 +161,20 @@ that validates credential id and version, the command's node and workspace, and 
 state through the same `PersistenceTransaction` as the ACK/result write. A plain `isRevoked` call
 cannot authorize a SQLite settlement; if the transaction-bound authority is missing, validation
 fails closed. SQLite serializes writes through that provider, so an invalidation using the same
-provider orders before the check or after the fenced update. The Local all-in-one currently has no
-production fenced settlement caller; its authority seam is for future callers. Hosted PostgreSQL
+provider orders before the check or after the fenced update. The same transaction-bound authority now fences
+`SqliteRuntimeEventEffectSink` progress and terminal effects: every effect, replays included, validates
+the delivering channel's credential fence against the stored command's node and workspace before any
+execution, attempt or receipt write, and a missing command, malformed fence or absent authority fails
+closed (parity with `PostgresRuntimeEventEffectSink`). The Local all-in-one currently has no production
+fenced settlement caller; its authority seam is for future callers. Context-command ACK, result and error
+settlement on SQLite (`SqliteContextCommandRepository`) and the reconnect `hello` retained-outcome
+applier are not credential-fenced yet (see incomplete milestones). Hosted PostgreSQL
 settlements continue to use the PostgreSQL identity authority and fence path, not the SQLite
 transaction hook.
 
-**Hosted PostgreSQL durable state:** the Hosted `hosted-server` profile qualifies the same
-`PersistenceProvider` contract through `PostgresPersistenceProvider`
+**Hosted PostgreSQL durable state:** the same `PersistenceProvider` contract is qualified, in tests
+only, through `PostgresPersistenceProvider`; no Hosted composition constructs it or a device endpoint
+over it yet, and the only production device endpoint is the Local/SQLite one
 (`packages/profile-portability/src/postgres-persistence-provider.ts`) over the new
 `persistence_records` table (drizzle migration `0071_persistence_records`; the canonical migration
 chain, applied by the migration role, owns DDL — the provider verifies presence and never creates
@@ -151,14 +185,22 @@ isolated database.
 
 Neither layer can produce an implicit cloud reroute: an offline or revoked route denies with
 `fallback: 'none'` and the transport has no alternate route, and at attempt selection
-`RuntimeDiscoveryAttemptRouter` refuses to replace an offline or revoked local runtime that the plan
-could have used with a remote one (`WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK`).
+`RuntimeDiscoveryAttemptRouter` never replaces a local runtime that the plan could have used but that
+is not live-eligible (offline, stale, reconnecting, unknown health, revoked or missing grant, revoked
+compatibility, no node) with a remote one (`WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK`). While such
+a local runtime exists the choice is restricted to local candidates, so a healthy local runtime still
+wins and no local candidate is a typed denial. A local runtime that could never have served the attempt
+(disallowed family or location, missing capability, unpinned harness, denied entitlement, `incompatible`
+or `capability_missing` compatibility) does not block a remote one.
 
 Evidence: `packages/acp-adapter/src/acp-remote-fence.test.mjs` (route schema, fence decisions,
 finite-clock guards, HPKE/signature binding), `packages/acp-adapter/src/acp-remote-transport.test.mjs`
 (parked-async revocation/abort regressions, parked storage window/generation regressions,
 revocation at execution/sealing/response-opening boundaries, authenticated and encrypted runs,
-replay/conflict/generation proofs, edge fences), `packages/acp-adapter/src/acp-remote-response-boundary.test.mjs`
+replay/conflict/generation proofs, edge fences), `packages/acp-adapter/src/acp-remote-delivery-fences.test.mjs` (delivered-not-undelivered, withheld
+exchange as `response_unknown`, claim release and retry, ledger capacity recovery),
+`tests/acp-remote-device-retention.test.mjs` (retention and `abandonClaim` on the in-memory and SQLite
+stores), `packages/acp-adapter/src/acp-remote-response-boundary.test.mjs`
 (the response authorization boundary: peer revocation before the final read and while sealing, cached
 replay after revocation, identity conflict; the pre-dispatch boundary: peer revocation after the claim,
 a positive control, and a store failure at the read),

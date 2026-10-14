@@ -512,11 +512,47 @@ function filterPendingDelivery(events: readonly ExecutionEvent[], executionId: s
     .toSorted((left, right) => compareCodePointOrder(left.recordedAt, right.recordedAt))
 }
 
+type SqliteCredentialFenceValidator = (
+  transaction: PersistenceTransaction,
+  fence: CredentialRevocationFence,
+  scope: { readonly nodeId: string; readonly workspaceId: string }
+) => Promise<void>
+
+/**
+ * Applies runtime progress and terminal effects. Mirrors the PostgreSQL sink: every effect, replays
+ * included, first validates the delivering channel's credential fence against the stored command's
+ * node and workspace inside the same transaction as the execution write. A missing command, a
+ * malformed fence, or an absent validator fails closed, so a revoked or superseded credential can
+ * never settle an execution (the later fenced command update would otherwise leave the ledger split).
+ */
 export class SqliteRuntimeEventEffectSink implements RuntimeEventEffectSink {
-  constructor(readonly provider: PersistenceProvider) {}
+  constructor(
+    readonly provider: PersistenceProvider,
+    private readonly validateCredentialFence?: SqliteCredentialFenceValidator
+  ) {}
+
+  async #assertCredentialFence(
+    transaction: PersistenceTransaction,
+    effect: RuntimeProgressEffect | RuntimeTerminalEffect
+  ): Promise<void> {
+    const record = await transaction.get(namespaces.runtimeCommands, recordId(effect.commandId))
+    if (
+      record === undefined ||
+      this.validateCredentialFence === undefined ||
+      !validCredentialFenceShape(effect.credentialFence)
+    ) {
+      throw new SqliteRuntimeCommandCredentialFenceInvalidError()
+    }
+    const command = RuntimeCommandRecordSchema.parse(record.value)
+    await this.validateCredentialFence(transaction, effect.credentialFence, {
+      nodeId: command.nodeId,
+      workspaceId: command.workspaceId,
+    })
+  }
 
   applyProgress(effect: RuntimeProgressEffect): Promise<RuntimeEventEffectResult> {
     return this.provider.transaction(async (transaction) => {
+      await this.#assertCredentialFence(transaction, effect)
       const key = receiptKey(effect.commandId, 'progress', effect.eventSequence)
       const replay = await replayReceipt(transaction, key, effect.frameHash, effect.legacyFrameHash)
       if (replay !== undefined) return replay
@@ -555,6 +591,7 @@ export class SqliteRuntimeEventEffectSink implements RuntimeEventEffectSink {
 
   applyTerminal(effect: RuntimeTerminalEffect): Promise<RuntimeEventEffectResult> {
     return this.provider.transaction(async (transaction) => {
+      await this.#assertCredentialFence(transaction, effect)
       const key = receiptKey(effect.commandId, 'terminal', effect.messageSequence)
       const replay = await replayReceipt(transaction, key, effect.frameHash, effect.legacyFrameHash)
       if (replay !== undefined) return replay
@@ -707,7 +744,7 @@ export function createRuntimeNodeCredentialFenceValidator(
   ) => {
     if (
       authority.validateCredentialFenceInTransaction === undefined ||
-      !(await authority.validateCredentialFenceInTransaction(transaction, fence, scope))
+      (await authority.validateCredentialFenceInTransaction(transaction, fence, scope)) !== true
     ) {
       throw new SqliteRuntimeCommandCredentialFenceInvalidError()
     }

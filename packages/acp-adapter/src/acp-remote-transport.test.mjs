@@ -725,6 +725,7 @@ describe('edge fences: binding, executor failure, payload ceiling, state store',
     expect(observedEffects).toBe(1)
     expect(await store.readLedger(commandIds.first)).toEqual({
       identity: expect.any(String),
+      expiresAtMs: expect.any(Number),
     })
   })
 

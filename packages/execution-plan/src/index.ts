@@ -750,9 +750,13 @@ export class ExecutionPlanAcceptanceValidator {
   }
 
   async #scopeAllows(plan: ExecutionPlan, input: ExecutionScopeAdmissionInput): Promise<boolean> {
-    if (plan.correlation.executionScope === undefined) return true
+    // A version 1 plan carries no scope of its own, but a child derived from a scoped parent can omit
+    // the scope while keeping the same project (scopes compare semantically), so any plan with a
+    // parent walks its lineage: an inactive ancestor grant must stop its descendants too.
+    if (plan.correlation.executionScope === undefined && plan.parentExecutionPlan === undefined) {
+      return true
+    }
     const authority = this.options?.scopeAuthority
-    if (authority === undefined) return false
     const now = this.options?.now?.() ?? new Date().toISOString()
     const seen = new Set<string>()
     let current = plan
@@ -760,7 +764,10 @@ export class ExecutionPlanAcceptanceValidator {
     for (;;) {
       if (seen.has(current.executionPlanId)) return false
       seen.add(current.executionPlanId)
-      if (!(await currentExecutionScopeAllows(authority, scopeInput, now))) return false
+      if (current.correlation.executionScope !== undefined) {
+        if (authority === undefined) return false
+        if (!(await currentExecutionScopeAllows(authority, scopeInput, now))) return false
+      }
       if (current.parentExecutionPlan === undefined) return true
       const parent = await this.repository.get(current.parentExecutionPlan)
       if (parent === undefined || !executionScopeCanNarrow(parent.correlation, current.correlation))

@@ -38,6 +38,12 @@ export type AcpRemoteDeviceOutcome = AcpRemoteDeviceDenialOutcome | AcpRemoteDev
 
 export interface AcpRemoteDeviceLedgerRecord {
   readonly identity: string
+  /**
+   * End of the claimed command's validity window (epoch ms). Once the window has closed the
+   * command is refused before the ledger is consulted, so the entry no longer protects against
+   * replay and may be pruned. Absent on entries that predate retention: those are never pruned.
+   */
+  readonly expiresAtMs?: number
   /** Absent while an effect is claimed but not finished (or after a crash before it completed). */
   readonly outcome?: AcpRemoteDeviceOutcome
 }
@@ -52,6 +58,14 @@ export interface AcpRemoteDeviceClaim {
    * all observe spare capacity and each claim beyond the bound.
    */
   readonly capacity: number
+  /** End of this command's validity window (epoch ms), retained for pruning. */
+  readonly expiresAtMs: number
+  /**
+   * At capacity, entries whose retained window ended at or before this instant are pruned inside
+   * the same transaction before the bound is re-evaluated. Their commands are refused by the
+   * window fence before any ledger read, so pruning cannot reopen a replay.
+   */
+  readonly pruneExpiredAtOrBeforeMs: number
 }
 
 /**
@@ -123,6 +137,13 @@ export interface AcpRemoteDeviceStateStore {
   claim(input: AcpRemoteDeviceClaim): Promise<AcpRemoteDeviceClaimResult>
   /** Records the finished outcome over the claimed entry. */
   recordOutcome(commandId: string, outcome: AcpRemoteDeviceOutcome): Promise<void>
+  /**
+   * Releases a claim whose effect provably never started (refused before dispatch for a reason
+   * that is specific to this delivery, such as an expired window). Removes the entry only while it
+   * has no recorded outcome and carries the same identity; anything else is left untouched, so a
+   * recorded effect is never erased.
+   */
+  abandonClaim(commandId: string, identity: string): Promise<void>
 }
 
 function readFenceRecord(value: JsonValue | undefined): AcpRemoteDeviceFenceRecord {
@@ -153,6 +174,7 @@ function fenceValue(fence: AcpRemoteDeviceFenceRecord): JsonValue {
 function ledgerValue(record: AcpRemoteDeviceLedgerRecord): JsonValue {
   return {
     identity: record.identity,
+    ...(record.expiresAtMs === undefined ? {} : { expiresAtMs: record.expiresAtMs }),
     ...(record.outcome === undefined ? {} : { outcome: record.outcome as unknown as JsonValue }),
   }
 }
@@ -162,13 +184,19 @@ function readLedgerRecord(value: JsonValue | undefined): AcpRemoteDeviceLedgerRe
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('ACP_REMOTE_DEVICE_STATE_CORRUPT')
   }
-  const record = value as { identity?: unknown; outcome?: unknown }
+  const record = value as { identity?: unknown; outcome?: unknown; expiresAtMs?: unknown }
   if (typeof record.identity !== 'string') {
     throw new Error('ACP_REMOTE_DEVICE_STATE_CORRUPT')
   }
-  if (record.outcome === undefined) return { identity: record.identity }
+  if (record.expiresAtMs !== undefined && !Number.isFinite(record.expiresAtMs)) {
+    throw new Error('ACP_REMOTE_DEVICE_STATE_CORRUPT')
+  }
+  const expires =
+    record.expiresAtMs === undefined ? {} : { expiresAtMs: record.expiresAtMs as number }
+  if (record.outcome === undefined) return { identity: record.identity, ...expires }
   return {
     identity: record.identity,
+    ...expires,
     outcome: record.outcome as unknown as AcpRemoteDeviceOutcome,
   }
 }
@@ -207,8 +235,21 @@ export class InMemoryAcpRemoteDeviceStateStore implements AcpRemoteDeviceStateSt
     if (this.#ledger.has(input.commandId)) return 'already_claimed'
     // Capacity admission in the same synchronous claim step as the write (duplicates above
     // already replayed), so racing distinct commands admit exactly one at the bound.
-    if (this.#ledger.size >= input.capacity) return 'replay_ledger_full'
-    this.#ledger.set(input.commandId, { identity: input.identity })
+    if (this.#ledger.size >= input.capacity) {
+      for (const [commandId, record] of this.#ledger) {
+        if (
+          record.expiresAtMs !== undefined &&
+          record.expiresAtMs <= input.pruneExpiredAtOrBeforeMs
+        ) {
+          this.#ledger.delete(commandId)
+        }
+      }
+      if (this.#ledger.size >= input.capacity) return 'replay_ledger_full'
+    }
+    this.#ledger.set(input.commandId, {
+      identity: input.identity,
+      expiresAtMs: input.expiresAtMs,
+    })
     this.#fence = {
       ...this.#fence,
       highestGeneration: Math.max(this.#fence.highestGeneration, input.channelGeneration),
@@ -219,7 +260,18 @@ export class InMemoryAcpRemoteDeviceStateStore implements AcpRemoteDeviceStateSt
   async recordOutcome(commandId: string, outcome: AcpRemoteDeviceOutcome): Promise<void> {
     const record = this.#ledger.get(commandId)
     if (record === undefined) throw new Error('ACP_REMOTE_DEVICE_STATE_CORRUPT')
-    this.#ledger.set(commandId, { identity: record.identity, outcome })
+    this.#ledger.set(commandId, {
+      identity: record.identity,
+      ...(record.expiresAtMs === undefined ? {} : { expiresAtMs: record.expiresAtMs }),
+      outcome,
+    })
+  }
+
+  async abandonClaim(commandId: string, identity: string): Promise<void> {
+    const record = this.#ledger.get(commandId)
+    if (record !== undefined && record.identity === identity && record.outcome === undefined) {
+      this.#ledger.delete(commandId)
+    }
   }
 }
 
@@ -347,14 +399,19 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
         // committed entry — at most `capacity` distinct commands ever become executable.
         // Duplicates returned above replay regardless of capacity; nothing is evicted here.
         if ((await this.#countPrefix(transaction, input.capacity)) >= input.capacity) {
-          return 'replay_ledger_full' as const
+          // At the bound: free entries whose window has closed (they can no longer be replayed),
+          // then re-evaluate in this same transaction.
+          await this.#pruneExpired(transaction, input.pruneExpiredAtOrBeforeMs)
+          if ((await this.#countPrefix(transaction, input.capacity)) >= input.capacity) {
+            return 'replay_ledger_full' as const
+          }
         }
         // Create-if-absent: the provider rejects an unconditional put over an existing record, so a
         // concurrent claimer for the same command fails instead of overwriting the recorded effect.
         await transaction.put({
           namespace: LEDGER_NAMESPACE,
           id: this.#ledgerId(input.commandId),
-          value: ledgerValue({ identity: input.identity }),
+          value: ledgerValue({ identity: input.identity, expiresAtMs: input.expiresAtMs }),
         })
         // Unconditional revision-checked fence participation: every claim writes the fence row it
         // read, so a revocation or a higher-generation claim committing after this transaction's
@@ -385,10 +442,56 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
           namespace: LEDGER_NAMESPACE,
           id,
           ...(stored === undefined ? {} : { expectedRevision: stored.revision }),
-          value: ledgerValue({ identity: record.identity, outcome }),
+          value: ledgerValue({
+            identity: record.identity,
+            ...(record.expiresAtMs === undefined ? {} : { expiresAtMs: record.expiresAtMs }),
+            outcome,
+          }),
         })
       })
     )
+  }
+
+  async abandonClaim(commandId: string, identity: string): Promise<void> {
+    await this.#withConflictRetry(async () =>
+      this.#provider.transaction(async (transaction) => {
+        const id = this.#ledgerId(commandId)
+        const stored = await transaction.get(LEDGER_NAMESPACE, id)
+        const record = readLedgerRecord(stored?.value)
+        if (stored === undefined || record === undefined) return
+        if (record.identity !== identity || record.outcome !== undefined) return
+        await transaction.delete(LEDGER_NAMESPACE, id, stored.revision)
+      })
+    )
+  }
+
+  /** Deletes this route's entries whose retained window ended at or before `atOrBeforeMs`. */
+  async #pruneExpired(transaction: PersistenceTransaction, atOrBeforeMs: number): Promise<void> {
+    const prefix = `c-${this.#scope}-`
+    let afterId = `c-${this.#scope}`
+    const expired: { readonly id: string; readonly revision: number }[] = []
+    for (;;) {
+      const page = await transaction.scan(LEDGER_NAMESPACE, { afterId, limit: 128 })
+      if (page.length === 0) break
+      let ended = false
+      for (const record of page) {
+        if (!record.id.startsWith(prefix)) {
+          ended = true
+          break
+        }
+        const entry = readLedgerRecord(record.value)
+        if (entry?.expiresAtMs !== undefined && entry.expiresAtMs <= atOrBeforeMs) {
+          expired.push({ id: record.id, revision: record.revision })
+        }
+      }
+      if (ended || page.length < 128) break
+      const last = page[page.length - 1]
+      if (last === undefined) break
+      afterId = last.id
+    }
+    for (const entry of expired) {
+      await transaction.delete(LEDGER_NAMESPACE, entry.id, entry.revision)
+    }
   }
 
   /** Optimistic records conflict under concurrent writers; one reload-and-retry absorbs it. */

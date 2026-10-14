@@ -146,14 +146,19 @@ export class LocalControlApiComposition {
     this.projectStates = new SqliteProjectStateRepository(persistence)
     this.statePromotionProposals = new SqliteStatePromotionProposalRepository(persistence)
     this.reconciliationCheckpoints = new SqliteReconciliationCheckpointRepository(persistence)
-    this.runtimeCommands = new SqliteRuntimeCommandRepository(
-      persistence,
+    const runtimeCredentialFenceValidator =
       runtimeCommandCredentialAuthority === undefined
         ? undefined
         : createRuntimeNodeCredentialFenceValidator(runtimeCommandCredentialAuthority)
+    this.runtimeCommands = new SqliteRuntimeCommandRepository(
+      persistence,
+      runtimeCredentialFenceValidator
     )
     this.runtimeInventoryCheckpoints = new SqliteRuntimeInventoryCheckpointRepository(persistence)
-    this.runtimeEventEffects = new SqliteRuntimeEventEffectSink(persistence)
+    this.runtimeEventEffects = new SqliteRuntimeEventEffectSink(
+      persistence,
+      runtimeCredentialFenceValidator
+    )
     this.runtimeDiscoveryRepository = new SqliteRuntimeDiscoveryRepository(persistence)
     const catalogApprovals = new SqliteCatalogApprovalRepository(persistence)
     const executionPlanValidatorOptions = {
