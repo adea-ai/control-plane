@@ -202,6 +202,7 @@ export async function createNodePiDurableLeadComposition(
     }, recoveryIntervalMs)
     recoveryTimer.unref()
     const initializedRuntime = runtime
+    const publicRecoveries = new Set<Promise<void>>()
     let closePromise: Promise<void> | undefined
     const assertOpen = () => {
       if (closePromise !== undefined) throw new Error('PI_LEAD_COMPOSITION_CLOSED')
@@ -212,12 +213,20 @@ export async function createNodePiDurableLeadComposition(
       service,
       async recover() {
         assertOpen()
-        await initializedRuntime.recover()
-        await preparations?.recoverExpired()
-        unclaimedPreparationRecovery = await recoverUnclaimedPreparations()
-        preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
-        childProgressRecovery = await options.childProgress?.scan(initializedRuntime.adapter)
-        await terminalSettlement.settle()
+        const recovery = (async () => {
+          await initializedRuntime.recover()
+          await preparations?.recoverExpired()
+          unclaimedPreparationRecovery = await recoverUnclaimedPreparations()
+          preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
+          childProgressRecovery = await options.childProgress?.scan(initializedRuntime.adapter)
+          await terminalSettlement.settle()
+        })()
+        publicRecoveries.add(recovery)
+        try {
+          await recovery
+        } finally {
+          publicRecoveries.delete(recovery)
+        }
       },
       get preparationRecoveryBlocked() {
         return preparationRecoveryBlocked
@@ -238,8 +247,11 @@ export async function createNodePiDurableLeadComposition(
       close() {
         closePromise ??= (async () => {
           clearInterval(recoveryTimer)
-          await terminalSettlement.close()
+          // Accepted recovery calls keep their stores and settlement port until
+          // they finish. Their callers receive failures; failures must not skip cleanup.
+          await Promise.allSettled(publicRecoveries)
           await preparationRecovery
+          await terminalSettlement.close()
           try {
             await initializedRuntime.close()
           } finally {
