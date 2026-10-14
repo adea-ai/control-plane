@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.96.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.0...workspace-v1.96.1) (2026-10-14)
+
+
+### Documentation
+
+* **agents:** tailor repository guidance and draft WIP workflow ([#1117](https://github.com/adea-ai/control-plane/issues/1117)) ([8acf2a8](https://github.com/adea-ai/control-plane/commit/8acf2a8213f95f60dc8be19c7d304b45329afea9))
+
 ## [1.96.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.95.0...workspace-v1.96.0) (2026-10-13)
 
 
