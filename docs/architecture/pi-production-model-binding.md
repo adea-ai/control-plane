@@ -54,6 +54,11 @@ Missing configuration leaves production lead and publication unavailable.
 
 ## Source-authority review checkpoint (#1178, 2026-10-13)
 
+Verified characterization and the physical/profile qualification still required by
+Adea #1178 are separated in
+[`pi-source-authority-qualification.md`](pi-source-authority-qualification.md). Nothing
+below is physical qualification.
+
 The current contract carries one workspace through product evidence, immutable
 profile/model resolution, execution and publication. Companion Adea draft
 [#1327](https://github.com/adea-ai/adea/pull/1327) withholds foreign-Agent evidence;
