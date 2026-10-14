@@ -105,15 +105,16 @@ export async function readProcessIdentity(pid) {
   return { ...row, startTicks }
 }
 
-/** Whether `actual` is the process `expected` describes. `ppid` is excluded: orphans are reparented. */
+/** Whether `actual` is the process `expected` describes. Both must carry kernel start ticks: `ps`
+ *  start times are whole seconds, so a same-command replacement within the same second is told apart
+ *  only by ticks. `ppid` is excluded: orphans are reparented. */
 export function sameProcess(actual, expected) {
   return (
     actual.pid === expected.pid &&
     actual.started === expected.started &&
     actual.command === expected.command &&
-    (expected.startTicks === undefined ||
-      actual.startTicks === undefined ||
-      actual.startTicks === expected.startTicks)
+    actual.startTicks !== undefined &&
+    actual.startTicks === expected.startTicks
   )
 }
 
@@ -164,33 +165,69 @@ class PinnedProcess {
   }
 }
 
+function mismatch(reason) {
+  return new Error(`PINNED_PROCESS_IDENTITY_MISMATCH: ${reason}`)
+}
+
 /**
- * Pins the process now holding `expected.pid` and verifies it is the recorded process. The
- * descriptor is opened first and the identity read second, so a pid reissued before the open shows
- * up as a mismatch, and a process that exited in between shows up as already exited. A mismatch
- * closes the descriptor and signals nothing.
+ * Opens a descriptor for `pid`, then reads the identity of what holds it and keeps the pin only if
+ * `accept` says it is the process being claimed. The descriptor is opened first and the identity
+ * read second: the descriptor fixes which process is meant, and everything read afterwards
+ * describes that process. A pid reissued before the open shows up as a rejected identity, and a
+ * process that exited in between shows up as already exited. A rejection closes the descriptor and
+ * signals nothing. An identity without kernel start ticks is never accepted.
  */
-export async function pinProcess(expected, { backend, readIdentity = readProcessIdentity } = {}) {
+async function pinMatching(pid, accept, { backend, readIdentity = readProcessIdentity } = {}) {
   const pinning = backend ?? (await createPidfdBackend())
-  const fd = pinning.open(expected.pid)
-  if (fd === undefined) throw new Error('PINNED_PROCESS_IDENTITY_MISMATCH: no such process')
+  const fd = pinning.open(pid)
+  if (fd === undefined) throw mismatch('no such process')
   try {
-    const actual = await readIdentity(expected.pid)
-    if (actual === undefined || !sameProcess(actual, expected) || pinning.exited(fd)) {
-      throw new Error('PINNED_PROCESS_IDENTITY_MISMATCH: pid is not the recorded process')
+    const actual = await readIdentity(pid)
+    if (actual === undefined || actual.startTicks === undefined || !accept(actual)) {
+      throw mismatch('pid is not the claimed process')
     }
-    return new PinnedProcess({ ...expected, ...actual }, fd, pinning)
+    if (pinning.exited(fd)) throw mismatch('the process has already exited')
+    return new PinnedProcess(actual, fd, pinning)
   } catch (error) {
     pinning.close(fd)
     throw error
   }
 }
 
-/** Records and pins the process at `pid`, whose command must include `commandIncludes`. */
-export async function pinOwnedProcess(pid, commandIncludes, options = {}) {
-  const row = await (options.readIdentity ?? readProcessIdentity)(pid)
-  if (row === undefined || !row.command.includes(commandIncludes)) {
-    throw new Error('OWNED_PROCESS_IDENTITY_MISMATCH')
+/**
+ * Pins a previously recorded process. `expected` must carry `startTicks`, captured when the process
+ * was recorded; an identity without it cannot tell a same-command replacement within the same
+ * second from the original, so it is refused.
+ */
+export async function pinProcess(expected, options) {
+  if (expected.startTicks === undefined) {
+    throw new Error(
+      'PINNED_PROCESS_IDENTITY_INCOMPLETE: record kernel start ticks with the identity'
+    )
   }
-  return pinProcess(row, options)
+  return pinMatching(expected.pid, (actual) => sameProcess(actual, expected), options)
+}
+
+/**
+ * Pins a process this test owns, identified by ownership instead of a prior record: its command must
+ * include `commandIncludes` and its parent must be `parentPid` (or the pinned `parent`, which must
+ * still be running). The kernel start ticks are read from the pinned process itself. A process that
+ * merely shares the command, even one started in the same second, has another parent and is refused.
+ */
+export async function pinOwnedProcess(
+  pid,
+  { commandIncludes, parent, parentPid = parent?.identity.pid, ...options }
+) {
+  const handle = await pinMatching(
+    pid,
+    (actual) =>
+      actual.command.includes(commandIncludes) &&
+      (parentPid === undefined || actual.ppid === parentPid),
+    options
+  )
+  if (parent?.exited) {
+    handle.close()
+    throw mismatch('the owning parent is no longer running')
+  }
+  return handle
 }
