@@ -3,7 +3,11 @@ import { drizzle } from 'drizzle-orm/postgres-js'
 import { sql } from 'drizzle-orm'
 import postgres from 'postgres'
 import { loadDatabaseCredentials } from '@control-plane/config'
-import { operationsMetricNames, operationsStorageNamespaces } from '@control-plane/telemetry'
+import {
+  OperationsMeasurementLifecycle,
+  operationsMetricNames,
+  operationsStorageNamespaces,
+} from '@control-plane/telemetry'
 import {
   createPostgresOperationsMeasurementProducer,
   createPostgresRuntimeMeasurements,
@@ -1575,6 +1579,95 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
         }
       }
       expect(recorded).toEqual([])
+    },
+    timeout
+  )
+
+  test(
+    'close aborts a still-active database pass before its pass deadline, then the transaction rolls back',
+    async () => {
+      const pool = postgres(applicationUrl, { max: 2, prepare: false })
+      const database = drizzle(pool, { schema })
+      const recorded = []
+      const adapter = {
+        add: (...args) => recorded.push(args),
+        record: (...args) => recorded.push(args),
+        recordGauge: (...args) => recorded.push(args),
+      }
+      const signals = []
+      let lifecycle
+      let lock
+      try {
+        const producer = createPostgresOperationsMeasurementProducer({
+          database,
+          workspaceId: WORKSPACE_A,
+          lockTimeoutMs: 8000,
+          statementTimeoutMs: 9000,
+          now: () => NOW,
+        })
+        // The baseline from a complete pass, before anything stalls.
+        expect((await producer.measureDetailed()).baselineCommitted).toBe(true)
+
+        lock = await holdExclusiveLock('usage_operation_receipts')
+        // The pass deadline (60 s) is far beyond this test: only close() can abort the pass.
+        lifecycle = new OperationsMeasurementLifecycle({
+          adapter,
+          serviceName: 'hosted-control-plane',
+          intervalMs: 3_600_000,
+          closeTimeoutMs: 200,
+          measure: (context) => {
+            signals.push(context.signal)
+            return producer.measure(context)
+          },
+        })
+        lifecycle.start()
+        // The pass is genuinely active in the database: its last source waits on the lock.
+        const deadline = Date.now() + 5000
+        while ((await busyApplicationBackends()) === 0 && Date.now() < deadline)
+          await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(await busyApplicationBackends()).toBe(1)
+        expect(signals).toHaveLength(1)
+        expect(signals[0].aborted).toBe(false)
+
+        const closeStarted = Date.now()
+        await Promise.race([lifecycle.close(), new Promise((resolve) => setTimeout(resolve, 3000))])
+        expect(Date.now() - closeStarted).toBeLessThan(2500)
+        expect(signals[0].aborted).toBe(true)
+        expect(recorded).toEqual([])
+        // The abandoned transaction has not finished, and no pass can start on top of it.
+        await expect(producer.measureDetailed()).resolves.toBeUndefined()
+
+        lock.release()
+        await lock.done
+        lock = undefined
+        // It rolls back at its next source boundary instead of reading on.
+        await untilNoBusyBackends()
+        expect(await openApplicationTransactions()).toBe(0)
+        expect(recorded).toEqual([])
+
+        // The producer recovers; the baseline is still the last complete snapshot.
+        const recovered = await producer.measureDetailed()
+        expect(recovered.baselineCommitted).toBe(true)
+        expect(
+          valueOf(recovered.points, operationsMetricNames.storageGrowthBytes, {
+            namespace: 'total',
+          })
+        ).toBe(0)
+      } finally {
+        try {
+          if (lock !== undefined) {
+            lock.release()
+            await lock.done
+          }
+        } finally {
+          try {
+            await lifecycle?.close()
+            await untilNoBusyBackends()
+          } finally {
+            await pool.end({ timeout: 5 })
+          }
+        }
+      }
     },
     timeout
   )
