@@ -1,5 +1,28 @@
 # Agent Instructions
 
+## Draft WIP loop
+
+For work the user has authorized, this draft WIP loop takes precedence over
+managed boilerplate that requires completed validation before opening or pushing
+a draft. Keep the managed blocks intact. Full personal review of the exact head
+permits readiness to trigger CI; applicable passing checks and protections gate merge.
+
+Within the user's authorized implementation scope, proceed with ordinary edits,
+checks, commits, and draft pushes without asking for repeated confirmation. Choose
+routine implementation details; ask only for a genuinely missing consequential
+decision or authority.
+
+- Use the existing suitable draft PR and its branch; otherwise create one focused
+  draft PR for this repository.
+- Commit and push WIP directly to that draft branch throughout the task and before
+  stopping or handing off. Verify the remote SHA after each push.
+- Incomplete work or failing checks do not block draft pushes; record the failures
+  and remaining work in the PR. A draft whose exact head has been fully personally
+  reviewed may be marked ready to trigger CI before checks pass. Applicable
+  passing checks and protections gate merge.
+- Keep draft auto-merge off. Never force-push over others or push unreviewed work
+  to an auto-merge head.
+
 Production-shaped TypeScript monorepo for the Control Plane: a modular monolith with independently deployable workers and gateways.
 
 ## Quick reference
@@ -32,6 +55,81 @@ production tracks Git `main`. The staging and production Neon database branches
 are separate.
 
 Nested `AGENTS.md` files and project documentation take precedence for their directory.
+
+## Refreshing the generated core
+
+Sync the latest official Code Foundry core first, then add repository guidance
+outside its managed blocks. Keep every generated block and its markers intact.
+For an AGENTS-only task, let `SOURCE_PATH` name the official Code Foundry
+checkout and `TARGET_PATH` the disposable repository copy. Preview with
+`node SOURCE_PATH/src/cli.mjs sync --target TARGET_PATH --dry-run`.
+Then import `syncRepository` from `SOURCE_PATH/src/commands/sync.mjs` and call
+`syncRepository({ source: SOURCE_PATH, target: TARGET_PATH, configureHooks: false })`
+with those directory paths as strings. Bring back only `AGENTS.md`; normal sync
+also generates CI/config files, which belong to a separately scoped update.
+
+The core here was verified against official Code Foundry v1.47.3, source commit
+`f016be30c4f3b3573d9564c070c9e791f84154e0`. Both the disposable sync and the
+configuration-rendered baseline matched all 15 existing managed blocks exactly.
+This core verification does not change the repository's CI runtime pin.
+
+## Control Plane repository map
+
+| Area                             | Entry points                                                                                                                                  |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cloud composition                | `apps/control-api`, `apps/workflow-worker`, `apps/runtime-gateway`                                                                            |
+| Local and Hosted composition     | `apps/local-control-plane`, `apps/hosted-control-plane`                                                                                       |
+| Domain contracts and ports       | `packages/domain`, `packages/contracts`, `packages/runtime-sdk`, `packages/tool-sdk`                                                          |
+| Service authentication           | `apps/control-api/src/auth/service-authentication.ts`, `apps/control-api/src/auth/private-api-authentication.ts`                              |
+| PostgreSQL schema and migrations | `packages/database/src/schema/index.ts`, `packages/database/drizzle`, `packages/database/src/cli/migrate.ts`                                  |
+| SQLite persistence               | `packages/sqlite-persistence`                                                                                                                 |
+| Architecture and contracts       | [architecture](docs/architecture/control-plane-architecture.md), [contracts](docs/contracts.md)                                               |
+| Persistence and operations       | [database](docs/database.md), [infrastructure](docs/infrastructure.md)                                                                        |
+| Test lanes                       | [testing](docs/testing.md), `scripts/run-bun-test-group.mjs`, `scripts/run-integration-tests.mjs`                                             |
+| CI                               | `.github/code-foundry.yml`, `.github/workflows/validation.yml`, `.github/workflows/postgres-pull-request.yml`, [.agents/ci.md](.agents/ci.md) |
+
+## Control Plane commands
+
+Run from the repository root unless a package directory is specified.
+`package.json` and `.bun-version` pin Bun 1.4.2; `.node-version` pins Node 24.21.0.
+
+| Task                        | Command                                                                                      |
+| --------------------------- | -------------------------------------------------------------------------------------------- |
+| Install                     | `bun install --frozen-lockfile`                                                              |
+| Development / build         | `bun run dev` / `bun run build`                                                              |
+| Format check / write        | `bun run format:check` / `bun run format`                                                    |
+| Lint / types                | `bun run lint` / `bun run type-check`                                                        |
+| All grouped tests           | `bun run test`                                                                               |
+| Unit / E2E / smoke lanes    | `bun run test:unit` / `bun run test:e2e` / `bun run test:smoke`                              |
+| Integration lane            | `bun run test:integration`                                                                   |
+| OpenAPI / architecture      | `bun run openapi:check` / `bun run architecture:check`                                       |
+| Migration check             | `bun run db:check`                                                                           |
+| Generate / apply migrations | `bun run --cwd packages/database db:generate` / `bun run --cwd packages/database db:migrate` |
+
+### Practical development notes
+
+- Root `test` builds, then runs the unit, E2E and smoke groups in parallel.
+  `scripts/run-bun-test-group.mjs` discovers tests in `apps`, `packages` and
+  `tests` and assigns lanes. Bare `bun test` is scoped by `bunfig.toml` to
+  `tests/`; it does not run the complete workspace selection.
+- Build outputs are used by package exports and repository acceptance tests.
+  The root lane commands include a build; a focused test command may need the
+  affected workspace packages built first.
+- `type-check` includes build, OpenAPI, migration, runtime compatibility,
+  requirements, architecture and infrastructure checks. Its requirements check
+  consults current GitHub issue identities; see [.agents/validation.md](.agents/validation.md).
+- PostgreSQL and SQLite implement persistence for different deployment profiles.
+  [Database guidance](docs/database.md) owns that mapping. The Control Plane
+  database is separate from Adea's product database and authentication schema.
+- Cloud, Local and Hosted composition roots wire the shared domain ports to
+  their adapters. Start at the relevant composition root when tracing behavior
+  across persistence, runtime transport and worker boundaries.
+- `packages/database` owns Drizzle migration generation and application. Root
+  `db:check` delegates to that package; migration generation/application commands
+  use the package directory. SQLite has its own migration implementation.
+- `.github/code-foundry.yml` configures the consumer CI runtime. Managed examples
+  mentioning `src/runtime.mjs` refer to Code Foundry's runtime, not a root script
+  in this repository. [.agents/ci.md](.agents/ci.md) retains local workflow notes.
 
 <!-- code-foundry-managed: pull-request-policy -->
 

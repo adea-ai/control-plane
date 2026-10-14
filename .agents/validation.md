@@ -11,13 +11,13 @@ bun run format:check     # oxfmt formatting check
 bun run lint             # oxlint + turbo boundaries
 bun run type-check       # Workspace types + OpenAPI and migration-schema drift
 bun run build            # TypeScript build via Turborepo
-bun run test             # Per-package tests (turbo) + repository acceptance tests
+bun run test             # Build + parallel unit, E2E and smoke groups
 bun run openapi:check    # OpenAPI contract validation (control-api only)
 bun run db:check         # Drizzle migration-schema validation
-bun run test:acceptance  # Complete M1 foundation, Terraform, and container acceptance
+bun run test:acceptance  # Foundation validation, Railway manifest, and container acceptance
 ```
 
-`bun test` (bare) is scoped to `tests/` via `bunfig.toml`; per-package tests run through `turbo run test` in `bun run test`.
+`bun test` (bare) is scoped to `tests/` via `bunfig.toml`. Root `bun run test` builds, then runs the unit, E2E and smoke groups through `scripts/run-bun-test-group.mjs`; the runner selects tests from `apps/`, `packages/` and `tests/`.
 
 `bun run requirements:check` fails closed against current GitHub issue identities. Non-verified source, profile, requirement, and prior-audit gaps must reference open `adea-ai/control-plane` issues in repository milestone #11 (M11). Additional architecture gaps follow the same rule, with the BYO model-selection successor #931 permitted in milestone #20; that exception cannot move a legacy ledger gap out of M11. Milestone display titles are informational. The check requires GitHub connectivity. When `GH_TOKEN` or `GITHUB_TOKEN` is set, it uses that token for REST fetches. Otherwise, tokenless CI runs use the public GitHub REST API through `fetch`; local runs use the already-authenticated GitHub CLI session through `gh api`, without reading or persisting the CLI token. All paths retain the same pagination, inventory validation, defensive bounds, and fail-closed handling; tokenless REST requests are subject to GitHub's public API rate limits.
 
