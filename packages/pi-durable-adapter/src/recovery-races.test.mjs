@@ -1777,3 +1777,76 @@ test.each([
     }
   }
 )
+
+test('a failed engine creation keeps the confirmed safe-resume generation for the retry', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-resume-engine-failure-'))
+  const inferenceId = 'pi-generation:1'
+  const probes = []
+  const permits = []
+  let creations = 0
+  let sends = 0
+  const setup = fixture(directory, {
+    authorizeInference: async (_authority, key, safeResume) => {
+      permits.push({ key, safeResume })
+      return { maxOutputTokens: 10, maximumInputTokens: 64, assertActive: async () => {} }
+    },
+    reconcileInference: async (_authority, key) => {
+      probes.push(key)
+      return 'safe_to_resume'
+    },
+    engineFactory: async (engineOptions) => {
+      creations++
+      // Creation 2 fails before the engine can authorize any inference.
+      if (creations === 2) throw new Error('engine creation failed')
+      return {
+        run: async () => {
+          await engineOptions.authorizeInference({ inferenceId })
+          // Creation 1 loses its process after authorizing the inference; the send is undecided.
+          if (creations === 1) throw new Error('process lost after authorization')
+          sends++
+          return result
+        },
+        close: async () => {},
+        cancel: async () => {},
+      }
+    },
+  })
+  const adapter = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    const handle = await adapter.start(setup.request)
+    await adapter.drain()
+    const turnKey = `pi-turn:${setup.request.attemptId}:initial`
+    const inferenceKey = `${turnKey}:${inferenceId}`
+    expect(adapter.journal.get(handle.handleId).state).toBe('unknown')
+    expect(adapter.journal.get(handle.handleId).detail.activeInference?.inferenceKey).toBe(
+      inferenceKey
+    )
+
+    // Recovery confirms the exact generation safe; the resumed run then fails creating its engine.
+    await adapter.reconcile(handle)
+    await adapter.drain()
+    const afterCreationFailure = adapter.journal.get(handle.handleId)
+    expect(creations).toBe(2)
+    expect(afterCreationFailure.state).toBe('unknown')
+    expect(afterCreationFailure.detail.safeResumeInferenceKey).toBe(inferenceKey)
+
+    // The retry re-observes that same generation and still carries its resume permit.
+    await adapter.reconcile(handle)
+    await adapter.drain()
+    expect(probes).toEqual([inferenceKey, inferenceKey, inferenceKey, inferenceKey])
+    expect(permits).toEqual([
+      { key: inferenceKey, safeResume: undefined },
+      {
+        key: inferenceKey,
+        safeResume: { schemaVersion: 'pi-inference-resume-permit/v1', inferenceKey },
+      },
+    ])
+    const completed = adapter.journal.get(handle.handleId)
+    expect(completed.state).toBe('completed')
+    expect(completed.detail.safeResumeInferenceKey).toBeUndefined()
+    expect(sends).toBe(1)
+  } finally {
+    await adapter.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})

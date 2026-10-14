@@ -1235,10 +1235,16 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         handedOff = this.#schedule(next, claim)
       } else {
         const activeInference = readActiveInference(claimed)
-        const observe = () =>
-          activeInference
-            ? this.#probeInference(authority, activeInference.inferenceKey)
-            : this.#probeInference(authority, turnKey(claimed))
+        // A confirmed resume permit survives a failure before the engine authorizes its first
+        // inference (for example engine creation): the retry re-observes that exact generation
+        // instead of falling back to the turn scope and discarding the permit.
+        const pendingResumeKey =
+          activeInference === undefined &&
+          typeof claimed.detail['safeResumeInferenceKey'] === 'string'
+            ? claimed.detail['safeResumeInferenceKey']
+            : undefined
+        const resumeKey = activeInference?.inferenceKey ?? pendingResumeKey
+        const observe = () => this.#probeInference(authority, resumeKey ?? turnKey(claimed))
         const preliminary = await observe()
         await this.#recoveryAuthority(authority)
         this.#assertOpen()
@@ -1262,10 +1268,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
                 inferenceTrackingVersion: 1,
                 engineRunStarted: false,
                 activeInference: undefined,
-                safeResumeInferenceKey:
-                  activeInference && safe === 'safe_to_resume'
-                    ? activeInference.inferenceKey
-                    : undefined,
+                safeResumeInferenceKey: resumeKey,
                 inferencePending: false,
                 observedAt: this.#now(),
                 reasonCode: undefined,
