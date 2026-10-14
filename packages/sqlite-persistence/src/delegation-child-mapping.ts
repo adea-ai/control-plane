@@ -6,6 +6,13 @@ import {
   type ChildAdmissionReceipt,
   type ChildAdmissionRequest,
 } from '@control-plane/orchestration'
+import {
+  childAdmissionNamespace,
+  childMappingNamespace,
+  childRuntimeLookupNamespace,
+  childSessionNamespace,
+} from './delegation-receipt-namespaces.js'
+import { retainReceiptOwnerPins } from './delegation-retention.js'
 import { json, recordId } from './record-storage.js'
 
 export const ChildJobMappingSchema = ChildAdmissionReceiptSchema.pick({
@@ -25,10 +32,12 @@ export interface StoredChildAdmissionReceipt {
   readonly request: ChildAdmissionRequest
   readonly receipt: ChildAdmissionReceipt
 }
-export const childMappingNamespace = 'delegation-child-mappings'
-export const childAdmissionNamespace = 'delegation-admission-receipts'
-export const childSessionNamespace = 'delegation-native-sessions'
-export const childRuntimeLookupNamespace = 'delegation-runtime-lookups'
+export {
+  childAdmissionNamespace,
+  childMappingNamespace,
+  childRuntimeLookupNamespace,
+  childSessionNamespace,
+}
 
 export async function retainChildMapping(
   tx: PersistenceTransaction,
@@ -57,6 +66,7 @@ export async function retainChildMapping(
       throw new Error('DELEGATION_CHILD_MAPPING_CONFLICT')
     if (!session)
       await tx.put({ namespace: childSessionNamespace, id: sessionId, value: json(mapping) })
+    await retainReceiptOwnerPins(tx, childSessionNamespace, mapping)
   }
   await tx.put({
     namespace: childMappingNamespace,
@@ -64,6 +74,7 @@ export async function retainChildMapping(
     ...(existing ? { expectedRevision: existing.revision } : {}),
     value: json(mapping),
   })
+  await retainReceiptOwnerPins(tx, childMappingNamespace, mapping)
 }
 
 export async function retainChildAdmission(
@@ -88,4 +99,5 @@ export async function retainChildAdmission(
     id: recordId(request.delegationId),
     value: json({ request, receipt }),
   })
+  await retainReceiptOwnerPins(tx, childAdmissionNamespace, { request, receipt })
 }

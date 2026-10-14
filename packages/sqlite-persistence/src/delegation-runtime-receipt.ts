@@ -14,7 +14,10 @@ import {
 } from '@control-plane/orchestration'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import { recordId } from './record-storage.js'
-import { childAdmissionNamespace, childRuntimeLookupNamespace } from './delegation-child-mapping.js'
+import {
+  childAdmissionNamespace,
+  childRuntimeLookupNamespace,
+} from './delegation-receipt-namespaces.js'
 import { assertSqliteStoredPlanReference } from './repositories.js'
 import { readToolCallIn } from './tool-repositories.js'
 

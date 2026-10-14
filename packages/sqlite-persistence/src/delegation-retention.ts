@@ -1,12 +1,13 @@
 import type { RetentionClassId } from '@control-plane/config'
-import type { PersistenceTransaction } from '@control-plane/deployment'
+import type { PersistenceProvider, PersistenceTransaction } from '@control-plane/deployment'
 import {
   childAdmissionNamespace,
   childMappingNamespace,
   childRuntimeLookupNamespace,
   childSessionNamespace,
-} from './delegation-child-mapping.js'
-import { terminalReceiptNamespace } from './delegation-terminal-receipt.js'
+  terminalReceiptNamespace,
+} from './delegation-receipt-namespaces.js'
+import { recordId } from './record-storage.js'
 
 /**
  * Retention lifecycle of the child admission, mapping and terminal receipt
@@ -33,6 +34,8 @@ export const delegationReceiptNamespaces = [
   terminalReceiptNamespace,
 ] as const
 
+type ReceiptNamespace = (typeof delegationReceiptNamespaces)[number]
+
 /**
  * Existing retention class that governs each namespace's eventual deletion
  * (owner decision on #1022). Recording it adds no deletion path and no period:
@@ -40,15 +43,14 @@ export const delegationReceiptNamespaces = [
  * becomes deletable once a path with settlement and reference proof is built
  * and registered in scripts/retention-classes.mjs.
  */
-export const delegationReceiptRetentionClass: Readonly<
-  Record<(typeof delegationReceiptNamespaces)[number], RetentionClassId>
-> = {
-  [childAdmissionNamespace]: 'native-admission-fences',
-  [childMappingNamespace]: 'native-admission-fences',
-  [childSessionNamespace]: 'native-admission-fences',
-  [childRuntimeLookupNamespace]: 'native-admission-fences',
-  [terminalReceiptNamespace]: 'native-terminal-snapshots',
-}
+export const delegationReceiptRetentionClass: Readonly<Record<ReceiptNamespace, RetentionClassId>> =
+  {
+    [childAdmissionNamespace]: 'native-admission-fences',
+    [childMappingNamespace]: 'native-admission-fences',
+    [childSessionNamespace]: 'native-admission-fences',
+    [childRuntimeLookupNamespace]: 'native-admission-fences',
+    [terminalReceiptNamespace]: 'native-terminal-snapshots',
+  }
 
 export interface DelegationReceiptPins {
   readonly executionIds: ReadonlySet<string>
@@ -57,9 +59,7 @@ export interface DelegationReceiptPins {
 
 type Path = readonly string[]
 
-const executionPaths: Readonly<
-  Record<(typeof delegationReceiptNamespaces)[number], readonly Path[]>
-> = {
+const executionPaths: Readonly<Record<ReceiptNamespace, readonly Path[]>> = {
   [childAdmissionNamespace]: [
     ['request', 'parentExecutionId'],
     ['request', 'childExecutionId'],
@@ -79,7 +79,7 @@ const executionPaths: Readonly<
   ],
 }
 
-const planPaths: Readonly<Record<(typeof delegationReceiptNamespaces)[number], readonly Path[]>> = {
+const planPaths: Readonly<Record<ReceiptNamespace, readonly Path[]>> = {
   [childAdmissionNamespace]: [
     ['request', 'parentPlan', 'executionPlanId'],
     ['request', 'childPlan', 'executionPlanId'],
@@ -99,29 +99,125 @@ function read(value: unknown, path: Path): string | undefined {
   return typeof current === 'string' ? current : undefined
 }
 
+/** Owners and plans a receipt row positively identifies; a damaged field pins nothing else. */
+export function receiptOwnerPins(
+  namespace: ReceiptNamespace,
+  value: unknown
+): DelegationReceiptPins {
+  const executionIds = new Set<string>()
+  const planIds = new Set<string>()
+  for (const path of executionPaths[namespace]) {
+    const executionId = read(value, path)
+    if (executionId !== undefined) executionIds.add(executionId)
+  }
+  for (const path of planPaths[namespace]) {
+    const planId = read(value, path)
+    if (planId !== undefined) planIds.add(planId)
+  }
+  return { executionIds, planIds }
+}
+
 /**
- * Fresh read of every execution and plan the receipt namespaces still name, in
- * the caller's transaction. Like the neighbouring `delegations` check it pins on
- * positively identified owners, so a damaged field cannot widen or narrow what
- * another field still pins.
+ * Owner pin index. Each receipt writer records the executions and plans its row
+ * names in the same transaction as the row, so a retention candidate costs one
+ * exact-key read per owner instead of a scan of every retained receipt. The index
+ * is append-only like the receipts it mirrors: nothing releases a pin.
+ */
+export const receiptOwnerPinNamespace = 'delegation-receipt-owner-pins'
+const backfillMarker = 'backfill-complete'
+
+const pinId = (kind: 'execution' | 'plan', identity: string) => recordId(`${kind}:${identity}`)
+
+async function putPin(
+  transaction: PersistenceTransaction,
+  kind: 'execution' | 'plan',
+  identity: string
+): Promise<void> {
+  const id = pinId(kind, identity)
+  if ((await transaction.get(receiptOwnerPinNamespace, id)) === undefined)
+    await transaction.put({ namespace: receiptOwnerPinNamespace, id, value: { kind, identity } })
+}
+
+/** Writers call this right after retaining a receipt row, in the same transaction. */
+export async function retainReceiptOwnerPins(
+  transaction: PersistenceTransaction,
+  namespace: ReceiptNamespace,
+  value: unknown
+): Promise<void> {
+  const pins = receiptOwnerPins(namespace, value)
+  for (const executionId of pins.executionIds) await putPin(transaction, 'execution', executionId)
+  for (const planId of pins.planIds) await putPin(transaction, 'plan', planId)
+}
+
+/**
+ * Full scan of the receipt namespaces. Only the one-time index backfill and a
+ * read-only assessment of a store that has not been backfilled use it; no
+ * per-candidate path does.
  */
 export async function readDelegationReceiptPins(
   transaction: PersistenceTransaction,
-  from: readonly (typeof delegationReceiptNamespaces)[number][] = delegationReceiptNamespaces
+  from: readonly ReceiptNamespace[] = delegationReceiptNamespaces
 ): Promise<DelegationReceiptPins> {
   const executionIds = new Set<string>()
   const planIds = new Set<string>()
-  for (const namespace of from) {
+  for (const namespace of from)
     for (const row of await transaction.list(namespace)) {
-      for (const path of executionPaths[namespace]) {
-        const executionId = read(row.value, path)
-        if (executionId !== undefined) executionIds.add(executionId)
-      }
-      for (const path of planPaths[namespace]) {
-        const planId = read(row.value, path)
-        if (planId !== undefined) planIds.add(planId)
-      }
+      const pins = receiptOwnerPins(namespace, row.value)
+      for (const executionId of pins.executionIds) executionIds.add(executionId)
+      for (const planId of pins.planIds) planIds.add(planId)
     }
-  }
   return { executionIds, planIds }
+}
+
+export interface ReceiptOwnerPinReader {
+  hasExecution(transaction: PersistenceTransaction, executionId: string): Promise<boolean>
+  hasPlan(transaction: PersistenceTransaction, planId: string): Promise<boolean>
+}
+
+/**
+ * Resolves the pin reader for one sweep. Rows written before the index existed
+ * are indexed once, here, outside the candidate loop; a dry run writes nothing
+ * and falls back to one read-only scan of the legacy rows. Either way every
+ * candidate afterwards needs only exact-key reads inside its own transaction,
+ * which also see pins written by receipt writers after this point.
+ */
+export async function prepareReceiptOwnerPins(
+  provider: PersistenceProvider,
+  options: { readonly dryRun: boolean }
+): Promise<ReceiptOwnerPinReader> {
+  const complete = (transaction: PersistenceTransaction) =>
+    transaction.get(receiptOwnerPinNamespace, recordId(backfillMarker))
+  let legacy: DelegationReceiptPins | undefined
+  if ((await provider.transaction(complete)) === undefined) {
+    if (options.dryRun) legacy = await provider.transaction(readDelegationReceiptPins)
+    else
+      await provider.transaction(async (transaction) => {
+        if ((await complete(transaction)) !== undefined) return
+        const pins = await readDelegationReceiptPins(transaction)
+        for (const executionId of pins.executionIds)
+          await putPin(transaction, 'execution', executionId)
+        for (const planId of pins.planIds) await putPin(transaction, 'plan', planId)
+        await transaction.put({
+          namespace: receiptOwnerPinNamespace,
+          id: recordId(backfillMarker),
+          value: { backfilled: true },
+        })
+      })
+  }
+  const indexed = async (
+    transaction: PersistenceTransaction,
+    kind: 'execution' | 'plan',
+    identity: string
+  ) => (await transaction.get(receiptOwnerPinNamespace, pinId(kind, identity))) !== undefined
+  return {
+    async hasExecution(transaction, executionId) {
+      return (
+        legacy?.executionIds.has(executionId) === true ||
+        (await indexed(transaction, 'execution', executionId))
+      )
+    },
+    async hasPlan(transaction, planId) {
+      return legacy?.planIds.has(planId) === true || (await indexed(transaction, 'plan', planId))
+    },
+  }
 }

@@ -66,7 +66,12 @@ row names the parent and child executions it was written for (admission and
 lookup receipts also name the plans), and the existing `executions` and
 `execution-plans` retention classes refuse to delete an owner while any of these
 rows still names it, whether or not the `delegations` row is still present
-(`delegation-retention.ts`). A pending terminal publication intent and a
+(`delegation-retention.ts`). The receipt writers record those owners in the same
+transaction in `delegation-receipt-owner-pins`, so a retention candidate costs one
+exact-key read per owner instead of a scan of every retained receipt. Rows
+retained before the index existed are indexed once by the first applying sweep
+(a dry run writes nothing and reads them once instead). The index is append-only
+like the receipts it mirrors. A pending terminal publication intent and a
 native-start lookup receipt are therefore never swept away before their repair
 path has read them, and a published receipt is retained as well.
 

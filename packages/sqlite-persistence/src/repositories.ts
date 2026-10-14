@@ -72,7 +72,7 @@ import {
 } from './retention-reference-metadata.js'
 import { countSqliteMatchingActiveRetentionHolds } from './retention-hold-repository.js'
 import { SqliteDurableUsageStore } from './usage-store.js'
-import { readDelegationReceiptPins } from './delegation-retention.js'
+import { prepareReceiptOwnerPins } from './delegation-retention.js'
 
 const namespaces = {
   commands: 'command-inbox',
@@ -1026,6 +1026,7 @@ export class SqliteExecutionRepository implements ExecutionRepository {
     const assessedAt = now.toISOString()
     const dryRun = options.dryRun ?? true
     const counter = new RetentionAssessmentCounter('executions', assessedAt, options.bound ?? 64)
+    const receiptPins = await prepareReceiptOwnerPins(this.provider, { dryRun })
     let deleted = 0
     let raced = 0
     let afterId: string | undefined
@@ -1234,7 +1235,8 @@ export class SqliteExecutionRepository implements ExecutionRepository {
             return value?.request?.executionId === execution.executionId
           })
           // Admission, mapping, lookup and terminal receipts pin their owners on their own.
-          const receiptReference = (await readDelegationReceiptPins(transaction)).executionIds.has(
+          const receiptReference = await receiptPins.hasExecution(
+            transaction,
             execution.executionId
           )
           const activeAttempts = attempts.filter(
@@ -1546,6 +1548,7 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
       assessedAt,
       options.bound ?? 64
     )
+    const receiptPins = await prepareReceiptOwnerPins(this.provider, { dryRun })
     let deleted = 0
     let raced = 0
     let scanned = 0
@@ -1625,9 +1628,11 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
             const parentPlanId = value?.command?.delegation?.parentPlan?.executionPlanId
             if (typeof parentPlanId === 'string') references.add(parentPlanId)
           }
-          for (const planId of (await readDelegationReceiptPins(transaction)).planIds)
-            references.add(planId)
-          const pendingReferences = references.has(plan.executionPlanId) ? 1 : 0
+          const pendingReferences =
+            references.has(plan.executionPlanId) ||
+            (await receiptPins.hasPlan(transaction, plan.executionPlanId))
+              ? 1
+              : 0
           const currentWindow = await getReferenceRetentionWindow(
             transaction,
             'executionPlans',

@@ -18,7 +18,10 @@ import { SqliteDelegationRepository } from './delegation-repository.ts'
 import {
   delegationReceiptNamespaces,
   delegationReceiptRetentionClass,
+  prepareReceiptOwnerPins,
   readDelegationReceiptPins,
+  receiptOwnerPinNamespace,
+  retainReceiptOwnerPins,
 } from './delegation-retention.ts'
 import { decidedRetentionPolicy, retentionClassPolicy } from '@control-plane/config'
 import { fixture, ids } from './child-allocation-fixture.mjs'
@@ -109,6 +112,52 @@ const receiptRows = {
   }),
 }
 
+// Retained the way the writers do: the row and its owner pins in one transaction.
+async function seedReceipt(provider, namespace, id, value) {
+  await provider.transaction(async (transaction) => {
+    await transaction.put({ namespace, id, value })
+    await retainReceiptOwnerPins(transaction, namespace, value)
+  })
+}
+
+// Wraps a provider so each transaction reports what it read from the receipt
+// namespaces and the owner pin index.
+function measuredProvider(provider) {
+  const receiptNamespaces = new Set([...delegationReceiptNamespaces, receiptOwnerPinNamespace])
+  const transactions = []
+  return {
+    transactions,
+    provider: {
+      async transaction(operation) {
+        const stat = { scans: 0, pinGets: 0, otherReceiptGets: 0, startedAt: performance.now() }
+        transactions.push(stat)
+        try {
+          return await provider.transaction((transaction) =>
+            operation(
+              new Proxy(transaction, {
+                get(target, key) {
+                  const member = target[key]
+                  if (typeof member !== 'function') return member
+                  return (namespace, ...rest) => {
+                    if (key === 'get' && namespace === receiptOwnerPinNamespace) stat.pinGets += 1
+                    else if (key === 'get' && receiptNamespaces.has(namespace))
+                      stat.otherReceiptGets += 1
+                    else if ((key === 'list' || key === 'scan') && receiptNamespaces.has(namespace))
+                      stat.scans += 1
+                    return member.call(target, namespace, ...rest)
+                  }
+                },
+              })
+            )
+          )
+        } finally {
+          stat.milliseconds = performance.now() - stat.startedAt
+        }
+      },
+    },
+  }
+}
+
 describe('delegation receipt retention (#1022)', () => {
   test('every delegation namespace the persistence layer writes is classified', () => {
     // Owner-bearing rows were classified when #1022 wired them in; the rest are
@@ -116,6 +165,8 @@ describe('delegation receipt retention (#1022)', () => {
     // `delegation-*` namespace has to be added to one list on purpose.
     const governedElsewhere = new Set([
       'delegation-by-child',
+      // The owner pin index the receipt writers maintain.
+      'delegation-receipt-owner-pins',
       'delegation-publications',
       'delegation-tool-admissions-',
       'delegation-tool-call-admissions-',
@@ -127,14 +178,14 @@ describe('delegation receipt retention (#1022)', () => {
       const source = readFileSync(new URL(file, sourceDirectory), 'utf8')
       for (const match of source.matchAll(/['`](delegation-[a-z-]+)['`$]/g)) found.add(match[1])
     }
-    expect([...found].filter((name) => !governedElsewhere.has(name)).sort()).toEqual(
-      [...delegationReceiptNamespaces].sort()
+    expect([...found].filter((name) => !governedElsewhere.has(name)).toSorted()).toEqual(
+      [...delegationReceiptNamespaces].toSorted()
     )
   })
 
   test('every namespace is assigned an existing class without adding a period', () => {
-    expect(Object.keys(delegationReceiptRetentionClass).sort()).toEqual(
-      [...delegationReceiptNamespaces].sort()
+    expect(Object.keys(delegationReceiptRetentionClass).toSorted()).toEqual(
+      [...delegationReceiptNamespaces].toSorted()
     )
     for (const namespace of delegationReceiptNamespaces) {
       const policy = retentionClassPolicy(
@@ -165,22 +216,25 @@ describe('delegation receipt retention (#1022)', () => {
         })
         expect(control.retainedByReason).toEqual({})
         expect(control.deleted).toBe(0)
-        await provider.transaction((transaction) =>
-          transaction.put({
-            namespace,
-            id: storedId(namespace),
-            value: receiptRows[namespace]({ parent: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV' }),
-          })
+        await seedReceipt(
+          provider,
+          namespace,
+          storedId(namespace),
+          receiptRows[namespace]({ parent: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV' })
         )
         const pinned = await executions.deleteEligibleExecutions(retentionNow, retentionOptions)
         expect(pinned.deleted).toBe(0)
         expect(pinned.retainedByReason).toEqual({ reference_pending: 2 })
         expect(await executions.getExecution(parentExecutionId)).toBeDefined()
         expect(await executions.getExecution(childExecutionId)).toBeDefined()
-        await provider.transaction((transaction) =>
-          transaction.delete(namespace, storedId(namespace))
+      })
+      // Without the receipt the same owners are deleted, so the receipt was the pin.
+      await withProvider(async (provider) => {
+        await seedOwners(provider)
+        const released = await new SqliteExecutionRepository(provider).deleteEligibleExecutions(
+          retentionNow,
+          retentionOptions
         )
-        const released = await executions.deleteEligibleExecutions(retentionNow, retentionOptions)
         expect(released.deleted).toBe(2)
       })
     })
@@ -189,13 +243,10 @@ describe('delegation receipt retention (#1022)', () => {
     await withProvider(async (provider) => {
       const executions = new SqliteExecutionRepository(provider)
       await seedOwners(provider)
-      await provider.transaction((transaction) =>
-        transaction.put({
-          namespace: 'delegation-terminal-receipts',
-          id: 'damaged-terminal-receipt',
-          value: { status: 'pending', event: { childExecutionId } },
-        })
-      )
+      await seedReceipt(provider, 'delegation-terminal-receipts', 'damaged-terminal-receipt', {
+        status: 'pending',
+        event: { childExecutionId },
+      })
       const result = await executions.deleteEligibleExecutions(retentionNow, retentionOptions)
       expect(result.deleted).toBe(1)
       expect(await executions.getExecution(childExecutionId)).toBeDefined()
@@ -203,8 +254,150 @@ describe('delegation receipt retention (#1022)', () => {
     })
   })
 
+  for (const namespace of delegationReceiptNamespaces)
+    test(`${namespace} rows retained before the pin index existed pin once swept`, async () => {
+      await withProvider(async (provider) => {
+        const executions = new SqliteExecutionRepository(provider)
+        await seedOwners(provider)
+        // A raw write stands in for a row retained by an earlier version.
+        await provider.transaction((transaction) =>
+          transaction.put({
+            namespace,
+            id: storedId(namespace),
+            value: receiptRows[namespace]({ parent: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV' }),
+          })
+        )
+        // A dry run writes nothing, so it reads the legacy rows once and still pins.
+        const assessed = await executions.deleteEligibleExecutions(retentionNow, {
+          ...retentionOptions,
+          dryRun: true,
+        })
+        expect(assessed.retainedByReason).toEqual({ reference_pending: 2 })
+        expect(await provider.transaction((tx) => tx.list(receiptOwnerPinNamespace))).toEqual([])
+        // The first applying sweep indexes them once, then pins from the index.
+        const pinned = await executions.deleteEligibleExecutions(retentionNow, retentionOptions)
+        expect(pinned.deleted).toBe(0)
+        expect(pinned.retainedByReason).toEqual({ reference_pending: 2 })
+        expect(
+          (await provider.transaction((tx) => tx.list(receiptOwnerPinNamespace))).length
+        ).toBeGreaterThan(2)
+        const again = await executions.deleteEligibleExecutions(retentionNow, retentionOptions)
+        expect(again.retainedByReason).toEqual({ reference_pending: 2 })
+      })
+    })
+
+  test('candidate lookups do not scan the retained receipts and do not grow with them', async () => {
+    const free = 20
+    const pinned = 20
+    const measurements = []
+    for (const retained of [50, 1_500]) {
+      await withProvider(async (provider) => {
+        // Unrelated receipts in every namespace, retained the way the writers do.
+        await provider.transaction(async (transaction) => {
+          for (let index = 0; index < retained; index += 1) {
+            const namespace =
+              delegationReceiptNamespaces[index % delegationReceiptNamespaces.length]
+            const value = {
+              parentExecutionId: `exe_unrelated_parent_${index}`,
+              childExecutionId: `exe_unrelated_child_${index}`,
+              request: { executionId: `exe_unrelated_child_${index}` },
+              event: {
+                parentExecutionId: `exe_unrelated_parent_${index}`,
+                childExecutionId: `exe_unrelated_child_${index}`,
+              },
+            }
+            await transaction.put({ namespace, id: `filler-${index}`, value })
+            await retainReceiptOwnerPins(transaction, namespace, value)
+          }
+          for (let index = 0; index < free + pinned; index += 1) {
+            const executionId = `exe_${'0'.repeat(23)}${String(index).padStart(3, '0')}`
+            await transaction.put({
+              namespace: 'executions',
+              id: storedId(executionId),
+              value: terminalExecution(executionId, 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV'),
+            })
+            if (index < pinned) {
+              const value = { parentExecutionId: executionId, childExecutionId: executionId }
+              await transaction.put({
+                namespace: 'delegation-child-mappings',
+                id: `candidate-${index}`,
+                value,
+              })
+              await retainReceiptOwnerPins(transaction, 'delegation-child-mappings', value)
+            }
+          }
+        })
+        // The one-time index step is part of preparing a sweep, not of a candidate.
+        await prepareReceiptOwnerPins(provider, { dryRun: false })
+        const measured = measuredProvider(provider)
+        const result = await new SqliteExecutionRepository(
+          measured.provider
+        ).deleteEligibleExecutions(retentionNow, { ...retentionOptions, bound: 64 })
+        expect(result.deleted).toBe(free)
+        expect(result.retainedByReason).toEqual({ reference_pending: pinned })
+        for (const stat of measured.transactions) {
+          expect(stat.scans).toBe(0)
+          expect(stat.otherReceiptGets).toBe(0)
+          expect(stat.pinGets).toBeLessThanOrEqual(1)
+        }
+        measurements.push({
+          retained,
+          pinGets: measured.transactions.reduce((sum, stat) => sum + stat.pinGets, 0),
+          transactions: measured.transactions.length,
+          slowestMilliseconds: Math.max(...measured.transactions.map((stat) => stat.milliseconds)),
+        })
+      })
+    }
+    // 30 times more retained receipts, identical receipt reads.
+    expect(measurements[1].pinGets).toBe(measurements[0].pinGets)
+    expect(measurements[1].transactions).toBe(measurements[0].transactions)
+    // One pin read per candidate, plus the sweep's single marker read.
+    expect(measurements[0].pinGets).toBe(free + pinned + 1)
+    console.info('receipt retention lock measurements', JSON.stringify(measurements))
+  }, 120000)
+
+  test('plan candidates read one pin and never scan the retained receipts', async () => {
+    await withProvider(async (provider) => {
+      const plans = new SqliteExecutionPlanRepository(provider)
+      const plan = createExecutionPlanTestFixture()
+      await new SqliteContextPackageRepository(provider).put(
+        contextPackageSerializationFixtures.futurePi
+      )
+      await plans.put(plan)
+      await provider.transaction(async (transaction) => {
+        for (let index = 0; index < 1_000; index += 1) {
+          const value = {
+            request: {
+              parentPlan: { executionPlanId: `pln_unrelated_${index}` },
+              childPlan: { executionPlanId: `pln_unrelated_child_${index}` },
+            },
+          }
+          await transaction.put({
+            namespace: 'delegation-admission-receipts',
+            id: `filler-${index}`,
+            value,
+          })
+          await retainReceiptOwnerPins(transaction, 'delegation-admission-receipts', value)
+        }
+      })
+      await prepareReceiptOwnerPins(provider, { dryRun: false })
+      const measured = measuredProvider(provider)
+      const deadline = new Date(Date.parse(plan.compiledAt) + 3 * ninetyDaysMs + 60_000)
+      await new SqliteExecutionPlanRepository(measured.provider).deleteEligibleExecutionPlans(
+        deadline,
+        retentionOptions
+      )
+      const reads = measured.transactions.filter((stat) => stat.pinGets > 0)
+      expect(reads.length).toBeGreaterThan(0)
+      for (const stat of measured.transactions) {
+        expect(stat.scans).toBe(0)
+        expect(stat.pinGets).toBeLessThanOrEqual(1)
+      }
+    })
+  })
+
   for (const namespace of ['delegation-admission-receipts', 'delegation-runtime-lookups'])
-    test(`${namespace} pins the plans it names until released`, async () => {
+    test(`${namespace} pins the plans it names`, async () => {
       await withProvider(async (provider) => {
         const plans = new SqliteExecutionPlanRepository(provider)
         const plan = createExecutionPlanTestFixture()
@@ -213,30 +406,20 @@ describe('delegation receipt retention (#1022)', () => {
         )
         await plans.put(plan)
         const deadline = new Date(Date.parse(plan.compiledAt) + 3 * ninetyDaysMs + 60_000)
-        const id = storedId(namespace)
-        await provider.transaction((transaction) =>
-          transaction.put({
-            namespace,
-            id,
-            value: receiptRows[namespace]({
-              parent: plan.executionPlanId,
-              child: plan.executionPlanId,
-            }),
-          })
+        const control = await plans.deleteEligibleExecutionPlans(deadline, {
+          ...retentionOptions,
+          dryRun: true,
+        })
+        expect(control.retainedByReason).toEqual({ not_expired: 1 })
+        await seedReceipt(
+          provider,
+          namespace,
+          storedId(namespace),
+          receiptRows[namespace]({ parent: plan.executionPlanId, child: plan.executionPlanId })
         )
         const pinned = await plans.deleteEligibleExecutionPlans(deadline, retentionOptions)
         expect(pinned.deleted).toBe(0)
         expect(pinned.retainedByReason).toEqual({ reference_pending: 1 })
-        await provider.transaction((transaction) => transaction.delete(namespace, id))
-        // Release restarts the existing reference window; no new period applies.
-        const released = await plans.deleteEligibleExecutionPlans(deadline, retentionOptions)
-        expect(released.deleted).toBe(0)
-        expect(released.retainedByReason).toEqual({ not_expired: 1 })
-        const expired = await plans.deleteEligibleExecutionPlans(
-          new Date(deadline.getTime() + ninetyDaysMs + 1),
-          retentionOptions
-        )
-        expect(expired.deleted).toBe(1)
       })
     })
 
@@ -319,11 +502,11 @@ describe('delegation receipt retention (#1022)', () => {
       expect(retained['delegation-terminal-receipts']).toHaveLength(1)
       // Each real row names its owners where the pin reader looks, so the pins are
       // not an artefact of the hand-built rows above.
-      const owners = [ids.parentExecutionId, child.request.childExecutionId].sort()
+      const owners = [ids.parentExecutionId, child.request.childExecutionId].toSorted()
       const planIds = [
         f.canonicalParentPlan.executionPlanId,
         child.childPlan.executionPlanId,
-      ].sort()
+      ].toSorted()
       for (const [namespace, expectedPlans] of [
         ['delegation-admission-receipts', planIds],
         ['delegation-child-mappings', []],
@@ -333,9 +516,21 @@ describe('delegation receipt retention (#1022)', () => {
         const pins = await f.provider.transaction((transaction) =>
           readDelegationReceiptPins(transaction, [namespace])
         )
-        expect([...pins.executionIds].sort()).toEqual(owners)
-        expect([...pins.planIds].sort()).toEqual(expectedPlans)
+        expect([...pins.executionIds].toSorted()).toEqual(owners)
+        expect([...pins.planIds].toSorted()).toEqual(expectedPlans)
       }
+      // The writers' own pin index agrees with a full scan of what they retained.
+      const scanned = await f.provider.transaction(readDelegationReceiptPins)
+      const indexed = await f.provider.transaction((transaction) =>
+        transaction.list(receiptOwnerPinNamespace)
+      )
+      const indexedIdentities = (kind) =>
+        indexed
+          .filter((row) => row.value.kind === kind)
+          .map((row) => row.value.identity)
+          .toSorted()
+      expect(indexedIdentities('execution')).toEqual([...scanned.executionIds].toSorted())
+      expect(indexedIdentities('plan')).toEqual([...scanned.planIds].toSorted())
       const future = new Date('2030-01-01T00:00:00.000Z')
 
       await sweepSqliteRetention(f.provider, future)
