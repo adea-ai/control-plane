@@ -15,7 +15,12 @@ import {
   SqlitePersistenceProvider,
 } from './index.js'
 import { SqliteDelegationRepository } from './delegation-repository.ts'
-import { delegationReceiptNamespaces, readDelegationReceiptPins } from './delegation-retention.ts'
+import {
+  delegationReceiptNamespaces,
+  delegationReceiptRetentionClass,
+  readDelegationReceiptPins,
+} from './delegation-retention.ts'
+import { decidedRetentionPolicy, retentionClassPolicy } from '@control-plane/config'
 import { fixture, ids } from './child-allocation-fixture.mjs'
 import { sweepSqliteRetention, snapshotNamespaces } from './retention-sweep.fixture.mjs'
 
@@ -125,6 +130,28 @@ describe('delegation receipt retention (#1022)', () => {
     expect([...found].filter((name) => !governedElsewhere.has(name)).sort()).toEqual(
       [...delegationReceiptNamespaces].sort()
     )
+  })
+
+  test('every namespace is assigned an existing class without adding a period', () => {
+    expect(Object.keys(delegationReceiptRetentionClass).sort()).toEqual(
+      [...delegationReceiptNamespaces].sort()
+    )
+    for (const namespace of delegationReceiptNamespaces) {
+      const policy = retentionClassPolicy(
+        decidedRetentionPolicy,
+        delegationReceiptRetentionClass[namespace]
+      )
+      expect(policy.id).toBe(delegationReceiptRetentionClass[namespace])
+    }
+    expect(delegationReceiptRetentionClass['delegation-terminal-receipts']).toBe(
+      'native-terminal-snapshots'
+    )
+    for (const namespace of delegationReceiptNamespaces)
+      if (namespace !== 'delegation-terminal-receipts')
+        expect(
+          retentionClassPolicy(decidedRetentionPolicy, delegationReceiptRetentionClass[namespace])
+            .retainMs
+        ).toBeNull()
   })
 
   for (const namespace of delegationReceiptNamespaces)

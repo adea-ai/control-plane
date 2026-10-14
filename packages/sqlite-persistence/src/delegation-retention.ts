@@ -1,3 +1,4 @@
+import type { RetentionClassId } from '@control-plane/config'
 import type { PersistenceTransaction } from '@control-plane/deployment'
 import {
   childAdmissionNamespace,
@@ -31,6 +32,23 @@ export const delegationReceiptNamespaces = [
   childRuntimeLookupNamespace,
   terminalReceiptNamespace,
 ] as const
+
+/**
+ * Existing retention class that governs each namespace's eventual deletion
+ * (owner decision on #1022). Recording it adds no deletion path and no period:
+ * `native-admission-fences` is unbounded, and `native-terminal-snapshots` only
+ * becomes deletable once a path with settlement and reference proof is built
+ * and registered in scripts/retention-classes.mjs.
+ */
+export const delegationReceiptRetentionClass: Readonly<
+  Record<(typeof delegationReceiptNamespaces)[number], RetentionClassId>
+> = {
+  [childAdmissionNamespace]: 'native-admission-fences',
+  [childMappingNamespace]: 'native-admission-fences',
+  [childSessionNamespace]: 'native-admission-fences',
+  [childRuntimeLookupNamespace]: 'native-admission-fences',
+  [terminalReceiptNamespace]: 'native-terminal-snapshots',
+}
 
 export interface DelegationReceiptPins {
   readonly executionIds: ReadonlySet<string>

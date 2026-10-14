@@ -13,7 +13,10 @@ import {
 } from '../packages/sqlite-persistence/src/retention-sweep.fixture.mjs'
 import { retentionClasses } from '../scripts/retention-classes.mjs'
 import { sweepRegisteredRetentionClasses } from './retention-registry-sweep.fixture.mjs'
-import { delegationReceiptNamespaces } from '../packages/sqlite-persistence/src/delegation-retention.ts'
+import {
+  delegationReceiptNamespaces,
+  delegationReceiptRetentionClass,
+} from '../packages/sqlite-persistence/src/delegation-retention.ts'
 import { withChildMappingRecovery } from './pi-durable-child-mapping-recovery.fixture.mjs'
 
 test('the package sweep list mirrors the operator retention registry', () => {
@@ -24,6 +27,11 @@ test('the package sweep list mirrors the operator retention registry', () => {
         .map(([classId, entry]) => [classId, [entry.sqlite, entry.apply]])
     )
   ).toEqual(sqliteRetentionSweeps)
+})
+
+test('the receipt classes have no registered deletion path yet', () => {
+  for (const classId of new Set(Object.values(delegationReceiptRetentionClass)))
+    expect(retentionClasses[classId]).toBeUndefined()
 })
 
 const watched = [

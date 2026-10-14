@@ -70,8 +70,11 @@ rows still names it, whether or not the `delegations` row is still present
 native-start lookup receipt are therefore never swept away before their repair
 path has read them, and a published receipt is retained as well.
 
-Releasing these rows needs an owner decision on which existing class governs
-their eventual deletion. Until a class is chosen and its deletion path is
+The owner decided which existing class governs their eventual deletion (#1022)
+(`delegationReceiptRetentionClass`): admission, mapping, native-session and
+lookup rows belong to `native-admission-fences` (unbounded), terminal receipts to
+`native-terminal-snapshots` (30 days from eligibility). That records ownership
+only. Until a deletion path with settlement and reference proof is built and
 registered in `scripts/retention-classes.mjs`, they outlive every sweep. A test
 fails when a new `delegation-*` namespace is written without being classified.
 PostgreSQL does not hold these namespaces.
