@@ -296,7 +296,7 @@ describe('profile recovery and fenced rollback', () => {
     expect(calls.some(([guard]) => guard === 'authority')).toBe(true)
   })
 
-  test('a new owner at the next generation resumes while the fenced owner stays refused', async () => {
+  test('a new same-target authority binding resumes while the fenced binding stays refused', async () => {
     const driver = new MockRuntimeAdapter()
     const transport = new DirectLocalRuntimeTransport(driver)
     const adapter = new TransportedRuntimeAdapter(transport, 'mock')
@@ -319,8 +319,9 @@ describe('profile recovery and fenced rollback', () => {
     })
     const handle = await oldBinding.adapter.start(startRequest('recovery:new-owner'))
 
-    // Rollback: the old owner is fenced; the next owner binds the retained
-    // handle through a fresh approved authority and resumes it.
+    // Rollback: the old authority is fenced; a fresh approved authority rebinds
+    // the same target and resumes the retained handle. No target-generation
+    // change is modeled by this adapter-level fixture.
     oldApproved = false
     const newCalls = []
     const newBinding = await bindProfileRuntime({

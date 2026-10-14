@@ -95,11 +95,12 @@ async function ingressPost(ports, executionId, path, body) {
 }
 
 /** Records the launcher and native server of one incarnation, once its composition has started. */
-async function recordOwnedRestate(owned, launcherPid) {
+async function recordOwnedRestate(incarnation, owned, launcherPid) {
   const launcher = await identityOf(launcherPid, pinned.launcher)
   owned.push(launcher)
   const native = await ownedNativeServer(launcherPid, pinned.native)
   owned.push(native)
+  incarnation.restateOwnershipRecorded = true
   return { launcher, native }
 }
 
@@ -124,7 +125,13 @@ async function reapOwned(owned) {
 /** Ends every spawned composition, then every recorded Restate identity. Each step is attempted even
  *  after an earlier failure. The work directory is removed only when nothing remains unconfirmed;
  *  otherwise it and the recorded identities are kept for diagnosis. */
-async function releaseOwnership({ work, incarnations, owned, exitBoundMs = EXIT_BOUND_MS }) {
+async function releaseOwnership({
+  work,
+  incarnations,
+  owned,
+  exitBoundMs = EXIT_BOUND_MS,
+  reapOwnedProcesses = reapOwned,
+}) {
   const problems = []
   for (const [index, incarnation] of incarnations.entries()) {
     const label = `composition incarnation ${index} (pid ${incarnation.child.pid ?? 'unspawned'})`
@@ -133,17 +140,15 @@ async function releaseOwnership({ work, incarnations, owned, exitBoundMs = EXIT_
     } catch (error) {
       problems.push(error)
     }
-    // Without a started or failed record, that incarnation's Restate processes were never recorded.
-    const reported = incarnation.stages.some(
-      (entry) => entry.stage === 'started' || entry.stage === 'failed'
-    )
-    if (!reported) {
+    // Protocol progress does not prove that both the launcher and native server identities were
+    // recorded. A failed startup or a failure during identity lookup must preserve the work state.
+    if (incarnation.restateOwnershipRecorded !== true) {
       problems.push(new Error(`RESTATE_OWNERSHIP_UNRECORDED: ${label}`))
     }
   }
-  let unconfirmed = await reapOwned(owned)
+  let unconfirmed = await reapOwnedProcesses(owned)
   // One retry, limited to identities that are still recorded and not confirmed gone.
-  if (unconfirmed.length > 0) unconfirmed = await reapOwned(owned)
+  if (unconfirmed.length > 0) unconfirmed = await reapOwnedProcesses(owned)
   for (const { identity, reason } of unconfirmed) {
     problems.push(
       new Error(
@@ -186,7 +191,7 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
     const initial = spawnSelfHostedSimpleComposition('initial', config)
     incarnations.push(initial)
     const started = await initial.next('started')
-    const initialOwned = await recordOwnedRestate(owned, started.launcherPid)
+    const initialOwned = await recordOwnedRestate(initial, owned, started.launcherPid)
     const paused = await initial.next('awaiting_input', 60_000)
     expect(paused).toMatchObject({ state: 'awaiting_input', attemptCount: 1 })
     const { executionId } = paused
@@ -209,7 +214,7 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
     const recovery = spawnSelfHostedSimpleComposition('recover', { ...config, executionId })
     incarnations.push(recovery)
     const recoveredStarted = await recovery.next('started')
-    const recoveredOwned = await recordOwnedRestate(owned, recoveredStarted.launcherPid)
+    const recoveredOwned = await recordOwnedRestate(recovery, owned, recoveredStarted.launcherPid)
     const recovered = await recovery.next('recovered')
     // Same execution identity, attempt, and version as before the kill.
     expect(recovered).toMatchObject({
@@ -351,6 +356,8 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       },
       exited: new Promise(() => {}),
       stages: [{ stage: 'started' }],
+      // This cleanup-only double models an incarnation whose Restate ownership was recorded.
+      restateOwnershipRecorded: true,
     }
     const exits = {
       child: {
@@ -364,6 +371,7 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       },
       exited: Promise.resolve({ code: null, signal: 'SIGKILL' }),
       stages: [{ stage: 'started' }],
+      restateOwnershipRecorded: true,
     }
     const error = await releaseOwnership({
       work,
@@ -379,6 +387,95 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
     expect(signalled).toEqual(['never-exits', 'exits'])
     expect(existsSync(work)).toBe(true)
     await rm(work, { recursive: true, force: true })
+  })
+
+  test('cleanup preserves state when Restate ownership was not fully recorded', async () => {
+    const stageCases = [
+      [{ stage: 'failed' }],
+      [{ stage: 'started' }],
+      [{ stage: 'started' }, { stage: 'failed' }],
+    ]
+
+    for (const [index, stages] of stageCases.entries()) {
+      const work = await mkdtemp(join(tmpdir(), `self-hosted-simple-unrecorded-${index}-`))
+      const signalled = []
+      try {
+        const error = await releaseOwnership({
+          work,
+          incarnations: [
+            {
+              child: {
+                pid: 100 + index,
+                exitCode: 1,
+                signalCode: null,
+                kill: (signal) => {
+                  signalled.push(signal)
+                  return true
+                },
+              },
+              exited: Promise.resolve({ code: 1, signal: null }),
+              stages,
+            },
+          ],
+          owned: [],
+        }).catch((caught) => caught)
+
+        expect(error).toBeInstanceOf(AggregateError)
+        expect(error.errors.map((entry) => entry.message)).toContainEqual(
+          expect.stringContaining('RESTATE_OWNERSHIP_UNRECORDED')
+        )
+        expect(signalled).toEqual([])
+        expect(existsSync(work)).toBe(true)
+      } finally {
+        await rm(work, { recursive: true, force: true })
+      }
+    }
+  })
+
+  test('cleanup removes state after recorded Restate identities are confirmed gone', async () => {
+    const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-recorded-cleanup-'))
+    const recordedIdentities = [
+      { pid: 101, started: 'fixture-launcher', command: pinned.launcher },
+      { pid: 102, started: 'fixture-server', command: pinned.native },
+    ]
+    const owned = [...recordedIdentities]
+    const reapAttempts = []
+    const signalled = []
+
+    try {
+      await releaseOwnership({
+        work,
+        incarnations: [
+          {
+            child: {
+              pid: 100,
+              exitCode: 0,
+              signalCode: null,
+              kill: (signal) => {
+                signalled.push(signal)
+                return true
+              },
+            },
+            exited: Promise.resolve({ code: 0, signal: null }),
+            stages: [{ stage: 'started' }],
+            restateOwnershipRecorded: true,
+          },
+        ],
+        owned,
+        reapOwnedProcesses: async (identities) => {
+          reapAttempts.push([...identities])
+          identities.splice(0, identities.length)
+          return []
+        },
+      })
+
+      expect(reapAttempts).toEqual([recordedIdentities])
+      expect(owned).toEqual([])
+      expect(signalled).toEqual([])
+      expect(existsSync(work)).toBe(false)
+    } finally {
+      await rm(work, { recursive: true, force: true })
+    }
   })
 
   test('a spawn failure is reported promptly instead of hanging the protocol wait', async () => {
