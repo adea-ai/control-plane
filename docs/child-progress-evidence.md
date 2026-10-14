@@ -59,6 +59,16 @@ stay wired to the canonical durable paths rather than a parallel ledger.
   usage, the production scanner publishes terminal evidence through the feed,
   human input lands ahead of batching, and cost states persist across
   close/reopen.
+- `tests/pi-durable-compaction-governed-dispatch.test.mjs` — the actual
+  production Pi lead factory after a native-session compaction and a full
+  composition reopen: the lead's `delegate_child` call runs the real governed
+  executor and delegation bridge, current grants are read again for the
+  dispatch, the child is allocated, funded from the parent's stated allowance
+  (`DurableChildRuntimeBudgetAdmission`), started once and runs its own
+  priced turn, whose reservation, exact usage and release are retained. A
+  grant withdrawn after the reopen leaves no child, reservation or start. The
+  provider transport, funding records and policy decision are scripted
+  fixtures; attempt settlement and cost-state projection are not driven.
 - `tests/child-progress-two-siblings-composition.test.mjs` — **two sibling
   children under one real parent**: coordinator admission over durable SQLite
   repositories, canonical per-child reservations and settlements in the

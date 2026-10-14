@@ -484,7 +484,7 @@ export async function createProductionFactoryFixture(options = {}) {
       : undefined
     globalThis.fetch = scriptedPhysicalFetch(state, options.physicalResponder)
     fetchInstalled = true
-    composition = await createProductionPiLeadComposition({
+    const compositionOptions = {
       ...(children ? { children } : {}),
       ...(options.governedManagementCall
         ? { governedManagementCall: options.governedManagementCall }
@@ -598,7 +598,20 @@ export async function createProductionFactoryFixture(options = {}) {
       ...(options.managementAuthority === undefined
         ? {}
         : { managementAuthority: options.managementAuthority }),
-    })
+    }
+    const openComposition = () => createProductionPiLeadComposition(compositionOptions)
+    composition = await openComposition()
+    // Restart the production composition over the same canonical stores, directory and retained
+    // authority, as a process restart would. Persistence and the scripted transport stay open, and
+    // `whileClosed` runs after the old composition released its files and before the new one opens.
+    const reopenComposition = async (whileClosed) => {
+      const previous = composition
+      composition = undefined
+      await previous.close()
+      await whileClosed?.()
+      composition = await openComposition()
+      return composition
+    }
     const command = (operation, payload) =>
       StateChangingCommandEnvelopeSchema.parse({
         contractVersion: { major: 1, minor: 0 },
@@ -628,7 +641,10 @@ export async function createProductionFactoryFixture(options = {}) {
       parameters,
     })
     return {
-      composition,
+      get composition() {
+        return composition
+      },
+      reopenComposition,
       directory,
       principal,
       state,
