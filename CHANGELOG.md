@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.96.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.2...workspace-v1.96.3) (2026-10-14)
+
+
+### Tests
+
+* **models:** characterize source profile scope ([#1178](https://github.com/adea-ai/control-plane/issues/1178) WIP) ([#1118](https://github.com/adea-ai/control-plane/issues/1118)) ([cc5dd03](https://github.com/adea-ai/control-plane/commit/cc5dd03f5f4a5f12f70aeefa3cb55fa9adf1e47a))
+
 ## [1.96.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.1...workspace-v1.96.2) (2026-10-14)
 
 
