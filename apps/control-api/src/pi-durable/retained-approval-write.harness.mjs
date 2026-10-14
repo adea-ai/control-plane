@@ -282,7 +282,7 @@ export async function compose(
       assertAuthority: (request, boundary) => authority.assertCurrent(request, boundary),
       now: () => clock.now,
     })
-    const runner = createRunner({ effects: gate, interactions })
+    const runner = createRunner({ effects: gate, interactions, registry })
     let sessionClosed = false
     return {
       interactions,
