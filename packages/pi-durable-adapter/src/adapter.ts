@@ -1235,15 +1235,15 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         handedOff = this.#schedule(next, claim)
       } else {
         const activeInference = readActiveInference(claimed)
-        // A confirmed resume permit survives a failure before the engine authorizes its first
-        // inference (for example engine creation): the retry re-observes that exact generation
-        // instead of falling back to the turn scope and discarding the permit.
-        const pendingResumeKey =
-          activeInference === undefined &&
-          typeof claimed.detail['safeResumeInferenceKey'] === 'string'
-            ? claimed.detail['safeResumeInferenceKey']
-            : undefined
-        const resumeKey = activeInference?.inferenceKey ?? pendingResumeKey
+        // `resumeGenerationKey` is the identity of the generation reconciliation observes; it
+        // outlives a failure before the engine authorizes its first inference (for example engine
+        // creation) and any unresolved verdict, so a later probe still asks about that exact
+        // generation and never falls back to the turn scope. `safeResumeInferenceKey` is the
+        // separate permission to execute: only a verdict confirmed under this claim grants it.
+        const retainedKey = (['resumeGenerationKey', 'safeResumeInferenceKey'] as const)
+          .map((field) => claimed.detail[field])
+          .find((value): value is string => typeof value === 'string')
+        const resumeKey = activeInference?.inferenceKey ?? retainedKey
         const observe = () => this.#probeInference(authority, resumeKey ?? turnKey(claimed))
         const preliminary = await observe()
         await this.#recoveryAuthority(authority)
@@ -1268,6 +1268,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
                 inferenceTrackingVersion: 1,
                 engineRunStarted: false,
                 activeInference: undefined,
+                resumeGenerationKey: resumeKey,
                 safeResumeInferenceKey: resumeKey,
                 inferencePending: false,
                 observedAt: this.#now(),
@@ -1296,6 +1297,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               state: 'unknown',
               detail: {
                 ...current.detail,
+                // The verdict revokes permission to execute but keeps the generation identity.
+                resumeGenerationKey: resumeKey,
                 safeResumeInferenceKey: undefined,
                 observedAt: this.#now(),
                 reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
@@ -1749,6 +1752,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             error: undefined,
             terminalUsage: undefined,
             activeInference: undefined,
+            resumeGenerationKey: undefined,
+            safeResumeInferenceKey: undefined,
             inferenceTrackingVersion: 1,
             engineRunStarted: false,
             inferencePending: false,
@@ -1806,6 +1811,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               detail: {
                 ...this.journal.get(record.handleId).detail,
                 activeInference: undefined,
+                resumeGenerationKey: undefined,
+                safeResumeInferenceKey: undefined,
                 inferenceTrackingVersion: 1,
                 engineRunStarted: false,
                 inferencePending: false,
@@ -1852,11 +1859,19 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           epoch,
           {
             state: 'unknown',
-            detail: {
-              ...this.journal.get(record.handleId).detail,
-              observedAt: this.#now(),
-              reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
-            },
+            detail: (() => {
+              const failed = this.journal.get(record.handleId).detail
+              return {
+                ...failed,
+                // An undecided run holds no permission to execute. An unconsumed permit survives
+                // only as the generation identity that the next reconciliation observes.
+                resumeGenerationKey:
+                  failed['resumeGenerationKey'] ?? failed['safeResumeInferenceKey'],
+                safeResumeInferenceKey: undefined,
+                observedAt: this.#now(),
+                reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
+              }
+            })(),
           },
           {
             type: 'status',

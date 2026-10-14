@@ -1828,7 +1828,9 @@ test('a failed engine creation keeps the confirmed safe-resume generation for th
     const afterCreationFailure = adapter.journal.get(handle.handleId)
     expect(creations).toBe(2)
     expect(afterCreationFailure.state).toBe('unknown')
-    expect(afterCreationFailure.detail.safeResumeInferenceKey).toBe(inferenceKey)
+    // The generation stays the reconciliation identity; permission to execute is revoked.
+    expect(afterCreationFailure.detail.resumeGenerationKey).toBe(inferenceKey)
+    expect(afterCreationFailure.detail.safeResumeInferenceKey).toBeUndefined()
 
     // The retry re-observes that same generation and still carries its resume permit.
     await adapter.reconcile(handle)
@@ -1844,9 +1846,105 @@ test('a failed engine creation keeps the confirmed safe-resume generation for th
     const completed = adapter.journal.get(handle.handleId)
     expect(completed.state).toBe('completed')
     expect(completed.detail.safeResumeInferenceKey).toBeUndefined()
+    expect(completed.detail.resumeGenerationKey).toBeUndefined()
     expect(sends).toBe(1)
   } finally {
     await adapter.close().catch(() => {})
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
+test.each([
+  // Probe counts: two safe probes per resume, one when the first is unresolved.
+  ['first', ['unresolved'], 6],
+  ['second', ['safe_to_resume', 'unresolved'], 8],
+])(
+  'an unresolved %s probe after a failed engine creation keeps the generation identity until safe returns',
+  async (_probe, unresolvedProbes, probeCount) => {
+    const directory = mkdtempSync(join(tmpdir(), 'pi-resume-unresolved-'))
+    const inferenceId = 'pi-generation:1'
+    const probes = []
+    const verdicts = []
+    const permits = []
+    let creations = 0
+    let sends = 0
+    const setup = fixture(directory, {
+      authorizeInference: async (_authority, key, safeResume) => {
+        permits.push({ key, safeResume })
+        return { maxOutputTokens: 10, maximumInputTokens: 64, assertActive: async () => {} }
+      },
+      reconcileInference: async (_authority, key) => {
+        probes.push(key)
+        return verdicts.shift() ?? 'safe_to_resume'
+      },
+      engineFactory: async (engineOptions) => {
+        creations++
+        if (creations === 2) throw new Error('engine creation failed')
+        return {
+          run: async () => {
+            await engineOptions.authorizeInference({ inferenceId })
+            if (creations === 1) throw new Error('process lost after authorization')
+            sends++
+            return result
+          },
+          close: async () => {},
+          cancel: async () => {},
+        }
+      },
+    })
+    const adapter = new PiDurableRuntimeAdapter(setup.options)
+    try {
+      const handle = await adapter.start(setup.request)
+      await adapter.drain()
+      const inferenceKey = `pi-turn:${setup.request.attemptId}:initial:${inferenceId}`
+      expect(adapter.journal.get(handle.handleId).state).toBe('unknown')
+
+      // Safe generation G resumes, then engine creation fails.
+      await adapter.reconcile(handle)
+      await adapter.drain()
+      expect(creations).toBe(2)
+      expect(adapter.journal.get(handle.handleId).state).toBe('unknown')
+
+      // Reconciliation is temporarily unresolved. No engine may be created, and the record keeps
+      // G as its identity without any permission to execute.
+      verdicts.push(...unresolvedProbes)
+      expect((await adapter.reconcile(handle)).state).toBe('unknown')
+      await adapter.drain()
+      const unresolved = adapter.journal.get(handle.handleId)
+      expect(creations).toBe(2)
+      expect(sends).toBe(0)
+      expect(unresolved.state).toBe('unknown')
+      expect(unresolved.detail.resumeGenerationKey).toBe(inferenceKey)
+      expect(unresolved.detail.safeResumeInferenceKey).toBeUndefined()
+      expect(unresolved.detail.reasonCode).toBe('PI_INFERENCE_RECONCILIATION_REQUIRED')
+
+      // A repeated unresolved verdict changes nothing; safe G then returns and recovers.
+      verdicts.push(...unresolvedProbes)
+      await adapter.reconcile(handle)
+      await adapter.drain()
+      expect(adapter.journal.get(handle.handleId).detail.resumeGenerationKey).toBe(inferenceKey)
+      await adapter.reconcile(handle)
+      await adapter.drain()
+
+      // Every probe asked about G; none fell back to the turn key.
+      expect(probes).toHaveLength(probeCount)
+      expect(new Set(probes)).toEqual(new Set([inferenceKey]))
+      expect(creations).toBe(3)
+      expect(permits).toEqual([
+        { key: inferenceKey, safeResume: undefined },
+        {
+          key: inferenceKey,
+          safeResume: { schemaVersion: 'pi-inference-resume-permit/v1', inferenceKey },
+        },
+      ])
+      const completed = adapter.journal.get(handle.handleId)
+      expect(completed.state).toBe('completed')
+      expect(completed.detail.resumeGenerationKey).toBeUndefined()
+      expect(completed.detail.safeResumeInferenceKey).toBeUndefined()
+      expect(sends).toBe(1)
+    } finally {
+      await adapter.close().catch(() => {})
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }
+)
