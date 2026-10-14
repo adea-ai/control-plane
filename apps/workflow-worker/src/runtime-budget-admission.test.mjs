@@ -5,7 +5,7 @@ import {
   createExecutionPlanTestFixtureInputs,
 } from '@control-plane/execution-plan/testing'
 import { ExecutionPlanCompiler, executionPlanBudgetAllowance } from '@control-plane/execution-plan'
-import { DurableUsageLedger } from '@control-plane/usage-ledger'
+import { childAllowanceStatementOf, DurableUsageLedger } from '@control-plane/usage-ledger'
 import { DurableRuntimeBudgetAdmission } from './runtime-budget-admission.ts'
 
 const ids = {
@@ -427,6 +427,7 @@ describe('durable runtime budget admission', () => {
         currency: 'USD',
         maximumMicrounits,
         maximumTokens,
+        parentChildAllowance: childAllowanceStatementOf(fixture.plan.constraints.limits),
         source: { sourceId: `sibling-${name}`, idempotencyKey: `sibling-${name}` },
       })
 
@@ -477,6 +478,7 @@ describe('durable runtime budget admission', () => {
         currency: 'USD',
         maximumMicrounits,
         maximumTokens,
+        parentChildAllowance: childAllowanceStatementOf(fixture.plan.constraints.limits),
         source: { sourceId: `sibling-${name}`, idempotencyKey: `sibling-${name}` },
       })
     await openSibling('a', 3_000_000, 60_000)
@@ -510,6 +512,55 @@ describe('durable runtime budget admission', () => {
       // now spent or funded, so nothing is still held back
       maximumMicrounits: allowance.maximumMicrounits - 1_000_000 - 3_000_000,
       maximumTokens: allowance.maximumTokens - 10_000 - 90_000,
+    })
+  })
+
+  test('a lead whose attempt settled first still cannot give children more than the allowance', async () => {
+    const childAllowance = { maximumMicrounits: 4_000_000, maximumTokens: 100_000 }
+    const store = new TransactionalMemoryStore()
+    const fixture = await acceptedExecution(
+      store,
+      ids.executionId,
+      {},
+      planWithChildAllowance(childAllowance)
+    )
+    const allowance = await openAcceptedBudget(store, fixture)
+    const guard = makeAdmission(store, fixture.repository)
+    const attempt = await guard.reserve(admissionInput(fixture))
+    const ledger = new DurableUsageLedger({ store, now: () => acceptedAt })
+    // The attempt ends and releases its whole envelope: everything is available again.
+    await ledger.settle({
+      workspaceId: allowance.workspaceId,
+      executionId: allowance.executionId,
+      reservationKey: attempt.reservationKey,
+      source: { sourceId: 'lead-settle', idempotencyKey: 'lead-settle' },
+    })
+    expect(await ledger.summary(allowance.workspaceId, allowance.executionId)).toMatchObject({
+      availableMicrounits: allowance.maximumMicrounits,
+      availableTokens: allowance.maximumTokens,
+    })
+    const openSibling = (name, maximumMicrounits, maximumTokens) =>
+      ledger.openBudget({
+        workspaceId: allowance.workspaceId,
+        executionId: siblingId(name),
+        parentExecutionId: allowance.executionId,
+        currency: 'USD',
+        maximumMicrounits,
+        maximumTokens,
+        parentChildAllowance: childAllowanceStatementOf(fixture.plan.constraints.limits),
+        source: { sourceId: `sibling-${name}`, idempotencyKey: `sibling-${name}` },
+      })
+    // Asking for the whole plan ceiling yields the stated allowance, not the freed balance.
+    expect(
+      await openSibling('a', allowance.maximumMicrounits, allowance.maximumTokens)
+    ).toMatchObject({
+      maximumMicrounits: childAllowance.maximumMicrounits,
+      maximumTokens: childAllowance.maximumTokens,
+    })
+    await expect(openSibling('b', 1, 1)).rejects.toThrow('BUDGET_EXHAUSTED')
+    // Without the cap the same freed balance would have funded the sibling.
+    expect(await ledger.summary(allowance.workspaceId, allowance.executionId)).toMatchObject({
+      availableMicrounits: allowance.maximumMicrounits - childAllowance.maximumMicrounits,
     })
   })
 
@@ -559,6 +610,7 @@ describe('durable runtime budget admission', () => {
         currency: 'USD',
         maximumMicrounits: parentAllowance.maximumMicrounits,
         maximumTokens: parentAllowance.maximumTokens,
+        parentChildAllowance: childAllowanceStatementOf(child.plan.constraints.limits),
         source: { sourceId: 'grandchild', idempotencyKey: 'grandchild' },
       })
     ).toMatchObject({ maximumMicrounits: heldMicrounits, maximumTokens: heldTokens })

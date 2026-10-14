@@ -123,11 +123,22 @@ receipts remain verifiable; extensions must not reuse the current maxima as that
 
 A child is funded only from its parent's unreserved balance, and a runtime attempt reserves
 everything that is left. A plan therefore states what it holds back for children:
-`limits.childExecutions.budgetAllowance` (`maximumMicrounits`, `maximumTokens`). The attempt
-reservation is the available balance minus the part of that allowance no child has been funded from
-yet; an open child funding counts at its ceiling and a settled one at what it spent. The allowance
-must be below both execution ceilings, so the execution keeps a nonzero share, and it needs at least
-one child and one level of depth. Plans that omit it keep their exact shape and digest.
+`limits.childExecutions.budgetAllowance` (`maximumMicrounits`, `maximumTokens`). The allowance is
+both a holdback and a cap, from the same definition (`unfundedChildAllowance`): the part of it no
+child has been funded from yet. An open child funding counts at its ceiling and a settled one at
+what it spent.
+
+- **Holdback:** a runtime attempt reserves the available balance minus the unfunded allowance, so a
+  child can be funded.
+- **Cap:** child allocation passes the parent plan's statement (`parentChildAllowance`) to
+  `openBudget`, which funds the child at the smallest of its requested ceiling, the parent's
+  available balance and the unfunded allowance, and fails with `BUDGET_EXHAUSTED` when either
+  resource has none left. The cap holds when the lead's attempt has already settled and released its
+  envelope: balance freed later is never available to children beyond the allowance. The statement
+  is a constant of the parent's accepted plan, so a replayed opening is identical.
+- The allowance must be below both execution ceilings, so the execution keeps a nonzero share, and
+  it needs at least one child and one level of depth. Plans that omit it keep their exact shape and
+  digest, and their children are funded from whatever is available as before.
 
 - **Omitted:** a plan that allows children but states no allowance reserves everything left in its
   attempt, so no child can be funded (`BUDGET_EXHAUSTED`). Nothing invents a default share; the plan
@@ -139,8 +150,8 @@ one child and one level of depth. Plans that omit it keep their exact shape and 
   its own allowance for its own children or none; it is not compared with its parent's, because a
   grandchild is funded only from the child's budget, which the parent already bounded. Every other
   child limit is still compared exactly.
-- **Clamped:** a child is funded at the smaller of its requested ceiling and what its parent has
-  available, so its budget can be below its plan's ceiling. Its allowance scales by the same ratio
+- **Clamped:** a child is funded at the smaller of its requested ceiling, what its parent has
+  available and the unfunded allowance, so its budget can be below its plan's ceiling. Its allowance scales by the same ratio
   and rounds down, so the plan keeps the share it asked for and a nonzero budget always leaves a
   nonzero attempt envelope. A root budget is never clamped.
 - **Siblings:** siblings share one allowance. Each is clamped to what is left, and once the allowance
@@ -151,8 +162,8 @@ one child and one level of depth. Plans that omit it keep their exact shape and 
 `DurableRuntimeBudgetAdmission` applies this to a root execution accepted by a command.
 `DurableChildRuntimeBudgetAdmission` is the production `reserveBudget` implementation for the
 delegation bridge. A delegated child has no accepted command, so it checks the delegation record,
-the allocator's opening receipt, and the parent's funding reservation before reserving the same
-envelope. A child's own budget is opened with its own reservations: nothing it spends or reserves
+the allocator's opening receipt (whose fingerprint covers the parent plan's statement) and the
+parent's funding reservation before reserving the same envelope. A child's own budget is opened with its own reservations: nothing it spends or reserves
 changes its parent's attempt envelope.
 
 ### Model-request holds inside an attempt

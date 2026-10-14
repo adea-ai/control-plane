@@ -12,6 +12,11 @@ import {
   type DurableUsageTransaction,
 } from './durable-contract.js'
 import { UsageLedgerEntrySchema, type UsageLedgerEntry } from './index.js'
+import {
+  ChildAllowanceStatementSchema,
+  unfundedChildAllowance,
+  type ChildAllowanceStatement,
+} from './child-allowance.js'
 
 const AmountSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const CurrencySchema = z.string().regex(/^[A-Z]{3}$/)
@@ -25,6 +30,7 @@ const OpenBudgetInputSchema = z
     currency: CurrencySchema,
     maximumMicrounits: AmountSchema,
     maximumTokens: AmountSchema,
+    parentChildAllowance: ChildAllowanceStatementSchema.exactOptional(),
     source: DurableUsageSourceSchema,
   })
   .strict()
@@ -165,6 +171,12 @@ export interface OpenDurableUsageBudgetInput {
   readonly currency: string
   readonly maximumMicrounits: number
   readonly maximumTokens: number
+  /**
+   * The parent plan's statement of what it holds back for its children. When given, the child is
+   * funded at most from the part of it no sibling has been funded from, however much the parent
+   * has available. Ignored for a root budget.
+   */
+  readonly parentChildAllowance?: ChildAllowanceStatement
   readonly source: DurableUsageSource
 }
 
@@ -264,6 +276,16 @@ export class DurableUsageLedger {
         const parentTotals = calculateTotals(parent)
         maximumMicrounits = Math.min(data.maximumMicrounits, parentTotals.availableMicrounits)
         maximumTokens = Math.min(data.maximumTokens, parentTotals.availableTokens)
+        if (data.parentChildAllowance !== undefined) {
+          // The stated allowance is a cap as well as a holdback: balance an attempt released later
+          // is not available to children beyond it. A child of nothing is no child.
+          const remaining = unfundedChildAllowance(parent, data.parentChildAllowance)
+          maximumMicrounits = Math.min(maximumMicrounits, remaining.microunits)
+          maximumTokens = Math.min(maximumTokens, remaining.tokens)
+          if (maximumMicrounits === 0 || maximumTokens === 0) {
+            throw usageError('BUDGET_EXHAUSTED')
+          }
+        }
         if (maximumMicrounits === 0 && maximumTokens === 0) {
           throw usageError('BUDGET_EXHAUSTED')
         }

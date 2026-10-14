@@ -1,8 +1,10 @@
 import { canonicalJsonStringify } from '@control-plane/contracts'
+import { ExecutionPlanSchema, type ExecutionPlanRepository } from '@control-plane/execution-plan'
 import type { CanonicalDelegationAdmission } from '@control-plane/orchestration'
 import type { RuntimeAttemptBudgetAuthority } from '@control-plane/runtime-sdk'
 import {
   budgetOpeningEntryIdempotencyKey,
+  childAllowanceStatementOf,
   DurableUsageBudgetSchema,
   DurableUsageEffectSchema,
   DurableUsageLedger,
@@ -15,6 +17,8 @@ import { fingerprintForOpenBudget, isOpeningCredit } from './runtime-budget-admi
 
 export interface DurableChildRuntimeBudgetAdmissionOptions {
   readonly store: DurableUsageStore
+  /** The plan repository the delegation bridge reads, used to read the parent plan's allowance. */
+  readonly plans: Pick<ExecutionPlanRepository, 'get'>
 }
 
 /**
@@ -33,9 +37,11 @@ export interface DurableChildRuntimeBudgetAdmissionOptions {
  */
 export class DurableChildRuntimeBudgetAdmission {
   readonly #store: DurableUsageStore
+  readonly #plans: Pick<ExecutionPlanRepository, 'get'>
 
   constructor(options: DurableChildRuntimeBudgetAdmissionOptions) {
     this.#store = options.store
+    this.#plans = options.plans
   }
 
   /** Bound as `reserveBudget` on the delegation runtime bridge. */
@@ -75,8 +81,22 @@ export class DurableChildRuntimeBudgetAdmission {
       currency: limits.budget.currency,
       source: openingSource,
     }
-    // The allocator opened the budget from the child plan's ceilings, so the stored receipt's
-    // fingerprint is over those requested ceilings, never the clamped funded amount.
+    // The allocator opened the budget from the child plan's ceilings and, when the parent plan
+    // states a child allowance, that statement. The stored receipt's fingerprint is over that
+    // request, never the clamped funded amount.
+    const storedParentPlan = await this.#plans.get({
+      executionPlanId: record.parentExecutionPlanId,
+      contentDigest: record.parentExecutionPlanDigest,
+    })
+    if (storedParentPlan === undefined) deny()
+    const parentPlan = ExecutionPlanSchema.parse(storedParentPlan)
+    if (
+      parentPlan.correlation.workspaceId !== workspaceId ||
+      plan.parentExecutionPlan?.contentDigest !== parentPlan.contentDigest
+    ) {
+      deny()
+    }
+    const parentChildAllowance = childAllowanceStatementOf(parentPlan.constraints.limits)
     const openingFingerprint = fingerprintForOpenBudget({
       workspaceId,
       executionId,
@@ -84,6 +104,7 @@ export class DurableChildRuntimeBudgetAdmission {
       currency: limits.budget.currency,
       maximumMicrounits: limits.budget.maximumMicrounits,
       maximumTokens: limits.tokens.maximumTotal,
+      ...(parentChildAllowance === undefined ? {} : { parentChildAllowance }),
       source: openingSource,
     })
 

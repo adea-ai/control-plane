@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { SqliteExecutionPlanRepository } from '@control-plane/sqlite-persistence'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
   DurableChildRuntimeBudgetAdmission,
@@ -57,6 +58,12 @@ async function allocated(child) {
   }
 }
 
+const childAdmission = (f) =>
+  new DurableChildRuntimeBudgetAdmission({
+    store: f.usageStore,
+    plans: new SqliteExecutionPlanRepository(f.provider),
+  })
+
 const entriesOf = (ledger, executionId) => ledger.entries(ids.workspaceId, executionId)
 const summaryOf = (ledger, executionId) => ledger.summary(ids.workspaceId, executionId)
 
@@ -69,7 +76,7 @@ test('reserves a delegated child attempt from the budget its allocation funded, 
   })
   try {
     const ledger = await runningLead(f)
-    const admission = new DurableChildRuntimeBudgetAdmission({ store: f.usageStore })
+    const admission = childAdmission(f)
     const child = await f.childAdmission()
     const delegated = await allocated(child)
     const childId = child.childIds.childExecutionId
@@ -133,7 +140,7 @@ test('a second sibling cannot be funded once the first took the whole allowance,
   })
   try {
     const ledger = await runningLead(f)
-    const admission = new DurableChildRuntimeBudgetAdmission({ store: f.usageStore })
+    const admission = childAdmission(f)
     const first = await f.childAdmission()
     const second = await f.childAdmission()
     const firstDelegated = await allocated(first)
@@ -159,7 +166,7 @@ test('refuses a child whose funding, opening receipt or identity does not match 
   })
   try {
     const ledger = await runningLead(f)
-    const admission = new DurableChildRuntimeBudgetAdmission({ store: f.usageStore })
+    const admission = childAdmission(f)
     const child = await f.childAdmission()
     const delegated = await allocated(child)
     const childId = child.childIds.childExecutionId
@@ -199,6 +206,58 @@ test('refuses a child whose funding, opening receipt or identity does not match 
       source: { sourceId: 'finalize-child', idempotencyKey: 'finalize-child' },
     })
     await expect(admission.reserve(delegated)).rejects.toThrow(RuntimeBudgetAdmissionError)
+  } finally {
+    await f.close()
+  }
+})
+
+test('allocation after the lead attempt settled still funds a child only up to the stated allowance', async () => {
+  const f = await fixture({
+    maximumTotal: 2,
+    maximumParallel: 2,
+    maximumDepth: 2,
+    childAllowance: allowance,
+  })
+  try {
+    const ledger = await runningLead(f)
+    // The lead's attempt ends first: its whole envelope is released and 10M is available again.
+    await ledger.settle({
+      workspaceId: ids.workspaceId,
+      executionId: ids.parentExecutionId,
+      reservationKey: parentAttemptKey,
+      source: { sourceId: 'lead-settle', idempotencyKey: 'lead-settle' },
+    })
+    expect(await summaryOf(ledger, ids.parentExecutionId)).toMatchObject({
+      availableMicrounits: 10_000_000,
+      availableTokens: 250_000,
+    })
+    const first = await f.childAdmission()
+    const second = await f.childAdmission()
+    const delegated = await allocated(first)
+
+    // The child plan asks for 10M, but the parent plan states 4M for children.
+    expect(await summaryOf(ledger, first.childIds.childExecutionId)).toMatchObject({
+      maximumMicrounits: allowance.maximumMicrounits,
+      maximumTokens: allowance.maximumTokens,
+    })
+    expect(await summaryOf(ledger, ids.parentExecutionId)).toMatchObject({
+      availableMicrounits: 10_000_000 - allowance.maximumMicrounits,
+    })
+    // A sibling finds the allowance used up, however much of the freed balance is left, and no
+    // execution, attempt, budget or delegation row is left behind.
+    await expect(allocated(second)).rejects.toThrow('BUDGET_EXHAUSTED')
+    expect(await f.executions.getExecution(second.childIds.childExecutionId)).toBeUndefined()
+    await expect(
+      f.usageStore.transaction(ids.workspaceId, (tx) =>
+        tx.getBudget(second.childIds.childExecutionId)
+      )
+    ).resolves.toBeUndefined()
+    // The funded child still reserves its attempt through the production admission, which verifies
+    // the opening receipt that carries the parent's statement.
+    expect(await childAdmission(f).reserve(delegated)).toMatchObject({
+      executionId: first.childIds.childExecutionId,
+      maximumMicrounits: 4_000_000 - 1_600_000,
+    })
   } finally {
     await f.close()
   }
