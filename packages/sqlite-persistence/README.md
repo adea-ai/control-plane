@@ -54,6 +54,24 @@ operations and the bridge terminal-recovery entry point do not start a runtime,
 create an engine session, or deliver a product timeline event.
 
 The added namespaces use the existing generic record table, with no schema
-migration or credential changes. Receipt retention/deletion scheduling is not
-added here; the lifecycle/retention owners must account for these namespaces
-when wiring automatic recovery and cleanup.
+migration or credential changes.
+
+## Receipt retention (#1022)
+
+`delegation-admission-receipts`, `delegation-child-mappings`,
+`delegation-native-sessions`, `delegation-runtime-lookups` and
+`delegation-terminal-receipts` are reference-governed evidence. They carry no
+age clock and no deletion path, and no retention period is added for them. Each
+row names the parent and child executions it was written for (admission and
+lookup receipts also name the plans), and the existing `executions` and
+`execution-plans` retention classes refuse to delete an owner while any of these
+rows still names it, whether or not the `delegations` row is still present
+(`delegation-retention.ts`). A pending terminal publication intent and a
+native-start lookup receipt are therefore never swept away before their repair
+path has read them, and a published receipt is retained as well.
+
+Releasing these rows needs an owner decision on which existing class governs
+their eventual deletion. Until a class is chosen and its deletion path is
+registered in `scripts/retention-classes.mjs`, they outlive every sweep. A test
+fails when a new `delegation-*` namespace is written without being classified.
+PostgreSQL does not hold these namespaces.

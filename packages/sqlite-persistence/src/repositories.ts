@@ -72,6 +72,7 @@ import {
 } from './retention-reference-metadata.js'
 import { countSqliteMatchingActiveRetentionHolds } from './retention-hold-repository.js'
 import { SqliteDurableUsageStore } from './usage-store.js'
+import { readDelegationReceiptPins } from './delegation-retention.js'
 
 const namespaces = {
   commands: 'command-inbox',
@@ -1232,6 +1233,10 @@ export class SqliteExecutionRepository implements ExecutionRepository {
             const value = row.value as { request?: { executionId?: unknown } } | null
             return value?.request?.executionId === execution.executionId
           })
+          // Admission, mapping, lookup and terminal receipts pin their owners on their own.
+          const receiptReference = (await readDelegationReceiptPins(transaction)).executionIds.has(
+            execution.executionId
+          )
           const activeAttempts = attempts.filter(
             (attempt) => !terminalExecutionStates.has(attempt.state)
           )
@@ -1273,6 +1278,7 @@ export class SqliteExecutionRepository implements ExecutionRepository {
               memoryProposalReference ||
               delegationReference ||
               admissionReference ||
+              receiptReference ||
               activeAttempts.length > 0 ||
               !attemptsComplete
                 ? 1
@@ -1619,6 +1625,8 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
             const parentPlanId = value?.command?.delegation?.parentPlan?.executionPlanId
             if (typeof parentPlanId === 'string') references.add(parentPlanId)
           }
+          for (const planId of (await readDelegationReceiptPins(transaction)).planIds)
+            references.add(planId)
           const pendingReferences = references.has(plan.executionPlanId) ? 1 : 0
           const currentWindow = await getReferenceRetentionWindow(
             transaction,

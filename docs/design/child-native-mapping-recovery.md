@@ -62,8 +62,11 @@ unchanged and excluded from the regression.
 
 The two stores remain separate. The pre-start CP lookup receipt plus the native
 journal makes the gap repairable; it does not claim cross-store atomicity.
-Receipt retention and read-scope qualification must be reviewed with the owning
-lifecycle/retention teams before production wiring.
+Read-scope qualification must be reviewed with the owning lifecycle teams before
+production wiring. Receipt retention (#1022) is covered in
+`packages/sqlite-persistence/README.md`: the lookup and mapping rows pin their
+owners against the `executions` and `execution-plans` sweeps and are not
+deletable until an owner decides which class governs them.
 
 Qualification is checked before and after every current-authority await. The
 authority response pins the original actor, reader principal, audience, revision

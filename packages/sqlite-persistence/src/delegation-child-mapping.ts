@@ -28,6 +28,7 @@ export interface StoredChildAdmissionReceipt {
 export const childMappingNamespace = 'delegation-child-mappings'
 export const childAdmissionNamespace = 'delegation-admission-receipts'
 export const childSessionNamespace = 'delegation-native-sessions'
+export const childRuntimeLookupNamespace = 'delegation-runtime-lookups'
 
 export async function retainChildMapping(
   tx: PersistenceTransaction,
