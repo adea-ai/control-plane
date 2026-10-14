@@ -193,6 +193,35 @@ async function releaseOwnership({
   await rm(work, { recursive: true, force: true })
 }
 
+/** Ends a spawned owner and whatever was pinned beneath it, through handles only: the owner's
+ *  ChildProcess (SIGTERM, then SIGKILL after the bound) and the pinned child and anchor. It is safe
+ *  after any failure, including a child that is already terminated and closed, and signals no bare
+ *  pid, so a reused pid can never be hit. Each step is attempted even after an earlier failure. */
+async function releaseSpawnedOwner({ owner, ownerExit, handles, exitBoundMs = EXIT_BOUND_MS }) {
+  const problems = []
+  try {
+    if (owner.exitCode === null && owner.signalCode === null) owner.kill('SIGTERM')
+    await boundedWait(ownerExit, exitBoundMs, 'owner exit').catch(async () => {
+      owner.kill('SIGKILL')
+      await boundedWait(ownerExit, exitBoundMs, 'owner exit after SIGKILL')
+    })
+  } catch (error) {
+    problems.push(error)
+  }
+  for (const handle of handles()) {
+    try {
+      if (!(await handle.terminate({ graceMs: 5000, forceMs: 5000 }))) {
+        problems.push(new Error(`pinned process ${handle.identity.pid} is still running`))
+      }
+    } catch (error) {
+      problems.push(error)
+    } finally {
+      handle.close()
+    }
+  }
+  if (problems.length > 0) throw new AggregateError(problems, 'owner teardown')
+}
+
 afterEach(async () => {
   const failures = []
   for (const entry of cleanup.splice(0)) {
@@ -789,34 +818,38 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       })
 
       test('a real owner that exits cannot vouch for its child, and the orphan is refused', async () => {
-        // A shell owner (a child of this test) starts a sleeping child and prints its pid.
-        const owner = spawn('sh', ['-c', 'sleep 62 & echo $!; wait'], {
+        // A shell owner (a child of this test) starts a sleeping child and prints its pid. On SIGTERM
+        // the owner ends its own child, so teardown never needs to signal the child by number.
+        const owner = spawn('sh', ['-c', 'sleep 62 & c=$!; trap "kill $c" TERM; echo $c; wait'], {
           stdio: ['ignore', 'pipe', 'ignore'],
         })
         const ownerExit = processExit(owner)
-        let childPid
-        cleanup.push(async () => {
-          if (childPid !== undefined) {
-            try {
-              process.kill(childPid, 'SIGKILL')
-            } catch {
-              // already gone
-            }
-          }
-          if (owner.exitCode === null && owner.signalCode === null) owner.kill('SIGKILL')
-          await boundedWait(ownerExit, EXIT_BOUND_MS, 'owner exit')
-        })
-        childPid = Number(
-          await new Promise((resolve) => {
-            let buffer = ''
-            owner.stdout.on('data', (chunk) => {
-              buffer += chunk
-              if (buffer.includes('\n')) resolve(buffer.trim())
-            })
+        let anchor
+        let child
+        // Teardown works only through handles and runs on every path, including a failure before or
+        // after a pin. It never signals a pid.
+        cleanup.push(() =>
+          releaseSpawnedOwner({
+            owner,
+            ownerExit,
+            handles: () => [child, anchor].filter((handle) => handle !== undefined),
           })
         )
-        const anchor = await pinSpawned(owner, owner.pid, { commandIncludes: 'sh -c' })
-        const child = await pinOwnedProcess(childPid, {
+        const childPid = Number(
+          await boundedWait(
+            new Promise((resolve) => {
+              let buffer = ''
+              owner.stdout.on('data', (chunk) => {
+                buffer += chunk
+                if (buffer.includes('\n')) resolve(buffer.trim())
+              })
+            }),
+            EXIT_BOUND_MS,
+            'owner child pid'
+          )
+        )
+        anchor = await pinSpawned(owner, owner.pid, { commandIncludes: 'sh -c' })
+        child = await pinOwnedProcess(childPid, {
           commandIncludes: 'sleep 62',
           parent: anchor,
         })
@@ -834,10 +867,61 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
           'the spawned process has already exited'
         )
 
+        // The orphan is ended through its pinned handle. Teardown finds it gone and signals nothing.
         expect(await child.terminate()).toBe(true)
-        child.close()
-        anchor.close()
       })
+    })
+
+    test('teardown after the child was terminated and its handle closed signals no pid, even if the pid is reused', async () => {
+      // The child is gone and its handle closed; its pid may now belong to anyone. Teardown must go
+      // through handles only, so it signals nothing by number.
+      const ownerChild = spawn('sleep', ['63'], { stdio: 'ignore' })
+      const ownerExit = processExit(ownerChild)
+      const identity = await readProcessIdentity(ownerChild.pid)
+      const handle = await pinProcess(identity)
+      expect(await handle.terminate()).toBe(true)
+      await boundedWait(ownerExit, EXIT_BOUND_MS, 'terminated owner exit')
+      handle.close()
+
+      await withoutPidSignals(async () => {
+        await releaseSpawnedOwner({ owner: ownerChild, ownerExit, handles: () => [handle] })
+      })
+    })
+
+    test('teardown still ends the owner and its pinned handles after a failure mid-test, by handle only', async () => {
+      const owner = spawn('sleep', ['64'], { stdio: 'ignore' })
+      const ownerExit = processExit(owner)
+      const identity = await readProcessIdentity(owner.pid)
+      const handle = await pinProcess(identity)
+      await withoutPidSignals(async () => {
+        await releaseSpawnedOwner({ owner, ownerExit, handles: () => [handle] })
+      })
+      expect(owner.signalCode).toBe('SIGTERM')
+      expect(handle.exited).toBe(true)
+      // A handle that cannot be confirmed gone is reported, not hidden, and the rest still runs.
+      const stuck = {
+        identity: { pid: 1 },
+        terminate: async () => false,
+        close: () => {},
+      }
+      const exited = processExit(spawn('true'))
+      await expect(
+        releaseSpawnedOwner({
+          owner: { exitCode: 0, signalCode: null, kill: () => {} },
+          ownerExit: exited,
+          handles: () => [stuck],
+        })
+      ).rejects.toThrow('owner teardown')
+    })
+
+    test('no test or fixture signals a bare pid', async () => {
+      for (const file of [
+        'tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs',
+        'tests/fixtures/pinned-process.mjs',
+        'tests/fixtures/self-hosted-simple-sigkill.mjs',
+      ]) {
+        expect(await readFile(join(repositoryRoot, file), 'utf8')).not.toMatch(/process\.kill\s*\(/)
+      }
     })
 
     test('pinning fails closed instead of falling back to a bare pid where pidfds are unavailable', async () => {
