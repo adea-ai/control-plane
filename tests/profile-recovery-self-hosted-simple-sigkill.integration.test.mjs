@@ -30,6 +30,7 @@ import {
   approvalInteractionId,
   artifactIdOf,
   boundedWait,
+  fixturePath,
   graph,
   graphInput,
   liveIdentity,
@@ -46,6 +47,7 @@ import {
   createPidfdBackend,
   pinOwnedProcess,
   pinProcess,
+  pinSpawned,
   readProcessIdentity,
 } from './fixtures/pinned-process.mjs'
 
@@ -92,25 +94,34 @@ async function ingressPost(ports, executionId, path, body) {
 }
 
 /** Records and pins the launcher and native server of one incarnation, once its composition has
- *  started. Ownership is checked on the pinned process itself: the launcher must be a child of the
- *  composition, and the native server a child of the pinned launcher. Each handle enters `owned` as
- *  soon as it is pinned, so a failure while recording the next process leaves the earlier one
- *  recorded for the reap. */
-async function recordOwnedRestate(incarnation, owned, { pid: compositionPid, launcherPid }) {
-  const launcher = await pinOwnedProcess(launcherPid, {
-    commandIncludes: pinned.launcher,
-    parentPid: compositionPid,
+ *  started. Ownership is anchored to the original spawned composition, not to a numeric pid from
+ *  the protocol: the composition is pinned first and must still be running, the launcher must be
+ *  its child, and the native server a child of the pinned launcher. Each launcher and native handle
+ *  enters `owned` as soon as it is pinned, so a failure while recording the next process leaves the
+ *  earlier one recorded for the reap. The composition anchor is released once the chain is pinned;
+ *  the test stops the composition through its own child handle. */
+async function recordOwnedRestate(incarnation, owned, mode, { pid: compositionPid, launcherPid }) {
+  const composition = await pinSpawned(incarnation.child, compositionPid, {
+    commandIncludes: `${fixturePath} ${mode}`,
   })
-  owned.push(launcher)
-  // Discovery only names a candidate pid; the pin below decides whether it is the owned process.
-  const candidate = await ownedNativeServer(launcherPid, pinned.native)
-  const native = await pinOwnedProcess(candidate.pid, {
-    commandIncludes: pinned.native,
-    parent: launcher,
-  })
-  owned.push(native)
-  incarnation.restateOwnershipRecorded = true
-  return { launcher, native }
+  try {
+    const launcher = await pinOwnedProcess(launcherPid, {
+      commandIncludes: pinned.launcher,
+      parent: composition,
+    })
+    owned.push(launcher)
+    // Discovery only names a candidate pid; the pin below decides whether it is the owned process.
+    const candidate = await ownedNativeServer(launcherPid, pinned.native)
+    const native = await pinOwnedProcess(candidate.pid, {
+      commandIncludes: pinned.native,
+      parent: launcher,
+    })
+    owned.push(native)
+    incarnation.restateOwnershipRecorded = true
+    return { launcher, native }
+  } finally {
+    composition.close()
+  }
 }
 
 /** Terminates every pinned process. A confirmed one leaves `owned` and its handle is released; any
@@ -208,7 +219,7 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
     const initial = spawnSelfHostedSimpleComposition('initial', config)
     incarnations.push(initial)
     const started = await initial.next('started')
-    const initialOwned = await recordOwnedRestate(initial, owned, started)
+    const initialOwned = await recordOwnedRestate(initial, owned, 'initial', started)
     const paused = await initial.next('awaiting_input', 60_000)
     expect(paused).toMatchObject({ state: 'awaiting_input', attemptCount: 1 })
     const { executionId } = paused
@@ -231,7 +242,7 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
     const recovery = spawnSelfHostedSimpleComposition('recover', { ...config, executionId })
     incarnations.push(recovery)
     const recoveredStarted = await recovery.next('started')
-    const recoveredOwned = await recordOwnedRestate(recovery, owned, recoveredStarted)
+    const recoveredOwned = await recordOwnedRestate(recovery, owned, 'recover', recoveredStarted)
     const recovered = await recovery.next('recovered')
     // Same execution identity, attempt, and version as before the kill.
     expect(recovered).toMatchObject({
@@ -614,17 +625,27 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       ).rejects.toThrow('PINNED_PROCESS_IDENTITY_MISMATCH')
     })
 
-    test('a real same-command process started in the same second is not accepted for a recorded one', async () => {
+    test('a real same-command process started in the same second, with a different start tick, is not accepted for a recorded one', async () => {
+      // Two identical commands in one ps second but at different kernel ticks. Selection is explicit:
+      // a spawn that shares the first one's tick (or lands in the next second) is discarded.
       let first
       let second
-      // Two identical commands within one ps second; retry across a second boundary.
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        first = await spawnBystander(['61'])
-        second = await spawnBystander(['61'])
-        if (first.identity.started === second.identity.started) break
-        first.bystander.kill('SIGKILL')
-        second.bystander.kill('SIGKILL')
+      for (let attempt = 0; attempt < 40 && second === undefined; attempt += 1) {
+        if (first === undefined) first = await spawnBystander(['61'])
+        await new Promise((resolve) => setTimeout(resolve, 15))
+        const candidate = await spawnBystander(['61'])
+        if (candidate.identity.started !== first.identity.started) {
+          // The second boundary passed: start over with a fresh first process.
+          first.bystander.kill('SIGKILL')
+          candidate.bystander.kill('SIGKILL')
+          first = undefined
+        } else if (candidate.identity.startTicks === first.identity.startTicks) {
+          candidate.bystander.kill('SIGKILL')
+        } else {
+          second = candidate
+        }
       }
+      expect(second).toBeDefined()
       expect(second.identity.started).toBe(first.identity.started)
       expect(second.identity.command).toBe(first.identity.command)
       expect(second.identity.startTicks).not.toBe(first.identity.startTicks)
@@ -649,6 +670,174 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       expect(await owned.terminate()).toBe(true)
       owned.close()
       expect(first.bystander.exitCode).toBeNull()
+    })
+
+    describe('anchoring ownership to the original spawned composition', () => {
+      const compositionCommand = '/usr/bin/node /fixtures/self-hosted-simple-sigkill.mjs initial'
+      const composition = {
+        pid: 900,
+        ppid: process.pid,
+        started: secondOfStart,
+        command: compositionCommand,
+        startTicks: 3000,
+      }
+      /** A stand-in for the spawned ChildProcess whose exit state the test controls. */
+      const spawned = (overrides = {}) => ({
+        pid: 900,
+        exitCode: null,
+        signalCode: null,
+        ...overrides,
+      })
+
+      test('a protocol pid that is not the spawned composition is refused before any descriptor is opened', async () => {
+        const backend = scriptedBackend(composition)
+        await expect(
+          pinSpawned(spawned({ pid: 901 }), 900, {
+            commandIncludes: compositionCommand,
+            backend,
+            readIdentity: async () => composition,
+          })
+        ).rejects.toThrow('the reported pid is not the spawned process')
+        expect(backend.events).toEqual([])
+      })
+
+      test('an exited composition whose pid now belongs to a same-command process is refused', async () => {
+        // The original composition was reaped; its pid went to a process with the same command line
+        // started in the same ps second, even a child of this test.
+        const backend = scriptedBackend(composition)
+        await expect(
+          pinSpawned(spawned({ exitCode: 0 }), 900, {
+            commandIncludes: compositionCommand,
+            backend,
+            readIdentity: async () => composition,
+          })
+        ).rejects.toThrow('the spawned process has already exited')
+        expect(backend.events).toEqual([])
+      })
+
+      test('an owner that exits while it is being pinned is refused and its descriptor closed', async () => {
+        const child = spawned()
+        const backend = scriptedBackend(composition)
+        await expect(
+          pinSpawned(child, 900, {
+            commandIncludes: compositionCommand,
+            backend,
+            readIdentity: async () => {
+              // The spawned child is reaped, and its pid reissued, while the identity is read.
+              child.exitCode = 0
+              return composition
+            },
+          })
+        ).rejects.toThrow('the spawned process exited while it was being pinned')
+        expect(backend.events).toEqual(['open:900', 'close:5'])
+      })
+
+      test('a reissued pid owned by another parent is refused', async () => {
+        const backend = scriptedBackend(composition)
+        await expect(
+          pinSpawned(spawned(), 900, {
+            commandIncludes: compositionCommand,
+            backend,
+            readIdentity: async () => ({ ...composition, ppid: 4242 }),
+          })
+        ).rejects.toThrow('PINNED_PROCESS_IDENTITY_MISMATCH')
+        expect(backend.events).toEqual(['open:900', 'close:5'])
+      })
+
+      test('a pinned composition vouches for its launcher only while it is running', async () => {
+        const launcher = {
+          pid: 910,
+          ppid: 900,
+          started: secondOfStart,
+          command: '/pinned/restate/lib/index.js',
+          startTicks: 3010,
+        }
+        let owner
+        const ownerBackend = scriptedBackend(composition)
+        owner = await pinSpawned(spawned(), 900, {
+          commandIncludes: compositionCommand,
+          backend: ownerBackend,
+          readIdentity: async () => composition,
+        })
+        const accept = {
+          commandIncludes: '/pinned/restate/lib/index.js',
+          parent: owner,
+          backend: scriptedBackend(launcher),
+          readIdentity: async () => launcher,
+        }
+        const handle = await pinOwnedProcess(910, accept)
+        expect(handle.identity).toEqual(launcher)
+
+        // Once the owner is gone (here: its pinned process reports exit), nothing it spawned is
+        // claimed, even a process that still reports it as parent.
+        const exitedOwner = { identity: owner.identity, exited: true }
+        await expect(
+          pinOwnedProcess(910, {
+            ...accept,
+            backend: scriptedBackend(launcher),
+            parent: exitedOwner,
+          })
+        ).rejects.toThrow('PINNED_PROCESS_IDENTITY_MISMATCH')
+        // An orphaned launcher is no longer a child of the owner it was recorded under.
+        await expect(
+          pinOwnedProcess(910, {
+            ...accept,
+            backend: scriptedBackend(launcher),
+            readIdentity: async () => ({ ...launcher, ppid: 1 }),
+          })
+        ).rejects.toThrow('PINNED_PROCESS_IDENTITY_MISMATCH')
+      })
+
+      test('a real owner that exits cannot vouch for its child, and the orphan is refused', async () => {
+        // A shell owner (a child of this test) starts a sleeping child and prints its pid.
+        const owner = spawn('sh', ['-c', 'sleep 62 & echo $!; wait'], {
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+        const ownerExit = processExit(owner)
+        let childPid
+        cleanup.push(async () => {
+          if (childPid !== undefined) {
+            try {
+              process.kill(childPid, 'SIGKILL')
+            } catch {
+              // already gone
+            }
+          }
+          if (owner.exitCode === null && owner.signalCode === null) owner.kill('SIGKILL')
+          await boundedWait(ownerExit, EXIT_BOUND_MS, 'owner exit')
+        })
+        childPid = Number(
+          await new Promise((resolve) => {
+            let buffer = ''
+            owner.stdout.on('data', (chunk) => {
+              buffer += chunk
+              if (buffer.includes('\n')) resolve(buffer.trim())
+            })
+          })
+        )
+        const anchor = await pinSpawned(owner, owner.pid, { commandIncludes: 'sh -c' })
+        const child = await pinOwnedProcess(childPid, {
+          commandIncludes: 'sleep 62',
+          parent: anchor,
+        })
+        expect(child.identity.ppid).toBe(owner.pid)
+
+        // The owner exits; the child is reparented and the anchor reports the exit.
+        owner.kill('SIGKILL')
+        await boundedWait(ownerExit, EXIT_BOUND_MS, 'owner exit')
+        expect(anchor.exited).toBe(true)
+        await expect(
+          pinOwnedProcess(childPid, { commandIncludes: 'sleep 62', parent: anchor })
+        ).rejects.toThrow('PINNED_PROCESS_IDENTITY_MISMATCH')
+        // A fresh anchor on the exited owner is refused as well.
+        await expect(pinSpawned(owner, owner.pid, { commandIncludes: 'sh -c' })).rejects.toThrow(
+          'the spawned process has already exited'
+        )
+
+        expect(await child.terminate()).toBe(true)
+        child.close()
+        anchor.close()
+      })
     })
 
     test('pinning fails closed instead of falling back to a bare pid where pidfds are unavailable', async () => {

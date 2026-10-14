@@ -231,3 +231,31 @@ export async function pinOwnedProcess(
   }
   return handle
 }
+
+/**
+ * Anchors a spawned process to the original this test started. The protocol reports a numeric pid;
+ * trusting it alone would let a different process stand in once the original exited and its pid was
+ * reissued. The reported pid must be the pid of the ChildProcess this test spawned, that child must
+ * not have exited before or after the pin (an unreaped child keeps its pid from being reissued),
+ * and the pinned process must be a child of this test with the expected command. The returned
+ * handle is an anchor for ownership checks: a pinned owner that has exited vouches for nothing.
+ */
+export async function pinSpawned(
+  child,
+  reportedPid,
+  { commandIncludes, ownerPid = process.pid, ...options }
+) {
+  const running = () => child.exitCode === null && child.signalCode === null
+  if (reportedPid !== child.pid) throw mismatch('the reported pid is not the spawned process')
+  if (!running()) throw mismatch('the spawned process has already exited')
+  const handle = await pinOwnedProcess(child.pid, {
+    commandIncludes,
+    parentPid: ownerPid,
+    ...options,
+  })
+  if (!running() || handle.exited) {
+    handle.close()
+    throw mismatch('the spawned process exited while it was being pinned')
+  }
+  return handle
+}
