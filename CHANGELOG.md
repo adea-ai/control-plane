@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.96.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.3...workspace-v1.96.4) (2026-10-14)
+
+
+### Bug Fixes
+
+* **pi-durable:** preflight retained approval tool pins ([#1124](https://github.com/adea-ai/control-plane/issues/1124)) ([128b396](https://github.com/adea-ai/control-plane/commit/128b396eca07f45185c6abf2ab476612b922968a))
+
 ## [1.96.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.2...workspace-v1.96.3) (2026-10-14)
 
 
