@@ -2,6 +2,12 @@ import { expect, test } from 'bun:test'
 import { CanonicalDelegationRuntimeBridge } from '../packages/orchestration/src/delegation-runtime.ts'
 import { recordId } from '../packages/sqlite-persistence/src/record-storage.ts'
 import { withChildMappingRecovery } from './pi-durable-child-mapping-recovery.fixture.mjs'
+import { PersistentModelSelectionRepository } from '../packages/model-gateway/src/selection-repository.ts'
+import { SqliteCredentialVaultRepository } from '../packages/sqlite-persistence/src/credential-vault-repository.ts'
+import {
+  readPersistenceTransaction,
+  writePersistenceTransaction,
+} from '@control-plane/deployment/read-scope'
 
 async function mutate(x, namespace, identity, change) {
   await x.provider.transaction(async (tx) => {
@@ -550,6 +556,75 @@ test(
         first.mapping
       )
       expect(await executions.getAttempt(x.f.ids.childAttemptId)).toEqual(canonical)
+      await x.assertNoOtherEffects()
+    }),
+  30000
+)
+
+test(
+  'recovered-session authority reads share the locked provider without metadata writes or other effects',
+  () =>
+    withChildMappingRecovery(async (x) => {
+      const models = new PersistentModelSelectionRepository(x.provider)
+      const vault = new SqliteCredentialVaultRepository(x.provider)
+      const original = x.provider.transaction.bind(x.provider)
+      let authorityActive = false,
+        reentries = 0,
+        pending,
+        captured
+      x.provider.transaction = (operation) => {
+        if (authorityActive) reentries++
+        return original(operation)
+      }
+      x.control.inTransaction = async () => {
+        authorityActive = true
+        let timer
+        try {
+          pending = Promise.all([
+            models.getDefaults(x.f.ids.workspaceId),
+            vault.getCredential('crd_01JABCDEF0123456789ABCDEFG'),
+          ])
+          expect(
+            await Promise.race([
+              pending,
+              new Promise((_, reject) => {
+                timer = setTimeout(
+                  () => reject(new Error('RECOVERY_METADATA_QUEUED_BEHIND_OWN_TRANSACTION')),
+                  250
+                )
+              }),
+            ])
+          ).toEqual([undefined, undefined])
+          await readPersistenceTransaction(x.provider, async (reader) => {
+            captured = reader
+          })
+          expect(() =>
+            writePersistenceTransaction(x.provider, (tx) =>
+              tx.put({ namespace: 'scope-proof', id: 'forbidden', value: true })
+            )
+          ).toThrow('PERSISTENCE_READ_SCOPE_WRITE_DENIED')
+        } finally {
+          clearTimeout(timer)
+          authorityActive = false
+        }
+      }
+      let result, error
+      try {
+        result = await x.bridge.recoverChildSession(x.f.identity)
+      } catch (cause) {
+        error = cause
+      } finally {
+        await pending?.catch(() => undefined)
+      }
+      expect({ code: error?.message ?? null, reentries, recovered: Boolean(result) }).toEqual({
+        code: null,
+        reentries: 0,
+        recovered: true,
+      })
+      expect(result.mapping.externalSessionId).toBe(x.handle.externalSessionId)
+      await expect(captured.get('scope-proof', 'value')).rejects.toThrow(
+        'PERSISTENCE_READ_SCOPE_CLOSED'
+      )
       await x.assertNoOtherEffects()
     }),
   30000

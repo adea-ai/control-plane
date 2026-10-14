@@ -1,3 +1,7 @@
+import {
+  readPersistenceTransaction,
+  writePersistenceTransaction,
+} from '@control-plane/deployment/read-scope'
 import { createHash } from 'node:crypto'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import type { JsonValue, PersistenceProvider } from '@control-plane/deployment'
@@ -15,7 +19,7 @@ import type { ModelSelectionRepository } from './selection-service.js'
 export class PersistentModelSelectionRepository implements ModelSelectionRepository {
   constructor(readonly persistence: PersistenceProvider) {}
   async getConnection(workspaceId: string, ref: string) {
-    return this.persistence.transaction(async (tx) => {
+    return readPersistenceTransaction(this.persistence, async (tx) => {
       const row = await tx.get(scope('connections', workspaceId), ref)
       if (!row) return undefined
       const value = ModelConnectionSchema.parse(row.value)
@@ -25,7 +29,7 @@ export class PersistentModelSelectionRepository implements ModelSelectionReposit
     })
   }
   async listConnections(workspaceId: string) {
-    return this.persistence.transaction(async (tx) =>
+    return readPersistenceTransaction(this.persistence, async (tx) =>
       (await tx.scan(scope('connections', workspaceId), { limit: 128 })).map((row) => {
         const value = ModelConnectionSchema.parse(row.value)
         if (value.workspaceId !== workspaceId || value.connectionRef !== row.id)
@@ -36,7 +40,7 @@ export class PersistentModelSelectionRepository implements ModelSelectionReposit
   }
   async saveConnection(expectedRevision: number, input: ModelConnection) {
     const next = ModelConnectionSchema.parse(input)
-    return this.persistence.transaction(async (tx) => {
+    return writePersistenceTransaction(this.persistence, async (tx) => {
       const namespace = scope('connections', next.workspaceId)
       const row = await tx.get(namespace, next.connectionRef)
       if (
@@ -58,7 +62,7 @@ export class PersistentModelSelectionRepository implements ModelSelectionReposit
     })
   }
   async getDefaults(workspaceId: string) {
-    return this.persistence.transaction(async (tx) => {
+    return readPersistenceTransaction(this.persistence, async (tx) => {
       const row = await tx.get('workspace-model-defaults', workspaceId)
       if (!row) return undefined
       const value = WorkspaceModelDefaultsSchema.parse(row.value)
@@ -68,7 +72,7 @@ export class PersistentModelSelectionRepository implements ModelSelectionReposit
   }
   async saveDefaults(expectedRevision: number, input: WorkspaceModelDefaults) {
     const next = WorkspaceModelDefaultsSchema.parse(input)
-    return this.persistence.transaction(async (tx) => {
+    return writePersistenceTransaction(this.persistence, async (tx) => {
       const row = await tx.get('workspace-model-defaults', next.workspaceId)
       if (
         (row ? WorkspaceModelDefaultsSchema.parse(row.value).revision : 0) !== expectedRevision ||
@@ -86,7 +90,7 @@ export class PersistentModelSelectionRepository implements ModelSelectionReposit
   }
   async insertSelection(input: RuntimeProviderSelection) {
     const next = RuntimeProviderSelectionSchema.parse(input)
-    return this.persistence.transaction(async (tx) => {
+    return writePersistenceTransaction(this.persistence, async (tx) => {
       const namespace = scope('selections', next.workspaceId)
       if (await tx.get(namespace, next.selectionRef)) return false
       await tx.put({ namespace, id: next.selectionRef, value: json(next) })
@@ -94,7 +98,7 @@ export class PersistentModelSelectionRepository implements ModelSelectionReposit
     })
   }
   async getSelection(workspaceId: string, ref: string) {
-    return this.persistence.transaction(async (tx) => {
+    return readPersistenceTransaction(this.persistence, async (tx) => {
       const row = await tx.get(scope('selections', workspaceId), ref)
       if (!row) return undefined
       const value = RuntimeProviderSelectionSchema.parse(row.value)
