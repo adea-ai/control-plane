@@ -39,9 +39,10 @@ export type AcpRemoteDeviceOutcome = AcpRemoteDeviceDenialOutcome | AcpRemoteDev
 export interface AcpRemoteDeviceLedgerRecord {
   readonly identity: string
   /**
-   * End of the claimed command's validity window (epoch ms). Once the window has closed the
-   * command is refused before the ledger is consulted, so the entry no longer protects against
-   * replay and may be pruned. Absent on entries that predate retention: those are never pruned.
+   * End of the claimed command's validity window (epoch ms). A delivery whose window has closed is
+   * refused before the ledger is consulted, but a retry of the same command id with a fresh window is
+   * not, so a closed-window entry is compacted (never deleted). Absent on entries that predate
+   * retention: those are never compacted.
    */
   readonly expiresAtMs?: number
   /** Absent while an effect is claimed but not finished (or after a crash before it completed). */
@@ -58,14 +59,18 @@ export interface AcpRemoteDeviceClaim {
    * all observe spare capacity and each claim beyond the bound.
    */
   readonly capacity: number
-  /** End of this command's validity window (epoch ms), retained for pruning. */
+  /** End of this command's validity window (epoch ms), retained for compaction. */
   readonly expiresAtMs: number
   /**
-   * At capacity, entries whose retained window ended at or before this instant are pruned inside
-   * the same transaction before the bound is re-evaluated. Their commands are refused by the
-   * window fence before any ledger read, so pruning cannot reopen a replay.
+   * At capacity, entries whose retained window ended at or before this instant are COMPACTED inside
+   * the same transaction before the bound is re-evaluated. Compaction never deletes duplicate
+   * protection: a controller may retry the same command id with a fresh window at any time, and the
+   * window fence alone would admit it. A compacted entry keeps its identity and its pending or
+   * recorded state in a separate compact record (an exchange outcome, whose sealed output is no
+   * longer retained, becomes `outcome_uncertain`), and it stops counting against `capacity`, which
+   * bounds only the live entries.
    */
-  readonly pruneExpiredAtOrBeforeMs: number
+  readonly compactExpiredAtOrBeforeMs: number
 }
 
 /**
@@ -202,6 +207,24 @@ function readLedgerRecord(value: JsonValue | undefined): AcpRemoteDeviceLedgerRe
 }
 
 /**
+ * Compact form of a ledger record whose delivery window has closed. Identity and the pending or
+ * recorded state are kept, so a same-command retry with a fresh window can never execute again; a
+ * recorded exchange (the sealed output is no longer retained) becomes `outcome_uncertain`, a pending
+ * claim stays pending, and a denial outcome is small enough to keep as recorded.
+ */
+function compactedRecord(record: AcpRemoteDeviceLedgerRecord): AcpRemoteDeviceLedgerRecord {
+  const outcome: AcpRemoteDeviceOutcome | undefined =
+    record.outcome?.kind === 'exchange'
+      ? { kind: 'denial', reason: 'outcome_uncertain' }
+      : record.outcome
+  return {
+    identity: record.identity,
+    ...(record.expiresAtMs === undefined ? {} : { expiresAtMs: record.expiresAtMs }),
+    ...(outcome === undefined ? {} : { outcome }),
+  }
+}
+
+/**
  * Process-memory seam. Not durable across restart; unit fixtures only, never a production claim.
  * One instance is one route: a shared production store must be the scoped PersistenceProvider
  * implementation below.
@@ -209,6 +232,7 @@ function readLedgerRecord(value: JsonValue | undefined): AcpRemoteDeviceLedgerRe
 export class InMemoryAcpRemoteDeviceStateStore implements AcpRemoteDeviceStateStore {
   #fence: AcpRemoteDeviceFenceRecord = { highestGeneration: 0 }
   readonly #ledger = new Map<string, AcpRemoteDeviceLedgerRecord>()
+  readonly #compacted = new Map<string, AcpRemoteDeviceLedgerRecord>()
 
   async loadFence(): Promise<AcpRemoteDeviceFenceRecord> {
     return { ...this.#fence }
@@ -219,12 +243,13 @@ export class InMemoryAcpRemoteDeviceStateStore implements AcpRemoteDeviceStateSt
     this.#fence = { ...this.#fence, revokedAt }
   }
 
+  /** Live (non-compacted) entries: the quantity `capacity` bounds. */
   async countLedger(): Promise<number> {
     return this.#ledger.size
   }
 
   async readLedger(commandId: string): Promise<AcpRemoteDeviceLedgerRecord | undefined> {
-    const record = this.#ledger.get(commandId)
+    const record = this.#ledger.get(commandId) ?? this.#compacted.get(commandId)
     return record === undefined ? undefined : { ...record }
   }
 
@@ -232,15 +257,18 @@ export class InMemoryAcpRemoteDeviceStateStore implements AcpRemoteDeviceStateSt
     // Same atomic ordering as the durable store: the fence decides before any write.
     if (this.#fence.revokedAt !== undefined) return 'device_revoked'
     if (input.channelGeneration < this.#fence.highestGeneration) return 'stale_channel_generation'
-    if (this.#ledger.has(input.commandId)) return 'already_claimed'
+    if (this.#ledger.has(input.commandId) || this.#compacted.has(input.commandId)) {
+      return 'already_claimed'
+    }
     // Capacity admission in the same synchronous claim step as the write (duplicates above
     // already replayed), so racing distinct commands admit exactly one at the bound.
     if (this.#ledger.size >= input.capacity) {
       for (const [commandId, record] of this.#ledger) {
         if (
           record.expiresAtMs !== undefined &&
-          record.expiresAtMs <= input.pruneExpiredAtOrBeforeMs
+          record.expiresAtMs <= input.compactExpiredAtOrBeforeMs
         ) {
+          this.#compacted.set(commandId, compactedRecord(record))
           this.#ledger.delete(commandId)
         }
       }
@@ -258,25 +286,33 @@ export class InMemoryAcpRemoteDeviceStateStore implements AcpRemoteDeviceStateSt
   }
 
   async recordOutcome(commandId: string, outcome: AcpRemoteDeviceOutcome): Promise<void> {
-    const record = this.#ledger.get(commandId)
+    const live = this.#ledger.get(commandId)
+    const compacted = this.#compacted.get(commandId)
+    const record = live ?? compacted
     if (record === undefined) throw new Error('ACP_REMOTE_DEVICE_STATE_CORRUPT')
-    this.#ledger.set(commandId, {
+    const next = {
       identity: record.identity,
       ...(record.expiresAtMs === undefined ? {} : { expiresAtMs: record.expiresAtMs }),
       outcome,
-    })
+    }
+    if (live !== undefined) this.#ledger.set(commandId, next)
+    else this.#compacted.set(commandId, compactedRecord(next))
   }
 
   async abandonClaim(commandId: string, identity: string): Promise<void> {
-    const record = this.#ledger.get(commandId)
-    if (record !== undefined && record.identity === identity && record.outcome === undefined) {
-      this.#ledger.delete(commandId)
+    for (const ledger of [this.#ledger, this.#compacted]) {
+      const record = ledger.get(commandId)
+      if (record !== undefined && record.identity === identity && record.outcome === undefined) {
+        ledger.delete(commandId)
+      }
     }
   }
 }
 
 const FENCE_NAMESPACE = 'acp-remote-device-fence'
 const LEDGER_NAMESPACE = 'acp-remote-device-ledger'
+/** Compact records of closed-window commands: duplicate protection is kept, capacity is not spent. */
+const COMPACTED_NAMESPACE = 'acp-remote-device-ledger-compacted'
 
 /** Fixed-scope digest helpers: keys are derived from the authenticated route identity. */
 function scopeDigest(scope: AcpRemoteDeviceStateScope): string {
@@ -376,9 +412,15 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
   }
 
   async readLedger(commandId: string): Promise<AcpRemoteDeviceLedgerRecord | undefined> {
-    return this.#provider.transaction(async (transaction) =>
-      readLedgerRecord((await transaction.get(LEDGER_NAMESPACE, this.#ledgerId(commandId)))?.value)
-    )
+    return this.#provider.transaction(async (transaction) => {
+      const id = this.#ledgerId(commandId)
+      return readLedgerRecord(
+        (
+          (await transaction.get(LEDGER_NAMESPACE, id)) ??
+          (await transaction.get(COMPACTED_NAMESPACE, id))
+        )?.value
+      )
+    })
   }
 
   async claim(input: AcpRemoteDeviceClaim): Promise<AcpRemoteDeviceClaimResult> {
@@ -391,7 +433,11 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
         if (input.channelGeneration < fence.highestGeneration) {
           return 'stale_channel_generation' as const
         }
-        const existing = await transaction.get(LEDGER_NAMESPACE, this.#ledgerId(input.commandId))
+        const ledgerId = this.#ledgerId(input.commandId)
+        // A compacted record is still a claim: a retry with a fresh window must never run again.
+        const existing =
+          (await transaction.get(LEDGER_NAMESPACE, ledgerId)) ??
+          (await transaction.get(COMPACTED_NAMESPACE, ledgerId))
         if (existing !== undefined) return 'already_claimed' as const
         // Capacity admission in the SAME transaction as the fence write and ledger insert:
         // every admitting claim rewrites the fence row under its read revision, so a racing
@@ -399,9 +445,10 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
         // committed entry — at most `capacity` distinct commands ever become executable.
         // Duplicates returned above replay regardless of capacity; nothing is evicted here.
         if ((await this.#countPrefix(transaction, input.capacity)) >= input.capacity) {
-          // At the bound: free entries whose window has closed (they can no longer be replayed),
-          // then re-evaluate in this same transaction.
-          await this.#pruneExpired(transaction, input.pruneExpiredAtOrBeforeMs)
+          // At the bound: compact entries whose window has closed (their duplicate protection is
+          // kept in the compacted namespace, only their capacity is released), then re-evaluate in
+          // this same transaction.
+          await this.#compactExpired(transaction, input.compactExpiredAtOrBeforeMs)
           if ((await this.#countPrefix(transaction, input.capacity)) >= input.capacity) {
             return 'replay_ledger_full' as const
           }
@@ -410,7 +457,7 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
         // concurrent claimer for the same command fails instead of overwriting the recorded effect.
         await transaction.put({
           namespace: LEDGER_NAMESPACE,
-          id: this.#ledgerId(input.commandId),
+          id: ledgerId,
           value: ledgerValue({ identity: input.identity, expiresAtMs: input.expiresAtMs }),
         })
         // Unconditional revision-checked fence participation: every claim writes the fence row it
@@ -435,18 +482,22 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
     await this.#withConflictRetry(async () =>
       this.#provider.transaction(async (transaction) => {
         const id = this.#ledgerId(commandId)
-        const stored = await transaction.get(LEDGER_NAMESPACE, id)
+        const live = await transaction.get(LEDGER_NAMESPACE, id)
+        const stored = live ?? (await transaction.get(COMPACTED_NAMESPACE, id))
         const record = readLedgerRecord(stored?.value)
-        if (record === undefined) throw new Error('ACP_REMOTE_DEVICE_STATE_CORRUPT')
+        if (stored === undefined || record === undefined) {
+          throw new Error('ACP_REMOTE_DEVICE_STATE_CORRUPT')
+        }
+        const next = {
+          identity: record.identity,
+          ...(record.expiresAtMs === undefined ? {} : { expiresAtMs: record.expiresAtMs }),
+          outcome,
+        }
         await transaction.put({
-          namespace: LEDGER_NAMESPACE,
+          namespace: live === undefined ? COMPACTED_NAMESPACE : LEDGER_NAMESPACE,
           id,
-          ...(stored === undefined ? {} : { expectedRevision: stored.revision }),
-          value: ledgerValue({
-            identity: record.identity,
-            ...(record.expiresAtMs === undefined ? {} : { expiresAtMs: record.expiresAtMs }),
-            outcome,
-          }),
+          expectedRevision: stored.revision,
+          value: ledgerValue(live === undefined ? compactedRecord(next) : next),
         })
       })
     )
@@ -456,20 +507,30 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
     await this.#withConflictRetry(async () =>
       this.#provider.transaction(async (transaction) => {
         const id = this.#ledgerId(commandId)
-        const stored = await transaction.get(LEDGER_NAMESPACE, id)
-        const record = readLedgerRecord(stored?.value)
-        if (stored === undefined || record === undefined) return
-        if (record.identity !== identity || record.outcome !== undefined) return
-        await transaction.delete(LEDGER_NAMESPACE, id, stored.revision)
+        for (const namespace of [LEDGER_NAMESPACE, COMPACTED_NAMESPACE]) {
+          const stored = await transaction.get(namespace, id)
+          const record = readLedgerRecord(stored?.value)
+          if (stored === undefined || record === undefined) continue
+          if (record.identity !== identity || record.outcome !== undefined) continue
+          await transaction.delete(namespace, id, stored.revision)
+        }
       })
     )
   }
 
-  /** Deletes this route's entries whose retained window ended at or before `atOrBeforeMs`. */
-  async #pruneExpired(transaction: PersistenceTransaction, atOrBeforeMs: number): Promise<void> {
+  /**
+   * Moves this route's live entries whose retained window ended at or before `atOrBeforeMs` into the
+   * compacted namespace in the same transaction. Nothing is deleted outright, so a same-command
+   * retry with a fresh window still finds its claim.
+   */
+  async #compactExpired(transaction: PersistenceTransaction, atOrBeforeMs: number): Promise<void> {
     const prefix = `c-${this.#scope}-`
     let afterId = `c-${this.#scope}`
-    const expired: { readonly id: string; readonly revision: number }[] = []
+    const expired: {
+      readonly id: string
+      readonly revision: number
+      readonly record: AcpRemoteDeviceLedgerRecord
+    }[] = []
     for (;;) {
       const page = await transaction.scan(LEDGER_NAMESPACE, { afterId, limit: 128 })
       if (page.length === 0) break
@@ -481,7 +542,7 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
         }
         const entry = readLedgerRecord(record.value)
         if (entry?.expiresAtMs !== undefined && entry.expiresAtMs <= atOrBeforeMs) {
-          expired.push({ id: record.id, revision: record.revision })
+          expired.push({ id: record.id, revision: record.revision, record: entry })
         }
       }
       if (ended || page.length < 128) break
@@ -490,6 +551,11 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
       afterId = last.id
     }
     for (const entry of expired) {
+      await transaction.put({
+        namespace: COMPACTED_NAMESPACE,
+        id: entry.id,
+        value: ledgerValue(compactedRecord(entry.record)),
+      })
       await transaction.delete(LEDGER_NAMESPACE, entry.id, entry.revision)
     }
   }

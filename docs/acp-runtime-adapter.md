@@ -127,12 +127,20 @@ No await separates its completion from the dispatch call, but a commit landing a
 observed by it. This does not make the executor's side effects or any network delivery atomic with the
 read, and a revocation committed after the read cannot stop a dispatch already in progress.
 
-**Ledger retention:** the replay ledger bounds live replay protection, it is not a lifetime cap. Each
-claim retains its delivery-window end; when a route's ledger is at capacity (default 1,024), the claim
-transaction first prunes entries whose window ended more than the clock-skew bound ago, then re-checks
-the bound. Those commands are refused by the window fence before any ledger read, so pruning cannot
-reopen a replay. Entries written before retention existed carry no window and are never pruned. While
-every entry is still inside its window a new command is refused `replay_ledger_full`.
+**Ledger retention:** duplicate protection outlives the delivery window. A controller may retry the
+same command id with a fresh window at any time, and that retry passes the window fence, so a claim is
+never deleted. `capacity` (default 1,024 per route) bounds only the live entries. When a route is at
+capacity, the claim transaction first compacts entries whose window ended more than the clock-skew
+bound ago, moving them to a compact record in a separate namespace
+(`acp-remote-device-ledger-compacted`), then re-checks the bound. A compacted record keeps the
+command's identity and its pending or recorded state: a pending claim stays pending and replays as
+`outcome_uncertain`, a recorded denial is kept, and a recorded exchange, whose sealed output is no
+longer retained, becomes `outcome_uncertain`. A same-command retry therefore never executes again, and
+a different payload under a compacted id is `command_conflict`. Entries written before retention
+existed carry no window and are never compacted. While every entry is still inside its window a new
+command is refused `replay_ledger_full`. Compact records are kept for the life of the route (one small
+record per command); a retention horizon for them needs a controller-side command-id epoch and is an
+open design decision (see incomplete milestones).
 
 **Device key rotation:** device state is scoped by the device key id. Re-enrolling the device with a new
 signing key id starts a fresh fence and ledger; a still-valid captured command is only safe because the
@@ -200,7 +208,7 @@ revocation at execution/sealing/response-opening boundaries, authenticated and e
 replay/conflict/generation proofs, edge fences), `packages/acp-adapter/src/acp-remote-delivery-fences.test.mjs` (delivered-not-undelivered, withheld
 exchange as `response_unknown`, claim release and retry, ledger capacity recovery),
 `tests/acp-remote-device-retention.test.mjs` (retention and `abandonClaim` on the in-memory and SQLite
-stores), `packages/acp-adapter/src/acp-remote-response-boundary.test.mjs`
+stores, including same-command retries after compaction), `packages/acp-adapter/src/acp-remote-response-boundary.test.mjs`
 (the response authorization boundary: peer revocation before the final read and while sealing, cached
 replay after revocation, identity conflict; the pre-dispatch boundary: peer revocation after the claim,
 a positive control, and a store failure at the read),

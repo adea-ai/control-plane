@@ -898,11 +898,11 @@ export class SecureAcpDeviceEndpoint {
           identity,
           channelGeneration: header.channelGeneration,
           capacity: this.#ledgerCapacity,
-          // Retention: a record whose delivery window has closed can never be replayed (the window
-          // fence denies it first), so claims prune such records instead of letting the durable
-          // ledger fill permanently.
+          // Retention: a record whose delivery window has closed is compacted, not deleted. A retry
+          // of the same command id with a fresh window passes the window fence, so its duplicate
+          // protection must survive; compaction only releases the capacity the record held.
           expiresAtMs: Date.parse(header.expiresAt),
-          pruneExpiredAtOrBeforeMs: this.#now().getTime() - ACP_REMOTE_CLOCK_SKEW_MS,
+          compactExpiredAtOrBeforeMs: this.#now().getTime() - ACP_REMOTE_CLOCK_SKEW_MS,
         })
       } catch {
         return { kind: 'denial', reason: 'state_unavailable' }

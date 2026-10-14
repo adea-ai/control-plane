@@ -182,4 +182,76 @@ describe('the replay ledger recovers from capacity once windows close', () => {
     expect(await store.countLedger()).toBeLessThanOrEqual(2)
     expect(await store.readLedger(third)).toMatchObject({ outcome: { kind: 'exchange' } })
   })
+
+  test('cleanup never reopens a command: a same-command retry with a fresh window does not run again', async () => {
+    const store = new InMemoryAcpRemoteDeviceStateStore()
+    const fixture = await createSecureFixture({ stateStore: store, replayLedgerCapacity: 2 })
+    const send = (commandId) =>
+      captured(
+        fixture.controller.dispatch(runtimeCommand({ commandId, issuedAt: iso(fixture.clock) }))
+      )
+    expect((await send(commandIds.first)).error).toBeUndefined()
+    expect((await send(commandIds.second)).error).toBeUndefined()
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(2)
+
+    // Both windows close and a third command compacts them.
+    fixture.clock.current = new Date(fixture.clock.current.getTime() + 10 * 60_000)
+    expect((await send(commandIds.third)).error).toBeUndefined()
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(3)
+    expect(await store.countLedger()).toBe(1)
+
+    // The controller retries the first command with a fresh window: it passes validation, but its
+    // duplicate protection survived cleanup, so the effect does not run a second time.
+    const retried = await send(commandIds.first)
+    expect(retried.error).toMatchObject({
+      code: 'RUNTIME_NODE_OUTCOME_UNCERTAIN',
+      retryable: false,
+    })
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(3)
+    // A different payload reusing a compacted command id is a conflict, never a fresh effect.
+    const conflicting = await captured(
+      fixture.controller.dispatch(
+        runtimeCommand({
+          commandId: commandIds.second,
+          issuedAt: iso(fixture.clock),
+          parameters: { action: 'list', changed: true },
+        })
+      )
+    )
+    expect(conflicting.error).toBeDefined()
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(3)
+  })
+
+  test('a pending (uncertain) command stays protected after cleanup and is not re-run', async () => {
+    const store = new InMemoryAcpRemoteDeviceStateStore()
+    const fixture = await createSecureFixture({ stateStore: store, replayLedgerCapacity: 1 })
+    // The executor fails after the effect for the first command only, leaving its claim pending.
+    const dispatch = fixture.executor.dispatch.bind(fixture.executor)
+    let calls = 0
+    fixture.executor.dispatch = async (command) => {
+      calls += 1
+      const exchange = await dispatch(command)
+      if (calls === 1) throw new Error('EXECUTOR_FAILED_AFTER_EFFECT')
+      return exchange
+    }
+    const send = (commandId) =>
+      captured(
+        fixture.controller.dispatch(runtimeCommand({ commandId, issuedAt: iso(fixture.clock) }))
+      )
+    expect((await send(commandIds.first)).error).toMatchObject({
+      code: 'RUNTIME_NODE_OUTCOME_UNCERTAIN',
+    })
+    expect(await store.readLedger(commandIds.first)).toMatchObject({ identity: expect.any(String) })
+    expect((await store.readLedger(commandIds.first)).outcome).toBeUndefined()
+
+    fixture.clock.current = new Date(fixture.clock.current.getTime() + 10 * 60_000)
+    expect((await send(commandIds.second)).error).toBeUndefined()
+    expect(await store.countLedger()).toBe(1)
+    const effectsBefore = fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)
+
+    const retried = await send(commandIds.first)
+    expect(retried.error).toMatchObject({ code: 'RUNTIME_NODE_OUTCOME_UNCERTAIN' })
+    expect(calls).toBe(2)
+    expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(effectsBefore)
+  })
 })
