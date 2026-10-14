@@ -2,8 +2,8 @@
 //
 // Scope label: this proof uses the legacy LangGraph test composition
 // (`graphActivitiesFactory` over `LocalControlPlaneComposition`). It is not Pi Durable host wiring.
-// The parent reaps the orphaned Restate launcher and native server by recorded identity before the
-// recovery composition starts. It does not adopt orphans.
+// The parent reaps the orphaned Restate launcher and native server through pinned process handles
+// before the recovery composition starts. It does not adopt orphans.
 //
 // Runs as a child process: `node <this file> initial|recover` with configuration in
 // SELF_HOSTED_SIMPLE_CONFIG. Each incarnation opens the supported LocalControlPlaneComposition
@@ -11,9 +11,10 @@
 // server through its own process provider. The parent kills the composition process only, so
 // the owned Restate launcher and its native server are orphaned while they run.
 //
-// Process control is scoped to identities recorded by the parent: `ps -p <pid>` for one recorded
+// Process lookup is scoped to identities recorded by the parent: `ps -p <pid>` for one recorded
 // pid, and `pgrep -P <recorded launcher pid>` for that launcher's direct children. Nothing lists
-// the system process table and nothing matches by name.
+// the system process table and nothing matches by name. Signalling never uses a bare pid: it goes
+// through the pinned handles in `pinned-process.mjs`.
 
 import { execFile, spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
@@ -530,29 +531,6 @@ export async function ownedNativeServer(launcherPid, nativePath, deadlineMs = 15
     await delay(100)
   }
   throw new Error('SELF_HOSTED_SIMPLE_NATIVE_NOT_FOUND')
-}
-
-/** Ends one recorded identity: SIGTERM first, SIGKILL only if it outlives the grace period. */
-export async function reapIdentity(identity, { graceMs = 30_000, forceMs = 10_000 } = {}) {
-  for (const [signal, budget] of [
-    ['SIGTERM', graceMs],
-    ['SIGKILL', forceMs],
-  ]) {
-    if (!(await liveIdentity(identity))) return true
-    // Re-verify immediately before signalling, so a reused pid is never signalled.
-    if (!(await liveIdentity(identity))) return true
-    try {
-      process.kill(identity.pid, signal)
-    } catch (error) {
-      if (error.code !== 'ESRCH') throw error
-    }
-    const deadline = Date.now() + budget
-    while (Date.now() < deadline) {
-      if (!(await liveIdentity(identity))) return true
-      await delay(100)
-    }
-  }
-  return !(await liveIdentity(identity))
 }
 
 export { fixturePath }

@@ -5,12 +5,14 @@
 // LocalControlPlaneComposition, profile `hosted-simple`, durable execution `restate`). It is not Pi
 // Durable host wiring. The parent kills the composition process only. The launcher and native
 // Restate server it started keep running as orphans. The parent then reaps exactly those recorded
-// identities by hand before a second composition starts on the same data. It does not adopt orphans.
+// processes by hand before a second composition starts on the same data. Each is pinned by a Linux
+// pidfd when recorded, so termination and liveness never go through a bare pid that the kernel
+// could reissue; where pidfds are unavailable the proof fails closed. It does not adopt orphans.
 //
 // Proven here: the paused approval survives the kill with its execution, attempt, and version; the
 // recovered composition serves the same execution; a duplicate run submission starts no second
 // effect; one approval resumes the workflow; `prepare` runs once, `finalize` once, and one result
-// artifact is written across both incarnations; owned processes are reaped by recorded identity.
+// artifact is written across both incarnations; owned processes are reaped through pinned handles.
 //
 // Not covered: automatic orphan adoption, Restate drain, upgrade, rollback, and Hosted. Those stay in
 // docs/profile-recovery-acceptance-map.md.
@@ -30,18 +32,22 @@ import {
   boundedWait,
   graph,
   graphInput,
-  identityOfPid,
   liveIdentity,
   ownedNativeServer,
   parseProtocolLine,
   pinnedRestateCommands,
   processExit,
-  reapIdentity,
   runInputOf,
   spawnProtocolChild,
   spawnSelfHostedSimpleComposition,
   stopChild,
 } from './fixtures/self-hosted-simple-sigkill.mjs'
+import {
+  createPidfdBackend,
+  pinOwnedProcess,
+  pinProcess,
+  readProcessIdentity,
+} from './fixtures/pinned-process.mjs'
 
 // This file sits in tests/, so one `..` is the repository root.
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -73,15 +79,6 @@ async function isolatedPorts() {
   }
 }
 
-/** Identity of a recorded pid whose command must include the expected pinned path. */
-async function identityOf(pid, commandIncludes) {
-  const row = await identityOfPid(pid)
-  if (row === undefined || !row.command.includes(commandIncludes)) {
-    throw new Error('OWNED_PROCESS_IDENTITY_MISMATCH')
-  }
-  return row
-}
-
 async function ingressPost(ports, executionId, path, body) {
   return fetch(
     `http://127.0.0.1:${ports.restateIngressPort}/execution-lifecycle/${executionId}/${path}`,
@@ -94,29 +91,40 @@ async function ingressPost(ports, executionId, path, body) {
   )
 }
 
-/** Records the launcher and native server of one incarnation, once its composition has started. */
+/** Records and pins the launcher and native server of one incarnation, once its composition has
+ *  started. Each handle enters `owned` as soon as it is pinned, so a failure while recording the
+ *  next process leaves the earlier one recorded for the reap. */
 async function recordOwnedRestate(incarnation, owned, launcherPid) {
-  const launcher = await identityOf(launcherPid, pinned.launcher)
+  const launcher = await pinOwnedProcess(launcherPid, pinned.launcher)
   owned.push(launcher)
-  const native = await ownedNativeServer(launcherPid, pinned.native)
+  const nativeRow = await ownedNativeServer(launcherPid, pinned.native)
+  const native = await pinProcess(nativeRow)
   owned.push(native)
   incarnation.restateOwnershipRecorded = true
   return { launcher, native }
 }
 
-/** Attempts every recorded identity. A confirmed identity leaves `owned`; any other stays in it, with
- *  the reason, so it can be diagnosed or retried by identity. Each attempt is independent. */
-async function reapOwned(owned) {
+/** Terminates every pinned process. A confirmed one leaves `owned` and its handle is released; any
+ *  other stays in it, handle and identity intact, with the reason, so the same process can be
+ *  diagnosed or retried. Each attempt is independent, and nothing is signalled by bare pid. */
+async function reapOwned(owned, options) {
   const unconfirmed = []
-  for (const identity of [...owned].toReversed()) {
+  for (const handle of [...owned].toReversed()) {
     try {
-      if (await reapIdentity(identity)) {
-        owned.splice(owned.indexOf(identity), 1)
+      if (await handle.terminate(options)) {
+        handle.close()
+        owned.splice(owned.indexOf(handle), 1)
       } else {
-        unconfirmed.push({ identity, reason: 'still live after SIGTERM and SIGKILL' })
+        unconfirmed.push({
+          identity: handle.identity,
+          reason: 'still live after SIGTERM and SIGKILL',
+        })
       }
     } catch (error) {
-      unconfirmed.push({ identity, reason: `signal failed: ${error.code ?? error.message}` })
+      unconfirmed.push({
+        identity: handle.identity,
+        reason: `signal failed: ${error.code ?? error.message}`,
+      })
     }
   }
   return unconfirmed
@@ -202,14 +210,14 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       code: null,
       signal: 'SIGKILL',
     })
-    expect(await liveIdentity(initialOwned.native)).toBeDefined()
-    expect(await liveIdentity(initialOwned.launcher)).toBeDefined()
+    expect(await liveIdentity(initialOwned.native.identity)).toBeDefined()
+    expect(await liveIdentity(initialOwned.launcher.identity)).toBeDefined()
 
     // Manual orphan reap: the recovery composition needs the data directory and ports. Only the
     // identities recorded above are signalled.
     expect(await reapOwned(owned)).toEqual([])
-    expect(await liveIdentity(initialOwned.native)).toBeUndefined()
-    expect(await liveIdentity(initialOwned.launcher)).toBeUndefined()
+    expect(await liveIdentity(initialOwned.native.identity)).toBeUndefined()
+    expect(await liveIdentity(initialOwned.launcher.identity)).toBeUndefined()
 
     const recovery = spawnSelfHostedSimpleComposition('recover', { ...config, executionId })
     incarnations.push(recovery)
@@ -262,8 +270,8 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       code: 0,
       signal: null,
     })
-    expect(await liveIdentity(recoveredOwned.native)).toBeUndefined()
-    expect(await liveIdentity(recoveredOwned.launcher)).toBeUndefined()
+    expect(await liveIdentity(recoveredOwned.native.identity)).toBeUndefined()
+    expect(await liveIdentity(recoveredOwned.launcher.identity)).toBeUndefined()
 
     // Effects across both incarnations: each graph operation and the result artifact once.
     const effects = (await readFile(evidencePath, 'utf8'))
@@ -282,29 +290,225 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
     expect(new Set(effects.map((entry) => entry.pid)).size).toBe(2)
   }, 120000)
 
-  test('reaping signals only the recorded identity, never a reused pid or a same-named process', async () => {
-    const bystander = spawn('sleep', ['60'], { stdio: 'ignore' })
-    const bystanderExit = processExit(bystander)
-    cleanup.push(async () => {
-      if (bystander.exitCode === null && bystander.signalCode === null) bystander.kill('SIGKILL')
-      await boundedWait(bystanderExit, EXIT_BOUND_MS, 'bystander exit')
-    })
-    let identity
-    for (let attempt = 0; attempt < 50 && identity === undefined; attempt += 1) {
-      identity = await identityOfPid(bystander.pid)
-      if (identity === undefined) await new Promise((resolve) => setTimeout(resolve, 20))
+  describe('pinned process termination', () => {
+    /** A bystander this test owns, with its recorded identity and an exit promise. */
+    async function spawnBystander(argv = ['60']) {
+      const bystander = spawn('sleep', argv, { stdio: 'ignore' })
+      const exit = processExit(bystander)
+      cleanup.push(async () => {
+        if (bystander.exitCode === null && bystander.signalCode === null) bystander.kill('SIGKILL')
+        await boundedWait(exit, EXIT_BOUND_MS, 'bystander exit')
+      })
+      let identity
+      for (let attempt = 0; attempt < 50 && identity === undefined; attempt += 1) {
+        identity = await readProcessIdentity(bystander.pid)
+        if (identity === undefined) await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      expect(identity).toBeDefined()
+      return { bystander, exit, identity }
     }
-    expect(identity).toBeDefined()
 
-    // A recorded start time that no longer matches means the pid was reused: nothing is signalled.
-    expect(await reapIdentity({ ...identity, started: 'Mon Jan  1 00:00:00 2001' })).toBe(true)
-    expect(await liveIdentity(identity)).toBeDefined()
+    /** Forbids bare-pid signalling for the duration of `run`, and reports any attempt. */
+    async function withoutPidSignals(run) {
+      const attempts = []
+      const original = process.kill
+      process.kill = (...args) => {
+        attempts.push(args)
+        throw new Error('PID_SIGNAL_FORBIDDEN')
+      }
+      try {
+        await run()
+      } finally {
+        process.kill = original
+      }
+      expect(attempts).toEqual([])
+    }
 
-    // The exact recorded identity is reaped.
-    expect(await reapIdentity(identity)).toBe(true)
-    expect(await liveIdentity(identity)).toBeUndefined()
-    expect(await boundedWait(bystanderExit, EXIT_BOUND_MS, 'bystander exit')).toMatchObject({
-      signal: 'SIGTERM',
+    test('terminating a pinned process signals exactly that process, through its handle and never its pid', async () => {
+      const { bystander, exit, identity } = await spawnBystander()
+      const other = await spawnBystander()
+      const handle = await pinProcess(identity)
+      expect(handle.identity).toMatchObject({ pid: identity.pid, command: identity.command })
+      expect(handle.identity.startTicks).toBeGreaterThan(0)
+
+      await withoutPidSignals(async () => {
+        expect(await handle.terminate()).toBe(true)
+      })
+      expect(await boundedWait(exit, EXIT_BOUND_MS, 'bystander exit')).toMatchObject({
+        signal: 'SIGTERM',
+      })
+      expect(bystander.exitCode ?? bystander.signalCode).not.toBeNull()
+      // The other process of the same command was never touched.
+      expect(other.bystander.exitCode).toBeNull()
+      expect(other.bystander.signalCode).toBeNull()
+      expect(await liveIdentity(other.identity)).toBeDefined()
+      handle.close()
+    })
+
+    test('a stale or foreign identity is refused before any signal, and a later correct pin still works', async () => {
+      const { bystander, exit, identity } = await spawnBystander()
+      const refusals = [
+        // A recorded start time that no longer matches: the pid was reissued.
+        { ...identity, started: 'Mon Jan  1 00:00:00 2001' },
+        // Same pid, different recorded start tick.
+        { ...identity, startTicks: identity.startTicks + 1 },
+        // A same-named process is not the recorded command.
+        { ...identity, command: `${identity.command} --impostor` },
+        // A pid that no process holds.
+        { ...identity, pid: 2 ** 22 + 1 },
+      ]
+      await withoutPidSignals(async () => {
+        for (const stale of refusals) {
+          await expect(pinProcess(stale)).rejects.toThrow('PINNED_PROCESS_IDENTITY_MISMATCH')
+        }
+      })
+      expect(bystander.exitCode).toBeNull()
+      expect(bystander.signalCode).toBeNull()
+      expect(await liveIdentity(identity)).toBeDefined()
+
+      // The failed attempts left nothing behind: the exact identity still pins and terminates.
+      const handle = await pinProcess(identity)
+      expect(await handle.terminate()).toBe(true)
+      expect(await boundedWait(exit, EXIT_BOUND_MS, 'bystander exit')).toMatchObject({
+        signal: 'SIGTERM',
+      })
+      handle.close()
+    })
+
+    test('a pinned handle stays bound to its process after it exits and never reaches a later holder of the pid', async () => {
+      const { bystander, exit, identity } = await spawnBystander()
+      const handle = await pinProcess(identity)
+      expect(handle.exited).toBe(false)
+
+      bystander.kill('SIGKILL')
+      await boundedWait(exit, EXIT_BOUND_MS, 'bystander exit')
+      // The handle reports the pinned process gone and refuses to signal; it does not fall back to
+      // the pid, which the kernel may now hand to any other process.
+      expect(handle.exited).toBe(true)
+      await withoutPidSignals(async () => {
+        expect(handle.signal('SIGKILL')).toBe(false)
+        expect(await handle.terminate()).toBe(true)
+      })
+      handle.close()
+    })
+
+    test('a pid reissued to another process after pinning is never signalled', async () => {
+      // Deterministic reissue: the injected pid table hands the pinned pid to an impostor once the
+      // pinned process exits. Real pid reuse cannot be forced without privileges.
+      const impostor = { alive: true, signals: [] }
+      const pinnedProcess = { alive: true, signals: [] }
+      const holders = new Map([[777, pinnedProcess]])
+      const descriptors = new Map()
+      const backend = {
+        open: (pid) => {
+          const holder = holders.get(pid)
+          if (holder === undefined) return undefined
+          descriptors.set(7, holder)
+          return 7
+        },
+        send: (fd, signal) => {
+          const target = descriptors.get(fd)
+          if (!target.alive) return false
+          target.signals.push(signal)
+          if (signal === 9) target.alive = false
+          return true
+        },
+        exited: (fd) => !descriptors.get(fd).alive,
+        close: (fd) => descriptors.delete(fd),
+      }
+      const expected = { pid: 777, started: 'fixture', command: 'fixture-command' }
+      const handle = await pinProcess(expected, {
+        backend,
+        readIdentity: async () => ({ ...expected, startTicks: 1 }),
+      })
+
+      // The pinned process exits on its own and its pid is reissued to the impostor.
+      pinnedProcess.alive = false
+      holders.set(777, impostor)
+
+      await withoutPidSignals(async () => {
+        expect(await handle.terminate()).toBe(true)
+        expect(handle.signal('SIGKILL')).toBe(false)
+      })
+      expect(impostor.signals).toEqual([])
+      expect(pinnedProcess.signals).toEqual([])
+    })
+
+    test('a process that outlives termination keeps its handle and identity, and a retry reaches the same process', async () => {
+      const survivor = { alive: true, signals: [], ignoreSignals: 3 }
+      const closed = []
+      const backend = {
+        open: () => 9,
+        send: (_fd, signal) => {
+          survivor.signals.push(signal)
+          if (survivor.ignoreSignals > 0) {
+            survivor.ignoreSignals -= 1
+          } else {
+            survivor.alive = false
+          }
+          return true
+        },
+        exited: () => !survivor.alive,
+        close: (fd) => closed.push(fd),
+      }
+      const expected = { pid: 4242, started: 'fixture', command: 'fixture-command' }
+      const handle = await pinProcess(expected, {
+        backend,
+        readIdentity: async () => ({ ...expected, startTicks: 5 }),
+      })
+      const identityBefore = structuredClone(handle.identity)
+      const owned = [handle]
+
+      // First pass: SIGTERM and SIGKILL are both ignored. Nothing is lost.
+      const first = await reapOwned(owned, { graceMs: 30, forceMs: 30, pollMs: 5 })
+      expect(first).toEqual([
+        { identity: identityBefore, reason: 'still live after SIGTERM and SIGKILL' },
+      ])
+      expect(owned).toEqual([handle])
+      expect(handle.identity).toEqual(identityBefore)
+      expect(closed).toEqual([])
+      expect(survivor.signals).toEqual([15, 9])
+
+      // The retry uses the same handle, reaches the same process, and only then releases it.
+      expect(await reapOwned(owned, { graceMs: 30, forceMs: 30, pollMs: 5 })).toEqual([])
+      expect(owned).toEqual([])
+      expect(closed).toEqual([9])
+      expect(survivor.signals).toEqual([15, 9, 15, 9])
+    })
+
+    test('a failing signal keeps the handle and identity for diagnosis and retry', async () => {
+      let failing = true
+      const backend = {
+        open: () => 3,
+        send: () => {
+          if (failing) throw Object.assign(new Error('denied'), { code: 'EPERM' })
+          return true
+        },
+        exited: () => !failing,
+        close: () => {},
+      }
+      const expected = { pid: 11, started: 'fixture', command: 'fixture-command' }
+      const handle = await pinProcess(expected, {
+        backend,
+        readIdentity: async () => ({ ...expected, startTicks: 2 }),
+      })
+      const owned = [handle]
+      expect(await reapOwned(owned, { graceMs: 20, forceMs: 20, pollMs: 5 })).toEqual([
+        { identity: handle.identity, reason: 'signal failed: EPERM' },
+      ])
+      expect(owned).toEqual([handle])
+      failing = false
+      expect(await reapOwned(owned, { graceMs: 20, forceMs: 20, pollMs: 5 })).toEqual([])
+      expect(owned).toEqual([])
+    })
+
+    test('pinning fails closed instead of falling back to a bare pid where pidfds are unavailable', async () => {
+      await expect(createPidfdBackend({ platform: 'darwin' })).rejects.toThrow(
+        'PINNED_PROCESS_UNSUPPORTED'
+      )
+      await expect(createPidfdBackend({ platform: 'linux', arch: 'riscv64' })).rejects.toThrow(
+        'PINNED_PROCESS_UNSUPPORTED'
+      )
     })
   })
 
