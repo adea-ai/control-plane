@@ -495,6 +495,105 @@ describe.skipIf(!enabled)('hosted PostgreSQL durable state qualification', () =>
     })
   })
 
+  /**
+   * A provider whose transactions run `beforeDelete` once, immediately before the first
+   * `delete` of a ledger record is issued. The hook runs on a DIFFERENT pooled connection and is
+   * awaited, so the interleaving is fixed by construction, not by timing.
+   */
+  function interleavingProvider(provider, namespace, beforeDelete) {
+    let armed = true
+    return new Proxy(provider, {
+      get(target, property) {
+        if (property !== 'transaction') {
+          const value = Reflect.get(target, property)
+          return typeof value === 'function' ? value.bind(target) : value
+        }
+        return (run) =>
+          target.transaction((transaction) =>
+            run(
+              new Proxy(transaction, {
+                get(inner, name) {
+                  const value = Reflect.get(inner, name)
+                  if (name !== 'delete') {
+                    return typeof value === 'function' ? value.bind(inner) : value
+                  }
+                  return async (deleteNamespace, id, expectedRevision) => {
+                    if (armed && deleteNamespace === namespace) {
+                      armed = false
+                      await beforeDelete(id)
+                    }
+                    return inner.delete(deleteNamespace, id, expectedRevision)
+                  }
+                },
+              })
+            )
+          )
+      },
+    })
+  }
+
+  const LEDGER = 'acp-remote-device-ledger'
+  const openClaim = (commandId, overrides = {}) => ({
+    commandId,
+    identity: `identity-${commandId}`,
+    channelGeneration: 1,
+    capacity: 1,
+    expiresAtMs: Date.parse('2026-08-25T12:01:00.000Z'),
+    compactExpiredAtOrBeforeMs: Date.parse('2026-08-25T12:30:00.000Z'),
+    ...overrides,
+  })
+
+  test('cleanup does not recreate a pending record after another connection released the never-executed command', async () => {
+    await withPostgresProvider(async (provider) => {
+      const scope = acpRemoteDeviceStateScope(route)
+      const releasing = new PersistenceProviderAcpRemoteDeviceStateStore(provider, scope)
+      // Capacity 1: claiming B must compact the closed-window, still-pending claim A.
+      expect(await releasing.claim(openClaim(COMMAND_A, { compactExpiredAtOrBeforeMs: 0 }))).toBe(
+        'claimed'
+      )
+      const cleaning = new PersistenceProviderAcpRemoteDeviceStateStore(
+        interleavingProvider(provider, LEDGER, async () => {
+          // Cleanup has scanned A and is about to delete it; a second connection now safely
+          // releases A (its effect never started) and commits.
+          await releasing.abandonClaim(COMMAND_A, `identity-${COMMAND_A}`)
+        }),
+        scope
+      )
+
+      expect(await cleaning.claim(openClaim(COMMAND_B))).toBe('claimed')
+
+      // The release won: A has no record at all, so a retry may still execute it exactly once.
+      expect(await releasing.readLedger(COMMAND_A)).toBeUndefined()
+      expect(await releasing.claim(openClaim(COMMAND_A, { capacity: 2 }))).toBe('claimed')
+      expect(await releasing.readLedger(COMMAND_B)).toMatchObject({
+        identity: `identity-${COMMAND_B}`,
+      })
+    })
+  })
+
+  test('a release racing a cleanup that already compacted the claim still removes it', async () => {
+    await withPostgresProvider(async (provider) => {
+      const scope = acpRemoteDeviceStateScope(route)
+      const cleaning = new PersistenceProviderAcpRemoteDeviceStateStore(provider, scope)
+      expect(await cleaning.claim(openClaim(COMMAND_A, { compactExpiredAtOrBeforeMs: 0 }))).toBe(
+        'claimed'
+      )
+      const releasing = new PersistenceProviderAcpRemoteDeviceStateStore(
+        interleavingProvider(provider, LEDGER, async () => {
+          // The release has read the live record and is about to delete it; a second connection
+          // compacts it (moving it to the compact namespace) and commits first.
+          expect(await cleaning.claim(openClaim(COMMAND_B))).toBe('claimed')
+        }),
+        scope
+      )
+
+      await releasing.abandonClaim(COMMAND_A, `identity-${COMMAND_A}`)
+
+      expect(await cleaning.readLedger(COMMAND_A)).toBeUndefined()
+      expect(await cleaning.claim(openClaim(COMMAND_A, { capacity: 2 }))).toBe('claimed')
+    })
+  })
+
   const RUNTIME_SESSION = 'runtime.session'
   const headerFor = (fixture, command) => ({
     suite: ACP_REMOTE_SUITE,

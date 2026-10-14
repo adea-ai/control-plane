@@ -313,6 +313,8 @@ const FENCE_NAMESPACE = 'acp-remote-device-fence'
 const LEDGER_NAMESPACE = 'acp-remote-device-ledger'
 /** Compact records of closed-window commands: duplicate protection is kept, capacity is not spent. */
 const COMPACTED_NAMESPACE = 'acp-remote-device-ledger-compacted'
+/** Matched by `#withConflictRetry`, like the providers' own revision conflicts. */
+const REVISION_CONFLICT = 'ACP_REMOTE_DEVICE_STATE_REVISION_CONFLICT'
 
 /** Fixed-scope digest helpers: keys are derived from the authenticated route identity. */
 function scopeDigest(scope: AcpRemoteDeviceStateScope): string {
@@ -512,7 +514,10 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
           const record = readLedgerRecord(stored?.value)
           if (stored === undefined || record === undefined) continue
           if (record.identity !== identity || record.outcome !== undefined) continue
-          await transaction.delete(namespace, id, stored.revision)
+          // Already removed by a concurrent connection (or moved by compaction): re-read, never skip.
+          if (!(await transaction.delete(namespace, id, stored.revision))) {
+            throw new Error(REVISION_CONFLICT)
+          }
         }
       })
     )
@@ -551,12 +556,19 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
       afterId = last.id
     }
     for (const entry of expired) {
+      // Remove the live record first. A concurrent connection may have released the claim (a
+      // never-executed command) or recorded its outcome since the scan: `delete` then reports that
+      // nothing was removed, and recreating the record as a compact pending claim would leave that
+      // command stuck at `outcome_uncertain`. A lost revision-checked delete is a transaction
+      // conflict, so this whole claim rolls back and retries against the fresh state.
+      if (!(await transaction.delete(LEDGER_NAMESPACE, entry.id, entry.revision))) {
+        throw new Error(REVISION_CONFLICT)
+      }
       await transaction.put({
         namespace: COMPACTED_NAMESPACE,
         id: entry.id,
         value: ledgerValue(compactedRecord(entry.record)),
       })
-      await transaction.delete(LEDGER_NAMESPACE, entry.id, entry.revision)
     }
   }
 
