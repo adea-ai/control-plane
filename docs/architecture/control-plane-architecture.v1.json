@@ -196,6 +196,7 @@
         "@control-plane/production-readiness",
         "@control-plane/runtime-gateway-protocol",
         "@control-plane/runtime-sdk",
+        "@control-plane/telemetry",
         "@control-plane/tool-execution",
         "@control-plane/tool-sdk",
         "@control-plane/usage-ledger"

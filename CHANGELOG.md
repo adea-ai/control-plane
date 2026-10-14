@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.97.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.5...workspace-v1.97.0) (2026-10-14)
+
+
+### Features
+
+* **usage:** hold a stated child allowance out of the lead attempt reservation ([#1123](https://github.com/adea-ai/control-plane/issues/1123)) ([dff1541](https://github.com/adea-ai/control-plane/commit/dff15411b66c9cd4fe9c3e72121c3f6db3588264))
+
 ## [1.96.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.4...workspace-v1.96.5) (2026-10-14)
 
 
