@@ -1,3 +1,4 @@
+import { withPersistenceReadScope } from '@control-plane/deployment/read-scope'
 import {
   canonicalJsonStringify,
   compareCodePointOrder,
@@ -105,7 +106,7 @@ export class SqliteDelegationRepository implements DelegationRepository, ChildAd
         throw new Error('CHILD_RUNTIME_LOOKUP_STALE')
       const reader = createSqliteChildAdmissionReader(tx, snapshot.receipt.workspaceId)
       try {
-        await input.assertCurrent(reader)
+        await withPersistenceReadScope(this.provider, tx, () => input.assertCurrent(reader))
       } finally {
         reader.close()
       }
@@ -408,7 +409,7 @@ export class SqliteDelegationRepository implements DelegationRepository, ChildAd
       // when the recheck returns. No read re-enters the provider while the allocation transaction is open.
       const reader = createSqliteChildAdmissionReader(tx, request.workspaceId)
       try {
-        await input.assertCurrent(reader)
+        await withPersistenceReadScope(this.provider, tx, () => input.assertCurrent(reader))
       } finally {
         reader.close()
       }
