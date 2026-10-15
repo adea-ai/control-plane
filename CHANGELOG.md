@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.100.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.0...workspace-v1.100.1) (2026-10-15)
+
+
+### CI
+
+* pin the shared validation workflow to the merged code-foundry fix ([#1144](https://github.com/adea-ai/control-plane/issues/1144)) ([db154ff](https://github.com/adea-ai/control-plane/commit/db154ff5083a14820285b6ff01ca59f8c41ccd87))
+
 ## [1.100.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.99.0...workspace-v1.100.0) (2026-10-15)
 
 
