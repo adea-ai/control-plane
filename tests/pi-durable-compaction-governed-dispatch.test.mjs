@@ -1,5 +1,8 @@
 import { expect, test } from 'bun:test'
+import { EventEmitter } from 'node:events'
 import { rm, stat } from 'node:fs/promises'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import {
   compactNativeSession,
   nativeSessionPath,
@@ -20,6 +23,70 @@ import {
   runChildSettlementProcess,
 } from './pi-durable-child-settlement-process.fixture.mjs'
 import { createProductionFactoryFixture } from './pi-production-factory.fixture.mjs'
+
+test('settlement process result waits for stdout to close after exit', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    pid: 12345,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  })
+  let resolved = false
+  const pending = runChildSettlementProcess('/unused', {}, { spawnWorker: () => child }).then(
+    (result) => {
+      resolved = true
+      return result
+    }
+  )
+  child.emit('exit', 0, null)
+  await Promise.resolve()
+  expect(resolved).toBe(false)
+  child.stdout.emit('data', 'RESULT {"retained":true}\n')
+  child.emit('close', 0, null)
+  expect((await pending).result).toEqual({ retained: true })
+})
+
+test('settlement process rejects malformed or missing successful output', async () => {
+  for (const output of ['RESULT {invalid json}\n', '']) {
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+    })
+    const pending = runChildSettlementProcess('/unused', {}, { spawnWorker: () => child })
+    pending.catch(() => {})
+    child.stdout.emit('data', output)
+    expect(() => child.emit('close', 0, null)).not.toThrow()
+    await expect(pending).rejects.toThrow()
+  }
+})
+
+test('settlement process kills a timed-out worker and waits for it to close', async () => {
+  const signals = []
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+    kill(signal) {
+      signals.push(signal)
+      queueMicrotask(() => this.emit('close', null, signal))
+      return true
+    },
+  })
+  await expect(
+    runChildSettlementProcess('/unused', {}, { spawnWorker: () => child, timeoutMs: 10 })
+  ).rejects.toThrow('CHILD_SETTLEMENT_PROCESS_TIMEOUT')
+  expect(signals).toEqual(['SIGKILL'])
+})
+
+test('settlement process rejects spawn errors', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  })
+  const pending = runChildSettlementProcess('/unused', {}, { spawnWorker: () => child })
+  pending.catch(() => {})
+  child.emit('error', new Error('SPAWN_FAILED'))
+  child.emit('close', -1, null)
+  await expect(pending).rejects.toThrow('SPAWN_FAILED')
+})
 
 const leadInteractionId = 'int_01JABCDEF0123456789ABCDEFG'
 const leadQuestion = 'Synthetic actual factory question'
@@ -754,6 +821,20 @@ for (const [step, expected] of Object.entries(interruptions)) {
       const crashed = await readStores()
       expect(crashed.cost.outcome.costState).toBe(expected.cost)
       expect(crashed.childSummary.settled).toBe(expected.budgetSettled)
+      // Read the runtime-attempt fence from a fresh connection, including the boundary between
+      // reporting usage and settling the attempt, before either resume process can repair it.
+      const crashedStores = await openDurableChildStores(directory, ids)
+      try {
+        const released = crashedStores.ledger.assertRuntimeAttemptReleased(
+          ids.workspaceId,
+          childExecutionId,
+          childAttemptId
+        )
+        if (expected.attemptReleased) await released
+        else await expect(released).rejects.toMatchObject({ code: 'SETTLEMENT_INCOMPLETE' })
+      } finally {
+        await crashedStores.close()
+      }
       // The lead settled before the crash, so the parent's remaining hold is the child's funding alone.
       const funding = crashed.parentEntries.find(
         (entry) =>
@@ -842,9 +923,17 @@ test('a child whose send failed is never settled or reported as complete', async
   }
 }, 120000)
 
-// The publication comparison must be able to fail: the same event type with a changed id, key or
-// payload, or a rewritten row, is a different durable record.
-for (const tamper of ['idempotency key', 'delegation id', 'payload field']) {
+// Change exactly one field on disk: ordinary transaction.put also changes revision/write time,
+// which would let a broken key/event comparison pass solely because metadata changed.
+const publicationTampers = {
+  'storage id': (row) => (row.id += '-x'),
+  revision: (row) => row.revision++,
+  'write time': (row) => (row.updatedAt = new Date(Date.parse(row.updatedAt) + 1).toISOString()),
+  'idempotency key': (row) => (row.value.idempotencyKey += '-x'),
+  'delegation id': (row) => (row.value.event.delegationId += 'x'),
+  'payload field': (row) => (row.value.event.details.payloadProbe = 'changed'),
+}
+for (const [tamper, change] of Object.entries(publicationTampers)) {
   test(`publication records differ when the ${tamper} of the terminal publication changes`, async () => {
     const { host, hooks } = await createHost()
     try {
@@ -852,25 +941,39 @@ for (const tamper of ['idempotency key', 'delegation id', 'payload field']) {
       await hooks.scanner.scan(adapter)
       const before = await publicationsOf(hooks)
       const terminal = expectOneTerminalPublication(before, dispatch.executionId)
-      const value = structuredClone(terminal.value)
-      if (tamper === 'idempotency key') value.idempotencyKey = `${value.idempotencyKey}-x`
-      else if (tamper === 'delegation id') value.event.delegationId = `${value.event.delegationId}x`
-      else value.event.payloadProbe = 'changed'
-      await hooks.persistence.transaction((transaction) =>
-        transaction.put({
-          namespace: 'delegation-publications',
-          id: terminal.id,
-          expectedRevision: terminal.revision,
-          value,
-        })
-      )
+      const changed = structuredClone(terminal)
+      change(changed)
+      // Deliberate corruption of disposable fixture data bypasses the normal writer so that all
+      // fields except the named mutation remain byte-identical, including storage metadata.
+      const database = new DatabaseSync(join(host.directory, 'canonical.sqlite'))
+      try {
+        const result = database
+          .prepare(
+            'UPDATE control_plane_records SET id = ?, revision = ?, updated_at = ?, value = ? WHERE namespace = ? AND id = ?'
+          )
+          .run(
+            changed.id,
+            changed.revision,
+            changed.updatedAt,
+            JSON.stringify(changed.value),
+            terminal.namespace,
+            terminal.id
+          )
+        expect(Number(result.changes)).toBe(1)
+      } finally {
+        database.close()
+      }
       const after = await publicationsOf(hooks)
       // Same number of rows and the same event type, yet not the same record.
       expect(after.map((record) => record.value.event.type)).toEqual(
         before.map((record) => record.value.event.type)
       )
+      expect(after).toEqual(
+        before
+          .map((record) => (record.id === terminal.id ? changed : record))
+          .toSorted((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+      )
       expect(after).not.toEqual(before)
-      expect(after.find((record) => record.id === terminal.id).revision).toBe(2)
     } finally {
       await host.close()
     }
