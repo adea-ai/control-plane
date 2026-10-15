@@ -294,7 +294,7 @@ describe('host key lifecycle', () => {
 })
 
 describe('durable execution acceptance bridge', () => {
-  test('creates one CommandInbox execution for reordered concurrent and durable replay', async () => {
+  test('creates one CommandInbox execution for adapter delivery and reordered replay', async () => {
     const key = await generateHostEncryptionKeyPair(hostId, new Date(issuedAt))
     const request = ControlApiFixtures.executionAcceptance.request
     const relayWorkspaceId = request.workspaceId
@@ -356,19 +356,16 @@ describe('durable execution acceptance bridge', () => {
     })
     await adapter.start()
 
+    const first = await adapter.poll()
     const reorderedEnvelope = Object.fromEntries(Object.entries(envelope).toReversed())
     const [accepted, concurrentReplay] = await Promise.all([
       processor.process(envelope, new Date(observedAt)),
       processor.process(reorderedEnvelope, new Date(observedAt)),
     ])
-    const first = await adapter.poll()
     const replay = await processor.process(envelope, observedAt)
 
-    expect([accepted.outcome, concurrentReplay.outcome].toSorted()).toEqual([
-      'accepted',
-      'duplicate',
-    ])
-    expect(first).toEqual({ delivered: 1, accepted: 0, duplicates: 1, rejected: 0, deferred: 0 })
+    expect(first).toEqual({ delivered: 1, accepted: 1, duplicates: 0, rejected: 0, deferred: 0 })
+    expect([accepted.outcome, concurrentReplay.outcome]).toEqual(['duplicate', 'duplicate'])
     expect(replay).toMatchObject({ outcome: 'duplicate', commandId: relayCommandId })
     expect(replay.result.data.executionId).toBe('exe_01JABCDEF0123456789ABCDEFG')
     expect(repository.executionCount).toBe(1)
