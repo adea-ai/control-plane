@@ -72,6 +72,19 @@ const historicalLocaleDigests = {
   },
 }
 
+// This pins the #664 mixed epoch: the request digest used code-point ordering,
+// while the untagged input digest still used the evidenced sv-SE ordering.
+// These byte strings and hashes were built independently of the serializer.
+const historicalMixedEpochReceipt = {
+  legacyInputBytes: '{"z":"zee","å":"a-ring","ä":"a-diaeresis"}',
+  legacyInputDigest: 'sha256:13df5d9701ee0f10b54eda343f77b053bf317cf5a8628c41638ae5216993f312',
+  codePointInputBytes: '{"z":"zee","ä":"a-diaeresis","å":"a-ring"}',
+  codePointInputDigest: 'sha256:7ddabc8d2b1f156a21c6d00f3f7c01984ea6428096cccb2606534f8a1f0eb55d',
+  codePointRequestBytes:
+    '{"attemptId":"att_01JABCDEF0123456789ABCDEFG","executionId":"exe_01JABCDEF0123456789ABCDEFG","idempotencyKey":"tool-effect-0001","input":{"z":"zee","ä":"a-diaeresis","å":"a-ring"},"operation":"write","policySnapshotRef":"policy://workspace/v7","principalRef":"service:runtime-worker","profileId":"prf_01JABCDEF0123456789ABCDEFG","toolCallId":"tlc_01JABCDEF0123456789ABCDEFG","toolDefinitionId":"tld_01JABCDEF0123456789ABCDEFG","toolVersionId":"tlv_01JABCDEF0123456789ABCDEFG","workspaceId":"wsp_01JABCDEF0123456789ABCDEFG"}',
+  codePointRequestDigest: 'sha256:a1840f7a9bac8e85fec4c513412c9bef91d60e1b863a34d00d94a1717c6f77f9',
+}
+
 function digestReceiptBytes(bytes) {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`
 }
@@ -85,6 +98,18 @@ test('pinned historical locale receipt hashes match their independent canonical 
       historicalLocaleDigests[locale === 'turkish' ? 'unsupportedTurkish' : locale].request
     )
   }
+  expect(digestReceiptBytes(historicalMixedEpochReceipt.legacyInputBytes)).toBe(
+    historicalMixedEpochReceipt.legacyInputDigest
+  )
+  expect(digestReceiptBytes(historicalMixedEpochReceipt.codePointInputBytes)).toBe(
+    historicalMixedEpochReceipt.codePointInputDigest
+  )
+  expect(digestReceiptBytes(historicalMixedEpochReceipt.codePointRequestBytes)).toBe(
+    historicalMixedEpochReceipt.codePointRequestDigest
+  )
+  expect(historicalMixedEpochReceipt.legacyInputDigest).not.toBe(
+    historicalMixedEpochReceipt.codePointInputDigest
+  )
 })
 
 // The old serializer omitted the locale argument. Pin that default explicitly
@@ -732,8 +757,20 @@ describe('policy-controlled durable tool execution', () => {
     })
   })
 
-  test('an untagged canonical receipt written during the V2 cutover still replays', async () => {
-    const plainRequest = request({ approval: undefined })
+  test('an untagged mixed-era receipt replays a v2 request with locale-legacy input', async () => {
+    const input = { ä: 'a-diaeresis', å: 'a-ring', z: 'zee' }
+    const plainRequest = request({ approval: undefined, input })
+    const retryRequest = request({
+      approval: undefined,
+      input: { z: 'zee', å: 'a-ring', ä: 'a-diaeresis' },
+    })
+    const mixedReceipt = historicalMixedEpochReceipt
+    expect(toolRequestDigest(plainRequest)).toBe(mixedReceipt.codePointRequestDigest)
+    expect(toolRequestMatchesDigest(retryRequest, mixedReceipt.codePointRequestDigest)).toBe(true)
+    expect(toolInputMatchesDigest(input, mixedReceipt.legacyInputDigest)).toBe(true)
+    expect(toolInputMatchesDigest(input, mixedReceipt.legacyInputDigest, 2)).toBe(false)
+    expect(mixedReceipt.legacyInputBytes).not.toBe(mixedReceipt.codePointInputBytes)
+
     const first = await fixture({
       versionOverrides: {
         operations: [{ ...version().operations[0], approvalMode: 'never' }],
@@ -741,11 +778,13 @@ describe('policy-controlled durable tool execution', () => {
     })
     const completed = await first.service.execute(plainRequest)
     const untaggedCall = { ...completed.call }
+    untaggedCall.requestDigest = mixedReceipt.codePointRequestDigest
     delete untaggedCall.requestDigestVersion
     delete untaggedCall.inputDigestVersion
     // #664 wrote canonical request digests while input digests still used the
-    // durable legacy helper; both fields were untagged in that period.
-    untaggedCall.inputDigest = toolInputDigest(plainRequest.input)
+    // durable legacy helper; both fields were untagged in that period. The
+    // fixed sv-SE input bytes differ from code-point ordering above.
+    untaggedCall.inputDigest = mixedReceipt.legacyInputDigest
 
     const historicalCalls = {
       async getByIdempotencyKey() {
@@ -758,7 +797,7 @@ describe('policy-controlled durable tool execution', () => {
         operations: [{ ...version().operations[0], approvalMode: 'never' }],
       },
     })
-    const replay = await replayFixture.service.execute(plainRequest)
+    const replay = await replayFixture.service.execute(retryRequest)
 
     expect(replay).toMatchObject({ state: 'succeeded', call: { status: 'succeeded' } })
     expect(replayFixture.executor.requests).toHaveLength(0)
