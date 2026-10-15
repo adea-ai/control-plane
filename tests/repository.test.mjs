@@ -104,6 +104,7 @@ test('defines root quality and build commands', async () => {
     'db:check',
     'requirements:check',
     'architecture:check',
+    'check:digest-writers',
   ]) {
     assert.equal(typeof manifest.scripts[script], 'string', `${script} must be defined`)
   }
@@ -112,6 +113,8 @@ test('defines root quality and build commands', async () => {
   assert.match(manifest.scripts['type-check'], /bun run db:check/)
   assert.match(manifest.scripts['requirements:check'], /--check-issues/)
   assert.match(manifest.scripts['db:check'], /packages\/database/)
+  assert.match(manifest.scripts.lint, /bun run check:canonical-ordering/)
+  assert.match(manifest.scripts.lint, /bun run check:digest-writers/)
   assert.match(manifest.scripts['test:unit'], /--coverage/)
   assert.match(manifest.scripts.test, /--parallel/)
 })
@@ -302,6 +305,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/canonical-source-lineage.test.mjs',
     'tests/container-promotion.test.mjs',
     'tests/docker-pull-backoff.test.mjs',
+    'tests/digest-writer-guard.test.mjs',
     'tests/foundation.test.mjs',
     'tests/infrastructure.test.mjs',
     'tests/integration-shards.test.mjs',

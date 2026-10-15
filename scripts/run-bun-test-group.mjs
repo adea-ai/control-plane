@@ -54,6 +54,7 @@ const repositoryGroups = {
     'tests/canonical-source-lineage.test.mjs',
     'tests/container-promotion.test.mjs',
     'tests/docker-pull-backoff.test.mjs',
+    'tests/digest-writer-guard.test.mjs',
     'tests/foundation.test.mjs',
     'tests/infrastructure.test.mjs',
     'tests/integration-shards.test.mjs',
