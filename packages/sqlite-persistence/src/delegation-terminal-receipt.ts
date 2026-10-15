@@ -5,9 +5,11 @@ import {
   type DelegationEvent,
   type DelegationRecord,
 } from '@control-plane/orchestration'
+import { terminalReceiptNamespace } from './delegation-receipt-namespaces.js'
+import { retainReceiptOwnerPins } from './delegation-retention.js'
 import { json, recordId } from './record-storage.js'
 
-export const terminalReceiptNamespace = 'delegation-terminal-receipts'
+export { terminalReceiptNamespace }
 export interface DelegationTerminalReceipt {
   readonly idempotencyKey: string
   readonly status: 'pending' | 'published'
@@ -68,6 +70,7 @@ export async function retainTerminalReceipt(
     ...(existing ? { expectedRevision: existing.revision } : {}),
     value: json(receipt),
   })
+  await retainReceiptOwnerPins(tx, terminalReceiptNamespace, receipt)
 }
 
 function sameOutcome(left: DelegationTerminalReceipt, right: DelegationTerminalReceipt): boolean {

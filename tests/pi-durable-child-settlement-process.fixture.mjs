@@ -18,6 +18,7 @@ import {
   childIds,
   createChildTerminalSettlement,
   loadChildCostState,
+  readPublicationRecords,
 } from './pi-durable-compaction-governed-dispatch.fixture.mjs'
 
 const worker = fileURLToPath(import.meta.url)
@@ -34,6 +35,7 @@ export async function openDurableChildStores(directory, { workspaceId, parentExe
     }),
     usageOutcomes: new SqliteChildUsageOutcomeRepository(persistence, childIds.delegationId),
     events: new SqliteDelegationEventPublisher(persistence, parentExecutionId),
+    persistence,
     delegations: new SqliteDelegationRepository(persistence),
     journal,
     workspaceId,
@@ -59,7 +61,7 @@ export async function readDurableChildState(stores) {
       parentSummary: await ledger.summary(workspaceId, parentExecutionId),
       childSummary: await ledger.summary(workspaceId, childIds.executionId),
       cost: await loadChildCostState(stores.usageOutcomes, parentExecutionId),
-      eventTypes: (await stores.events.list()).map((event) => event.type),
+      publications: await readPublicationRecords(stores.persistence, parentExecutionId),
       childJournal: childRow,
       delegationCount: (await stores.delegations.listByParent(parentExecutionId)).length,
     })
