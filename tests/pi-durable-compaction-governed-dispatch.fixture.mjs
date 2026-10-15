@@ -523,7 +523,7 @@ export async function loadChildCostState(usageOutcomes, parentExecutionId) {
 
 /**
  * Every durable publication row of one parent's inbox, exactly as stored: storage id, revision,
- * write time, idempotency key and the whole event (id, delegation, payload). Comparing these rows,
+ * write time, idempotency key and the whole event (identities, occurrence time, details). Comparing these rows,
  * not event types, detects a republished, rewritten or re-keyed publication.
  */
 export async function readPublicationRecords(provider, parentExecutionId) {

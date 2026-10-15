@@ -72,8 +72,12 @@ export async function readDurableChildState(stores) {
  * Runs the worker in a new process. `killAtStep` makes the worker SIGKILL itself right after that
  * durable settlement step, so the process dies mid-settlement with no chance to clean up.
  */
-export function runChildSettlementProcess(directory, ids, { killAtStep } = {}) {
-  const child = spawn(
+export function runChildSettlementProcess(
+  directory,
+  ids,
+  { killAtStep, spawnWorker = spawn, timeoutMs = 30000 } = {}
+) {
+  const child = spawnWorker(
     process.execPath,
     [worker, directory, ids.workspaceId, ids.parentExecutionId, ids.at, killAtStep ?? '-'],
     { stdio: ['ignore', 'pipe', 'pipe'] }
@@ -83,16 +87,32 @@ export function runChildSettlementProcess(directory, ids, { killAtStep } = {}) {
   child.stdout.on('data', (chunk) => (stdout += chunk))
   child.stderr.on('data', (chunk) => (stderr += chunk))
   return new Promise((resolve, reject) => {
-    child.on('error', reject)
-    child.on('exit', (code, signal) => {
-      const line = stdout.split('\n').find((candidate) => candidate.startsWith('RESULT '))
-      resolve({
-        pid: child.pid,
-        code,
-        signal,
-        stderr,
-        result: line ? JSON.parse(line.slice('RESULT '.length)) : undefined,
-      })
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill('SIGKILL')
+    }, timeoutMs)
+    child.once('error', (error) => {
+      clearTimeout(timer)
+      reject(error)
+    })
+    // `exit` can precede the last pipe data. `close` means stdout/stderr are drained as well.
+    child.once('close', (code, signal) => {
+      clearTimeout(timer)
+      try {
+        if (timedOut) throw new Error(`CHILD_SETTLEMENT_PROCESS_TIMEOUT:${stderr}`)
+        const line = stdout.split('\n').find((candidate) => candidate.startsWith('RESULT '))
+        if (code === 0 && !line) throw new Error(`CHILD_SETTLEMENT_RESULT_MISSING:${stderr}`)
+        resolve({
+          pid: child.pid,
+          code,
+          signal,
+          stderr,
+          result: line ? JSON.parse(line.slice('RESULT '.length)) : undefined,
+        })
+      } catch (error) {
+        reject(error)
+      }
     })
   })
 }

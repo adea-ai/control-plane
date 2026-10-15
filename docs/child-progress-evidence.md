@@ -84,8 +84,11 @@ stay wired to the canonical durable paths rather than a parallel ledger.
   complete durable publication rows (storage id, revision, write time,
   idempotency key and whole event), not only event types, before the
   interruption, after it, after the reopen or resume and after repeats, so a
-  changed event id, key or payload fails; separate tests tamper with each to
-  show the comparison can fail. Neither repeats a debit, release, start, send
+  changed row id, revision, write time, key, delegation identity or event payload
+  fails. Separate tests tamper with exactly one of those fields on disk, preserving
+  all other fields so a metadata change cannot mask a missing payload comparison.
+  The standalone crash cases also read the attempt-release fence from a fresh
+  connection before resuming. Neither repeats a debit, release, start, send
   or publication, and a child whose send outcome is
   unknown is never settled. The provider transport, funding records and policy
   decision are scripted fixtures, and the child settlement driver is test-only:

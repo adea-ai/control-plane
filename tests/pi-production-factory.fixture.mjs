@@ -612,8 +612,8 @@ export async function createProductionFactoryFixture(options = {}) {
     }
     const openComposition = () => createProductionPiLeadComposition(compositionOptions)
     composition = await openComposition()
-    // Restart the production composition over the same canonical stores, directory and retained
-    // authority, as a process restart would. Persistence and the scripted transport stay open, and
+    // Reopen the production composition in this process over the same canonical stores, directory
+    // and retained authority. Persistence and the scripted transport stay open, and
     // `whileClosed` runs after the old composition released its files and before the new one opens.
     const reopenComposition = async (whileClosed) => {
       const previous = composition
