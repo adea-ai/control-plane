@@ -46,6 +46,7 @@ const ids = {
   corruptCall: 'tlc_01JABCDEF0123456789ABCDEFB',
   ambiguousCall: 'tlc_01JABCDEF0123456789ABCDEFC',
   pendingCall: 'tlc_01JABCDEF0123456789ABCDEFE',
+  historicalCall: 'tlc_01JABCDEF0123456789ABCDEFJ',
   pendingRequest: 'req_01JABCDEF0123456789ABCDEFC',
 }
 
@@ -449,6 +450,35 @@ describe.skipIf(!integrationEnabled)('PostgreSQL tool storage', () => {
         })
       ).rejects.toThrow()
       expect(await repository.get(tagged.toolCallId)).toEqual(authorized)
+    } finally {
+      await connection.close()
+    }
+  })
+
+  test('untagged Swedish historical receipt bytes survive PostgreSQL reconnect', async () => {
+    let connection = await openIndependentConnection()
+    const historicalCall = call({
+      toolCallId: ids.historicalCall,
+      idempotencyKey: 'tool-effect-0001',
+      requestDigest: 'sha256:e12c3382065ac7229a74625f92242099a49f3eae7e38784acbaa258a3ddf637b',
+      inputDigest: 'sha256:13df5d9701ee0f10b54eda343f77b053bf317cf5a8628c41638ae5216993f312',
+    })
+    try {
+      const repository = new PostgresToolCallRepository(connection.database, workspaceId)
+      expect(await repository.insert(historicalCall)).toBe(true)
+      expect(await repository.get(historicalCall.toolCallId)).toEqual(historicalCall)
+    } finally {
+      await connection.close()
+    }
+
+    connection = await openIndependentConnection()
+    try {
+      const persisted = await new PostgresToolCallRepository(connection.database, workspaceId).get(
+        historicalCall.toolCallId
+      )
+      expect(persisted).toEqual(historicalCall)
+      expect(persisted.requestDigestVersion).toBeUndefined()
+      expect(persisted.inputDigestVersion).toBeUndefined()
     } finally {
       await connection.close()
     }
