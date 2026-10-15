@@ -20,6 +20,11 @@ import {
 } from '@control-plane/tool-sdk'
 import { ToolGateway, ToolGatewayError, type PreparedToolExecution } from './tool-registry.js'
 
+// Untagged ToolCalls have no collation or ICU metadata. Only the en-US and
+// sv-SE locale forms are evidenced by fixed Bun 1.4.2 / ICU 78.1 receipt bytes.
+// Do not use the reader's ambient locale to broaden legacy acceptance.
+const VERIFIABLE_UNTAGGED_LOCALES = ['en-US', 'sv-SE'] as const
+
 export interface ToolCallRepository {
   insert(call: ToolCall): Promise<boolean>
   get(toolCallId: string): Promise<ToolCall | undefined>
@@ -508,7 +513,11 @@ function authorizationRequest(
 }
 
 export function toolRequestDigest(request: DurableToolCallRequest): string {
-  return digestV2({
+  return digestV2(requestDigestPayload(request))
+}
+
+function requestDigestPayload(request: DurableToolCallRequest): unknown {
+  return {
     toolCallId: request.toolCallId,
     executionId: request.executionId,
     attemptId: request.attemptId,
@@ -521,7 +530,7 @@ export function toolRequestDigest(request: DurableToolCallRequest): string {
     input: request.input,
     idempotencyKey: request.idempotencyKey,
     policySnapshotRef: request.policySnapshotRef,
-  })
+  }
 }
 
 /**
@@ -530,20 +539,7 @@ export function toolRequestDigest(request: DurableToolCallRequest): string {
  * calls persisted before the migration.
  */
 export function toolRequestDigestLegacy(request: DurableToolCallRequest): string {
-  return digest({
-    toolCallId: request.toolCallId,
-    executionId: request.executionId,
-    attemptId: request.attemptId,
-    workspaceId: request.workspaceId,
-    profileId: request.profileId,
-    principalRef: request.audit.principalRef,
-    toolDefinitionId: request.toolDefinitionId,
-    toolVersionId: request.toolVersionId,
-    operation: request.operation,
-    input: request.input,
-    idempotencyKey: request.idempotencyKey,
-    policySnapshotRef: request.policySnapshotRef,
-  })
+  return digest(requestDigestPayload(request))
 }
 
 /** Accepts historical untagged request digests and only the exact tagged form. */
@@ -552,8 +548,13 @@ export function toolRequestMatchesDigest(
   expected: string,
   version?: unknown
 ): boolean {
-  if (version === undefined)
-    return expected === toolRequestDigestLegacy(request) || expected === toolRequestDigest(request)
+  if (version === undefined) {
+    const payload = requestDigestPayload(request)
+    return (
+      expected === digestV2(payload) ||
+      VERIFIABLE_UNTAGGED_LOCALES.some((locale) => expected === digestWithLocale(payload, locale))
+    )
+  }
   return version === 2 && expected === toolRequestDigest(request)
 }
 
@@ -603,6 +604,10 @@ function digest(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
 
+function digestWithLocale(value: unknown, locale: string): string {
+  return `sha256:${createHash('sha256').update(canonical(value, locale)).digest('hex')}`
+}
+
 /** Legacy locale-canonical input digest retained for untagged historical receipts. */
 export function toolInputDigest(input: unknown): string {
   return digest(input)
@@ -614,7 +619,12 @@ export function toolInputMatchesDigest(
   expected: string,
   version?: unknown
 ): boolean {
-  if (version === undefined) return expected === digest(input) || expected === digestV2(input)
+  if (version === undefined) {
+    return (
+      expected === digestV2(input) ||
+      VERIFIABLE_UNTAGGED_LOCALES.some((locale) => expected === digestWithLocale(input, locale))
+    )
+  }
   return version === 2 && expected === digestV2(input)
 }
 
@@ -655,14 +665,16 @@ function digestV2(value: unknown): string {
 // CANONICAL-JSON: verification-only legacy form, see contracts canonicalJsonStringify.
 // request.input is arbitrary tool-call JSON (free-form keys); the idempotency
 // verifier dual-accepts the legacy locale-dependent form and the V2 code-point form.
-function canonical(value: unknown): string {
+function canonical(value: unknown, locale?: string): string {
   if (value === undefined) return 'null'
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+  if (Array.isArray(value)) return `[${value.map((entry) => canonical(entry, locale)).join(',')}]`
   if (value !== null && typeof value === 'object') {
     return `{${Object.entries(value)
       .filter(([, entry]) => entry !== undefined)
-      .toSorted(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
+      .toSorted(([left], [right]) =>
+        locale === undefined ? left.localeCompare(right) : left.localeCompare(right, locale)
+      )
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry, locale)}`)
       .join(',')}}`
   }
   return JSON.stringify(value) ?? 'null'

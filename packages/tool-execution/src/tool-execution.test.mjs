@@ -35,6 +35,75 @@ const ids = {
   interaction: 'int_01JABCDEF0123456789ABCDEFG',
 }
 
+// These literal canonical JSON bytes were generated with a standalone script
+// using Bun 1.4.2 / ICU 78.1 and SHA-256, independently of the serializer below.
+// They pin the en-US and sv-SE historical locale collations. Tests
+// hash these fixed bytes; they never derive receipt hashes from the serializer.
+const historicalLocaleReceiptBytes = {
+  enUS: {
+    input: '{"å":"a-ring","ä":"a-diaeresis","z":"zee"}',
+    request:
+      '{"attemptId":"att_01JABCDEF0123456789ABCDEFG","executionId":"exe_01JABCDEF0123456789ABCDEFG","idempotencyKey":"tool-effect-0001","input":{"å":"a-ring","ä":"a-diaeresis","z":"zee"},"operation":"write","policySnapshotRef":"policy://workspace/v7","principalRef":"service:runtime-worker","profileId":"prf_01JABCDEF0123456789ABCDEFG","toolCallId":"tlc_01JABCDEF0123456789ABCDEFG","toolDefinitionId":"tld_01JABCDEF0123456789ABCDEFG","toolVersionId":"tlv_01JABCDEF0123456789ABCDEFG","workspaceId":"wsp_01JABCDEF0123456789ABCDEFG"}',
+  },
+  svSE: {
+    input: '{"z":"zee","å":"a-ring","ä":"a-diaeresis"}',
+    request:
+      '{"attemptId":"att_01JABCDEF0123456789ABCDEFG","executionId":"exe_01JABCDEF0123456789ABCDEFG","idempotencyKey":"tool-effect-0001","input":{"z":"zee","å":"a-ring","ä":"a-diaeresis"},"operation":"write","policySnapshotRef":"policy://workspace/v7","principalRef":"service:runtime-worker","profileId":"prf_01JABCDEF0123456789ABCDEFG","toolCallId":"tlc_01JABCDEF0123456789ABCDEFG","toolDefinitionId":"tld_01JABCDEF0123456789ABCDEFG","toolVersionId":"tlv_01JABCDEF0123456789ABCDEFG","workspaceId":"wsp_01JABCDEF0123456789ABCDEFG"}',
+  },
+  turkish: {
+    input: '{"a":3,"A":4,"ı":2,"I":1,"i":5,"İ":6}',
+    request:
+      '{"attemptId":"att_01JABCDEF0123456789ABCDEFG","executionId":"exe_01JABCDEF0123456789ABCDEFG","idempotencyKey":"tool-effect-0001","input":{"a":3,"A":4,"ı":2,"I":1,"i":5,"İ":6},"operation":"write","policySnapshotRef":"policy://workspace/v7","principalRef":"service:runtime-worker","profileId":"prf_01JABCDEF0123456789ABCDEFG","toolCallId":"tlc_01JABCDEF0123456789ABCDEFG","toolDefinitionId":"tld_01JABCDEF0123456789ABCDEFG","toolVersionId":"tlv_01JABCDEF0123456789ABCDEFG","workspaceId":"wsp_01JABCDEF0123456789ABCDEFG"}',
+  },
+}
+
+const historicalLocaleDigests = {
+  enUS: {
+    input: 'sha256:df1be80b672833fb837277f221cfd710fef879218911dec00c7815ee12fa7a9f',
+    request: 'sha256:fe605a692590f68913c5976e3f7ef2a1c3efe5bd29099ff3c82ed564ba03e1e5',
+  },
+  svSE: {
+    input: 'sha256:13df5d9701ee0f10b54eda343f77b053bf317cf5a8628c41638ae5216993f312',
+    request: 'sha256:1e6549b772d8214f37fd72b131a86a979e3147f2d21b63ea28b4825eaeaf6770',
+  },
+  unsupportedTurkish: {
+    input: 'sha256:bbc6768eb8f890b5a938a492e1ab0f9d3c8584d37584464787cb23ecc82e52d5',
+    request: 'sha256:a859930f309a28490a9719e8563cd5fad314397b898fd2bcabbb8d089c364482',
+  },
+}
+
+function digestReceiptBytes(bytes) {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`
+}
+
+test('pinned historical locale receipt hashes match their independent canonical bytes', () => {
+  for (const locale of ['enUS', 'svSE', 'turkish']) {
+    expect(digestReceiptBytes(historicalLocaleReceiptBytes[locale].input)).toBe(
+      historicalLocaleDigests[locale === 'turkish' ? 'unsupportedTurkish' : locale].input
+    )
+    expect(digestReceiptBytes(historicalLocaleReceiptBytes[locale].request)).toBe(
+      historicalLocaleDigests[locale === 'turkish' ? 'unsupportedTurkish' : locale].request
+    )
+  }
+})
+
+// The old serializer omitted the locale argument. Pin that default explicitly
+// so the unsupported-locale fixture stays deterministic on differently
+// configured developer and CI hosts.
+async function withDefaultLocaleCompare(locale, callback) {
+  const originalLocaleCompare = String.prototype.localeCompare
+  Reflect.set(String.prototype, 'localeCompare', function (...args) {
+    return args.length === 1
+      ? originalLocaleCompare.call(this, args[0], locale)
+      : originalLocaleCompare.apply(this, args)
+  })
+  try {
+    return await callback()
+  } finally {
+    Reflect.set(String.prototype, 'localeCompare', originalLocaleCompare)
+  }
+}
+
 test('tool input digests expose the durable legacy canonical form for authority checks', () => {
   const input = { z: 'artifact', a: 1 }
   const expected = 'sha256:c903c8fedc8d79d9e651f7f42a541a4147ba6f1e3ec5a8c60ae74fe724665fdf'
@@ -574,6 +643,93 @@ describe('policy-controlled durable tool execution', () => {
     const replay = await service.execute(plainRequest)
     expect(replay).toMatchObject({ state: 'in_progress', call: { requestDigest: legacyDigest } })
     expect(executor.requests).toHaveLength(0)
+  })
+
+  test('replays each pinned historical locale receipt without repeating its effect', async () => {
+    const originalInput = { ä: 'a-diaeresis', å: 'a-ring', z: 'zee' }
+    const retryInput = { z: 'zee', å: 'a-ring', ä: 'a-diaeresis' }
+    const originalRequest = request({ approval: undefined, input: originalInput })
+    const retryRequest = request({ approval: undefined, input: retryInput })
+    const looseSchema = { inputSchema: { type: 'object', additionalProperties: true } }
+    const noApproval = { operations: [{ ...version().operations[0], approvalMode: 'never' }] }
+
+    for (const receipt of [historicalLocaleDigests.enUS, historicalLocaleDigests.svSE]) {
+      expect(toolInputMatchesDigest(retryInput, receipt.input)).toBe(true)
+      expect(toolRequestMatchesDigest(retryRequest, receipt.request)).toBe(true)
+      expect(toolInputMatchesDigest(retryInput, receipt.input, 2)).toBe(false)
+      expect(toolRequestMatchesDigest(retryRequest, receipt.request, 2)).toBe(false)
+
+      const seed = await fixture({ versionOverrides: { ...looseSchema, ...noApproval } })
+      const completed = await seed.service.execute(originalRequest)
+      const historicalCall = { ...completed.call }
+      historicalCall.requestDigest = receipt.request
+      historicalCall.inputDigest = receipt.input
+      delete historicalCall.requestDigestVersion
+      delete historicalCall.inputDigestVersion
+      const historicalCalls = new InMemoryToolCallRepository()
+      expect(await historicalCalls.insert(historicalCall)).toBe(true)
+
+      const replay = await fixture({
+        calls: historicalCalls,
+        versionOverrides: { ...looseSchema, ...noApproval },
+      })
+      const outcome = await replay.service.execute(retryRequest)
+
+      expect(outcome).toMatchObject({ state: 'succeeded', call: { status: 'succeeded' } })
+      expect(replay.executor.requests).toHaveLength(0)
+      await expect(
+        replay.service.execute(
+          request({ approval: undefined, input: { ...retryInput, z: 'changed' } })
+        )
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+      expect(replay.executor.requests).toHaveLength(0)
+    }
+  })
+
+  test('fails closed on unsupported Turkish legacy bytes under a pinned en-US host default', async () => {
+    const input = { I: 1, ı: 2, a: 3, A: 4, i: 5, İ: 6 }
+    const incoming = request({ approval: undefined, input })
+
+    const seed = await fixture({
+      versionOverrides: {
+        inputSchema: { type: 'object', additionalProperties: true },
+        operations: [{ ...version().operations[0], approvalMode: 'never' }],
+      },
+    })
+    const completed = await seed.service.execute(incoming)
+    const unsupportedCall = { ...completed.call }
+    unsupportedCall.requestDigest = historicalLocaleDigests.unsupportedTurkish.request
+    unsupportedCall.inputDigest = historicalLocaleDigests.unsupportedTurkish.input
+    delete unsupportedCall.requestDigestVersion
+    delete unsupportedCall.inputDigestVersion
+    const unsupportedCalls = new InMemoryToolCallRepository()
+    expect(await unsupportedCalls.insert(unsupportedCall)).toBe(true)
+
+    const replay = await fixture({
+      calls: unsupportedCalls,
+      versionOverrides: {
+        inputSchema: { type: 'object', additionalProperties: true },
+        operations: [{ ...version().operations[0], approvalMode: 'never' }],
+      },
+    })
+    await withDefaultLocaleCompare('en-US', async () => {
+      expect(toolInputMatchesDigest(input, historicalLocaleDigests.unsupportedTurkish.input)).toBe(
+        false
+      )
+      expect(
+        toolRequestMatchesDigest(incoming, historicalLocaleDigests.unsupportedTurkish.request)
+      ).toBe(false)
+      expect(
+        toolInputMatchesDigest(input, historicalLocaleDigests.unsupportedTurkish.input, 2)
+      ).toBe(false)
+      expect(
+        toolRequestMatchesDigest(incoming, historicalLocaleDigests.unsupportedTurkish.request, 2)
+      ).toBe(false)
+      await expect(replay.service.execute(incoming)).rejects.toMatchObject({
+        code: 'IDEMPOTENCY_CONFLICT',
+      })
+      expect(replay.executor.requests).toHaveLength(0)
+    })
   })
 
   test('an untagged canonical receipt written during the V2 cutover still replays', async () => {

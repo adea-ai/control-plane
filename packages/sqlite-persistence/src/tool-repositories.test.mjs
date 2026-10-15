@@ -13,8 +13,6 @@ import {
   StaticToolPolicyAuthorizer,
   ToolGateway,
   ToolRegistry,
-  toolInputDigest,
-  toolRequestDigestLegacy,
 } from '@control-plane/tool-execution'
 import { InMemoryInteractionRepository, InteractionService } from '@control-plane/domain'
 import { ToolExecutorError } from '@control-plane/tool-sdk'
@@ -41,6 +39,10 @@ const ids = {
 }
 
 const requestedAt = '2026-08-25T09:00:00.000Z'
+const historicalSwedishToolReceipt = {
+  requestDigest: 'sha256:1e6549b772d8214f37fd72b131a86a979e3147f2d21b63ea28b4825eaeaf6770',
+  inputDigest: 'sha256:13df5d9701ee0f10b54eda343f77b053bf317cf5a8628c41638ae5216993f312',
+}
 
 function definition(workspaceId = ids.workspace, toolDefinitionId = ids.definition) {
   return {
@@ -258,10 +260,12 @@ function waitForWorkerState(worker, expectedState) {
   })
 }
 
-async function seedRegistry(provider) {
+async function seedRegistry(provider, inputSchema) {
   const registry = new ToolRegistry(new SqliteToolRegistryRepository(provider, ids.workspace))
   await registry.createDefinition(definition())
-  await registry.publishVersion(versionDraft())
+  const draft = versionDraft()
+  if (inputSchema) draft.inputSchema = inputSchema
+  await registry.publishVersion(draft)
 }
 
 async function publishedVersion(toolVersionId, semanticVersion) {
@@ -565,7 +569,7 @@ describe('SQLite tool repositories', () => {
   test('policy-controlled tool effects retain in-progress and completed receipts across service instances and reopen', async () => {
     await withDatabase(async ({ path, provider, reopen }) => {
       const persistence = provider()
-      await seedRegistry(persistence)
+      await seedRegistry(persistence, { type: 'object', additionalProperties: true })
       let releaseEffect
       let markStarted
       const started = new Promise((resolve) => {
@@ -579,7 +583,9 @@ describe('SQLite tool repositories', () => {
         return pendingEffect
       })
       const firstService = service(persistence, firstExecutor)
-      const request = executionRequest()
+      const request = executionRequest({
+        input: { ä: 'a-diaeresis', å: 'a-ring', z: 'zee' },
+      })
       const firstExecution = firstService.execute(request)
       await started
       expect(
@@ -638,8 +644,8 @@ describe('SQLite tool repositories', () => {
         const historicalCall = { ...record.value.call }
         delete historicalCall.requestDigestVersion
         delete historicalCall.inputDigestVersion
-        historicalCall.requestDigest = toolRequestDigestLegacy(request)
-        historicalCall.inputDigest = toolInputDigest(request.input)
+        historicalCall.requestDigest = historicalSwedishToolReceipt.requestDigest
+        historicalCall.inputDigest = historicalSwedishToolReceipt.inputDigest
         await transaction.put({
           ...persisted,
           expectedRevision: record.revision,
@@ -651,8 +657,8 @@ describe('SQLite tool repositories', () => {
       expect(legacyReplay).toMatchObject({
         state: 'succeeded',
         call: {
-          requestDigest: toolRequestDigestLegacy(request),
-          inputDigest: toolInputDigest(request.input),
+          requestDigest: historicalSwedishToolReceipt.requestDigest,
+          inputDigest: historicalSwedishToolReceipt.inputDigest,
         },
       })
       expect(legacyReplay.call.requestDigestVersion).toBeUndefined()
