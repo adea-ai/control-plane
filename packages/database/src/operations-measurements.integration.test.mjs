@@ -3,7 +3,11 @@ import { drizzle } from 'drizzle-orm/postgres-js'
 import { sql } from 'drizzle-orm'
 import postgres from 'postgres'
 import { loadDatabaseCredentials } from '@control-plane/config'
-import { operationsMetricNames, operationsStorageNamespaces } from '@control-plane/telemetry'
+import {
+  OperationsMeasurementLifecycle,
+  operationsMetricNames,
+  operationsStorageNamespaces,
+} from '@control-plane/telemetry'
 import {
   createPostgresOperationsMeasurementProducer,
   createPostgresRuntimeMeasurements,
@@ -518,7 +522,7 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
       failure = error
     }
 
-    expect(attempts.sort()).toEqual(['database', 'first-client', 'second-client'])
+    expect(attempts.toSorted()).toEqual(['database', 'first-client', 'second-client'])
     expect(failure).toBeInstanceOf(AggregateError)
     expect(failure.errors).toEqual([closeFailure, disposeFailure])
   })
@@ -1287,9 +1291,7 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
       expect(observed[1].writeCode).toBe('25006')
       const [{ n }] = await migrationSql`select count(*)::int as n from executions`
       expect(n).toBe(observed[1].before)
-      const open = await migrationSql`select count(*)::int as n from pg_stat_activity
-        where datname = ${isolated.name} and state like 'idle in transaction%'`
-      expect(open[0].n).toBe(0)
+      expect(await openApplicationTransactions()).toBe(0)
     },
     timeout
   )
@@ -1447,13 +1449,307 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
           }
         }
       }
-      const open = await migrationSql`select count(*)::int as n from pg_stat_activity
-        where datname = ${isolated.name} and usename = ${new URL(applicationUrl).username}
-          and state like 'idle in transaction%'`
-      expect(open[0].n).toBe(0)
+      expect(await openApplicationTransactions()).toBe(0)
     },
     timeout
   )
+
+  /**
+   * Other backends of the application role that are not idle. Counted through the
+   * application connection itself: PostgreSQL hides other roles' activity details.
+   */
+  async function busyApplicationBackends() {
+    const rows = await application.execute(sql`select count(*)::int as n from pg_stat_activity
+      where datname = current_database() and usename = current_user
+        and pid <> pg_backend_pid() and state <> 'idle'`)
+    return rows[0].n
+  }
+
+  /** Application-role backends left inside a transaction, counted through the application role. */
+  async function openApplicationTransactions() {
+    const rows = await application.execute(sql`select count(*)::int as n from pg_stat_activity
+      where datname = current_database() and usename = current_user
+        and pid <> pg_backend_pid() and state like 'idle in transaction%'`)
+    return rows[0].n
+  }
+
+  async function untilNoBusyBackends(timeoutMs = 8000) {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if ((await busyApplicationBackends()) === 0) return
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    throw new Error('abandoned measurement backends did not finish')
+  }
+
+  test(
+    'an aborted pass stuck on a lock returns promptly, rolls back and promotes no baseline',
+    async () => {
+      const producer = producerFor(WORKSPACE_A, { lockTimeoutMs: 8000, statementTimeoutMs: 9000 })
+      const first = await producer.measureDetailed()
+      expect(first.baselineCommitted).toBe(true)
+
+      const lock = await holdExclusiveLock('usage_operation_receipts')
+      const controller = new AbortController()
+      try {
+        const pending = producer.measureDetailed(controller.signal)
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        const abortedAt = Date.now()
+        controller.abort()
+        await expect(
+          Promise.race([pending, new Promise((resolve) => setTimeout(() => resolve('hung'), 2000))])
+        ).resolves.toBeUndefined()
+        expect(Date.now() - abortedAt).toBeLessThan(1000)
+
+        // The abandoned transaction is still waiting on the lock: no pass starts on top
+        // of it, so abandoned work never accumulates connections.
+        await expect(producer.measureDetailed()).resolves.toBeUndefined()
+        expect(await busyApplicationBackends()).toBe(1)
+      } finally {
+        lock.release()
+        await lock.done
+      }
+      await untilNoBusyBackends()
+
+      // The producer recovers; the aborted pass promoted nothing, and the baseline is
+      // still the last complete snapshot (data is unchanged, so growth is exactly zero).
+      let recovered
+      const deadline = Date.now() + 5000
+      while (recovered === undefined && Date.now() < deadline) {
+        recovered = await producer.measureDetailed()
+        if (recovered === undefined) await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      expect(recovered?.baselineCommitted).toBe(true)
+      expect(
+        valueOf(recovered.points, operationsMetricNames.storageGrowthBytes, { namespace: 'total' })
+      ).toBe(0)
+      expect(await openApplicationTransactions()).toBe(0)
+    },
+    timeout
+  )
+
+  test(
+    'lifecycle pass and close deadlines bound a database stalled on a lock, then the pool ends cleanly',
+    async () => {
+      const pool = postgres(applicationUrl, { max: 2, prepare: false })
+      const recorded = []
+      const adapter = {
+        add: (...args) => recorded.push(args),
+        record: (...args) => recorded.push(args),
+        recordGauge: (...args) => recorded.push(args),
+      }
+      const lock = await holdExclusiveLock('usage_operation_receipts')
+      let lifecycle
+      try {
+        lifecycle = createPostgresRuntimeMeasurements({
+          database: drizzle(pool, { schema }),
+          adapter,
+          intervalMs: 3_600_000,
+          workspaceId: WORKSPACE_A,
+          lockTimeoutMs: 8000,
+          statementTimeoutMs: 9000,
+          passTimeoutMs: 150,
+          closeTimeoutMs: 150,
+          now: () => NOW,
+        })
+        lifecycle.start()
+        const sampleStarted = Date.now()
+        await lifecycle.sample()
+        expect(Date.now() - sampleStarted).toBeLessThan(2000)
+
+        const closeStarted = Date.now()
+        const closing = lifecycle.close()
+        expect(lifecycle.close()).toBe(closing)
+        await closing
+        await lifecycle.close()
+        expect(Date.now() - closeStarted).toBeLessThan(2000)
+        expect(recorded).toEqual([])
+      } finally {
+        // Release the lock, drain what is still abandoned, then end the pool.
+        lock.release()
+        try {
+          await lock.done
+        } finally {
+          try {
+            await lifecycle?.close()
+            await untilNoBusyBackends()
+          } finally {
+            await pool.end({ timeout: 5 })
+          }
+        }
+      }
+      expect(recorded).toEqual([])
+    },
+    timeout
+  )
+
+  test(
+    'close aborts a still-active database pass before its pass deadline, then the transaction rolls back',
+    async () => {
+      const pool = postgres(applicationUrl, { max: 2, prepare: false })
+      const database = drizzle(pool, { schema })
+      const recorded = []
+      const adapter = {
+        add: (...args) => recorded.push(args),
+        record: (...args) => recorded.push(args),
+        recordGauge: (...args) => recorded.push(args),
+      }
+      const signals = []
+      let lifecycle
+      let lock
+      try {
+        const producer = createPostgresOperationsMeasurementProducer({
+          database,
+          workspaceId: WORKSPACE_A,
+          lockTimeoutMs: 8000,
+          statementTimeoutMs: 9000,
+          now: () => NOW,
+        })
+        // The baseline from a complete pass, before anything stalls.
+        expect((await producer.measureDetailed()).baselineCommitted).toBe(true)
+
+        lock = await holdExclusiveLock('usage_operation_receipts')
+        // The pass deadline (60 s) is far beyond this test: only close() can abort the pass.
+        lifecycle = new OperationsMeasurementLifecycle({
+          adapter,
+          serviceName: 'hosted-control-plane',
+          intervalMs: 3_600_000,
+          closeTimeoutMs: 200,
+          measure: (context) => {
+            signals.push(context.signal)
+            return producer.measure(context)
+          },
+        })
+        lifecycle.start()
+        // The pass is genuinely active in the database: its last source waits on the lock.
+        const deadline = Date.now() + 5000
+        while ((await busyApplicationBackends()) === 0 && Date.now() < deadline)
+          await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(await busyApplicationBackends()).toBe(1)
+        expect(signals).toHaveLength(1)
+        expect(signals[0].aborted).toBe(false)
+
+        const closeStarted = Date.now()
+        await Promise.race([lifecycle.close(), new Promise((resolve) => setTimeout(resolve, 3000))])
+        expect(Date.now() - closeStarted).toBeLessThan(2500)
+        expect(signals[0].aborted).toBe(true)
+        expect(recorded).toEqual([])
+        // The abandoned transaction has not finished, and no pass can start on top of it.
+        await expect(producer.measureDetailed()).resolves.toBeUndefined()
+
+        lock.release()
+        await lock.done
+        lock = undefined
+        // It rolls back at its next source boundary instead of reading on.
+        await untilNoBusyBackends()
+        expect(await openApplicationTransactions()).toBe(0)
+        expect(recorded).toEqual([])
+
+        // The producer recovers; the baseline is still the last complete snapshot.
+        const recovered = await producer.measureDetailed()
+        expect(recovered.baselineCommitted).toBe(true)
+        expect(
+          valueOf(recovered.points, operationsMetricNames.storageGrowthBytes, {
+            namespace: 'total',
+          })
+        ).toBe(0)
+      } finally {
+        try {
+          if (lock !== undefined) {
+            lock.release()
+            await lock.done
+          }
+        } finally {
+          try {
+            await lifecycle?.close()
+            await untilNoBusyBackends()
+          } finally {
+            await pool.end({ timeout: 5 })
+          }
+        }
+      }
+    },
+    timeout
+  )
+
+  for (const boundary of ['connection', 'savepoint', 'final source']) {
+    test(
+      `abort at the ${boundary} boundary rolls back the real PostgreSQL transaction`,
+      async () => {
+        const statements = []
+        const pool = postgres(applicationUrl, {
+          max: 1,
+          prepare: false,
+          debug: (_connection, query) => statements.push(query.trim().toLowerCase()),
+        })
+        const database = drizzle(pool, { schema })
+        const reached = Promise.withResolvers()
+        const release = Promise.withResolvers()
+        const completed = Promise.withResolvers()
+        let reads = 0
+        const pause = async () => {
+          reached.resolve()
+          await release.promise
+        }
+        const controlled = {
+          transaction: (callback, options) =>
+            database
+              .transaction(async (transaction) => {
+                if (boundary === 'connection') await pause()
+                return callback({
+                  execute: transaction.execute.bind(transaction),
+                  transaction: (inner) =>
+                    transaction.transaction(async (savepoint) => {
+                      if (boundary === 'savepoint' && reads === 0) await pause()
+                      return inner({
+                        execute: async (query) => {
+                          const rows = await savepoint.execute(query)
+                          reads += 1
+                          if (
+                            boundary === 'final source' &&
+                            reads === postgresMeasuredNamespaces.length
+                          )
+                            await pause()
+                          return rows
+                        },
+                      })
+                    }),
+                })
+              }, options)
+              .finally(() => completed.resolve()),
+        }
+        const controller = new AbortController()
+        const producer = producerFor(WORKSPACE_A, { database: controlled })
+        try {
+          const pending = producer.measureDetailed(controller.signal)
+          await reached.promise
+          controller.abort()
+          await expect(pending).resolves.toBeUndefined()
+          // The real transaction is still paused; another pass cannot acquire a connection.
+          await expect(producer.measureDetailed()).resolves.toBeUndefined()
+          release.resolve()
+          await completed.promise
+          expect(statements.some((statement) => /^rollback\b/.test(statement))).toBe(true)
+          expect(statements.some((statement) => /^commit\b/.test(statement))).toBe(false)
+          expect(reads).toBe(boundary === 'final source' ? postgresMeasuredNamespaces.length : 0)
+          if (boundary === 'connection')
+            expect(statements.some((statement) => statement.includes('set_config'))).toBe(false)
+          // Observe closure through the application role; this also lets the producer release its
+          // in-process fence after the driver's transaction promise finishes.
+          expect(await openApplicationTransactions()).toBe(0)
+
+          const recovered = await producer.measureDetailed()
+          expect(recovered.baselineCommitted).toBe(true)
+          expect(pointsOf(recovered.points, operationsMetricNames.storageGrowthBytes)).toEqual([])
+        } finally {
+          release.resolve()
+          await completed.promise
+          await pool.end({ timeout: 5 })
+        }
+      },
+      timeout
+    )
+  }
 
   test(
     'concurrent callers share one in-flight pass',

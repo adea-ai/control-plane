@@ -232,3 +232,70 @@ test('built Node adapter uses its compiled worker and completes measurement befo
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('compiled SQLite worker exits on abort and preserves the last complete growth baseline', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'runtime-measurements-cancellation-'))
+  const databasePath = join(directory, 'control-plane.sqlite')
+  const provider = new SqlitePersistenceProvider({ path: databasePath })
+  try {
+    await provider.migrate()
+    provider.close()
+    const result = await promisify(execFile)(
+      'node',
+      [
+        fileURLToPath(new URL('./runtime-measurements-cancellation.fixture.mjs', import.meta.url)),
+        databasePath,
+      ],
+      { timeout: 15000 }
+    )
+    const evidence = JSON.parse(result.stdout)
+    assert.equal(evidence.terminations, 1)
+    assert.equal(evidence.readerTerminations, 1)
+    assert.equal(evidence.growth, evidence.final - evidence.first)
+    assert.notEqual(evidence.growth, evidence.final - evidence.abandoned)
+  } finally {
+    provider.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('SQLite sampling and close stay bounded whether completion or the deadline wins', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'runtime-measurements-'))
+  const databasePath = join(directory, 'control-plane.sqlite')
+  const database = new DatabaseSync(databasePath)
+  database.exec(`CREATE TABLE control_plane_records (
+    namespace TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL,
+    value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (namespace, id)
+  ) STRICT`)
+  database.close()
+  const observed = []
+  const record = (name, value, attributes) => observed.push({ name, value, attributes })
+  // A fast worker may legitimately finish before this deadline. The held-worker fixture above
+  // separately proves discard on abort; here either outcome must leave shutdown bounded and quiet.
+  const lifecycle = createLocalRuntimeMeasurements({
+    databasePath,
+    adapter: { add: record, record, recordGauge: record },
+    intervalMs: 1000,
+    measurement: { workspaceId },
+    now: () => new Date('2026-10-13T00:00:00.000Z'),
+    passTimeoutMs: 10,
+    closeTimeoutMs: 10,
+  })
+  try {
+    lifecycle.start()
+    const started = Date.now()
+    await lifecycle.sample()
+    assert.ok(Date.now() - started < 2000)
+    const closing = lifecycle.close()
+    assert.equal(lifecycle.close(), closing)
+    await closing
+    const afterClose = structuredClone(observed)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    assert.deepEqual(observed, afterClose)
+    await lifecycle.sample()
+    assert.deepEqual(observed, afterClose)
+  } finally {
+    await lifecycle.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
