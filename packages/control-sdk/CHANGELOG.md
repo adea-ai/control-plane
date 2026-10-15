@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.18.1](https://github.com/adea-ai/control-plane/compare/sdk-v1.18.0...sdk-v1.18.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **orchestration:** version graph catalog digests ([bdc2fbb](https://github.com/adea-ai/control-plane/commit/bdc2fbb6afc00e97bfdba0f686a5ba08fc643cf7))
+* preserve graph digest compatibility ([#1149](https://github.com/adea-ai/control-plane/issues/1149)) ([bdc2fbb](https://github.com/adea-ai/control-plane/commit/bdc2fbb6afc00e97bfdba0f686a5ba08fc643cf7))
+
 ## [1.18.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.17.0...sdk-v1.18.0) (2026-10-10)
 
 
