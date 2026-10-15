@@ -310,6 +310,8 @@ async function exerciseRejectedCompositionBeforeHandshake(
     failureBeforeOwnershipHandshake: {
       method: failureMethod,
       probePath: join(work, `${failureMethod}-failure.json`),
+      stopFailurePath: join(work, `${failureMethod}-stop-failure.json`),
+      failStopAfterStart: failureMethod === 'start',
       probeDelayMs,
       releasePath,
     },
@@ -318,15 +320,19 @@ async function exerciseRejectedCompositionBeforeHandshake(
   const initial = spawnSelfHostedSimpleComposition('initial', config)
   const incarnation = initial
   const probeWaitMs = FAILURE_PROBE_WAIT_MS + probeDelayMs
-  cleanup.push(() =>
-    cleanupFailureComposition({
+  let cleanupHandled = false
+  const cleanupFailure = async () => {
+    if (cleanupHandled) return
+    await cleanupFailureComposition({
       work,
       incarnation,
       owned,
       releasePath,
       timeoutMs: probeWaitMs + EXIT_BOUND_MS * 2,
     })
-  )
+    cleanupHandled = true
+  }
+  cleanup.push(cleanupFailure)
 
   const outcome = await waitForFailureOutcome(
     initial,
@@ -357,6 +363,16 @@ async function exerciseRejectedCompositionBeforeHandshake(
   expect(initial.stages.find((stage) => stage.stage === 'failed')).toMatchObject({
     processIdentities: evidence.processIdentities,
   })
+  if (failureMethod === 'start') {
+    expect(existsSync(config.failureBeforeOwnershipHandshake.stopFailurePath)).toBe(true)
+    await cleanupFailure()
+    expect(
+      await boundedWait(initial.exited, EXIT_BOUND_MS, 'partially started composition cleanup')
+    ).toBeDefined()
+    expect(owned).toEqual([])
+    expect(existsSync(work)).toBe(false)
+    return
+  }
   expect(await boundedWait(initial.exited, EXIT_BOUND_MS, 'failed composition exit')).toEqual({
     code: 1,
     signal: null,

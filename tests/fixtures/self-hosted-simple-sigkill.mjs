@@ -280,11 +280,32 @@ async function runInitial(config) {
       healthFailureArmed = true
     }
   } else if (failure?.method === 'start') {
-    const originalStart = composition.start.bind(composition)
+    const originalWorkflowStart = composition.workflow.start.bind(composition.workflow)
+    const originalWorkflowStop = composition.workflow.stop.bind(composition.workflow)
     const originalHealth = composition.workflow.health.bind(composition.workflow)
-    composition.start = async () => {
-      await originalStart()
-      return rejectAfterRestateStarts(await originalHealth(), failure)
+    let injectedStartError
+    composition.workflow.start = async () => {
+      try {
+        await originalWorkflowStart()
+        return await rejectAfterRestateStarts(await originalHealth(), failure)
+      } catch (error) {
+        injectedStartError = error
+        throw error
+      }
+    }
+    if (failure.failStopAfterStart === true) {
+      let stopFailureInjected = false
+      composition.workflow.stop = async () => {
+        if (!stopFailureInjected && injectedStartError !== undefined) {
+          stopFailureInjected = true
+          await writeFile(
+            failure.stopFailurePath,
+            JSON.stringify({ message: 'SELF_HOSTED_SIMPLE_INJECTED_START_STOP_FAILURE' })
+          )
+          throw new Error('SELF_HOSTED_SIMPLE_INJECTED_START_STOP_FAILURE')
+        }
+        await originalWorkflowStop()
+      }
     }
   }
   try {
