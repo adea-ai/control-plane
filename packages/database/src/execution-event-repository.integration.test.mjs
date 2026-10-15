@@ -25,7 +25,7 @@ const planReference = {
   schemaVersion: plan.schemaVersion,
 }
 const payload = { schemaVersion: 1, schemas: ['v1'], 'a-b': 1, a_b: 2 }
-const historicalPayload = { schemaVersion: 1, schemas: ['v1'], 'a-b': 1, a_b: 2 }
+const historicalPayload = payload
 const historicalHash = '2a64697fcbc2d74f77b9dceaec97f0bd170aab9592edd2e0248bd5f70f91b735'
 
 function draft(id, value = payload) {
@@ -140,6 +140,7 @@ describe.skipIf(!enabled)('PostgreSQL event payload hash versioning', () => {
     const historical = await repository.get(legacyEventId)
     expect(historical).toMatchObject({ payloadHash: historicalHash })
     expect(historical.payloadHashVersion).toBeUndefined()
+    expect(hashExecutionEventPayloadV2(historical.payload)).not.toBe(historicalHash)
     await expect(service.append(draft(legacyEventId))).rejects.toMatchObject({
       code: 'EVENT_EXISTS',
     })

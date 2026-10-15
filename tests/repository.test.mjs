@@ -209,6 +209,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'apps/hosted-control-plane/src/reconciliation-metrics.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-projection.integration.test.mjs',
     'apps/workflow-worker/src/child-runtime-budget-admission.integration.test.mjs',
+    'apps/workflow-worker/src/remote-runtime-waiter.integration.test.mjs',
     'apps/workflow-worker/src/runtime-budget-admission.integration.test.mjs',
     'packages/database/src/admission-rollout-admin.integration.test.mjs',
     'packages/database/src/budget-admission.integration.test.mjs',

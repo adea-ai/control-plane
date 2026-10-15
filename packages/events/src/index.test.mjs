@@ -115,6 +115,7 @@ describe('ExecutionEvent log', () => {
       historicalLocaleHash
     )
     expect(hashExecutionEventPayload(historicalLocalePayload)).toBe(historicalLocaleHash)
+    expect(hashExecutionEventPayload(historicalLocalePayload, 'en-US')).toBe(historicalLocaleHash)
     expect(ExecutionEventSchema.parse(historical).payloadHashVersion).toBeUndefined()
 
     const canonicalRecord = {

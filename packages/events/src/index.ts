@@ -383,8 +383,11 @@ function cloneOptional<Value>(value: Value | undefined): Value | undefined {
   return value === undefined ? undefined : clone(value)
 }
 
-export function hashExecutionEventPayload(payload: Readonly<Record<string, unknown>>): string {
-  return createHash('sha256').update(canonicalJson(payload)).digest('hex')
+export function hashExecutionEventPayload(
+  payload: Readonly<Record<string, unknown>>,
+  locale?: string
+): string {
+  return createHash('sha256').update(canonicalJson(payload, locale)).digest('hex')
 }
 
 /** Code-point canonical form (#612) for host-independent, explicitly tagged event rows. */
@@ -396,16 +399,19 @@ export * from './runtime-ingestion.js'
 
 // CANONICAL-JSON: verification-only legacy form, see contracts canonicalJsonStringify
 // Retained for untagged historical event rows and runtime-gateway frameHash replay receipts.
-function canonicalJson(value: unknown): string {
+function canonicalJson(value: unknown, locale?: string): string {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
     return JSON.stringify(value)
   }
   if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value)
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (Array.isArray(value))
+    return `[${value.map((entry) => canonicalJson(entry, locale)).join(',')}]`
   if (value && typeof value === 'object') {
     return `{${Object.entries(value)
-      .toSorted(([left], [right]) => left.localeCompare(right))
-      .map(([key, nested]) => `${JSON.stringify(key)}:${canonicalJson(nested)}`)
+      .toSorted(([left], [right]) =>
+        locale === undefined ? left.localeCompare(right) : left.localeCompare(right, locale)
+      )
+      .map(([key, nested]) => `${JSON.stringify(key)}:${canonicalJson(nested, locale)}`)
       .join(',')}}`
   }
   throw new Error('EVENT_PAYLOAD_MUST_BE_JSON')

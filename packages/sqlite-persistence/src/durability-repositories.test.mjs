@@ -240,10 +240,16 @@ describe('SQLite standalone durability repositories', () => {
         payloadHash: hashExecutionEventPayloadV2(payload),
       })
 
-      const { payloadHashVersion: _version, ...historical } = written
       const historicalPayload = { schemaVersion: 1, schemas: ['v1'], 'a-b': 1, a_b: 2 }
       const historicalHash = '2a64697fcbc2d74f77b9dceaec97f0bd170aab9592edd2e0248bd5f70f91b735'
-      const rowId = `r-${createHash('sha256').update(written.eventId).digest('hex')}`
+      const historicalDraft = {
+        ...eventDraft('evt_01CRZ3NDEKTSV4RRFFQ69G5FAV'),
+        payload: historicalPayload,
+      }
+      const historicalWritten = await repository.append(historicalDraft)
+      expect(historicalWritten.payloadHashVersion).toBe(2)
+      const { payloadHashVersion: _historicalVersion, ...historical } = historicalWritten
+      const rowId = `r-${createHash('sha256').update(historicalWritten.eventId).digest('hex')}`
       const row = await current().transaction((transaction) =>
         transaction.get('execution-events', rowId)
       )
@@ -262,14 +268,20 @@ describe('SQLite standalone durability repositories', () => {
         })
       )
 
-      const legacyRead = await repository.get(written.eventId)
+      const originalTaggedRead = await repository.get(written.eventId)
+      expect(originalTaggedRead?.payloadHashVersion).toBe(2)
+      expect(originalTaggedRead?.payloadHash).toBe(hashExecutionEventPayloadV2(payload))
+      const legacyRead = await repository.get(historicalWritten.eventId)
       expect(legacyRead?.payloadHashVersion).toBeUndefined()
       expect(legacyRead?.payloadHash).toBe(historicalHash)
       await reopened()
       const durable = new SqliteExecutionEventRepository(current())
-      expect(await durable.get(written.eventId)).toEqual(legacyRead)
+      expect(await durable.get(written.eventId)).toEqual(originalTaggedRead)
+      expect(await durable.get(historicalWritten.eventId)).toEqual(legacyRead)
       expect(await durable.append(draft)).toBeUndefined()
-      expect(await durable.get(written.eventId)).toEqual(legacyRead)
+      expect(await durable.append(historicalDraft)).toBeUndefined()
+      expect(await durable.get(written.eventId)).toEqual(originalTaggedRead)
+      expect(await durable.get(historicalWritten.eventId)).toEqual(legacyRead)
     })
   })
 
