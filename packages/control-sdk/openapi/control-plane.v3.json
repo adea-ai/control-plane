@@ -8351,6 +8351,7 @@
                               ],
                               "type": "object"
                             },
+                            "digestVersion": { "const": "canonical-json-v1", "type": "string" },
                             "lifecycle": {
                               "enum": ["published", "deprecated", "revoked"],
                               "type": "string"
@@ -9109,6 +9110,7 @@
                               ],
                               "type": "object"
                             },
+                            "digestVersion": { "const": "canonical-json-v1", "type": "string" },
                             "lifecycle": {
                               "enum": ["published", "deprecated", "revoked"],
                               "type": "string"
@@ -9633,6 +9635,7 @@
                               ],
                               "type": "object"
                             },
+                            "digestVersion": { "const": "canonical-json-v1", "type": "string" },
                             "lifecycle": {
                               "enum": ["published", "deprecated", "revoked"],
                               "type": "string"
@@ -10174,6 +10177,7 @@
                               ],
                               "type": "object"
                             },
+                            "digestVersion": { "const": "canonical-json-v1", "type": "string" },
                             "lifecycle": {
                               "enum": ["published", "deprecated", "revoked"],
                               "type": "string"
