@@ -1178,53 +1178,58 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
     }
   })
 
-  test('a health failure after Restate starts closes the composition before the ownership handshake', async () => {
-    const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-health-failure-'))
-    const config = {
-      dataDirectory: join(work, 'data'),
-      ports: await isolatedPorts(),
-      healthFailureBeforeOwnershipHandshake: true,
-      healthFailureProbePath: join(work, 'health-failure.json'),
-      healthFailureReleasePath: join(work, 'release-health-failure'),
-    }
-    const owned = []
-    const initial = spawnSelfHostedSimpleComposition('initial', config)
-    const incarnation = initial
-    cleanup.push(() => releaseOwnership({ work, incarnations: [incarnation], owned }))
-
-    const deadline = Date.now() + EXIT_BOUND_MS
-    let evidence
-    while (evidence === undefined && Date.now() < deadline) {
-      try {
-        evidence = JSON.parse(await readFile(config.healthFailureProbePath, 'utf8'))
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error
-        await new Promise((resolve) => setTimeout(resolve, 20))
+  for (const failureMethod of ['start', 'health']) {
+    test(`a rejected composition ${failureMethod} after Restate starts closes before the ownership handshake`, async () => {
+      const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-health-failure-'))
+      const config = {
+        dataDirectory: join(work, 'data'),
+        ports: await isolatedPorts(),
+        failureBeforeOwnershipHandshake: {
+          method: failureMethod,
+          probePath: join(work, `${failureMethod}-failure.json`),
+          releasePath: join(work, `release-${failureMethod}-failure`),
+        },
       }
-    }
-    if (evidence === undefined) await initial.next('started', EXIT_BOUND_MS)
-    expect(evidence).toBeDefined()
-    expect(evidence.processIdentities).toHaveLength(2)
-    const recorded = await recordOwnedRestate(incarnation, owned, 'initial', evidence)
-    expect(owned.map((handle) => handle.identity)).toEqual(evidence.processIdentities)
+      const owned = []
+      const initial = spawnSelfHostedSimpleComposition('initial', config)
+      const incarnation = initial
+      cleanup.push(() => releaseOwnership({ work, incarnations: [incarnation], owned }))
 
-    await writeFile(config.healthFailureReleasePath, 'continue')
-    await expect(initial.next('started', EXIT_BOUND_MS)).rejects.toThrow(
-      'PROTOCOL_CHILD_FAILED: SELF_HOSTED_SIMPLE_INJECTED_HEALTH_FAILURE'
-    )
-    expect(initial.stages.some((stage) => stage.stage === 'started')).toBe(false)
-    expect(initial.stages.find((stage) => stage.stage === 'failed')).toMatchObject({
-      processIdentities: evidence.processIdentities,
+      const deadline = Date.now() + EXIT_BOUND_MS
+      let evidence
+      while (evidence === undefined && Date.now() < deadline) {
+        try {
+          evidence = JSON.parse(
+            await readFile(config.failureBeforeOwnershipHandshake.probePath, 'utf8')
+          )
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error
+          await new Promise((resolve) => setTimeout(resolve, 20))
+        }
+      }
+      if (evidence === undefined) await initial.next('started', EXIT_BOUND_MS)
+      expect(evidence).toBeDefined()
+      expect(evidence.method).toBe(failureMethod)
+      expect(evidence.processIdentities).toHaveLength(2)
+      const recorded = await recordOwnedRestate(incarnation, owned, 'initial', evidence)
+      expect(owned.map((handle) => handle.identity)).toEqual(evidence.processIdentities)
+
+      await writeFile(config.failureBeforeOwnershipHandshake.releasePath, 'continue')
+      await expect(initial.next('started', EXIT_BOUND_MS)).rejects.toThrow(
+        `PROTOCOL_CHILD_FAILED: SELF_HOSTED_SIMPLE_INJECTED_${failureMethod.toUpperCase()}_FAILURE`
+      )
+      expect(initial.stages.some((stage) => stage.stage === 'started')).toBe(false)
+      expect(initial.stages.find((stage) => stage.stage === 'failed')).toMatchObject({
+        processIdentities: evidence.processIdentities,
+      })
+      expect(await boundedWait(initial.exited, EXIT_BOUND_MS, 'failed composition exit')).toEqual({
+        code: 1,
+        signal: null,
+      })
+      expect(recorded.launcher.exited).toBe(true)
+      expect(recorded.native.exited).toBe(true)
     })
-    expect(
-      await boundedWait(initial.exited, EXIT_BOUND_MS, 'health-failed composition exit')
-    ).toEqual({
-      code: 1,
-      signal: null,
-    })
-    expect(recorded.launcher.exited).toBe(true)
-    expect(recorded.native.exited).toBe(true)
-  })
+  }
 
   test('cleanup removes state after recorded Restate identities are confirmed gone', async () => {
     const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-recorded-cleanup-'))

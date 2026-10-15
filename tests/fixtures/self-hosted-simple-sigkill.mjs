@@ -213,6 +213,29 @@ function summaryOf(execution) {
   }
 }
 
+async function rejectAfterRestateStarts(health, failure) {
+  const commands = pinnedRestateCommands()
+  const launcherIdentity = await processIdentityWithTicks(health.details?.pid)
+  const native = await ownedNativeServer(health.details?.pid, commands.native)
+  const processIdentities = [launcherIdentity, native]
+  if (processIdentities.some((identity) => identity === undefined)) {
+    throw new Error('SELF_HOSTED_SIMPLE_FAILURE_IDENTITY_UNAVAILABLE')
+  }
+  await writeFile(
+    failure.probePath,
+    JSON.stringify({
+      method: failure.method,
+      pid: process.pid,
+      launcherPid: health.details?.pid,
+      processIdentities,
+    })
+  )
+  await waitForFile(failure.releasePath, 15_000)
+  const error = new Error(`SELF_HOSTED_SIMPLE_INJECTED_${failure.method.toUpperCase()}_FAILURE`)
+  error.processIdentities = processIdentities
+  throw error
+}
+
 async function runInitial(config) {
   const effects = effectLedger(config.evidencePath, 'initial')
   const executionIdRef = { current: undefined }
@@ -228,28 +251,31 @@ async function runInitial(config) {
     closeAttempted = true
     await composition.close()
   }
+  const failure = config.failureBeforeOwnershipHandshake
+  if (failure?.method === 'health') {
+    const originalStart = composition.start.bind(composition)
+    const originalHealth = composition.workflow.health.bind(composition.workflow)
+    let healthFailureArmed = false
+    composition.workflow.health = async () => {
+      const health = await originalHealth()
+      if (!healthFailureArmed) return health
+      return rejectAfterRestateStarts(health, failure)
+    }
+    composition.start = async () => {
+      await originalStart()
+      healthFailureArmed = true
+    }
+  } else if (failure?.method === 'start') {
+    const originalStart = composition.start.bind(composition)
+    const originalHealth = composition.workflow.health.bind(composition.workflow)
+    composition.start = async () => {
+      await originalStart()
+      return rejectAfterRestateStarts(await originalHealth(), failure)
+    }
+  }
   try {
     await composition.start()
     const started = await composition.workflow.health()
-    if (config.healthFailureBeforeOwnershipHandshake === true) {
-      const commands = pinnedRestateCommands()
-      const native = await ownedNativeServer(started.details?.pid, commands.native)
-      const launcherIdentity = await processIdentityWithTicks(started.details?.pid)
-      const processIdentities = [launcherIdentity, native]
-      if (processIdentities.some((identity) => identity === undefined)) {
-        throw new Error('SELF_HOSTED_SIMPLE_HEALTH_FAILURE_IDENTITY_UNAVAILABLE')
-      }
-      const evidence = {
-        pid: process.pid,
-        launcherPid: started.details?.pid,
-        processIdentities,
-      }
-      await writeFile(config.healthFailureProbePath, JSON.stringify(evidence))
-      await waitForFile(config.healthFailureReleasePath, 15_000)
-      const error = new Error('SELF_HOSTED_SIMPLE_INJECTED_HEALTH_FAILURE')
-      error.processIdentities = processIdentities
-      throw error
-    }
     emit({ stage: 'started', pid: process.pid, launcherPid: started.details?.pid })
     const seeded = await seedRegisteredGraphPlan(composition, plan, {
       reference: graph,
