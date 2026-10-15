@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { spawnSync as realSpawnSync } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'bun:test'
@@ -98,6 +99,8 @@ test('Postgres pull retries only the image-pull command and preserves the pinned
     environment: { COMPOSE_PROJECT_NAME: 'test-project' },
     spawnSync: (command, dockerArgs, options) => {
       calls.push({ command, dockerArgs, options })
+      // Compose cannot say which image it resolves, so there is no fallback to consider.
+      if (dockerArgs[1] === 'config') return { status: 1, stdout: '', stderr: 'no configuration' }
       return results.shift()
     },
     backoffOptions: {
@@ -109,11 +112,18 @@ test('Postgres pull retries only the image-pull command and preserves the pinned
     stderr: { write: (value) => stderr.push(value) },
   })
   assert.equal(result.status, 0)
-  assert.equal(calls.length, 2)
+  assert.equal(result.image, undefined)
+  assert.equal(calls.length, 3)
   assert.equal(calls[0].command, 'docker')
-  assert.deepEqual(calls[0].dockerArgs, ['compose', 'pull', 'postgres'])
-  assert.equal(calls[0].options.cwd, '/workspace/control-plane')
-  assert.deepEqual(calls[0].options.env, { COMPOSE_PROJECT_NAME: 'test-project' })
+  assert.deepEqual(calls[0].dockerArgs, ['compose', 'config', '--format', 'json', 'postgres'])
+  for (const call of calls.slice(1)) {
+    assert.equal(call.command, 'docker')
+    assert.deepEqual(call.dockerArgs, ['compose', 'pull', 'postgres'])
+  }
+  for (const call of calls) {
+    assert.equal(call.options.cwd, '/workspace/control-plane')
+    assert.deepEqual(call.options.env, { COMPOSE_PROJECT_NAME: 'test-project' })
+  }
   assert.deepEqual(delays, [1])
   assert.deepEqual(stdout, ['postgres Pulled\n'])
   assert.deepEqual(stderr, ['postgres Error toomanyrequests: Rate exceeded'])
@@ -260,58 +270,268 @@ test('when every registry is rate limited the bounded backoff applies and the la
   )
 })
 
+// Answers `docker compose config` like Compose would for a project whose postgres image is
+// `effective`, unless the variable is set to something else and `ignoresVariable` is false.
+function fakeCompose({ effective, ignoresVariable = false, pulls = [] }) {
+  const calls = []
+  const environments = []
+  let composePulls = 0
+  const spawnSync = (command, dockerArgs, options) => {
+    calls.push([command, ...dockerArgs])
+    environments.push(options.env)
+    if (dockerArgs[1] === 'config') {
+      const image = ignoresVariable ? effective : (options.env[postgresImageVariable] ?? effective)
+      return {
+        status: 0,
+        stdout: JSON.stringify({ services: { postgres: { image } } }),
+        stderr: '',
+      }
+    }
+    if (dockerArgs[0] === 'compose') {
+      // Rate limited once; the retry after the backoff goes through.
+      composePulls += 1
+      return composePulls === 1 ? ecrRateLimited : { status: 0, stdout: '', stderr: '' }
+    }
+    pulls.push(dockerArgs[2])
+    return { status: 0, stdout: '', stderr: '' }
+  }
+  return { calls, environments, spawnSync }
+}
+
+const quiet = {
+  backoffOptions: { delaysMs: [1], sleep: async () => {}, log: () => {} },
+  stdout: { write: () => {} },
+  stderr: { write: () => {} },
+}
+
 test('Postgres pull falls over to the same digest and reports it without a credential', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'pull-postgres-fallback-'))
-  try {
-    await writeFile(
-      join(directory, 'compose.yaml'),
-      `services:\n  postgres:\n    image: \${CONTROL_PLANE_POSTGRES_IMAGE:-${pinnedPostgres}}\n`
-    )
-    const calls = []
-    const environments = []
+  const compose = fakeCompose({ effective: pinnedPostgres })
+  const result = await pullPostgresImage({
+    cwd: '/workspace/control-plane',
+    environment: { COMPOSE_PROJECT_NAME: 'test-project' },
+    spawnSync: compose.spawnSync,
+    ...quiet,
+  })
+  assert.equal(result.status, 0)
+  assert.equal(result.image, mirrorPostgres)
+  assert.deepEqual(compose.calls, [
+    ['docker', 'compose', 'config', '--format', 'json', 'postgres'],
+    ['docker', 'compose', 'pull', 'postgres'],
+    ['docker', 'compose', 'config', '--format', 'json', 'postgres'],
+    ['docker', 'pull', '--quiet', mirrorPostgres],
+  ])
+  // Only the verification of the fallback sees the variable; nothing carries a credential.
+  assert.deepEqual(
+    compose.environments.map((env) => Object.keys(env)),
+    [
+      ['COMPOSE_PROJECT_NAME'],
+      ['COMPOSE_PROJECT_NAME'],
+      ['COMPOSE_PROJECT_NAME', postgresImageVariable],
+      ['COMPOSE_PROJECT_NAME'],
+    ]
+  )
+})
+
+test('a fallback derives from the image Compose resolves, not from the default in compose.yaml', async () => {
+  // `.env`, COMPOSE_FILE or an override selected another digest: the fallback keeps that digest.
+  const selected = 'public.ecr.aws/docker/library/postgres:17.2-alpine@sha256:' + 'a'.repeat(64)
+  const pulls = []
+  const compose = fakeCompose({ effective: selected, pulls })
+  const result = await pullPostgresImage({
+    cwd: '/workspace/control-plane',
+    environment: {},
+    spawnSync: compose.spawnSync,
+    ...quiet,
+  })
+  assert.equal(result.image, `mirror.gcr.io/library/postgres:17.2-alpine@sha256:${'a'.repeat(64)}`)
+  assert.deepEqual(pulls, [result.image])
+  assert.ok(result.image.endsWith(selected.slice(selected.indexOf('@sha256:'))))
+  assert.ok(!result.image.includes('18.6'))
+})
+
+test('a fallback is disabled when exporting the variable would not select that image', async () => {
+  // An override file pins its own image, so CONTROL_PLANE_POSTGRES_IMAGE would change nothing.
+  const pulls = []
+  const compose = fakeCompose({ effective: pinnedPostgres, ignoresVariable: true, pulls })
+  const result = await pullPostgresImage({
+    cwd: '/workspace/control-plane',
+    environment: {},
+    spawnSync: compose.spawnSync,
+    ...quiet,
+  })
+  assert.equal(result.image, undefined)
+  assert.deepEqual(pulls, [])
+  // Both mirrors are refused, then the canonical pull is retried once after the backoff.
+  const composePulls = compose.calls.filter(
+    (call) => call.slice(1, 4).join(' ') === 'compose pull postgres'
+  )
+  assert.equal(composePulls.length, 2)
+  assert.equal(compose.calls.filter((call) => call[1] === 'pull').length, 0)
+})
+
+test('an image Compose resolves that is not a pinned ECR reference has no fallback', async () => {
+  for (const effective of [
+    'public.ecr.aws/docker/library/postgres:18.6-alpine',
+    'example.com/library/postgres:18@sha256:' + 'b'.repeat(64),
+    mirrorPostgres,
+  ]) {
+    const pulls = []
+    const compose = fakeCompose({ effective, pulls })
     const result = await pullPostgresImage({
-      cwd: directory,
-      environment: { COMPOSE_PROJECT_NAME: 'test-project' },
-      spawnSync: (command, dockerArgs, options) => {
-        calls.push([command, ...dockerArgs])
-        environments.push(options.env)
-        return dockerArgs[0] === 'compose' ? ecrRateLimited : { status: 0, stdout: '', stderr: '' }
-      },
-      backoffOptions: { sleep: async () => {}, log: () => {} },
-      stdout: { write: () => {} },
-      stderr: { write: () => {} },
+      cwd: '/workspace/control-plane',
+      environment: {},
+      spawnSync: compose.spawnSync,
+      ...quiet,
     })
-    assert.equal(result.status, 0)
-    assert.equal(result.image, mirrorPostgres)
-    assert.deepEqual(calls, [
-      ['docker', 'compose', 'pull', 'postgres'],
-      ['docker', 'pull', '--quiet', mirrorPostgres],
-    ])
-    for (const environment of environments)
-      assert.deepEqual(environment, { COMPOSE_PROJECT_NAME: 'test-project' })
-  } finally {
-    await rm(directory, { recursive: true, force: true })
+    assert.equal(result.image, undefined)
+    assert.deepEqual(pulls, [])
   }
 })
 
+test('unusable Compose configuration output leaves only the bounded backoff', async () => {
+  for (const config of [
+    { status: 1, stdout: '', stderr: 'invalid compose file' },
+    { status: 0, stdout: 'not json', stderr: '' },
+    { status: 0, stdout: JSON.stringify({ services: {} }), stderr: '' },
+    { status: 0, stdout: JSON.stringify({ services: { postgres: { image: '' } } }), stderr: '' },
+    { status: 0, stdout: JSON.stringify({ services: { postgres: { image: 7 } } }), stderr: '' },
+    { status: null, stdout: '', stderr: '', error: new Error('spawn docker ENOENT') },
+  ]) {
+    const calls = []
+    const result = await pullPostgresImage({
+      cwd: '/workspace/control-plane',
+      environment: {},
+      spawnSync: (command, dockerArgs) => {
+        calls.push(dockerArgs)
+        if (dockerArgs[1] === 'config') return config
+        return calls.filter((args) => args[1] === 'pull').length === 1
+          ? ecrRateLimited
+          : { status: 0, stdout: '', stderr: '' }
+      },
+      ...quiet,
+    })
+    assert.equal(result.image, undefined)
+    assert.deepEqual(
+      calls.filter((args) => args[0] === 'pull'),
+      []
+    )
+  }
+})
+
+// These run the real `docker compose config` against temporary projects, so the claim that Compose's
+// own resolution (`.env`, COMPOSE_FILE, overrides) selects the fallback's digest is tested, not assumed.
+const composeAvailable =
+  realSpawnSync('docker', ['compose', 'version'], { stdio: 'ignore' }).status === 0
+
+async function realComposeProject(files) {
+  const directory = await mkdtemp(join(tmpdir(), 'pull-postgres-compose-'))
+  await mkdir(join(directory, 'docker/postgres'), { recursive: true })
+  await writeFile(join(directory, 'docker/postgres/init.sql'), '')
+  await writeFile(
+    join(directory, 'compose.yaml'),
+    `services:\n  postgres:\n    image: \${CONTROL_PLANE_POSTGRES_IMAGE:-${pinnedPostgres}}\n`
+  )
+  for (const [name, content] of Object.entries(files))
+    await writeFile(join(directory, name), content)
+  return directory
+}
+
+// Real `compose config`; the registry commands are scripted so nothing leaves the machine.
+function realConfigSpawn(pulls) {
+  let composePulls = 0
+  return (command, dockerArgs, options) => {
+    if (dockerArgs[1] === 'config') return realSpawnSync(command, dockerArgs, options)
+    if (dockerArgs[0] === 'compose') {
+      composePulls += 1
+      return composePulls === 1 ? ecrRateLimited : { status: 0, stdout: '', stderr: '' }
+    }
+    pulls.push(dockerArgs[2])
+    return { status: 0, stdout: '', stderr: '' }
+  }
+}
+
+const composeEnvironment = (extra = {}) => ({
+  PATH: process.env.PATH,
+  HOME: process.env.HOME,
+  ...extra,
+})
+
+test.skipIf(!composeAvailable)(
+  'with real Compose, a .env-selected digest is the one the fallback keeps',
+  async () => {
+    const digest = 'c'.repeat(64)
+    const directory = await realComposeProject({
+      '.env': `CONTROL_PLANE_POSTGRES_IMAGE=public.ecr.aws/docker/library/postgres:17.2-alpine@sha256:${digest}\n`,
+    })
+    try {
+      const pulls = []
+      const result = await pullPostgresImage({
+        cwd: directory,
+        environment: composeEnvironment(),
+        spawnSync: realConfigSpawn(pulls),
+        ...quiet,
+      })
+      assert.equal(result.image, `mirror.gcr.io/library/postgres:17.2-alpine@sha256:${digest}`)
+      assert.deepEqual(pulls, [result.image])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
+
+test.skipIf(!composeAvailable)(
+  'with real Compose, an override file that fixes the image disables the fallback',
+  async () => {
+    const directory = await realComposeProject({
+      'override.yaml': `services:\n  postgres:\n    image: public.ecr.aws/docker/library/postgres:17.2-alpine@sha256:${'d'.repeat(64)}\n`,
+    })
+    try {
+      const pulls = []
+      const result = await pullPostgresImage({
+        cwd: directory,
+        environment: composeEnvironment({ COMPOSE_FILE: 'compose.yaml:override.yaml' }),
+        spawnSync: realConfigSpawn(pulls),
+        ...quiet,
+      })
+      assert.equal(result.image, undefined)
+      assert.deepEqual(pulls, [])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
+
+test.skipIf(!composeAvailable)(
+  'with real Compose, the default digest still falls over to both mirrors in order',
+  async () => {
+    const directory = await realComposeProject({})
+    try {
+      const pulls = []
+      const result = await pullPostgresImage({
+        cwd: directory,
+        environment: composeEnvironment(),
+        spawnSync: realConfigSpawn(pulls),
+        ...quiet,
+      })
+      assert.equal(result.image, mirrorPostgres)
+      assert.deepEqual(pulls, [mirrorPostgres])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
+
 test('an image already chosen through the variable is never replaced by a fallback', async () => {
-  const calls = []
+  const pulls = []
+  const compose = fakeCompose({ effective: mirrorPostgres, pulls })
   const result = await pullPostgresImage({
     cwd: '/workspace/control-plane',
     environment: { [postgresImageVariable]: mirrorPostgres },
-    spawnSync: (command, dockerArgs) => {
-      calls.push(dockerArgs)
-      return calls.length === 1 ? ecrRateLimited : { status: 0, stdout: '', stderr: '' }
-    },
-    backoffOptions: { delaysMs: [1], sleep: async () => {}, log: () => {} },
-    stdout: { write: () => {} },
-    stderr: { write: () => {} },
+    spawnSync: compose.spawnSync,
+    ...quiet,
   })
   assert.equal(result.image, undefined)
-  assert.deepEqual(calls, [
-    ['compose', 'pull', 'postgres'],
-    ['compose', 'pull', 'postgres'],
-  ])
+  assert.deepEqual(pulls, [])
 })
 
 test('the selected fallback reaches later GitHub steps through the job environment file only', () => {

@@ -1,29 +1,31 @@
 import { spawnSync as defaultSpawnSync } from 'node:child_process'
-import { appendFileSync, readFileSync } from 'node:fs'
+import { appendFileSync } from 'node:fs'
 import process from 'node:process'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import {
-  composePostgresImages,
-  postgresImageVariable,
-  runWithPullFallback,
-} from './docker-pull-backoff.mjs'
+import { postgresImageVariable, runWithPullFallback } from './docker-pull-backoff.mjs'
 
 const pullArguments = ['compose', 'pull', 'postgres']
+const configArguments = ['compose', 'config', '--format', 'json', 'postgres']
 
-// The canonical pinned reference from the compose file in `cwd`, or undefined when there is none
-// to read. Without it only the bounded backoff applies.
-function canonicalImage(cwd, environment) {
-  if (environment[postgresImageVariable]) return environment[postgresImageVariable]
+// The image Compose itself resolves for the postgres service: the same working directory,
+// environment, `.env` file, COMPOSE_FILE selection and overrides as the pull that follows. Anything
+// short of a definite answer (Compose fails, prints something else, names no image) is `undefined`,
+// and without a known image there is no fallback, only the bounded backoff. The output is only
+// parsed, never printed, because a resolved configuration can carry secrets.
+function effectiveImage(run, environment) {
+  const result = run(configArguments, environment)
+  if (result.error || result.status !== 0) return undefined
   try {
-    return composePostgresImages(readFileSync(join(cwd, 'compose.yaml'), 'utf8'))[0]
+    const image = JSON.parse(result.stdout).services?.postgres?.image
+    return typeof image === 'string' && image !== '' ? image : undefined
   } catch {
     return undefined
   }
 }
 
 // Resolves to the pull result plus `image`: the fallback reference that was pulled when the
-// canonical registry was rate limited, or undefined when the compose file's own image was pulled.
+// registry of the effective image was rate limited, or undefined when that image itself was pulled.
 // A caller that starts the service afterwards must export that reference as
 // CONTROL_PLANE_POSTGRES_IMAGE so compose uses the image that is now present locally.
 export async function pullPostgresImage({
@@ -34,12 +36,12 @@ export async function pullPostgresImage({
   stdout = process.stdout,
   stderr = process.stderr,
 } = {}) {
-  const run = (arguments_) =>
+  const run = (arguments_, env = environment) =>
     spawnSync('docker', arguments_, {
       cwd,
       encoding: 'utf8',
       stdio: 'pipe',
-      env: environment,
+      env,
       timeout: 90_000,
     })
   const { result, image } = await runWithPullFallback(
@@ -51,8 +53,23 @@ export async function pullPostgresImage({
       if (attempt.stderr) stderr.write(attempt.stderr)
       return attempt
     },
-    canonicalImage(cwd, environment),
-    { pull: (reference) => run(['pull', '--quiet', reference]), ...backoffOptions }
+    effectiveImage(run, environment),
+    {
+      pull: (reference) => {
+        // The fallback only helps if exporting it makes Compose run exactly that reference. A
+        // Compose override or file selection that ignores the variable would start another image.
+        const selected = effectiveImage(run, { ...environment, [postgresImageVariable]: reference })
+        if (selected !== reference) {
+          return {
+            status: 1,
+            stdout: '',
+            stderr: `${postgresImageVariable} does not select the postgres image in this Compose configuration`,
+          }
+        }
+        return run(['pull', '--quiet', reference])
+      },
+      ...backoffOptions,
+    }
   )
 
   if (result.error) throw result.error
