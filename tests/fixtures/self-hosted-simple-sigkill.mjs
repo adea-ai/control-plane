@@ -228,6 +228,11 @@ async function rejectAfterRestateStarts(health, failure) {
   const probeDelayStartedAt = Date.now()
   if (probeDelayMs > 0) await delay(probeDelayMs)
   const probeDelayElapsedMs = Date.now() - probeDelayStartedAt
+  if (failure.probeWriteFailure === true) {
+    const error = new Error('SELF_HOSTED_SIMPLE_FAILURE_PROBE_WRITE_INJECTED')
+    error.processIdentities = processIdentities
+    throw error
+  }
   await writeFile(
     failure.probePath,
     JSON.stringify({
