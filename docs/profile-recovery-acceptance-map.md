@@ -176,6 +176,8 @@ Owners are existing issues. Where no open issue names a gap, the row says so.
    The SIGKILL proof's main teardown requests a fresh ownership handshake after
    startup timeout or partial identity capture, waits for startup to settle,
    and pins both Restate processes under the live composition before killing it.
+   The fixture retains the original launched process handle until its exit settles,
+   including stop timeouts that clear the runtime health PID before exit.
    If that handshake cannot be completed, it keeps the live owner, partial
    handles, and work directory for diagnosis; it does not force-kill an
    unrecorded process chain. Linux pidfds are required and unsupported platforms

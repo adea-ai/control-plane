@@ -1484,6 +1484,7 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
     'startup timeout',
     'partial identity capture',
     'rejected start with failed stop',
+    'provider stop timeout',
   ]) {
     test(`main cleanup closes Restate after ${failure} before ownership is recorded`, async () => {
       const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-main-cleanup-'))
@@ -1493,6 +1494,9 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
         dataDirectory: join(work, 'data'),
         evidencePath: join(work, 'effects.jsonl'),
         ports: await isolatedPorts(),
+        ...(failure === 'provider stop timeout'
+          ? { processStopFailure: join(work, 'process-stop-failure.json') }
+          : {}),
         ...(failure !== 'partial identity capture'
           ? {
               failureBeforeOwnershipHandshake: {
@@ -1532,12 +1536,23 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       const observed = await recordOwnedRestate({ ...initial }, observers, 'initial', started)
       if (failure === 'startup timeout') {
         await expect(initial.next('started', 100)).rejects.toThrow('PROTOCOL_CHILD_TIMEOUT_started')
-      } else if (failure === 'rejected start with failed stop') {
+      } else if (
+        failure === 'rejected start with failed stop' ||
+        failure === 'provider stop timeout'
+      ) {
         await writeFile(releasePath, 'reject startup')
         await expect(initial.next('started', EXIT_BOUND_MS)).rejects.toThrow(
           'SELF_HOSTED_SIMPLE_INJECTED_START_FAILURE'
         )
-        expect(existsSync(config.failureBeforeOwnershipHandshake.stopFailurePath)).toBe(true)
+        if (failure === 'provider stop timeout') {
+          expect(JSON.parse(await readFile(config.processStopFailure, 'utf8'))).toMatchObject({
+            launcherPid: started.launcherPid,
+            signal: 'SIGTERM',
+            pending: true,
+          })
+        } else {
+          expect(existsSync(config.failureBeforeOwnershipHandshake.stopFailurePath)).toBe(true)
+        }
       } else {
         await expect(
           recordOwnedRestate(initial, owned, 'initial', started, async () => {

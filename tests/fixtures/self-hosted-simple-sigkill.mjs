@@ -32,6 +32,7 @@ import {
   deterministicInterruptGraph,
 } from '../../packages/langgraph-adapter/src/index.ts'
 import { OrchestrationGraphSegmentActivities } from '../../packages/workflow-runtime/src/index.ts'
+import { NodeProcessRuntimeProvider } from '@control-plane/deployment'
 import { CommandInboxService } from '@control-plane/domain'
 import { DirectLocalRuntimeTransport } from '@control-plane/runtime-sdk'
 import { ManagedPiAdapter, ManagedPiDriver } from '@control-plane/managed-pi-adapter'
@@ -87,7 +88,54 @@ function createDirectManagedPiAdapter() {
 }
 
 /** The supported composition, configured exactly as the existing self-hosted simple proof. */
-export function openSelfHostedSimpleComposition({ dataDirectory, ports, effects, executionIdRef }) {
+export function openSelfHostedSimpleComposition({
+  dataDirectory,
+  ports,
+  effects,
+  executionIdRef,
+  processStopFailure,
+}) {
+  const processes = []
+  const provider = new NodeProcessRuntimeProvider({
+    spawnPolicy: {
+      allowedExecutables: [pinnedRestateCommands().launcher],
+      allowedWorkingDirectories: [dataDirectory],
+    },
+  })
+  const processProvider = {
+    async launch(request) {
+      const handle = await provider.launch(request)
+      const record = { handle, exited: false }
+      processes.push(record)
+      void handle.wait().then(
+        () => {
+          record.exited = true
+        },
+        () => {}
+      )
+      let stopFailureInjected = false
+      return {
+        pid: handle.pid,
+        startedAt: handle.startedAt,
+        wait: () => handle.wait(),
+        stop: async (signal) => {
+          if (processStopFailure && !stopFailureInjected) {
+            stopFailureInjected = true
+            await writeFile(
+              processStopFailure,
+              JSON.stringify({
+                launcherPid: handle.pid,
+                signal: signal ?? 'SIGTERM',
+                pending: !record.exited,
+              })
+            )
+            throw new Error('PROCESS_STOP_TIMEOUT_INJECTED')
+          }
+          await handle.stop(signal)
+        },
+      }
+    },
+  }
   const plan = createRegisteredGraphPlan(graph, graphInput)
   const registration = deterministicInterruptGraph(graph)
   let composition
@@ -95,6 +143,7 @@ export function openSelfHostedSimpleComposition({ dataDirectory, ports, effects,
     profile: 'hosted-simple',
     dataDirectory,
     durableExecution: 'restate',
+    processProvider,
     runtimeTransport: createDirectManagedPiAdapter(),
     ...ports,
     graphActivitiesFactory: ({ persistence }) =>
@@ -142,7 +191,7 @@ export function openSelfHostedSimpleComposition({ dataDirectory, ports, effects,
         })
       ),
   })
-  return { composition, plan }
+  return { composition, plan, processes }
 }
 
 export function artifactIdOf(executionId) {
@@ -254,8 +303,7 @@ async function rejectAfterRestateStarts(health, failure) {
 /** Before any startup work, accept a cleanup ownership request. Await startup settlement before
  *  reporting health: stopping concurrently with start can miss a not-yet-assigned Restate child.
  *  This only reports an ownership anchor; the parent must pin the full chain before SIGKILL. */
-function cleanupControl(composition) {
-  const health = composition.workflow.health.bind(composition.workflow)
+function cleanupControl(composition, processes) {
   const lines = createInterface({ input: process.stdin })
   let startup
   let requested = false
@@ -266,8 +314,9 @@ function cleanupControl(composition) {
       requested = true
       void (async () => {
         await startup.catch(() => undefined)
-        const status = await health()
-        emit({ stage: 'cleanup_started', pid: process.pid, launcherPid: status.details?.pid })
+        const active = processes.filter((record) => !record.exited)
+        if (active.length !== 1) throw new Error('RESTATE_CLEANUP_PROCESS_UNCONFIRMED')
+        emit({ stage: 'cleanup_started', pid: process.pid, launcherPid: active[0].handle.pid })
       })().catch((error) => {
         emit({ stage: 'failed', pid: process.pid, message: String(error?.message ?? error) })
       })
@@ -280,10 +329,10 @@ function cleanupControl(composition) {
     },
     closeRequested,
     dispose: () => lines.close(),
-    async disposeWhenStopped() {
-      // Composition startup/close can swallow a workflow stop failure. Keep its control pipe
-      // alive while the provider still owns Restate so the parent can pin it before killing us.
-      if ((await health()).details?.pid === undefined) lines.close()
+    disposeWhenStopped() {
+      // Runtime.stop clears its process reference before awaiting stop. Only the original
+      // process handle's settled exit proves it stopped; health PID absence proves nothing.
+      if (processes.every((record) => record.exited)) lines.close()
     },
   }
 }
@@ -291,13 +340,14 @@ function cleanupControl(composition) {
 async function runInitial(config) {
   const effects = effectLedger(config.evidencePath, 'initial')
   const executionIdRef = { current: undefined }
-  const { composition, plan } = openSelfHostedSimpleComposition({
+  const { composition, plan, processes } = openSelfHostedSimpleComposition({
     dataDirectory: config.dataDirectory,
     ports: config.ports,
     effects,
     executionIdRef,
+    processStopFailure: config.processStopFailure,
   })
-  const control = cleanupControl(composition)
+  const control = cleanupControl(composition, processes)
   let closeAttempted = false
   const closeComposition = async () => {
     if (closeAttempted) return
@@ -402,13 +452,14 @@ async function runInitial(config) {
 async function runRecover(config) {
   const effects = effectLedger(config.evidencePath, 'recovery')
   const executionIdRef = { current: config.executionId }
-  const { composition } = openSelfHostedSimpleComposition({
+  const { composition, processes } = openSelfHostedSimpleComposition({
     dataDirectory: config.dataDirectory,
     ports: config.ports,
     effects,
     executionIdRef,
+    processStopFailure: config.processStopFailure,
   })
-  const control = cleanupControl(composition)
+  const control = cleanupControl(composition, processes)
   let closeAttempted = false
   const closeComposition = async () => {
     if (closeAttempted) return
