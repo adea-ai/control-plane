@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.100.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.1...workspace-v1.100.2) (2026-10-15)
+
+
+### Performance
+
+* cache SQLite statements and avoid repeated canonical JSON work ([#1142](https://github.com/adea-ai/control-plane/issues/1142)) ([b8b47f5](https://github.com/adea-ai/control-plane/commit/b8b47f5c0261f8e9880fd0572fd05aa353c3c418))
+* memoize execution plan verification on an immutable snapshot ([#1143](https://github.com/adea-ai/control-plane/issues/1143)) ([4e1bf3d](https://github.com/adea-ai/control-plane/commit/4e1bf3d3c58dd8e6326c8722bbcdb3e7d62de24f))
+
 ## [1.100.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.0...workspace-v1.100.1) (2026-10-15)
 
 
