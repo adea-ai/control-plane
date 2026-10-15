@@ -7,6 +7,8 @@ import {
   compactNativeSession,
   nativeSessionPath,
 } from '../packages/pi-durable-adapter/src/native-session-compaction.fixture.mjs'
+import { PiChildTerminalSettlement } from '../apps/control-api/src/pi-durable/child-terminal-settlement.ts'
+import { mutateChildUsage } from '../apps/control-api/src/pi-durable/child-usage-outcomes.ts'
 import {
   childIds,
   childObjective,
@@ -472,6 +474,81 @@ test('a grant revoked after the compaction reopen starts no child and funds noth
   }
 }, 60000)
 
+/** Runs the delegating turn with the bridge's authority read replaced, without compaction. */
+async function delegateWithBridgeAuthority(override) {
+  const { host, hooks, sent } = await createHost()
+  const { dispatch, handle } = await runLeadFirstTurn(host, hooks)
+  hooks.authorityOverride = override(hooks)
+  const adapter = host.composition.adapter
+  await submitSecondTurn(adapter, handle)
+  await adapter.drain()
+  return { host, hooks, sent, dispatch, handle, adapter }
+}
+
+async function expectNoChildStartedAfterRestart({ host, hooks, sent, dispatch, handle }) {
+  const sendsBefore = host.state.physicalSends
+  await host.reopenComposition()
+  await hooks.scanner.scan(host.composition.adapter)
+  await hooks.scanner.scan(host.composition.adapter)
+  expect(hooks.evidence.childStarts).toHaveLength(0)
+  expect(sent.child).toHaveLength(0)
+  expect(host.state.physicalSends).toBe(sendsBefore)
+  expect((await publicationsOf(hooks)).map((record) => record.value.event.type)).not.toContain(
+    'delegation.completed'
+  )
+  expect(childOf(host.composition.adapter)).toBeUndefined()
+  expect((await host.composition.adapter.status(handle)).state).toBe('unknown')
+  expect(await hooks.delegationRecords.listByParent(dispatch.executionId)).toHaveLength(1)
+}
+
+test('a child authority that cannot be read at the bridge reserves, funds and starts nothing', async () => {
+  const run = await delegateWithBridgeAuthority(() => async () => {
+    throw new Error('TEST_CHILD_AUTHORITY_MISSING')
+  })
+  const { host, hooks, sent, adapter, handle } = run
+  try {
+    // The bridge reads authority before it reserves a budget, so a missing authority ends there.
+    expect(hooks.evidence.bridgeAuthorityReads).toBeGreaterThan(0)
+    expect(hooks.evidence.reservations).toHaveLength(0)
+    expect(hooks.evidence.fundingWrites).toHaveLength(0)
+    expect(hooks.evidence.childStarts).toHaveLength(0)
+    expect(sent.child).toHaveLength(0)
+    expect(childOf(adapter)).toBeUndefined()
+    expect((await hooks.toolCalls.get(childIds.toolCallId)).status).toBe('reconciliation_required')
+    expect((await adapter.status(handle)).state).toBe('unknown')
+    await expectNoChildStartedAfterRestart(run)
+  } finally {
+    await host.close()
+  }
+}, 60000)
+
+test('authority revoked after the reservation is funded starts no child and sends nothing', async () => {
+  let reads = 0
+  const run = await delegateWithBridgeAuthority((hooks) => async (input) => {
+    // The first read admits the reservation; every later read finds the grant withdrawn.
+    if (++reads === 1) return hooks.host.composition.childAuthorityCurrent.readRecord(input)
+    throw new Error('TEST_CHILD_AUTHORITY_REVOKED')
+  })
+  const { host, hooks, sent, adapter, handle } = run
+  try {
+    expect(hooks.evidence.reservations).toHaveLength(1)
+    expect(hooks.evidence.fundingWrites).toEqual([childIds.attemptId])
+    // Authority is re-read after the reservation and before the runtime start.
+    expect(hooks.evidence.bridgeAuthorityReads).toBe(2)
+    expect(hooks.evidence.childStarts).toHaveLength(0)
+    expect(sent.child).toHaveLength(0)
+    expect(childOf(adapter)).toBeUndefined()
+    expect((await hooks.toolCalls.get(childIds.toolCallId)).status).toBe('reconciliation_required')
+    expect((await adapter.status(handle)).state).toBe('unknown')
+    await expectNoChildStartedAfterRestart(run)
+    // Reopening and scanning never re-reserves or re-funds.
+    expect(hooks.evidence.reservations).toHaveLength(1)
+    expect(hooks.evidence.fundingWrites).toHaveLength(1)
+  } finally {
+    await host.close()
+  }
+}, 60000)
+
 /** Lead first turn, compaction across a reopen, then the delegating turn until the child completes. */
 async function dispatchChildAfterCompaction(host, hooks, { waitForCompleted = true } = {}) {
   const { dispatch, handle } = await runLeadFirstTurn(host, hooks)
@@ -639,6 +716,75 @@ test('child settlement carries the parent allowance through actual usage to fina
     expect(hooks.evidence.childStarts).toHaveLength(1)
     expect(hooks.evidence.reservations).toHaveLength(1)
     expect(host.state.physicalSends).toBe(4)
+  } finally {
+    await host.close()
+  }
+}, 120000)
+
+test('the production composition settles the admitted child through its own settlement path', async () => {
+  const { host, hooks } = await createHost()
+  try {
+    const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
+    // Only the production composition runs here: no test-built settlement instance.
+    expect(typeof host.composition.settleChildTerminalAccounting).toBe('function')
+    expect(host.composition.childTerminalSettlementBlocked).toBe(false)
+    expect((await readChildCostState(hooks)).outcome.costState).toBe('reserved')
+    expect(await settleLeadTerminal(host)).toEqual({ settled: 1, pending: 0, unbound: 1 })
+
+    const sends = host.state.physicalSends
+    const starts = hooks.evidence.childStarts.length
+    expect(await host.composition.settleChildTerminalAccounting()).toEqual({
+      settled: 1,
+      pending: 0,
+      unpriced: 0,
+    })
+    expect(host.composition.childTerminalSettlementBlocked).toBe(false)
+
+    const { parent, child } = await rowsOf(host, dispatch)
+    const spent = expectSettledChildLedger(child)
+    expect(
+      kinds(parent.filter((entry) => entry.reservationKey === `child:${childExecutionId}`))
+    ).toEqual(['reservation', 'release', 'settlement'])
+    expect(await summaryOf(host, childExecutionId)).toMatchObject({
+      spentMicrounits: spent,
+      reservedMicrounits: 0,
+      settled: true,
+    })
+    expect((await readChildCostState(hooks)).outcome).toMatchObject({
+      costState: 'settled',
+      reported: { accounting: { costExact: true, chargedMicrounits: spent } },
+      reconciled: { result: 'within_reservation', reportedChargedMicrounits: spent },
+      settled: { settledMicrounits: spent },
+    })
+
+    // Repeating the pass and reopening the composition (which re-runs recovery, including this
+    // settlement) change no money, no cost state, no event, and send or start nothing.
+    // The terminal event is the progress scanner's to publish, once; settlement never publishes.
+    await hooks.scanner.scan(host.composition.adapter)
+    const before = {
+      rows: await rowsOf(host, dispatch),
+      cost: stableSummary(await readChildCostState(hooks)),
+      publications: await publicationsOf(hooks),
+    }
+    expectOneTerminalPublication(before.publications, hooks.host.state.parentExecutionId)
+    expect(await host.composition.settleChildTerminalAccounting()).toEqual({
+      settled: 1,
+      pending: 0,
+      unpriced: 0,
+    })
+    await host.reopenComposition()
+    expect(await host.composition.settleChildTerminalAccounting()).toEqual({
+      settled: 1,
+      pending: 0,
+      unpriced: 0,
+    })
+    expect(host.composition.childTerminalSettlementBlocked).toBe(false)
+    expect(await rowsOf(host, dispatch)).toEqual(before.rows)
+    expect(stableSummary(await readChildCostState(hooks))).toBe(before.cost)
+    expect(await publicationsOf(hooks)).toEqual(before.publications)
+    expect(host.state.physicalSends).toBe(sends)
+    expect(hooks.evidence.childStarts).toHaveLength(starts)
+    expect(hooks.evidence.reservations).toHaveLength(1)
   } finally {
     await host.close()
   }
@@ -979,3 +1125,206 @@ for (const [tamper, change] of Object.entries(publicationTampers)) {
     }
   }, 120000)
 }
+
+const terminalCostIdentity = (host) => ({
+  parentExecutionId: host.state.parentExecutionId,
+  delegationId: childIds.delegationId,
+  childExecutionId,
+  childAttemptId,
+})
+
+function terminalPass(host, hooks, overrides = {}) {
+  return new PiChildTerminalSettlement({
+    journal: { list: () => host.composition.adapter.journal.list() },
+    ledger: host.ledger,
+    delegations: hooks.delegationRecords,
+    usageOutcomes: () => hooks.usageOutcomes,
+    now: () => hooks.at,
+    ...overrides,
+  })
+}
+
+async function captureTerminalState(host, hooks, dispatch) {
+  return {
+    rows: await rowsOf(host, dispatch),
+    parentSummary: await summaryOf(host, dispatch.executionId),
+    childSummary: await summaryOf(host, childExecutionId),
+    cost: await readChildCostState(hooks),
+  }
+}
+
+const settlementCorruptions = {
+  'charged amount': async (host) => ({
+    journal: {
+      list() {
+        return host.composition.adapter.journal.list().map((record) => {
+          if (record.admission.request.executionId !== childExecutionId) return record
+          const changed = structuredClone(record)
+          changed.detail.result.usage.accounting.chargedMicrounits += 1
+          delete changed.detail.result.usage.cost
+          return changed
+        })
+      },
+    },
+  }),
+  'ledger attempt': async (host) => {
+    const ledger = new Proxy(host.ledger, {
+      get(target, property) {
+        if (property === 'entries')
+          return async (...args) =>
+            (await target.entries(...args)).map((entry) =>
+              entry.kind === 'model_usage'
+                ? { ...entry, attemptId: 'att_01JCCDEF0123456789ABCDEFG' }
+                : entry
+            )
+        const value = Reflect.get(target, property, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    return { ledger }
+  },
+  'projection report': async (host, hooks) => {
+    const usageEntry = (await host.ledger.entries(host.workspaceId, childExecutionId)).find(
+      (entry) => entry.kind === 'model_usage'
+    )
+    const changed = structuredClone(childOf(host.composition.adapter).detail.result.usage)
+    changed.accounting.chargedMicrounits += 1
+    delete changed.cost
+    await mutateChildUsage(hooks.usageOutcomes, (cost) =>
+      cost.recordReportedUsage(terminalCostIdentity(host), changed, {
+        reportId: 'conflicting-terminal-report',
+        publicationSequence: usageEntry.sequence + 1000,
+      })
+    )
+    return {}
+  },
+  'projection reservation': async (host, hooks) => {
+    const stored = await hooks.usageOutcomes.load()
+    const snapshot = structuredClone(stored.snapshot)
+    const entry = snapshot.entries.find(
+      (item) => item.outcome.identity.childAttemptId === childAttemptId
+    )
+    entry.outcome.reserved.reservationKey = 'different-attempt-hold'
+    await hooks.usageOutcomes.save({ revision: stored.revision + 1, snapshot })
+    return {}
+  },
+}
+
+for (const [corruption, prepare] of Object.entries(settlementCorruptions)) {
+  test(`terminal settlement rejects mismatched ${corruption} before changing durable state`, async () => {
+    const { host, hooks } = await createHost()
+    try {
+      const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
+      const overrides = await prepare(host, hooks)
+      const before = await captureTerminalState(host, hooks, dispatch)
+      const pass = terminalPass(host, hooks, overrides)
+      await expect(pass.settle()).rejects.toThrow('PI_CHILD_SETTLEMENT_MISMATCH')
+      expect(pass.blocked).toBe(true)
+      expect(await captureTerminalState(host, hooks, dispatch)).toEqual(before)
+    } finally {
+      await host.close()
+    }
+  }, 120000)
+}
+
+test('a newer report after budget finalization cannot receive the earlier report settlement', async () => {
+  const { host, hooks } = await createHost()
+  try {
+    const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
+    const usageEntry = (await host.ledger.entries(host.workspaceId, childExecutionId)).find(
+      (entry) => entry.kind === 'model_usage'
+    )
+    const newer = structuredClone(childOf(host.composition.adapter).detail.result.usage)
+    newer.accounting.chargedMicrounits += 1
+    delete newer.cost
+    let injected = false
+    const pass = terminalPass(host, hooks, {
+      afterStep: async (step) => {
+        if (step !== 'budget-finalized' || injected) return
+        injected = true
+        await mutateChildUsage(hooks.usageOutcomes, (cost) =>
+          cost.recordReportedUsage(terminalCostIdentity(host), newer, {
+            reportId: 'newer-terminal-report',
+            publicationSequence: usageEntry.sequence + 1000,
+          })
+        )
+      },
+    })
+
+    await expect(pass.settle()).rejects.toThrow('PI_CHILD_SETTLEMENT_MISMATCH')
+    expect(pass.blocked).toBe(true)
+    const latest = await readChildCostState(hooks)
+    expect(latest.outcome).toMatchObject({ costState: 'reported', reported: newer })
+    expect(latest.outcome.reconciled).toBeUndefined()
+    expect(latest.outcome.settled).toBeUndefined()
+    const beforeRetry = await captureTerminalState(host, hooks, dispatch)
+    await expect(pass.settle()).rejects.toThrow('PI_CHILD_SETTLEMENT_MISMATCH')
+    expect(await captureTerminalState(host, hooks, dispatch)).toEqual(beforeRetry)
+  } finally {
+    await host.close()
+  }
+}, 120000)
+
+test('a newer identical report keeps its own publication fence after budget finalization', async () => {
+  const { host, hooks } = await createHost()
+  try {
+    const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
+    const usageEntry = (await host.ledger.entries(host.workspaceId, childExecutionId)).find(
+      (entry) => entry.kind === 'model_usage'
+    )
+    const sameUsage = structuredClone(childOf(host.composition.adapter).detail.result.usage)
+    let injected = false
+    const pass = terminalPass(host, hooks, {
+      afterStep: async (step) => {
+        if (step !== 'budget-finalized' || injected) return
+        injected = true
+        await mutateChildUsage(hooks.usageOutcomes, (cost) =>
+          cost.recordReportedUsage(terminalCostIdentity(host), sameUsage, {
+            reportId: 'newer-identical-terminal-report',
+            publicationSequence: usageEntry.sequence + 1000,
+          })
+        )
+      },
+    })
+
+    await expect(pass.settle()).rejects.toThrow('PI_CHILD_SETTLEMENT_MISMATCH')
+    const latest = await readChildCostState(hooks)
+    expect(latest.outcome).toMatchObject({ costState: 'reported', reported: sameUsage })
+    expect(latest.outcome.reconciled).toBeUndefined()
+    expect(latest.outcome.settled).toBeUndefined()
+    const beforeRetry = await captureTerminalState(host, hooks, dispatch)
+    await expect(pass.settle()).rejects.toThrow('PI_CHILD_SETTLEMENT_MISMATCH')
+    expect(await captureTerminalState(host, hooks, dispatch)).toEqual(beforeRetry)
+  } finally {
+    await host.close()
+  }
+}, 120000)
+
+test('a failed child lookup does not prevent a later completed record from settling', async () => {
+  const { host, hooks } = await createHost()
+  try {
+    const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
+    const record = childOf(host.composition.adapter)
+    const lookupError = new Error('FIRST_CHILD_LOOKUP_FAILED')
+    let reads = 0
+    const pass = terminalPass(host, hooks, {
+      journal: { list: () => [record, record] },
+      delegations: {
+        async findByChild(id) {
+          reads += 1
+          if (reads === 1) throw lookupError
+          return hooks.delegationRecords.findByChild(id)
+        },
+      },
+    })
+
+    await expect(pass.settle()).rejects.toBe(lookupError)
+    expect(pass.blocked).toBe(true)
+    expect(reads).toBe(2)
+    expect(await summaryOf(host, childExecutionId)).toMatchObject({ settled: true })
+    expect((await readChildCostState(hooks)).outcome.costState).toBe('settled')
+    expect(await rowsOf(host, dispatch)).toMatchObject({ child: expect.any(Array) })
+  } finally {
+    await host.close()
+  }
+}, 120000)
