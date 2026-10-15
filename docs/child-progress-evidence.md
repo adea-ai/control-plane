@@ -66,9 +66,18 @@ stay wired to the canonical durable paths rather than a parallel ledger.
   dispatch, the child is allocated, funded from the parent's stated allowance
   (`DurableChildRuntimeBudgetAdmission`), started once and runs its own
   priced turn, whose reservation, exact usage and release are retained. A
-  grant withdrawn after the reopen leaves no child, reservation or start. The
-  provider transport, funding records and policy decision are scripted
-  fixtures; attempt settlement and cost-state projection are not driven.
+  grant withdrawn after the reopen leaves no child, reservation or start.
+  The same file then settles the child: the attempt reservation, the child
+  budget (releasing the unspent funding back into the parent's allowance) and
+  the cost-state projection (`reserved` -> `reported` -> `reconciled` ->
+  `settled`, retained through `SqliteChildUsageOutcomeRepository`). The lead is
+  settled by the production `SqlitePiLeadTerminalSettlement`. Settlement is
+  interrupted after each durable step and resumed after a physical restart
+  with no repeated debit, release, start, send or publication, and a child
+  whose send outcome is unknown is never settled. The provider transport,
+  funding records and policy decision are scripted fixtures, and the child
+  settlement driver is test-only: production settles leads only and no
+  composition root runs a child settlement yet.
 - `tests/child-progress-two-siblings-composition.test.mjs` — **two sibling
   children under one real parent**: coordinator admission over durable SQLite
   repositories, canonical per-child reservations and settlements in the
