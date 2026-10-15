@@ -501,9 +501,69 @@ export class InMemoryExecutionPlanRepository implements ExecutionPlanRepository 
 }
 
 export function assertExecutionPlanIntegrity(input: unknown): ExecutionPlan {
+  const key = verifiedPlanKey(input)
+  if (key !== undefined) {
+    const cached = verifiedPlans.get(key)
+    if (cached !== undefined) {
+      // Refresh recency; callers always receive their own copy.
+      verifiedPlans.delete(key)
+      verifiedPlans.set(key, cached)
+      return structuredClone(cached)
+    }
+  }
   const plan = parsePlan(input)
   assertPlanIntegrity(plan)
+  if (key !== undefined) {
+    if (verifiedPlans.size >= MAX_VERIFIED_PLANS) {
+      const oldest = verifiedPlans.keys().next()
+      if (!oldest.done) verifiedPlans.delete(oldest.value)
+    }
+    verifiedPlans.set(key, structuredClone(plan))
+  }
   return plan
+}
+
+// Parsing and re-digesting a plan is pure in its JSON content, and one flow
+// re-verifies the same few plans thousands of times. Only successes are kept,
+// keyed by the exact serialized content, so a changed or invalid plan can
+// never match a cached verdict. Inputs that are not plain JSON bypass the memo.
+const MAX_VERIFIED_PLANS = 64
+const MAX_VERIFIED_PLAN_KEY_LENGTH = 256 * 1024
+const verifiedPlans = new Map<string, ExecutionPlan>()
+
+function verifiedPlanKey(input: unknown): string | undefined {
+  if (!isPlainJson(input, 0)) return undefined
+  const key = JSON.stringify(input)
+  return key.length <= MAX_VERIFIED_PLAN_KEY_LENGTH ? key : undefined
+}
+
+function isPlainJson(value: unknown, depth: number): boolean {
+  if (depth > 32) return false
+  if (value === null) return true
+  switch (typeof value) {
+    case 'string':
+    case 'boolean':
+      return true
+    case 'number':
+      return Number.isFinite(value) && !Object.is(value, -0)
+    case 'object': {
+      if (Array.isArray(value)) {
+        for (let index = 0; index < value.length; index += 1) {
+          if (!(index in value) || !isPlainJson(value[index], depth + 1)) return false
+        }
+        return true
+      }
+      const prototype = Object.getPrototypeOf(value) as object | null
+      if (prototype !== Object.prototype && prototype !== null) return false
+      if (Object.getOwnPropertySymbols(value).length > 0) return false
+      for (const key of Object.keys(value)) {
+        if (!isPlainJson((value as Record<string, unknown>)[key], depth + 1)) return false
+      }
+      return true
+    }
+    default:
+      return false
+  }
 }
 
 export interface ExecutionPlanAcceptanceValidatorOptions {

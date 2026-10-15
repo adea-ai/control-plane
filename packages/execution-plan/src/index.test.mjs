@@ -920,6 +920,62 @@ function compile(input) {
   return new ExecutionPlanCompiler('1.0.0').compile(input)
 }
 
+describe('verified plan memo', () => {
+  test('returns independent copies and still rejects every changed or non-JSON input', () => {
+    const plan = compile(baseInput())
+    const first = assertExecutionPlanIntegrity(plan)
+    const second = assertExecutionPlanIntegrity(JSON.parse(JSON.stringify(plan)))
+    const third = assertExecutionPlanIntegrity(plan)
+    expect(first).toEqual(plan)
+    expect(second).toEqual(plan)
+    expect(third).toEqual(plan)
+    expect(second).not.toBe(third)
+
+    // Mutating a returned plan must not leak into later verifications.
+    third.compiler.version = '9.9.9'
+    third.skills.push({})
+    expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+
+    // A cached verdict never covers changed content, even by a single field.
+    expect(() =>
+      assertExecutionPlanIntegrity({ ...plan, compiledAt: '2030-01-01T00:00:00.000Z' })
+    ).toThrow()
+    expect(() =>
+      assertExecutionPlanIntegrity({ ...plan, outputContract: { contractRef: 'other' } })
+    ).toThrow()
+    expect(() => assertExecutionPlanIntegrity({ ...plan, extra: true })).toThrow()
+    // Failures are re-evaluated every time, not remembered as successes.
+    expect(() => assertExecutionPlanIntegrity({ ...plan, extra: true })).toThrow()
+    expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+  })
+
+  test('does not let a non-JSON object borrow the verdict of an equal-looking plan', () => {
+    const plan = compile(baseInput())
+    expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+    const withDate = { ...plan, compiledAt: new Date(plan.compiledAt) }
+    expect(() => assertExecutionPlanIntegrity(withDate)).toThrow()
+    class Holder {
+      constructor(value) {
+        Object.assign(this, value)
+      }
+    }
+    // Accepted by the schema both with and without the memo; it just bypasses it.
+    expect(assertExecutionPlanIntegrity(new Holder(plan))).toEqual(plan)
+    expect(() => assertExecutionPlanIntegrity({ ...plan, extra: 1n })).toThrow()
+  })
+
+  test('stays correct past the memo bound', () => {
+    const plans = Array.from({ length: 70 }, (_value, index) =>
+      compile({
+        ...baseInput(),
+        compiledAt: new Date(Date.UTC(2026, 7, 23, 12, 0, index)).toISOString(),
+      })
+    )
+    for (const plan of plans) expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+    for (const plan of plans) expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+  })
+})
+
 describe('immutable graph selection in execution plans', () => {
   const graph = {
     reference: {
