@@ -1,7 +1,8 @@
-import { expect, test } from 'bun:test'
+import { afterAll, expect, test } from 'bun:test'
 import { EventEmitter } from 'node:events'
-import { rm, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { cp, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   compactNativeSession,
@@ -441,9 +442,8 @@ test('governed child dispatch after native compaction and reopen runs once with 
 }, 90000)
 
 test('a grant revoked after the compaction reopen starts no child and funds nothing', async () => {
-  const { host, hooks, sent } = await createHost()
+  const { host, hooks, sent, dispatch, handle } = await forkAwaitingLead()
   try {
-    const { dispatch, handle } = await runLeadFirstTurn(host, hooks)
     await compactAcrossReopen(host, handle)
     // The governed tool was allowed by policy; the workspace grant is withdrawn before the child is
     // allocated, so current authority has to refuse it.
@@ -476,8 +476,7 @@ test('a grant revoked after the compaction reopen starts no child and funds noth
 
 /** Runs the delegating turn with the bridge's authority read replaced, without compaction. */
 async function delegateWithBridgeAuthority(override) {
-  const { host, hooks, sent } = await createHost()
-  const { dispatch, handle } = await runLeadFirstTurn(host, hooks)
+  const { host, hooks, sent, dispatch, handle } = await forkAwaitingLead()
   hooks.authorityOverride = override(hooks)
   const adapter = host.composition.adapter
   await submitSecondTurn(adapter, handle)
@@ -550,8 +549,8 @@ test('authority revoked after the reservation is funded starts no child and send
 }, 60000)
 
 /** Lead first turn, compaction across a reopen, then the delegating turn until the child completes. */
-async function dispatchChildAfterCompaction(host, hooks, { waitForCompleted = true } = {}) {
-  const { dispatch, handle } = await runLeadFirstTurn(host, hooks)
+async function dispatchChildAfterCompaction(host, hooks, { waitForCompleted = true, lead } = {}) {
+  const { dispatch, handle } = lead ?? (await runLeadFirstTurn(host, hooks))
   await compactAcrossReopen(host, handle)
   const adapter = host.composition.adapter
   await submitSecondTurn(adapter, handle)
@@ -564,6 +563,135 @@ async function dispatchChildAfterCompaction(host, hooks, { waitForCompleted = tr
   }, 'child terminal')
   return { dispatch, handle, adapter }
 }
+
+/**
+ * Two dozen proofs below start from the same state, and building it takes about ten seconds of CPU:
+ * the real lead turn, native compaction, reopen, second turn and child run. It is built once by the
+ * real production composition over real SQLite, then checkpointed: the canonical database through
+ * the provider's own backup, every other file of the runtime directory by copy, and the host's
+ * in-memory bindings by value. Each proof restores a checkpoint over the same host and opens a fresh
+ * production composition over the restored files, which is the restart path the composition already
+ * supports. Mutating proofs (tampered rows, interrupted and killed settlements, separate settlement
+ * processes) therefore start from identical durable state and cannot leak into each other. The
+ * uncheckpointed flow stays in the tests that assert each of its steps.
+ *
+ * Two checkpoints are taken on one shared host: the lead awaiting input after its first turn, and the
+ * child completed after compaction and the delegating turn.
+ */
+const sqliteFileNames = new Set([
+  'canonical.sqlite',
+  'canonical.sqlite-wal',
+  'canonical.sqlite-shm',
+])
+let sharedScenario
+/** The plain data of a fixture object; behavior (functions and the authority port) is kept as is. */
+const dataOf = (record) =>
+  Object.fromEntries(
+    Object.entries(record)
+      .filter(([key, value]) => typeof value !== 'function' && key !== 'scopeAuthority')
+      .map(([key, value]) => [key, structuredClone(value)])
+  )
+function restoreData(target, saved) {
+  for (const key of Object.keys(target))
+    if (typeof target[key] !== 'function' && key !== 'scopeAuthority' && !(key in saved))
+      delete target[key]
+  for (const [key, value] of Object.entries(saved)) target[key] = structuredClone(value)
+}
+
+/** Closes the composition and store, then captures the durable files and the in-memory bindings. */
+async function captureCheckpoint({ host, hooks, sent, behavior }) {
+  const directory = await mkdtemp(join(tmpdir(), 'pi-dispatch-checkpoint-'))
+  await host.suspend()
+  await cp(host.directory, directory, {
+    recursive: true,
+    filter: (source) => !sqliteFileNames.has(basename(source)),
+  })
+  await hooks.persistence.migrate()
+  const sqlite = await hooks.persistence.backup()
+  await host.resume()
+  return {
+    directory,
+    sqlite,
+    state: dataOf(host.state),
+    records: structuredClone([...host.records]),
+    evidence: dataOf(hooks.evidence),
+    sent: dataOf(sent),
+    behavior: dataOf(behavior),
+    intentId: hooks.intentId,
+  }
+}
+
+async function restoreCheckpoint({ host, hooks, sent, behavior }, checkpoint) {
+  await host.suspend()
+  await hooks.persistence.restore(checkpoint.sqlite)
+  for (const name of await readdir(host.directory))
+    if (!sqliteFileNames.has(name))
+      await rm(join(host.directory, name), { recursive: true, force: true })
+  await cp(checkpoint.directory, host.directory, { recursive: true })
+  restoreData(host.state, checkpoint.state)
+  host.records.clear()
+  for (const [key, value] of structuredClone(checkpoint.records)) host.records.set(key, value)
+  restoreData(hooks.evidence, checkpoint.evidence)
+  restoreData(sent, checkpoint.sent)
+  restoreData(behavior, checkpoint.behavior)
+  hooks.intentId = checkpoint.intentId
+  hooks.afterPolicyAllow = undefined
+  hooks.authorityOverride = undefined
+  hooks.settlementSeam = undefined
+  await host.resume()
+}
+
+/** The shared host with its lead awaiting input after the first turn, built on first use. */
+function leadScenario() {
+  sharedScenario ??= (async () => {
+    const behavior = {}
+    const { host, hooks, sent } = await createHost({}, behavior)
+    const lead = await runLeadFirstTurn(host, hooks)
+    const scenario = { host, hooks, sent, behavior, lead, checkpoints: {} }
+    scenario.checkpoints.lead = await captureCheckpoint(scenario)
+    return scenario
+  })()
+  return sharedScenario
+}
+
+const forkView = (scenario) => ({
+  // `close()` only releases the fork; the shared host is closed once, after the last test.
+  host: Object.create(scenario.host, { close: { value: async () => {} } }),
+  hooks: scenario.hooks,
+  sent: scenario.sent,
+  behavior: scenario.behavior,
+})
+
+/** Restores the lead awaiting its second turn, before compaction. */
+async function forkAwaitingLead() {
+  const scenario = await leadScenario()
+  await restoreCheckpoint(scenario, scenario.checkpoints.lead)
+  return { ...forkView(scenario), ...scenario.lead }
+}
+
+/** Restores the completed child after compaction and the delegating turn. */
+async function forkDispatchedHost() {
+  const scenario = await leadScenario()
+  scenario.checkpoints.dispatched ??= (async () => {
+    await restoreCheckpoint(scenario, scenario.checkpoints.lead)
+    await dispatchChildAfterCompaction(scenario.host, scenario.hooks, { lead: scenario.lead })
+    return captureCheckpoint(scenario)
+  })()
+  await restoreCheckpoint(scenario, await scenario.checkpoints.dispatched)
+  return {
+    ...forkView(scenario),
+    ...scenario.lead,
+    adapter: scenario.host.composition.adapter,
+  }
+}
+
+afterAll(async () => {
+  const scenario = await sharedScenario?.catch(() => undefined)
+  if (!scenario) return
+  await scenario.host.close()
+  for (const checkpoint of Object.values(scenario.checkpoints))
+    await rm((await checkpoint).directory, { recursive: true, force: true })
+})
 
 const rowsOf = async (host, dispatch) => ({
   parent: await host.ledger.entries(host.workspaceId, dispatch.executionId),
@@ -598,9 +726,8 @@ function expectSettledChildLedger(childEntries) {
 }
 
 test('child settlement carries the parent allowance through actual usage to final settlement', async () => {
-  const { host, hooks } = await createHost()
+  const { host, hooks, dispatch, handle, adapter } = await forkDispatchedHost()
   try {
-    const { dispatch, handle, adapter } = await dispatchChildAfterCompaction(host, hooks)
     const settlement = childSettlementFor(hooks)
     const reservationKey = `runtime-attempt:${childAttemptId}`
 
@@ -722,9 +849,8 @@ test('child settlement carries the parent allowance through actual usage to fina
 }, 120000)
 
 test('the production composition settles the admitted child through its own settlement path', async () => {
-  const { host, hooks } = await createHost()
+  const { host, hooks, dispatch } = await forkDispatchedHost()
   try {
-    const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
     // Only the production composition runs here: no test-built settlement instance.
     expect(typeof host.composition.settleChildTerminalAccounting).toBe('function')
     expect(host.composition.childTerminalSettlementBlocked).toBe(false)
@@ -823,9 +949,8 @@ const finalizeParent = (host, dispatch, key) =>
 
 for (const [step, expected] of Object.entries(interruptions)) {
   test(`production composition: settlement interrupted after ${step} reconciles across an in-process reopen`, async () => {
-    const { host, hooks } = await createHost()
+    const { host, hooks, dispatch, handle, adapter } = await forkDispatchedHost()
     try {
-      const { dispatch, handle, adapter } = await dispatchChildAfterCompaction(host, hooks)
       // The lead settles first, so any reservation still open on the parent is the child's alone.
       expect(await settleLeadTerminal(host)).toEqual({ settled: 1, pending: 0, unbound: 1 })
       await host.ledger.assertRuntimeAttemptReleased(
@@ -931,10 +1056,9 @@ for (const [step, expected] of Object.entries(interruptions)) {
 // provider transport, credentials or composition, so they cannot start, send or publish.
 for (const [step, expected] of Object.entries(interruptions)) {
   test(`standalone settlement process: killed after ${step}, a new process resumes from the stores`, async () => {
-    const { host, hooks } = await createHost()
+    const { host, hooks, dispatch, handle, adapter } = await forkDispatchedHost()
     let directory
     try {
-      const { dispatch, handle, adapter } = await dispatchChildAfterCompaction(host, hooks)
       expect(await settleLeadTerminal(host)).toEqual({ settled: 1, pending: 0, unbound: 1 })
       await hooks.scanner.scan(adapter)
       const published = await publicationsOf(hooks)
@@ -945,7 +1069,7 @@ for (const [step, expected] of Object.entries(interruptions)) {
         at: hooks.at,
       }
       const sends = host.state.physicalSends
-      directory = await host.detach()
+      directory = await host.suspend()
 
       const readStores = async () => {
         const stores = await openDurableChildStores(directory, ids)
@@ -1023,17 +1147,19 @@ for (const [step, expected] of Object.entries(interruptions)) {
       expect(hooks.evidence.childStarts).toHaveLength(1)
       expect(handle.attemptId).toBeDefined()
     } finally {
+      // The directory belongs to the shared host; the next fork restores it from the checkpoint.
       await host.close()
-      if (directory) await rm(directory, { recursive: true, force: true })
     }
   }, 150000)
 }
 
 test('a child whose send failed is never settled or reported as complete', async () => {
-  const { host, hooks } = await createHost({}, { childFails: true })
+  const { host, hooks, behavior, ...lead } = await forkAwaitingLead()
+  behavior.childFails = true
   try {
     const { dispatch, adapter } = await dispatchChildAfterCompaction(host, hooks, {
       waitForCompleted: false,
+      lead,
     })
     const row = childOf(adapter)
     const status = await adapter.status(row.admission.handle)
@@ -1081,9 +1207,8 @@ const publicationTampers = {
 }
 for (const [tamper, change] of Object.entries(publicationTampers)) {
   test(`publication records differ when the ${tamper} of the terminal publication changes`, async () => {
-    const { host, hooks } = await createHost()
+    const { host, hooks, dispatch, adapter } = await forkDispatchedHost()
     try {
-      const { dispatch, adapter } = await dispatchChildAfterCompaction(host, hooks)
       await hooks.scanner.scan(adapter)
       const before = await publicationsOf(hooks)
       const terminal = expectOneTerminalPublication(before, dispatch.executionId)
@@ -1212,9 +1337,8 @@ const settlementCorruptions = {
 
 for (const [corruption, prepare] of Object.entries(settlementCorruptions)) {
   test(`terminal settlement rejects mismatched ${corruption} before changing durable state`, async () => {
-    const { host, hooks } = await createHost()
+    const { host, hooks, dispatch } = await forkDispatchedHost()
     try {
-      const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
       const overrides = await prepare(host, hooks)
       const before = await captureTerminalState(host, hooks, dispatch)
       const pass = terminalPass(host, hooks, overrides)
@@ -1228,9 +1352,8 @@ for (const [corruption, prepare] of Object.entries(settlementCorruptions)) {
 }
 
 test('a newer report after budget finalization cannot receive the earlier report settlement', async () => {
-  const { host, hooks } = await createHost()
+  const { host, hooks, dispatch } = await forkDispatchedHost()
   try {
-    const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
     const usageEntry = (await host.ledger.entries(host.workspaceId, childExecutionId)).find(
       (entry) => entry.kind === 'model_usage'
     )
@@ -1266,9 +1389,8 @@ test('a newer report after budget finalization cannot receive the earlier report
 }, 120000)
 
 test('a newer identical report keeps its own publication fence after budget finalization', async () => {
-  const { host, hooks } = await createHost()
+  const { host, hooks, dispatch } = await forkDispatchedHost()
   try {
-    const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
     const usageEntry = (await host.ledger.entries(host.workspaceId, childExecutionId)).find(
       (entry) => entry.kind === 'model_usage'
     )
@@ -1301,9 +1423,8 @@ test('a newer identical report keeps its own publication fence after budget fina
 }, 120000)
 
 test('a failed child lookup does not prevent a later completed record from settling', async () => {
-  const { host, hooks } = await createHost()
+  const { host, hooks, dispatch } = await forkDispatchedHost()
   try {
-    const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
     const record = childOf(host.composition.adapter)
     const lookupError = new Error('FIRST_CHILD_LOOKUP_FAILED')
     let reads = 0
