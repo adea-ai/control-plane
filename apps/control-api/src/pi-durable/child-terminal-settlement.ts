@@ -1,17 +1,14 @@
 import { createHash } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
-import type { DelegationRepository } from '@control-plane/orchestration'
+import { ChildUsageLedger, type DelegationRepository } from '@control-plane/orchestration'
 import {
   RuntimeStartRequestSchema,
   RuntimeUsageSchema,
   type RuntimeUsage,
 } from '@control-plane/runtime-sdk'
 import type { DurableUsageLedger } from '@control-plane/usage-ledger'
-import {
-  mutateChildUsage,
-  readChildUsage,
-  type ChildUsageOutcomesFor,
-} from './child-usage-outcomes.js'
+import { mutateChildUsage, type ChildUsageOutcomesFor } from './child-usage-outcomes.js'
 
 /** The journal read needed: terminal records of child attempts. Other records are left alone. */
 export interface ChildTerminalJournal {
@@ -41,9 +38,11 @@ export interface ChildTerminalSettlementResult {
  * projection), so a new process resumes from exactly what was recorded. Every step is idempotent and
  * ordered so a cost state never runs ahead of the money: report (needs the retained usage entry),
  * settle the attempt reservation, finalize the child budget back into the parent's funding
- * reservation, then reconcile and settle the projection. A refusal leaves the reservation open for a
- * later pass. Failed, cancelled, unknown and interrupted children keep their reservation and cost
- * state exactly as recorded; nothing here infers or releases them.
+ * reservation, then reconcile and settle the projection. A ledger refusal before budget finalization
+ * leaves the remaining reservation open for a later pass. Evidence mismatches block projection
+ * settlement; if one appears after ledger finalization, those durable ledger entries are not undone.
+ * Failed, cancelled, unknown and interrupted children keep their reservation and cost state exactly
+ * as recorded; nothing here infers or releases them.
  */
 export class PiChildTerminalSettlement {
   #pass: Promise<ChildTerminalSettlementResult> | undefined
@@ -106,7 +105,15 @@ export class PiChildTerminalSettlement {
       if (!request.success || request.data.executionId === undefined) continue
       const plan = assertExecutionPlanIntegrity(request.data.executionPlan)
       if (!plan.parentExecutionPlan) continue
-      const delegation = await this.options.delegations.findByChild(request.data.executionId)
+      let delegation: Awaited<ReturnType<DelegationRepository['findByChild']>>
+      try {
+        delegation = await this.options.delegations.findByChild(request.data.executionId)
+      } catch (error) {
+        // A damaged or temporarily unavailable lookup must not prevent another completed record
+        // from being recovered in this pass.
+        failure ??= { error }
+        continue
+      }
       if (!delegation || delegation.childAttemptId !== request.data.attemptId) continue
       const usage = RuntimeUsageSchema.safeParse(
         (record.detail['result'] as { usage?: unknown } | undefined)?.usage
@@ -151,27 +158,96 @@ export class PiChildTerminalSettlement {
     const executionId = delegation.childExecutionId
     const reservationKey = `runtime-attempt:${childAttemptId}`
     const step = (name: ChildSettlementStep) => this.options.afterStep?.(name)
+    const mismatch = () => new Error('PI_CHILD_SETTLEMENT_MISMATCH')
+    const assertProjection = (cost: ChildUsageLedger) => {
+      const outcome = cost.status(identity)
+      const reserved = outcome.reserved
+      if (
+        reserved === undefined ||
+        reserved.workspaceId !== workspaceId ||
+        reserved.executionId !== executionId ||
+        reserved.attemptId !== childAttemptId ||
+        reserved.reservationKey !== reservationKey
+      )
+        throw mismatch()
+      if (
+        outcome.reported !== undefined &&
+        !isDeepStrictEqual(RuntimeUsageSchema.parse(outcome.reported), usage)
+      )
+        throw mismatch()
+      const retained = cost
+        .snapshot()
+        .entries.find(
+          (entry) =>
+            entry.outcome.identity.parentExecutionId === identity.parentExecutionId &&
+            entry.outcome.identity.delegationId === identity.delegationId &&
+            entry.outcome.identity.childExecutionId === identity.childExecutionId &&
+            entry.outcome.identity.childAttemptId === identity.childAttemptId
+        )
+      if (
+        outcome.reported !== undefined &&
+        (retained?.highestPublication !== publicationSequence ||
+          retained.retainedReportId !== reportId)
+      )
+        throw mismatch()
+      if (
+        outcome.settled !== undefined &&
+        (outcome.settled.settledMicrounits !== accounting.chargedMicrounits ||
+          outcome.settled.settlementRef !== reportId)
+      )
+        throw mismatch()
+      return outcome
+    }
 
-    const current = await readChildUsage(store, identity)
-    if (current.costState === 'settled') return 'settled'
-
-    const usageEntry = (await this.options.ledger.entries(workspaceId, executionId)).find(
+    const usageEntries = (await this.options.ledger.entries(workspaceId, executionId)).filter(
       (entry) => entry.kind === 'model_usage' && entry.source.sourceId === accounting.sourceId
     )
+    if (usageEntries.length > 1) throw mismatch()
+    const usageEntry = usageEntries[0]
     if (!usageEntry) return 'pending'
+    const publicationSequence = usageEntry.sequence
+    if (
+      usageEntry.workspaceId !== workspaceId ||
+      usageEntry.executionId !== executionId ||
+      usageEntry.attemptId !== childAttemptId ||
+      usageEntry.costMicrounits !== accounting.chargedMicrounits ||
+      usageEntry.currency !== accounting.currency ||
+      usageEntry.costExact !== accounting.costExact ||
+      usageEntry.fundingSource !== accounting.fundingSource
+    )
+      throw mismatch()
     const reportId = `usage-settle:${childAttemptId}:${createHash('sha256')
       .update(accounting.sourceId)
       .digest('hex')
       .slice(0, 16)}`
 
+    const readProjection = async () => {
+      const stored = await store.load()
+      const cost = new ChildUsageLedger()
+      if (stored) cost.restore(stored.snapshot)
+      return { cost, outcome: assertProjection(cost) }
+    }
+    const { outcome: current } = await readProjection()
+
+    if (current.costState === 'settled') return 'settled'
+
     if (current.reported === undefined) {
-      await mutateChildUsage(store, (cost) =>
+      const receipt = await mutateChildUsage(store, (cost) =>
         cost.recordReportedUsage(identity, usage, {
           reportId,
           publicationSequence: usageEntry.sequence,
         })
       )
+      if (
+        ('outcome' in receipt &&
+          receipt.outcome !== 'recorded' &&
+          receipt.outcome !== 'duplicate_report') ||
+        ('reported' in receipt &&
+          !isDeepStrictEqual(RuntimeUsageSchema.parse(receipt.reported), usage))
+      )
+        throw mismatch()
       await step('reported')
+      await readProjection()
     }
 
     try {
@@ -189,6 +265,7 @@ export class PiChildTerminalSettlement {
       if (usageCode(error) !== 'RESERVATION_SETTLED') throw error
     }
     await step('attempt-settled')
+    await readProjection()
 
     try {
       await this.options.ledger.finalizeBudget({
@@ -210,23 +287,31 @@ export class PiChildTerminalSettlement {
       throw new Error('PI_CHILD_SETTLEMENT_INCOMPLETE')
     // The projection settles exactly what the ledger settled, and only when it agrees with the
     // priced report.
-    if (summary.spentMicrounits !== accounting.chargedMicrounits)
-      throw new Error('PI_CHILD_SETTLEMENT_MISMATCH')
+    if (summary.spentMicrounits !== accounting.chargedMicrounits) throw mismatch()
 
-    if (current.reconciled === undefined) {
-      await mutateChildUsage(store, (cost) =>
-        cost.reconcile(identity, { reconciledAt: this.options.now() })
-      )
+    // The projection can advance while the durable ledger steps run. Re-read it after budget
+    // finalization, then validate again inside each mutation so an intervening newer report never
+    // inherits reconciliation or settlement evidence for this report.
+    const { outcome: latest } = await readProjection()
+    if (latest.costState === 'settled') return 'settled'
+
+    if (latest.reconciled === undefined) {
+      await mutateChildUsage(store, (cost) => {
+        assertProjection(cost)
+        return cost.reconcile(identity, { reconciledAt: this.options.now() })
+      })
       await step('reconciled')
     }
-    await mutateChildUsage(store, (cost) =>
-      cost.settle(identity, {
+    await mutateChildUsage(store, (cost) => {
+      const currentProjection = assertProjection(cost)
+      if (currentProjection.reconciled === undefined) throw mismatch()
+      return cost.settle(identity, {
         currency: 'USD',
         settledMicrounits: summary.spentMicrounits,
         settledAt: this.options.now(),
         settlementRef: reportId,
       })
-    )
+    })
     return 'settled'
   }
 }

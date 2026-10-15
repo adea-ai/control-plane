@@ -7,6 +7,8 @@ import {
   compactNativeSession,
   nativeSessionPath,
 } from '../packages/pi-durable-adapter/src/native-session-compaction.fixture.mjs'
+import { PiChildTerminalSettlement } from '../apps/control-api/src/pi-durable/child-terminal-settlement.ts'
+import { mutateChildUsage } from '../apps/control-api/src/pi-durable/child-usage-outcomes.ts'
 import {
   childIds,
   childObjective,
@@ -1123,3 +1125,206 @@ for (const [tamper, change] of Object.entries(publicationTampers)) {
     }
   }, 120000)
 }
+
+const terminalCostIdentity = (host) => ({
+  parentExecutionId: host.state.parentExecutionId,
+  delegationId: childIds.delegationId,
+  childExecutionId,
+  childAttemptId,
+})
+
+function terminalPass(host, hooks, overrides = {}) {
+  return new PiChildTerminalSettlement({
+    journal: { list: () => host.composition.adapter.journal.list() },
+    ledger: host.ledger,
+    delegations: hooks.delegationRecords,
+    usageOutcomes: () => hooks.usageOutcomes,
+    now: () => hooks.at,
+    ...overrides,
+  })
+}
+
+async function captureTerminalState(host, hooks, dispatch) {
+  return {
+    rows: await rowsOf(host, dispatch),
+    parentSummary: await summaryOf(host, dispatch.executionId),
+    childSummary: await summaryOf(host, childExecutionId),
+    cost: await readChildCostState(hooks),
+  }
+}
+
+const settlementCorruptions = {
+  'charged amount': async (host) => ({
+    journal: {
+      list() {
+        return host.composition.adapter.journal.list().map((record) => {
+          if (record.admission.request.executionId !== childExecutionId) return record
+          const changed = structuredClone(record)
+          changed.detail.result.usage.accounting.chargedMicrounits += 1
+          delete changed.detail.result.usage.cost
+          return changed
+        })
+      },
+    },
+  }),
+  'ledger attempt': async (host) => {
+    const ledger = new Proxy(host.ledger, {
+      get(target, property) {
+        if (property === 'entries')
+          return async (...args) =>
+            (await target.entries(...args)).map((entry) =>
+              entry.kind === 'model_usage'
+                ? { ...entry, attemptId: 'att_01JCCDEF0123456789ABCDEFG' }
+                : entry
+            )
+        const value = Reflect.get(target, property, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    return { ledger }
+  },
+  'projection report': async (host, hooks) => {
+    const usageEntry = (await host.ledger.entries(host.workspaceId, childExecutionId)).find(
+      (entry) => entry.kind === 'model_usage'
+    )
+    const changed = structuredClone(childOf(host.composition.adapter).detail.result.usage)
+    changed.accounting.chargedMicrounits += 1
+    delete changed.cost
+    await mutateChildUsage(hooks.usageOutcomes, (cost) =>
+      cost.recordReportedUsage(terminalCostIdentity(host), changed, {
+        reportId: 'conflicting-terminal-report',
+        publicationSequence: usageEntry.sequence + 1000,
+      })
+    )
+    return {}
+  },
+  'projection reservation': async (host, hooks) => {
+    const stored = await hooks.usageOutcomes.load()
+    const snapshot = structuredClone(stored.snapshot)
+    const entry = snapshot.entries.find(
+      (item) => item.outcome.identity.childAttemptId === childAttemptId
+    )
+    entry.outcome.reserved.reservationKey = 'different-attempt-hold'
+    await hooks.usageOutcomes.save({ revision: stored.revision + 1, snapshot })
+    return {}
+  },
+}
+
+for (const [corruption, prepare] of Object.entries(settlementCorruptions)) {
+  test(`terminal settlement rejects mismatched ${corruption} before changing durable state`, async () => {
+    const { host, hooks } = await createHost()
+    try {
+      const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
+      const overrides = await prepare(host, hooks)
+      const before = await captureTerminalState(host, hooks, dispatch)
+      const pass = terminalPass(host, hooks, overrides)
+      await expect(pass.settle()).rejects.toThrow('PI_CHILD_SETTLEMENT_MISMATCH')
+      expect(pass.blocked).toBe(true)
+      expect(await captureTerminalState(host, hooks, dispatch)).toEqual(before)
+    } finally {
+      await host.close()
+    }
+  }, 120000)
+}
+
+test('a newer report after budget finalization cannot receive the earlier report settlement', async () => {
+  const { host, hooks } = await createHost()
+  try {
+    const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
+    const usageEntry = (await host.ledger.entries(host.workspaceId, childExecutionId)).find(
+      (entry) => entry.kind === 'model_usage'
+    )
+    const newer = structuredClone(childOf(host.composition.adapter).detail.result.usage)
+    newer.accounting.chargedMicrounits += 1
+    delete newer.cost
+    let injected = false
+    const pass = terminalPass(host, hooks, {
+      afterStep: async (step) => {
+        if (step !== 'budget-finalized' || injected) return
+        injected = true
+        await mutateChildUsage(hooks.usageOutcomes, (cost) =>
+          cost.recordReportedUsage(terminalCostIdentity(host), newer, {
+            reportId: 'newer-terminal-report',
+            publicationSequence: usageEntry.sequence + 1000,
+          })
+        )
+      },
+    })
+
+    await expect(pass.settle()).rejects.toThrow('PI_CHILD_SETTLEMENT_MISMATCH')
+    expect(pass.blocked).toBe(true)
+    const latest = await readChildCostState(hooks)
+    expect(latest.outcome).toMatchObject({ costState: 'reported', reported: newer })
+    expect(latest.outcome.reconciled).toBeUndefined()
+    expect(latest.outcome.settled).toBeUndefined()
+    const beforeRetry = await captureTerminalState(host, hooks, dispatch)
+    await expect(pass.settle()).rejects.toThrow('PI_CHILD_SETTLEMENT_MISMATCH')
+    expect(await captureTerminalState(host, hooks, dispatch)).toEqual(beforeRetry)
+  } finally {
+    await host.close()
+  }
+}, 120000)
+
+test('a newer identical report keeps its own publication fence after budget finalization', async () => {
+  const { host, hooks } = await createHost()
+  try {
+    const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
+    const usageEntry = (await host.ledger.entries(host.workspaceId, childExecutionId)).find(
+      (entry) => entry.kind === 'model_usage'
+    )
+    const sameUsage = structuredClone(childOf(host.composition.adapter).detail.result.usage)
+    let injected = false
+    const pass = terminalPass(host, hooks, {
+      afterStep: async (step) => {
+        if (step !== 'budget-finalized' || injected) return
+        injected = true
+        await mutateChildUsage(hooks.usageOutcomes, (cost) =>
+          cost.recordReportedUsage(terminalCostIdentity(host), sameUsage, {
+            reportId: 'newer-identical-terminal-report',
+            publicationSequence: usageEntry.sequence + 1000,
+          })
+        )
+      },
+    })
+
+    await expect(pass.settle()).rejects.toThrow('PI_CHILD_SETTLEMENT_MISMATCH')
+    const latest = await readChildCostState(hooks)
+    expect(latest.outcome).toMatchObject({ costState: 'reported', reported: sameUsage })
+    expect(latest.outcome.reconciled).toBeUndefined()
+    expect(latest.outcome.settled).toBeUndefined()
+    const beforeRetry = await captureTerminalState(host, hooks, dispatch)
+    await expect(pass.settle()).rejects.toThrow('PI_CHILD_SETTLEMENT_MISMATCH')
+    expect(await captureTerminalState(host, hooks, dispatch)).toEqual(beforeRetry)
+  } finally {
+    await host.close()
+  }
+}, 120000)
+
+test('a failed child lookup does not prevent a later completed record from settling', async () => {
+  const { host, hooks } = await createHost()
+  try {
+    const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
+    const record = childOf(host.composition.adapter)
+    const lookupError = new Error('FIRST_CHILD_LOOKUP_FAILED')
+    let reads = 0
+    const pass = terminalPass(host, hooks, {
+      journal: { list: () => [record, record] },
+      delegations: {
+        async findByChild(id) {
+          reads += 1
+          if (reads === 1) throw lookupError
+          return hooks.delegationRecords.findByChild(id)
+        },
+      },
+    })
+
+    await expect(pass.settle()).rejects.toBe(lookupError)
+    expect(pass.blocked).toBe(true)
+    expect(reads).toBe(2)
+    expect(await summaryOf(host, childExecutionId)).toMatchObject({ settled: true })
+    expect((await readChildCostState(hooks)).outcome.costState).toBe('settled')
+    expect(await rowsOf(host, dispatch)).toMatchObject({ child: expect.any(Array) })
+  } finally {
+    await host.close()
+  }
+}, 120000)
