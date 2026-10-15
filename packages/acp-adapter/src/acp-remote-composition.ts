@@ -4,8 +4,11 @@ import {
   acpRemoteDeviceStateScope,
 } from './acp-remote-device-state.ts'
 import {
+  SecureAcpRemoteTransport,
   SecureAcpDeviceEndpoint,
+  type AcpRemoteControllerAuthorityPort,
   type SecureAcpDeviceEndpointOptions,
+  type SecureAcpRemoteTransportOptions,
 } from './acp-remote-transport.ts'
 
 /**
@@ -37,4 +40,23 @@ export function createPersistentSecureAcpDeviceEndpoint(
       acpRemoteDeviceStateScope(options.route)
     ),
   })
+}
+
+export type EnrolledSecureAcpRemoteTransportOptions = Omit<
+  SecureAcpRemoteTransportOptions,
+  'controllerAuthority'
+> & {
+  readonly controllerAuthority: AcpRemoteControllerAuthorityPort
+}
+
+/**
+ * Production controller construction. The caller supplies a route derived from current
+ * server-owned connection state, the matching enrolled controller key, and its live enrollment
+ * authority. The raw constructor remains available for isolated tests but is not this production
+ * composition path.
+ */
+export function createEnrolledSecureAcpRemoteTransport(
+  options: EnrolledSecureAcpRemoteTransportOptions
+): SecureAcpRemoteTransport {
+  return new SecureAcpRemoteTransport(options)
 }

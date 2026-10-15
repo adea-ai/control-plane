@@ -22,7 +22,7 @@ import {
   type DelegationRepository,
 } from '@control-plane/orchestration'
 import { ExecutionAttemptSchema, ExecutionSchema } from '@control-plane/domain'
-import { DurableUsageLedger } from '@control-plane/usage-ledger'
+import { childAllowanceStatementOf, DurableUsageLedger } from '@control-plane/usage-ledger'
 import type { ControlPlaneDatabase } from './connection.js'
 import { createPgChildAdmissionReader } from './child-admission-reader.js'
 import { contextPackages } from './schema/context-packages.js'
@@ -255,6 +255,7 @@ export class PostgresDelegationRepository implements DelegationRepository, Child
           currency: childPlan.constraints.limits.budget.currency,
           maximumMicrounits: childPlan.constraints.limits.budget.maximumMicrounits,
           maximumTokens: childPlan.constraints.limits.tokens.maximumTotal,
+          ...parentChildAllowanceOf(parentPlan.constraints.limits),
           source: {
             sourceId: `child-budget:${record.delegationId}`,
             idempotencyKey: `child-budget-open:${record.delegationId}`,
@@ -674,4 +675,10 @@ function toRow(record: DelegationRecord) {
     acceptedAt: new Date(record.acceptedAt),
     updatedAt: new Date(record.updatedAt),
   }
+}
+
+/** The parent plan's child allowance, so a child is never funded beyond it from freed balance. */
+function parentChildAllowanceOf(limits: Parameters<typeof childAllowanceStatementOf>[0]) {
+  const parentChildAllowance = childAllowanceStatementOf(limits)
+  return parentChildAllowance === undefined ? {} : { parentChildAllowance }
 }

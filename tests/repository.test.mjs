@@ -36,7 +36,7 @@ const runtimeRef =
   (await readFile(new URL('../.github/code-foundry.yml', import.meta.url), 'utf8')).match(
     /^runtime_ref: (\S+)$/m
   )?.[1] ?? ''
-const sharedValidationRef = '4480e8aed1dac8bbb3cb12d8d7fe086a13a8eb3b'
+const sharedValidationRef = '7119b3e2baebfbfdd47d32428cbf5df2f2079afa'
 
 const apps = [
   'control-api',
@@ -209,6 +209,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'apps/hosted-control-plane/src/reconciliation-metrics.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-projection.integration.test.mjs',
     'apps/runtime-gateway/src/runtime-node-credential-binding.integration.test.mjs',
+    'apps/workflow-worker/src/child-runtime-budget-admission.integration.test.mjs',
     'apps/workflow-worker/src/runtime-budget-admission.integration.test.mjs',
     'packages/database/src/admission-rollout-admin.integration.test.mjs',
     'packages/database/src/budget-admission.integration.test.mjs',
@@ -222,6 +223,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/database/src/memory-provenance-retention.integration.test.mjs',
     'packages/database/src/model-selection-repository.integration.test.mjs',
     'packages/database/src/neon-ddl-probe.integration.test.mjs',
+    'packages/database/src/operations-measurements.integration.test.mjs',
     'packages/database/src/project-state-initialization.integration.test.mjs',
     'packages/database/src/retention-ancestry.integration.test.mjs',
     'packages/database/src/retention-claim-budget.integration.test.mjs',
@@ -274,9 +276,11 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-local-native-terminal-usage.test.mjs',
     'tests/m11-standalone-e2e.test.mjs',
     'tests/child-progress-two-siblings-composition.test.mjs',
+    'tests/child-runtime-budget-admission.test.mjs',
     'tests/pi-child-continuation-sqlite.test.mjs',
     'tests/pi-durable-child-host.test.mjs',
     'tests/pi-durable-child-mapping-recovery.test.mjs',
+    'tests/delegation-receipt-retention-restart.test.mjs',
     'tests/pi-durable-delegation-recovery.test.mjs',
     'tests/pi-durable-canonical-authority.test.mjs',
     'tests/pi-durable-production-child-composition.test.mjs',

@@ -43,6 +43,10 @@ describe.skipIf(!enabled)('PostgreSQL child budget admission', () => {
       parentInput.correlation.workspaceId = workspaceId
       parentInput.constraints.limits.childExecutions.maximumTotal = 2
       parentInput.constraints.limits.concurrency.maximumParallel = 1
+      parentInput.constraints.limits.childExecutions.budgetAllowance = {
+        maximumMicrounits: 4_000_000,
+        maximumTokens: 100_000,
+      }
       const parentPlan = new ExecutionPlanCompiler('1.0.0').compile(parentInput)
       await contexts.put(parentContext)
       await plans.put(parentPlan)
@@ -337,6 +341,13 @@ describe.skipIf(!enabled)('PostgreSQL child budget admission', () => {
       ).toHaveLength(1)
 
       const winner = contenders[winnerIndex]
+      // The parent has 100M available and the child plan asks for its whole ceiling, but the
+      // parent plan states 4M of 10M (and 100k of 250k tokens, scaled to the 100k parent budget).
+      expect(
+        await usageStore.transaction(workspaceId, (transaction) =>
+          transaction.getBudget(winner.childExecutionId)
+        )
+      ).toMatchObject({ maximumMicrounits: 4_000_000, maximumTokens: 40_000 })
       expect(observedByReader).toEqual({
         execution: await executions.getExecution(parentExecutionId),
         attempt: await executions.getAttempt(parentAttemptId),

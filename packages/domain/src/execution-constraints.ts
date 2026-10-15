@@ -67,24 +67,64 @@ export const ModelRequirementSchema = z
   .strict()
 
 const PositiveLimitSchema = z.number().int().positive()
-export const ExecutionLimitsSchema = z.object({
-  budget: z.object({
-    currency: z.literal('USD'),
-    maximumMicrounits: PositiveLimitSchema,
-  }),
-  tokens: z.object({ maximumTotal: PositiveLimitSchema }),
-  duration: z.object({ maximumMs: PositiveLimitSchema }),
-  concurrency: z.object({ maximumParallel: PositiveLimitSchema }),
-  childExecutions: z.object({
-    maximumTotal: z.number().int().nonnegative(),
-    maximumDepth: z.number().int().nonnegative(),
-  }),
-  sandbox: z.object({
-    cpuMillicores: PositiveLimitSchema,
-    memoryMebibytes: PositiveLimitSchema,
-    storageMebibytes: PositiveLimitSchema,
-  }),
+/**
+ * Part of an execution's own budget and token ceiling that the plan holds back for its child
+ * executions. The execution's runtime attempt reserves only the rest, so a child can be funded
+ * from the unreserved balance. Omitted means no part is held back, and the attempt reserves
+ * everything that is left.
+ */
+export const ChildBudgetAllowanceSchema = z.object({
+  maximumMicrounits: PositiveLimitSchema,
+  maximumTokens: PositiveLimitSchema,
 })
+
+export const ExecutionLimitsSchema = z
+  .object({
+    budget: z.object({
+      currency: z.literal('USD'),
+      maximumMicrounits: PositiveLimitSchema,
+    }),
+    tokens: z.object({ maximumTotal: PositiveLimitSchema }),
+    duration: z.object({ maximumMs: PositiveLimitSchema }),
+    concurrency: z.object({ maximumParallel: PositiveLimitSchema }),
+    childExecutions: z.object({
+      maximumTotal: z.number().int().nonnegative(),
+      maximumDepth: z.number().int().nonnegative(),
+      budgetAllowance: ChildBudgetAllowanceSchema.exactOptional(),
+    }),
+    sandbox: z.object({
+      cpuMillicores: PositiveLimitSchema,
+      memoryMebibytes: PositiveLimitSchema,
+      storageMebibytes: PositiveLimitSchema,
+    }),
+  })
+  .superRefine((limits, context) => {
+    const allowance = limits.childExecutions.budgetAllowance
+    if (allowance === undefined) return
+    const path = ['childExecutions', 'budgetAllowance']
+    if (limits.childExecutions.maximumTotal < 1 || limits.childExecutions.maximumDepth < 1) {
+      context.addIssue({
+        code: 'custom',
+        path,
+        message: 'A child budget allowance needs at least one child and one level of depth',
+      })
+    }
+    // The execution itself must keep a nonzero share of both ceilings.
+    if (allowance.maximumMicrounits >= limits.budget.maximumMicrounits) {
+      context.addIssue({
+        code: 'custom',
+        path: [...path, 'maximumMicrounits'],
+        message: 'The child allowance must be below the execution budget',
+      })
+    }
+    if (allowance.maximumTokens >= limits.tokens.maximumTotal) {
+      context.addIssue({
+        code: 'custom',
+        path: [...path, 'maximumTokens'],
+        message: 'The child allowance must be below the execution token ceiling',
+      })
+    }
+  })
 
 export const InteractionPolicySchema = z.object({
   approvals: z.enum(['disabled', 'allowed', 'required']),
@@ -336,6 +376,7 @@ function minimumLimits(
     childExecutions: {
       maximumTotal: Math.min(left.childExecutions.maximumTotal, right.childExecutions.maximumTotal),
       maximumDepth: Math.min(left.childExecutions.maximumDepth, right.childExecutions.maximumDepth),
+      ...composeChildBudgetAllowance(left, right),
     },
     sandbox: {
       cpuMillicores: Math.min(left.sandbox.cpuMillicores, right.sandbox.cpuMillicores),
@@ -343,6 +384,37 @@ function minimumLimits(
       storageMebibytes: Math.min(left.sandbox.storageMebibytes, right.sandbox.storageMebibytes),
     },
   }
+}
+
+/**
+ * A layer that states no allowance has no opinion; stated allowances compose to the smaller one.
+ * The result only ever shrinks: it is dropped when the composed limits leave no child to fund, and
+ * clamped so the execution keeps a share of both ceilings.
+ */
+function composeChildBudgetAllowance(
+  left: ExecutionConstraintSet['limits'],
+  right: ExecutionConstraintSet['limits']
+): { budgetAllowance?: z.output<typeof ChildBudgetAllowanceSchema> } {
+  const stated = [left, right].flatMap((limits) => limits.childExecutions.budgetAllowance ?? [])
+  if (stated.length === 0) return {}
+  const maximumTotal = Math.min(
+    left.childExecutions.maximumTotal,
+    right.childExecutions.maximumTotal
+  )
+  const maximumDepth = Math.min(
+    left.childExecutions.maximumDepth,
+    right.childExecutions.maximumDepth
+  )
+  const maximumMicrounits = Math.min(
+    ...stated.map((value) => value.maximumMicrounits),
+    Math.min(left.budget.maximumMicrounits, right.budget.maximumMicrounits) - 1
+  )
+  const maximumTokens = Math.min(
+    ...stated.map((value) => value.maximumTokens),
+    Math.min(left.tokens.maximumTotal, right.tokens.maximumTotal) - 1
+  )
+  if (maximumTotal < 1 || maximumDepth < 1 || maximumMicrounits < 1 || maximumTokens < 1) return {}
+  return { budgetAllowance: { maximumMicrounits, maximumTokens } }
 }
 
 function toolGrantKey(grant: { tool: { toolId: string; versionRange: string } }): string {

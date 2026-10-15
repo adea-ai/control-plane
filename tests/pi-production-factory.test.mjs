@@ -366,6 +366,38 @@ test('real production factory prepares without inference and publishes exact nat
   }
 }, 30000)
 
+test('the compiled lead plan takes its child allowance from the pinned profile version when the request states none', async () => {
+  const stated = (constraints) => constraints.limits.childExecutions.budgetAllowance
+  for (const source of ['profile', 'request-and-profile', 'none']) {
+    const host = await createProductionFactoryFixture({ childAllowanceSource: source })
+    try {
+      const intentId = host.setIntent()
+      await host.composition.piDurableLeadService.prepare(
+        host.command('pi-durable.lead.prepare', { intentId }),
+        host.principal
+      )
+      const plan = host.parentPlanForIntent(intentId)
+      const fromProfile = stated(host.profile.definition.executionConstraints)
+      // The plan is pinned to the published profile version the product pin resolved to.
+      expect(plan.profile.profileVersionId).toBe(host.profile.profileVersionId)
+      expect(plan.profile.contentDigest).toBe(host.profile.contentDigest)
+      expect(host.childAllowanceSource).toBe(source)
+      if (source === 'none') {
+        expect(fromProfile).toBeUndefined()
+        expect(stated(host.requestConstraints)).toBeUndefined()
+        expect(stated(plan.constraints)).toBeUndefined()
+        continue
+      }
+      expect(fromProfile).toBeDefined()
+      expect(stated(plan.constraints)).toEqual(fromProfile)
+      if (source === 'profile') expect(stated(host.requestConstraints)).toBeUndefined()
+      else expect(stated(host.requestConstraints)).toEqual(fromProfile)
+    } finally {
+      await host.close()
+    }
+  }
+})
+
 test('actual factory current original actor and account denial never mint a canonical admission or start native work', async () => {
   const host = await createProductionFactoryFixture()
   try {

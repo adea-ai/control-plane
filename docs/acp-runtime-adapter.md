@@ -154,15 +154,29 @@ Local composition's `secureAcpRemoteRoute` option constructs the endpoint over t
 own `SqlitePersistenceProvider` (`LocalControlPlaneComposition.secureAcpDevice`), with passthrough
 from `start()` via `compositionOptions`. The route record (public keys, ids, validity) stays an
 explicit host-supplied composition input — no ambient credential or key material — and the
-in-memory default remains test-only.
+in-memory default remains test-only. Controller construction has a separate
+`createEnrolledSecureAcpRemoteTransport` factory. It requires the current controller enrollment
+authority and binds each durable check to the route scope, controller key id, and public key before
+inventory requests, before commands leave, after wire replies, and before publishing decrypted
+replies. Connection-state reporting uses the synchronous cache only after a durable check passes;
+it stays offline before that check and after a rejected check or observed wire disconnect. Enrolled
+transports use
+`revokeCurrent()` to recheck authority before signing; the synchronous `revoke()` helper is only for
+isolated transport tests. The authority port is a required production boundary; the raw constructor
+remains useful for isolated transport tests.
 
 **Production wire boundary (#1023 remains open):** the Local composition constructs the durable
-device endpoint, but `AcpRemoteWire` still has no concrete production implementation or call site
-that sends its sealed commands and inventory requests through `apps/runtime-gateway`. The secure
-route tests connect callbacks directly to `device.handleCommand` and `device.handleInventory`; they
-prove endpoint behavior, not an authenticated controller-to-device production exchange. The
-runtime-gateway WebSocket server handles runtime-node connections, but these paths do not join it
-to a controller-side ACP wire. Therefore #1023's production transport acceptance is still open.
+device endpoint and controller construction can require a current enrollment authority, but
+`AcpRemoteWire` still has no concrete production implementation or call site that sends sealed
+commands and inventory requests through `apps/runtime-gateway`. The secure route tests connect
+callbacks directly to `device.handleCommand` and `device.handleInventory`; they prove endpoint
+behavior, not an authenticated controller-to-device production exchange. The runtime-gateway
+WebSocket server handles runtime-node connections, but these paths do not join it to a
+controller-side ACP wire. This repository contains no node agent that answers the sealed ACP
+operation and no enrolled-controller signer source implementing the new authority port. The wire
+also needs a per-command reply artifact path because the existing runtime artifact verifier permits
+one result artifact per attempt. No live ACP producer, node-agent hook, enrolled device, or signer
+was available for qualification. Therefore #1023's production transport acceptance remains open.
 
 **SQLite credential-fence contract:** SQLite runtime-command settlement now requires an authority
 that validates credential id and version, the command's node and workspace, and current revocation

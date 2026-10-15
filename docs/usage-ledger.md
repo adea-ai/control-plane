@@ -119,6 +119,116 @@ replay verifies the operation-bound terminal settlement and validated settled ro
 Future budget extensions must retain original opening authority so those historical
 receipts remain verifiable; extensions must not reuse the current maxima as that history.
 
+### Child allowance in the accepted plan
+
+A child is funded only from its parent's unreserved balance, and a runtime attempt reserves
+everything that is left. A plan therefore states what it holds back for children:
+`limits.childExecutions.budgetAllowance` (`maximumMicrounits`, `maximumTokens`). The allowance is
+both a holdback and a cap, from the same definition (`unfundedChildAllowance`): the part of it no
+child has been funded from yet. An open child funding counts at its ceiling and a settled one at
+what it spent.
+
+- **Holdback:** a runtime attempt reserves the available balance minus the unfunded allowance, so a
+  child can be funded.
+- **Cap:** child allocation passes the parent plan's statement (`parentChildAllowance`) to
+  `openBudget`, which funds the child at the smallest of its requested ceiling, the parent's
+  available balance and the unfunded allowance, and fails with `BUDGET_EXHAUSTED` when either
+  resource has none left. The cap is an invariant of the parent's budget ledger, not of the lead's
+  attempt: it counts funding still open at its ceiling and funding already settled at what it
+  spent, so it bounds outstanding funding plus spend, not a one-off total. A child that settles
+  below its ceiling returns the difference to the allowance for later siblings. The statement is a
+  constant of the parent's accepted plan, so a replayed opening is identical.
+- **Lifecycle:** the production allocators (SQLite and PostgreSQL) also require the parent
+  execution to be running and its latest attempt running or awaiting input, so after the lead's
+  attempt ends no child is allocated at all. When a plan states an allowance, its cap is the second,
+  independent line of defence for the window where the lead's usage reservation has settled but its
+  attempt record has not moved on: released balance cannot fund children beyond that allowance.
+  When a plan omits the allowance, no cap is applied in that window and released balance can fund
+  children under the legacy behavior described below. Both paths are tested
+  (`tests/child-runtime-budget-admission.test.mjs`, the ledger and worker suites, and the
+  PostgreSQL child allocator suite). The lifecycle fence remains the allocator's boundary after
+  the parent attempt ends.
+- A stated allowance must be positive, below both execution ceilings so the execution keeps a
+  nonzero share, and needs at least one child and one level of depth. Plans that omit it keep their
+  exact shape and digest and retain their prior funding behavior.
+
+- **Omitted:** no balance is held back for children. While the lead's full attempt reservation is
+  open, no unreserved balance remains for child funding. If that reservation settles while the
+  parent execution is running and its latest attempt is running or awaiting input, the released
+  balance becomes available to children
+  without an allowance cap; this preserves the behavior of existing plans. Zero is not a valid
+  stated allowance, and no default share is invented. A plan that needs a holdback and cap must
+  state a positive allowance.
+- **Layers:** constraint layers on one execution (profile and request) compose to the smaller stated
+  allowance, a layer that states none has no opinion, and the result is clamped under the composed
+  ceilings or dropped when no child remains.
+- **Nested:** the allowance is the execution's own, not an inherited restriction. A child plan states
+  its own allowance for its own children or none; it is not compared with its parent's, because a
+  grandchild is funded only from the child's budget, which the parent already bounded. Every other
+  child limit is still compared exactly.
+- **Clamped:** a child is funded at the smaller of its requested ceiling, what its parent has
+  available and the unfunded allowance, so its budget can be below its plan's ceiling. Its allowance scales by the same ratio
+  and rounds down, so the plan keeps the share it asked for and a nonzero budget always leaves a
+  nonzero attempt envelope. A root budget is never clamped.
+- **Siblings:** siblings share one allowance. Each is clamped to what is left, and once the allowance
+  is funded or spent no further child can be opened. A settled child counts at what it spent, so its
+  unused funding is available again to a sibling and to a later attempt.
+- **Retries:** a retry reserves only what is released, never a share a child was already funded from.
+
+`DurableRuntimeBudgetAdmission` applies this to a root execution accepted by a command.
+`DurableChildRuntimeBudgetAdmission` is the production `reserveBudget` implementation for the
+delegation bridge. A delegated child has no accepted command, so it checks the delegation record,
+the allocator's opening receipt (whose fingerprint covers the parent plan's statement) and the
+parent's funding reservation before reserving the same envelope. A child's own budget is opened with its own reservations: nothing it spends or reserves
+changes its parent's attempt envelope.
+
+#### Where each case is tested
+
+The same cases run over both stores. SQLite: `tests/child-runtime-budget-admission.test.mjs`.
+PostgreSQL: `apps/workflow-worker/src/child-runtime-budget-admission.integration.test.mjs`, with
+`packages/database/src/child-budget-admission.integration.test.mjs` for the cap and the denial
+cleanup.
+
+| Case                                                                                                                 | SQLite                                                             | PostgreSQL                     |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------ |
+| With a stated allowance, allocation after the lead's reservation settles while its attempt remains running is capped | yes                                                                | yes                            |
+| An outstanding child funding exhausts the allowance for a sibling (`BUDGET_EXHAUSTED`, no rows)                      | yes                                                                | yes                            |
+| Settled child spend frees only the unspent difference                                                                | yes                                                                | yes                            |
+| The child admission binds the parent plan's statement (a different or absent statement denies)                       | different and absent statement, foreign plan, receipt and identity | different and absent statement |
+| Cancelled lead attempt is refused by the allocator (`CHILD_ADMISSION_DENIED`, no rows)                               | yes                                                                | yes                            |
+
+The allowance bounds outstanding child funding plus settled spend, not a lifetime allocation: in the
+PostgreSQL test a 4M allowance funds a 4M child, the child spends 1M and settles, and the next
+sibling is funded 3M (its 3M of unspent funding returned) after which the allowance is exhausted
+again (1M spent plus 3M outstanding).
+
+#### Composition contract for `DurableChildRuntimeBudgetAdmission`
+
+No composition root builds `CanonicalDelegationRuntimeBridge` in this repository yet, so the class
+is exported but unused. A root that builds the bridge wires it as follows; this contract is for the
+Local and Hosted composition owners (CP #1047, #1048):
+
+```ts
+new CanonicalDelegationRuntimeBridge({
+  // ...records, lifecycle, plans, delegations, runtime, runtimeConnectionId, assertAuthority...
+  reserveBudget: new DurableChildRuntimeBudgetAdmission({ store: usageStore, plans }).reserve,
+})
+```
+
+- `store` is the same `DurableUsageStore` the root's child allocator opens child budgets in
+  (`SqliteDurableUsageStore` for Local, `PostgresDurableUsageStore` for Hosted and Cloud). A
+  different store sees no child budget and denies.
+- `plans` is the same `ExecutionPlanRepository` the bridge reads. It supplies the parent plan whose
+  statement the opening receipt was fingerprinted with.
+- Pass `.reserve` itself, unwrapped. It denies with `RuntimeBudgetAdmissionError`
+  (`RUNTIME_BUDGET_ADMISSION_DENIED`) and never partially reserves; it is replay-safe, so recovery
+  may call it again for the same delegation and attempt and receives the same envelope.
+- The bridge calls it after `assertAuthority` and before `runtime.start`, so a denial starts no
+  runtime. The reservation is allocation authority, not a charge. Child usage settlement and
+  `finalizeBudget` stay with the existing child-completion path.
+- The root's lead admission remains `DurableRuntimeBudgetAdmission`; neither class replaces the
+  other.
+
 ### Model-request holds inside an attempt
 
 `reserveModelRequest` subdivides an existing open attempt reservation. The caller

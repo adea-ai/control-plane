@@ -78,6 +78,7 @@ export const INTEGRATION_SHARDS = [
           'src/retention-reference-windows.integration.test.mjs',
           'src/retention-hold-activation.integration.test.mjs',
           'src/retention-ancestry.integration.test.mjs',
+          'src/operations-measurements.integration.test.mjs',
         ],
       },
     ],
@@ -126,7 +127,10 @@ export const INTEGRATION_SHARDS = [
       },
       {
         package: 'apps/workflow-worker',
-        files: ['src/runtime-budget-admission.integration.test.mjs'],
+        files: [
+          'src/child-runtime-budget-admission.integration.test.mjs',
+          'src/runtime-budget-admission.integration.test.mjs',
+        ],
       },
       {
         package: 'apps/control-api',

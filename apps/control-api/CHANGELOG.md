@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.32.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.32.1...control-api-v1.32.2) (2026-10-14)
+
+
+### Bug Fixes
+
+* **pi-durable:** preflight retained approval tool pins ([#1124](https://github.com/adea-ai/control-plane/issues/1124)) ([128b396](https://github.com/adea-ai/control-plane/commit/128b396eca07f45185c6abf2ab476612b922968a))
+
+## [1.32.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.32.0...control-api-v1.32.1) (2026-10-14)
+
+
+### Tests
+
+* **models:** characterize source profile scope ([#1178](https://github.com/adea-ai/control-plane/issues/1178) WIP) ([#1118](https://github.com/adea-ai/control-plane/issues/1118)) ([cc5dd03](https://github.com/adea-ai/control-plane/commit/cc5dd03f5f4a5f12f70aeefa3cb55fa9adf1e47a))
+
 ## [1.32.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.31.0...control-api-v1.32.0) (2026-10-13)
 
 

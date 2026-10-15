@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.21.2](https://github.com/adea-ai/control-plane/compare/contracts-v1.21.1...contracts-v1.21.2) (2026-10-15)
+
+
+### Performance
+
+* cache SQLite statements and avoid repeated canonical JSON work ([#1142](https://github.com/adea-ai/control-plane/issues/1142)) ([b8b47f5](https://github.com/adea-ai/control-plane/commit/b8b47f5c0261f8e9880fd0572fd05aa353c3c418))
+
+## [1.21.1](https://github.com/adea-ai/control-plane/compare/contracts-v1.21.0...contracts-v1.21.1) (2026-10-14)
+
+
+### Tests
+
+* **models:** characterize source profile scope ([#1178](https://github.com/adea-ai/control-plane/issues/1178) WIP) ([#1118](https://github.com/adea-ai/control-plane/issues/1118)) ([cc5dd03](https://github.com/adea-ai/control-plane/commit/cc5dd03f5f4a5f12f70aeefa3cb55fa9adf1e47a))
+
 ## [1.21.0](https://github.com/adea-ai/control-plane/compare/contracts-v1.20.0...contracts-v1.21.0) (2026-10-12)
 
 

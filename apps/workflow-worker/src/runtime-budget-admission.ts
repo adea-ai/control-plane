@@ -2,10 +2,7 @@ import { createHash } from 'node:crypto'
 import { canonicalJsonStringify, IdentifierSchemas } from '@control-plane/contracts'
 import type { CommandAcceptanceRepository, Execution } from '@control-plane/domain'
 import { executionPlanBudgetAllowance, type ExecutionPlan } from '@control-plane/execution-plan'
-import {
-  RuntimeAttemptBudgetAuthoritySchema,
-  type RuntimeAttemptBudgetAuthority,
-} from '@control-plane/runtime-sdk'
+import { type RuntimeAttemptBudgetAuthority } from '@control-plane/runtime-sdk'
 import {
   budgetOpeningEntryIdempotencyKey,
   DurableUsageLedger,
@@ -16,6 +13,10 @@ import {
   type DurableUsageTransaction,
   type UsageLedgerEntry,
 } from '@control-plane/usage-ledger'
+import { reserveAttemptEnvelope } from './runtime-attempt-reservation.js'
+import { RuntimeBudgetAdmissionError } from './runtime-budget-admission-error.js'
+
+export { RuntimeBudgetAdmissionError } from './runtime-budget-admission-error.js'
 
 export type { RuntimeAttemptBudgetAuthority } from '@control-plane/runtime-sdk'
 
@@ -156,63 +157,16 @@ export class DurableRuntimeBudgetAdmission implements RuntimeBudgetAdmissionPort
           denyAdmission()
         }
         if (reserveAttempt) {
-          const reservationKey = `runtime-attempt:${input.attemptId}`
-          const existing = budget.reservations.find(
-            (reservation) => reservation.reservationKey === reservationKey
-          )
-          if (
-            existing !== undefined &&
-            (existing.attemptId !== input.attemptId ||
-              existing.childExecutionId !== undefined ||
-              existing.status !== 'open')
-          ) {
-            denyAdmission()
-          }
-          if (
-            existing === undefined &&
-            ((budget.maximumMicrounits > 0 && summary.availableMicrounits === 0) ||
-              (budget.maximumTokens > 0 && summary.availableTokens === 0))
-          ) {
-            denyAdmission()
-          }
-          // Reserve remaining allowance (children can be clamped), not
-          // an invented zero after another attempt reserved or spent it.
-          // Exact replay reuses the same envelope and immutable effect identity.
-          const mutationLedger = new DurableUsageLedger({
-            store: {
-              transaction: async (workspaceId, operation) => {
-                if (workspaceId !== allowance.workspaceId) denyAdmission()
-                return operation(transaction)
-              },
-            },
-          })
-          const maximumMicrounits = existing?.maximumMicrounits ?? summary.availableMicrounits
-          const maximumTokens = existing?.maximumTokens ?? summary.availableTokens
-          await mutationLedger.reserve({
+          return await reserveAttemptEnvelope({
+            transaction,
             workspaceId: allowance.workspaceId,
             executionId: allowance.executionId,
             attemptId: input.attemptId,
-            reservationKey,
-            maximumMicrounits,
-            maximumTokens,
-            source: {
-              sourceId: input.attemptId,
-              idempotencyKey: `${reservationKey}:reserve`,
-            },
-          })
-          // The transaction result is exposed only after the store confirms commit.
-          // Replay returns the same reservation ceiling, without rewriting the plan.
-          return RuntimeAttemptBudgetAuthoritySchema.parse({
-            schemaVersion: 1 as const,
-            workspaceId: allowance.workspaceId,
-            executionId: allowance.executionId,
-            attemptId: input.attemptId,
-            executionPlanId: input.executionPlan.executionPlanId,
-            executionPlanDigest: input.executionPlan.contentDigest,
-            reservationKey,
             currency: allowance.currency,
-            maximumMicrounits,
-            maximumTokens,
+            budget,
+            availableMicrounits: summary.availableMicrounits,
+            availableTokens: summary.availableTokens,
+            executionPlan: input.executionPlan,
           })
         }
         return undefined
@@ -251,15 +205,6 @@ export function validateRuntimeAttemptBudgetAuthority(
   return Object.freeze(candidate)
 }
 
-export class RuntimeBudgetAdmissionError extends Error {
-  readonly code = 'RUNTIME_BUDGET_ADMISSION_DENIED'
-
-  constructor() {
-    super('RUNTIME_BUDGET_ADMISSION_DENIED')
-    this.name = 'RuntimeBudgetAdmissionError'
-  }
-}
-
 function transactionBoundReadOnlyStore(
   workspaceId: string,
   transaction: DurableUsageTransaction
@@ -280,9 +225,9 @@ function transactionBoundReadOnlyStore(
   }
 }
 
-function isOpeningCredit(
+export function isOpeningCredit(
   entry: UsageLedgerEntry,
-  allowance: ReturnType<typeof executionPlanBudgetAllowance>,
+  allowance: OpeningCreditExpectation,
   maximumMicrounits: number
 ): boolean {
   const parsed = UsageLedgerEntrySchema.safeParse(entry)
@@ -309,8 +254,17 @@ function isOpeningCredit(
   )
 }
 
+/** Opening evidence a budget's first credit must match: where it was opened and by whom. */
+export interface OpeningCreditExpectation {
+  readonly workspaceId: string
+  readonly executionId: string
+  readonly parentExecutionId?: string | undefined
+  readonly currency: string
+  readonly source: { readonly sourceId: string; readonly idempotencyKey: string }
+}
+
 // Keep aligned with usage-ledger's private fingerprintFor('openBudget', input).
-function fingerprintForOpenBudget(input: ReturnType<typeof executionPlanBudgetAllowance>): string {
+export function fingerprintForOpenBudget(input: unknown): string {
   const payload = canonicalJsonStringify({ method: 'openBudget', input })
   return `sha256:${createHash('sha256').update(payload).digest('hex')}`
 }
