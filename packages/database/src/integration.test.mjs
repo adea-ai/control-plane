@@ -1327,7 +1327,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       ...versionMismatchRecord.contextPackage,
       canonicalizationVersion: 1,
     }
-    await expect(repository.commit(versionMismatchRecord, versionMismatchPackage)).rejects.toThrow(
+    expect(() => repository.commit(versionMismatchRecord, versionMismatchPackage)).toThrow(
       'CONTEXT_AUTHORING_COMMAND_SCOPE_MISMATCH'
     )
     expect(await packages.getById(versionMismatchPackage.contextPackageId)).toBeUndefined()
