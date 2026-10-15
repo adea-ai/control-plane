@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { stat } from 'node:fs/promises'
+import { rm, stat } from 'node:fs/promises'
 import {
   compactNativeSession,
   nativeSessionPath,
@@ -7,12 +7,17 @@ import {
 import {
   childIds,
   childObjective,
-  createChildTerminalSettlement,
+  childSettlementFor,
   createGovernedDispatchHooks,
   governedDispatchChildren,
   readChildCostState,
   settleLeadTerminal,
 } from './pi-durable-compaction-governed-dispatch.fixture.mjs'
+import {
+  openDurableChildStores,
+  readDurableChildState,
+  runChildSettlementProcess,
+} from './pi-durable-child-settlement-process.fixture.mjs'
 import { createProductionFactoryFixture } from './pi-production-factory.fixture.mjs'
 
 const leadInteractionId = 'int_01JABCDEF0123456789ABCDEFG'
@@ -507,7 +512,7 @@ test('child settlement carries the parent allowance through actual usage to fina
   const { host, hooks } = await createHost()
   try {
     const { dispatch, handle, adapter } = await dispatchChildAfterCompaction(host, hooks)
-    const settlement = createChildTerminalSettlement(hooks)
+    const settlement = childSettlementFor(hooks)
     const reservationKey = `runtime-attempt:${childAttemptId}`
 
     // The proof so far: the child completed, but both attempt reservations are still open, and the
@@ -597,8 +602,8 @@ test('child settlement carries the parent allowance through actual usage to fina
       settled: { settledMicrounits: spent },
     })
 
-    // Repeating every pass changes nothing: settlement, lead settlement, the scanner, and a physical
-    // restart that re-runs the startup scan.
+    // Repeating every pass changes nothing: settlement, lead settlement, the scanner, and an
+    // in-process composition reopen that re-runs the startup scan (persistence stays open).
     const before = {
       rows: await rowsOf(host, dispatch),
       parentSummary: stableSummary(await summaryOf(host, dispatch.executionId)),
@@ -628,42 +633,69 @@ test('child settlement carries the parent allowance through actual usage to fina
 }, 120000)
 
 // An interrupted settlement leaves exactly the evidence recorded so far. The cost state never runs
-// ahead of the ledger, a restart does not repeat a recorded step, and the resumed settlement ends in
-// the same ledger as an uninterrupted one.
+// ahead of the ledger, a restart does not repeat a recorded step or republish the terminal event,
+// and the resumed settlement ends in the same ledger as an uninterrupted one.
 const interruptions = {
-  reported: {
-    cost: 'reported',
-    attemptReleased: false,
-    budgetSettled: false,
-  },
+  reported: { cost: 'reported', attemptReleased: false, budgetSettled: false },
   'attempt-settled': { cost: 'reported', attemptReleased: true, budgetSettled: false },
   'budget-finalized': { cost: 'reported', attemptReleased: true, budgetSettled: true },
   reconciled: { cost: 'reconciled', attemptReleased: true, budgetSettled: true },
 }
 
+const openReservations = (host, executionId) =>
+  host.repositories.usage.transaction(host.workspaceId, async (transaction) =>
+    (await transaction.getBudget(executionId)).reservations
+      .filter((reservation) => reservation.status === 'open')
+      .map((reservation) => reservation.reservationKey)
+  )
+const finalizeParent = (host, dispatch, key) =>
+  host.ledger.finalizeBudget({
+    workspaceId: host.workspaceId,
+    executionId: dispatch.executionId,
+    source: { sourceId: key, idempotencyKey: `${key}:finalize` },
+  })
+
 for (const [step, expected] of Object.entries(interruptions)) {
-  test(`settlement interrupted after ${step} reconciles truthfully across a restart`, async () => {
+  test(`settlement interrupted after ${step} reconciles truthfully across an in-process reopen`, async () => {
     const { host, hooks } = await createHost()
     try {
-      const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
-      const settlement = createChildTerminalSettlement(hooks)
+      const { dispatch, handle, adapter } = await dispatchChildAfterCompaction(host, hooks)
+      // The lead settles first, so any reservation still open on the parent is the child's alone.
+      expect(await settleLeadTerminal(host)).toEqual({ settled: 1, pending: 0, unbound: 1 })
+      await host.ledger.assertRuntimeAttemptReleased(
+        host.workspaceId,
+        dispatch.executionId,
+        handle.attemptId
+      )
+      // Terminal publication happens once, before any settlement is attempted.
+      await hooks.scanner.scan(adapter)
+      const published = await eventTypes(hooks)
+      expect(published.filter((type) => type === 'delegation.completed')).toHaveLength(1)
+      const expectPublishedOnce = async () => {
+        await hooks.scanner.scan(host.composition.adapter)
+        expect(await eventTypes(hooks)).toEqual(published)
+      }
+
       hooks.settlementSeam = async (reached) => {
         if (reached === step) throw new Error(`SETTLEMENT_INTERRUPTED:${step}`)
       }
-      await expect(settlement.settle()).rejects.toThrow(`SETTLEMENT_INTERRUPTED:${step}`)
+      await expect(childSettlementFor(hooks).settle()).rejects.toThrow(
+        `SETTLEMENT_INTERRUPTED:${step}`
+      )
       hooks.settlementSeam = undefined
+      await expectPublishedOnce()
 
       const snapshotState = async () => ({
         rows: await rowsOf(host, dispatch),
         child: stableSummary(await summaryOf(host, childExecutionId)),
         parent: stableSummary(await summaryOf(host, dispatch.executionId)),
         cost: stableSummary(await readChildCostState(hooks)),
+        events: await eventTypes(hooks),
       })
       const interrupted = await snapshotState()
 
       // Truthful partial state, from the ledger and the projection rather than from this test.
-      const costState = (await readChildCostState(hooks)).outcome.costState
-      expect(costState).toBe(expected.cost)
+      expect((await readChildCostState(hooks)).outcome.costState).toBe(expected.cost)
       const release = host.ledger.assertRuntimeAttemptReleased(
         host.workspaceId,
         childExecutionId,
@@ -672,26 +704,28 @@ for (const [step, expected] of Object.entries(interruptions)) {
       if (expected.attemptReleased) await release
       else await expect(release).rejects.toMatchObject({ code: 'SETTLEMENT_INCOMPLETE' })
       expect((await summaryOf(host, childExecutionId)).settled).toBe(expected.budgetSettled)
-      // While the child budget is unsettled the parent's funding stays held and cannot be finalized.
-      const finalizeParent = () =>
-        host.ledger.finalizeBudget({
-          workspaceId: host.workspaceId,
-          executionId: dispatch.executionId,
-          source: { sourceId: 'parent-early', idempotencyKey: 'parent-early:finalize' },
+      // With the lead already settled, the child's funding reservation alone is what holds the
+      // parent open, until the child budget is finalized.
+      if (expected.budgetSettled) {
+        expect(await openReservations(host, dispatch.executionId)).toEqual([])
+      } else {
+        expect(await openReservations(host, dispatch.executionId)).toEqual([
+          `child:${childExecutionId}`,
+        ])
+        await expect(finalizeParent(host, dispatch, 'parent-early')).rejects.toMatchObject({
+          code: 'SETTLEMENT_INCOMPLETE',
         })
-      if (!expected.budgetSettled) {
-        await expect(finalizeParent()).rejects.toMatchObject({ code: 'SETTLEMENT_INCOMPLETE' })
         expect(await snapshotState()).toEqual(interrupted)
       }
 
-      // A physical restart changes nothing that was recorded.
+      // An in-process composition reopen (persistence stays open) changes nothing that was recorded,
+      // and its startup scan and a further scan do not republish the terminal event.
       await host.reopenComposition()
+      await expectPublishedOnce()
       expect(await snapshotState()).toEqual(interrupted)
 
       // The resumed settlement completes once; the ledger matches an uninterrupted run.
-      expect(await createChildTerminalSettlement(hooks).settle()).toMatchObject({
-        state: 'settled',
-      })
+      expect(await childSettlementFor(hooks).settle()).toMatchObject({ state: 'settled' })
       const { parent, child } = await rowsOf(host, dispatch)
       const spent = expectSettledChildLedger(child)
       expect(
@@ -703,17 +737,116 @@ for (const [step, expected] of Object.entries(interruptions)) {
         costState: 'settled',
         settled: { settledMicrounits: spent },
       })
+      await expectPublishedOnce()
       const settled = await snapshotState()
-      expect(await createChildTerminalSettlement(hooks).settle()).toMatchObject({
-        state: 'settled',
-      })
+      expect(await childSettlementFor(hooks).settle()).toMatchObject({ state: 'settled' })
+      await expectPublishedOnce()
       expect(await snapshotState()).toEqual(settled)
+      // Nothing is held any more, so the parent finalizes at lead plus child spend.
+      expect(await openReservations(host, dispatch.executionId)).toEqual([])
+      const leadSpent = parent
+        .filter((entry) => entry.kind === 'model_usage')
+        .reduce((total, entry) => total + entry.costMicrounits, 0)
+      expect(await finalizeParent(host, dispatch, 'parent-final')).toMatchObject({
+        settled: true,
+        spentMicrounits: leadSpent + spent,
+      })
       expect(hooks.evidence.childStarts).toHaveLength(1)
       expect(host.state.physicalSends).toBe(4)
     } finally {
       await host.close()
     }
-  }, 120000)
+  }, 150000)
+}
+
+// The same interruptions as a real crash: the host is closed completely (composition, persistence
+// and every store), a separate process settles until it SIGKILLs itself right after the step, and a
+// third and fourth process resume and repeat from the on-disk stores alone. Those processes have no
+// provider transport, credentials or composition, so they cannot start, send or publish.
+for (const [step, expected] of Object.entries(interruptions)) {
+  test(`settlement killed after ${step} in another process resumes in a new process`, async () => {
+    const { host, hooks } = await createHost()
+    let directory
+    try {
+      const { dispatch, handle, adapter } = await dispatchChildAfterCompaction(host, hooks)
+      expect(await settleLeadTerminal(host)).toEqual({ settled: 1, pending: 0, unbound: 1 })
+      await hooks.scanner.scan(adapter)
+      const published = await eventTypes(hooks)
+      expect(published.filter((type) => type === 'delegation.completed')).toHaveLength(1)
+      const ids = {
+        workspaceId: host.workspaceId,
+        parentExecutionId: dispatch.executionId,
+        at: hooks.at,
+      }
+      const sends = host.state.physicalSends
+      directory = await host.detach()
+
+      const readStores = async () => {
+        const stores = await openDurableChildStores(directory, ids)
+        try {
+          return await readDurableChildState(stores)
+        } finally {
+          await stores.close()
+        }
+      }
+      const closed = await readStores()
+      expect(closed.eventTypes).toEqual(published)
+      expect(closed.cost.outcome.costState).toBe('reserved')
+
+      // A process that dies mid-settlement, with no chance to clean up.
+      const killed = await runChildSettlementProcess(directory, ids, { killAtStep: step })
+      expect(killed.signal).toBe('SIGKILL')
+      expect(killed.result).toBeUndefined()
+      expect(killed.pid).not.toBe(process.pid)
+      const crashed = await readStores()
+      expect(crashed.cost.outcome.costState).toBe(expected.cost)
+      expect(crashed.childSummary.settled).toBe(expected.budgetSettled)
+      // The lead settled before the crash, so the parent's remaining hold is the child's funding alone.
+      const funding = crashed.parentEntries.find(
+        (entry) =>
+          entry.reservationKey === `child:${childExecutionId}` && entry.kind === 'reservation'
+      )
+      expect(crashed.parentSummary.reservedMicrounits).toBe(
+        expected.budgetSettled ? 0 : funding.quantity.value
+      )
+      expect(crashed.eventTypes).toEqual(published)
+      expect(crashed.childJournal).toEqual(closed.childJournal)
+      expect(crashed.delegationCount).toBe(1)
+
+      // A new process resumes from the stores and finishes the settlement.
+      const resumed = await runChildSettlementProcess(directory, ids)
+      expect(resumed.code).toBe(0)
+      expect(new Set([process.pid, killed.pid, resumed.pid]).size).toBe(3)
+      expect(resumed.result.settlement).toMatchObject({ state: 'settled' })
+      const done = resumed.result.state
+      const spent = expectSettledChildLedger(done.childEntries)
+      expect(
+        done.parentEntries
+          .filter((entry) => entry.reservationKey === `child:${childExecutionId}`)
+          .map((entry) => entry.kind)
+      ).toEqual(['reservation', 'release', 'settlement'])
+      expect(done.cost.outcome).toMatchObject({
+        costState: 'settled',
+        settled: { settledMicrounits: spent },
+      })
+      expect(done.parentSummary.reservedMicrounits).toBe(0)
+      expect(done.eventTypes).toEqual(published)
+      expect(done.childJournal).toEqual(closed.childJournal)
+      expect(done.delegationCount).toBe(1)
+
+      // A further process repeats it with no change anywhere.
+      const repeated = await runChildSettlementProcess(directory, ids)
+      expect(repeated.code).toBe(0)
+      expect(repeated.result.state).toEqual(done)
+      expect(await readStores()).toEqual(done)
+      expect(host.state.physicalSends).toBe(sends)
+      expect(hooks.evidence.childStarts).toHaveLength(1)
+      expect(handle.attemptId).toBeDefined()
+    } finally {
+      await host.close()
+      if (directory) await rm(directory, { recursive: true, force: true })
+    }
+  }, 150000)
 }
 
 test('a child whose send failed is never settled or reported as complete', async () => {
@@ -730,7 +863,7 @@ test('a child whose send failed is never settled or reported as complete', async
       rows: await rowsOf(host, dispatch),
       cost: stableSummary(await readChildCostState(hooks)),
     }
-    const result = await createChildTerminalSettlement(hooks).settle()
+    const result = await childSettlementFor(hooks).settle()
     expect(result).toMatchObject({ state: 'not_terminal' })
     // Nothing was reported, released or settled for an outcome the runtime could not confirm: the
     // reservation stays held and the cost state stays at what was admitted.
@@ -746,7 +879,7 @@ test('a child whose send failed is never settled or reported as complete', async
     // A restart does not turn the uncertain send into a result either.
     await host.reopenComposition()
     expect((await host.composition.adapter.status(row.admission.handle)).state).toBe('unknown')
-    expect(await createChildTerminalSettlement(hooks).settle()).toMatchObject({
+    expect(await childSettlementFor(hooks).settle()).toMatchObject({
       state: 'not_terminal',
     })
     expect(await rowsOf(host, dispatch)).toEqual(before.rows)

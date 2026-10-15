@@ -71,13 +71,18 @@ stay wired to the canonical durable paths rather than a parallel ledger.
   budget (releasing the unspent funding back into the parent's allowance) and
   the cost-state projection (`reserved` -> `reported` -> `reconciled` ->
   `settled`, retained through `SqliteChildUsageOutcomeRepository`). The lead is
-  settled by the production `SqlitePiLeadTerminalSettlement`. Settlement is
-  interrupted after each durable step and resumed after a physical restart
-  with no repeated debit, release, start, send or publication, and a child
-  whose send outcome is unknown is never settled. The provider transport,
-  funding records and policy decision are scripted fixtures, and the child
-  settlement driver is test-only: production settles leads only and no
-  composition root runs a child settlement yet.
+  settled by the production `SqlitePiLeadTerminalSettlement` first, so the
+  child's reservation alone is shown to hold the parent open. Settlement is interrupted after each durable step and
+  resumed twice: across an in-process composition reopen (persistence stays
+  open; the startup scan and later scans must not republish the terminal
+  event), and across a real crash, where the host is closed completely, a
+  separate process SIGKILLs itself right after the step and new processes
+  resume and repeat from the on-disk stores alone. Neither repeats a debit,
+  release, start, send or publication, and a child whose send outcome is
+  unknown is never settled. The provider transport, funding records and policy
+  decision are scripted fixtures, and the child settlement driver is test-only:
+  production settles leads only and no composition root runs a child
+  settlement yet.
 - `tests/child-progress-two-siblings-composition.test.mjs` — **two sibling
   children under one real parent**: coordinator admission over durable SQLite
   repositories, canonical per-child reservations and settlements in the
