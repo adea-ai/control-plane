@@ -954,9 +954,9 @@ describe('verified plan memo', () => {
     expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
     const withDate = { ...plan, compiledAt: new Date(plan.compiledAt) }
     expect(() => assertExecutionPlanIntegrity(withDate)).toThrow()
-    // Accepted by the schema both with and without the memo; it just bypasses it.
+    // The schema refuses non-plain objects; the memo bypass must not change that.
     const exotic = Object.assign(Object.create({ inherited: true }), plan)
-    expect(assertExecutionPlanIntegrity(exotic)).toEqual(plan)
+    expect(() => assertExecutionPlanIntegrity(exotic)).toThrow()
     expect(() => assertExecutionPlanIntegrity({ ...plan, extra: 1n })).toThrow()
   })
 
