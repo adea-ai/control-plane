@@ -96,6 +96,7 @@ export const INTEGRATION_SHARDS = [
           'src/delegation-reference.integration.test.mjs',
           'src/admission-rollout-admin.integration.test.mjs',
           'src/graph-definition-repository.integration.test.mjs',
+          'src/execution-event-repository.integration.test.mjs',
           'src/project-state-initialization.integration.test.mjs',
           'src/workspace-catalog.integration.test.mjs',
           'src/credential-vault-repository.integration.test.mjs',

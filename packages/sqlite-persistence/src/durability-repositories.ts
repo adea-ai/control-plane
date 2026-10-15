@@ -968,6 +968,7 @@ function sameEventIdentity(left: ExecutionEvent, right: ExecutionEvent): boolean
     left.type === right.type &&
     left.schemaVersion === right.schemaVersion &&
     left.payloadHash === right.payloadHash &&
+    left.payloadHashVersion === right.payloadHashVersion &&
     left.recordedAt === right.recordedAt &&
     isDeepStrictEqual(left.correlation, right.correlation)
   )
@@ -1013,6 +1014,7 @@ async function appendEvent(
     sequence,
     payloadBytes: Buffer.byteLength(JSON.stringify(sanitized.payload)),
     payloadHash: hashExecutionEventPayloadV2(sanitized.payload),
+    payloadHashVersion: 2,
     publication: { status: 'pending', attempts: 0, version: 1 },
   })
   await transaction.put({ namespace: namespaces.events, id, value: json(event) })

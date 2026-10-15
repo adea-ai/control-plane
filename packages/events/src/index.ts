@@ -6,6 +6,7 @@ import {
 import { compareCodePointOrder } from '@control-plane/contracts'
 import { redactTelemetryValue } from '@control-plane/telemetry'
 import { createHash } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import { z } from 'zod'
 
@@ -25,6 +26,7 @@ const EventTypeSchema = z.union([
     .string()
     .regex(/^(?:execution|attempt|interaction|usage|artifact|reconciliation)\.[a-z][a-z0-9_-]*$/),
 ])
+const PayloadHashVersionSchema = z.literal(2)
 const ErrorReferenceSchema = z
   .string()
   .max(512)
@@ -43,7 +45,7 @@ const PublicationSchema = z.object({
 /** Classification vocabulary shared with memory-writeback and context authoring contracts. */
 export const EventSensitivitySchema = z.enum(['public', 'internal', 'confidential', 'restricted'])
 
-export const ExecutionEventSchema = z.object({
+const ExecutionEventObjectSchema = z.object({
   eventId: IdentifierSchemas.eventId,
   executionId: IdentifierSchemas.executionId,
   attemptId: IdentifierSchemas.attemptId.optional(),
@@ -71,6 +73,8 @@ export const ExecutionEventSchema = z.object({
   payload: z.record(z.string(), z.json()),
   payloadBytes: z.number().int().nonnegative().max(16_384),
   payloadHash: z.string().regex(/^[a-f0-9]{64}$/),
+  /** Internal persisted-row hash format. Omitted on pre-versioned rows. */
+  payloadHashVersion: PayloadHashVersionSchema.optional(),
   occurredAt: TimestampSchema,
   recordedAt: TimestampSchema,
   retentionExpiresAt: TimestampSchema,
@@ -78,18 +82,38 @@ export const ExecutionEventSchema = z.object({
   publication: PublicationSchema,
 })
 
+export const ExecutionEventSchema = ExecutionEventObjectSchema.superRefine((event, context) => {
+  // Untagged rows retain their historical read behavior: their hash may have
+  // been produced by a locale-sensitive runtime that is no longer available.
+  if (
+    event.payloadHashVersion === 2 &&
+    hashExecutionEventPayloadV2(event.payload) !== event.payloadHash
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['payloadHash'],
+      message: 'EVENT_PAYLOAD_HASH_MISMATCH',
+    })
+  }
+})
+
 export type ExecutionEvent = z.output<typeof ExecutionEventSchema>
 export type ExecutionEventDraft = Omit<
   ExecutionEvent,
-  'sequence' | 'payloadBytes' | 'payloadHash' | 'publication' | 'archivedAt'
+  'sequence' | 'payloadBytes' | 'payloadHash' | 'payloadHashVersion' | 'publication' | 'archivedAt'
 >
 
-export const ExecutionEventDraftSchema = ExecutionEventSchema.omit({
+export const ExecutionEventDraftSchema = ExecutionEventObjectSchema.omit({
   sequence: true,
   payloadBytes: true,
   payloadHash: true,
+  payloadHashVersion: true,
   publication: true,
   archivedAt: true,
+}).extend({
+  // The repository owns the persisted hash format tag; callers cannot select or
+  // smuggle an unsupported format through the draft parser.
+  payloadHashVersion: z.never().optional(),
 })
 
 export function sanitizeExecutionEventDraft(draft: ExecutionEventDraft): ExecutionEventDraft {
@@ -124,7 +148,8 @@ export class InMemoryExecutionEventRepository implements ExecutionEventRepositor
       ...sanitized,
       sequence,
       payloadBytes: Buffer.byteLength(JSON.stringify(sanitized.payload)),
-      payloadHash: hashExecutionEventPayload(sanitized.payload),
+      payloadHash: hashExecutionEventPayloadV2(sanitized.payload),
+      payloadHashVersion: 2,
       publication: { status: 'pending', attempts: 0, version: 1 },
     })
     this.#sequences.set(sanitized.executionId, sequence)
@@ -164,8 +189,11 @@ export class InMemoryExecutionEventRepository implements ExecutionEventRepositor
 
   async compareAndSetPublication(expectedVersion: number, event: ExecutionEvent): Promise<boolean> {
     const current = this.#events.get(event.eventId)
-    if (current?.publication.version !== expectedVersion) return false
-    this.#events.set(event.eventId, clone(ExecutionEventSchema.parse(event)))
+    const parsed = ExecutionEventSchema.parse(event)
+    if (current?.publication.version !== expectedVersion || !sameEventIdentity(current, parsed)) {
+      return false
+    }
+    this.#events.set(event.eventId, clone(parsed))
     return true
   }
 
@@ -333,6 +361,21 @@ export class ExecutionEventService {
 function fail(code: ExecutionEventErrorCode): never {
   throw new ExecutionEventError(code)
 }
+
+function sameEventIdentity(left: ExecutionEvent, right: ExecutionEvent): boolean {
+  return (
+    left.eventId === right.eventId &&
+    left.executionId === right.executionId &&
+    left.sequence === right.sequence &&
+    left.type === right.type &&
+    left.schemaVersion === right.schemaVersion &&
+    left.payloadHash === right.payloadHash &&
+    left.payloadHashVersion === right.payloadHashVersion &&
+    left.recordedAt === right.recordedAt &&
+    isDeepStrictEqual(left.correlation, right.correlation)
+  )
+}
+
 function clone<Value>(value: Value): Value {
   return structuredClone(value)
 }
@@ -344,13 +387,7 @@ export function hashExecutionEventPayload(payload: Readonly<Record<string, unkno
   return createHash('sha256').update(canonicalJson(payload)).digest('hex')
 }
 
-/**
- * Code-point canonical form (#612). Host-independent, so newly written event
- * rows hash identically everywhere. Event-row payload hashes are write-once
- * (never recomputed for verification), which made the in-place cutover safe;
- * the legacy form above is retained only to keep the runtime-gateway frame
- * replay verification byte-compatible until its versioned migration.
- */
+/** Code-point canonical form (#612) for host-independent, explicitly tagged event rows. */
 export function hashExecutionEventPayloadV2(payload: Readonly<Record<string, unknown>>): string {
   return createHash('sha256').update(canonicalJsonStringify(payload)).digest('hex')
 }
@@ -358,8 +395,7 @@ export function hashExecutionEventPayloadV2(payload: Readonly<Record<string, unk
 export * from './runtime-ingestion.js'
 
 // CANONICAL-JSON: verification-only legacy form, see contracts canonicalJsonStringify
-// Retained so runtime-gateway frameHash replay receipts persist verifiable across the
-// #612 cutover; event-row payload hashes migrated to hashExecutionEventPayloadV2
+// Retained for untagged historical event rows and runtime-gateway frameHash replay receipts.
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
     return JSON.stringify(value)
