@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import process from 'node:process'
-import { eq } from 'drizzle-orm'
 import { loadDatabaseCredentials } from '@control-plane/config'
 import { ExecutionLifecycleService } from '@control-plane/domain'
 import {
@@ -16,7 +15,6 @@ import {
   PostgresExecutionEventRepository,
   PostgresExecutionPlanRepository,
   PostgresExecutionRepository,
-  executionEvents,
 } from '@control-plane/database'
 import { createIsolatedTestDatabase, integrationTestTimeout } from '@control-plane/database/testing'
 import { PollingRemoteRuntimeOutcomeWaiter } from './remote-runtime-waiter.ts'
@@ -100,10 +98,10 @@ describe.skipIf(!enabled)('remote runtime waiter historical event compatibility'
     expect(event.payloadHashVersion).toBe(2)
     expect(event.payloadHash).toBe(hashExecutionEventPayloadV2(historicalPayload))
 
-    await isolated.application
-      .update(executionEvents)
-      .set({ payloadHash: historicalPayloadHash, payloadHashVersion: null })
-      .where(eq(executionEvents.eventId, eventId))
+    await isolated.application.$client.unsafe(
+      'update execution_events set payload_hash = $1, payload_hash_version = null where event_id = $2',
+      [historicalPayloadHash, eventId]
+    )
   }, integrationTestTimeout(60_000))
 
   afterAll(async () => {
@@ -200,14 +198,14 @@ describe.skipIf(!enabled)('remote runtime waiter historical event compatibility'
       })
       expect(consumedEvent.payloadHashVersion).toBeUndefined()
 
-      const [stored] = await isolated.application
-        .select()
-        .from(executionEvents)
-        .where(eq(executionEvents.eventId, eventId))
+      const [stored] = await isolated.application.$client.unsafe(
+        'select payload, payload_hash, payload_hash_version, payload_bytes from execution_events where event_id = $1',
+        [eventId]
+      )
       expect(stored.payload).toEqual(historicalPayload)
-      expect(stored.payloadHash).toBe(historicalPayloadHash)
-      expect(stored.payloadHashVersion).toBeNull()
-      expect(stored.payloadBytes).toBe(Buffer.byteLength(JSON.stringify(historicalPayload)))
+      expect(stored.payload_hash).toBe(historicalPayloadHash)
+      expect(stored.payload_hash_version).toBeNull()
+      expect(stored.payload_bytes).toBe(Buffer.byteLength(JSON.stringify(historicalPayload)))
     },
     integrationTestTimeout()
   )
