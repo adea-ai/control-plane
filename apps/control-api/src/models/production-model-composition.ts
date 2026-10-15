@@ -26,6 +26,7 @@ import { createProductionLeadProductAuthority } from './production-lead-product.
 import { createProductionLeadReadiness } from './production-lead-readiness.js'
 import { createProductionFacadeRetention } from './production-facade-retention.js'
 import { createProductionRuntimeBinding } from './production-runtime-binding.js'
+import type { ProductionChildBridgeContext } from '../pi-durable/production-child-bridge.js'
 import { createPiLeadModelProductAuthority } from '../pi-durable/model-product-authority.js'
 import {
   createNodePiDurableLeadComposition,
@@ -95,8 +96,10 @@ export interface ProductionPiLeadCompositionOptions {
       ProductionChildDelegationOptions,
       'product' | 'readCurrent' | 'now' | 'onEventRetained'
     > & { readonly readCurrent?: ProductionChildDelegationOptions['readCurrent'] }
+    /** The second argument carries this composition's own canonical child ports for the bridge. */
     readonly createGovernedDelegateChild: (
-      service: DelegationService
+      service: DelegationService,
+      context: ProductionChildBridgeContext
     ) => NonNullable<NodePiDurableLeadCompositionOptions['governedDelegateChild']>
     /** Lease and alias only: child admission, funding and facades are composed by the server. */
     readonly modelAuthority: Pick<
@@ -301,7 +304,11 @@ export async function createProductionPiLeadComposition(
         : undefined
     const governedDelegateChild =
       children && childDelegation
-        ? children.createGovernedDelegateChild(childDelegation.service)
+        ? children.createGovernedDelegateChild(childDelegation.service, {
+            authority: childCurrent!,
+            modelBinding: childHost!.bindingFor,
+            runtime: { start: (request) => runtimeBinding.current().start(request) },
+          })
         : undefined
     const canonical = createCanonicalModelHostComposition({
       canonical: {

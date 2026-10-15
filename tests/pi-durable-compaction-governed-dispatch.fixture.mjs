@@ -1,5 +1,6 @@
 // TEST ONLY: governed delegate_child wired into the actual production Pi lead factory. The real
-// GovernedDelegateChildExecutor, CanonicalDelegationRuntimeBridge, production child delegation
+// GovernedDelegateChildExecutor, the production child bridge builder (CanonicalDelegationRuntimeBridge
+// over the composition's own authority, model binding and adapter), production child delegation
 // (allocator, current-grant reads) and DurableChildRuntimeBudgetAdmission are used. Funding
 // records, the provider transport and the policy decision are scripted fixtures.
 import { createHash } from 'node:crypto'
@@ -14,7 +15,6 @@ import {
 import {
   assertDelegationToolParentPlan,
   CanonicalDelegationCommandResolver,
-  CanonicalDelegationRuntimeBridge,
   GovernedDelegateChildExecutor,
 } from '@control-plane/orchestration'
 import {
@@ -33,6 +33,7 @@ import {
 } from '@control-plane/tool-execution'
 import { DurableChildRuntimeBudgetAdmission } from '@control-plane/workflow-worker'
 import { PiDurableChildProgressScanner } from '../apps/control-api/src/pi-durable/child-progress-scanner.ts'
+import { createProductionChildRuntimeBridge } from '../apps/control-api/src/pi-durable/production-child-bridge.ts'
 
 const id = (prefix, suffix = '01JABCDEF0123456789ABCDEFG') => `${prefix}_${suffix}`
 const childSuffix = '01JBBCDEF0123456789ABCDEFG'
@@ -57,6 +58,8 @@ export function createGovernedDispatchHooks() {
     /** Runs after the scripted policy decision allows the effect, before the executor is reached. */
     afterPolicyAllow: undefined,
     bridge: undefined,
+    /** Replaces the production authority read for one test, e.g. to model a missing authority. */
+    authorityOverride: undefined,
     scanner: undefined,
     delegationService: undefined,
     evidence: {
@@ -350,41 +353,42 @@ export function governedDispatchChildren(hooks) {
         events,
         scopeAdmission,
       },
-      createGovernedDelegateChild(delegationService) {
+      createGovernedDelegateChild(delegationService, context) {
         hooks.delegationService = delegationService
-        const bridge = new CanonicalDelegationRuntimeBridge({
+        // The production builder: the composition hands over its own canonical authority, model
+        // binding and adapter. Only the evidence counters and the scripted funding record are local.
+        const bridge = createProductionChildRuntimeBridge({
           records: delegationRecords,
           lifecycle,
           plans: repositories.plans,
           delegations: delegationService,
-          runtime: {
-            async start(request) {
-              evidence.childStarts.push(structuredClone(request))
-              return hooks.host.composition.adapter.start(request)
-            },
-          },
+          events,
           runtimeConnectionId: childIds.runtimeConnectionId,
-          childReceipts: delegationRecords,
-          terminalPublisher: events,
-          async assertAuthority(admission) {
-            evidence.bridgeAuthorityReads++
-            // The production reader: retained delegation, parent attempt, lead intent and its
-            // ready marker, the admitted tool call and a fresh product read.
-            await hooks.host.composition.childAuthorityCurrent.readRecord({
-              executionId: admission.record.childExecutionId,
-              attemptId: admission.identity.childAttemptId,
-            })
+          context: {
+            ...context,
+            authority: {
+              async readRecord(input) {
+                evidence.bridgeAuthorityReads++
+                return hooks.authorityOverride
+                  ? hooks.authorityOverride(input)
+                  : context.authority.readRecord(input)
+              },
+            },
+            runtime: {
+              async start(request) {
+                evidence.childStarts.push(structuredClone(request))
+                return context.runtime.start(request)
+              },
+            },
           },
           async reserveBudget(admission) {
             const budget = await budgetAdmission.reserve(admission)
             evidence.reservations.push(structuredClone(budget))
-            const binding = await hooks.host.composition.childModelBinding({
-              executionId: budget.executionId,
-              attemptId: budget.attemptId,
-            })
+            return budget
+          },
+          async fundChildAttempt({ budget, binding }) {
             await writeChildFunding(hooks, binding)
             evidence.fundingWrites.push(budget.attemptId)
-            return budget
           },
         })
         hooks.bridge = bridge

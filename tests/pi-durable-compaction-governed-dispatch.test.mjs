@@ -377,3 +377,76 @@ test('a grant revoked after the compaction reopen starts no child and funds noth
     await host.close()
   }
 }, 60000)
+
+/** Runs the delegating turn with the bridge's authority read replaced, without compaction. */
+async function delegateWithBridgeAuthority(override) {
+  const { host, hooks, sent } = await createHost()
+  const { dispatch, handle } = await runLeadFirstTurn(host, hooks)
+  hooks.authorityOverride = override(hooks)
+  const adapter = host.composition.adapter
+  await submitSecondTurn(adapter, handle)
+  await adapter.drain()
+  return { host, hooks, sent, dispatch, handle, adapter }
+}
+
+async function expectNoChildStartedAfterRestart({ host, hooks, sent, dispatch, handle }) {
+  const sendsBefore = host.state.physicalSends
+  await host.reopenComposition()
+  await hooks.scanner.scan(host.composition.adapter)
+  await hooks.scanner.scan(host.composition.adapter)
+  expect(hooks.evidence.childStarts).toHaveLength(0)
+  expect(sent.child).toHaveLength(0)
+  expect(host.state.physicalSends).toBe(sendsBefore)
+  expect(await eventTypes(hooks)).not.toContain('delegation.completed')
+  expect(childOf(host.composition.adapter)).toBeUndefined()
+  expect((await host.composition.adapter.status(handle)).state).toBe('unknown')
+  expect(await hooks.delegationRecords.listByParent(dispatch.executionId)).toHaveLength(1)
+}
+
+test('a child authority that cannot be read at the bridge reserves, funds and starts nothing', async () => {
+  const run = await delegateWithBridgeAuthority(() => async () => {
+    throw new Error('TEST_CHILD_AUTHORITY_MISSING')
+  })
+  const { host, hooks, sent, adapter, handle } = run
+  try {
+    // The bridge reads authority before it reserves a budget, so a missing authority ends there.
+    expect(hooks.evidence.bridgeAuthorityReads).toBeGreaterThan(0)
+    expect(hooks.evidence.reservations).toHaveLength(0)
+    expect(hooks.evidence.fundingWrites).toHaveLength(0)
+    expect(hooks.evidence.childStarts).toHaveLength(0)
+    expect(sent.child).toHaveLength(0)
+    expect(childOf(adapter)).toBeUndefined()
+    expect((await hooks.toolCalls.get(childIds.toolCallId)).status).toBe('reconciliation_required')
+    expect((await adapter.status(handle)).state).toBe('unknown')
+    await expectNoChildStartedAfterRestart(run)
+  } finally {
+    await host.close()
+  }
+}, 60000)
+
+test('authority revoked after the reservation is funded starts no child and sends nothing', async () => {
+  let reads = 0
+  const run = await delegateWithBridgeAuthority((hooks) => async (input) => {
+    // The first read admits the reservation; every later read finds the grant withdrawn.
+    if (++reads === 1) return hooks.host.composition.childAuthorityCurrent.readRecord(input)
+    throw new Error('TEST_CHILD_AUTHORITY_REVOKED')
+  })
+  const { host, hooks, sent, adapter, handle } = run
+  try {
+    expect(hooks.evidence.reservations).toHaveLength(1)
+    expect(hooks.evidence.fundingWrites).toEqual([childIds.attemptId])
+    // Authority is re-read after the reservation and before the runtime start.
+    expect(hooks.evidence.bridgeAuthorityReads).toBe(2)
+    expect(hooks.evidence.childStarts).toHaveLength(0)
+    expect(sent.child).toHaveLength(0)
+    expect(childOf(adapter)).toBeUndefined()
+    expect((await hooks.toolCalls.get(childIds.toolCallId)).status).toBe('reconciliation_required')
+    expect((await adapter.status(handle)).state).toBe('unknown')
+    await expectNoChildStartedAfterRestart(run)
+    // Reopening and scanning never re-reserves or re-funds.
+    expect(hooks.evidence.reservations).toHaveLength(1)
+    expect(hooks.evidence.fundingWrites).toHaveLength(1)
+  } finally {
+    await host.close()
+  }
+}, 60000)

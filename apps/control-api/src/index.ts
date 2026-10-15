@@ -8,6 +8,11 @@ export {
   createProductionChildModelAuthority,
   ProductionChildModelRequestSchema,
 } from './models/production-child-model-authority.js'
+export {
+  createProductionChildRuntimeBridge,
+  type ProductionChildBridgeContext,
+  type ProductionChildBridgeOptions,
+} from './pi-durable/production-child-bridge.js'
 export { createProductionRoleModelSelection } from './models/production-role-selection.js'
 export { ProductionLeadProductEvidenceSchema } from './models/production-lead-product.js'
 export { createProductionProductHttpReader } from './models/production-product-http.js'
