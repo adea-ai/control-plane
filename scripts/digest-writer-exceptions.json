@@ -799,6 +799,138 @@
         "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
         "PR #1151 published immutable head 2ea1f0ed"
       ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "03bc7fa408aef348f71eee4312263393578c6070bf5d5e355fc975a391a55975",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/pi-durable-adapter/src/child-continuation.fixture.mjs",
+        "owner": "fixture",
+        "fingerprint": "fc54d7a361f5c686a8667b0d09260c223a69d52881f7c5ea5875339c269f765e",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "The existing child-continuation fixture retains an evidenced untagged inputDigest through toolInputDigest. It is a historical fixture consumer; the analyzer conservatively reports both optional-locale branches from canonical(value, locale).",
+      "provenance": [
+        "PR #1151 published immutable head 2ea1f0ed",
+        "PR #1151 local follow-up candidate c7d690a95f91b88e1336e61983a04615ed2db435 and f4cf4ae07e8c08f29f95c581e4ba8343b8f5b70; publication pending"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "03bc7fa408aef348f71eee4312263393578c6070bf5d5e355fc975a391a55975",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "digestWithLocale",
+        "fingerprint": "98bff41f995b4a703b579202139e7ab853466d4986113fce0a8a8eb0c185bb8d",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The untagged receipt matchers accept only the evidenced en-US and sv-SE locale forms through this helper; tagged version 2 accepts only digestV2. The analyzer conservatively reports both default and explicit branches of canonical(value, locale), so this edge does not broaden the accepted locale set.",
+      "provenance": [
+        "PR #1151 published immutable head 2ea1f0ed",
+        "PR #1151 local follow-up candidate c7d690a95f91b88e1336e61983a04615ed2db435 and f4cf4ae07e8c08f29f95c581e4ba8343b8f5b70; publication pending"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "03bc7fa408aef348f71eee4312263393578c6070bf5d5e355fc975a391a55975",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "digest",
+        "fingerprint": "e35db37d73bce0ec732b394f7e7633670e29e952c09b3d9267d17cdfe064cf6d",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "This helper reproduces host-default legacy bytes for existing legacy APIs and fixture reproduction; the untagged matchers do not use it as a fallback, and tagged version 2 uses digestV2. The analyzer conservatively reports both optional-locale comparator branches although digest calls canonical without a locale.",
+      "provenance": [
+        "PR #1151 published immutable head 2ea1f0ed",
+        "PR #1151 local follow-up candidate c7d690a95f91b88e1336e61983a04615ed2db435 and f4cf4ae07e8c08f29f95c581e4ba8343b8f5b70; publication pending"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "5c0f226cdabcb343f3568e6874280f0a0f9c5ea1f29c676b7193703c4e53cbc8",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/pi-durable-adapter/src/child-continuation.fixture.mjs",
+        "owner": "fixture",
+        "fingerprint": "fc54d7a361f5c686a8667b0d09260c223a69d52881f7c5ea5875339c269f765e",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "The existing child-continuation fixture retains an evidenced untagged inputDigest through toolInputDigest. It is a historical fixture consumer; the analyzer conservatively reports both optional-locale branches from canonical(value, locale).",
+      "provenance": [
+        "PR #1151 published immutable head 2ea1f0ed",
+        "PR #1151 local follow-up candidate c7d690a95f91b88e1336e61983a04615ed2db435 and f4cf4ae07e8c08f29f95c581e4ba8343b8f5b70; publication pending"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "5c0f226cdabcb343f3568e6874280f0a0f9c5ea1f29c676b7193703c4e53cbc8",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "digestWithLocale",
+        "fingerprint": "98bff41f995b4a703b579202139e7ab853466d4986113fce0a8a8eb0c185bb8d",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The untagged receipt matchers accept only the evidenced en-US and sv-SE locale forms through this helper; tagged version 2 accepts only digestV2. The analyzer conservatively reports both default and explicit branches of canonical(value, locale), so this edge does not broaden the accepted locale set.",
+      "provenance": [
+        "PR #1151 published immutable head 2ea1f0ed",
+        "PR #1151 local follow-up candidate c7d690a95f91b88e1336e61983a04615ed2db435 and f4cf4ae07e8c08f29f95c581e4ba8343b8f5b70; publication pending"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "5c0f226cdabcb343f3568e6874280f0a0f9c5ea1f29c676b7193703c4e53cbc8",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "digest",
+        "fingerprint": "e35db37d73bce0ec732b394f7e7633670e29e952c09b3d9267d17cdfe064cf6d",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "This helper reproduces host-default legacy bytes for existing legacy APIs and fixture reproduction; the untagged matchers do not use it as a fallback, and tagged version 2 uses digestV2. The analyzer conservatively reports both optional-locale comparator branches although digest calls canonical without a locale.",
+      "provenance": [
+        "PR #1151 published immutable head 2ea1f0ed",
+        "PR #1151 local follow-up candidate c7d690a95f91b88e1336e61983a04615ed2db435 and f4cf4ae07e8c08f29f95c581e4ba8343b8f5b70; publication pending"
+      ]
     }
   ]
 }

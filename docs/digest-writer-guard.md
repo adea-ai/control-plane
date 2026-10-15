@@ -51,6 +51,24 @@ The inventory includes retained context-package, context-command,
 project-state, execution-plan, delegation, event-frame, tool-input,
 tool-registration, and tool-schema digest edges; the SQLite context-operation
 index; the local graph's legacy result verifier; and a durable-tool fixture.
+The local PR #1151 follow-up candidate adds six exact tool-digest edges. They
+pair the helper's default and explicit-locale comparator call sites with
+`digestWithLocale`, legacy `digest`, and the existing child-continuation
+fixture. The untagged matchers accept `digestV2` or explicit locale digests
+for only the two evidenced locales, `en-US` and `sv-SE`; they do not use the
+host-default `digest` helper as a fallback. That helper remains available to
+reproduce legacy host-default bytes for existing legacy APIs and the historical
+fixture. Tagged version 2 accepts only the version-2 digest; malformed or
+unknown versions fail closed. These exceptions cover only the source/sink
+pairs in that candidate and do not permit other locale choices. Their
+provenance records the unpublished candidate commits and remains pending
+confirmation of PR #1151's final published head.
+
+The verifier recomputes locale ordering with the current ICU runtime; its
+recorded Bun 1.4.2 / ICU 78.1 fixtures do not guarantee that a later ICU version
+will reproduce the same bytes. The guard records these exact compatibility
+flows without claiming cross-runtime reproducibility.
+
 Some entries are existing writers, not verification-only code; each reason
 records that distinction and its provenance. Two exact exceptions document
 analysis limits: the event `reject` method reads the versioned `s2` frame hash
