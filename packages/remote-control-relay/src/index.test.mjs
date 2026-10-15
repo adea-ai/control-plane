@@ -294,7 +294,7 @@ describe('host key lifecycle', () => {
 })
 
 describe('durable execution acceptance bridge', () => {
-  test('creates one logical CommandInbox execution for deterministic encrypted replay', async () => {
+  test('creates one CommandInbox execution for reordered concurrent and durable replay', async () => {
     const key = await generateHostEncryptionKeyPair(hostId, new Date(issuedAt))
     const request = ControlApiFixtures.executionAcceptance.request
     const relayWorkspaceId = request.workspaceId
@@ -355,10 +355,20 @@ describe('durable execution acceptance bridge', () => {
       now: () => observedAt,
     })
     await adapter.start()
+
+    const reorderedEnvelope = Object.fromEntries(Object.entries(envelope).toReversed())
+    const [accepted, concurrentReplay] = await Promise.all([
+      processor.process(envelope, new Date(observedAt)),
+      processor.process(reorderedEnvelope, new Date(observedAt)),
+    ])
     const first = await adapter.poll()
     const replay = await processor.process(envelope, observedAt)
 
-    expect(first).toEqual({ delivered: 1, accepted: 1, duplicates: 0, rejected: 0, deferred: 0 })
+    expect([accepted.outcome, concurrentReplay.outcome].toSorted()).toEqual([
+      'accepted',
+      'duplicate',
+    ])
+    expect(first).toEqual({ delivered: 1, accepted: 0, duplicates: 1, rejected: 0, deferred: 0 })
     expect(replay).toMatchObject({ outcome: 'duplicate', commandId: relayCommandId })
     expect(replay.result.data.executionId).toBe('exe_01JABCDEF0123456789ABCDEFG')
     expect(repository.executionCount).toBe(1)
@@ -408,7 +418,9 @@ describe('opaque delivery and durable command idempotency', () => {
     expect(relay.pull(hostId)[0]?.attempts).toBe(2)
     relay.acknowledge(record.deliveryId)
     expect(relay.pull(hostId)).toEqual([])
-    expect(relay.publish(envelope).deliveryId).toBe(record.deliveryId)
+    expect(
+      relay.publish(Object.fromEntries(Object.entries(envelope).toReversed())).deliveryId
+    ).toBe(record.deliveryId)
     expect(() => relay.publish({ ...envelope, expiresAt: '2026-08-30T00:09:00.000Z' })).toThrow(
       'RELAY_COMMAND_CONFLICT'
     )
@@ -433,7 +445,7 @@ describe('opaque delivery and durable command idempotency', () => {
     )
     const [first, duplicate] = await Promise.all([
       processor.process(envelope, observedAt),
-      processor.process(envelope, observedAt),
+      processor.process(Object.fromEntries(Object.entries(envelope).toReversed()), observedAt),
     ])
     expect([first.outcome, duplicate.outcome].toSorted()).toEqual(['accepted', 'duplicate'])
     expect(first.result).toEqual(duplicate.result)
@@ -674,6 +686,90 @@ describe('opaque delivery and durable command idempotency', () => {
     ).rejects.toMatchObject({
       code: 'RELAY_COMMAND_INVALID',
     })
+    await expect(
+      processor.process({ ...command, schemaVersion: 2 }, observedAt)
+    ).rejects.toMatchObject({ code: 'RELAY_COMMAND_INVALID' })
+  })
+
+  test('persists the schema-v1 replay bytes before an effect can mutate the command', async () => {
+    const history = JSON.parse(
+      await readFile(
+        new URL('../fixtures/golden/metadata-command-v1-replay.json', import.meta.url),
+        'utf8'
+      )
+    )
+    const repository = new InMemoryRelayMetadataCommandResultRepository()
+    let effects = 0
+    const command = JSON.parse(history.commandJson)
+    const processor = new RelayMetadataCommandProcessor(
+      hostId,
+      workspaceId,
+      async (acceptedCommand) => {
+        effects += 1
+        await Promise.resolve()
+        acceptedCommand.targetId = 'mutated-after-acceptance'
+        acceptedCommand.commandId = 'mutated-command-id'
+        return history.result.result
+      },
+      repository
+    )
+
+    const accepted = await processor.process(command, observedAt)
+    expect(accepted.commandId).toBe('metadata-serialized-v1')
+    expect((await repository.get(command.commandId))?.command).toBe(history.commandJson)
+
+    const reorderedCommand = Object.fromEntries(Object.entries(command).toReversed())
+    const restartedProcessor = new RelayMetadataCommandProcessor(
+      hostId,
+      workspaceId,
+      async () => {
+        effects += 1
+        return { targetId: 'duplicate-effect' }
+      },
+      repository
+    )
+    await expect(restartedProcessor.process(reorderedCommand, observedAt)).resolves.toMatchObject({
+      outcome: 'duplicate',
+      result: history.result.result,
+    })
+    expect(effects).toBe(1)
+  })
+
+  test('replays the fixed historical schema-v1 command receipt after restart', async () => {
+    const history = JSON.parse(
+      await readFile(
+        new URL('../fixtures/golden/metadata-command-v1-replay.json', import.meta.url),
+        'utf8'
+      )
+    )
+    let effects = 0
+    const repository = {
+      get: async (receiptCommandId) =>
+        receiptCommandId === history.result.commandId
+          ? { command: history.commandJson, result: history.result }
+          : undefined,
+      put: async () => {
+        throw new Error('HISTORICAL_RECEIPT_SHOULD_NOT_BE_REWRITTEN')
+      },
+    }
+    const processor = new RelayMetadataCommandProcessor(
+      hostId,
+      workspaceId,
+      async () => {
+        effects += 1
+        return { targetId: 'duplicate-effect' }
+      },
+      repository
+    )
+    const reorderedCommand = Object.fromEntries(
+      Object.entries(JSON.parse(history.commandJson)).toReversed()
+    )
+
+    await expect(processor.process(reorderedCommand, observedAt)).resolves.toEqual({
+      ...history.result,
+      outcome: 'duplicate',
+    })
+    expect(effects).toBe(0)
   })
 
   test('publishes only encrypted results to an ephemeral client return key', async () => {
