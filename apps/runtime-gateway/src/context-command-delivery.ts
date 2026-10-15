@@ -104,6 +104,16 @@ export class ContextCommandDeliveryService {
         throw error
       }
       input.signal?.throwIfAborted()
+      if (
+        Date.parse(record.expiresAt) > this.#now().getTime() &&
+        !isCommandProtocolCompatible(record, source)
+      ) {
+        // This channel cannot carry the immutable command envelope. Leave it
+        // queued and advance this connection's cursor; a later compatible
+        // connection starts a fresh recovery page and can retry it.
+        visited(record.commandId)
+        continue
+      }
       sequence = await input.nextSequence()
       input.signal?.throwIfAborted()
       try {
@@ -151,8 +161,12 @@ export class ContextCommandDeliveryService {
       })
       return { record, sent: false }
     }
+    const command = GatewayCommandEnvelopeSchema.parse(current.commandEnvelope)
+    if (!isProtocolCompatible(command.protocolVersion, source.protocolVersion)) {
+      return { record: current, sent: false }
+    }
     const envelope = GatewayCommandEnvelopeSchema.parse({
-      ...current.commandEnvelope,
+      ...command,
       channelGeneration: source.channelGeneration,
       sequence,
       sentAt: now,
@@ -418,6 +432,22 @@ export class ContextCommandDeliveryService {
 function terminal(record: ContextCommandRecord): boolean {
   return ['succeeded', 'failed', 'cancelled', 'expired'].includes(record.status)
 }
+
+function isCommandProtocolCompatible(
+  record: ContextCommandRecord,
+  source: ActiveRuntimeNodeChannelRecord
+): boolean {
+  const command = GatewayCommandEnvelopeSchema.parse(record.commandEnvelope)
+  return isProtocolCompatible(command.protocolVersion, source.protocolVersion)
+}
+
+function isProtocolCompatible(
+  command: { readonly major: number; readonly minor: number },
+  source: { readonly major: number; readonly minor: number }
+): boolean {
+  return command.major === source.major && command.minor <= source.minor
+}
+
 function fail(code: string): never {
   throw new Error(`CONTEXT_COMMAND_${code}`)
 }

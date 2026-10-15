@@ -31,7 +31,9 @@ export class PostgresContextAuthoringCommandRepository implements ContextAuthori
       record.scope.workspaceId !== package_.projectState.workspaceId ||
       record.scope.projectId !== package_.projectState.projectId ||
       record.contextPackage.contextPackageId !== package_.contextPackageId ||
-      record.contextPackage.contentDigest !== package_.contentDigest
+      record.contextPackage.contentDigest !== package_.contentDigest ||
+      (record.contextPackage.canonicalizationVersion !== undefined &&
+        record.contextPackage.canonicalizationVersion !== package_.canonicalizationVersion)
     )
       throw new Error('CONTEXT_AUTHORING_COMMAND_SCOPE_MISMATCH')
     return this.database.transaction(async (transaction) => {

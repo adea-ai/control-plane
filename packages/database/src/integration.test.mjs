@@ -1310,6 +1310,29 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         contentDigest: package_.contentDigest,
       },
     })
+    const versionMismatchPackage = composeProviderContextPackage(
+      contextPackageSerializationFixtures.futurePi,
+      {
+        callerContextRefs: ['contract://authoring-version-mismatch/v1'],
+        localProjectGrantRefs: [],
+        contributions: [],
+      }
+    )
+    expect(versionMismatchPackage.canonicalizationVersion).toBe(2)
+    const versionMismatchRecord = recordFor(
+      versionMismatchPackage,
+      'context-authoring-version-mismatch-0001'
+    )
+    versionMismatchRecord.contextPackage = {
+      ...versionMismatchRecord.contextPackage,
+      canonicalizationVersion: 1,
+    }
+    await expect(repository.commit(versionMismatchRecord, versionMismatchPackage)).rejects.toThrow(
+      'CONTEXT_AUTHORING_COMMAND_SCOPE_MISMATCH'
+    )
+    expect(await packages.getById(versionMismatchPackage.contextPackageId)).toBeUndefined()
+    expect(await repository.get(versionMismatchRecord.scope)).toBeUndefined()
+
     const results = await Promise.all(
       Array.from({ length: 8 }, (_, index) => {
         const package_ = candidates[index % 2]
