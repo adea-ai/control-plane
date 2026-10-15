@@ -47,16 +47,28 @@ function serialize(value: unknown): string {
   }
   if (type === 'bigint' || type === 'function' || type === 'symbol')
     throw new TypeError(`canonicalJsonStringify: cannot serialize ${type} value`)
-  if (Array.isArray(value)) return `[${value.map((entry) => serialize(entry)).join(',')}]`
+  if (Array.isArray(value)) {
+    let output = '['
+    for (let index = 0; index < value.length; index += 1) {
+      if (index > 0) output += ','
+      output += serialize(value[index])
+    }
+    return `${output}]`
+  }
   const prototype = Object.getPrototypeOf(value) as object | null
   if (prototype !== Object.prototype && prototype !== null)
     throw new TypeError('canonicalJsonStringify: value is not JSON-compatible plain data')
-  const entries = Object.entries(value)
-    .filter(([, entry]) => entry !== undefined)
-    .sort(([left], [right]) => compareCodePoint(left, right))
-  return `{${entries
-    .map(([key, entry]) => `${JSON.stringify(key)}:${serialize(entry)}`)
-    .join(',')}}`
+  const record = value as Readonly<Record<string, unknown>>
+  const keys = Object.keys(record).toSorted(compareCodePoint)
+  let output = '{'
+  let separator = ''
+  for (const key of keys) {
+    const entry = record[key]
+    if (entry === undefined) continue
+    output += `${separator}${JSON.stringify(key)}:${serialize(entry)}`
+    separator = ','
+  }
+  return `${output}}`
 }
 
 /**

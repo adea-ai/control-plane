@@ -122,3 +122,78 @@ describe('canonicalJsonStringify', () => {
     })
   })
 })
+
+describe('canonicalJsonStringify parity with the reference serializer', () => {
+  // The pre-optimization implementation, kept verbatim as the oracle.
+  const reference = (value) => {
+    if (value === undefined || value === null) return 'null'
+    const type = typeof value
+    if (type === 'string' || type === 'boolean') return JSON.stringify(value)
+    if (type === 'number') return Number.isFinite(value) ? JSON.stringify(value) : 'null'
+    if (type === 'bigint' || type === 'function' || type === 'symbol')
+      throw new TypeError(`canonicalJsonStringify: cannot serialize ${type} value`)
+    if (Array.isArray(value)) return `[${value.map((entry) => reference(entry)).join(',')}]`
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null)
+      throw new TypeError('canonicalJsonStringify: value is not JSON-compatible plain data')
+    const entries = Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .toSorted(([left], [right]) => codePointCompare(left, right))
+    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${reference(entry)}`).join(',')}}`
+  }
+
+  const nullPrototype = Object.assign(Object.create(null), { b: 1, a: [undefined, 2] })
+  const fixtures = [
+    undefined,
+    null,
+    true,
+    'text "quoted" \n \u2028 \ud800',
+    0,
+    -0,
+    1.5e300,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    [],
+    {},
+    [undefined, null, { z: undefined, y: 1 }],
+    { 'a-b': 1, ab: 2, a_b: 3, Aa: 4, 'a!': 5, '': 6, '😀': 7, '\uffff': 8 },
+    {
+      nested: { b: [{ d: 1, c: undefined, a: [] }], a: { y: null, x: false } },
+      1: 'x',
+      10: 'y',
+      2: 'z',
+    },
+    nullPrototype,
+    { __proto__: null, only: undefined },
+  ]
+
+  test.each(fixtures.map((fixture, index) => [index, fixture]))(
+    'matches byte for byte on fixture %d',
+    (_index, fixture) => {
+      expect(canonicalJsonStringify(fixture)).toBe(reference(fixture))
+    }
+  )
+
+  test('rejects the same unsupported values with the same errors', () => {
+    const unsupported = [
+      1n,
+      () => 1,
+      Symbol('x'),
+      new Date(0),
+      new Map(),
+      Object.create({ inherited: true }),
+      { deep: [{ bad: 1n }] },
+      [Symbol('y')],
+    ]
+    for (const value of unsupported) {
+      let expected
+      try {
+        reference(value)
+      } catch (error) {
+        expected = error
+      }
+      expect(expected).toBeInstanceOf(TypeError)
+      expect(() => canonicalJsonStringify(value)).toThrow(expected.message)
+    }
+  })
+})
