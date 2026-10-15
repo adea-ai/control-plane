@@ -35,8 +35,13 @@ cleanup() {
 }
 node_bin="$(command -v node)"
 # Pre-pull the pinned database image through the bounded registry-only retry
-# helper. The profile starts below remain single-shot.
-"$node_bin" ../../scripts/pull-postgres-image.mjs
+# helper. The profile starts below remain single-shot. When the canonical registry
+# is rate limited the helper falls over to the same digest on another registry and
+# prints that reference, which compose then uses through the exported variable.
+postgres_image="$("$node_bin" ../../scripts/pull-postgres-image.mjs --print-image)"
+if [[ -n "$postgres_image" ]]; then
+  export CONTROL_PLANE_POSTGRES_IMAGE="$postgres_image"
+fi
 trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT

@@ -263,6 +263,12 @@ and removes that project's containers, network and volume in `finally`, includin
 partial startup and test failures. Before startup, the runner and pull-request CI
 use `scripts/pull-postgres-image.mjs` to retry only a registry rate-limit response
 (`toomanyrequests`, HTTP 429, or pull-rate-limit text), with three bounded backoffs.
+Before each backoff it first tries the same digest on `mirror.gcr.io` and then
+`docker.io`, without credentials: a digest names the content, so a fallback cannot
+change which image runs. The compose files read the image as
+`${CONTROL_PLANE_POSTGRES_IMAGE:-<pinned reference>}`; the runner, the Hosted Compose
+script and the pull-request workflow (through `GITHUB_ENV`) set that variable to the
+fallback they pulled, so Postgres starts from the local image.
 `docker compose up --wait` and health checks then run once; startup errors are not
 retried. The runner's Docker commands and the nested
 PostgreSQL disruption/restore Docker calls have a 90-second process bound;

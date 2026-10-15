@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'bun:test'
 import {
+  composePostgresImages,
   defaultPullBackoffMs,
+  fallbackImages,
   isRegistryRateLimit,
+  postgresImageVariable,
   runWithPullBackoff,
+  runWithPullFallback,
 } from '../scripts/docker-pull-backoff.mjs'
-import { pullPostgresImage } from '../scripts/pull-postgres-image.mjs'
+import { exportSelectedImage, pullPostgresImage } from '../scripts/pull-postgres-image.mjs'
 
 const repositoryRoot = new URL('..', import.meta.url)
 
@@ -129,4 +135,233 @@ test('integration and PR workflows pull before starting Postgres', async () => {
     workflow.indexOf('run: bun scripts/pull-postgres-image.mjs') <
       workflow.indexOf('run: docker compose up -d --wait postgres')
   )
+})
+
+const pinnedPostgres =
+  'public.ecr.aws/docker/library/postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873'
+const mirrorPostgres =
+  'mirror.gcr.io/library/postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873'
+const hubPostgres =
+  'docker.io/library/postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873'
+const ecrRateLimited = {
+  status: 1,
+  stdout: '',
+  stderr: 'Error response from daemon: toomanyrequests: Data limit exceeded',
+}
+
+test('a pinned ECR Public image falls over to the same digest on the other registries', () => {
+  assert.deepEqual(fallbackImages(pinnedPostgres), [mirrorPostgres, hubPostgres])
+  // Only a digest-pinned ECR Public reference has a fallback: a tag could name other content.
+  assert.deepEqual(fallbackImages(pinnedPostgres.replace(/@sha256:.*/, '')), [])
+  assert.deepEqual(fallbackImages(mirrorPostgres), [])
+  assert.deepEqual(fallbackImages(undefined), [])
+})
+
+function fallbackHarness({ attempts, pulls }) {
+  const events = []
+  return {
+    events,
+    options: {
+      delaysMs: [5, 7],
+      sleep: async (milliseconds) => void events.push(['sleep', milliseconds]),
+      log: () => {},
+      pull: async (reference) => {
+        events.push(['pull', reference])
+        return pulls.shift() ?? { status: 0, stdout: '', stderr: '' }
+      },
+    },
+    attempt: async (fallback) => {
+      events.push(['attempt', fallback])
+      return attempts.shift() ?? succeeded
+    },
+  }
+}
+
+test('a canonical success or an unrelated failure never touches a fallback registry', async () => {
+  for (const first of [succeeded, { status: 1, stdout: '', stderr: 'manifest unknown' }]) {
+    const harness = fallbackHarness({ attempts: [first], pulls: [] })
+    const outcome = await runWithPullFallback(harness.attempt, pinnedPostgres, harness.options)
+    assert.equal(outcome.result, first)
+    assert.equal(outcome.image, undefined)
+    assert.deepEqual(harness.events, [['attempt', undefined]])
+  }
+})
+
+test('a rate-limited canonical pull uses the first fallback that pulls, without any backoff', async () => {
+  const harness = fallbackHarness({ attempts: [ecrRateLimited], pulls: [] })
+  const outcome = await runWithPullFallback(harness.attempt, pinnedPostgres, harness.options)
+  assert.equal(outcome.image, mirrorPostgres)
+  assert.equal(outcome.result.status, 0)
+  assert.deepEqual(harness.events, [
+    ['attempt', undefined],
+    ['pull', mirrorPostgres],
+    ['attempt', mirrorPostgres],
+  ])
+})
+
+test('a fallback that cannot be pulled or used only moves on to the next registry', async () => {
+  const harness = fallbackHarness({
+    attempts: [ecrRateLimited, { status: 1, stdout: '', stderr: 'unexpected' }],
+    pulls: [{ status: 0, stdout: '', stderr: '' }],
+  })
+  const outcome = await runWithPullFallback(harness.attempt, pinnedPostgres, harness.options)
+  assert.equal(outcome.image, hubPostgres)
+  assert.deepEqual(harness.events, [
+    ['attempt', undefined],
+    ['pull', mirrorPostgres],
+    ['attempt', mirrorPostgres],
+    ['pull', hubPostgres],
+    ['attempt', hubPostgres],
+  ])
+  const unreachable = fallbackHarness({
+    attempts: [ecrRateLimited],
+    pulls: [
+      { status: 1, stdout: '', stderr: 'mirror down' },
+      { status: 1, stdout: '', stderr: 'toomanyrequests' },
+    ],
+  })
+  const fallbackOutcome = await runWithPullFallback(
+    unreachable.attempt,
+    pinnedPostgres,
+    unreachable.options
+  )
+  // Both fallbacks failed to pull, so the round ends in a backoff and the canonical pull is retried.
+  assert.equal(fallbackOutcome.image, undefined)
+  assert.equal(fallbackOutcome.result.status, 0)
+  assert.deepEqual(unreachable.events, [
+    ['attempt', undefined],
+    ['pull', mirrorPostgres],
+    ['pull', hubPostgres],
+    ['sleep', 5],
+    ['attempt', undefined],
+  ])
+})
+
+test('when every registry is rate limited the bounded backoff applies and the last result surfaces', async () => {
+  const harness = fallbackHarness({
+    attempts: [ecrRateLimited, ecrRateLimited, ecrRateLimited],
+    pulls: Array.from({ length: 6 }, () => ({ status: 1, stdout: '', stderr: 'toomanyrequests' })),
+  })
+  const outcome = await runWithPullFallback(harness.attempt, pinnedPostgres, harness.options)
+  assert.equal(outcome.result, ecrRateLimited)
+  assert.equal(outcome.image, undefined)
+  assert.deepEqual(
+    harness.events.filter(([kind]) => kind === 'sleep'),
+    [
+      ['sleep', 5],
+      ['sleep', 7],
+    ]
+  )
+  assert.equal(harness.events.filter(([kind]) => kind === 'attempt').length, 3)
+  // Each round tries both fallbacks before it waits.
+  assert.deepEqual(
+    harness.events.slice(0, 4).map(([kind]) => kind),
+    ['attempt', 'pull', 'pull', 'sleep']
+  )
+})
+
+test('Postgres pull falls over to the same digest and reports it without a credential', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pull-postgres-fallback-'))
+  try {
+    await writeFile(
+      join(directory, 'compose.yaml'),
+      `services:\n  postgres:\n    image: \${CONTROL_PLANE_POSTGRES_IMAGE:-${pinnedPostgres}}\n`
+    )
+    const calls = []
+    const environments = []
+    const result = await pullPostgresImage({
+      cwd: directory,
+      environment: { COMPOSE_PROJECT_NAME: 'test-project' },
+      spawnSync: (command, dockerArgs, options) => {
+        calls.push([command, ...dockerArgs])
+        environments.push(options.env)
+        return dockerArgs[0] === 'compose' ? ecrRateLimited : { status: 0, stdout: '', stderr: '' }
+      },
+      backoffOptions: { sleep: async () => {}, log: () => {} },
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+    })
+    assert.equal(result.status, 0)
+    assert.equal(result.image, mirrorPostgres)
+    assert.deepEqual(calls, [
+      ['docker', 'compose', 'pull', 'postgres'],
+      ['docker', 'pull', '--quiet', mirrorPostgres],
+    ])
+    for (const environment of environments)
+      assert.deepEqual(environment, { COMPOSE_PROJECT_NAME: 'test-project' })
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('an image already chosen through the variable is never replaced by a fallback', async () => {
+  const calls = []
+  const result = await pullPostgresImage({
+    cwd: '/workspace/control-plane',
+    environment: { [postgresImageVariable]: mirrorPostgres },
+    spawnSync: (command, dockerArgs) => {
+      calls.push(dockerArgs)
+      return calls.length === 1 ? ecrRateLimited : { status: 0, stdout: '', stderr: '' }
+    },
+    backoffOptions: { delaysMs: [1], sleep: async () => {}, log: () => {} },
+    stdout: { write: () => {} },
+    stderr: { write: () => {} },
+  })
+  assert.equal(result.image, undefined)
+  assert.deepEqual(calls, [
+    ['compose', 'pull', 'postgres'],
+    ['compose', 'pull', 'postgres'],
+  ])
+})
+
+test('the selected fallback reaches later GitHub steps through the job environment file only', () => {
+  const writes = []
+  const append = (file, text) => writes.push([file, text])
+  assert.equal(exportSelectedImage(mirrorPostgres, { environment: {}, append }), false)
+  assert.equal(
+    exportSelectedImage(undefined, { environment: { GITHUB_ENV: '/tmp/env' }, append }),
+    false
+  )
+  assert.equal(
+    exportSelectedImage(mirrorPostgres, { environment: { GITHUB_ENV: '/tmp/env' }, append }),
+    true
+  )
+  assert.deepEqual(writes, [['/tmp/env', `${postgresImageVariable}=${mirrorPostgres}\n`]])
+})
+
+test('every compose Postgres image is the same pinned digest behind the fallback variable', async () => {
+  const sources = await Promise.all(
+    ['compose.yaml', 'infrastructure/compose/compose.yaml'].map((path) =>
+      readFile(new URL(path, repositoryRoot), 'utf8')
+    )
+  )
+  const images = sources.flatMap(composePostgresImages)
+  assert.equal(images.length, 3)
+  for (const image of images) assert.equal(image, pinnedPostgres)
+  // No ECR Public reference may bypass the variable, or a fallback would not reach it.
+  for (const source of sources)
+    assert.equal(
+      (source.match(/public\.ecr\.aws\/docker\//g) ?? []).length,
+      composePostgresImages(source).length
+    )
+})
+
+test('the hosted compose acceptance script starts Postgres from the pulled image', async () => {
+  const script = await readFile(
+    new URL('scripts/run-hosted-compose-acceptance.sh', repositoryRoot),
+    'utf8'
+  )
+  assert.match(
+    script,
+    /postgres_image="\$\("\$node_bin" \.\.\/\.\.\/scripts\/pull-postgres-image\.mjs --print-image\)"/
+  )
+  assert.match(script, /export CONTROL_PLANE_POSTGRES_IMAGE="\$postgres_image"/)
+  assert.ok(
+    script.indexOf('export CONTROL_PLANE_POSTGRES_IMAGE') < script.indexOf('compose_started=true')
+  )
+  const runner = await readFile(
+    new URL('scripts/run-integration-tests.mjs', repositoryRoot),
+    'utf8'
+  )
+  assert.match(runner, /runnerEnvironment\[postgresImageVariable\] = image/)
 })
