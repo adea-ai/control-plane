@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
+import { postgresImageVariable } from './docker-pull-backoff.mjs'
 import { pullPostgresImage } from './pull-postgres-image.mjs'
 import {
   INTEGRATION_SHARD_IDS,
@@ -43,7 +44,10 @@ function run(command, arguments_, options = {}) {
 // Retry only the digest-pinned image pull. Container startup and health checks
 // run once, so a startup failure cannot be hidden by repeating `compose up`.
 async function composeUpPostgres() {
-  await pullPostgresImage({ environment: runnerEnvironment })
+  const { image } = await pullPostgresImage({ environment: runnerEnvironment })
+  // A rate-limited registry falls over to the same digest elsewhere; compose then has to
+  // start the image that is now present locally, here and in every later compose command.
+  if (image !== undefined) runnerEnvironment[postgresImageVariable] = image
   run('docker', ['compose', 'up', '-d', '--wait', 'postgres'], {
     environment: runnerEnvironment,
   })

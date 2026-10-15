@@ -29,6 +29,7 @@ import {
   readChildRuntimeContext,
   childRuntimeLookupNamespace,
 } from './delegation-runtime-receipt.js'
+import { retainReceiptOwnerPins } from './delegation-retention.js'
 import { json, recordId } from './record-storage.js'
 import { assertSqliteStoredPlanReference } from './repositories.js'
 import { SqliteDurableUsageStore } from './usage-store.js'
@@ -81,8 +82,10 @@ export class SqliteDelegationRepository implements DelegationRepository, ChildAd
     await this.provider.transaction(async (tx) => {
       const snapshot = await readChildRuntimeContext(tx, input.delegationId, request)
       const id = recordId(snapshot.receipt.childAttemptId)
-      if (!(await tx.get(childRuntimeLookupNamespace, id)))
+      if (!(await tx.get(childRuntimeLookupNamespace, id))) {
         await tx.put({ namespace: childRuntimeLookupNamespace, id, value: json(snapshot.receipt) })
+        await retainReceiptOwnerPins(tx, childRuntimeLookupNamespace, snapshot.receipt)
+      }
     })
   }
 
