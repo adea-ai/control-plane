@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.99.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.98.2...workspace-v1.99.0) (2026-10-15)
+
+
+### Features
+
+* **sqlite:** pin owners from child receipt namespaces in retention ([#1022](https://github.com/adea-ai/control-plane/issues/1022) WIP) ([#1132](https://github.com/adea-ai/control-plane/issues/1132)) ([b7bfb0e](https://github.com/adea-ai/control-plane/commit/b7bfb0e9e55c31a15e7ac6e9257f37d9a7bf9f71))
+
 ## [1.98.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.98.1...workspace-v1.98.2) (2026-10-15)
 
 
