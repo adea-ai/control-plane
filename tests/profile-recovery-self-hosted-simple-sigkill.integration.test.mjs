@@ -19,7 +19,7 @@
 
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -49,6 +49,7 @@ import {
   pinProcess,
   pinSpawned,
   readProcessIdentity,
+  sameProcess,
 } from './fixtures/pinned-process.mjs'
 
 // This file sits in tests/, so one `..` is the repository root.
@@ -56,6 +57,7 @@ const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const pinned = pinnedRestateCommands()
 const EXIT_BOUND_MS = 15_000
 const cleanup = []
+const OWNER_WITH_CHILD_TRAP = "sleep 62 & c=$!; trap 'exit 0' TERM; echo $c; wait"
 
 async function isolatedPorts() {
   const servers = []
@@ -110,9 +112,10 @@ async function recordOwnedRestate(incarnation, owned, mode, { pid: compositionPi
       parent: composition,
     })
     owned.push(launcher)
-    // Discovery only names a candidate pid; the pin below decides whether it is the owned process.
+    // Discovery records a full candidate identity; the pin below proves the same process is still
+    // the owned child before it can be reaped.
     const candidate = await ownedNativeServer(launcherPid, pinned.native)
-    const native = await pinOwnedProcess(candidate.pid, {
+    const native = await pinRecordedOwnedProcess(candidate, {
       commandIncludes: pinned.native,
       parent: launcher,
     })
@@ -122,6 +125,36 @@ async function recordOwnedRestate(incarnation, owned, mode, { pid: compositionPi
   } finally {
     composition.close()
   }
+}
+
+/** Pins the process discovered as a native child and rejects a same-pid replacement before it is
+ *  treated as the recorded Restate server. Parentage is checked by pinOwnedProcess; startTicks
+ *  distinguishes same-command replacements that begin in the same ps start-time second. */
+async function pinRecordedOwnedProcess(
+  expected,
+  { commandIncludes, parent, parentPid, ...options }
+) {
+  const ownerPid = parentPid ?? parent?.identity.pid
+  if (ownerPid === undefined) throw new Error('PINNED_PROCESS_OWNER_IDENTITY_MISSING')
+  if (expected.startTicks === undefined) {
+    throw new Error('PINNED_PROCESS_IDENTITY_INCOMPLETE: native candidate has no start ticks')
+  }
+  if (expected.ppid !== ownerPid) {
+    throw new Error(
+      'PINNED_PROCESS_IDENTITY_MISMATCH: native candidate is not owned by its launcher'
+    )
+  }
+  const handle = await pinOwnedProcess(expected.pid, {
+    commandIncludes,
+    parent,
+    parentPid: ownerPid,
+    ...options,
+  })
+  if (!sameProcess(handle.identity, expected)) {
+    handle.close()
+    throw new Error('PINNED_PROCESS_IDENTITY_MISMATCH: native process changed after discovery')
+  }
+  return handle
 }
 
 /** Terminates every pinned process. A confirmed one leaves `owned` and its handle is released; any
@@ -551,6 +584,64 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       expect(owned).toEqual([])
     })
 
+    test('cleanup retains a failed pinned handle through its retries, then releases that same handle after recovery', async () => {
+      let failing = true
+      const closed = []
+      const backend = {
+        open: () => 13,
+        send: () => {
+          if (failing) throw Object.assign(new Error('denied'), { code: 'EPERM' })
+          return true
+        },
+        exited: () => !failing,
+        close: (fd) => closed.push(fd),
+      }
+      const expected = { pid: 41, started: 'fixture', command: 'fixture-command', startTicks: 7 }
+      const handle = await pinProcess(expected, {
+        backend,
+        readIdentity: async () => ({ ...expected, startTicks: 7 }),
+      })
+      const owned = [handle]
+      const incarnation = {
+        child: {
+          pid: 40,
+          exitCode: 0,
+          signalCode: null,
+          kill: () => true,
+        },
+        exited: Promise.resolve({ code: 0, signal: null }),
+        restateOwnershipRecorded: true,
+      }
+      const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-retry-cleanup-'))
+
+      try {
+        const cleanupError = await releaseOwnership({
+          work,
+          incarnations: [incarnation],
+          owned,
+          reapOwnedProcesses: reapOwned,
+        }).catch((error) => error)
+        expect(cleanupError).toBeInstanceOf(AggregateError)
+        expect(cleanupError.errors.map((error) => error.message)).toContainEqual(
+          expect.stringContaining('OWNED_PROCESS_UNCONFIRMED')
+        )
+        expect(owned).toEqual([handle])
+        expect(handle.identity).toMatchObject(expected)
+        expect(closed).toEqual([])
+
+        failing = false
+        expect(await reapOwned(owned, { graceMs: 20, forceMs: 20, pollMs: 5 })).toEqual([])
+        expect(owned).toEqual([])
+        expect(closed).toEqual([13])
+      } finally {
+        if (owned.includes(handle)) {
+          failing = false
+          await reapOwned(owned, { graceMs: 20, forceMs: 20, pollMs: 5 })
+        }
+        await rm(work, { recursive: true, force: true })
+      }
+    })
+
     /** An injected pid table: `open` pins whatever holds the pid, `send` records every signal. */
     function scriptedBackend(holder) {
       const events = []
@@ -586,6 +677,28 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       await expect(
         pinProcess(recorded, { backend, readIdentity: async () => replacement })
       ).rejects.toThrow('PINNED_PROCESS_IDENTITY_MISMATCH')
+      expect(backend.events).toEqual(['open:500', 'close:5'])
+    })
+
+    test('a same-command replacement under the same owner in the same second is refused before signaling', async () => {
+      const launcherPid = 321
+      const recorded = {
+        pid: 500,
+        ppid: launcherPid,
+        started: secondOfStart,
+        command: nativeCommand,
+        startTicks: 1000,
+      }
+      const replacement = { ...recorded, startTicks: 1003 }
+      const backend = scriptedBackend(replacement)
+      await expect(
+        pinRecordedOwnedProcess(recorded, {
+          commandIncludes: '/pinned/restate-server',
+          parentPid: launcherPid,
+          backend,
+          readIdentity: async () => replacement,
+        })
+      ).rejects.toThrow('PINNED_PROCESS_IDENTITY_MISMATCH: native process changed after discovery')
       expect(backend.events).toEqual(['open:500', 'close:5'])
     })
 
@@ -818,9 +931,9 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       })
 
       test('a real owner that exits cannot vouch for its child, and the orphan is refused', async () => {
-        // A shell owner (a child of this test) starts a sleeping child and prints its pid. On SIGTERM
-        // the owner ends its own child, so teardown never needs to signal the child by number.
-        const owner = spawn('sh', ['-c', 'sleep 62 & c=$!; trap "kill $c" TERM; echo $c; wait'], {
+        // A shell owner (a child of this test) starts a sleeping child and prints its pid. Its
+        // SIGTERM trap exits only the shell; the pinned child is then ended by this test's handle.
+        const owner = spawn('sh', ['-c', OWNER_WITH_CHILD_TRAP], {
           stdio: ['ignore', 'pipe', 'ignore'],
         })
         const ownerExit = processExit(owner)
@@ -855,9 +968,11 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
         })
         expect(child.identity.ppid).toBe(owner.pid)
 
-        // The owner exits; the child is reparented and the anchor reports the exit.
-        owner.kill('SIGKILL')
+        // The owner exits; the child remains live and is reparented. The trap must not signal its
+        // numeric pid, which could have been reused between the owner's observation and SIGTERM.
+        owner.kill('SIGTERM')
         await boundedWait(ownerExit, EXIT_BOUND_MS, 'owner exit')
+        expect(await liveIdentity(child.identity)).toBeDefined()
         expect(anchor.exited).toBe(true)
         await expect(
           pinOwnedProcess(childPid, { commandIncludes: 'sleep 62', parent: anchor })
@@ -869,6 +984,11 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
 
         // The orphan is ended through its pinned handle. Teardown finds it gone and signals nothing.
         expect(await child.terminate()).toBe(true)
+      })
+
+      test('the shell owner trap exits the shell without signalling a child by numeric pid', async () => {
+        expect(OWNER_WITH_CHILD_TRAP).toMatch(/trap\s+['"]exit 0['"]\s+TERM/)
+        expect(OWNER_WITH_CHILD_TRAP).not.toMatch(/trap\s+['"][^'"]*\bkill\s+\$[A-Za-z_]/)
       })
     })
 
@@ -1056,6 +1176,54 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
         await rm(work, { recursive: true, force: true })
       }
     }
+  })
+
+  test('a health failure after Restate starts closes the composition before the ownership handshake', async () => {
+    const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-health-failure-'))
+    const config = {
+      dataDirectory: join(work, 'data'),
+      ports: await isolatedPorts(),
+      healthFailureBeforeOwnershipHandshake: true,
+      healthFailureProbePath: join(work, 'health-failure.json'),
+      healthFailureReleasePath: join(work, 'release-health-failure'),
+    }
+    const owned = []
+    const initial = spawnSelfHostedSimpleComposition('initial', config)
+    const incarnation = initial
+    cleanup.push(() => releaseOwnership({ work, incarnations: [incarnation], owned }))
+
+    const deadline = Date.now() + EXIT_BOUND_MS
+    let evidence
+    while (evidence === undefined && Date.now() < deadline) {
+      try {
+        evidence = JSON.parse(await readFile(config.healthFailureProbePath, 'utf8'))
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+    }
+    if (evidence === undefined) await initial.next('started', EXIT_BOUND_MS)
+    expect(evidence).toBeDefined()
+    expect(evidence.processIdentities).toHaveLength(2)
+    const recorded = await recordOwnedRestate(incarnation, owned, 'initial', evidence)
+    expect(owned.map((handle) => handle.identity)).toEqual(evidence.processIdentities)
+
+    await writeFile(config.healthFailureReleasePath, 'continue')
+    await expect(initial.next('started', EXIT_BOUND_MS)).rejects.toThrow(
+      'PROTOCOL_CHILD_FAILED: SELF_HOSTED_SIMPLE_INJECTED_HEALTH_FAILURE'
+    )
+    expect(initial.stages.some((stage) => stage.stage === 'started')).toBe(false)
+    expect(initial.stages.find((stage) => stage.stage === 'failed')).toMatchObject({
+      processIdentities: evidence.processIdentities,
+    })
+    expect(
+      await boundedWait(initial.exited, EXIT_BOUND_MS, 'health-failed composition exit')
+    ).toEqual({
+      code: 1,
+      signal: null,
+    })
+    expect(recorded.launcher.exited).toBe(true)
+    expect(recorded.native.exited).toBe(true)
   })
 
   test('cleanup removes state after recorded Restate identities are confirmed gone', async () => {

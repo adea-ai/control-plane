@@ -19,6 +19,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { access, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
@@ -56,6 +57,7 @@ const PROTOCOL_STAGES = new Set([
   'failed',
 ])
 const MAXIMUM_STDOUT_BUFFER = 1 << 20
+const PS_ROW = /^\s*(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/
 
 const execFileAsync = promisify(execFile)
 const fixturePath = fileURLToPath(import.meta.url)
@@ -220,52 +222,80 @@ async function runInitial(config) {
     effects,
     executionIdRef,
   })
-  await composition.start()
-  const started = await composition.workflow.health()
-  emit({ stage: 'started', pid: process.pid, launcherPid: started.details?.pid })
-  const seeded = await seedRegisteredGraphPlan(composition, plan, {
-    reference: graph,
-    input: graphInput,
-  })
-  const acceptedAt = new Date().toISOString()
-  const accepted = await new CommandInboxService({
-    repository: composition.commandRepository,
-    executionIdFactory: () => `exe_${plan.executionPlanId.slice(4)}`,
-    executionPlanValidator: seeded,
-  }).acceptExecution({
-    ...acceptanceCommand(plan),
-    receivedAt: acceptedAt,
-    retentionExpiresAt: new Date(Date.parse(acceptedAt) + 30 * 86400000).toISOString(),
-  })
-  const executionId = accepted.execution.executionId
-  executionIdRef.current = executionId
-  const send = await fetch(
-    `http://127.0.0.1:${config.ports.restateIngressPort}/execution-lifecycle/${executionId}/run/send`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(runInputOf(plan, executionId)),
-      signal: AbortSignal.timeout(15000),
+  let closeAttempted = false
+  const closeComposition = async () => {
+    if (closeAttempted) return
+    closeAttempted = true
+    await composition.close()
+  }
+  try {
+    await composition.start()
+    const started = await composition.workflow.health()
+    if (config.healthFailureBeforeOwnershipHandshake === true) {
+      const commands = pinnedRestateCommands()
+      const native = await ownedNativeServer(started.details?.pid, commands.native)
+      const launcherIdentity = await processIdentityWithTicks(started.details?.pid)
+      const processIdentities = [launcherIdentity, native]
+      if (processIdentities.some((identity) => identity === undefined)) {
+        throw new Error('SELF_HOSTED_SIMPLE_HEALTH_FAILURE_IDENTITY_UNAVAILABLE')
+      }
+      const evidence = {
+        pid: process.pid,
+        launcherPid: started.details?.pid,
+        processIdentities,
+      }
+      await writeFile(config.healthFailureProbePath, JSON.stringify(evidence))
+      await waitForFile(config.healthFailureReleasePath, 15_000)
+      const error = new Error('SELF_HOSTED_SIMPLE_INJECTED_HEALTH_FAILURE')
+      error.processIdentities = processIdentities
+      throw error
     }
-  )
-  if (!send.ok) throw new Error('SELF_HOSTED_SIMPLE_RUN_SEND_FAILED')
-  const paused = await waitForExecution(
-    composition,
-    executionId,
-    (execution) => execution.state === 'awaiting_input'
-  )
-  const health = await composition.workflow.health()
-  if (!Number.isSafeInteger(health.details?.pid)) throw new Error('SELF_HOSTED_SIMPLE_NO_PID')
-  emit({
-    stage: 'awaiting_input',
-    pid: process.pid,
-    executionId,
-    launcherPid: health.details.pid,
-    ...summaryOf(paused),
-  })
-  // Wait for the parent's SIGKILL. The bounded keep-alive stops a stranded composition.
-  await delay(120_000)
-  await composition.close()
+    emit({ stage: 'started', pid: process.pid, launcherPid: started.details?.pid })
+    const seeded = await seedRegisteredGraphPlan(composition, plan, {
+      reference: graph,
+      input: graphInput,
+    })
+    const acceptedAt = new Date().toISOString()
+    const accepted = await new CommandInboxService({
+      repository: composition.commandRepository,
+      executionIdFactory: () => `exe_${plan.executionPlanId.slice(4)}`,
+      executionPlanValidator: seeded,
+    }).acceptExecution({
+      ...acceptanceCommand(plan),
+      receivedAt: acceptedAt,
+      retentionExpiresAt: new Date(Date.parse(acceptedAt) + 30 * 86400000).toISOString(),
+    })
+    const executionId = accepted.execution.executionId
+    executionIdRef.current = executionId
+    const send = await fetch(
+      `http://127.0.0.1:${config.ports.restateIngressPort}/execution-lifecycle/${executionId}/run/send`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(runInputOf(plan, executionId)),
+        signal: AbortSignal.timeout(15000),
+      }
+    )
+    if (!send.ok) throw new Error('SELF_HOSTED_SIMPLE_RUN_SEND_FAILED')
+    const paused = await waitForExecution(
+      composition,
+      executionId,
+      (execution) => execution.state === 'awaiting_input'
+    )
+    const health = await composition.workflow.health()
+    if (!Number.isSafeInteger(health.details?.pid)) throw new Error('SELF_HOSTED_SIMPLE_NO_PID')
+    emit({
+      stage: 'awaiting_input',
+      pid: process.pid,
+      executionId,
+      launcherPid: health.details.pid,
+      ...summaryOf(paused),
+    })
+    // Wait for the parent's SIGKILL. The bounded keep-alive stops a stranded composition.
+    await delay(120_000)
+  } finally {
+    await closeComposition()
+  }
 }
 
 async function runRecover(config) {
@@ -277,42 +307,95 @@ async function runRecover(config) {
     effects,
     executionIdRef,
   })
-  await composition.start()
-  const health = await composition.workflow.health()
-  emit({ stage: 'started', pid: process.pid, launcherPid: health.details?.pid })
-  const recovered = await composition.executions.getExecution(config.executionId)
-  emit({
-    stage: 'recovered',
-    pid: process.pid,
-    executionId: config.executionId,
-    launcherPid: health.details?.pid,
-    ...summaryOf(recovered),
-  })
-  const lines = createInterface({ input: process.stdin })
-  const closeRequested = new Promise((resolve) => {
-    lines.on('line', (line) => {
-      if (line.trim() === 'close') resolve()
+  let lines
+  let closeAttempted = false
+  const closeComposition = async () => {
+    if (closeAttempted) return
+    closeAttempted = true
+    await composition.close()
+  }
+  try {
+    await composition.start()
+    const health = await composition.workflow.health()
+    emit({ stage: 'started', pid: process.pid, launcherPid: health.details?.pid })
+    const recovered = await composition.executions.getExecution(config.executionId)
+    emit({
+      stage: 'recovered',
+      pid: process.pid,
+      executionId: config.executionId,
+      launcherPid: health.details?.pid,
+      ...summaryOf(recovered),
     })
-  })
-  const finished = await waitForExecution(composition, config.executionId, (execution) =>
-    ['completed', 'failed', 'cancelled', 'timed_out'].includes(execution.state)
-  )
-  const result = await composition.objectStore.get(
-    `graph-results/${config.executionId}/result.json`
-  )
-  emit({
-    stage: 'completed',
-    pid: process.pid,
-    executionId: config.executionId,
-    ...summaryOf(finished),
-    terminalResultRef: finished.terminalResultRef,
-    result: JSON.parse(new TextDecoder().decode(result.body)),
-  })
-  await closeRequested
-  lines.close()
-  await composition.close()
-  // Explicit exit once the composition has released its Restate child and storage.
-  emit({ stage: 'closed', pid: process.pid }, () => process.exit(0))
+    lines = createInterface({ input: process.stdin })
+    const closeRequested = new Promise((resolve) => {
+      lines.on('line', (line) => {
+        if (line.trim() === 'close') resolve()
+      })
+    })
+    const finished = await waitForExecution(composition, config.executionId, (execution) =>
+      ['completed', 'failed', 'cancelled', 'timed_out'].includes(execution.state)
+    )
+    const result = await composition.objectStore.get(
+      `graph-results/${config.executionId}/result.json`
+    )
+    emit({
+      stage: 'completed',
+      pid: process.pid,
+      executionId: config.executionId,
+      ...summaryOf(finished),
+      terminalResultRef: finished.terminalResultRef,
+      result: JSON.parse(new TextDecoder().decode(result.body)),
+    })
+    await closeRequested
+    lines.close()
+    await closeComposition()
+    // Explicit exit once the composition has released its Restate child and storage.
+    emit({ stage: 'closed', pid: process.pid }, () => process.exit(0))
+  } finally {
+    lines?.close()
+    await closeComposition()
+  }
+}
+
+/** A stable ps identity bracketed by /proc reads, so pid reuse during capture is rejected. */
+async function processIdentityWithTicks(pid) {
+  if (!Number.isSafeInteger(pid)) return undefined
+  const readStartTicks = async () => {
+    let stat
+    try {
+      stat = await readFile(`/proc/${pid}/stat`, 'utf8')
+    } catch (error) {
+      if (error.code === 'ENOENT') return undefined
+      throw error
+    }
+    // The command name is parenthesised and may contain spaces; field 22 is start time in ticks.
+    const startTicks = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19])
+    return Number.isSafeInteger(startTicks) ? startTicks : undefined
+  }
+  const firstStartTicks = await readStartTicks()
+  if (firstStartTicks === undefined) return undefined
+  const row = await identityOfPid(pid)
+  if (row === undefined) return undefined
+  const lastStartTicks = await readStartTicks()
+  if (lastStartTicks === undefined || firstStartTicks !== lastStartTicks) return undefined
+  return { ...row, startTicks: lastStartTicks }
+}
+
+async function waitForFile(path, timeoutMs) {
+  if (typeof path !== 'string' || path.length === 0) {
+    throw new Error('SELF_HOSTED_SIMPLE_HEALTH_FAILURE_GATE_MISSING')
+  }
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      await access(path)
+      return
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+      await delay(20)
+    }
+  }
+  throw new Error('SELF_HOSTED_SIMPLE_HEALTH_FAILURE_GATE_TIMEOUT')
 }
 
 if (process.argv[1] === fixturePath) {
@@ -323,7 +406,14 @@ if (process.argv[1] === fixturePath) {
     else if (mode === 'recover') await runRecover(config)
     else throw new Error('SELF_HOSTED_SIMPLE_MODE_INVALID')
   } catch (error) {
-    emit({ stage: 'failed', pid: process.pid, message: String(error?.message ?? error) })
+    emit({
+      stage: 'failed',
+      pid: process.pid,
+      message: String(error?.message ?? error),
+      ...(Array.isArray(error?.processIdentities)
+        ? { processIdentities: error.processIdentities }
+        : {}),
+    })
     process.exitCode = 1
   }
 }
@@ -462,8 +552,6 @@ export function pinnedRestateCommands() {
   }
 }
 
-const PS_ROW = /^\s*(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/
-
 /** Identity of one recorded pid, read with `ps -p <pid>`. Undefined when the pid no longer exists. */
 export async function identityOfPid(pid) {
   let stdout
@@ -513,8 +601,8 @@ export async function childrenOfRecorded(parentPid) {
   for (const line of stdout.split('\n')) {
     const pid = Number(line.trim())
     if (!Number.isSafeInteger(pid) || pid < 1) continue
-    const row = await identityOfPid(pid)
-    if (row !== undefined) rows.push(row)
+    const row = await processIdentityWithTicks(pid)
+    if (row?.ppid === parentPid) rows.push(row)
   }
   return rows
 }
