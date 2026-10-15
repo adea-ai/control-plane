@@ -414,7 +414,13 @@ function spawnHandleOwner() {
  *  enters `owned` as soon as it is pinned, so a failure while recording the next process leaves the
  *  earlier one recorded for the reap. The composition anchor is released once the chain is pinned;
  *  the test stops the composition through its own child handle. */
-async function recordOwnedRestate(incarnation, owned, mode, { pid: compositionPid, launcherPid }) {
+async function recordOwnedRestate(
+  incarnation,
+  owned,
+  mode,
+  { pid: compositionPid, launcherPid },
+  discoverNative = ownedNativeServer
+) {
   const composition = await pinSpawned(incarnation.child, compositionPid, {
     commandIncludes: `${fixturePath} ${mode}`,
   })
@@ -426,7 +432,7 @@ async function recordOwnedRestate(incarnation, owned, mode, { pid: compositionPi
     owned.push(launcher)
     // Discovery records a full candidate identity; the pin below proves the same process is still
     // the owned child before it can be reaped.
-    const candidate = await ownedNativeServer(launcherPid, pinned.native)
+    const candidate = await discoverNative(launcherPid, pinned.native)
     const native = await pinRecordedOwnedProcess(candidate, {
       commandIncludes: pinned.native,
       parent: launcher,
@@ -495,8 +501,9 @@ async function reapOwned(owned, options) {
   return unconfirmed
 }
 
-/** Ends every spawned composition, then every recorded Restate identity. Each step is attempted even
- *  after an earlier failure. The work directory is removed only when nothing remains unconfirmed;
+/** Pins any missing ownership chain before ending a live composition, then reaps recorded Restate
+ *  identities. Incomplete chains retain live owners and handles without signalling them. The work
+ *  directory is removed only when nothing remains unconfirmed;
  *  otherwise it and the recorded identities are kept for diagnosis. */
 async function releaseOwnership({
   work,
@@ -508,20 +515,56 @@ async function releaseOwnership({
   const problems = []
   for (const [index, incarnation] of incarnations.entries()) {
     const label = `composition incarnation ${index} (pid ${incarnation.child.pid ?? 'unspawned'})`
+    if (
+      incarnation.restateOwnershipRecorded !== true &&
+      incarnation.child.exitCode === null &&
+      incarnation.child.signalCode === null
+    ) {
+      try {
+        if (!['initial', 'recover'].includes(incarnation.mode)) {
+          throw new Error('RESTATE_CLEANUP_MODE_MISSING')
+        }
+        incarnation.child.stdin.write('pin_cleanup\n')
+        const started = await incarnation.next('cleanup_started', exitBoundMs, {
+          ignoreFailures: true,
+        })
+        await recordOwnedRestate(incarnation, owned, incarnation.mode, started)
+      } catch (error) {
+        problems.push(error)
+      }
+    }
+    if (incarnation.restateOwnershipRecorded !== true) {
+      // Preserve the live owner and partial handles. Killing either the composition or just the
+      // launcher can orphan a native child that was never pinned. No force fallback is safe.
+      problems.push(new Error(`RESTATE_OWNERSHIP_UNRECORDED: ${label}`))
+      continue
+    }
     try {
       await stopChild(incarnation, { label, timeoutMs: exitBoundMs })
     } catch (error) {
       problems.push(error)
     }
-    // Protocol progress does not prove that both the launcher and native server identities were
-    // recorded. A failed startup or a failure during identity lookup must preserve the work state.
-    if (incarnation.restateOwnershipRecorded !== true) {
-      problems.push(new Error(`RESTATE_OWNERSHIP_UNRECORDED: ${label}`))
-    }
   }
-  let unconfirmed = await reapOwnedProcesses(owned)
-  // One retry, limited to identities that are still recorded and not confirmed gone.
-  if (unconfirmed.length > 0) unconfirmed = await reapOwnedProcesses(owned)
+  const incomplete = incarnations.some((entry) => entry.restateOwnershipRecorded !== true)
+  let unconfirmed
+  if (incomplete) {
+    unconfirmed = []
+    for (const handle of owned.toReversed()) {
+      if (handle.exited) {
+        handle.close()
+        owned.splice(owned.indexOf(handle), 1)
+      } else {
+        unconfirmed.push({
+          identity: handle.identity,
+          reason: 'ownership chain incomplete; retained',
+        })
+      }
+    }
+  } else {
+    unconfirmed = await reapOwnedProcesses(owned)
+    // One retry, limited to identities that are still recorded and not confirmed gone.
+    if (unconfirmed.length > 0) unconfirmed = await reapOwnedProcesses(owned)
+  }
   for (const { identity, reason } of unconfirmed) {
     problems.push(
       new Error(
@@ -1437,6 +1480,86 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
     })
   })
 
+  for (const failure of [
+    'startup timeout',
+    'partial identity capture',
+    'rejected start with failed stop',
+  ]) {
+    test(`main cleanup closes Restate after ${failure} before ownership is recorded`, async () => {
+      const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-main-cleanup-'))
+      const releasePath = join(work, 'release-health')
+      const probePath = join(work, 'health-probe.json')
+      const config = {
+        dataDirectory: join(work, 'data'),
+        evidencePath: join(work, 'effects.jsonl'),
+        ports: await isolatedPorts(),
+        ...(failure !== 'partial identity capture'
+          ? {
+              failureBeforeOwnershipHandshake: {
+                method: failure === 'startup timeout' ? 'health' : 'start',
+                probePath,
+                releasePath,
+                failStopAfterStart: failure === 'rejected start with failed stop',
+                stopFailurePath: join(work, 'stop-failure.json'),
+              },
+            }
+          : {}),
+      }
+      const initial = spawnSelfHostedSimpleComposition('initial', config)
+      const owned = []
+      // Independent observer handles make the regression safe even against the old cleanup:
+      // they are never passed to main cleanup and never mark its ownership handshake complete.
+      const observers = []
+      cleanup.push(async () => {
+        if (existsSync(work)) await writeFile(releasePath, 'test teardown')
+        if (observers.length === 2) {
+          await stopChild(initial, { label: 'independently pinned regression owner' })
+          expect(await reapOwned(observers)).toEqual([])
+        } else {
+          await boundedWait(initial.exited, FAILURE_PROBE_WAIT_MS, 'unrecorded regression owner')
+        }
+        for (const handle of owned) handle.close()
+        await rm(work, { recursive: true, force: true })
+      })
+      let started
+      if (failure !== 'partial identity capture') {
+        const outcome = await waitForFailureOutcome(initial, probePath, FAILURE_PROBE_WAIT_MS)
+        expect(outcome.kind).toBe('probe')
+        started = outcome.evidence
+      } else {
+        started = await initial.next('started')
+      }
+      const observed = await recordOwnedRestate({ ...initial }, observers, 'initial', started)
+      if (failure === 'startup timeout') {
+        await expect(initial.next('started', 100)).rejects.toThrow('PROTOCOL_CHILD_TIMEOUT_started')
+      } else if (failure === 'rejected start with failed stop') {
+        await writeFile(releasePath, 'reject startup')
+        await expect(initial.next('started', EXIT_BOUND_MS)).rejects.toThrow(
+          'SELF_HOSTED_SIMPLE_INJECTED_START_FAILURE'
+        )
+        expect(existsSync(config.failureBeforeOwnershipHandshake.stopFailurePath)).toBe(true)
+      } else {
+        await expect(
+          recordOwnedRestate(initial, owned, 'initial', started, async () => {
+            throw new Error('NATIVE_IDENTITY_CAPTURE_INJECTED')
+          })
+        ).rejects.toThrow('NATIVE_IDENTITY_CAPTURE_INJECTED')
+        expect(owned).toHaveLength(1)
+      }
+      expect(initial.restateOwnershipRecorded).toBeUndefined()
+      const cleanupError = await releaseOwnership({ work, incarnations: [initial], owned }).catch(
+        (error) => error
+      )
+      expect(observed.native.exited).toBe(true)
+      if (cleanupError !== undefined) throw cleanupError
+      expect(initial.restateOwnershipRecorded).toBe(true)
+      expect(observed.launcher.exited).toBe(true)
+      expect(await initial.exited).toEqual({ code: null, signal: 'SIGKILL' })
+      expect(owned).toEqual([])
+      expect(existsSync(work)).toBe(false)
+    }, 60_000)
+  }
+
   test('cleanup attempts every child after one exit is unconfirmed, and keeps the state for diagnosis', async () => {
     const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-cleanup-'))
     const signalled = []
@@ -1484,6 +1607,57 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
     expect(signalled).toEqual(['never-exits', 'exits'])
     expect(existsSync(work)).toBe(true)
     await rm(work, { recursive: true, force: true })
+  })
+
+  test('main cleanup retains the live owner and partial handle when ownership repair fails', async () => {
+    const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-unconfirmed-main-'))
+    const signals = []
+    const requests = []
+    const partial = {
+      identity: { pid: 302, started: 'unconfirmed-launcher' },
+      exited: false,
+      terminate: () => {
+        throw new Error('PARTIAL_LAUNCHER_MUST_NOT_BE_TERMINATED')
+      },
+      close: () => {
+        throw new Error('LIVE_HANDLE_MUST_NOT_BE_RELEASED')
+      },
+    }
+    const owned = [partial]
+    try {
+      const error = await releaseOwnership({
+        work,
+        owned,
+        incarnations: [
+          {
+            mode: 'initial',
+            child: {
+              pid: 301,
+              exitCode: null,
+              signalCode: null,
+              stdin: { write: (request) => requests.push(request) },
+              kill: (signal) => signals.push(signal),
+            },
+            next: async () => {
+              throw new Error('PINNED_PROCESS_IDENTITY_MISMATCH')
+            },
+            exited: new Promise(() => {}),
+          },
+        ],
+      }).catch((caught) => caught)
+      expect(error).toBeInstanceOf(AggregateError)
+      expect(error.errors.map((entry) => entry.message)).toEqual([
+        'PINNED_PROCESS_IDENTITY_MISMATCH',
+        expect.stringContaining('RESTATE_OWNERSHIP_UNRECORDED'),
+        expect.stringContaining('OWNED_PROCESS_UNCONFIRMED'),
+      ])
+      expect(requests).toEqual(['pin_cleanup\n'])
+      expect(signals).toEqual([])
+      expect(owned).toEqual([partial])
+      expect(existsSync(work)).toBe(true)
+    } finally {
+      await rm(work, { recursive: true, force: true })
+    }
   })
 
   test('cleanup preserves state when Restate ownership was not fully recorded', async () => {

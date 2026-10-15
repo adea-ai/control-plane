@@ -50,6 +50,7 @@ export const approvalInteractionId = 'approval-1'
 export const PROTOCOL_PREFIX = 'SELF_HOSTED_SIMPLE_PROTOCOL '
 const PROTOCOL_STAGES = new Set([
   'started',
+  'cleanup_started',
   'awaiting_input',
   'recovered',
   'completed',
@@ -250,6 +251,43 @@ async function rejectAfterRestateStarts(health, failure) {
   throw error
 }
 
+/** Before any startup work, accept a cleanup ownership request. Await startup settlement before
+ *  reporting health: stopping concurrently with start can miss a not-yet-assigned Restate child.
+ *  This only reports an ownership anchor; the parent must pin the full chain before SIGKILL. */
+function cleanupControl(composition) {
+  const health = composition.workflow.health.bind(composition.workflow)
+  const lines = createInterface({ input: process.stdin })
+  let startup
+  let requested = false
+  const closeRequested = new Promise((resolve) => {
+    lines.on('line', (line) => {
+      if (line.trim() === 'close') resolve()
+      if (line.trim() !== 'pin_cleanup' || requested) return
+      requested = true
+      void (async () => {
+        await startup.catch(() => undefined)
+        const status = await health()
+        emit({ stage: 'cleanup_started', pid: process.pid, launcherPid: status.details?.pid })
+      })().catch((error) => {
+        emit({ stage: 'failed', pid: process.pid, message: String(error?.message ?? error) })
+      })
+    })
+  })
+  return {
+    start() {
+      startup = Promise.resolve().then(() => composition.start())
+      return startup
+    },
+    closeRequested,
+    dispose: () => lines.close(),
+    async disposeWhenStopped() {
+      // Composition startup/close can swallow a workflow stop failure. Keep its control pipe
+      // alive while the provider still owns Restate so the parent can pin it before killing us.
+      if ((await health()).details?.pid === undefined) lines.close()
+    },
+  }
+}
+
 async function runInitial(config) {
   const effects = effectLedger(config.evidencePath, 'initial')
   const executionIdRef = { current: undefined }
@@ -259,6 +297,7 @@ async function runInitial(config) {
     effects,
     executionIdRef,
   })
+  const control = cleanupControl(composition)
   let closeAttempted = false
   const closeComposition = async () => {
     if (closeAttempted) return
@@ -309,7 +348,7 @@ async function runInitial(config) {
     }
   }
   try {
-    await composition.start()
+    await control.start()
     const started = await composition.workflow.health()
     emit({ stage: 'started', pid: process.pid, launcherPid: started.details?.pid })
     const seeded = await seedRegisteredGraphPlan(composition, plan, {
@@ -356,6 +395,7 @@ async function runInitial(config) {
     await delay(120_000)
   } finally {
     await closeComposition()
+    await control.disposeWhenStopped()
   }
 }
 
@@ -368,7 +408,7 @@ async function runRecover(config) {
     effects,
     executionIdRef,
   })
-  let lines
+  const control = cleanupControl(composition)
   let closeAttempted = false
   const closeComposition = async () => {
     if (closeAttempted) return
@@ -376,7 +416,7 @@ async function runRecover(config) {
     await composition.close()
   }
   try {
-    await composition.start()
+    await control.start()
     const health = await composition.workflow.health()
     emit({ stage: 'started', pid: process.pid, launcherPid: health.details?.pid })
     const recovered = await composition.executions.getExecution(config.executionId)
@@ -386,12 +426,6 @@ async function runRecover(config) {
       executionId: config.executionId,
       launcherPid: health.details?.pid,
       ...summaryOf(recovered),
-    })
-    lines = createInterface({ input: process.stdin })
-    const closeRequested = new Promise((resolve) => {
-      lines.on('line', (line) => {
-        if (line.trim() === 'close') resolve()
-      })
     })
     const finished = await waitForExecution(composition, config.executionId, (execution) =>
       ['completed', 'failed', 'cancelled', 'timed_out'].includes(execution.state)
@@ -407,14 +441,14 @@ async function runRecover(config) {
       terminalResultRef: finished.terminalResultRef,
       result: JSON.parse(new TextDecoder().decode(result.body)),
     })
-    await closeRequested
-    lines.close()
+    await control.closeRequested
+    control.dispose()
     await closeComposition()
     // Explicit exit once the composition has released its Restate child and storage.
     emit({ stage: 'closed', pid: process.pid }, () => process.exit(0))
   } finally {
-    lines?.close()
     await closeComposition()
+    await control.disposeWhenStopped()
   }
 }
 
@@ -530,6 +564,10 @@ export function spawnProtocolChild({ executable, args = [], cwd, env = process.e
     spawnError = error
     wake()
   })
+  child.stdin.on('error', (error) => {
+    spawnError = error
+    wake()
+  })
   child.stdout.on('data', (chunk) => {
     try {
       stdoutBuffer = `${stdoutBuffer}${chunk}`
@@ -548,13 +586,13 @@ export function spawnProtocolChild({ executable, args = [], cwd, env = process.e
   child.stderr.on('data', (chunk) => {
     stderrTail = `${stderrTail}${chunk}`.slice(-4096)
   })
-  async function next(stage, timeoutMs = 60_000) {
+  async function next(stage, timeoutMs = 60_000, { ignoreFailures = false } = {}) {
     const deadline = Date.now() + timeoutMs
     for (;;) {
       const found = stages.find((entry) => entry.stage === stage)
       if (found) return found
       const failed = stages.find((entry) => entry.stage === 'failed')
-      if (failed) throw new Error(`PROTOCOL_CHILD_FAILED: ${failed.message}`)
+      if (failed && !ignoreFailures) throw new Error(`PROTOCOL_CHILD_FAILED: ${failed.message}`)
       if (spawnError)
         throw new Error(`PROTOCOL_CHILD_SPAWN_FAILED: ${spawnError.code ?? 'UNKNOWN'}`)
       if (child.exitCode !== null || child.signalCode !== null) {
@@ -573,12 +611,15 @@ export function spawnProtocolChild({ executable, args = [], cwd, env = process.e
 
 /** One self-hosted simple composition incarnation, spawned from this helper. */
 export function spawnSelfHostedSimpleComposition(mode, config) {
-  return spawnProtocolChild({
-    executable: process.execPath,
-    args: [fixturePath, mode],
-    cwd: fileURLToPath(new URL('../..', import.meta.url)),
-    env: { ...process.env, SELF_HOSTED_SIMPLE_CONFIG: JSON.stringify(config) },
-  })
+  return {
+    mode,
+    ...spawnProtocolChild({
+      executable: process.execPath,
+      args: [fixturePath, mode],
+      cwd: fileURLToPath(new URL('../..', import.meta.url)),
+      env: { ...process.env, SELF_HOSTED_SIMPLE_CONFIG: JSON.stringify(config) },
+    }),
+  }
 }
 
 /** Rejects if a promise has not settled within the bound. Used for every exit wait. */

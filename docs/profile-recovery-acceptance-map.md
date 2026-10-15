@@ -173,6 +173,13 @@ Owners are existing issues. Where no open issue names a gap, the row says so.
    record only; full portable workflow/attempt backup is unproven. Product-startup
    adoption or reaping of an orphaned Restate child, Restate drain, upgrade, and
    rollback also remain unproven.
+   The SIGKILL proof's main teardown requests a fresh ownership handshake after
+   startup timeout or partial identity capture, waits for startup to settle,
+   and pins both Restate processes under the live composition before killing it.
+   If that handshake cannot be completed, it keeps the live owner, partial
+   handles, and work directory for diagnosis; it does not force-kill an
+   unrecorded process chain. Linux pidfds are required and unsupported platforms
+   fail closed. This is test cleanup, not product orphan adoption or recovery.
    Owner: #1025 crash/recovery, drain, upgrade, and rollback clauses. Its listed
    dependencies are #935 (fence cancellation retries and uncertain effects) and
    #939 (typed durable tasks).
