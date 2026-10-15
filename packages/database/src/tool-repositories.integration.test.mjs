@@ -413,6 +413,47 @@ describe.skipIf(!integrationEnabled)('PostgreSQL tool storage', () => {
     }
   })
 
+  test('tagged tool-call digest versions are immutable across compare-and-set', async () => {
+    const connection = await openIndependentConnection()
+    try {
+      const repository = new PostgresToolCallRepository(connection.database, workspaceId)
+      const tagged = call({
+        toolCallId: 'tlc_01JABCDEF0123456789ABCDEFF',
+        idempotencyKey: 'tool-tag-immutability-pg-0001',
+        requestDigestVersion: 2,
+        inputDigestVersion: 2,
+      })
+      expect(await repository.insert(tagged)).toBe(true)
+
+      const authorized = {
+        ...tagged,
+        status: 'authorized',
+        revision: 2,
+        authorizedAt: requestedAt,
+        history: [...tagged.history, { status: 'authorized', at: requestedAt }],
+      }
+      expect(await repository.compareAndSet(1, authorized)).toBe(true)
+
+      const requestTagDowngrade = { ...authorized }
+      delete requestTagDowngrade.requestDigestVersion
+      expect(await repository.compareAndSet(2, { ...requestTagDowngrade, revision: 3 })).toBe(false)
+      const inputTagDowngrade = { ...authorized }
+      delete inputTagDowngrade.inputDigestVersion
+      expect(await repository.compareAndSet(2, { ...inputTagDowngrade, revision: 3 })).toBe(false)
+
+      await expect(
+        repository.compareAndSet(2, {
+          ...authorized,
+          revision: 3,
+          inputDigestVersion: 3,
+        })
+      ).rejects.toThrow()
+      expect(await repository.get(tagged.toolCallId)).toEqual(authorized)
+    } finally {
+      await connection.close()
+    }
+  })
+
   test('tool-call revisions above PostgreSQL int32 range persist and advance through CAS', async () => {
     const connection = await openIndependentConnection()
     try {

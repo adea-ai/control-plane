@@ -13,6 +13,8 @@ import {
   StaticToolPolicyAuthorizer,
   ToolGateway,
   ToolRegistry,
+  toolInputDigest,
+  toolRequestDigestLegacy,
 } from '@control-plane/tool-execution'
 import { InMemoryInteractionRepository, InteractionService } from '@control-plane/domain'
 import { ToolExecutorError } from '@control-plane/tool-sdk'
@@ -513,7 +515,7 @@ describe('SQLite tool repositories', () => {
       const persistence = provider()
       const first = new SqliteToolCallRepository(persistence, ids.workspace)
       const second = new SqliteToolCallRepository(persistence, ids.workspace)
-      const original = call()
+      const original = call({ requestDigestVersion: 2, inputDigestVersion: 2 })
       expect(await first.insert(original)).toBe(true)
 
       const authorized = {
@@ -536,6 +538,12 @@ describe('SQLite tool repositories', () => {
       expect(await first.compareAndSet(1, { ...authorized, toolVersionId: ids.otherVersion })).toBe(
         false
       )
+      const requestTagDowngrade = { ...authorized }
+      delete requestTagDowngrade.requestDigestVersion
+      expect(await first.compareAndSet(1, requestTagDowngrade)).toBe(false)
+      const inputTagDowngrade = { ...authorized }
+      delete inputTagDowngrade.inputDigestVersion
+      expect(await first.compareAndSet(1, inputTagDowngrade)).toBe(false)
       await expect(
         first.compareAndSet(1, { ...authorized, workspaceId: ids.otherWorkspace })
       ).rejects.toThrow()
@@ -601,7 +609,12 @@ describe('SQLite tool repositories', () => {
       const completed = await firstExecution
       expect(completed).toMatchObject({
         state: 'succeeded',
-        call: { status: 'succeeded', result: { output: { saved: true } } },
+        call: {
+          status: 'succeeded',
+          requestDigestVersion: 2,
+          inputDigestVersion: 2,
+          result: { output: { saved: true } },
+        },
       })
       expect(firstExecutor.requests).toHaveLength(1)
 
@@ -610,9 +623,61 @@ describe('SQLite tool repositories', () => {
       const replay = await service(reopened, afterRestartExecutor).execute(request)
       expect(replay).toEqual(completed)
       expect(afterRestartExecutor.requests).toHaveLength(0)
+
+      await expect(
+        service(reopened, afterRestartExecutor).execute(
+          executionRequest({ input: { value: 'changed' } })
+        )
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+      expect(afterRestartExecutor.requests).toHaveLength(0)
+
+      const persisted = storedRecord('tool-calls', ids.workspace, completed.call.toolCallId)
+      await reopened.transaction(async (transaction) => {
+        const record = await transaction.get(persisted.namespace, persisted.id)
+        expect(record).toBeDefined()
+        const historicalCall = { ...record.value.call }
+        delete historicalCall.requestDigestVersion
+        delete historicalCall.inputDigestVersion
+        historicalCall.requestDigest = toolRequestDigestLegacy(request)
+        historicalCall.inputDigest = toolInputDigest(request.input)
+        await transaction.put({
+          ...persisted,
+          expectedRevision: record.revision,
+          value: { ...record.value, call: historicalCall },
+        })
+      })
+
+      const legacyReplay = await service(reopened, afterRestartExecutor).execute(request)
+      expect(legacyReplay).toMatchObject({
+        state: 'succeeded',
+        call: {
+          requestDigest: toolRequestDigestLegacy(request),
+          inputDigest: toolInputDigest(request.input),
+        },
+      })
+      expect(legacyReplay.call.requestDigestVersion).toBeUndefined()
+      expect(legacyReplay.call.inputDigestVersion).toBeUndefined()
+      expect(afterRestartExecutor.requests).toHaveLength(0)
       expect(
         await new SqliteToolCallRepository(reopened, ids.workspace).listByExecution(ids.execution)
-      ).toEqual([completed.call])
+      ).toEqual([legacyReplay.call])
+
+      await reopened.transaction(async (transaction) => {
+        const record = await transaction.get(persisted.namespace, persisted.id)
+        expect(record).toBeDefined()
+        await transaction.put({
+          ...persisted,
+          expectedRevision: record.revision,
+          value: {
+            ...record.value,
+            call: { ...record.value.call, inputDigestVersion: 3 },
+          },
+        })
+      })
+      await expect(service(reopened, afterRestartExecutor).execute(request)).rejects.toThrow(
+        'SQLITE_TOOL_CALL_CORRUPT'
+      )
+      expect(afterRestartExecutor.requests).toHaveLength(0)
     })
   })
 

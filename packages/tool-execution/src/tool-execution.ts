@@ -33,10 +33,11 @@ export class InMemoryToolCallRepository implements ToolCallRepository {
   readonly #idempotency = new Map<string, string>()
 
   async insert(call: ToolCall): Promise<boolean> {
-    const key = idempotencyIndex(call.workspaceId, call.idempotencyKey)
-    if (this.#calls.has(call.toolCallId) || this.#idempotency.has(key)) return false
-    this.#calls.set(call.toolCallId, clone(call))
-    this.#idempotency.set(key, call.toolCallId)
+    const parsed = ToolCallSchema.parse(call)
+    const key = idempotencyIndex(parsed.workspaceId, parsed.idempotencyKey)
+    if (this.#calls.has(parsed.toolCallId) || this.#idempotency.has(key)) return false
+    this.#calls.set(parsed.toolCallId, clone(parsed))
+    this.#idempotency.set(key, parsed.toolCallId)
     return true
   }
 
@@ -53,8 +54,11 @@ export class InMemoryToolCallRepository implements ToolCallRepository {
   }
 
   async compareAndSet(expectedRevision: number, call: ToolCall): Promise<boolean> {
-    if (this.#calls.get(call.toolCallId)?.revision !== expectedRevision) return false
-    this.#calls.set(call.toolCallId, clone(ToolCallSchema.parse(call)))
+    const current = this.#calls.get(call.toolCallId)
+    if (!current || current.revision !== expectedRevision) return false
+    const next = ToolCallSchema.parse(call)
+    if (!sameCallIdentity(current, next)) return false
+    this.#calls.set(call.toolCallId, clone(next))
     return true
   }
 
@@ -139,6 +143,9 @@ export class PolicyDecisionPointToolAuthorizer implements ToolPolicyAuthorizer {
           riskClass: request.riskClass,
           requiredCapabilities: request.requiredCapabilities,
           inputDigest: request.inputDigest,
+          ...(request.inputDigestVersion === undefined
+            ? {}
+            : { inputDigestVersion: request.inputDigestVersion }),
         },
       },
       context: {
@@ -273,11 +280,7 @@ export class PolicyControlledToolExecutionService {
     const key = idempotencyIndex(request.workspaceId, request.idempotencyKey)
     const active = this.#inFlight.get(key)
     if (active) {
-      if (
-        active.requestDigest !== requestDigest &&
-        active.requestDigest !== toolRequestDigestLegacy(request)
-      )
-        fail('IDEMPOTENCY_CONFLICT')
+      if (active.requestDigest !== requestDigest) fail('IDEMPOTENCY_CONFLICT')
       return active.promise
     }
     const promise = this.#executePrepared(request, prepared, requestDigest, options)
@@ -295,11 +298,15 @@ export class PolicyControlledToolExecutionService {
     requestDigest: string,
     options: { readonly signal?: AbortSignal }
   ): Promise<DurableToolExecutionOutcome> {
-    let call = await this.calls.getByIdempotencyKey(request.workspaceId, request.idempotencyKey)
+    const storedCall = await this.calls.getByIdempotencyKey(
+      request.workspaceId,
+      request.idempotencyKey
+    )
+    let call = storedCall === undefined ? undefined : ToolCallSchema.parse(storedCall)
     if (call) {
       if (
-        call.requestDigest !== requestDigest &&
-        call.requestDigest !== toolRequestDigestLegacy(request)
+        !toolRequestMatchesDigest(request, call.requestDigest, call.requestDigestVersion) ||
+        !toolInputMatchesDigest(request.input, call.inputDigest, call.inputDigestVersion)
       )
         fail('IDEMPOTENCY_CONFLICT')
       const terminal = terminalOutcome(call)
@@ -309,6 +316,7 @@ export class PolicyControlledToolExecutionService {
       call = ToolCallSchema.parse({
         toolCallId: request.toolCallId,
         requestDigest,
+        requestDigestVersion: 2,
         executionId: request.executionId,
         attemptId: request.attemptId,
         workspaceId: request.workspaceId,
@@ -317,7 +325,8 @@ export class PolicyControlledToolExecutionService {
         toolDefinitionId: request.toolDefinitionId,
         toolVersionId: request.toolVersionId,
         operation: request.operation,
-        inputDigest: digest(request.input),
+        inputDigest: digestV2(request.input),
+        inputDigestVersion: 2,
         policySnapshotRef: request.policySnapshotRef,
         executor: prepared.version.executor,
         idempotencyKey: request.idempotencyKey,
@@ -488,6 +497,9 @@ function authorizationRequest(
     toolVersionId: call.toolVersionId,
     operation: call.operation,
     inputDigest: call.inputDigest,
+    ...(call.inputDigestVersion === undefined
+      ? {}
+      : { inputDigestVersion: call.inputDigestVersion }),
     riskClass: prepared.operation.riskClass,
     requiredCapabilities: prepared.operation.requiredCapabilities,
     policySnapshotRef: call.policySnapshotRef,
@@ -532,6 +544,17 @@ export function toolRequestDigestLegacy(request: DurableToolCallRequest): string
     idempotencyKey: request.idempotencyKey,
     policySnapshotRef: request.policySnapshotRef,
   })
+}
+
+/** Accepts historical untagged request digests and only the exact tagged form. */
+export function toolRequestMatchesDigest(
+  request: DurableToolCallRequest,
+  expected: string,
+  version?: unknown
+): boolean {
+  if (version === undefined)
+    return expected === toolRequestDigestLegacy(request) || expected === toolRequestDigest(request)
+  return version === 2 && expected === toolRequestDigest(request)
 }
 
 function toGatewayRequest(request: DurableToolCallRequest): ToolExecutionRequest {
@@ -580,14 +603,47 @@ function digest(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
 
-/** Canonical digest stored on a durable ToolCall for its exact input. */
+/** Legacy locale-canonical input digest retained for untagged historical receipts. */
 export function toolInputDigest(input: unknown): string {
   return digest(input)
 }
 
-/** Accepts both persisted legacy and code-point-canonical input digests. */
-export function toolInputMatchesDigest(input: unknown, expected: string): boolean {
-  return expected === digest(input) || expected === digestV2(input)
+/** Accepts historical untagged input digests and only the exact tagged form. */
+export function toolInputMatchesDigest(
+  input: unknown,
+  expected: string,
+  version?: unknown
+): boolean {
+  if (version === undefined) return expected === digest(input) || expected === digestV2(input)
+  return version === 2 && expected === digestV2(input)
+}
+
+function sameCallIdentity(current: ToolCall, next: ToolCall): boolean {
+  return (
+    canonicalJsonStringify(callIdentity(current)) === canonicalJsonStringify(callIdentity(next))
+  )
+}
+
+function callIdentity(call: ToolCall): unknown {
+  return {
+    toolCallId: call.toolCallId,
+    requestDigest: call.requestDigest,
+    requestDigestVersion: call.requestDigestVersion,
+    executionId: call.executionId,
+    attemptId: call.attemptId,
+    workspaceId: call.workspaceId,
+    profileId: call.profileId,
+    principalRef: call.principalRef,
+    toolDefinitionId: call.toolDefinitionId,
+    toolVersionId: call.toolVersionId,
+    operation: call.operation,
+    inputDigest: call.inputDigest,
+    inputDigestVersion: call.inputDigestVersion,
+    policySnapshotRef: call.policySnapshotRef,
+    executor: call.executor,
+    idempotencyKey: call.idempotencyKey,
+    requestedAt: call.requestedAt,
+  }
 }
 
 function digestV2(value: unknown): string {
