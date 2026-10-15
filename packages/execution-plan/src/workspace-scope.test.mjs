@@ -23,6 +23,20 @@ const expiry = '2026-09-23T10:00:00.000Z'
 const workspaceScope = { schemaVersion: 1, kind: 'workspace' }
 const id = (prefix, tail = 'G') => `${prefix}_01JABCDEF0123456789ABCDEF${tail}`
 const compiler = new ExecutionPlanCompiler('1.0.0')
+function historicalContextPackage() {
+  const current = contextPackageSerializationFixtures.futurePi
+  const {
+    contextPackageId: _id,
+    contentDigest: _digest,
+    canonicalizationVersion: _version,
+    ...content
+  } = current
+  return {
+    ...content,
+    contextPackageId: 'ctx_57PXZBSKA8RKKX5FKEWVP4Q6F0',
+    contentDigest: 'sha256:29eddfaf33523139f4af9bb9bb12e6786df2c30e93790a8360874e88191eb641',
+  }
+}
 function fixture() {
   const legacy = contextPackageSerializationFixtures.futurePi
   const base = {
@@ -88,7 +102,7 @@ function command(plan) {
 }
 
 test('legacy canonical plan bytes stay pinned; scope/version changes never rehash historical objects', () => {
-  const legacy = createExecutionPlanTestFixture()
+  const legacy = createExecutionPlanTestFixture({ contextPackage: historicalContextPackage() })
   expect(legacy.contentDigest).toBe(
     'sha256:dc03a107d310cf14591b6d34fba4ed6443faedfb8e972ac31f2a50957b3d86fe'
   )
@@ -218,7 +232,7 @@ test('CommandInbox requires explicit current authority, converges concurrent adm
 test.each([false, true])(
   'explicit project replay checks the retained legacy pin and current scope even after a race: %s',
   async (race) => {
-    const legacy = createExecutionPlanTestFixture()
+    const legacy = createExecutionPlanTestFixture({ contextPackage: historicalContextPackage() })
     const input = createExecutionPlanTestFixtureInputs()
     const explicit = compiler.compile({
       ...input,

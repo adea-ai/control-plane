@@ -128,6 +128,15 @@ Terminal state, result reference or normalized failure, the required execution e
 
 ## Compatibility and deprecation
 
+Protocol v1.8 adds optional `canonicalizationVersion` to context-provider
+command envelopes. Tagged commands require protocol v1.8 or later; new writers
+use version 2 and send only after the channel negotiates v1.8. Older strict
+readers cannot parse the field, so upgrade runtime readers and gateways before
+enabling tagged writes. A tagged command on a v1.5–v1.7 channel remains pending
+and retryable without transmission until a compatible channel is available.
+Existing untagged v1.5 commands remain valid for delivery and replay, and no
+stored command is rewritten during this upgrade.
+
 Protocol v1.7 adds optional `terminalUsage` to result envelopes for succeeded,
 failed and cancelled executions. It uses the Runtime SDK's validated token,
 duration and optional reported cost/accounting contract. Senders must negotiate

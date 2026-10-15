@@ -1263,10 +1263,12 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     const package_ = contextPackageSerializationFixtures.futurePi
     const repository = new PostgresContextPackageRepository(isolated.application)
     const reference = await repository.put(package_)
+    expect(reference.canonicalizationVersion).toBe(2)
     expect(await repository.put(package_)).toEqual(reference)
 
     const restarted = new PostgresContextPackageRepository(isolated.application)
     expect(await restarted.get(reference)).toEqual(package_)
+    expect(await restarted.get({ ...reference, canonicalizationVersion: 1 })).toBeUndefined()
     expect(await restarted.getById(package_.contextPackageId)).toEqual(package_)
     expect(
       await restarted.get({ ...reference, contentDigest: `sha256:${'0'.repeat(64)}` })

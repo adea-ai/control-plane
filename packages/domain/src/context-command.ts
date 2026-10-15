@@ -45,6 +45,7 @@ const Envelope = z
     ...Semantics.shape,
     type: z.literal('command'),
     schemaVersion: z.literal(1),
+    canonicalizationVersion: z.union([z.literal(1), z.literal(2)]).optional(),
     protocolVersion: z
       .object({ major: z.literal(1), minor: z.number().int().nonnegative() })
       .strict(),
@@ -60,14 +61,27 @@ const Envelope = z
   })
   .strict()
   .superRefine((command, context) => {
-    // Dual-accept (#612): envelopes persisted before the code-point cutover
-    // carry the legacy locale-dependent bytes; current senders (the Cortana
-    // adapter already does) emit the host-independent form. Inbox retention
-    // (30-day minimum) bounds how long the legacy candidate must stay.
-    if (
-      command.payloadHash !== contextCommandSemanticHash(command) &&
-      command.payloadHash !== contextCommandSemanticHashV2(command)
-    )
+    if (command.canonicalizationVersion !== undefined && command.protocolVersion.minor < 8) {
+      context.addIssue({
+        code: 'custom',
+        path: ['canonicalizationVersion'],
+        message: 'Command canonicalization versions require protocol v1.8 or later',
+      })
+    }
+    // Untagged inbox rows predate version metadata. Keep the host-default
+    // legacy form, the known English legacy form, and the current shared form
+    // verifiable; tagged records select exactly one format.
+    const validHash =
+      command.canonicalizationVersion === 1
+        ? command.payloadHash === contextCommandSemanticHashV1(command)
+        : command.canonicalizationVersion === 2
+          ? command.payloadHash === contextCommandSemanticHashV2(command)
+          : [
+              contextCommandSemanticHash(command),
+              contextCommandSemanticHashV1(command),
+              contextCommandSemanticHashV2(command),
+            ].includes(command.payloadHash)
+    if (!validHash)
       context.addIssue({ code: 'custom', message: 'Context command payload hash mismatch' })
     if (Buffer.byteLength(JSON.stringify(command), 'utf8') > 262144)
       context.addIssue({ code: 'custom', message: 'Context command exceeds its bounded envelope' })
@@ -229,14 +243,17 @@ export interface ContextCommandRepository {
 }
 
 export function contextCommandSemanticHash(input: unknown): string {
-  return digest(canonical(Semantics.parse(input)))
+  return digest(canonicalLegacy(Semantics.parse(input)))
+}
+
+/** Fixed English-locale legacy encoding for an explicitly version-1 envelope. */
+export function contextCommandSemanticHashV1(input: unknown): string {
+  return digest(canonicalLegacy(Semantics.parse(input), 'en'))
 }
 
 /**
- * Host-independent semantic hash (#612): same content as
- * {@link contextCommandSemanticHash} but with code-point key ordering. This is
- * the form new senders should emit; the legacy form above is retained only so
- * envelopes persisted before the cutover keep verifying.
+ * Host-independent semantic hash (#612), encoded by the shared canonical JSON
+ * primitive. This is the form new senders should emit.
  */
 export function contextCommandSemanticHashV2(input: unknown): string {
   return digest(canonicalJsonStringify(Semantics.parse(input)) ?? 'undefined')
@@ -399,17 +416,23 @@ function isTerminal(status: ContextCommandRecord['status']): boolean {
 function digest(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`
 }
-// CANONICAL-JSON: verification-only legacy form, see contracts canonicalJsonStringify
-// Semantics payload.parameters has a z.json() catchall (free-form keys); the envelope
-// verifier dual-accepts this legacy locale-dependent form and the V2 code-point form
-// (contextCommandSemanticHashV2). Inbox retention (30-day minimum) bounds the window.
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+// CANONICAL-JSON: verification-only legacy form, see contracts canonicalJsonStringify.
+// Retain the original host-default form for old untagged inbox rows; explicit v1
+// uses the known English locale, while new v2 records use the shared primitive.
+function canonicalLegacy(value: unknown, locale?: string): string {
+  const compare = (left: string, right: string) =>
+    locale === undefined ? left.localeCompare(right) : left.localeCompare(right, locale)
+  if (Array.isArray(value))
+    return `[${value.map((entry) => canonicalLegacy(entry, locale)).join(',')}]`
   if (typeof value === 'object' && value !== null)
     return `{${Object.entries(value)
       .filter(([, entry]) => entry !== undefined)
-      .toSorted(([a], [b]) => a.localeCompare(b))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
+      .toSorted(([a], [b]) => compare(a, b))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalLegacy(entry, locale)}`)
       .join(',')}}`
   return JSON.stringify(value) ?? 'undefined'
+}
+
+function canonical(value: unknown): string {
+  return canonicalLegacy(value)
 }

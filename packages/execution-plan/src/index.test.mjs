@@ -100,6 +100,7 @@ function rehashContextPackage(package_) {
   const {
     contextPackageId: _contextPackageId,
     contentDigest: _contentDigest,
+    canonicalizationVersion: _canonicalizationVersion,
     ...content
   } = package_
   const contentDigest = legacyContextDigest(content)

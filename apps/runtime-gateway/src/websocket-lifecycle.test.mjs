@@ -350,6 +350,53 @@ describe('Runtime Gateway WebSocket lifecycle', () => {
     })
   })
 
+  test.each([5, 6, 7])(
+    'defers tagged protocol v1.8 commands on a v1.%i channel while preserving untagged v1.5 delivery',
+    async (minor) => {
+      const fixture = setup(`gateway-v1-${minor}`)
+      const socket = new FakeSocket()
+      fixture.gateway.open(connection('gwc-v1', channel(1), socket))
+      await fixture.gateway.receive('gwc-v1', JSON.stringify(helloAtMinor(1, minor)))
+
+      const legacyQueued = {
+        ...golden.command,
+        protocolVersion: { major: 1, minor: 5 },
+      }
+      const tagged = {
+        ...golden.command,
+        canonicalizationVersion: 2,
+        protocolVersion: { major: 1, minor: 8 },
+      }
+
+      await fixture.gateway.send(legacyQueued)
+      expect(JSON.parse(socket.sent.at(-1))).toEqual(legacyQueued)
+      await expect(fixture.gateway.send(tagged)).rejects.toMatchObject({
+        code: 'RUNTIME_GATEWAY_PROTOCOL_INCOMPATIBLE',
+      })
+      expect(
+        socket.sent.some((frame) => JSON.parse(frame).canonicalizationVersion === 2)
+      ).toBeFalse()
+      await fixture.gateway.close()
+    }
+  )
+
+  test('sends tagged v1.8 commands after a v1.8 channel negotiates successfully', async () => {
+    const fixture = setup('gateway-v1-8')
+    const socket = new FakeSocket()
+    fixture.gateway.open(connection('gwc-v1-8', channel(1), socket))
+    await fixture.gateway.receive('gwc-v1-8', JSON.stringify(helloAtMinor(1, 8)))
+    const tagged = {
+      ...golden.command,
+      canonicalizationVersion: 2,
+      protocolVersion: { major: 1, minor: 8 },
+    }
+
+    await fixture.gateway.send(tagged)
+
+    expect(JSON.parse(socket.sent.at(-1))).toEqual(tagged)
+    await fixture.gateway.close()
+  })
+
   test('reconnects across instances and replaces stale logical sessions deterministically', async () => {
     const coordination = new InMemoryRuntimeNodeCoordination()
     const durableState = new Map([['cmd_pending', { result: 'retained' }]])
@@ -633,6 +680,13 @@ function connection(connectionId, authenticatedChannel, socket) {
 
 function hello(channelGeneration, id = nodeId) {
   return { ...golden.hello, nodeId: id, channelGeneration }
+}
+
+function helloAtMinor(channelGeneration, minor, id = nodeId) {
+  return {
+    ...hello(channelGeneration, id),
+    supportedVersions: [{ major: 1, minor }],
+  }
 }
 
 class FakeSocket {
