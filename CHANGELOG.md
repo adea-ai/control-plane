@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.98.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.98.1...workspace-v1.98.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **ci:** fall back to mirror registries for rate-limited Postgres image pulls ([#1138](https://github.com/adea-ai/control-plane/issues/1138)) ([db15d06](https://github.com/adea-ai/control-plane/commit/db15d066c216102154bfc923b90cd9499132d6df))
+
 ## [1.98.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.98.0...workspace-v1.98.1) (2026-10-14)
 
 
