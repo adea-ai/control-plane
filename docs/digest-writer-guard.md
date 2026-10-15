@@ -51,7 +51,8 @@ The inventory includes retained context-package, context-command,
 project-state, execution-plan, delegation, event-frame, tool-input,
 tool-registration, and tool-schema digest edges; the SQLite context-operation
 index; the local graph's legacy result verifier; and a durable-tool fixture.
-The local PR #1151 follow-up candidate adds six exact tool-digest edges. They
+The PR #1151 integration candidate at immutable head
+`93bef9334055db6a3fbb2ca5c452d3fa60bb0520` adds six exact tool-digest edges. They
 pair the helper's default and explicit-locale comparator call sites with
 `digestWithLocale`, legacy `digest`, and the existing child-continuation
 fixture. The untagged matchers accept `digestV2` or explicit locale digests
@@ -59,15 +60,29 @@ for only the two evidenced locales, `en-US` and `sv-SE`; they do not use the
 host-default `digest` helper as a fallback. That helper remains available to
 reproduce legacy host-default bytes for existing legacy APIs and the historical
 fixture. Tagged version 2 accepts only the version-2 digest; malformed or
-unknown versions fail closed. These exceptions cover only the source/sink
-pairs in that candidate and do not permit other locale choices. Their
-provenance records the unpublished candidate commits and remains pending
-confirmation of PR #1151's final published head.
+unknown versions fail closed. Untagged code-point v2 digests are accepted on
+all runtimes; locale-dependent historical candidates are accepted only on the
+exact Bun 1.4.2 and ICU 78.1 runtime pair. Unknown runtimes and unsupported
+locales fail closed before effects, and no environment setting bypasses this
+fence. A future Bun or ICU upgrade requires requalifying the fixed historical
+fixtures before extending the supported pair. These exceptions cover only the
+source/sink pairs in that candidate and do not permit other locale choices.
+Their provenance records the prior published head and this immutable
+integration-candidate snapshot separately; the candidate snapshot is an
+identity for the reviewed source, not a claim of publication.
 
-The verifier recomputes locale ordering with the current ICU runtime; its
-recorded Bun 1.4.2 / ICU 78.1 fixtures do not guarantee that a later ICU version
-will reproduce the same bytes. The guard records these exact compatibility
-flows without claiming cross-runtime reproducibility.
+Published PR #1152 at immutable head
+`bf6d40647c5ad8206859c63310fa59b9a0eebf99` adds six exact analyzer edges for
+the default and explicit-locale `canonicalJson` call sites. The runtime frame
+receipt path continues to use the default helper, preserving its existing
+bytes; the explicit `en-US` helper call is confined to historical untagged
+terminal-usage verification. The candidate includes a fixed historical
+en-US payload checked under an `sv-SE` host locale. The `#reject` edge remains
+a property-insensitive analyzer false positive: that path compares the
+versioned `s2` frame hash. These exceptions do not authorize a new locale
+dependent writer. The event helper still uses the current runtime's ICU
+collation data, so this does not prove reproducibility across ICU upgrades. The
+candidate passed full-root validation and the PostgreSQL historical-consumer check.
 
 Some entries are existing writers, not verification-only code; each reason
 records that distinction and its provenance. Two exact exceptions document

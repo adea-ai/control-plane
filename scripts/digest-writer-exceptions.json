@@ -819,7 +819,7 @@
       "reason": "The existing child-continuation fixture retains an evidenced untagged inputDigest through toolInputDigest. It is a historical fixture consumer; the analyzer conservatively reports both optional-locale branches from canonical(value, locale).",
       "provenance": [
         "PR #1151 published immutable head 2ea1f0ed",
-        "PR #1151 local follow-up candidate c7d690a95f91b88e1336e61983a04615ed2db435 and f4cf4ae07e8c08f29f95c581e4ba8343b8f5b70; publication pending"
+        "PR #1151 integration candidate at immutable head 93bef9334055db6a3fbb2ca5c452d3fa60bb0520 (candidate snapshot)"
       ]
     },
     {
@@ -841,7 +841,7 @@
       "reason": "The untagged receipt matchers accept only the evidenced en-US and sv-SE locale forms through this helper; tagged version 2 accepts only digestV2. The analyzer conservatively reports both default and explicit branches of canonical(value, locale), so this edge does not broaden the accepted locale set.",
       "provenance": [
         "PR #1151 published immutable head 2ea1f0ed",
-        "PR #1151 local follow-up candidate c7d690a95f91b88e1336e61983a04615ed2db435 and f4cf4ae07e8c08f29f95c581e4ba8343b8f5b70; publication pending"
+        "PR #1151 integration candidate at immutable head 93bef9334055db6a3fbb2ca5c452d3fa60bb0520 (candidate snapshot)"
       ]
     },
     {
@@ -863,7 +863,7 @@
       "reason": "This helper reproduces host-default legacy bytes for existing legacy APIs and fixture reproduction; the untagged matchers do not use it as a fallback, and tagged version 2 uses digestV2. The analyzer conservatively reports both optional-locale comparator branches although digest calls canonical without a locale.",
       "provenance": [
         "PR #1151 published immutable head 2ea1f0ed",
-        "PR #1151 local follow-up candidate c7d690a95f91b88e1336e61983a04615ed2db435 and f4cf4ae07e8c08f29f95c581e4ba8343b8f5b70; publication pending"
+        "PR #1151 integration candidate at immutable head 93bef9334055db6a3fbb2ca5c452d3fa60bb0520 (candidate snapshot)"
       ]
     },
     {
@@ -885,7 +885,7 @@
       "reason": "The existing child-continuation fixture retains an evidenced untagged inputDigest through toolInputDigest. It is a historical fixture consumer; the analyzer conservatively reports both optional-locale branches from canonical(value, locale).",
       "provenance": [
         "PR #1151 published immutable head 2ea1f0ed",
-        "PR #1151 local follow-up candidate c7d690a95f91b88e1336e61983a04615ed2db435 and f4cf4ae07e8c08f29f95c581e4ba8343b8f5b70; publication pending"
+        "PR #1151 integration candidate at immutable head 93bef9334055db6a3fbb2ca5c452d3fa60bb0520 (candidate snapshot)"
       ]
     },
     {
@@ -907,7 +907,7 @@
       "reason": "The untagged receipt matchers accept only the evidenced en-US and sv-SE locale forms through this helper; tagged version 2 accepts only digestV2. The analyzer conservatively reports both default and explicit branches of canonical(value, locale), so this edge does not broaden the accepted locale set.",
       "provenance": [
         "PR #1151 published immutable head 2ea1f0ed",
-        "PR #1151 local follow-up candidate c7d690a95f91b88e1336e61983a04615ed2db435 and f4cf4ae07e8c08f29f95c581e4ba8343b8f5b70; publication pending"
+        "PR #1151 integration candidate at immutable head 93bef9334055db6a3fbb2ca5c452d3fa60bb0520 (candidate snapshot)"
       ]
     },
     {
@@ -929,8 +929,122 @@
       "reason": "This helper reproduces host-default legacy bytes for existing legacy APIs and fixture reproduction; the untagged matchers do not use it as a fallback, and tagged version 2 uses digestV2. The analyzer conservatively reports both optional-locale comparator branches although digest calls canonical without a locale.",
       "provenance": [
         "PR #1151 published immutable head 2ea1f0ed",
-        "PR #1151 local follow-up candidate c7d690a95f91b88e1336e61983a04615ed2db435 and f4cf4ae07e8c08f29f95c581e4ba8343b8f5b70; publication pending"
+        "PR #1151 integration candidate at immutable head 93bef9334055db6a3fbb2ca5c452d3fa60bb0520 (candidate snapshot)"
       ]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "a043bff914a7f71d0f55ea8a4954d83344ee1df559e49d7dfc82a0cd67ef44b5",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "apps/runtime-gateway/src/runtime-event-ingestion.ts",
+        "owner": "#reject",
+        "fingerprint": "678846b529f5d43a457a411fa90367cff2e5ff9c08a69078bfb68852470e22a2",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Property-insensitive analysis merges the separately returned legacy frameHash and s2 fields; this exact edge is a false positive because #reject compares s2. In the PR #1152 candidate, explicit en-US is only used for historical untagged terminal-usage verification.",
+      "provenance": ["PR #1152 published immutable head bf6d40647c5ad8206859c63310fa59b9a0eebf99"]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "a043bff914a7f71d0f55ea8a4954d83344ee1df559e49d7dfc82a0cd67ef44b5",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "apps/runtime-gateway/src/runtime-event-ingestion.ts",
+        "owner": "frameHashes",
+        "fingerprint": "633bd2605bec1efa84f482b1122c157293302e9138878b789f3706d6cb1d096a",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Replay receipts retain the legacy frame hash for pre-cutover receipt compatibility. frameHashes calls the helper without a locale, preserving the existing default bytes; the analyzer conservatively includes the optional en-US branch used only by historical untagged terminal-usage verification.",
+      "provenance": ["PR #1152 published immutable head bf6d40647c5ad8206859c63310fa59b9a0eebf99"]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "a043bff914a7f71d0f55ea8a4954d83344ee1df559e49d7dfc82a0cd67ef44b5",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/events/src/index.ts",
+        "owner": "hashExecutionEventPayload",
+        "fingerprint": "30eaba359b1a5f112077226a1ac2d563c5d1477501eae2617f0546caf1385c42",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The legacy event payload hash remains available for historical verification while new event-row hashes use v2. The explicit en-US branch is used only by historical untagged terminal-usage verification; default helper bytes remain unchanged.",
+      "provenance": ["PR #1152 published immutable head bf6d40647c5ad8206859c63310fa59b9a0eebf99"]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "db763d56cac913502435ea2346d1713dc20343045ca48ddec940c8f5d83475f1",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "apps/runtime-gateway/src/runtime-event-ingestion.ts",
+        "owner": "#reject",
+        "fingerprint": "678846b529f5d43a457a411fa90367cff2e5ff9c08a69078bfb68852470e22a2",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Property-insensitive analysis merges the separately returned legacy frameHash and s2 fields; this exact edge is a false positive because #reject compares s2. In the PR #1152 candidate, explicit en-US is only used for historical untagged terminal-usage verification.",
+      "provenance": ["PR #1152 published immutable head bf6d40647c5ad8206859c63310fa59b9a0eebf99"]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "db763d56cac913502435ea2346d1713dc20343045ca48ddec940c8f5d83475f1",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "apps/runtime-gateway/src/runtime-event-ingestion.ts",
+        "owner": "frameHashes",
+        "fingerprint": "633bd2605bec1efa84f482b1122c157293302e9138878b789f3706d6cb1d096a",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Replay receipts retain the legacy frame hash for pre-cutover receipt compatibility. frameHashes calls the helper without a locale, preserving the existing default bytes; the analyzer conservatively includes the optional en-US branch used only by historical untagged terminal-usage verification.",
+      "provenance": ["PR #1152 published immutable head bf6d40647c5ad8206859c63310fa59b9a0eebf99"]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "db763d56cac913502435ea2346d1713dc20343045ca48ddec940c8f5d83475f1",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/events/src/index.ts",
+        "owner": "hashExecutionEventPayload",
+        "fingerprint": "30eaba359b1a5f112077226a1ac2d563c5d1477501eae2617f0546caf1385c42",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The legacy event payload hash remains available for historical verification while new event-row hashes use v2. The explicit en-US branch is used only by historical untagged terminal-usage verification; default helper bytes remain unchanged.",
+      "provenance": ["PR #1152 published immutable head bf6d40647c5ad8206859c63310fa59b9a0eebf99"]
     }
   ]
 }
