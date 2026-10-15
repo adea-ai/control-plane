@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.49.0](https://github.com/adea-ai/control-plane/compare/database-v1.48.0...database-v1.49.0) (2026-10-15)
+
+
+### Features
+
+* **telemetry:** bound measurement producer cancellation and shutdown ([#1133](https://github.com/adea-ai/control-plane/issues/1133)) ([c07c770](https://github.com/adea-ai/control-plane/commit/c07c770ed7f05974b86c43f45bd4eb1de1042df7))
+
 ## [1.48.0](https://github.com/adea-ai/control-plane/compare/database-v1.47.0...database-v1.48.0) (2026-10-14)
 
 
