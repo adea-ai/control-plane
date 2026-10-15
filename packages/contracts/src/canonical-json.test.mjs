@@ -138,7 +138,7 @@ describe('canonicalJsonStringify parity with the reference serializer', () => {
       throw new TypeError('canonicalJsonStringify: value is not JSON-compatible plain data')
     const entries = Object.entries(value)
       .filter(([, entry]) => entry !== undefined)
-      .sort(([left], [right]) => codePointCompare(left, right))
+      .toSorted(([left], [right]) => codePointCompare(left, right))
     return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${reference(entry)}`).join(',')}}`
   }
 
@@ -181,7 +181,7 @@ describe('canonicalJsonStringify parity with the reference serializer', () => {
       Symbol('x'),
       new Date(0),
       new Map(),
-      new (class Plain {})(),
+      Object.create({ inherited: true }),
       { deep: [{ bad: 1n }] },
       [Symbol('y')],
     ]
