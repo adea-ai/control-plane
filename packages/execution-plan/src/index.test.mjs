@@ -954,13 +954,9 @@ describe('verified plan memo', () => {
     expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
     const withDate = { ...plan, compiledAt: new Date(plan.compiledAt) }
     expect(() => assertExecutionPlanIntegrity(withDate)).toThrow()
-    class Holder {
-      constructor(value) {
-        Object.assign(this, value)
-      }
-    }
     // Accepted by the schema both with and without the memo; it just bypasses it.
-    expect(assertExecutionPlanIntegrity(new Holder(plan))).toEqual(plan)
+    const exotic = Object.assign(Object.create({ inherited: true }), plan)
+    expect(assertExecutionPlanIntegrity(exotic)).toEqual(plan)
     expect(() => assertExecutionPlanIntegrity({ ...plan, extra: 1n })).toThrow()
   })
 
