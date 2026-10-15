@@ -150,6 +150,7 @@ export async function withChildMappingRecovery(
     }
     await run({
       f,
+      canonicalPath: join(directory, 'canonical.sqlite'),
       provider,
       records,
       snapshot,
