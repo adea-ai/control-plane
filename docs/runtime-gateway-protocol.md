@@ -132,10 +132,14 @@ Protocol v1.8 adds optional `canonicalizationVersion` to context-provider
 command envelopes. Tagged commands require protocol v1.8 or later; new writers
 use version 2 and send only after the channel negotiates v1.8. Older strict
 readers cannot parse the field, so upgrade runtime readers and gateways before
-enabling tagged writes. A tagged command on a v1.5–v1.7 channel remains pending
-and retryable without transmission until a compatible channel is available.
-Existing untagged v1.5 commands remain valid for delivery and replay, and no
-stored command is rewritten during this upgrade.
+enabling tagged writes. A tagged command that is already durably queued and
+encounters a v1.5–v1.7 channel during delivery or recovery remains pending and
+retryable without transmission until a compatible channel is available, subject
+to its existing expiry. A new context-provider request on a v1.5–v1.7 channel
+fails with `CORTANA_PROTOCOL_INCOMPATIBLE` before the binder returns a binding,
+a durable command is enqueued, or a sequence is reserved. Existing untagged
+v1.5 commands remain valid for delivery and replay, and no stored command is
+rewritten during this upgrade.
 
 Protocol v1.7 adds optional `terminalUsage` to result envelopes for succeeded,
 failed and cancelled executions. It uses the Runtime SDK's validated token,
