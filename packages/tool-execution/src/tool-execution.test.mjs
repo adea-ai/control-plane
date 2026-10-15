@@ -112,9 +112,9 @@ test('pinned historical locale receipt hashes match their independent canonical 
   )
 })
 
-// The old serializer omitted the locale argument. Pin that default explicitly
-// so the unsupported-locale fixture stays deterministic on differently
-// configured developer and CI hosts.
+// Legacy canonicalization omitted the locale argument. Pin the reader's host
+// default so these tests can prove a Swedish receipt still replays when the
+// ambient digest differs from the pinned historical bytes.
 async function withDefaultLocaleCompare(locale, callback) {
   const originalLocaleCompare = String.prototype.localeCompare
   Reflect.set(String.prototype, 'localeCompare', function (...args) {
@@ -127,6 +127,85 @@ async function withDefaultLocaleCompare(locale, callback) {
   } finally {
     Reflect.set(String.prototype, 'localeCompare', originalLocaleCompare)
   }
+}
+
+async function withRuntimeVersions({ bun, icu }, callback) {
+  const originalBun = process.versions['bun']
+  const originalIcu = process.versions['icu']
+  Reflect.set(process.versions, 'bun', bun)
+  Reflect.set(process.versions, 'icu', icu)
+  try {
+    return await callback()
+  } finally {
+    Reflect.set(process.versions, 'bun', originalBun)
+    Reflect.set(process.versions, 'icu', originalIcu)
+  }
+}
+
+async function assertUnqualifiedLegacyLocaleRuntime(runtimeVersions) {
+  const input = { z: 'zee', å: 'a-ring', ä: 'a-diaeresis' }
+  const incoming = request({ approval: undefined, input })
+  const versionOverrides = {
+    inputSchema: { type: 'object', additionalProperties: true },
+    operations: [{ ...version().operations[0], approvalMode: 'never' }],
+  }
+  const seeded = await fixture({ versionOverrides })
+  const completed = await seeded.service.execute(incoming)
+
+  const localeCall = { ...completed.call }
+  localeCall.requestDigest = historicalLocaleDigests.svSE.request
+  localeCall.inputDigest = historicalLocaleDigests.svSE.input
+  delete localeCall.requestDigestVersion
+  delete localeCall.inputDigestVersion
+  const localeCalls = new InMemoryToolCallRepository()
+  expect(await localeCalls.insert(localeCall)).toBe(true)
+
+  const codePointCall = { ...completed.call }
+  delete codePointCall.requestDigestVersion
+  delete codePointCall.inputDigestVersion
+  const codePointCalls = new InMemoryToolCallRepository()
+  expect(await codePointCalls.insert(codePointCall)).toBe(true)
+
+  const taggedCalls = new InMemoryToolCallRepository()
+  expect(await taggedCalls.insert(completed.call)).toBe(true)
+
+  const localeReplay = await fixture({ calls: localeCalls, versionOverrides })
+  const codePointReplay = await fixture({ calls: codePointCalls, versionOverrides })
+  const taggedReplay = await fixture({ calls: taggedCalls, versionOverrides })
+
+  await withDefaultLocaleCompare('en-US', () =>
+    withRuntimeVersions(runtimeVersions, async () => {
+      expect(toolInputDigest(input)).not.toBe(historicalLocaleDigests.svSE.input)
+      expect(toolRequestDigestLegacy(incoming)).not.toBe(historicalLocaleDigests.svSE.request)
+      expect(toolInputMatchesDigest(input, historicalLocaleDigests.svSE.input)).toBe(false)
+      expect(toolRequestMatchesDigest(incoming, historicalLocaleDigests.svSE.request)).toBe(false)
+
+      // The untagged #664 code-point form and strict v2 tags remain independent
+      // of the runtime-qualified legacy locale candidates.
+      expect(toolInputMatchesDigest(input, completed.call.inputDigest)).toBe(true)
+      expect(toolRequestMatchesDigest(incoming, completed.call.requestDigest)).toBe(true)
+      expect(toolInputMatchesDigest(input, completed.call.inputDigest, 2)).toBe(true)
+      expect(toolRequestMatchesDigest(incoming, completed.call.requestDigest, 2)).toBe(true)
+
+      await expect(localeReplay.service.execute(incoming)).rejects.toMatchObject({
+        code: 'IDEMPOTENCY_CONFLICT',
+      })
+      expect(localeReplay.executor.requests).toHaveLength(0)
+
+      const untaggedOutcome = await codePointReplay.service.execute(incoming)
+      expect(untaggedOutcome).toMatchObject({ state: 'succeeded', call: { status: 'succeeded' } })
+      expect(untaggedOutcome.call.requestDigestVersion).toBeUndefined()
+      expect(untaggedOutcome.call.inputDigestVersion).toBeUndefined()
+      expect(codePointReplay.executor.requests).toHaveLength(0)
+
+      const taggedOutcome = await taggedReplay.service.execute(incoming)
+      expect(taggedOutcome).toMatchObject({
+        state: 'succeeded',
+        call: { status: 'succeeded', requestDigestVersion: 2, inputDigestVersion: 2 },
+      })
+      expect(taggedReplay.executor.requests).toHaveLength(0)
+    })
+  )
 }
 
 test('tool input digests expose the durable legacy canonical form for authority checks', () => {
@@ -698,7 +777,13 @@ describe('policy-controlled durable tool execution', () => {
         calls: historicalCalls,
         versionOverrides: { ...looseSchema, ...noApproval },
       })
-      const outcome = await replay.service.execute(retryRequest)
+      const outcome = await withDefaultLocaleCompare('en-US', async () => {
+        if (receipt === historicalLocaleDigests.svSE) {
+          expect(toolInputDigest(retryInput)).not.toBe(receipt.input)
+          expect(toolRequestDigestLegacy(retryRequest)).not.toBe(receipt.request)
+        }
+        return replay.service.execute(retryRequest)
+      })
 
       expect(outcome).toMatchObject({ state: 'succeeded', call: { status: 'succeeded' } })
       expect(replay.executor.requests).toHaveLength(0)
@@ -708,6 +793,15 @@ describe('policy-controlled durable tool execution', () => {
         )
       ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
       expect(replay.executor.requests).toHaveLength(0)
+    }
+  })
+
+  test('locale history requires the qualified Bun and ICU pair while code-point replays remain valid', async () => {
+    for (const runtimeVersions of [
+      { bun: '1.4.2', icu: '79.0' },
+      { bun: '1.4.3', icu: '78.1' },
+    ]) {
+      await assertUnqualifiedLegacyLocaleRuntime(runtimeVersions)
     }
   })
 
@@ -773,6 +867,7 @@ describe('policy-controlled durable tool execution', () => {
 
     const first = await fixture({
       versionOverrides: {
+        inputSchema: { type: 'object', additionalProperties: true },
         operations: [{ ...version().operations[0], approvalMode: 'never' }],
       },
     })
@@ -794,12 +889,25 @@ describe('policy-controlled durable tool execution', () => {
     const replayFixture = await fixture({
       calls: historicalCalls,
       versionOverrides: {
+        inputSchema: { type: 'object', additionalProperties: true },
         operations: [{ ...version().operations[0], approvalMode: 'never' }],
       },
     })
-    const replay = await replayFixture.service.execute(retryRequest)
+    const replay = await withDefaultLocaleCompare('en-US', async () => {
+      expect(toolInputDigest(retryRequest.input)).not.toBe(mixedReceipt.legacyInputDigest)
+      return replayFixture.service.execute(retryRequest)
+    })
 
     expect(replay).toMatchObject({ state: 'succeeded', call: { status: 'succeeded' } })
+    expect(replayFixture.executor.requests).toHaveLength(0)
+    await expect(
+      replayFixture.service.execute(
+        request({
+          approval: undefined,
+          input: { ...retryRequest.input, z: 'changed' },
+        })
+      )
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
     expect(replayFixture.executor.requests).toHaveLength(0)
   })
 

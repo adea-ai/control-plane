@@ -624,21 +624,21 @@ describe('SQLite tool repositories', () => {
       })
       expect(firstExecutor.requests).toHaveLength(1)
 
-      const reopened = await reopen()
-      const afterRestartExecutor = new FakeToolExecutor(() => ({ saved: false }))
-      const replay = await service(reopened, afterRestartExecutor).execute(request)
-      expect(replay).toEqual(completed)
-      expect(afterRestartExecutor.requests).toHaveLength(0)
-
-      await expect(
-        service(reopened, afterRestartExecutor).execute(
-          executionRequest({ input: { value: 'changed' } })
-        )
-      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
-      expect(afterRestartExecutor.requests).toHaveLength(0)
+      const taggedRetryRequest = executionRequest({
+        toolCallId: ids.otherCall,
+        idempotencyKey: 'tool-effect-co-resident-v2-0001',
+        input: { value: 'tagged companion' },
+      })
+      const taggedExecutor = new FakeToolExecutor(() => ({ saved: false }))
+      const taggedCompleted = await service(persistence, taggedExecutor).execute(taggedRetryRequest)
+      expect(taggedCompleted).toMatchObject({
+        state: 'succeeded',
+        call: { requestDigestVersion: 2, inputDigestVersion: 2 },
+      })
+      expect(taggedExecutor.requests).toHaveLength(1)
 
       const persisted = storedRecord('tool-calls', ids.workspace, completed.call.toolCallId)
-      await reopened.transaction(async (transaction) => {
+      await persistence.transaction(async (transaction) => {
         const record = await transaction.get(persisted.namespace, persisted.id)
         expect(record).toBeDefined()
         const historicalCall = { ...record.value.call }
@@ -653,6 +653,8 @@ describe('SQLite tool repositories', () => {
         })
       })
 
+      const reopened = await reopen()
+      const afterRestartExecutor = new FakeToolExecutor(() => ({ saved: false }))
       const legacyReplay = await service(reopened, afterRestartExecutor).execute(request)
       expect(legacyReplay).toMatchObject({
         state: 'succeeded',
@@ -664,9 +666,41 @@ describe('SQLite tool repositories', () => {
       expect(legacyReplay.call.requestDigestVersion).toBeUndefined()
       expect(legacyReplay.call.inputDigestVersion).toBeUndefined()
       expect(afterRestartExecutor.requests).toHaveLength(0)
+      const taggedReplay = await service(reopened, afterRestartExecutor).execute(taggedRetryRequest)
+      expect(taggedReplay).toEqual(taggedCompleted)
+      expect(afterRestartExecutor.requests).toHaveLength(0)
+
+      const persistedCalls = await new SqliteToolCallRepository(
+        reopened,
+        ids.workspace
+      ).listByExecution(ids.execution)
+      expect(persistedCalls).toHaveLength(2)
+      expect(persistedCalls).toContainEqual(legacyReplay.call)
+      expect(persistedCalls).toContainEqual(taggedReplay.call)
       expect(
-        await new SqliteToolCallRepository(reopened, ids.workspace).listByExecution(ids.execution)
-      ).toEqual([legacyReplay.call])
+        persistedCalls.find(({ toolCallId }) => toolCallId === completed.call.toolCallId)
+      ).toMatchObject({
+        requestDigest: historicalSwedishToolReceipt.requestDigest,
+      })
+      expect(
+        persistedCalls.find(({ toolCallId }) => toolCallId === taggedCompleted.call.toolCallId)
+      ).toMatchObject({
+        requestDigestVersion: 2,
+        inputDigestVersion: 2,
+      })
+
+      await expect(
+        service(reopened, afterRestartExecutor).execute(
+          executionRequest({ ...request, input: { ...request.input, z: 'changed' } })
+        )
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+      await expect(
+        service(reopened, afterRestartExecutor).execute({
+          ...taggedRetryRequest,
+          input: { ...taggedRetryRequest.input, value: 'changed' },
+        })
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+      expect(afterRestartExecutor.requests).toHaveLength(0)
 
       await reopened.transaction(async (transaction) => {
         const record = await transaction.get(persisted.namespace, persisted.id)

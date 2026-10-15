@@ -20,10 +20,11 @@ import {
 } from '@control-plane/tool-sdk'
 import { ToolGateway, ToolGatewayError, type PreparedToolExecution } from './tool-registry.js'
 
-// Untagged ToolCalls have no collation or ICU metadata. Only the en-US and
-// sv-SE locale forms are evidenced by fixed Bun 1.4.2 / ICU 78.1 receipt bytes.
-// Do not use the reader's ambient locale to broaden legacy acceptance.
+// Untagged ToolCalls have no collation or runtime metadata. These locale forms
+// are evidenced only on this exact Bun/ICU pair. Do not use the reader's
+// ambient locale or an unqualified ICU to broaden legacy acceptance.
 const VERIFIABLE_UNTAGGED_LOCALES = ['en-US', 'sv-SE'] as const
+const QUALIFIED_LEGACY_LOCALE_RUNTIME = { bun: '1.4.2', icu: '78.1' } as const
 
 export interface ToolCallRepository {
   insert(call: ToolCall): Promise<boolean>
@@ -549,11 +550,7 @@ export function toolRequestMatchesDigest(
   version?: unknown
 ): boolean {
   if (version === undefined) {
-    const payload = requestDigestPayload(request)
-    return (
-      expected === digestV2(payload) ||
-      VERIFIABLE_UNTAGGED_LOCALES.some((locale) => expected === digestWithLocale(payload, locale))
-    )
+    return matchesUntaggedDigest(requestDigestPayload(request), expected)
   }
   return version === 2 && expected === toolRequestDigest(request)
 }
@@ -608,6 +605,22 @@ function digestWithLocale(value: unknown, locale: string): string {
   return `sha256:${createHash('sha256').update(canonical(value, locale)).digest('hex')}`
 }
 
+function matchesUntaggedDigest(value: unknown, expected: string): boolean {
+  // The #664 code-point form is independent of locale data and remains
+  // verifiable on every runtime. Locale candidates are accepted only on the
+  // exact runtime pair used to pin their historical receipt bytes.
+  if (expected === digestV2(value)) return true
+  if (!hasQualifiedLegacyLocaleRuntime()) return false
+  return VERIFIABLE_UNTAGGED_LOCALES.some((locale) => expected === digestWithLocale(value, locale))
+}
+
+function hasQualifiedLegacyLocaleRuntime(): boolean {
+  return (
+    process.versions['bun'] === QUALIFIED_LEGACY_LOCALE_RUNTIME.bun &&
+    process.versions['icu'] === QUALIFIED_LEGACY_LOCALE_RUNTIME.icu
+  )
+}
+
 /** Legacy locale-canonical input digest retained for untagged historical receipts. */
 export function toolInputDigest(input: unknown): string {
   return digest(input)
@@ -620,10 +633,7 @@ export function toolInputMatchesDigest(
   version?: unknown
 ): boolean {
   if (version === undefined) {
-    return (
-      expected === digestV2(input) ||
-      VERIFIABLE_UNTAGGED_LOCALES.some((locale) => expected === digestWithLocale(input, locale))
-    )
+    return matchesUntaggedDigest(input, expected)
   }
   return version === 2 && expected === digestV2(input)
 }
