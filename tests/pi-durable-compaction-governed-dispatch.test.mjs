@@ -632,6 +632,75 @@ test('child settlement carries the parent allowance through actual usage to fina
   }
 }, 120000)
 
+test('the production composition settles the admitted child through its own settlement path', async () => {
+  const { host, hooks } = await createHost()
+  try {
+    const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
+    // Only the production composition runs here: no test-built settlement instance.
+    expect(typeof host.composition.settleChildTerminalAccounting).toBe('function')
+    expect(host.composition.childTerminalSettlementBlocked).toBe(false)
+    expect((await readChildCostState(hooks)).outcome.costState).toBe('reserved')
+    expect(await settleLeadTerminal(host)).toEqual({ settled: 1, pending: 0, unbound: 1 })
+
+    const sends = host.state.physicalSends
+    const starts = hooks.evidence.childStarts.length
+    expect(await host.composition.settleChildTerminalAccounting()).toEqual({
+      settled: 1,
+      pending: 0,
+      unpriced: 0,
+    })
+    expect(host.composition.childTerminalSettlementBlocked).toBe(false)
+
+    const { parent, child } = await rowsOf(host, dispatch)
+    const spent = expectSettledChildLedger(child)
+    expect(
+      kinds(parent.filter((entry) => entry.reservationKey === `child:${childExecutionId}`))
+    ).toEqual(['reservation', 'release', 'settlement'])
+    expect(await summaryOf(host, childExecutionId)).toMatchObject({
+      spentMicrounits: spent,
+      reservedMicrounits: 0,
+      settled: true,
+    })
+    expect((await readChildCostState(hooks)).outcome).toMatchObject({
+      costState: 'settled',
+      reported: { accounting: { costExact: true, chargedMicrounits: spent } },
+      reconciled: { result: 'within_reservation', reportedChargedMicrounits: spent },
+      settled: { settledMicrounits: spent },
+    })
+
+    // Repeating the pass and reopening the composition (which re-runs recovery, including this
+    // settlement) change no money, no cost state, no event, and send or start nothing.
+    // The terminal event is the progress scanner's to publish, once; settlement never publishes.
+    await hooks.scanner.scan(host.composition.adapter)
+    const before = {
+      rows: await rowsOf(host, dispatch),
+      cost: stableSummary(await readChildCostState(hooks)),
+      events: await eventTypes(hooks),
+    }
+    expect(before.events.filter((type) => type === 'delegation.completed')).toHaveLength(1)
+    expect(await host.composition.settleChildTerminalAccounting()).toEqual({
+      settled: 1,
+      pending: 0,
+      unpriced: 0,
+    })
+    await host.reopenComposition()
+    expect(await host.composition.settleChildTerminalAccounting()).toEqual({
+      settled: 1,
+      pending: 0,
+      unpriced: 0,
+    })
+    expect(host.composition.childTerminalSettlementBlocked).toBe(false)
+    expect(await rowsOf(host, dispatch)).toEqual(before.rows)
+    expect(stableSummary(await readChildCostState(hooks))).toBe(before.cost)
+    expect(await eventTypes(hooks)).toEqual(before.events)
+    expect(host.state.physicalSends).toBe(sends)
+    expect(hooks.evidence.childStarts).toHaveLength(starts)
+    expect(hooks.evidence.reservations).toHaveLength(1)
+  } finally {
+    await host.close()
+  }
+}, 120000)
+
 // An interrupted settlement leaves exactly the evidence recorded so far. The cost state never runs
 // ahead of the ledger, a restart does not repeat a recorded step or republish the terminal event,
 // and the resumed settlement ends in the same ledger as an uninterrupted one.

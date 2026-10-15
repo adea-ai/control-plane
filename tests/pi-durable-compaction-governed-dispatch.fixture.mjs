@@ -38,6 +38,7 @@ import {
 import { DurableChildRuntimeBudgetAdmission } from '@control-plane/workflow-worker'
 import { SqlitePiLeadTerminalSettlement } from '../apps/control-api/src/pi-durable/lead-terminal-settlement.ts'
 import { PiDurableChildProgressScanner } from '../apps/control-api/src/pi-durable/child-progress-scanner.ts'
+import { PiChildTerminalSettlement } from '../apps/control-api/src/pi-durable/child-terminal-settlement.ts'
 import { createProductionChildRuntimeBridge } from '../apps/control-api/src/pi-durable/production-child-bridge.ts'
 
 const id = (prefix, suffix = '01JABCDEF0123456789ABCDEFG') => `${prefix}_${suffix}`
@@ -205,7 +206,9 @@ export function governedDispatchChildren(hooks) {
     hooks.toolCalls = toolCalls
     hooks.persistence = persistence
     hooks.at = at
-    hooks.usageOutcomes = new SqliteChildUsageOutcomeRepository(persistence, childIds.delegationId)
+    const usageOutcomesFor = (delegationId) =>
+      new SqliteChildUsageOutcomeRepository(persistence, delegationId)
+    hooks.usageOutcomes = usageOutcomesFor(childIds.delegationId)
     const service = new PolicyControlledToolExecutionService({
       gateway,
       calls: toolCalls,
@@ -392,17 +395,6 @@ export function governedDispatchChildren(hooks) {
           async reserveBudget(admission) {
             const budget = await budgetAdmission.reserve(admission)
             evidence.reservations.push(structuredClone(budget))
-            // The estimate (the child plan's ceiling) and the attempt's reservation are recorded as
-            // cost-state evidence in the same step, and retained through the production repository.
-            await mutateChildUsage(hooks.usageOutcomes, (usage) => {
-              const identity = childUsageIdentity(admission)
-              usage.recordEstimate(identity, {
-                currency: 'USD',
-                maximumMicrounits: admission.plan.constraints.limits.budget.maximumMicrounits,
-                source: 'governed-dispatch-child-plan',
-              })
-              usage.recordReservation(identity, budget)
-            })
             return budget
           },
           async fundChildAttempt({ budget, binding }) {
@@ -494,6 +486,7 @@ export function governedDispatchChildren(hooks) {
         })
         return { prepare }
       },
+      usageOutcomes: usageOutcomesFor,
       modelAuthority: { leasePrincipalRef, modelAlias: 'reasoning.standard' },
       runtime: {
         childProgress: {
@@ -510,33 +503,6 @@ export function governedDispatchChildren(hooks) {
       },
     }
   }
-}
-
-const usageCode = (error) => (typeof error === 'object' && error !== null ? error.code : undefined)
-
-function childUsageIdentity(admission) {
-  return {
-    parentExecutionId: admission.identity.parentExecutionId,
-    delegationId: admission.identity.delegationId,
-    childExecutionId: admission.record.childExecutionId,
-    childAttemptId: admission.identity.childAttemptId,
-  }
-}
-
-/**
- * The cost-state projection is never held in memory between steps: each step loads the durable
- * snapshot, applies its evidence and saves a newer revision only when something changed. A restart
- * therefore resumes from exactly what was recorded.
- */
-export async function mutateChildUsage(usageOutcomes, apply) {
-  const stored = await usageOutcomes.load()
-  const usage = new ChildUsageLedger()
-  if (stored) usage.restore(stored.snapshot)
-  const result = apply(usage)
-  const snapshot = usage.snapshot()
-  if (!stored || canonicalJsonStringify(stored.snapshot) !== canonicalJsonStringify(snapshot))
-    await usageOutcomes.save({ revision: (stored?.revision ?? 0) + 1, snapshot })
-  return result
 }
 
 /** The retained child cost state and its durable revision, as a restarted owner would load them. */
@@ -580,110 +546,46 @@ export async function settleLeadTerminal(host) {
 }
 
 /**
- * TEST ONLY child terminal settlement, composed from the existing machinery: the durable usage
- * ledger (`settle`, `finalizeBudget`), the child cost-state projection and its production
- * repository. Production has this path for the lead only; it is not wired into any composition
- * root here. It reads only durable state (the adapter journal's terminal record, the ledger and the
- * projection), so a new process can resume it. Every step is idempotent, durable and ordered so that
- * a cost state never runs ahead of the money: report (needs the retained usage entry), settle the
- * attempt reservation, finalize the child budget back into the parent's funding reservation, then
- * reconcile and settle the projection. `seam(step)` runs after each durable step and may throw, or
- * kill the process, to interrupt.
+ * The production child terminal settlement (`PiChildTerminalSettlement`) over this host's ledger,
+ * canonical delegation records, adapter journal and cost-state store. The composition runs the same
+ * class on its recovery pass; the tests build their own instance to interrupt it between durable
+ * steps (`seam(step)` may throw, or kill the process) and to read its result. `settle()` adds the
+ * single child's state to the production counts so the assertions stay readable.
  */
 export function createChildTerminalSettlement({
   ledger,
   usageOutcomes,
+  delegations,
   journal,
   workspaceId,
-  parentExecutionId,
   at,
   seam = async () => {},
 }) {
-  const reservationKey = `runtime-attempt:${childIds.attemptId}`
-  const identity = {
-    parentExecutionId,
-    delegationId: childIds.delegationId,
-    childExecutionId: childIds.executionId,
-    childAttemptId: childIds.attemptId,
-  }
+  const production = new PiChildTerminalSettlement({
+    journal,
+    ledger,
+    delegations,
+    now: () => at,
+    usageOutcomes: (delegationId) => {
+      if (delegationId !== childIds.delegationId) throw new Error('TEST_UNEXPECTED_DELEGATION')
+      return usageOutcomes
+    },
+    afterStep: seam,
+  })
   return {
     async settle() {
+      const result = await production.settle()
       const row = journal
         .list()
         .find((candidate) => candidate.admission.request.executionId === childIds.executionId)
-      if (!row) return { state: 'absent' }
-      // Only a completed run has priced, retained usage. A failed, unknown or running child keeps
-      // its reservation and its cost state exactly as recorded until it is reconciled.
-      const usage = row.detail?.result?.usage
-      if (row.state !== 'completed' || usage?.accounting === undefined)
-        return { state: 'not_terminal', runtime: row.state }
-      const usageEntry = (await ledger.entries(workspaceId, childIds.executionId)).find(
-        (entry) =>
-          entry.kind === 'model_usage' && entry.source.sourceId === usage.accounting.sourceId
-      )
-      if (!usageEntry) return { state: 'usage_not_retained' }
-      const reportId = `usage-settle:${childIds.attemptId}:${createHash('sha256')
-        .update(usage.accounting.sourceId)
-        .digest('hex')
-        .slice(0, 16)}`
-
-      await mutateChildUsage(usageOutcomes, (cost) =>
-        cost.recordReportedUsage(identity, usage, {
-          reportId,
-          publicationSequence: usageEntry.sequence,
-        })
-      )
-      await seam('reported')
-
-      try {
-        await ledger.settle({
-          workspaceId,
-          executionId: childIds.executionId,
-          reservationKey,
-          source: {
-            sourceId: childIds.attemptId,
-            idempotencyKey: `${reservationKey}:terminal-settle`,
-          },
-        })
-      } catch (error) {
-        if (usageCode(error) !== 'RESERVATION_SETTLED') throw error
+      if (!row) return { state: 'absent', ...result }
+      if (result.settled > 0) {
+        const { spentMicrounits } = await ledger.summary(workspaceId, childIds.executionId)
+        return { state: 'settled', spentMicrounits, ...result }
       }
-      await seam('attempt-settled')
-
-      try {
-        await ledger.finalizeBudget({
-          workspaceId,
-          executionId: childIds.executionId,
-          source: {
-            sourceId: `child-final:${childIds.executionId}`,
-            idempotencyKey: `child-final:${childIds.executionId}:finalize`,
-          },
-        })
-      } catch (error) {
-        if (usageCode(error) !== 'BUDGET_SETTLED') throw error
-      }
-      await seam('budget-finalized')
-
-      const summary = await ledger.summary(workspaceId, childIds.executionId)
-      if (!summary.settled || summary.reservedMicrounits !== 0)
-        throw new Error('TEST_CHILD_SETTLEMENT_INCOMPLETE')
-      // The projection settles exactly what the ledger settled, and only when it agrees with the
-      // priced report.
-      if (summary.spentMicrounits !== usage.accounting.chargedMicrounits)
-        throw new Error('TEST_CHILD_SETTLEMENT_MISMATCH')
-      await mutateChildUsage(usageOutcomes, (cost) =>
-        cost.reconcile(identity, { reconciledAt: at })
-      )
-      await seam('reconciled')
-      await mutateChildUsage(usageOutcomes, (cost) =>
-        cost.settle(identity, {
-          currency: 'USD',
-          settledMicrounits: summary.spentMicrounits,
-          settledAt: at,
-          settlementRef: reportId,
-        })
-      )
-      return { state: 'settled', spentMicrounits: summary.spentMicrounits }
+      if (result.pending > 0) return { state: 'pending', ...result }
+      if (result.unpriced > 0) return { state: 'unpriced', ...result }
+      return { state: 'not_terminal', runtime: row.state, ...result }
     },
   }
 }
@@ -694,6 +596,7 @@ export function childSettlementFor(hooks) {
   return createChildTerminalSettlement({
     ledger: host.ledger,
     usageOutcomes: hooks.usageOutcomes,
+    delegations: hooks.delegationRecords,
     journal: { list: () => host.composition.adapter.journal.list() },
     workspaceId: host.workspaceId,
     parentExecutionId: host.state.parentExecutionId,

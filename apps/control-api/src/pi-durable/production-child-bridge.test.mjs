@@ -14,13 +14,38 @@ const admission = {
   },
   record: { childExecutionId: id('exe').replace(/G$/, 'H') },
 }
+admission.plan = { constraints: { limits: { budget: { maximumMicrounits: 5_000_000 } } } }
 const budget = {
+  schemaVersion: 1,
+  workspaceId: id('wsp'),
   executionId: admission.record.childExecutionId,
   attemptId: admission.identity.childAttemptId,
+  executionPlanId: id('pln'),
+  executionPlanDigest: `sha256:${'a'.repeat(64)}`,
+  reservationKey: `runtime-attempt:${admission.identity.childAttemptId}`,
+  currency: 'USD',
+  maximumMicrounits: 1_000_000,
+  maximumTokens: 100_000,
+}
+function memoryOutcomes() {
+  const stored = new Map()
+  const saves = []
+  return {
+    saves,
+    stored,
+    for: (delegationId) => ({
+      load: async () => stored.get(delegationId),
+      save: async (record) => {
+        saves.push(record.revision)
+        stored.set(delegationId, structuredClone(record))
+      },
+    }),
+  }
 }
 const binding = { binding: 'child-model-binding' }
 
 function options(overrides = {}) {
+  const outcomes = memoryOutcomes()
   const calls = []
   const log = (name, value) => {
     calls.push(name)
@@ -49,13 +74,14 @@ function options(overrides = {}) {
         return binding
       },
       runtime: { start: async (request) => log('start', request) },
+      usageOutcomes: outcomes.for,
     },
     reserveBudget: async () => log('reserve', budget),
     fundChildAttempt: async (input) => {
       log('fund', input)
     },
   }
-  return { calls, options: { ...base, ...overrides } }
+  return { calls, outcomes, options: { ...base, ...overrides } }
 }
 
 test('builds the canonical bridge with terminal replay always configured', () => {
@@ -86,6 +112,7 @@ test.each([
   ['authority', { authority: undefined }],
   ['model binding', { modelBinding: undefined }],
   ['runtime', { runtime: undefined }],
+  ['cost-state store', { usageOutcomes: undefined }],
 ])('refuses to build without the composition %s', (_name, override) => {
   const { options: built } = options()
   built.context = { ...built.context, ...override }
@@ -134,6 +161,45 @@ test('reserves, derives the binding, then funds that reservation, in that order'
   expect(await bridge.options.reserveBudget(admission)).toBe(budget)
   expect(calls).toEqual(['reserve', 'binding'])
   expect(funded).toEqual([{ budget, binding }])
+})
+
+test('records the estimate and the reservation as cost state before the binding and the funding', async () => {
+  const { calls, outcomes, options: built } = options()
+  const bridge = createProductionChildRuntimeBridge(built)
+  await bridge.options.reserveBudget(admission)
+  expect(calls).toEqual(['reserve', 'binding', 'fund'])
+  const stored = outcomes.stored.get(admission.identity.delegationId)
+  expect(stored.revision).toBe(1)
+  const [entry] = stored.snapshot.entries
+  expect(entry.outcome).toMatchObject({
+    costState: 'reserved',
+    estimated: { currency: 'USD', maximumMicrounits: 5_000_000 },
+    reserved: { reservationKey: budget.reservationKey },
+  })
+  // Replaying the step (a recovery) records nothing new.
+  await bridge.options.reserveBudget(admission)
+  expect(outcomes.saves).toEqual([1])
+})
+
+test('cost state that cannot be recorded derives no binding and funds nothing', async () => {
+  const funded = []
+  const { calls, options: built } = options({
+    fundChildAttempt: async (input) => {
+      funded.push(input)
+    },
+  })
+  built.context.usageOutcomes = () => ({
+    load: async () => undefined,
+    save: async () => {
+      throw new Error('TEST_COST_STATE_UNAVAILABLE')
+    },
+  })
+  const bridge = createProductionChildRuntimeBridge(built)
+  await expect(bridge.options.reserveBudget(admission)).rejects.toThrow(
+    'TEST_COST_STATE_UNAVAILABLE'
+  )
+  expect(calls).toEqual(['reserve'])
+  expect(funded).toEqual([])
 })
 
 test('a refused reservation derives no binding and funds nothing', async () => {

@@ -8,6 +8,11 @@ import {
   type DelegationService,
 } from '@control-plane/orchestration'
 import type { ExecutionLifecycleService } from '@control-plane/domain'
+import {
+  childUsageIdentity,
+  mutateChildUsage,
+  type ChildUsageOutcomesFor,
+} from './child-usage-outcomes.js'
 import type { ExecutionPlanRepository } from '@control-plane/execution-plan'
 import type {
   RuntimeAdapter,
@@ -25,6 +30,8 @@ export interface ProductionChildBridgeContext {
   readonly modelBinding: (input: { executionId: string; attemptId: string }) => Promise<unknown>
   /** The same adapter the lead runs on. Resolves lazily and throws until the adapter is ready. */
   readonly runtime: Pick<RuntimeAdapter, 'start'>
+  /** The durable cost-state projection per delegation, shared with the terminal settlement. */
+  readonly usageOutcomes: ChildUsageOutcomesFor
 }
 
 export interface ProductionChildBridgeOptions {
@@ -90,6 +97,7 @@ export function createProductionChildRuntimeBridge(
     !required(context?.authority?.readRecord) ||
     !required(context?.modelBinding) ||
     !required(context?.runtime?.start) ||
+    !required(context?.usageOutcomes) ||
     !required(options.reserveBudget) ||
     !required(options.fundChildAttempt) ||
     (options.receiptReadAuthority === undefined) !== (options.nativeReceiptReader === undefined)
@@ -118,6 +126,17 @@ export function createProductionChildRuntimeBridge(
     },
     async reserveBudget(admission) {
       const budget = await options.reserveBudget(admission)
+      // The estimate (the child plan's ceiling) and the attempt's reservation are recorded as
+      // cost-state evidence in the same step, so the later settlement starts from what was reserved.
+      await mutateChildUsage(context.usageOutcomes(admission.identity.delegationId), (usage) => {
+        const identity = childUsageIdentity(admission)
+        usage.recordEstimate(identity, {
+          currency: 'USD',
+          maximumMicrounits: admission.plan.constraints.limits.budget.maximumMicrounits,
+          source: 'child-plan-budget-ceiling',
+        })
+        usage.recordReservation(identity, budget)
+      })
       const binding = await context.modelBinding({
         executionId: budget.executionId,
         attemptId: budget.attemptId,
