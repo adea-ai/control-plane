@@ -68,14 +68,81 @@ export interface ProductionChildBridgeOptions {
   }
 }
 
-const required = (value: unknown) => typeof value === 'function'
+const isFunction = (value: unknown) => typeof value === 'function'
+const hasFunctions = (port: unknown, names: readonly string[]) =>
+  typeof port === 'object' &&
+  port !== null &&
+  names.every((name) => isFunction((port as Record<string, unknown>)[name]))
+
+/**
+ * Every method the bridge calls on an injected port, by path: start (`resolve`, `startChild`),
+ * progress (`recordProgress`), session recovery (`recoverChildSession`) and terminal publication
+ * (`recoverTerminalPublication`). A port missing any of them refuses the build, so a recovery path
+ * can never be the first place a missing port is discovered.
+ */
+export const productionChildBridgePorts = {
+  records: [
+    'get',
+    'retainChildRuntimeStart',
+    'getChildRuntimeStart',
+    'bindRecoveredChildSession',
+    'bindChildSession',
+    'recoverTerminalPublication',
+  ],
+  lifecycle: ['getExecution'],
+  lifecycleRepository: ['getAttempt'],
+  plans: ['get'],
+  delegations: ['recordChildProgress'],
+  events: ['publish'],
+  authority: ['readRecord'],
+  runtime: ['start'],
+  receiptReadAuthority: ['assertQualified', 'assertCurrent', 'now'],
+  nativeReceiptReader: ['findExistingHandle'],
+} as const
+
+const guards = (options: ProductionChildBridgeOptions): boolean => {
+  const { context } = options
+  const ports = productionChildBridgePorts
+  const receiptsConfigured =
+    options.receiptReadAuthority !== undefined || options.nativeReceiptReader !== undefined
+  return (
+    hasFunctions(options.records, ports.records) &&
+    hasFunctions(options.lifecycle, ports.lifecycle) &&
+    hasFunctions(
+      (options.lifecycle as { repository?: unknown }).repository,
+      ports.lifecycleRepository
+    ) &&
+    hasFunctions(options.plans, ports.plans) &&
+    hasFunctions(options.delegations, ports.delegations) &&
+    hasFunctions(options.events, ports.events) &&
+    hasFunctions(context?.authority, ports.authority) &&
+    isFunction(context?.modelBinding) &&
+    hasFunctions(context?.runtime, ports.runtime) &&
+    isFunction(context?.usageOutcomes) &&
+    isFunction(options.reserveBudget) &&
+    isFunction(options.fundChildAttempt) &&
+    typeof options.runtimeConnectionId === 'string' &&
+    // Native receipt recovery needs both halves, each with the methods the bridge calls on it, and
+    // both bound to the same connection. Neither half alone can recover a session.
+    (!receiptsConfigured ||
+      (hasFunctions(options.receiptReadAuthority, ports.receiptReadAuthority) &&
+        hasFunctions(options.nativeReceiptReader, ports.nativeReceiptReader) &&
+        options.nativeReceiptReader?.runtimeConnectionId === options.runtimeConnectionId))
+  )
+}
 
 /**
  * Builds the governed child bridge from the composition's canonical ports. Each step the bridge
  * takes is a re-read of current authority first: the child's originating tool call, actor, grant
  * and provider are read before the budget is reserved, the reservation is funded only after it
- * resolves, and the runtime start receives the request only after a final read. A missing or
- * revoked authority therefore ends before any reservation, funding record or start.
+ * resolves, and the runtime start receives the request only after a final read.
+ *
+ * What a missing or revoked authority prevents depends on when it is lost. Missing or revoked at
+ * the first read: nothing is reserved, funded or started. Lost after the reservation or funding
+ * (the final read before the start): the start never happens and nothing is sent, but the
+ * reservation, the cost-state evidence and the funding record already exist and are not unwound
+ * here; they stay for the terminal settlement to account for. The bridge makes no claim that no
+ * earlier accounting occurred.
  *
  * Reopening a composition never reaches this bridge's `startChild`: only the governed executor
  * does, behind the policy-controlled tool service. Recovery and the progress scanner use
@@ -86,23 +153,7 @@ export function createProductionChildRuntimeBridge(
   options: ProductionChildBridgeOptions
 ): CanonicalDelegationRuntimeBridge {
   const { context } = options
-  if (
-    !required(options.records?.get) ||
-    !required(options.records?.retainChildRuntimeStart) ||
-    !required(options.records?.bindChildSession) ||
-    !required(options.lifecycle?.getExecution) ||
-    !required(options.plans?.get) ||
-    !required(options.delegations?.recordChildProgress) ||
-    !required(options.events?.publish) ||
-    !required(context?.authority?.readRecord) ||
-    !required(context?.modelBinding) ||
-    !required(context?.runtime?.start) ||
-    !required(context?.usageOutcomes) ||
-    !required(options.reserveBudget) ||
-    !required(options.fundChildAttempt) ||
-    (options.receiptReadAuthority === undefined) !== (options.nativeReceiptReader === undefined)
-  )
-    throw new Error('PI_PRODUCTION_CHILD_BINDING_REQUIRED')
+  if (!guards(options)) throw new Error('PI_PRODUCTION_CHILD_BINDING_REQUIRED')
   return new CanonicalDelegationRuntimeBridge({
     records: options.records,
     lifecycle: options.lifecycle,

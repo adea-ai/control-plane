@@ -196,18 +196,53 @@ no accepted selection or authority result is cached to bypass a current read.
 ## Governed child bridge
 
 `children.createGovernedDelegateChild(service, context)` receives the composition's own child
-authority reader, the model binding it derives for a retained child attempt, and its adapter.
+authority reader, the model binding it derives for a retained child attempt, its adapter and the
+per-delegation cost-state store (`children.usageOutcomes`, required).
 `createProductionChildRuntimeBridge` turns those and the root's canonical ports into the governed
 `CanonicalDelegationRuntimeBridge`. A start reads current authority first, then reserves the child
-attempt budget, derives the binding and records the child's funding, re-reads authority, and only
-then starts the child on the lead's adapter. A missing or revoked authority ends before any
-reservation, funding record or start; reopening a composition and repeating scans start, fund and
-send nothing.
+attempt budget and records the estimate and the reservation as cost-state evidence, derives the
+binding and records the child's funding, re-reads authority, and only then starts the child on the
+lead's adapter.
+
+What losing authority prevents depends on when it is lost:
+
+- Missing or revoked at the first read: nothing is reserved, funded or started.
+- Lost after the reservation or funding (caught by the final read): the start never happens and
+  nothing is sent, but the reservation, the cost-state evidence and the funding record already
+  exist. The builder does not unwind them; they stay for terminal settlement to account for. No
+  claim is made that no earlier accounting occurred.
+- Reopening a composition and repeating scans start, fund, reserve and send nothing: recovery and
+  the progress scanner use `recordProgress`, `recoverChildSession` and `recoverTerminalPublication`,
+  which call none of the effect ports.
+
+The builder checks, when it is built, every method it calls on each port along its start,
+progress, session-recovery and terminal-replay paths (`productionChildBridgePorts` lists them),
+and that native receipt recovery has both halves bound to the same runtime connection. A missing
+method refuses the build with `PI_PRODUCTION_CHILD_BINDING_REQUIRED`; it is never first discovered
+in a recovery path.
 
 The builder creates no credential, grant, reservation or funding record. Two sources stay with the
 root and are required (a root without them cannot build the bridge): the budget reservation
 (`DurableChildRuntimeBudgetAdmission.reserve`, unwrapped, over the child allocator's usage store)
 and `fundChildAttempt`, the operator-owned recorded funding decision for the child attempt. No
-repository code records a child's funding; the tests script it. Terminal child settlement
-(ledger settle, budget finalization and cost-state projection) is not wired for children in
-production.
+repository code records a child's funding; the tests script it.
+
+Terminal child settlement is `PiChildTerminalSettlement`, run by the node composition's recovery
+pass (and available as `settleChildTerminalAccounting`). It reports the child's priced usage into
+the cost-state projection, settles the attempt reservation, finalizes the child budget back into
+the parent's funding reservation, then reconciles and settles the projection, in that order, each
+step idempotent and restartable from durable state alone. A completed child with no priced usage,
+or whose usage entry is not yet retained, is left as recorded; failed, cancelled and unknown
+children keep their reservation until reconciled.
+
+### Dependencies outside this repository
+
+None of these is invented here; each is a gap a launcher or operator must close:
+
+- The launcher that supplies `piDurableProduction` (and so the child options) is not in this
+  repository, and neither the Local nor the Hosted composition builds the Pi lead.
+- The source that records a child attempt's funding (`fundChildAttempt`) has no implementation here.
+- The Local runtime-node credential source for the child's model credential is not in this
+  repository; the builder never creates one.
+- Native receipt recovery needs a host-qualified `receiptReadAuthority` and `nativeReceiptReader`;
+  without them a lost session mapping is not recoverable by the builder.

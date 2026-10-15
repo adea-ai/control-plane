@@ -1,6 +1,9 @@
 import { expect, test } from 'bun:test'
 import { CanonicalDelegationRuntimeBridge } from '@control-plane/orchestration'
-import { createProductionChildRuntimeBridge } from './production-child-bridge.ts'
+import {
+  createProductionChildRuntimeBridge,
+  productionChildBridgePorts,
+} from './production-child-bridge.ts'
 
 const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
 const runtimeConnectionId = id('rtc')
@@ -55,9 +58,15 @@ function options(overrides = {}) {
     records: {
       get: async () => undefined,
       retainChildRuntimeStart: async () => {},
+      getChildRuntimeStart: async () => undefined,
+      bindRecoveredChildSession: async () => ({}),
       bindChildSession: async () => ({}),
+      recoverTerminalPublication: async () => ({}),
     },
-    lifecycle: { getExecution: async () => undefined },
+    lifecycle: {
+      getExecution: async () => undefined,
+      repository: { getAttempt: async () => undefined },
+    },
     plans: { get: async () => undefined },
     delegations: { recordChildProgress: async () => ({}) },
     events: { publish: async () => {} },
@@ -95,7 +104,6 @@ test('builds the canonical bridge with terminal replay always configured', () =>
 
 test.each([
   ['records', { records: undefined }],
-  ['record receipts', { records: { get: async () => undefined } }],
   ['lifecycle', { lifecycle: undefined }],
   ['plans', { plans: undefined }],
   ['child progress service', { delegations: undefined }],
@@ -121,26 +129,91 @@ test.each([
   )
 })
 
-test('refuses a receipt read authority without its native reader and the reverse', () => {
-  const reader = { runtimeConnectionId, findExistingHandle: async () => undefined }
-  const authority = {
-    readerPrincipalId: 'reader',
-    audienceRef: 'audience',
-    now: () => '2026-10-15T00:00:00.000Z',
-    assertQualified: async () => {},
-    assertCurrent: async () => ({}),
+// Every method the bridge calls on a port, on its start, progress, session-recovery and terminal
+// replay paths, is checked when the bridge is built: a missing one refuses with the same code.
+test.each(
+  Object.entries({
+    records: productionChildBridgePorts.records,
+    plans: productionChildBridgePorts.plans,
+    delegations: productionChildBridgePorts.delegations,
+    events: productionChildBridgePorts.events,
+    lifecycle: productionChildBridgePorts.lifecycle,
+  }).flatMap(([port, names]) => names.map((name) => [port, name]))
+)('refuses to build when %s.%s is missing', (port, name) => {
+  const { options: built } = options()
+  built[port] = { ...built[port], [name]: undefined }
+  expect(() => createProductionChildRuntimeBridge(built)).toThrow(
+    'PI_PRODUCTION_CHILD_BINDING_REQUIRED'
+  )
+})
+
+test('refuses to build when the lifecycle repository cannot read an attempt', () => {
+  for (const repository of [undefined, {}, { getAttempt: 'getAttempt' }]) {
+    const { options: built } = options()
+    built.lifecycle = { ...built.lifecycle, repository }
+    expect(() => createProductionChildRuntimeBridge(built)).toThrow(
+      'PI_PRODUCTION_CHILD_BINDING_REQUIRED'
+    )
   }
+})
+
+test('refuses to build when the composition authority cannot read a record', () => {
+  const { options: built } = options()
+  built.context = { ...built.context, authority: {} }
+  expect(() => createProductionChildRuntimeBridge(built)).toThrow(
+    'PI_PRODUCTION_CHILD_BINDING_REQUIRED'
+  )
+})
+
+const reader = { runtimeConnectionId, findExistingHandle: async () => undefined }
+const receiptAuthority = {
+  readerPrincipalId: 'reader',
+  audienceRef: 'audience',
+  now: () => '2026-10-15T00:00:00.000Z',
+  assertQualified: async () => {},
+  assertCurrent: async () => ({}),
+}
+
+test('refuses a receipt read authority without its native reader and the reverse', () => {
   expect(() =>
-    createProductionChildRuntimeBridge(options({ receiptReadAuthority: authority }).options)
+    createProductionChildRuntimeBridge(options({ receiptReadAuthority: receiptAuthority }).options)
   ).toThrow('PI_PRODUCTION_CHILD_BINDING_REQUIRED')
   expect(() =>
     createProductionChildRuntimeBridge(options({ nativeReceiptReader: reader }).options)
   ).toThrow('PI_PRODUCTION_CHILD_BINDING_REQUIRED')
   expect(() =>
     createProductionChildRuntimeBridge(
-      options({ receiptReadAuthority: authority, nativeReceiptReader: reader }).options
+      options({ receiptReadAuthority: receiptAuthority, nativeReceiptReader: reader }).options
     )
   ).not.toThrow()
+})
+
+test.each([
+  ...productionChildBridgePorts.receiptReadAuthority.map((name) => [
+    `receiptReadAuthority.${name}`,
+    {
+      receiptReadAuthority: { ...receiptAuthority, [name]: undefined },
+      nativeReceiptReader: reader,
+    },
+  ]),
+  ...productionChildBridgePorts.nativeReceiptReader.map((name) => [
+    `nativeReceiptReader.${name}`,
+    {
+      receiptReadAuthority: receiptAuthority,
+      nativeReceiptReader: { ...reader, [name]: undefined },
+    },
+  ]),
+  [
+    'a native reader bound to another connection',
+    {
+      receiptReadAuthority: receiptAuthority,
+      nativeReceiptReader: { ...reader, runtimeConnectionId: id('rtc').replace(/G$/, 'H') },
+    },
+  ],
+])('refuses to build native receipt recovery with %s missing or unmatched', (_name, override) => {
+  expect(() => createProductionChildRuntimeBridge(options(override).options)).toThrow(
+    'PI_PRODUCTION_CHILD_BINDING_REQUIRED'
+  )
 })
 
 test('re-reads the composition authority for the exact child execution and attempt', async () => {
