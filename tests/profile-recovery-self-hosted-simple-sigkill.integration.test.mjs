@@ -208,18 +208,26 @@ async function releaseSpawnedOwner({ owner, ownerExit, handles, exitBoundMs = EX
   } catch (error) {
     problems.push(error)
   }
+  const unconfirmedHandles = []
   for (const handle of handles()) {
     try {
-      if (!(await handle.terminate({ graceMs: 5000, forceMs: 5000 }))) {
+      if (await handle.terminate({ graceMs: 5000, forceMs: 5000 })) {
+        handle.close()
+      } else {
+        unconfirmedHandles.push(handle)
         problems.push(new Error(`pinned process ${handle.identity.pid} is still running`))
       }
     } catch (error) {
+      unconfirmedHandles.push(handle)
       problems.push(error)
-    } finally {
-      handle.close()
     }
   }
-  if (problems.length > 0) throw new AggregateError(problems, 'owner teardown')
+  if (problems.length > 0) {
+    const failure = new AggregateError(problems, 'owner teardown')
+    // Keep failed pidfd handles reachable and open so callers can safely retry or diagnose them.
+    failure.unconfirmedHandles = unconfirmedHandles
+    throw failure
+  }
 }
 
 afterEach(async () => {
@@ -818,11 +826,17 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       })
 
       test('a real owner that exits cannot vouch for its child, and the orphan is refused', async () => {
-        // A shell owner (a child of this test) starts a sleeping child and prints its pid. On SIGTERM
-        // the owner ends its own child, so teardown never needs to signal the child by number.
-        const owner = spawn('sh', ['-c', 'sleep 62 & c=$!; trap "kill $c" TERM; echo $c; wait'], {
-          stdio: ['ignore', 'pipe', 'ignore'],
-        })
+        // A detached shell owner starts a sleeping child and prints its pid. Its isolated process
+        // group is anchored by the still-running owner, so the TERM trap can stop both without
+        // signaling a child pid that might have been reused.
+        const owner = spawn(
+          'sh',
+          [
+            '-c',
+            'sleep 62 & trap \'trap "" TERM; /bin/kill -TERM -- -$$; wait; exit\' TERM; echo $!; wait',
+          ],
+          { detached: true, stdio: ['ignore', 'pipe', 'ignore'] }
+        )
         const ownerExit = processExit(owner)
         let anchor
         let child
@@ -898,20 +912,34 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       })
       expect(owner.signalCode).toBe('SIGTERM')
       expect(handle.exited).toBe(true)
-      // A handle that cannot be confirmed gone is reported, not hidden, and the rest still runs.
+      // An unconfirmed handle remains open and reachable for safe retry, while later handles are
+      // still attempted and closed when they are confirmed gone.
+      let stuckCloseCalls = 0
+      let healthyCloseCalls = 0
       const stuck = {
         identity: { pid: 1 },
         terminate: async () => false,
-        close: () => {},
+        close: () => {
+          stuckCloseCalls += 1
+        },
       }
-      const exited = processExit(spawn('true'))
-      await expect(
-        releaseSpawnedOwner({
-          owner: { exitCode: 0, signalCode: null, kill: () => {} },
-          ownerExit: exited,
-          handles: () => [stuck],
-        })
-      ).rejects.toThrow('owner teardown')
+      const healthy = {
+        identity: { pid: 2 },
+        terminate: async () => true,
+        close: () => {
+          healthyCloseCalls += 1
+        },
+      }
+      const outcome = await releaseSpawnedOwner({
+        owner: { exitCode: 0, signalCode: null, kill: () => {} },
+        ownerExit: Promise.resolve(),
+        handles: () => [stuck, healthy],
+      }).catch((error) => error)
+      expect(outcome).toBeInstanceOf(AggregateError)
+      expect(outcome.message).toBe('owner teardown')
+      expect(outcome.unconfirmedHandles).toEqual([stuck])
+      expect(stuckCloseCalls).toBe(0)
+      expect(healthyCloseCalls).toBe(1)
     })
 
     test('no test or fixture signals a bare pid', async () => {
@@ -920,7 +948,9 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
         'tests/fixtures/pinned-process.mjs',
         'tests/fixtures/self-hosted-simple-sigkill.mjs',
       ]) {
-        expect(await readFile(join(repositoryRoot, file), 'utf8')).not.toMatch(/process\.kill\s*\(/)
+        const source = await readFile(join(repositoryRoot, file), 'utf8')
+        expect(source).not.toMatch(/process\.kill\s*\(/)
+        expect(source).not.toMatch(/\bkill\s+(?:(?:-[A-Za-z]+|--)\s+)*\$[A-Za-z_]/)
       }
     })
 
