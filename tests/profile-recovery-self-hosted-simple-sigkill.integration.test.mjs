@@ -242,14 +242,21 @@ async function releaseSpawnedOwner({ owner, ownerExit, handles, exitBoundMs = EX
     problems.push(error)
   }
   for (const handle of handles()) {
+    let terminated = false
     try {
-      if (!(await handle.terminate({ graceMs: 5000, forceMs: 5000 }))) {
+      terminated = await handle.terminate({ graceMs: 5000, forceMs: 5000 })
+      if (!terminated) {
         problems.push(new Error(`pinned process ${handle.identity.pid} is still running`))
       }
     } catch (error) {
       problems.push(error)
-    } finally {
-      handle.close()
+    }
+    if (terminated) {
+      try {
+        handle.close()
+      } catch (error) {
+        problems.push(error)
+      }
     }
   }
   if (problems.length > 0) throw new AggregateError(problems, 'owner teardown')
@@ -1019,19 +1026,34 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       expect(owner.signalCode).toBe('SIGTERM')
       expect(handle.exited).toBe(true)
       // A handle that cannot be confirmed gone is reported, not hidden, and the rest still runs.
+      let stillRunning = true
+      const terminationAttempts = []
+      const closes = []
       const stuck = {
         identity: { pid: 1 },
-        terminate: async () => false,
-        close: () => {},
+        terminate: async () => {
+          terminationAttempts.push(stuck.identity.pid)
+          return !stillRunning
+        },
+        close: () => closes.push(stuck.identity.pid),
       }
-      const exited = processExit(spawn('true'))
-      await expect(
+      const exited = Promise.resolve({ code: 0, signal: null })
+      const fakeOwner = { exitCode: 0, signalCode: null, kill: () => {} }
+      const cleanupOwner = () =>
         releaseSpawnedOwner({
-          owner: { exitCode: 0, signalCode: null, kill: () => {} },
+          owner: fakeOwner,
           ownerExit: exited,
           handles: () => [stuck],
         })
-      ).rejects.toThrow('owner teardown')
+      await expect(cleanupOwner()).rejects.toThrow('owner teardown')
+      expect(terminationAttempts).toEqual([1])
+      expect(closes).toEqual([])
+      expect(stuck.identity).toEqual({ pid: 1 })
+
+      stillRunning = false
+      await cleanupOwner()
+      expect(terminationAttempts).toEqual([1, 1])
+      expect(closes).toEqual([1])
     })
 
     test('no test or fixture signals a bare pid', async () => {
