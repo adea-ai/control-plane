@@ -130,7 +130,7 @@ export function openSelfHostedSimpleComposition({
                 pending: !record.exited,
               })
             )
-            throw new Error('PROCESS_STOP_TIMEOUT_INJECTED')
+            throw new Error('PROCESS_STOP_REJECTION_INJECTED')
           }
           await handle.stop(signal)
         },

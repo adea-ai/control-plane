@@ -1484,7 +1484,7 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
     'startup timeout',
     'partial identity capture',
     'rejected start with failed stop',
-    'provider stop timeout',
+    'provider stop rejection',
     'pending startup',
   ]) {
     test(`main cleanup closes Restate after ${failure} before ownership is recorded`, async () => {
@@ -1495,7 +1495,7 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
         dataDirectory: join(work, 'data'),
         evidencePath: join(work, 'effects.jsonl'),
         ports: await isolatedPorts(),
-        ...(failure === 'provider stop timeout'
+        ...(failure === 'provider stop rejection'
           ? { processStopFailure: join(work, 'process-stop-failure.json') }
           : {}),
         ...(failure !== 'partial identity capture'
@@ -1554,13 +1554,13 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
         await expect(initial.next('started', 100)).rejects.toThrow('PROTOCOL_CHILD_TIMEOUT_started')
       } else if (
         failure === 'rejected start with failed stop' ||
-        failure === 'provider stop timeout'
+        failure === 'provider stop rejection'
       ) {
         await writeFile(releasePath, 'reject startup')
         await expect(initial.next('started', EXIT_BOUND_MS)).rejects.toThrow(
           'SELF_HOSTED_SIMPLE_INJECTED_START_FAILURE'
         )
-        if (failure === 'provider stop timeout') {
+        if (failure === 'provider stop rejection') {
           expect(JSON.parse(await readFile(config.processStopFailure, 'utf8'))).toMatchObject({
             launcherPid: started.launcherPid,
             signal: 'SIGTERM',
