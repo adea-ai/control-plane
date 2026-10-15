@@ -36,7 +36,7 @@ const runtimeRef =
   (await readFile(new URL('../.github/code-foundry.yml', import.meta.url), 'utf8')).match(
     /^runtime_ref: (\S+)$/m
   )?.[1] ?? ''
-const sharedValidationRef = '4480e8aed1dac8bbb3cb12d8d7fe086a13a8eb3b'
+const sharedValidationRef = '7119b3e2baebfbfdd47d32428cbf5df2f2079afa'
 
 const apps = [
   'control-api',
