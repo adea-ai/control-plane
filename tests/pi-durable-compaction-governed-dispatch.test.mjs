@@ -424,7 +424,9 @@ async function expectNoChildStartedAfterRestart({ host, hooks, sent, dispatch, h
   expect(hooks.evidence.childStarts).toHaveLength(0)
   expect(sent.child).toHaveLength(0)
   expect(host.state.physicalSends).toBe(sendsBefore)
-  expect(await eventTypes(hooks)).not.toContain('delegation.completed')
+  expect((await publicationsOf(hooks)).map((record) => record.value.event.type)).not.toContain(
+    'delegation.completed'
+  )
   expect(childOf(host.composition.adapter)).toBeUndefined()
   expect((await host.composition.adapter.status(handle)).state).toBe('unknown')
   expect(await hooks.delegationRecords.listByParent(dispatch.executionId)).toHaveLength(1)
