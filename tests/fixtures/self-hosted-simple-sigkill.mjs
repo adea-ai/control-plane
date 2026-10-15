@@ -52,6 +52,7 @@ export const PROTOCOL_PREFIX = 'SELF_HOSTED_SIMPLE_PROTOCOL '
 const PROTOCOL_STAGES = new Set([
   'started',
   'cleanup_started',
+  'cleanup_requested',
   'awaiting_input',
   'recovered',
   'completed',
@@ -301,17 +302,19 @@ async function rejectAfterRestateStarts(health, failure) {
 }
 
 /** Before any startup work, accept a cleanup ownership request. Await startup settlement before
- *  reporting health: stopping concurrently with start can miss a not-yet-assigned Restate child.
+ *  reporting ownership: stopping concurrently with start can miss a not-yet-assigned Restate child.
  *  This only reports an ownership anchor; the parent must pin the full chain before SIGKILL. */
 function cleanupControl(composition, processes) {
   const lines = createInterface({ input: process.stdin })
   let startup
+  let startupSettled = false
   let requested = false
   const closeRequested = new Promise((resolve) => {
     lines.on('line', (line) => {
       if (line.trim() === 'close') resolve()
       if (line.trim() !== 'pin_cleanup' || requested) return
       requested = true
+      emit({ stage: 'cleanup_requested', pid: process.pid, startupPending: !startupSettled })
       void (async () => {
         await startup.catch(() => undefined)
         const active = processes.filter((record) => !record.exited)
@@ -324,7 +327,11 @@ function cleanupControl(composition, processes) {
   })
   return {
     start() {
-      startup = Promise.resolve().then(() => composition.start())
+      startup = Promise.resolve()
+        .then(() => composition.start())
+        .finally(() => {
+          startupSettled = true
+        })
       return startup
     },
     closeRequested,

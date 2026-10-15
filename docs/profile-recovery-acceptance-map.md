@@ -182,6 +182,8 @@ Owners are existing issues. Where no open issue names a gap, the row says so.
    handles, and work directory for diagnosis; it does not force-kill an
    unrecorded process chain. Linux pidfds are required and unsupported platforms
    fail closed. This is test cleanup, not product orphan adoption or recovery.
+   Unexpected Restate launcher death before the parent pins the complete chain
+   remains unqualified; this proof does not recover an unanchored native orphan.
    Owner: #1025 crash/recovery, drain, upgrade, and rollback clauses. Its listed
    dependencies are #935 (fence cancellation retries and uncertain effects) and
    #939 (typed durable tasks).

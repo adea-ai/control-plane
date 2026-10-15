@@ -1485,6 +1485,7 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
     'partial identity capture',
     'rejected start with failed stop',
     'provider stop timeout',
+    'pending startup',
   ]) {
     test(`main cleanup closes Restate after ${failure} before ownership is recorded`, async () => {
       const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-main-cleanup-'))
@@ -1503,7 +1504,9 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
                 method: failure === 'startup timeout' ? 'health' : 'start',
                 probePath,
                 releasePath,
-                failStopAfterStart: failure === 'rejected start with failed stop',
+                failStopAfterStart: ['rejected start with failed stop', 'pending startup'].includes(
+                  failure
+                ),
                 stopFailurePath: join(work, 'stop-failure.json'),
               },
             }
@@ -1534,7 +1537,20 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
         started = await initial.next('started')
       }
       const observed = await recordOwnedRestate({ ...initial }, observers, 'initial', started)
-      if (failure === 'startup timeout') {
+      expect(initial.restateOwnershipRecorded).toBeUndefined()
+      let cleanupInProgress
+      if (failure === 'pending startup') {
+        cleanupInProgress = releaseOwnership({ work, incarnations: [initial], owned }).catch(
+          (error) => error
+        )
+        expect(await initial.next('cleanup_requested', EXIT_BOUND_MS)).toMatchObject({
+          startupPending: true,
+        })
+        expect(initial.stages.some((stage) => stage.stage === 'cleanup_started')).toBe(false)
+        expect(initial.restateOwnershipRecorded).toBeUndefined()
+        expect(observed.native.exited).toBe(false)
+        await writeFile(releasePath, 'settle pending startup')
+      } else if (failure === 'startup timeout') {
         await expect(initial.next('started', 100)).rejects.toThrow('PROTOCOL_CHILD_TIMEOUT_started')
       } else if (
         failure === 'rejected start with failed stop' ||
@@ -1561,10 +1577,9 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
         ).rejects.toThrow('NATIVE_IDENTITY_CAPTURE_INJECTED')
         expect(owned).toHaveLength(1)
       }
-      expect(initial.restateOwnershipRecorded).toBeUndefined()
-      const cleanupError = await releaseOwnership({ work, incarnations: [initial], owned }).catch(
-        (error) => error
-      )
+      const cleanupError = await (
+        cleanupInProgress ?? releaseOwnership({ work, incarnations: [initial], owned })
+      ).catch((error) => error)
       expect(observed.native.exited).toBe(true)
       if (cleanupError !== undefined) throw cleanupError
       expect(initial.restateOwnershipRecorded).toBe(true)
