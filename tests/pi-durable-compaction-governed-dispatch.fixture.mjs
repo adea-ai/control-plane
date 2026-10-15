@@ -7,7 +7,6 @@ import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { canonicalJsonStringify } from '@control-plane/contracts'
 import { deriveContextPackage } from '@control-plane/context'
 import {
   ExecutionLifecycleService,
