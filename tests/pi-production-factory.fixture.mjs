@@ -135,6 +135,7 @@ export async function createProductionFactoryFixture(options = {}) {
   let persistence, composition, models
   let fetchInstalled = false
   let closing
+  let keepDirectory = false
   const close = () =>
     (closing ??= (async () => {
       try {
@@ -144,7 +145,7 @@ export async function createProductionFactoryFixture(options = {}) {
           await persistence?.close()
         } finally {
           if (fetchInstalled) globalThis.fetch = originalFetch
-          await rm(directory, { recursive: true, force: true })
+          if (!keepDirectory) await rm(directory, { recursive: true, force: true })
         }
       }
     })())
@@ -700,6 +701,13 @@ export async function createProductionFactoryFixture(options = {}) {
       command,
       read,
       close,
+      // Closes the composition and every store but leaves the directory, for a restart in a new process.
+      // The caller owns removing it.
+      async detach() {
+        keepDirectory = true
+        await close()
+        return directory
+      },
       rawProductEvidence: (intentId) => structuredClone(source.get(intentId)),
       setIntent: (intentId = randomUUID(), intentOptions = {}) => {
         const requestedModelSelections =

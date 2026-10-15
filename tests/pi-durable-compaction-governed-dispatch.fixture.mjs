@@ -388,7 +388,7 @@ export function governedDispatchChildren(hooks) {
             evidence.reservations.push(structuredClone(budget))
             // The estimate (the child plan's ceiling) and the attempt's reservation are recorded as
             // cost-state evidence in the same step, and retained through the production repository.
-            await mutateChildUsage(hooks, (usage) => {
+            await mutateChildUsage(hooks.usageOutcomes, (usage) => {
               const identity = childUsageIdentity(admission)
               usage.recordEstimate(identity, {
                 currency: 'USD',
@@ -524,33 +524,36 @@ function childUsageIdentity(admission) {
  * snapshot, applies its evidence and saves a newer revision only when something changed. A restart
  * therefore resumes from exactly what was recorded.
  */
-async function mutateChildUsage(hooks, apply) {
-  const stored = await hooks.usageOutcomes.load()
+export async function mutateChildUsage(usageOutcomes, apply) {
+  const stored = await usageOutcomes.load()
   const usage = new ChildUsageLedger()
   if (stored) usage.restore(stored.snapshot)
   const result = apply(usage)
   const snapshot = usage.snapshot()
   if (!stored || canonicalJsonStringify(stored.snapshot) !== canonicalJsonStringify(snapshot))
-    await hooks.usageOutcomes.save({ revision: (stored?.revision ?? 0) + 1, snapshot })
+    await usageOutcomes.save({ revision: (stored?.revision ?? 0) + 1, snapshot })
   return result
 }
 
 /** The retained child cost state and its durable revision, as a restarted owner would load them. */
-export async function readChildCostState(hooks) {
-  const stored = await hooks.usageOutcomes.load()
+export async function loadChildCostState(usageOutcomes, parentExecutionId) {
+  const stored = await usageOutcomes.load()
   const usage = new ChildUsageLedger()
   if (stored) usage.restore(stored.snapshot)
   return {
     revision: stored?.revision,
     snapshot: stored?.snapshot,
     outcome: usage.status({
-      parentExecutionId: hooks.host.state.parentExecutionId,
+      parentExecutionId,
       delegationId: childIds.delegationId,
       childExecutionId: childIds.executionId,
       childAttemptId: childIds.attemptId,
     }),
   }
 }
+
+export const readChildCostState = (hooks) =>
+  loadChildCostState(hooks.usageOutcomes, hooks.host.state.parentExecutionId)
 
 /**
  * The production lead terminal settlement, run over the composition's own lead admission database.
@@ -576,36 +579,41 @@ export async function settleLeadTerminal(host) {
  * TEST ONLY child terminal settlement, composed from the existing machinery: the durable usage
  * ledger (`settle`, `finalizeBudget`), the child cost-state projection and its production
  * repository. Production has this path for the lead only; it is not wired into any composition
- * root here. Every step is idempotent, durable and ordered so that a cost state never runs ahead of
- * the money: report (needs the retained usage entry), settle the attempt reservation, finalize the
- * child budget back into the parent's funding reservation, then reconcile and settle the projection.
- * `hooks.settlementSeam(step)` runs after each durable step and may throw to interrupt.
+ * root here. It reads only durable state (the adapter journal's terminal record, the ledger and the
+ * projection), so a new process can resume it. Every step is idempotent, durable and ordered so that
+ * a cost state never runs ahead of the money: report (needs the retained usage entry), settle the
+ * attempt reservation, finalize the child budget back into the parent's funding reservation, then
+ * reconcile and settle the projection. `seam(step)` runs after each durable step and may throw, or
+ * kill the process, to interrupt.
  */
-export function createChildTerminalSettlement(hooks) {
-  const { host } = hooks
-  const workspaceId = host.workspaceId
+export function createChildTerminalSettlement({
+  ledger,
+  usageOutcomes,
+  journal,
+  workspaceId,
+  parentExecutionId,
+  at,
+  seam = async () => {},
+}) {
   const reservationKey = `runtime-attempt:${childIds.attemptId}`
-  const seam = async (step) => hooks.settlementSeam?.(step)
-  const identity = () => ({
-    parentExecutionId: host.state.parentExecutionId,
+  const identity = {
+    parentExecutionId,
     delegationId: childIds.delegationId,
     childExecutionId: childIds.executionId,
     childAttemptId: childIds.attemptId,
-  })
+  }
   return {
     async settle() {
-      const adapter = host.composition.adapter
-      const row = adapter.journal
+      const row = journal
         .list()
         .find((candidate) => candidate.admission.request.executionId === childIds.executionId)
       if (!row) return { state: 'absent' }
-      const status = await adapter.status(row.admission.handle)
       // Only a completed run has priced, retained usage. A failed, unknown or running child keeps
       // its reservation and its cost state exactly as recorded until it is reconciled.
-      const usage = status.result?.usage
-      if (status.state !== 'completed' || usage?.accounting === undefined)
-        return { state: 'not_terminal', runtime: status.state }
-      const usageEntry = (await host.ledger.entries(workspaceId, childIds.executionId)).find(
+      const usage = row.detail?.result?.usage
+      if (row.state !== 'completed' || usage?.accounting === undefined)
+        return { state: 'not_terminal', runtime: row.state }
+      const usageEntry = (await ledger.entries(workspaceId, childIds.executionId)).find(
         (entry) =>
           entry.kind === 'model_usage' && entry.source.sourceId === usage.accounting.sourceId
       )
@@ -615,8 +623,8 @@ export function createChildTerminalSettlement(hooks) {
         .digest('hex')
         .slice(0, 16)}`
 
-      await mutateChildUsage(hooks, (cost) =>
-        cost.recordReportedUsage(identity(), usage, {
+      await mutateChildUsage(usageOutcomes, (cost) =>
+        cost.recordReportedUsage(identity, usage, {
           reportId,
           publicationSequence: usageEntry.sequence,
         })
@@ -624,7 +632,7 @@ export function createChildTerminalSettlement(hooks) {
       await seam('reported')
 
       try {
-        await host.ledger.settle({
+        await ledger.settle({
           workspaceId,
           executionId: childIds.executionId,
           reservationKey,
@@ -639,7 +647,7 @@ export function createChildTerminalSettlement(hooks) {
       await seam('attempt-settled')
 
       try {
-        await host.ledger.finalizeBudget({
+        await ledger.finalizeBudget({
           workspaceId,
           executionId: childIds.executionId,
           source: {
@@ -652,26 +660,40 @@ export function createChildTerminalSettlement(hooks) {
       }
       await seam('budget-finalized')
 
-      const summary = await host.ledger.summary(workspaceId, childIds.executionId)
+      const summary = await ledger.summary(workspaceId, childIds.executionId)
       if (!summary.settled || summary.reservedMicrounits !== 0)
         throw new Error('TEST_CHILD_SETTLEMENT_INCOMPLETE')
       // The projection settles exactly what the ledger settled, and only when it agrees with the
       // priced report.
       if (summary.spentMicrounits !== usage.accounting.chargedMicrounits)
         throw new Error('TEST_CHILD_SETTLEMENT_MISMATCH')
-      await mutateChildUsage(hooks, (cost) =>
-        cost.reconcile(identity(), { reconciledAt: hooks.at })
+      await mutateChildUsage(usageOutcomes, (cost) =>
+        cost.reconcile(identity, { reconciledAt: at })
       )
       await seam('reconciled')
-      await mutateChildUsage(hooks, (cost) =>
-        cost.settle(identity(), {
+      await mutateChildUsage(usageOutcomes, (cost) =>
+        cost.settle(identity, {
           currency: 'USD',
           settledMicrounits: summary.spentMicrounits,
-          settledAt: hooks.at,
+          settledAt: at,
           settlementRef: reportId,
         })
       )
       return { state: 'settled', spentMicrounits: summary.spentMicrounits }
     },
   }
+}
+
+/** The in-process settlement over the live host; the journal is read through the current composition. */
+export function childSettlementFor(hooks) {
+  const { host } = hooks
+  return createChildTerminalSettlement({
+    ledger: host.ledger,
+    usageOutcomes: hooks.usageOutcomes,
+    journal: { list: () => host.composition.adapter.journal.list() },
+    workspaceId: host.workspaceId,
+    parentExecutionId: host.state.parentExecutionId,
+    at: hooks.at,
+    seam: async (step) => hooks.settlementSeam?.(step),
+  })
 }
