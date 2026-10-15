@@ -233,7 +233,33 @@ test('built Node adapter uses its compiled worker and completes measurement befo
   }
 })
 
-test('a pass past its deadline terminates the worker and emits nothing; close stays bounded', async () => {
+test('compiled SQLite worker exits on abort and preserves the last complete growth baseline', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'runtime-measurements-cancellation-'))
+  const databasePath = join(directory, 'control-plane.sqlite')
+  const provider = new SqlitePersistenceProvider({ path: databasePath })
+  try {
+    await provider.migrate()
+    provider.close()
+    const result = await promisify(execFile)(
+      'node',
+      [
+        fileURLToPath(new URL('./runtime-measurements-cancellation.fixture.mjs', import.meta.url)),
+        databasePath,
+      ],
+      { timeout: 15000 }
+    )
+    const evidence = JSON.parse(result.stdout)
+    assert.equal(evidence.terminations, 1)
+    assert.equal(evidence.readerTerminations, 1)
+    assert.equal(evidence.growth, evidence.final - evidence.first)
+    assert.notEqual(evidence.growth, evidence.final - evidence.abandoned)
+  } finally {
+    provider.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('SQLite sampling and close stay bounded whether completion or the deadline wins', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'runtime-measurements-'))
   const databasePath = join(directory, 'control-plane.sqlite')
   const database = new DatabaseSync(databasePath)
@@ -244,8 +270,8 @@ test('a pass past its deadline terminates the worker and emits nothing; close st
   database.close()
   const observed = []
   const record = (name, value, attributes) => observed.push({ name, value, attributes })
-  // The minimum deadline is shorter than starting a worker thread, so the pass is
-  // abandoned while (or before) the worker runs; its result can never be emitted.
+  // A fast worker may legitimately finish before this deadline. The held-worker fixture above
+  // separately proves discard on abort; here either outcome must leave shutdown bounded and quiet.
   const lifecycle = createLocalRuntimeMeasurements({
     databasePath,
     adapter: { add: record, record, recordGauge: record },
@@ -263,10 +289,11 @@ test('a pass past its deadline terminates the worker and emits nothing; close st
     const closing = lifecycle.close()
     assert.equal(lifecycle.close(), closing)
     await closing
+    const afterClose = structuredClone(observed)
     await new Promise((resolve) => setTimeout(resolve, 300))
-    assert.deepEqual(observed, [])
+    assert.deepEqual(observed, afterClose)
     await lifecycle.sample()
-    assert.deepEqual(observed, [])
+    assert.deepEqual(observed, afterClose)
   } finally {
     await lifecycle.close()
     await rm(directory, { recursive: true, force: true })

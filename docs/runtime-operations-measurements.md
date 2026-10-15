@@ -58,9 +58,10 @@ partial or unsafe sources. Neither correlations nor errors become metric labels.
 
 Producer behavior on abort:
 
-- Hosted PostgreSQL: the signal is checked before the transaction opens and
-  before every source. An aborted pass throws inside the transaction, so it
-  rolls back and reads nothing further; the caller stops waiting on the
+- Hosted PostgreSQL: the signal is checked before requesting the transaction,
+  after connection acquisition, after each savepoint is acquired before its
+  source SELECT, and after the final source. An abort observed inside the transaction
+  callback throws, so it rolls back and starts no further source query; the caller stops waiting on the
   transaction immediately. The baseline is promoted only after a last
   synchronous check that the signal is still live, so an aborted pass promotes
   no baseline even if its transaction committed. While an abandoned
@@ -70,9 +71,10 @@ Producer behavior on abort:
   `pg_cancel_backend` call and none is made on the caller's behalf); it
   remains bounded by `statementTimeoutMs`, `lockTimeoutMs` and the fixed
   15 s idle-in-transaction timeout, and it rolls back.
-- Local/Hosted Simple SQLite: abort terminates the worker thread and the pass
-  settles when the thread has exited, so the read snapshot is released. An
-  aborted pass does not update the retained baseline.
+- Local/Hosted Simple SQLite: abort terminates the worker thread. Its producer
+  settles only after the thread exits and releases its read snapshot; the
+  lifecycle caller can return earlier at its deadline. An aborted pass does not
+  update the retained baseline.
 - Accordingly, `passTimeoutMs` bounds how long a pass can block the lifecycle,
   not the cost of database work already issued.
 
@@ -251,3 +253,16 @@ cancel an abandoned PostgreSQL statement server side, or recover a producer that
 never settles. Hosted PostgreSQL acquisition/commit behavior remains outside its
 scope, so a pool that cannot hand out a connection is bounded only by the pass
 deadline and the driver's own connect timeout.
+
+The compiled Node SQLite fixture holds a real worker's completed result before
+exit, observes termination and thread exit after abort, and compares storage
+growth across complete, aborted and complete passes. The aborted snapshot has
+different storage bytes, so preserving the previous complete baseline is
+observable. PostgreSQL tests distinguish commit from rollback, including real
+transactions paused after connection acquisition, savepoint acquisition and
+the final source query.
+The Node fixture also holds a real SQLite read snapshot after its first SELECT:
+a subsequent writer cannot truncate the WAL until cancellation terminates that
+worker, after which checkpointing succeeds. This does not claim interruption
+inside a synchronous SQLite C call; it verifies termination and release of an
+active snapshot between reads.

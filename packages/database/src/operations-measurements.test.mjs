@@ -507,19 +507,35 @@ describe('createPostgresOperationsMeasurementProducer', () => {
 })
 
 /** A database whose transaction can be held open and whose sources count their reads. */
-function controllableDatabase({ onSource } = {}) {
-  const state = { transactions: 0, reads: 0, finished: 0, bytes: 100, gate: undefined }
+function controllableDatabase({ onSource, onSavepoint, onCommit } = {}) {
+  const state = {
+    transactions: 0,
+    reads: 0,
+    configured: 0,
+    committed: 0,
+    rolledBack: 0,
+    finished: 0,
+    completion: undefined,
+    bytes: 100,
+    gate: undefined,
+  }
   const database = {
     state,
     transaction: async (callback) => {
       state.transactions += 1
+      const completion = Promise.withResolvers()
+      state.completion = completion.promise
       try {
         if (state.gate !== undefined) await state.gate
         let read = 0
-        return await callback({
-          execute: async () => [],
-          transaction: async (inner) =>
-            inner({
+        const result = await callback({
+          execute: async () => {
+            state.configured += 1
+            return []
+          },
+          transaction: async (inner) => {
+            await onSavepoint?.(read)
+            return inner({
               execute: async () => {
                 const index = read
                 read += 1
@@ -527,10 +543,18 @@ function controllableDatabase({ onSource } = {}) {
                 onSource?.(index)
                 return [baseRow({ bytes: String(state.bytes) })]
               },
-            }),
+            })
+          },
         })
+        state.committed += 1
+        onCommit?.()
+        return result
+      } catch (error) {
+        state.rolledBack += 1
+        throw error
       } finally {
         state.finished += 1
+        completion.resolve()
       }
     },
   }
@@ -564,6 +588,43 @@ describe('producer cancellation', () => {
     await expect(subject.measureDetailed(controller.signal)).resolves.toBeUndefined()
     await expect(subject.measure({ signal: controller.signal })).resolves.toBeUndefined()
     expect(database.state.transactions).toBe(0)
+  })
+
+  test('abort while acquiring the transaction issues no configuration or source query', async () => {
+    const database = controllableDatabase()
+    const gate = Promise.withResolvers()
+    database.state.gate = gate.promise
+    const controller = new AbortController()
+    const pending = producer(database).measureDetailed(controller.signal)
+    controller.abort()
+    await expect(promptly(pending)).resolves.toBeUndefined()
+    gate.resolve()
+    await database.state.completion
+    expect(database.state.configured).toBe(0)
+    expect(database.state.reads).toBe(0)
+    expect(database.state.committed).toBe(0)
+    expect(database.state.rolledBack).toBe(1)
+  })
+
+  test('abort while acquiring a source savepoint issues no source query and rolls back', async () => {
+    const reached = Promise.withResolvers()
+    const gate = Promise.withResolvers()
+    const database = controllableDatabase({
+      onSavepoint: async () => {
+        reached.resolve()
+        await gate.promise
+      },
+    })
+    const controller = new AbortController()
+    const pending = producer(database).measureDetailed(controller.signal)
+    await reached.promise
+    controller.abort()
+    await expect(promptly(pending)).resolves.toBeUndefined()
+    gate.resolve()
+    await database.state.completion
+    expect(database.state.reads).toBe(0)
+    expect(database.state.committed).toBe(0)
+    expect(database.state.rolledBack).toBe(1)
   })
 
   test('aborting between sources stops further reads, rolls back and promotes no baseline', async () => {
@@ -603,8 +664,10 @@ describe('producer cancellation', () => {
     const subject = producer(database)
     // First pass is complete but aborted before it can report.
     await expect(subject.measureDetailed(controller.signal)).resolves.toBeUndefined()
-    await new Promise((resolve) => setTimeout(resolve, 5))
+    await database.state.completion
     expect(database.state.finished).toBe(1)
+    expect(database.state.committed).toBe(0)
+    expect(database.state.rolledBack).toBe(1)
 
     // No baseline was promoted, so the next complete pass has no growth point.
     const next = await subject.measureDetailed()
@@ -623,14 +686,12 @@ describe('producer cancellation', () => {
       addEventListener() {},
       removeEventListener() {},
     }
-    const database = controllableDatabase({
-      onSource: (index) => {
-        if (index === postgresMeasuredNamespaces.length - 1) aborted = true
-      },
-    })
+    const database = controllableDatabase({ onCommit: () => (aborted = true) })
     const subject = producer(database)
     await expect(subject.measureDetailed(signal)).resolves.toBeUndefined()
     expect(database.state.finished).toBe(1)
+    expect(database.state.committed).toBe(1)
+    expect(database.state.rolledBack).toBe(0)
 
     aborted = false
     database.state.bytes = 130

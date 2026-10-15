@@ -522,7 +522,7 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
       failure = error
     }
 
-    expect(attempts.sort()).toEqual(['database', 'first-client', 'second-client'])
+    expect(attempts.toSorted()).toEqual(['database', 'first-client', 'second-client'])
     expect(failure).toBeInstanceOf(AggregateError)
     expect(failure.errors).toEqual([closeFailure, disposeFailure])
   })
@@ -1671,6 +1671,85 @@ describe.skipIf(!enabled)('Hosted PostgreSQL operations measurement producer', (
     },
     timeout
   )
+
+  for (const boundary of ['connection', 'savepoint', 'final source']) {
+    test(
+      `abort at the ${boundary} boundary rolls back the real PostgreSQL transaction`,
+      async () => {
+        const statements = []
+        const pool = postgres(applicationUrl, {
+          max: 1,
+          prepare: false,
+          debug: (_connection, query) => statements.push(query.trim().toLowerCase()),
+        })
+        const database = drizzle(pool, { schema })
+        const reached = Promise.withResolvers()
+        const release = Promise.withResolvers()
+        const completed = Promise.withResolvers()
+        let reads = 0
+        const pause = async () => {
+          reached.resolve()
+          await release.promise
+        }
+        const controlled = {
+          transaction: (callback, options) =>
+            database
+              .transaction(async (transaction) => {
+                if (boundary === 'connection') await pause()
+                return callback({
+                  execute: transaction.execute.bind(transaction),
+                  transaction: (inner) =>
+                    transaction.transaction(async (savepoint) => {
+                      if (boundary === 'savepoint' && reads === 0) await pause()
+                      return inner({
+                        execute: async (query) => {
+                          const rows = await savepoint.execute(query)
+                          reads += 1
+                          if (
+                            boundary === 'final source' &&
+                            reads === postgresMeasuredNamespaces.length
+                          )
+                            await pause()
+                          return rows
+                        },
+                      })
+                    }),
+                })
+              }, options)
+              .finally(() => completed.resolve()),
+        }
+        const controller = new AbortController()
+        const producer = producerFor(WORKSPACE_A, { database: controlled })
+        try {
+          const pending = producer.measureDetailed(controller.signal)
+          await reached.promise
+          controller.abort()
+          await expect(pending).resolves.toBeUndefined()
+          // The real transaction is still paused; another pass cannot acquire a connection.
+          await expect(producer.measureDetailed()).resolves.toBeUndefined()
+          release.resolve()
+          await completed.promise
+          expect(statements.some((statement) => /^rollback\b/.test(statement))).toBe(true)
+          expect(statements.some((statement) => /^commit\b/.test(statement))).toBe(false)
+          expect(reads).toBe(boundary === 'final source' ? postgresMeasuredNamespaces.length : 0)
+          if (boundary === 'connection')
+            expect(statements.some((statement) => statement.includes('set_config'))).toBe(false)
+          // Observe closure through the application role; this also lets the producer release its
+          // in-process fence after the driver's transaction promise finishes.
+          expect(await openApplicationTransactions()).toBe(0)
+
+          const recovered = await producer.measureDetailed()
+          expect(recovered.baselineCommitted).toBe(true)
+          expect(pointsOf(recovered.points, operationsMetricNames.storageGrowthBytes)).toEqual([])
+        } finally {
+          release.resolve()
+          await completed.promise
+          await pool.end({ timeout: 5 })
+        }
+      },
+      timeout
+    )
+  }
 
   test(
     'concurrent callers share one in-flight pass',

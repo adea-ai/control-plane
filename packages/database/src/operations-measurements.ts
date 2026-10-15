@@ -710,14 +710,17 @@ type MeasurementTransaction = Parameters<
 async function readSource<K extends PostgresMeasuredNamespace>(
   transaction: MeasurementTransaction,
   spec: SourceSpec<K>,
-  context: QueryContext
+  context: QueryContext,
+  signal: AbortSignal | undefined
 ): Promise<Outcome<SourceFacts[K]>> {
   let rows: readonly Row[]
   try {
     // A savepoint keeps one failed source from aborting the whole snapshot.
-    rows = await transaction.transaction(
-      async (savepoint) => (await savepoint.execute(spec.query(context))) as unknown as Row[]
-    )
+    rows = await transaction.transaction(async (savepoint) => {
+      // Acquiring a savepoint can await the driver. Recheck before issuing a new source query.
+      if (signal?.aborted) throw new MeasurementAborted()
+      return (await savepoint.execute(spec.query(context))) as unknown as Row[]
+    })
   } catch (error) {
     return { status: 'unavailable', reason: reasonFor(error) }
   }
@@ -994,6 +997,8 @@ export function createPostgresOperationsMeasurementProducer(
       try {
         return await resolved.database.transaction(
           async (transaction) => {
+            // Connection acquisition may have outlived the caller's deadline.
+            if (aborted()) throw new MeasurementAborted()
             await transaction.execute(sql`select
               set_config('statement_timeout', ${String(resolved.statementTimeoutMs)}, true),
               set_config('lock_timeout', ${String(resolved.lockTimeoutMs)}, true),
@@ -1002,8 +1007,15 @@ export function createPostgresOperationsMeasurementProducer(
             for (const namespace of postgresMeasuredNamespaces) {
               // An aborted pass stops at the next source boundary and rolls back.
               if (aborted()) throw new MeasurementAborted()
-              collected[namespace] = await readSource(transaction, sources[namespace], context)
+              collected[namespace] = await readSource(
+                transaction,
+                sources[namespace],
+                context,
+                signal
+              )
             }
+            // The last source has no next iteration to observe an abort and force rollback.
+            if (aborted()) throw new MeasurementAborted()
             return collected as unknown as SourceOutcomes
           },
           { isolationLevel: 'repeatable read', accessMode: 'read only' }
