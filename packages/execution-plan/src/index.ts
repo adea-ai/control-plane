@@ -501,9 +501,98 @@ export class InMemoryExecutionPlanRepository implements ExecutionPlanRepository 
 }
 
 export function assertExecutionPlanIntegrity(input: unknown): ExecutionPlan {
-  const plan = parsePlan(input)
+  // The snapshot is the only thing that is keyed, validated and cached, so the
+  // caller's object (hooks, getters, proxies, later mutation) can never pair
+  // one plan's key with another plan's verdict.
+  const snapshot = plainJsonSnapshot(input)
+  if (snapshot === undefined) {
+    const plan = parsePlan(input)
+    assertPlanIntegrity(plan)
+    return plan
+  }
+  const key = JSON.stringify(snapshot)
+  const cached = key.length <= MAX_VERIFIED_PLAN_KEY_LENGTH ? verifiedPlans.get(key) : undefined
+  if (cached !== undefined) {
+    // Refresh recency; callers always receive their own copy.
+    verifiedPlans.delete(key)
+    verifiedPlans.set(key, cached)
+    return structuredClone(cached)
+  }
+  const plan = parsePlan(snapshot)
   assertPlanIntegrity(plan)
+  if (key.length <= MAX_VERIFIED_PLAN_KEY_LENGTH) {
+    if (verifiedPlans.size >= MAX_VERIFIED_PLANS) {
+      const oldest = verifiedPlans.keys().next()
+      if (!oldest.done) verifiedPlans.delete(oldest.value)
+    }
+    verifiedPlans.set(key, structuredClone(plan))
+  }
   return plan
+}
+
+// Parsing and re-digesting a plan is pure in its JSON content, and one flow
+// re-verifies the same few plans thousands of times. Only successes are kept,
+// keyed by the exact serialized snapshot. Inputs that are not plain JSON data
+// bypass the memo and are validated exactly as before.
+const MAX_VERIFIED_PLANS = 64
+const MAX_VERIFIED_PLAN_KEY_LENGTH = 256 * 1024
+const MAX_SNAPSHOT_DEPTH = 32
+const verifiedPlans = new Map<string, ExecutionPlan>()
+
+/**
+ * Deep copy of plain JSON data, or undefined when the input is anything else.
+ * Each property is read exactly once through its own data descriptor, so
+ * accessors, `toJSON`-style hooks on non-plain objects, symbol keys, sparse
+ * arrays, non-finite numbers, `-0` and exotic prototypes are all refused. The
+ * copy owns its own plain arrays and null-prototype-free objects, so nothing
+ * the caller later does to the original can reach it.
+ */
+function plainJsonSnapshot(value: unknown, depth = 0): unknown {
+  if (depth > MAX_SNAPSHOT_DEPTH) return undefined
+  if (value === null) return null
+  switch (typeof value) {
+    case 'string':
+    case 'boolean':
+      return value
+    case 'number':
+      return Number.isFinite(value) && !Object.is(value, -0) ? value : undefined
+    case 'object':
+      break
+    default:
+      return undefined
+  }
+  if (Array.isArray(value)) {
+    const keys = Reflect.ownKeys(value)
+    if (keys.length !== value.length + 1) return undefined // indices plus `length`
+    const copy: unknown[] = []
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, index)
+      if (descriptor === undefined || !('value' in descriptor) || !descriptor.enumerable)
+        return undefined
+      const entry = plainJsonSnapshot(descriptor.value, depth + 1)
+      if (entry === undefined) return undefined
+      copy.push(entry)
+    }
+    return copy
+  }
+  const prototype = Object.getPrototypeOf(value) as object | null
+  if (prototype !== Object.prototype && prototype !== null) return undefined
+  const copy: Record<string, unknown> = {}
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key === 'symbol') return undefined
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (descriptor === undefined || !('value' in descriptor) || !descriptor.enumerable)
+      return undefined
+    const entry = plainJsonSnapshot(descriptor.value, depth + 1)
+    if (entry === undefined) return undefined
+    Object.defineProperty(copy, key, {
+      value: entry,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    })
+  }
+  return copy
 }
 
 export interface ExecutionPlanAcceptanceValidatorOptions {
