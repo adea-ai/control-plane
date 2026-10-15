@@ -181,43 +181,83 @@ function completeFailureRestateIdentities(identities) {
   return [launcher, native]
 }
 
-async function pinOrConfirmFailureIdentities(identities, owned) {
+async function pinFailureIdentityWithLiveAnchor(identity, parent) {
+  const commandIncludes = identity.command.includes(pinned.launcher)
+    ? pinned.launcher
+    : pinned.native
+  const handle = await pinOwnedProcess(identity.pid, { commandIncludes, parent })
+  if (!sameProcess(handle.identity, identity)) {
+    handle.close()
+    throw new Error('PINNED_PROCESS_IDENTITY_MISMATCH: failure identity changed after discovery')
+  }
+  return handle
+}
+
+async function pinOrConfirmFailureIdentities(
+  identities,
+  owned,
+  {
+    pinIdentity = pinFailureIdentityWithLiveAnchor,
+    identityReader = readProcessIdentity,
+    ownershipAnchor,
+  } = {}
+) {
   const problems = []
+  const [launcherIdentity] = identities
   for (const identity of identities) {
     if (owned.some((handle) => sameProcess(handle.identity, identity))) continue
-    try {
-      owned.push(await pinProcess(identity))
-    } catch (pinError) {
+    const isLauncher = identity.command.includes(pinned.launcher)
+    const owner = isLauncher
+      ? ownershipAnchor
+      : owned.find((handle) => sameProcess(handle.identity, launcherIdentity))
+    let pinError
+    if (owner !== undefined && owner.exited !== true) {
       try {
-        const actual = await readProcessIdentity(identity.pid)
-        if (actual === undefined) continue
-        if (
-          actual.pid === identity.pid &&
-          (!Number.isSafeInteger(actual.startTicks) || actual.startTicks === identity.startTicks)
-        ) {
-          problems.push(
-            new Error(
-              `OWNED_PROCESS_UNPINNED: pid ${identity.pid} may still be the recorded process`,
-              {
-                cause: pinError,
-              }
-            )
-          )
-        }
-        // A different full identity at the same pid cannot be the process in this failure record.
-      } catch (readError) {
-        problems.push(
-          new Error(`OWNED_PROCESS_IDENTITY_READ_FAILED: pid ${identity.pid}`, {
-            cause: readError,
-          })
-        )
+        owned.push(await pinIdentity(identity, owner))
+        continue
+      } catch (error) {
+        pinError = error
       }
+    }
+    try {
+      const actual = await identityReader(identity.pid)
+      if (actual === undefined) continue
+      if (
+        actual.pid === identity.pid &&
+        Number.isSafeInteger(actual.startTicks) &&
+        actual.startTicks !== identity.startTicks
+      ) {
+        // A different kernel start tick proves the recorded process is gone. If ticks match or
+        // cannot be read, this may be a same-tick pid reuse and late pinning cannot disambiguate it.
+        continue
+      }
+      problems.push(
+        new Error(
+          `OWNED_PROCESS_UNPINNED: pid ${identity.pid} may still be the recorded process; no live owner anchor remains`,
+          { cause: pinError }
+        )
+      )
+    } catch (readError) {
+      problems.push(
+        new Error(`OWNED_PROCESS_IDENTITY_READ_FAILED: pid ${identity.pid}`, {
+          cause: readError,
+        })
+      )
     }
   }
   return problems
 }
 
-async function cleanupFailureComposition({ work, incarnation, owned, releasePath, timeoutMs }) {
+async function cleanupFailureComposition({
+  work,
+  incarnation,
+  owned,
+  releasePath,
+  timeoutMs,
+  pinIdentity = pinFailureIdentityWithLiveAnchor,
+  identityReader = readProcessIdentity,
+  ownershipAnchor,
+}) {
   // Releasing the fixture gate lets a still-starting child fail through its own `finally` and
   // close the composition. Until both Restate processes are pinned, cleanup must not kill the
   // owner and orphan an unrecorded child.
@@ -236,7 +276,11 @@ async function cleanupFailureComposition({ work, incarnation, owned, releasePath
   const problems =
     identities === undefined
       ? [new Error('RESTATE_FAILURE_IDENTITIES_INCOMPLETE')]
-      : await pinOrConfirmFailureIdentities(identities, owned)
+      : await pinOrConfirmFailureIdentities(identities, owned, {
+          pinIdentity,
+          identityReader,
+          ownershipAnchor,
+        })
   let unconfirmed = await reapOwned(owned)
   if (unconfirmed.length > 0) unconfirmed = await reapOwned(owned)
   for (const { identity, reason } of unconfirmed) {
@@ -1551,6 +1595,78 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       expect(attemptedHandles).toEqual([handle, handle])
       expect(closeAttempts).toBe(1)
       expect(owned).toEqual([])
+      expect(existsSync(work)).toBe(true)
+    } finally {
+      await rm(work, { recursive: true, force: true })
+    }
+  })
+
+  test('late cleanup does not pin or signal an impostor with the exact recorded identity tuple', async () => {
+    const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-same-tick-impostor-'))
+    const identities = [
+      {
+        pid: 331,
+        ppid: 330,
+        started: 'fixture-launcher',
+        command: pinned.launcher,
+        startTicks: 61,
+      },
+      {
+        pid: 332,
+        ppid: 331,
+        started: 'fixture-native',
+        command: pinned.native,
+        startTicks: 62,
+      },
+    ]
+    const descriptors = new Map()
+    const exited = new Set()
+    const backendEvents = []
+    let nextFd = 20
+    const backend = {
+      open(pid) {
+        const fd = nextFd
+        nextFd += 1
+        descriptors.set(fd, pid)
+        backendEvents.push(`open:${pid}`)
+        return fd
+      },
+      send(fd, signal) {
+        backendEvents.push(`signal:${descriptors.get(fd)}:${signal}`)
+        exited.add(fd)
+        return true
+      },
+      exited: (fd) => exited.has(fd),
+      close(fd) {
+        backendEvents.push(`close:${descriptors.get(fd)}`)
+      },
+    }
+    const identityReader = async (pid) => identities.find((identity) => identity.pid === pid)
+    const incarnation = {
+      child: { pid: 330, exitCode: 1, signalCode: null },
+      exited: Promise.resolve({ code: 1, signal: null }),
+      stages: [{ stage: 'failed', processIdentities: identities }],
+    }
+
+    try {
+      const error = await cleanupFailureComposition({
+        work,
+        incarnation,
+        owned: [],
+        releasePath: join(work, 'release'),
+        timeoutMs: 100,
+        identityReader,
+        pinIdentity: (identity) =>
+          pinProcess(identity, {
+            backend,
+            readIdentity: identityReader,
+          }),
+      }).catch((caught) => caught)
+
+      expect(error).toBeInstanceOf(AggregateError)
+      expect(error.message).toContain(`state preserved for diagnosis at ${work}`)
+      expect(backendEvents.filter((event) => event.startsWith('open:'))).toEqual([])
+      expect(backendEvents.filter((event) => event.startsWith('signal:'))).toEqual([])
       expect(existsSync(work)).toBe(true)
     } finally {
       await rm(work, { recursive: true, force: true })
