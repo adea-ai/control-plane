@@ -920,6 +920,122 @@ function compile(input) {
   return new ExecutionPlanCompiler('1.0.0').compile(input)
 }
 
+describe('verified plan memo', () => {
+  test('returns independent copies and still rejects every changed or non-JSON input', () => {
+    const plan = compile(baseInput())
+    const first = assertExecutionPlanIntegrity(plan)
+    const second = assertExecutionPlanIntegrity(JSON.parse(JSON.stringify(plan)))
+    const third = assertExecutionPlanIntegrity(plan)
+    expect(first).toEqual(plan)
+    expect(second).toEqual(plan)
+    expect(third).toEqual(plan)
+    expect(second).not.toBe(third)
+
+    // Mutating a returned plan must not leak into later verifications.
+    third.compiler.version = '9.9.9'
+    third.skills.push({})
+    expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+
+    // A cached verdict never covers changed content, even by a single field.
+    expect(() =>
+      assertExecutionPlanIntegrity({ ...plan, compiledAt: '2030-01-01T00:00:00.000Z' })
+    ).toThrow()
+    expect(() =>
+      assertExecutionPlanIntegrity({ ...plan, outputContract: { contractRef: 'other' } })
+    ).toThrow()
+    expect(() => assertExecutionPlanIntegrity({ ...plan, extra: true })).toThrow()
+    // Failures are re-evaluated every time, not remembered as successes.
+    expect(() => assertExecutionPlanIntegrity({ ...plan, extra: true })).toThrow()
+    expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+  })
+
+  test('does not let a non-JSON object borrow the verdict of an equal-looking plan', () => {
+    const plan = compile(baseInput())
+    expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+    const withDate = { ...plan, compiledAt: new Date(plan.compiledAt) }
+    expect(() => assertExecutionPlanIntegrity(withDate)).toThrow()
+    // The schema refuses non-plain objects; the memo bypass must not change that.
+    const exotic = Object.assign(Object.create({ inherited: true }), plan)
+    expect(() => assertExecutionPlanIntegrity(exotic)).toThrow()
+    expect(() => assertExecutionPlanIntegrity({ ...plan, extra: 1n })).toThrow()
+  })
+
+  test('stays correct past the memo bound', () => {
+    const plans = Array.from({ length: 70 }, (_value, index) =>
+      compile({
+        ...baseInput(),
+        compiledAt: new Date(Date.UTC(2026, 7, 23, 12, 0, index)).toISOString(),
+      })
+    )
+    for (const plan of plans) expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+    for (const plan of plans) expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+  })
+  test('never pairs a key with a different plan when a getter changes between reads', () => {
+    const plan = compile(baseInput())
+    expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+    const other = '2031-01-01T00:00:00.000Z'
+    let reads = 0
+    const hostile = {
+      ...plan,
+      get compiledAt() {
+        reads += 1
+        // Serves the cached plan's value only on the second read, the one a
+        // serialization-based key would use, and a different value otherwise.
+        return reads === 2 ? plan.compiledAt : other
+      },
+    }
+    expect(() => assertExecutionPlanIntegrity(hostile)).toThrow()
+    expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+  })
+
+  test('never lets a serialization hook stand in for the real contents', () => {
+    const plan = compile(baseInput())
+    expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+    const requirements = [...plan.runtimeRequirements, { capability: 'forged' }]
+    Object.defineProperty(requirements, 'toJSON', {
+      value: () => plan.runtimeRequirements,
+      enumerable: false,
+    })
+    expect(() =>
+      assertExecutionPlanIntegrity({ ...plan, runtimeRequirements: requirements })
+    ).toThrow()
+
+    class Hooked {
+      toJSON() {
+        return plan
+      }
+    }
+    expect(() => assertExecutionPlanIntegrity(new Hooked())).toThrow()
+
+    const hookedObject = {
+      ...plan,
+      outputContract: { contractRef: 'other', toJSON: () => plan.outputContract },
+    }
+    expect(() => assertExecutionPlanIntegrity(hookedObject)).toThrow()
+  })
+
+  test('validates exactly the snapshot it keys, even if the input changes afterwards', () => {
+    const plan = compile(baseInput())
+    const live = JSON.parse(JSON.stringify(plan))
+    const result = assertExecutionPlanIntegrity(live)
+    live.compiledAt = '2032-01-01T00:00:00.000Z'
+    expect(result).toEqual(plan)
+    expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+    expect(() => assertExecutionPlanIntegrity(live)).toThrow()
+  })
+
+  test('rejects sparse arrays and non-finite numbers', () => {
+    const plan = compile(baseInput())
+    expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+    const sparse = [...plan.runtimeRequirements]
+    sparse.length += 1
+    expect(() => assertExecutionPlanIntegrity({ ...plan, runtimeRequirements: sparse })).toThrow()
+    expect(() =>
+      assertExecutionPlanIntegrity({ ...plan, profile: { ...plan.profile, version: Number.NaN } })
+    ).toThrow()
+  })
+})
+
 describe('immutable graph selection in execution plans', () => {
   const graph = {
     reference: {
