@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.40.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.40.0...sqlite-persistence-v1.40.1) (2026-10-15)
+
+
+### Performance
+
+* cache SQLite statements and avoid repeated canonical JSON work ([#1142](https://github.com/adea-ai/control-plane/issues/1142)) ([b8b47f5](https://github.com/adea-ai/control-plane/commit/b8b47f5c0261f8e9880fd0572fd05aa353c3c418))
+
 ## [1.40.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.39.0...sqlite-persistence-v1.40.0) (2026-10-15)
 
 
