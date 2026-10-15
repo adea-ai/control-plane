@@ -56,8 +56,39 @@ import {
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const pinned = pinnedRestateCommands()
 const EXIT_BOUND_MS = 15_000
+const FAILURE_PROBE_WAIT_MS = EXIT_BOUND_MS * 4
 const cleanup = []
-const OWNER_WITH_CHILD_TRAP = "sleep 62 & c=$!; trap 'exit 0' TERM; echo $c; wait"
+const OWNER_WITH_CHILD_HANDLE = String.raw`
+const { spawn } = require('node:child_process')
+const child = spawn('sleep', ['62'], { stdio: 'ignore' })
+let transferred = false
+let shuttingDown = false
+process.stdin.setEncoding('utf8')
+process.stdin.on('data', (chunk) => {
+  if (chunk.split(/\r?\n/).includes('transfer')) {
+    transferred = true
+    process.stdout.write('OWNERSHIP_TRANSFERRED\n')
+  }
+})
+process.on('SIGTERM', () => {
+  if (transferred) {
+    process.exit(0)
+    return
+  }
+  if (shuttingDown) return
+  shuttingDown = true
+  if (child.exitCode !== null || child.signalCode !== null) {
+    process.exit(0)
+    return
+  }
+  child.once('exit', () => process.exit(0))
+  child.kill('SIGTERM')
+  setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+  }, 1_000).unref()
+})
+process.stdout.write(String(child.pid) + '\n')
+`
 
 async function isolatedPorts() {
   const servers = []
@@ -93,6 +124,142 @@ async function ingressPost(ports, executionId, path, body) {
       signal: AbortSignal.timeout(15000),
     }
   )
+}
+
+async function waitForFailureOutcome(incarnation, probePath, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      return { kind: 'probe', evidence: JSON.parse(await readFile(probePath, 'utf8')) }
+    } catch (error) {
+      if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error
+    }
+    const failed = incarnation.stages.find((stage) => stage.stage === 'failed')
+    if (failed !== undefined) return { kind: 'failed', record: failed }
+    const started = incarnation.stages.find((stage) => stage.stage === 'started')
+    if (started !== undefined) return { kind: 'started', record: started }
+    if (incarnation.child.exitCode !== null || incarnation.child.signalCode !== null) {
+      return {
+        kind: 'exit',
+        result: await boundedWait(incarnation.exited, EXIT_BOUND_MS, 'failure owner exit'),
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  return { kind: 'timeout' }
+}
+
+async function cleanupFailureComposition({ work, incarnation, owned, releasePath, timeoutMs }) {
+  // Releasing the fixture gate lets a still-starting child fail through its own `finally` and
+  // close the composition. Until both Restate processes are pinned, cleanup must not kill the
+  // owner and orphan an unrecorded child.
+  await writeFile(releasePath, 'cleanup')
+  if (incarnation.restateOwnershipRecorded === true) {
+    await releaseOwnership({ work, incarnations: [incarnation], owned })
+    return
+  }
+  await boundedWait(incarnation.exited, timeoutMs, 'unrecorded failure composition close')
+  const unconfirmed = await reapOwned(owned)
+  if (unconfirmed.length > 0) {
+    throw new AggregateError(
+      unconfirmed.map(({ identity, reason }) => new Error(`pid ${identity.pid}: ${reason}`)),
+      `cleanup incomplete; state preserved for diagnosis at ${work}`
+    )
+  }
+  await rm(work, { recursive: true, force: true })
+}
+
+async function exerciseRejectedCompositionBeforeHandshake(
+  failureMethod,
+  { probeDelayMs = 0 } = {}
+) {
+  const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-health-failure-'))
+  const releasePath = join(work, `release-${failureMethod}-failure`)
+  const config = {
+    dataDirectory: join(work, 'data'),
+    ports: await isolatedPorts(),
+    failureBeforeOwnershipHandshake: {
+      method: failureMethod,
+      probePath: join(work, `${failureMethod}-failure.json`),
+      probeDelayMs,
+      releasePath,
+    },
+  }
+  const owned = []
+  const initial = spawnSelfHostedSimpleComposition('initial', config)
+  const incarnation = initial
+  const probeWaitMs = FAILURE_PROBE_WAIT_MS + probeDelayMs
+  cleanup.push(() =>
+    cleanupFailureComposition({
+      work,
+      incarnation,
+      owned,
+      releasePath,
+      timeoutMs: probeWaitMs + EXIT_BOUND_MS * 2,
+    })
+  )
+
+  const outcome = await waitForFailureOutcome(
+    initial,
+    config.failureBeforeOwnershipHandshake.probePath,
+    probeWaitMs
+  )
+  let evidence
+  if (outcome.kind === 'probe') {
+    evidence = outcome.evidence
+  } else if (outcome.kind === 'started') {
+    // If the fixture unexpectedly reaches its normal handshake, still pin the owner tree before
+    // failing this expectation so afterEach can clean it without risking an orphan.
+    await recordOwnedRestate(incarnation, owned, 'initial', outcome.record)
+  }
+  expect(outcome.kind).toBe('probe')
+  expect(evidence.method).toBe(failureMethod)
+  expect(evidence.probeDelayMs).toBe(probeDelayMs)
+  expect(evidence.probeDelayElapsedMs).toBeGreaterThanOrEqual(probeDelayMs)
+  expect(evidence.processIdentities).toHaveLength(2)
+  const recorded = await recordOwnedRestate(incarnation, owned, 'initial', evidence)
+  expect(owned.map((handle) => handle.identity)).toEqual(evidence.processIdentities)
+
+  await writeFile(releasePath, 'continue')
+  await expect(initial.next('started', EXIT_BOUND_MS)).rejects.toThrow(
+    `PROTOCOL_CHILD_FAILED: SELF_HOSTED_SIMPLE_INJECTED_${failureMethod.toUpperCase()}_FAILURE`
+  )
+  expect(initial.stages.some((stage) => stage.stage === 'started')).toBe(false)
+  expect(initial.stages.find((stage) => stage.stage === 'failed')).toMatchObject({
+    processIdentities: evidence.processIdentities,
+  })
+  expect(await boundedWait(initial.exited, EXIT_BOUND_MS, 'failed composition exit')).toEqual({
+    code: 1,
+    signal: null,
+  })
+  expect(recorded.launcher.exited).toBe(true)
+  expect(recorded.native.exited).toBe(true)
+}
+
+function spawnHandleOwner() {
+  const owner = spawn(process.execPath, ['-e', OWNER_WITH_CHILD_HANDLE], {
+    stdio: ['pipe', 'pipe', 'ignore'],
+  })
+  const exited = processExit(owner)
+  const lines = []
+  const waiters = []
+  let buffer = ''
+  owner.stdout.setEncoding('utf8')
+  owner.stdout.on('data', (chunk) => {
+    buffer += chunk
+    const output = buffer.split('\n')
+    buffer = output.pop()
+    for (const line of output) {
+      const waiter = waiters.shift()
+      if (waiter) waiter(line.trim())
+      else lines.push(line.trim())
+    }
+  })
+  const nextLine = () =>
+    lines.length > 0
+      ? Promise.resolve(lines.shift())
+      : new Promise((resolve) => waiters.push(resolve))
+  return { owner, exited, nextLine }
 }
 
 /** Records and pins the launcher and native server of one incarnation, once its composition has
@@ -937,46 +1104,35 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
         ).rejects.toThrow('PINNED_PROCESS_IDENTITY_MISMATCH')
       })
 
-      test('a real owner that exits cannot vouch for its child, and the orphan is refused', async () => {
-        // A shell owner (a child of this test) starts a sleeping child and prints its pid. Its
-        // SIGTERM trap exits only the shell; the pinned child is then ended by this test's handle.
-        const owner = spawn('sh', ['-c', OWNER_WITH_CHILD_TRAP], {
-          stdio: ['ignore', 'pipe', 'ignore'],
-        })
-        const ownerExit = processExit(owner)
+      test('a real owner that exits cannot vouch for its transferred child, and the orphan is refused', async () => {
+        // The owner retains a ChildProcess handle until the test pins the child and explicitly
+        // transfers ownership. After transfer, SIGTERM exits the owner and leaves the pinned child.
+        const { owner, exited: ownerExit, nextLine } = spawnHandleOwner()
         let anchor
         let child
         // Teardown works only through handles and runs on every path, including a failure before or
         // after a pin. It never signals a pid.
-        cleanup.push(() =>
+        const ownerCleanup = () =>
           releaseSpawnedOwner({
             owner,
             ownerExit,
             handles: () => [child, anchor].filter((handle) => handle !== undefined),
           })
-        )
-        const childPid = Number(
-          await boundedWait(
-            new Promise((resolve) => {
-              let buffer = ''
-              owner.stdout.on('data', (chunk) => {
-                buffer += chunk
-                if (buffer.includes('\n')) resolve(buffer.trim())
-              })
-            }),
-            EXIT_BOUND_MS,
-            'owner child pid'
-          )
-        )
-        anchor = await pinSpawned(owner, owner.pid, { commandIncludes: 'sh -c' })
+        cleanup.push(ownerCleanup)
+        const childPid = Number(await boundedWait(nextLine(), EXIT_BOUND_MS, 'owner child pid'))
+        anchor = await pinSpawned(owner, owner.pid, { commandIncludes: '-e' })
         child = await pinOwnedProcess(childPid, {
           commandIncludes: 'sleep 62',
           parent: anchor,
         })
         expect(child.identity.ppid).toBe(owner.pid)
+        owner.stdin.write('transfer\n')
+        expect(await boundedWait(nextLine(), EXIT_BOUND_MS, 'owner transfer acknowledgement')).toBe(
+          'OWNERSHIP_TRANSFERRED'
+        )
 
-        // The owner exits; the child remains live and is reparented. The trap must not signal its
-        // numeric pid, which could have been reused between the owner's observation and SIGTERM.
+        // After ownership transfer, the owner exits while the child remains live and is reparented.
+        // It does not signal the child's numeric pid, which may be reused after observation.
         owner.kill('SIGTERM')
         await boundedWait(ownerExit, EXIT_BOUND_MS, 'owner exit')
         expect(await liveIdentity(child.identity)).toBeDefined()
@@ -985,7 +1141,7 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
           pinOwnedProcess(childPid, { commandIncludes: 'sleep 62', parent: anchor })
         ).rejects.toThrow('PINNED_PROCESS_IDENTITY_MISMATCH')
         // A fresh anchor on the exited owner is refused as well.
-        await expect(pinSpawned(owner, owner.pid, { commandIncludes: 'sh -c' })).rejects.toThrow(
+        await expect(pinSpawned(owner, owner.pid, { commandIncludes: '-e' })).rejects.toThrow(
           'the spawned process has already exited'
         )
 
@@ -993,9 +1149,37 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
         expect(await child.terminate()).toBe(true)
       })
 
-      test('the shell owner trap exits the shell without signalling a child by numeric pid', async () => {
-        expect(OWNER_WITH_CHILD_TRAP).toMatch(/trap\s+['"]exit 0['"]\s+TERM/)
-        expect(OWNER_WITH_CHILD_TRAP).not.toMatch(/trap\s+['"][^'"]*\bkill\s+\$[A-Za-z_]/)
+      test('a pre-pin failure lets the owner end its child through the retained child handle', async () => {
+        const { owner, exited: ownerExit, nextLine } = spawnHandleOwner()
+        let anchor
+        const ownerCleanup = () =>
+          releaseSpawnedOwner({
+            owner,
+            ownerExit,
+            handles: () => [anchor].filter((handle) => handle !== undefined),
+          })
+        cleanup.push(ownerCleanup)
+
+        const childPid = Number(await boundedWait(nextLine(), EXIT_BOUND_MS, 'owner child pid'))
+        anchor = await pinSpawned(owner, owner.pid, { commandIncludes: '-e' })
+        let childIdentity
+        for (let attempt = 0; attempt < 50 && childIdentity === undefined; attempt += 1) {
+          childIdentity = await readProcessIdentity(childPid)
+          if (childIdentity === undefined) await new Promise((resolve) => setTimeout(resolve, 20))
+        }
+        expect(childIdentity).toBeDefined()
+        await expect(
+          pinOwnedProcess(childPid, {
+            commandIncludes: 'this-command-does-not-match',
+            parent: anchor,
+          })
+        ).rejects.toThrow('PINNED_PROCESS_IDENTITY_MISMATCH')
+
+        await ownerCleanup()
+        cleanup.splice(cleanup.indexOf(ownerCleanup), 1)
+        expect(await liveIdentity(childIdentity)).toBeUndefined()
+        expect(OWNER_WITH_CHILD_HANDLE).toContain("child.kill('SIGTERM')")
+        expect(OWNER_WITH_CHILD_HANDLE).not.toMatch(/process\.kill\(/)
       })
     })
 
@@ -1202,56 +1386,15 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
 
   for (const failureMethod of ['start', 'health']) {
     test(`a rejected composition ${failureMethod} after Restate starts closes before the ownership handshake`, async () => {
-      const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-health-failure-'))
-      const config = {
-        dataDirectory: join(work, 'data'),
-        ports: await isolatedPorts(),
-        failureBeforeOwnershipHandshake: {
-          method: failureMethod,
-          probePath: join(work, `${failureMethod}-failure.json`),
-          releasePath: join(work, `release-${failureMethod}-failure`),
-        },
-      }
-      const owned = []
-      const initial = spawnSelfHostedSimpleComposition('initial', config)
-      const incarnation = initial
-      cleanup.push(() => releaseOwnership({ work, incarnations: [incarnation], owned }))
-
-      const deadline = Date.now() + EXIT_BOUND_MS
-      let evidence
-      while (evidence === undefined && Date.now() < deadline) {
-        try {
-          evidence = JSON.parse(
-            await readFile(config.failureBeforeOwnershipHandshake.probePath, 'utf8')
-          )
-        } catch (error) {
-          if (error.code !== 'ENOENT') throw error
-          await new Promise((resolve) => setTimeout(resolve, 20))
-        }
-      }
-      if (evidence === undefined) await initial.next('started', EXIT_BOUND_MS)
-      expect(evidence).toBeDefined()
-      expect(evidence.method).toBe(failureMethod)
-      expect(evidence.processIdentities).toHaveLength(2)
-      const recorded = await recordOwnedRestate(incarnation, owned, 'initial', evidence)
-      expect(owned.map((handle) => handle.identity)).toEqual(evidence.processIdentities)
-
-      await writeFile(config.failureBeforeOwnershipHandshake.releasePath, 'continue')
-      await expect(initial.next('started', EXIT_BOUND_MS)).rejects.toThrow(
-        `PROTOCOL_CHILD_FAILED: SELF_HOSTED_SIMPLE_INJECTED_${failureMethod.toUpperCase()}_FAILURE`
-      )
-      expect(initial.stages.some((stage) => stage.stage === 'started')).toBe(false)
-      expect(initial.stages.find((stage) => stage.stage === 'failed')).toMatchObject({
-        processIdentities: evidence.processIdentities,
-      })
-      expect(await boundedWait(initial.exited, EXIT_BOUND_MS, 'failed composition exit')).toEqual({
-        code: 1,
-        signal: null,
-      })
-      expect(recorded.launcher.exited).toBe(true)
-      expect(recorded.native.exited).toBe(true)
+      await exerciseRejectedCompositionBeforeHandshake(failureMethod)
     })
   }
+
+  test('delayed failure discovery waits for the probe and safely reaps pinned Restate processes', async () => {
+    await exerciseRejectedCompositionBeforeHandshake('start', {
+      probeDelayMs: EXIT_BOUND_MS + 250,
+    })
+  })
 
   test('cleanup removes state after recorded Restate identities are confirmed gone', async () => {
     const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-recorded-cleanup-'))

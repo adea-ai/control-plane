@@ -221,12 +221,21 @@ async function rejectAfterRestateStarts(health, failure) {
   if (processIdentities.some((identity) => identity === undefined)) {
     throw new Error('SELF_HOSTED_SIMPLE_FAILURE_IDENTITY_UNAVAILABLE')
   }
+  const probeDelayMs =
+    Number.isSafeInteger(failure.probeDelayMs) && failure.probeDelayMs > 0
+      ? failure.probeDelayMs
+      : 0
+  const probeDelayStartedAt = Date.now()
+  if (probeDelayMs > 0) await delay(probeDelayMs)
+  const probeDelayElapsedMs = Date.now() - probeDelayStartedAt
   await writeFile(
     failure.probePath,
     JSON.stringify({
       method: failure.method,
       pid: process.pid,
       launcherPid: health.details?.pid,
+      probeDelayMs,
+      probeDelayElapsedMs,
       processIdentities,
     })
   )
