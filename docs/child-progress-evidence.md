@@ -73,12 +73,20 @@ stay wired to the canonical durable paths rather than a parallel ledger.
   `settled`, retained through `SqliteChildUsageOutcomeRepository`). The lead is
   settled by the production `SqlitePiLeadTerminalSettlement` first, so the
   child's reservation alone is shown to hold the parent open. Settlement is interrupted after each durable step and
-  resumed twice: across an in-process composition reopen (persistence stays
-  open; the startup scan and later scans must not republish the terminal
-  event), and across a real crash, where the host is closed completely, a
-  separate process SIGKILLs itself right after the step and new processes
-  resume and repeat from the on-disk stores alone. Neither repeats a debit,
-  release, start, send or publication, and a child whose send outcome is
+  resumed twice, and the two scopes are kept apart. Production-composition
+  recovery reopens the real production-factory host in the same process
+  (persistence stays open; the startup scan and later scans must not
+  republish the terminal event). Standalone settlement-process recovery is a
+  real crash of the test-only settlement driver: the host is closed
+  completely, a separate process SIGKILLs itself right after the step and new
+  processes resume and repeat from the on-disk stores alone, with no
+  composition, so they cannot scan, publish, start or send. Both compare the
+  complete durable publication rows (storage id, revision, write time,
+  idempotency key and whole event), not only event types, before the
+  interruption, after it, after the reopen or resume and after repeats, so a
+  changed event id, key or payload fails; separate tests tamper with each to
+  show the comparison can fail. Neither repeats a debit, release, start, send
+  or publication, and a child whose send outcome is
   unknown is never settled. The provider transport, funding records and policy
   decision are scripted fixtures, and the child settlement driver is test-only:
   production settles leads only and no composition root runs a child

@@ -552,6 +552,24 @@ export async function loadChildCostState(usageOutcomes, parentExecutionId) {
   }
 }
 
+/**
+ * Every durable publication row of one parent's inbox, exactly as stored: storage id, revision,
+ * write time, idempotency key and the whole event (id, delegation, payload). Comparing these rows,
+ * not event types, detects a republished, rewritten or re-keyed publication.
+ */
+export async function readPublicationRecords(provider, parentExecutionId) {
+  const records = await provider.transaction((transaction) =>
+    transaction.list('delegation-publications')
+  )
+  return JSON.parse(
+    JSON.stringify(
+      records
+        .filter((record) => record.value?.event?.parentExecutionId === parentExecutionId)
+        .toSorted((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+    )
+  )
+}
+
 export const readChildCostState = (hooks) =>
   loadChildCostState(hooks.usageOutcomes, hooks.host.state.parentExecutionId)
 

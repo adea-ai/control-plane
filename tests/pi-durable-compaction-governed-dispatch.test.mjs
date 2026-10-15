@@ -11,6 +11,7 @@ import {
   createGovernedDispatchHooks,
   governedDispatchChildren,
   readChildCostState,
+  readPublicationRecords,
   settleLeadTerminal,
 } from './pi-durable-compaction-governed-dispatch.fixture.mjs'
 import {
@@ -182,7 +183,24 @@ const childOf = (adapter) =>
   adapter.journal
     .list()
     .find((candidate) => candidate.admission.request.executionId === childExecutionId)
-const eventTypes = async (hooks) => (await hooks.events.list()).map((event) => event.type)
+/** The complete durable publication rows of the parent's inbox (see `readPublicationRecords`). */
+const publicationsOf = (hooks) =>
+  readPublicationRecords(hooks.persistence, hooks.host.state.parentExecutionId)
+
+/** Exactly one terminal publication for the child, keyed and carried by the child's delegation. */
+function expectOneTerminalPublication(records, parentExecutionId) {
+  const terminal = records.filter((record) => record.value.event.type === 'delegation.completed')
+  expect(terminal).toHaveLength(1)
+  expect(terminal[0].revision).toBe(1)
+  expect(terminal[0].value.idempotencyKey.startsWith(`delegation:${childIds.delegationId}:`)).toBe(
+    true
+  )
+  expect(terminal[0].value.event).toMatchObject({
+    delegationId: childIds.delegationId,
+    parentExecutionId,
+  })
+  return terminal[0]
+}
 
 /** Compacts the lead's native session while the whole production composition is closed. */
 async function compactAcrossReopen(host, handle) {
@@ -333,10 +351,10 @@ test('governed child dispatch after native compaction and reopen runs once with 
 
     // The scan publishes the terminal child evidence once; repeating it changes nothing.
     await hooks.scanner.scan(adapter)
-    const published = await eventTypes(hooks)
-    expect(published.filter((type) => type === 'delegation.completed')).toHaveLength(1)
+    const published = await publicationsOf(hooks)
+    expectOneTerminalPublication(published, hooks.host.state.parentExecutionId)
     await hooks.scanner.scan(adapter)
-    expect(await eventTypes(hooks)).toEqual(published)
+    expect(await publicationsOf(hooks)).toEqual(published)
 
     // A further restart replays nothing: no second start, send, reservation or usage entry.
     await host.reopenComposition()
@@ -346,7 +364,7 @@ test('governed child dispatch after native compaction and reopen runs once with 
     expect(hooks.evidence.reservations).toHaveLength(1)
     expect(host.state.physicalSends).toBe(4)
     expect(await host.ledger.entries(host.workspaceId, childExecutionId)).toEqual(childEntries)
-    expect(await eventTypes(hooks)).toEqual(published)
+    expect(await publicationsOf(hooks)).toEqual(published)
     expect(await hooks.delegationRecords.listByParent(dispatch.executionId)).toHaveLength(1)
   } finally {
     await host.close()
@@ -377,7 +395,7 @@ test('a grant revoked after the compaction reopen starts no child and funds noth
     expect(childOf(adapter)).toBeUndefined()
     expect(sent.child).toHaveLength(0)
     expect(sent.lead).toHaveLength(2)
-    expect(await eventTypes(hooks)).toEqual([])
+    expect(await publicationsOf(hooks)).toEqual([])
     // The lead stays unsettled for reconciliation rather than reporting a result.
     expect((await adapter.status(handle)).state).toBe('unknown')
     const parentEntries = await host.ledger.entries(host.workspaceId, dispatch.executionId)
@@ -537,8 +555,8 @@ test('child settlement carries the parent allowance through actual usage to fina
       cost: stableSummary(await readChildCostState(hooks)),
     }
     await hooks.scanner.scan(adapter)
-    const published = await eventTypes(hooks)
-    expect(published.filter((type) => type === 'delegation.completed')).toHaveLength(1)
+    const published = await publicationsOf(hooks)
+    expectOneTerminalPublication(published, hooks.host.state.parentExecutionId)
     const repeat = async () => {
       expect(await settlement.settle()).toMatchObject({ state: 'settled' })
       expect(await settleLeadTerminal(host)).toEqual({ settled: 1, pending: 0, unbound: 1 })
@@ -550,7 +568,7 @@ test('child settlement carries the parent allowance through actual usage to fina
     expect(await rowsOf(host, dispatch)).toEqual(before.rows)
     expect(stableSummary(await summaryOf(host, dispatch.executionId))).toBe(before.parentSummary)
     expect(stableSummary(await readChildCostState(hooks))).toBe(before.cost)
-    expect(await eventTypes(hooks)).toEqual(published)
+    expect(await publicationsOf(hooks)).toEqual(published)
     expect(hooks.evidence.childStarts).toHaveLength(1)
     expect(hooks.evidence.reservations).toHaveLength(1)
     expect(host.state.physicalSends).toBe(4)
@@ -559,6 +577,14 @@ test('child settlement carries the parent allowance through actual usage to fina
   }
 }, 120000)
 
+// Two recovery scopes are proven below and kept apart on purpose:
+// - production composition: the real production-factory host (adapter, scanner, bridge, lead
+//   settlement) is reopened in the same process while its persistence stays open.
+// - standalone settlement process: only the child settlement driver runs, in separate OS processes
+//   that open the on-disk stores. They have no composition, so they never scan, publish, start or
+//   send; the test reads the publication rows back from disk to show they were not touched.
+// In both, "unchanged" means the complete durable publication rows (storage id, revision, write
+// time, idempotency key and whole event) are equal, not only the event types.
 // An interrupted settlement leaves exactly the evidence recorded so far. The cost state never runs
 // ahead of the ledger, a restart does not repeat a recorded step or republish the terminal event,
 // and the resumed settlement ends in the same ledger as an uninterrupted one.
@@ -583,7 +609,7 @@ const finalizeParent = (host, dispatch, key) =>
   })
 
 for (const [step, expected] of Object.entries(interruptions)) {
-  test(`settlement interrupted after ${step} reconciles truthfully across an in-process reopen`, async () => {
+  test(`production composition: settlement interrupted after ${step} reconciles across an in-process reopen`, async () => {
     const { host, hooks } = await createHost()
     try {
       const { dispatch, handle, adapter } = await dispatchChildAfterCompaction(host, hooks)
@@ -596,11 +622,11 @@ for (const [step, expected] of Object.entries(interruptions)) {
       )
       // Terminal publication happens once, before any settlement is attempted.
       await hooks.scanner.scan(adapter)
-      const published = await eventTypes(hooks)
-      expect(published.filter((type) => type === 'delegation.completed')).toHaveLength(1)
+      const published = await publicationsOf(hooks)
+      expectOneTerminalPublication(published, hooks.host.state.parentExecutionId)
       const expectPublishedOnce = async () => {
         await hooks.scanner.scan(host.composition.adapter)
-        expect(await eventTypes(hooks)).toEqual(published)
+        expect(await publicationsOf(hooks)).toEqual(published)
       }
 
       hooks.settlementSeam = async (reached) => {
@@ -617,7 +643,7 @@ for (const [step, expected] of Object.entries(interruptions)) {
         child: stableSummary(await summaryOf(host, childExecutionId)),
         parent: stableSummary(await summaryOf(host, dispatch.executionId)),
         cost: stableSummary(await readChildCostState(hooks)),
-        events: await eventTypes(hooks),
+        publications: await publicationsOf(hooks),
       })
       const interrupted = await snapshotState()
 
@@ -691,15 +717,15 @@ for (const [step, expected] of Object.entries(interruptions)) {
 // third and fourth process resume and repeat from the on-disk stores alone. Those processes have no
 // provider transport, credentials or composition, so they cannot start, send or publish.
 for (const [step, expected] of Object.entries(interruptions)) {
-  test(`settlement killed after ${step} in another process resumes in a new process`, async () => {
+  test(`standalone settlement process: killed after ${step}, a new process resumes from the stores`, async () => {
     const { host, hooks } = await createHost()
     let directory
     try {
       const { dispatch, handle, adapter } = await dispatchChildAfterCompaction(host, hooks)
       expect(await settleLeadTerminal(host)).toEqual({ settled: 1, pending: 0, unbound: 1 })
       await hooks.scanner.scan(adapter)
-      const published = await eventTypes(hooks)
-      expect(published.filter((type) => type === 'delegation.completed')).toHaveLength(1)
+      const published = await publicationsOf(hooks)
+      expectOneTerminalPublication(published, hooks.host.state.parentExecutionId)
       const ids = {
         workspaceId: host.workspaceId,
         parentExecutionId: dispatch.executionId,
@@ -717,7 +743,7 @@ for (const [step, expected] of Object.entries(interruptions)) {
         }
       }
       const closed = await readStores()
-      expect(closed.eventTypes).toEqual(published)
+      expect(closed.publications).toEqual(published)
       expect(closed.cost.outcome.costState).toBe('reserved')
 
       // A process that dies mid-settlement, with no chance to clean up.
@@ -736,7 +762,7 @@ for (const [step, expected] of Object.entries(interruptions)) {
       expect(crashed.parentSummary.reservedMicrounits).toBe(
         expected.budgetSettled ? 0 : funding.quantity.value
       )
-      expect(crashed.eventTypes).toEqual(published)
+      expect(crashed.publications).toEqual(published)
       expect(crashed.childJournal).toEqual(closed.childJournal)
       expect(crashed.delegationCount).toBe(1)
 
@@ -757,7 +783,7 @@ for (const [step, expected] of Object.entries(interruptions)) {
         settled: { settledMicrounits: spent },
       })
       expect(done.parentSummary.reservedMicrounits).toBe(0)
-      expect(done.eventTypes).toEqual(published)
+      expect(done.publications).toEqual(published)
       expect(done.childJournal).toEqual(closed.childJournal)
       expect(done.delegationCount).toBe(1)
 
@@ -815,3 +841,38 @@ test('a child whose send failed is never settled or reported as complete', async
     await host.close()
   }
 }, 120000)
+
+// The publication comparison must be able to fail: the same event type with a changed id, key or
+// payload, or a rewritten row, is a different durable record.
+for (const tamper of ['idempotency key', 'delegation id', 'payload field']) {
+  test(`publication records differ when the ${tamper} of the terminal publication changes`, async () => {
+    const { host, hooks } = await createHost()
+    try {
+      const { dispatch, adapter } = await dispatchChildAfterCompaction(host, hooks)
+      await hooks.scanner.scan(adapter)
+      const before = await publicationsOf(hooks)
+      const terminal = expectOneTerminalPublication(before, dispatch.executionId)
+      const value = structuredClone(terminal.value)
+      if (tamper === 'idempotency key') value.idempotencyKey = `${value.idempotencyKey}-x`
+      else if (tamper === 'delegation id') value.event.delegationId = `${value.event.delegationId}x`
+      else value.event.payloadProbe = 'changed'
+      await hooks.persistence.transaction((transaction) =>
+        transaction.put({
+          namespace: 'delegation-publications',
+          id: terminal.id,
+          expectedRevision: terminal.revision,
+          value,
+        })
+      )
+      const after = await publicationsOf(hooks)
+      // Same number of rows and the same event type, yet not the same record.
+      expect(after.map((record) => record.value.event.type)).toEqual(
+        before.map((record) => record.value.event.type)
+      )
+      expect(after).not.toEqual(before)
+      expect(after.find((record) => record.id === terminal.id).revision).toBe(2)
+    } finally {
+      await host.close()
+    }
+  }, 120000)
+}
