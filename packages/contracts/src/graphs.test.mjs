@@ -1,7 +1,11 @@
 import { expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { canonicalJsonStringify } from './canonical-json.ts'
-import { GraphDefinitionContentSchema, GraphInputSchema } from './graphs.ts'
+import {
+  GraphDefinitionContentSchema,
+  GraphDefinitionVersionSchema,
+  GraphInputSchema,
+} from './graphs.ts'
 
 const legacyToolGraph = {
   graphDefinitionId: 'graph:local-tool-pin',
@@ -205,5 +209,31 @@ test('tool pin version, content digest, and operation each change graph content 
     const changed = structuredClone(definition)
     mutate(changed.nodes[0].operation.toolPin)
     expect(contentDigest(changed)).not.toBe(baseline)
+  }
+})
+
+test('graph version responses accept an optional explicit digest version', () => {
+  const content = structuredClone(legacyToolGraph)
+  const version = {
+    reference: {
+      graphDefinitionId: content.graphDefinitionId,
+      graphVersion: content.graphVersion,
+      contentDigest: contentDigest(content),
+    },
+    revision: 1,
+    lifecycle: 'published',
+    content,
+    publishedAt: '2026-08-25T13:00:00.000Z',
+    changedAt: '2026-08-25T13:00:00.000Z',
+  }
+
+  expect(GraphDefinitionVersionSchema.parse(version)).toEqual(version)
+  expect(
+    GraphDefinitionVersionSchema.parse({ ...version, digestVersion: 'canonical-json-v1' })
+  ).toEqual({ ...version, digestVersion: 'canonical-json-v1' })
+  for (const digestVersion of [null, 1, '', 'canonical-json-v2']) {
+    expect(GraphDefinitionVersionSchema.safeParse({ ...version, digestVersion }).success).toBe(
+      false
+    )
   }
 })
