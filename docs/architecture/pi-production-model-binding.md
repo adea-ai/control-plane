@@ -192,3 +192,22 @@ Readers captured from another provider or an expired nested scope refuse before
 accessing the transaction. Metadata writes attempted in the fence fail
 closed. Product, account, quota, revocation, lineage and expiry checks still run;
 no accepted selection or authority result is cached to bypass a current read.
+
+## Governed child bridge
+
+`children.createGovernedDelegateChild(service, context)` receives the composition's own child
+authority reader, the model binding it derives for a retained child attempt, and its adapter.
+`createProductionChildRuntimeBridge` turns those and the root's canonical ports into the governed
+`CanonicalDelegationRuntimeBridge`. A start reads current authority first, then reserves the child
+attempt budget, derives the binding and records the child's funding, re-reads authority, and only
+then starts the child on the lead's adapter. A missing or revoked authority ends before any
+reservation, funding record or start; reopening a composition and repeating scans start, fund and
+send nothing.
+
+The builder creates no credential, grant, reservation or funding record. Two sources stay with the
+root and are required (a root without them cannot build the bridge): the budget reservation
+(`DurableChildRuntimeBudgetAdmission.reserve`, unwrapped, over the child allocator's usage store)
+and `fundChildAttempt`, the operator-owned recorded funding decision for the child attempt. No
+repository code records a child's funding; the tests script it. Terminal child settlement
+(ledger settle, budget finalization and cost-state projection) is not wired for children in
+production.

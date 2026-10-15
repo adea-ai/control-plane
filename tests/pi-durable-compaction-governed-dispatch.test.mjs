@@ -7,8 +7,11 @@ import {
 import {
   childIds,
   childObjective,
+  createChildTerminalSettlement,
   createGovernedDispatchHooks,
   governedDispatchChildren,
+  readChildCostState,
+  settleLeadTerminal,
 } from './pi-durable-compaction-governed-dispatch.fixture.mjs'
 import { createProductionFactoryFixture } from './pi-production-factory.fixture.mjs'
 
@@ -84,7 +87,7 @@ function delegateCallResponse() {
 }
 
 /** Lead sends are told apart from the child's by the governed tool only the lead carries. */
-function scriptedProvider(sent) {
+function scriptedProvider(sent, behavior = {}) {
   return async ({ body }) => {
     const input = body.input
     const isChild =
@@ -93,6 +96,7 @@ function scriptedProvider(sent) {
       input[0].content[0].text === childObjective
     if (isChild) {
       sent.child.push(body)
+      if (behavior.childFails) return new Response('upstream failure', { status: 500 })
       return textResponse('Bounded child evidence.', 'resp_child')
     }
     sent.lead.push(body)
@@ -113,12 +117,12 @@ async function waitFor(predicate, label) {
   throw new Error(`TEST_WAIT_TIMEOUT:${label}`)
 }
 
-async function createHost(options = {}) {
+async function createHost(options = {}, behavior = {}) {
   const hooks = createGovernedDispatchHooks()
   const sent = { lead: [], child: [] }
   const host = await createProductionFactoryFixture({
     childrenFactory: governedDispatchChildren(hooks),
-    physicalResponder: scriptedProvider(sent),
+    physicalResponder: scriptedProvider(sent, behavior),
     ...options,
   })
   hooks.host = host
@@ -450,3 +454,304 @@ test('authority revoked after the reservation is funded starts no child and send
     await host.close()
   }
 }, 60000)
+
+/** Lead first turn, compaction across a reopen, then the delegating turn until the child completes. */
+async function dispatchChildAfterCompaction(host, hooks, { waitForCompleted = true } = {}) {
+  const { dispatch, handle } = await runLeadFirstTurn(host, hooks)
+  await compactAcrossReopen(host, handle)
+  const adapter = host.composition.adapter
+  await submitSecondTurn(adapter, handle)
+  await adapter.drain()
+  await waitFor(async () => {
+    const row = childOf(adapter)
+    if (!row) return false
+    const state = (await adapter.status(row.admission.handle)).state
+    return waitForCompleted ? state === 'completed' : state !== 'running' && state !== 'starting'
+  }, 'child terminal')
+  return { dispatch, handle, adapter }
+}
+
+const rowsOf = async (host, dispatch) => ({
+  parent: await host.ledger.entries(host.workspaceId, dispatch.executionId),
+  child: await host.ledger.entries(host.workspaceId, childExecutionId),
+})
+const summaryOf = (host, executionId) => host.ledger.summary(host.workspaceId, executionId)
+const stableSummary = (value) => JSON.stringify(value)
+
+/** Everything one settled child leaves in the child's own ledger: funded, spent once, released. */
+function expectSettledChildLedger(childEntries) {
+  expect(kinds(childEntries)).toEqual([
+    'credit',
+    'reservation',
+    'model_reservation',
+    'model_usage',
+    'model_release',
+    'release',
+    'settlement',
+    'settlement',
+  ])
+  const [credit, , , usageEntry, , attemptRelease, attemptSettlement, budgetSettlement] =
+    childEntries
+  expect(usageEntry).toMatchObject({ costExact: true })
+  const spent = usageEntry.costMicrounits
+  expect(spent).toBeGreaterThan(0)
+  // The attempt reservation held the whole funded balance: what was not spent is released, what was
+  // spent is the settlement, and finalizing the budget settles the same amount again once.
+  expect(attemptRelease.quantity.value).toBe(credit.quantity.value - spent)
+  expect(attemptSettlement.quantity.value).toBe(spent)
+  expect(budgetSettlement.quantity.value).toBe(spent)
+  return spent
+}
+
+test('child settlement carries the parent allowance through actual usage to final settlement', async () => {
+  const { host, hooks } = await createHost()
+  try {
+    const { dispatch, handle, adapter } = await dispatchChildAfterCompaction(host, hooks)
+    const settlement = createChildTerminalSettlement(hooks)
+    const reservationKey = `runtime-attempt:${childAttemptId}`
+
+    // The proof so far: the child completed, but both attempt reservations are still open, and the
+    // projection holds only the estimate and the reservation it was admitted with.
+    await expect(
+      host.ledger.assertRuntimeAttemptReleased(host.workspaceId, childExecutionId, childAttemptId)
+    ).rejects.toMatchObject({ code: 'SETTLEMENT_INCOMPLETE' })
+    await expect(
+      host.ledger.assertRuntimeAttemptReleased(
+        host.workspaceId,
+        dispatch.executionId,
+        handle.attemptId
+      )
+    ).rejects.toMatchObject({ code: 'SETTLEMENT_INCOMPLETE' })
+    const admitted = (await readChildCostState(hooks)).outcome
+    expect(admitted.costState).toBe('reserved')
+    expect(admitted.estimated).toMatchObject({ currency: 'USD' })
+    expect(admitted.reserved).toMatchObject({ reservationKey, executionId: childExecutionId })
+    expect(admitted.reported).toBeUndefined()
+
+    // Lead terminal settlement is the existing production class. It settles the lead's attempt and
+    // leaves the child's completed record alone, as it has no lead budget bound to it.
+    expect(await settleLeadTerminal(host)).toEqual({ settled: 1, pending: 0, unbound: 1 })
+    await host.ledger.assertRuntimeAttemptReleased(
+      host.workspaceId,
+      dispatch.executionId,
+      handle.attemptId
+    )
+    expect((await summaryOf(host, dispatch.executionId)).reservedMicrounits).toBeGreaterThan(0)
+
+    expect(await settlement.settle()).toMatchObject({ state: 'settled' })
+
+    // Allowance -> funding -> usage -> settlement, in the canonical ledger.
+    const { parent, child } = await rowsOf(host, dispatch)
+    const spent = expectSettledChildLedger(child)
+    const allowance = host.parentPlanForIntent(hooks.intentId).constraints.limits.childExecutions
+      .budgetAllowance.maximumMicrounits
+    expect(child[0].quantity.value).toBe(allowance)
+    const funding = parent.filter((entry) => entry.reservationKey === `child:${childExecutionId}`)
+    expect(kinds(funding)).toEqual(['reservation', 'release', 'settlement'])
+    expect(funding[0].quantity.value).toBe(allowance)
+    expect(funding[1].quantity.value).toBe(allowance - spent)
+    expect(funding[2].quantity.value).toBe(spent)
+
+    // Conservation: the parent's spend is its own three sends plus the child's one, nothing is held,
+    // and the child budget is settled.
+    const leadSpent = parent
+      .filter((entry) => entry.kind === 'model_usage')
+      .reduce((total, entry) => total + entry.costMicrounits, 0)
+    const parentSummary = await summaryOf(host, dispatch.executionId)
+    expect(parentSummary).toMatchObject({
+      spentMicrounits: leadSpent + spent,
+      reservedMicrounits: 0,
+      settled: false,
+    })
+    expect(parentSummary.spentMicrounits + parentSummary.availableMicrounits).toBe(
+      parentSummary.maximumMicrounits
+    )
+    expect(await summaryOf(host, childExecutionId)).toMatchObject({
+      spentMicrounits: spent,
+      reservedMicrounits: 0,
+      settled: true,
+    })
+    // Every reservation is released, so the parent can finalize and the retained model caches can go.
+    await host.ledger.assertRuntimeAttemptReleased(
+      host.workspaceId,
+      childExecutionId,
+      childAttemptId
+    )
+    await host.composition.collectTerminalModels()
+    expect(
+      await host.ledger.finalizeBudget({
+        workspaceId: host.workspaceId,
+        executionId: dispatch.executionId,
+        source: { sourceId: 'parent-final', idempotencyKey: 'parent-final:finalize' },
+      })
+    ).toMatchObject({ settled: true, spentMicrounits: leadSpent + spent })
+
+    // The cost state reached 'settled' from recorded evidence only, at the amount the ledger settled.
+    const settled = await readChildCostState(hooks)
+    expect(settled.outcome).toMatchObject({
+      costState: 'settled',
+      estimated: { currency: 'USD' },
+      reserved: { reservationKey },
+      reported: { accounting: { costExact: true, chargedMicrounits: spent } },
+      reconciled: { result: 'within_reservation', reportedChargedMicrounits: spent },
+      settled: { settledMicrounits: spent },
+    })
+
+    // Repeating every pass changes nothing: settlement, lead settlement, the scanner, and a physical
+    // restart that re-runs the startup scan.
+    const before = {
+      rows: await rowsOf(host, dispatch),
+      parentSummary: stableSummary(await summaryOf(host, dispatch.executionId)),
+      cost: stableSummary(await readChildCostState(hooks)),
+    }
+    await hooks.scanner.scan(adapter)
+    const published = await eventTypes(hooks)
+    expect(published.filter((type) => type === 'delegation.completed')).toHaveLength(1)
+    const repeat = async () => {
+      expect(await settlement.settle()).toMatchObject({ state: 'settled' })
+      expect(await settleLeadTerminal(host)).toEqual({ settled: 1, pending: 0, unbound: 1 })
+      await hooks.scanner.scan(host.composition.adapter)
+    }
+    await repeat()
+    await host.reopenComposition()
+    await repeat()
+    expect(await rowsOf(host, dispatch)).toEqual(before.rows)
+    expect(stableSummary(await summaryOf(host, dispatch.executionId))).toBe(before.parentSummary)
+    expect(stableSummary(await readChildCostState(hooks))).toBe(before.cost)
+    expect(await eventTypes(hooks)).toEqual(published)
+    expect(hooks.evidence.childStarts).toHaveLength(1)
+    expect(hooks.evidence.reservations).toHaveLength(1)
+    expect(host.state.physicalSends).toBe(4)
+  } finally {
+    await host.close()
+  }
+}, 120000)
+
+// An interrupted settlement leaves exactly the evidence recorded so far. The cost state never runs
+// ahead of the ledger, a restart does not repeat a recorded step, and the resumed settlement ends in
+// the same ledger as an uninterrupted one.
+const interruptions = {
+  reported: {
+    cost: 'reported',
+    attemptReleased: false,
+    budgetSettled: false,
+  },
+  'attempt-settled': { cost: 'reported', attemptReleased: true, budgetSettled: false },
+  'budget-finalized': { cost: 'reported', attemptReleased: true, budgetSettled: true },
+  reconciled: { cost: 'reconciled', attemptReleased: true, budgetSettled: true },
+}
+
+for (const [step, expected] of Object.entries(interruptions)) {
+  test(`settlement interrupted after ${step} reconciles truthfully across a restart`, async () => {
+    const { host, hooks } = await createHost()
+    try {
+      const { dispatch } = await dispatchChildAfterCompaction(host, hooks)
+      const settlement = createChildTerminalSettlement(hooks)
+      hooks.settlementSeam = async (reached) => {
+        if (reached === step) throw new Error(`SETTLEMENT_INTERRUPTED:${step}`)
+      }
+      await expect(settlement.settle()).rejects.toThrow(`SETTLEMENT_INTERRUPTED:${step}`)
+      hooks.settlementSeam = undefined
+
+      const snapshotState = async () => ({
+        rows: await rowsOf(host, dispatch),
+        child: stableSummary(await summaryOf(host, childExecutionId)),
+        parent: stableSummary(await summaryOf(host, dispatch.executionId)),
+        cost: stableSummary(await readChildCostState(hooks)),
+      })
+      const interrupted = await snapshotState()
+
+      // Truthful partial state, from the ledger and the projection rather than from this test.
+      const costState = (await readChildCostState(hooks)).outcome.costState
+      expect(costState).toBe(expected.cost)
+      const release = host.ledger.assertRuntimeAttemptReleased(
+        host.workspaceId,
+        childExecutionId,
+        childAttemptId
+      )
+      if (expected.attemptReleased) await release
+      else await expect(release).rejects.toMatchObject({ code: 'SETTLEMENT_INCOMPLETE' })
+      expect((await summaryOf(host, childExecutionId)).settled).toBe(expected.budgetSettled)
+      // While the child budget is unsettled the parent's funding stays held and cannot be finalized.
+      const finalizeParent = () =>
+        host.ledger.finalizeBudget({
+          workspaceId: host.workspaceId,
+          executionId: dispatch.executionId,
+          source: { sourceId: 'parent-early', idempotencyKey: 'parent-early:finalize' },
+        })
+      if (!expected.budgetSettled) {
+        await expect(finalizeParent()).rejects.toMatchObject({ code: 'SETTLEMENT_INCOMPLETE' })
+        expect(await snapshotState()).toEqual(interrupted)
+      }
+
+      // A physical restart changes nothing that was recorded.
+      await host.reopenComposition()
+      expect(await snapshotState()).toEqual(interrupted)
+
+      // The resumed settlement completes once; the ledger matches an uninterrupted run.
+      expect(await createChildTerminalSettlement(hooks).settle()).toMatchObject({
+        state: 'settled',
+      })
+      const { parent, child } = await rowsOf(host, dispatch)
+      const spent = expectSettledChildLedger(child)
+      expect(
+        parent
+          .filter((entry) => entry.reservationKey === `child:${childExecutionId}`)
+          .map((entry) => entry.kind)
+      ).toEqual(['reservation', 'release', 'settlement'])
+      expect((await readChildCostState(hooks)).outcome).toMatchObject({
+        costState: 'settled',
+        settled: { settledMicrounits: spent },
+      })
+      const settled = await snapshotState()
+      expect(await createChildTerminalSettlement(hooks).settle()).toMatchObject({
+        state: 'settled',
+      })
+      expect(await snapshotState()).toEqual(settled)
+      expect(hooks.evidence.childStarts).toHaveLength(1)
+      expect(host.state.physicalSends).toBe(4)
+    } finally {
+      await host.close()
+    }
+  }, 120000)
+}
+
+test('a child whose send failed is never settled or reported as complete', async () => {
+  const { host, hooks } = await createHost({}, { childFails: true })
+  try {
+    const { dispatch, adapter } = await dispatchChildAfterCompaction(host, hooks, {
+      waitForCompleted: false,
+    })
+    const row = childOf(adapter)
+    const status = await adapter.status(row.admission.handle)
+    // The send's outcome is unknown, so the runtime leaves it for reconciliation.
+    expect(status.state).toBe('unknown')
+    const before = {
+      rows: await rowsOf(host, dispatch),
+      cost: stableSummary(await readChildCostState(hooks)),
+    }
+    const result = await createChildTerminalSettlement(hooks).settle()
+    expect(result).toMatchObject({ state: 'not_terminal' })
+    // Nothing was reported, released or settled for an outcome the runtime could not confirm: the
+    // reservation stays held and the cost state stays at what was admitted.
+    expect(await rowsOf(host, dispatch)).toEqual(before.rows)
+    expect(stableSummary(await readChildCostState(hooks))).toBe(before.cost)
+    expect((await readChildCostState(hooks)).outcome.costState).toBe('reserved')
+    await expect(
+      host.ledger.assertRuntimeAttemptReleased(host.workspaceId, childExecutionId, childAttemptId)
+    ).rejects.toMatchObject({ code: 'SETTLEMENT_INCOMPLETE' })
+    expect(await summaryOf(host, childExecutionId)).toMatchObject({ settled: false })
+    expect(hooks.evidence.childStarts).toHaveLength(1)
+
+    // A restart does not turn the uncertain send into a result either.
+    await host.reopenComposition()
+    expect((await host.composition.adapter.status(row.admission.handle)).state).toBe('unknown')
+    expect(await createChildTerminalSettlement(hooks).settle()).toMatchObject({
+      state: 'not_terminal',
+    })
+    expect(await rowsOf(host, dispatch)).toEqual(before.rows)
+    expect(hooks.evidence.childStarts).toHaveLength(1)
+  } finally {
+    await host.close()
+  }
+}, 120000)
