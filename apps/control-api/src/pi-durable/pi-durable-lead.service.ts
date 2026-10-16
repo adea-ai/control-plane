@@ -624,7 +624,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       principal,
       'children'
     )
-    if ('fenced' in looked) fail('PI_LEAD_UNAVAILABLE')
+    if (looked.kind === 'fenced') fail('PI_LEAD_UNAVAILABLE')
     const { receipt, admission } = looked
     await this.options.authority.assertCurrent(admission, principal, 'children')
     const records = await this.options.childDelegations.listChildren(receipt.executionId)
@@ -632,7 +632,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     return PiDurableLeadChildrenResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
-        ...observedTarget(receipt, admission),
+        ...observedTarget(receipt, startRequestOf(looked)),
         ...childPage(
           childViews(receipt, records),
           request.parameters.after,
@@ -765,6 +765,8 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       operation,
     })
     if (isFencedResult(resolved)) {
+      // Child reads are refused under every fence; only status, progress and cancel are retained.
+      if (operation === 'children') fail('PI_LEAD_UNAVAILABLE')
       const retained = await this.#retainedBinding(receipt, resolved, principal, operation)
       return { kind: 'fenced', receipt, retained, principal, operation }
     }

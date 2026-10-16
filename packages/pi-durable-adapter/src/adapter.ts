@@ -2188,13 +2188,6 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   }
 }
 
-// claimProcess refuses a stale snapshot or a live owner; either means another process moved first.
-function isOwnerContention(error: unknown): boolean {
-  return (
-    error instanceof Error && ['STALE_STATE', 'PI_SESSION_OWNER_ACTIVE'].includes(error.message)
-  )
-}
-
 function turnKey(record: Pick<JournalRecord, 'attemptId' | 'detail'>): string {
   return (
     (record.detail['turn'] as { requestId: string } | undefined)?.requestId ??

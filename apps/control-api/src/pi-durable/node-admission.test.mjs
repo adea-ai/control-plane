@@ -1297,6 +1297,7 @@ test('children read is refused under a v2 fence that appears during the child re
       authority: setup.bridge,
       receipts,
       adapter,
+      fence: adapter,
       now: () => at,
       childDelegations: {
         async listChildren(executionId) {
