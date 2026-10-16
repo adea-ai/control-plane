@@ -6,14 +6,11 @@ import { NestFactory } from '@nestjs/core'
 import { FastifyAdapter } from '@nestjs/platform-fastify/adapters/fastify-adapter.js'
 import { canonicalJsonStringify, PublicContractManifest } from '@control-plane/contracts'
 import { ModelReadinessReasonSchema } from '@control-plane/model-gateway'
+import { ControlPlaneClient, ControlPlaneClientError } from '@control-plane/sdk'
 import { PolicyServiceAuthenticator } from '../auth/service-authentication.ts'
 import { NormalizedExceptionFilter } from '../http/errors.ts'
 import { PiDurableLeadModule } from './pi-durable-lead.module.ts'
 import { PiDurableLeadError } from './pi-durable-lead.service.ts'
-import {
-  ControlPlaneClient,
-  ControlPlaneClientError,
-} from '../../../../packages/control-sdk/src/index.ts'
 
 const at = '2026-10-08T09:00:00.000Z'
 const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
