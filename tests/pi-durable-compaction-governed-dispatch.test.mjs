@@ -1681,3 +1681,33 @@ test('a completed child whose retained receipts do not match the canonical ledge
     await unproven.host.close()
   }
 }, 120000)
+
+test('a child attempt that ran more than one turn is refused rather than settled against one turn of usage', async () => {
+  const { host, hooks, dispatch } = await forkDispatchedHost()
+  try {
+    // The ledger spend is the whole attempt's; the reported usage is the completed turn's alone.
+    const adapter = host.composition.adapter
+    const row = childOf(adapter)
+    const [[, receipt]] = Object.entries(row.detail.inferenceReceipts)
+    adapter.journal.update(row.handleId, row.epoch, {
+      detail: {
+        ...row.detail,
+        inferenceReceipts: {
+          ...row.detail.inferenceReceipts,
+          [`pi-turn:${childAttemptId}:earlier:pi-generation:1`]: {
+            ...receipt,
+            turnKey: `pi-turn:${childAttemptId}:earlier`,
+          },
+        },
+      },
+    })
+    await expect(host.composition.settleChildTerminalAccounting()).rejects.toThrow(
+      'PI_CHILD_SETTLEMENT_MULTI_TURN_UNSUPPORTED'
+    )
+    expect(host.composition.childTerminalSettlementBlocked).toBe(true)
+    expect((await readChildCostState(hooks)).outcome.costState).toBe('reserved')
+    expect(kinds((await rowsOf(host, dispatch)).child)).not.toContain('settlement')
+  } finally {
+    await host.close()
+  }
+}, 120000)

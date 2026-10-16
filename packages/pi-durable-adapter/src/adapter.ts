@@ -1642,6 +1642,22 @@ export function completedTurnUsageSources(
 
 const TURN_USAGE_SOURCE_PREFIX = 'pi-turn-usage:'
 
+/**
+ * True when the attempt retains inference receipts of a turn other than the one its record is on. The
+ * reported usage of a completed record covers only that turn, while the attempt's reservation and the
+ * canonical ledger cover every turn, so the two only agree for an attempt that ran a single turn.
+ */
+export function retainsOtherTurnUsage(
+  record: Pick<JournalRecord, 'attemptId' | 'detail'>
+): boolean {
+  const retained = record.detail['inferenceReceipts']
+  if (typeof retained !== 'object' || retained === null) return false
+  const turn = turnKey(record)
+  return Object.values(retained as Record<string, unknown>).some(
+    (receipt) => (receipt as { turnKey?: unknown } | null)?.turnKey !== turn
+  )
+}
+
 export function aggregateUsage(receipts: readonly ReturnType<typeof RuntimeUsageSchema.parse>[]) {
   if (!receipts.length) fail('PI_INFERENCE_RECEIPT_REQUIRED', 'validation')
   if (receipts.length === 1) return receipts[0]!

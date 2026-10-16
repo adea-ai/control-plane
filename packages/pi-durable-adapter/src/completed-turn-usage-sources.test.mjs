@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { RuntimeUsageSchema } from '@control-plane/runtime-sdk'
-import { aggregateUsage, completedTurnUsageSources } from './adapter.ts'
+import { aggregateUsage, completedTurnUsageSources, retainsOtherTurnUsage } from './adapter.ts'
 
 const usage = (sourceId, microunits, tokens) =>
   RuntimeUsageSchema.parse({
@@ -69,4 +69,16 @@ test('a composite that the retained receipts do not reproduce has no sources', (
       { inputTokens: 1, outputTokens: 1, durationMs: 1 }
     )
   ).toBeUndefined()
+})
+
+test('an attempt that retains receipts of another turn is told apart from a single-turn one', () => {
+  expect(retainsOtherTurnUsage({ attemptId, detail: {} })).toBe(false)
+  expect(retainsOtherTurnUsage({ attemptId, detail: { inferenceReceipts: receipts } })).toBe(false)
+  const earlier = {
+    ...receipts,
+    'pi-turn:earlier:pi-generation:0': { turnKey: 'pi-turn:earlier', usage: one },
+  }
+  expect(retainsOtherTurnUsage({ attemptId, detail: { inferenceReceipts: earlier } })).toBe(true)
+  const current = { turn: { requestId: 'pi-turn:second' }, inferenceReceipts: receipts }
+  expect(retainsOtherTurnUsage({ attemptId, detail: current })).toBe(true)
 })

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import { ChildUsageLedger, type DelegationRepository } from '@control-plane/orchestration'
-import { completedTurnUsageSources } from '@control-plane/pi-durable-adapter'
+import { completedTurnUsageSources, retainsOtherTurnUsage } from '@control-plane/pi-durable-adapter'
 import {
   RuntimeStartRequestSchema,
   RuntimeUsageSchema,
@@ -42,6 +42,9 @@ export interface ChildTerminalSettlementResult {
  * reservation, then reconcile and settle the projection. A ledger refusal before budget finalization
  * leaves the remaining reservation open for a later pass. Evidence mismatches block projection
  * settlement; if one appears after ledger finalization, those durable ledger entries are not undone.
+ * A child settles as one turn: its reported usage is that turn's, and the ledger spend it is checked
+ * against is the whole attempt's. An attempt with retained receipts of another turn is refused with
+ * `PI_CHILD_SETTLEMENT_MULTI_TURN_UNSUPPORTED` and keeps its reservation.
  * Failed, cancelled, unknown and interrupted children keep their reservation and cost state exactly
  * as recorded; nothing here infers or releases them.
  */
@@ -202,6 +205,12 @@ export class PiChildTerminalSettlement {
       return outcome
     }
 
+    // The settled amounts are the ledger's for the whole attempt, while the reported usage covers the
+    // completed turn only. They agree only for an attempt that ran a single turn, which is what a child
+    // is: its run is one turn and nothing here continues it. A child that retains receipts of another
+    // turn is refused rather than settled against usage that does not account for its spend.
+    if (retainsOtherTurnUsage({ attemptId: childAttemptId, detail }))
+      throw new Error('PI_CHILD_SETTLEMENT_MULTI_TURN_UNSUPPORTED')
     // The reported usage is one inference's, or the aggregate of a turn's several. Either way every
     // constituent inference must be in the canonical ledger, exactly as that inference reported it,
     // and together they must account for the reported charge.
