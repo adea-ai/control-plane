@@ -18,6 +18,7 @@
 // docs/profile-recovery-acceptance-map.md.
 
 import { spawn } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
@@ -26,6 +27,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { createRegisteredGraphPlan } from './fixtures/registered-graph-plan.mjs'
+import { createCleanupRunner, installSignalCleanup } from './fixtures/runner-cleanup.mjs'
 import {
   approvalInteractionId,
   artifactIdOf,
@@ -58,6 +60,12 @@ const pinned = pinnedRestateCommands()
 const EXIT_BOUND_MS = 15_000
 const FAILURE_PROBE_WAIT_MS = EXIT_BOUND_MS * 4
 const cleanup = []
+const delayMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const RUNNER_SIGNALS = [
+  ['SIGINT', 130],
+  ['SIGTERM', 143],
+  ['SIGHUP', 129],
+]
 const OWNER_WITH_CHILD_HANDLE = String.raw`
 const { spawn } = require('node:child_process')
 const child = spawn('sleep', ['62'], { stdio: 'ignore' })
@@ -625,37 +633,15 @@ async function releaseSpawnedOwner({ owner, ownerExit, handles, exitBoundMs = EX
   }
 }
 
-async function runRegisteredCleanup() {
-  const failures = []
-  for (const entry of cleanup.splice(0)) {
-    try {
-      await entry()
-    } catch (error) {
-      failures.push(error)
-    }
-  }
-  if (failures.length > 0) throw new AggregateError(failures, 'self-hosted simple SIGKILL cleanup')
-}
+const runRegisteredCleanup = createCleanupRunner(cleanup, 'self-hosted simple SIGKILL cleanup')
 
-afterEach(runRegisteredCleanup)
+afterEach(() => runRegisteredCleanup())
 
 // A runner ended by a signal (a CI timeout, Ctrl-C) never reaches afterEach, and would leave the
-// composition and its Restate children running. Run the registered cleanups once, through the same
-// handles, then exit with the conventional signal status. The listeners are once-only, so a second
-// signal still ends the runner immediately.
-for (const [signal, status] of [
-  ['SIGINT', 130],
-  ['SIGTERM', 143],
-  ['SIGHUP', 129],
-]) {
-  process.once(signal, () => {
-    runRegisteredCleanup()
-      .catch((error) => {
-        console.error(`runner ${signal} cleanup incomplete: ${error.message}`)
-      })
-      .finally(() => process.exit(status))
-  })
-}
+// composition and its Restate children running. The signal path shares afterEach's serialized
+// cleanup, so it waits for any cleanup already in flight, runs what remains through the same
+// handles, then exits with the conventional signal status.
+installSignalCleanup({ run: runRegisteredCleanup, signals: RUNNER_SIGNALS })
 
 describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan reap (not Pi Durable host wiring, no orphan adoption)', () => {
   async function exerciseSigkillRecovery(recoveryCloseVia) {
@@ -1514,6 +1500,103 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       await expect(createPidfdBackend({ platform: 'linux', arch: 'riscv64' })).rejects.toThrow(
         'PINNED_PROCESS_UNSUPPORTED'
       )
+    })
+  })
+
+  describe('runner cleanup shared by afterEach and signals', () => {
+    function heldCleanup() {
+      const events = []
+      const queue = []
+      let release
+      const held = new Promise((resolve) => {
+        release = resolve
+      })
+      queue.push(async () => {
+        events.push('held-start')
+        await held
+        events.push('held-done')
+      })
+      return { events, queue, release }
+    }
+    const signals = [
+      ['SIGINT', 130],
+      ['SIGTERM', 143],
+      ['SIGHUP', 129],
+    ]
+
+    test('a signal during an in-flight afterEach cleanup waits for it before exiting', async () => {
+      const { events, queue, release } = heldCleanup()
+      const run = createCleanupRunner(queue, 'test cleanup')
+      const target = new EventEmitter()
+      const exits = []
+      installSignalCleanup({
+        run,
+        signals,
+        target,
+        exit: (status) => exits.push(status),
+      })
+
+      const afterEachRun = run()
+      await delayMs(20)
+      expect(events).toEqual(['held-start'])
+      // The queue is already taken: a runner that drained it only once would see nothing left.
+      expect(queue).toEqual([])
+
+      target.emit('SIGTERM')
+      target.emit('SIGINT')
+      await delayMs(50)
+      expect(exits).toEqual([])
+
+      release()
+      await afterEachRun
+      await delayMs(20)
+      expect(events).toEqual(['held-start', 'held-done'])
+      expect(exits.toSorted()).toEqual([130, 143])
+      // Cleanup ran once, not once per delivery.
+      expect(events.filter((event) => event === 'held-start')).toHaveLength(1)
+    })
+
+    test('cleanup registered while another cleanup runs is still run, and failures do not stop later callbacks', async () => {
+      const queue = []
+      const events = []
+      const run = createCleanupRunner(queue, 'test cleanup')
+      queue.push(async () => {
+        events.push('first')
+        queue.push(async () => {
+          events.push('registered-late')
+        })
+        throw new Error('first failed')
+      })
+      queue.push(async () => {
+        events.push('second')
+      })
+      const outcome = await run().catch((error) => error)
+      expect(outcome).toBeInstanceOf(AggregateError)
+      expect(outcome.message).toBe('test cleanup')
+      expect(outcome.errors.map((error) => error.message)).toEqual(['first failed'])
+      expect(events).toEqual(['first', 'second', 'registered-late'])
+    })
+
+    test('a signal exits with its status after a failed cleanup and reports it', async () => {
+      const queue = [
+        async () => {
+          throw new Error('stuck owner')
+        },
+      ]
+      const target = new EventEmitter()
+      const exits = []
+      const reports = []
+      installSignalCleanup({
+        run: createCleanupRunner(queue, 'test cleanup'),
+        signals,
+        target,
+        exit: (status) => exits.push(status),
+        report: (message) => reports.push(message),
+      })
+      target.emit('SIGHUP')
+      await delayMs(30)
+      expect(exits).toEqual([129])
+      expect(reports).toEqual(['runner SIGHUP cleanup incomplete: test cleanup'])
     })
   })
 
