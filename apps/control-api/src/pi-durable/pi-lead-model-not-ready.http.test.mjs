@@ -4,12 +4,16 @@ import { createHash } from 'node:crypto'
 import { VersioningType } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
 import { FastifyAdapter } from '@nestjs/platform-fastify/adapters/fastify-adapter.js'
-import { canonicalJsonStringify } from '@control-plane/contracts'
+import { canonicalJsonStringify, PublicContractManifest } from '@control-plane/contracts'
 import { ModelReadinessReasonSchema } from '@control-plane/model-gateway'
 import { PolicyServiceAuthenticator } from '../auth/service-authentication.ts'
 import { NormalizedExceptionFilter } from '../http/errors.ts'
 import { PiDurableLeadModule } from './pi-durable-lead.module.ts'
 import { PiDurableLeadError } from './pi-durable-lead.service.ts'
+import {
+  ControlPlaneClient,
+  ControlPlaneClientError,
+} from '../../../../packages/control-sdk/src/index.ts'
 
 const at = '2026-10-08T09:00:00.000Z'
 const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
@@ -139,6 +143,71 @@ test('an unreadable authority is a retryable 503 with the same code, and other f
     expect(response.statusCode).toBe(503)
     expect(response.json().error.code).toBe('PI_LEAD_UNAVAILABLE')
     expect(response.body).not.toContain('sk-secret-value')
+  } finally {
+    await app.close()
+  }
+})
+
+test('a real HTTP refusal reaches SDK callers with code, bounded reason, status and request id', async () => {
+  let next
+  const app = await open({
+    dispatch: async () => {
+      throw next
+    },
+  })
+  // The SDK builds the real request; this transport only hands it to the live Nest app.
+  const client = new ControlPlaneClient({
+    baseUrl: 'https://control-plane.test',
+    credential: 'local-http-test-token',
+    fetch: async (url, init) => {
+      const response = await app.inject({
+        method: init.method,
+        url: new URL(url).pathname,
+        payload: init.body,
+        headers: Object.fromEntries(new Headers(init.headers)),
+      })
+      return new Response(response.body, {
+        status: response.statusCode,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+  const requestId = id('req')
+  const request = {
+    ...body('pi-durable.lead.dispatch', { intentId: 'f643a115-617d-4bae-8d52-cfe458c0b8ac' }),
+    requestId,
+    contractVersion: PublicContractManifest.current,
+  }
+  const refuse = async (error) => {
+    next = error
+    return client.dispatchPiDurableLead(request).catch((failure) => failure)
+  }
+  try {
+    const quota = await refuse(new PiDurableLeadError('PI_LEAD_MODEL_NOT_READY', 'QUOTA_EXHAUSTED'))
+    expect(quota).toBeInstanceOf(ControlPlaneClientError)
+    expect(quota).toMatchObject({
+      code: 'PI_LEAD_MODEL_NOT_READY',
+      reasonCode: 'QUOTA_EXHAUSTED',
+      status: 409,
+      retryable: false,
+      errorClass: 'conflict',
+      requestId,
+    })
+    const unreadable = await refuse(
+      new PiDurableLeadError('PI_LEAD_MODEL_NOT_READY', 'READINESS_UNAVAILABLE')
+    )
+    expect(unreadable).toMatchObject({
+      code: 'PI_LEAD_MODEL_NOT_READY',
+      reasonCode: 'READINESS_UNAVAILABLE',
+      status: 503,
+      retryable: true,
+      errorClass: 'runtime_unavailable',
+      requestId,
+    })
+    // An unrelated 503 stays generic: no readiness code and no reason.
+    const generic = await refuse(new PiDurableLeadError('PI_LEAD_UNAVAILABLE'))
+    expect(generic).toMatchObject({ code: 'PI_LEAD_UNAVAILABLE', status: 503, requestId })
+    expect(generic.reasonCode).toBeUndefined()
   } finally {
     await app.close()
   }
