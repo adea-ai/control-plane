@@ -49,6 +49,7 @@ import { NodeSessionLease } from './lease.js'
 import { DurableToolCallRequestSchema, type DurableToolCallRequest } from '@control-plane/tool-sdk'
 import { z } from 'zod'
 import { PiDurableEffectGate, type DurableEffectGateOutcome } from './effect-gate.js'
+import { issueInferenceResumePermit } from './resume-permit.js'
 import {
   PiDurableToolSourceSchema,
   verifyPiDurableManagementToolSource,
@@ -498,7 +499,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     reauthorizeBeforeClaim?: (authority: DurableExecutionAuthority) => Promise<void>
   ) {
     const request = RuntimeCancelRequestSchema.parse(input)
-    const record = this.#record(handle)
+    let record = this.#record(handle)
     const cancellationAuthority = this.#options.committedCancellationAuthority
     if (!cancellationAuthority) fail('PI_CANCELLATION_AUTHORITY_UNAVAILABLE', 'unavailable')
     const key = `cancel:${request.idempotencyKey}`
@@ -575,6 +576,9 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     // The caller's authorization callback is a preflight only; it never grants cancellation.
     await authorize(this.#stored(record))
     this.#assertOpen()
+    // Authorization awaits scope and authority lookups, and a generation can start or finish in
+    // that window. The target is derived from the journal as it is now, not as it was read before.
+    record = this.#record(handle)
     if (record.state === 'completed') fail('PI_EXECUTION_TERMINAL', 'conflict')
     // A stop request can arrive after the native run has already retained a failure.
     // Keep that terminal outcome authoritative; lead orchestration may still cascade
@@ -1659,10 +1663,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           })
           const safeResume =
             current.detail['safeResumeInferenceKey'] === generation.inferenceKey
-              ? {
-                  schemaVersion: 'pi-inference-resume-permit/v1' as const,
-                  inferenceKey: generation.inferenceKey,
-                }
+              ? issueInferenceResumePermit(generation.inferenceKey)
               : undefined
           const allowance = await this.#options.authorizeInference(
             authority,
