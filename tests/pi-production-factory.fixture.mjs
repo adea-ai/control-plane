@@ -623,6 +623,26 @@ export async function createProductionFactoryFixture(options = {}) {
       composition = await openComposition()
       return composition
     }
+    // Closes the composition and the canonical store but keeps the directory and every in-memory
+    // fixture binding, so the files can be copied, replaced or opened by another process.
+    // `resume` opens the store and a fresh composition over whatever the directory then holds.
+    let suspended = false
+    const suspend = async () => {
+      if (suspended) return directory
+      suspended = true
+      const previous = composition
+      composition = undefined
+      await previous?.close()
+      persistence.close()
+      return directory
+    }
+    const resume = async () => {
+      if (!suspended) return composition
+      await persistence.migrate()
+      composition = await openComposition()
+      suspended = false
+      return composition
+    }
     const command = (operation, payload) =>
       StateChangingCommandEnvelopeSchema.parse({
         contractVersion: { major: 1, minor: 0 },
@@ -656,6 +676,8 @@ export async function createProductionFactoryFixture(options = {}) {
         return composition
       },
       reopenComposition,
+      suspend,
+      resume,
       directory,
       principal,
       state,
