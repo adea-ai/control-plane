@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "profile": "local",
+  "entries": [
+    {
+      "path": "state.db",
+      "kind": "file",
+      "mode": 384,
+      "size": 14,
+      "sha256": "sha256:b6d89c0944bd5d3e74da9158405096e3021063edac41bef237c3363bd2565b0f"
+    }
+  ],
+  "contentDigest": "sha256:8807a8a38d8d52550b6435cf13d08879ce472f303d6ad14773c3bd057913b2dd"
+}

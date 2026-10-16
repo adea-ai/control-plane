@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.100.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.2...workspace-v1.100.3) (2026-10-15)
+
+
+### Bug Fixes
+
+* **m612:** preserve relay and checkpoint replay bytes ([#1150](https://github.com/adea-ai/control-plane/issues/1150)) ([a00ce81](https://github.com/adea-ai/control-plane/commit/a00ce8174f150973d1a0a8b8f8fea63d2cf1ec78))
+* **orchestration:** version graph catalog digests ([bdc2fbb](https://github.com/adea-ai/control-plane/commit/bdc2fbb6afc00e97bfdba0f686a5ba08fc643cf7))
+* preserve graph digest compatibility ([#1149](https://github.com/adea-ai/control-plane/issues/1149)) ([bdc2fbb](https://github.com/adea-ai/control-plane/commit/bdc2fbb6afc00e97bfdba0f686a5ba08fc643cf7))
+
+## [1.100.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.1...workspace-v1.100.2) (2026-10-15)
+
+
+### Performance
+
+* cache SQLite statements and avoid repeated canonical JSON work ([#1142](https://github.com/adea-ai/control-plane/issues/1142)) ([b8b47f5](https://github.com/adea-ai/control-plane/commit/b8b47f5c0261f8e9880fd0572fd05aa353c3c418))
+* memoize execution plan verification on an immutable snapshot ([#1143](https://github.com/adea-ai/control-plane/issues/1143)) ([4e1bf3d](https://github.com/adea-ai/control-plane/commit/4e1bf3d3c58dd8e6326c8722bbcdb3e7d62de24f))
+
+## [1.100.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.0...workspace-v1.100.1) (2026-10-15)
+
+
+### CI
+
+* pin the shared validation workflow to the merged code-foundry fix ([#1144](https://github.com/adea-ai/control-plane/issues/1144)) ([db154ff](https://github.com/adea-ai/control-plane/commit/db154ff5083a14820285b6ff01ca59f8c41ccd87))
+
 ## [1.100.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.99.0...workspace-v1.100.0) (2026-10-15)
 
 

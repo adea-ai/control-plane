@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.6](https://github.com/adea-ai/control-plane/compare/deployment-v1.10.5...deployment-v1.10.6) (2026-10-15)
+
+
+### Bug Fixes
+
+* **m612:** preserve relay and checkpoint replay bytes ([#1150](https://github.com/adea-ai/control-plane/issues/1150)) ([a00ce81](https://github.com/adea-ai/control-plane/commit/a00ce8174f150973d1a0a8b8f8fea63d2cf1ec78))
+
 ## [1.10.5](https://github.com/adea-ai/control-plane/compare/deployment-v1.10.4...deployment-v1.10.5) (2026-10-14)
 
 
