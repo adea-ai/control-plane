@@ -1,0 +1,68 @@
+# BYO lead model authority (issue 931)
+
+Contract for how a Pi Durable lead run may use a Control Plane held bring-your-own (BYO)
+model connection. It states what is enforced and where, so a consumer (for example the
+Adea app) can rely on the refusal shape. It adds no new operation, credential path or
+spending authority. It is proven with a scripted account reader, vault secret and
+transport; it is **not** live-provider qualification, and the account reader that tells
+Control Plane the real quota, entitlement and residency is still host supplied.
+
+## Eligibility
+
+A connection can serve a lead only when all of these hold at the moment of use:
+
+- provider `openai`, auth `api_key`, funding source `byo_api`;
+- harness `pi_durable` 1.1.0, binding `pi_durable_models`, location `remote_host`
+  (other harnesses fail `INCOMPATIBLE_HARNESS`, other locations `INCOMPATIBLE_LOCATION`);
+- the pinned model is still on the account, and the workspace grant, credential revision,
+  quota, entitlement and residency are all current;
+- the recorded payer is explicit and is not an Adea account. A `byo_api` key is paid for by
+  the key owner, so a funding record that names `adea_account` is refused with
+  `PROVIDER_POLICY_DENIED` (`provider_account` and `workspace_account` are allowed).
+
+Lead, child and direct roles select independently. Nothing is inherited and nothing falls
+back to another account, deployment, model or role. Control Plane does not gate direct
+sessions; a consumer decides direct eligibility from the table above.
+
+## Where it is rechecked
+
+Every boundary re-reads the host account authority, never a cached answer:
+selection resolve, prepare, dispatch, provider resolve and credential lease, and each
+physical provider send (`assertActive`). A fault at any read stops all later sends.
+
+## Refusal contract (v1)
+
+Prepare and dispatch refuse with code `PI_LEAD_MODEL_NOT_READY`.
+
+- HTTP 409 (`error.class` `conflict`, not retryable) for a definite not-ready reason.
+- HTTP 503 (`runtime_unavailable`, retryable) when the reason is `READINESS_UNAVAILABLE`
+  (account reader or quota unreadable).
+- `error.details.reasonCode` is one of the model readiness reasons except `READY`:
+  `CONNECTION_MISSING`, `CONNECTION_REVOKED`, `CREDENTIAL_MISSING`, `CREDENTIAL_EXPIRED`,
+  `CREDENTIAL_REVOKED`, `CREDENTIAL_REVISION_CHANGED`, `WORKSPACE_GRANT_EXPIRED`,
+  `WORKSPACE_GRANT_REVOKED`, `SELECTION_CHANGED`, `MODEL_UNAVAILABLE`, `QUOTA_EXHAUSTED`,
+  `INCOMPATIBLE_HARNESS`, `INCOMPATIBLE_LOCATION`, `AUTH_MODE_UNSUPPORTED`,
+  `PROVIDER_POLICY_DENIED`, `READINESS_UNAVAILABLE`.
+- A blocked funding view carries the same `reasonCode`; a ready view is unchanged.
+- No secret, provider message or account detail is included.
+
+Status, progress, lookup and cancel of an already admitted lead never require model
+readiness, so an operator can always see and stop a run after quota, grant or credential
+loss. Cancel keeps current actor, scope and lineage checks.
+
+## Proof
+
+- `tests/pi-byo-model-authority.test.mjs` runs the production composition against nine
+  account faults: prepare and dispatch refuse with the exact reason and zero sends, leases
+  or allocations; a running lead stays observable and cancellable; a payer kind case; and
+  a sweep that injects quota loss at each account read and asserts no send starts after it.
+- `apps/control-api/src/pi-durable/pi-lead-model-not-ready.http.test.mjs` pins the HTTP
+  envelope for every reason.
+- `packages/model-gateway/src/funding-view.test.mjs` pins the payer kind rule.
+
+## Not covered
+
+- Live OpenAI qualification and a real account reader.
+- The reason for a denial that happens after a send has started is not carried back to the
+  run result; the run fails closed without a bounded reason code.
+- Child run cancel is still gated by child model readiness.

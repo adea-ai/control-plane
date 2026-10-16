@@ -19,6 +19,9 @@ immutable snapshot through `ModelSelectionService.resolveSelection` on reopen.
 Every inference invokes `assertReady`; newer defaults affect subsequent admissions.
 Revocation, expiry, changed credentials/grants and stale qualification block old work.
 
+The lead run contract (eligibility, per-boundary rechecks, the `PI_LEAD_MODEL_NOT_READY`
+refusal and its reason codes) is in `docs/architecture/byo-lead-model-authority.md`.
+
 ## Composition
 
 Inject a durable `ModelSelectionRepository`, the existing `CredentialVault`, and

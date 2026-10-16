@@ -72,3 +72,5 @@ Preparing creates no physical-send reservation. R1 owns idempotent expiry/abando
 cleanup of the canonical UNUSED attempt allocation, including startup recovery;
 this composition never releases an in-flight allocation. Existing direct and
 legacy runtimes remain unchanged.
+
+See [BYO lead model authority](byo-lead-model-authority.md) for the consumer-facing refusal contract.
