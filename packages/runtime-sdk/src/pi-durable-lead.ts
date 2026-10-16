@@ -87,9 +87,24 @@ export const PiDurableLeadProgressRequestSchema = PiDurableLeadReadEnvelopeSchem
     })
     .strict(),
 })
+/** Position after which the next page of children starts: the last returned child's sort key. */
+export const PiDurableLeadChildrenCursorSchema = z
+  .object({ acceptedAt: z.iso.datetime(), delegationId: IdentifierSchemas.delegationId })
+  .strict()
+  .readonly()
+export type PiDurableLeadChildrenCursor = z.output<typeof PiDurableLeadChildrenCursorSchema>
+export const PI_DURABLE_LEAD_CHILDREN_MAX_PAGE = 256
 export const PiDurableLeadChildrenRequestSchema = PiDurableLeadReadEnvelopeSchema.extend({
   operation: z.literal('pi-durable.lead.children'),
-  parameters: z.object({ dispatchId: DispatchId }).strict(),
+  parameters: z
+    .object({
+      dispatchId: DispatchId,
+      /** Resume strictly after this child (acceptance time, then delegation ID). */
+      after: PiDurableLeadChildrenCursorSchema.optional(),
+      /** Page size, 1..256; the default is the maximum. */
+      limit: z.number().int().min(1).max(PI_DURABLE_LEAD_CHILDREN_MAX_PAGE).optional(),
+    })
+    .strict(),
 })
 export const PiDurableLeadCancelRequestSchema = PiDurableLeadCommandEnvelopeSchema.extend({
   operation: z.literal('pi-durable.lead.cancel'),
@@ -236,9 +251,31 @@ export const PiDurableLeadChildSchema = z
     outcome: PiDurableLeadChildOutcomeSchema.optional(),
   })
   .strict()
+/**
+ * One page of the dispatch's children, ordered by acceptance time then delegation ID.
+ * `totalChildren` counts every child of this dispatch at the time of the read, so a consumer
+ * can tell a complete set from a page. `complete` is true only when this page ends the set;
+ * otherwise `next` is the cursor for the following page. A page is never silently cut short.
+ */
 export const PiDurableLeadChildrenResponseSchema = response.extend({
   data: PiDurableLeadReceiptResponseSchema.extend({
-    children: z.array(PiDurableLeadChildSchema).max(256),
+    children: z.array(PiDurableLeadChildSchema).max(PI_DURABLE_LEAD_CHILDREN_MAX_PAGE),
+    totalChildren: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    complete: z.boolean(),
+    next: PiDurableLeadChildrenCursorSchema.optional(),
+  }).superRefine((value, context) => {
+    if (value.complete === (value.next !== undefined))
+      context.addIssue({
+        code: 'custom',
+        path: ['next'],
+        message: 'A page is complete exactly when it has no next cursor',
+      })
+    if (value.children.length > value.totalChildren)
+      context.addIssue({
+        code: 'custom',
+        path: ['totalChildren'],
+        message: 'A page cannot hold more children than the dispatch has',
+      })
   }),
 })
 

@@ -575,7 +575,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     workspaceId: string
     intentId: string
     principal: ServicePrincipal
-    operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   }): Promise<PiDurableLeadAdmission | PiDurableLeadFencedResult> {
     return this.#safe(async () => {
       const principal = ServicePrincipalSchema.parse(input.principal)
@@ -830,7 +830,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
   async assertCurrent(
     admission: PiDurableLeadAdmission,
     principal: ServicePrincipal,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   ): Promise<void> {
     return this.#safe(async () => {
       const checked = ServicePrincipalSchema.parse(principal)
@@ -1094,7 +1094,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     input: {
       workspaceId: string
       intentId: string
-      operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+      operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
     },
     variant: LeadFenceVariant,
     facts: LeadIntentFenceFacts,
@@ -1177,7 +1177,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     variant: LeadFenceVariant,
     facts: LeadIntentFenceFacts,
     principalId: string,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel',
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel',
     marker: LeadIntentMarker
   ): void {
     const decision = fencedOperationPolicy(variant)[operation as LeadOperation]

@@ -17904,7 +17904,25 @@
                   "parameters": {
                     "additionalProperties": false,
                     "properties": {
-                      "dispatchId": { "pattern": "^dispatch_[a-f0-9]{32}$", "type": "string" }
+                      "after": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "acceptedAt": {
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                            "type": "string"
+                          },
+                          "delegationId": {
+                            "pattern": "^dlg_[0-9A-HJKMNP-TV-Z]{26}$",
+                            "type": "string"
+                          }
+                        },
+                        "readOnly": true,
+                        "required": ["acceptedAt", "delegationId"],
+                        "type": "object"
+                      },
+                      "dispatchId": { "pattern": "^dispatch_[a-f0-9]{32}$", "type": "string" },
+                      "limit": { "maximum": 256, "minimum": 1, "type": "integer" }
                     },
                     "required": ["dispatchId"],
                     "type": "object"
@@ -18065,12 +18083,27 @@
                           "maxItems": 256,
                           "type": "array"
                         },
+                        "complete": { "type": "boolean" },
                         "dispatchId": { "pattern": "^dispatch_[a-f0-9]{32}$", "type": "string" },
                         "executionId": {},
                         "intentId": {
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                           "type": "string"
+                        },
+                        "next": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "acceptedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                              "type": "string"
+                            },
+                            "delegationId": {}
+                          },
+                          "readOnly": true,
+                          "required": ["acceptedAt", "delegationId"],
+                          "type": "object"
                         },
                         "observedTarget": {
                           "additionalProperties": false,
@@ -18098,7 +18131,12 @@
                           "type": "object"
                         },
                         "runtimeSessionId": {},
-                        "schemaVersion": { "const": "pi-lead-dispatch/v1", "type": "string" }
+                        "schemaVersion": { "const": "pi-lead-dispatch/v1", "type": "string" },
+                        "totalChildren": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        }
                       },
                       "required": [
                         "schemaVersion",
@@ -18107,7 +18145,9 @@
                         "executionId",
                         "attemptId",
                         "runtimeSessionId",
-                        "children"
+                        "children",
+                        "totalChildren",
+                        "complete"
                       ],
                       "type": "object"
                     },

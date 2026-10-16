@@ -32,11 +32,13 @@ import {
   PiDurableLeadProgressRequestSchema,
   PiDurableLeadChildrenRequestSchema,
   PiDurableLeadChildrenResponseSchema,
+  PI_DURABLE_LEAD_CHILDREN_MAX_PAGE,
   PiDurableLeadCancelRequestSchema,
   PiDurableLeadDispatchResponseSchema,
   PiDurableLeadStatusResponseSchema,
   PiDurableLeadProgressResponseSchema,
   PiDurableLeadCancelResponseSchema,
+  type PiDurableLeadChild,
   PiDurableLeadCommandEnvelopeSchema as command,
   PiDurableLeadReadEnvelopeSchema as read,
 } from '@control-plane/runtime-sdk'
@@ -142,13 +144,13 @@ export interface PiDurableLeadAuthority {
     readonly workspaceId: string
     readonly intentId: string
     readonly principal: ServicePrincipal
-    readonly operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    readonly operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   }): Promise<PiDurableLeadAdmission | PiDurableLeadFencedResult>
   /** Checks canonical audience, current accepted attempt, pinned plan, deadline and budget. */
   assertCurrent(
     admission: PiDurableLeadAdmission,
     principal: ServicePrincipal,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   ): Promise<void>
 }
 
@@ -583,23 +585,28 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     const request = parse(PiDurableLeadChildrenRequestSchema, input)
     checkPrincipal(request, principal, 'execution:read')
     if (!this.options.childDelegations) fail('PI_LEAD_NOT_CONFIGURED')
+    // `children` is its own authority operation: unlike status and progress it is refused under
+    // every rollback fence, at the lookup and at both rereads around the child read.
     const looked = await this.#lookup(
       request.workspaceId,
       request.parameters.dispatchId,
       principal,
-      'status'
+      'children'
     )
-    // A fenced receipt proves no current child authority: the read fails closed.
     if ('fenced' in looked) fail('PI_LEAD_UNAVAILABLE')
     const { receipt, admission } = looked
-    await this.options.authority.assertCurrent(admission, principal, 'status')
+    await this.options.authority.assertCurrent(admission, principal, 'children')
     const records = await this.options.childDelegations.listChildren(receipt.executionId)
-    await this.options.authority.assertCurrent(admission, principal, 'status')
+    await this.options.authority.assertCurrent(admission, principal, 'children')
     return PiDurableLeadChildrenResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
         ...observedTarget(receipt, admission),
-        children: childViews(receipt, records),
+        ...childPage(
+          childViews(receipt, records),
+          request.parameters.after,
+          request.parameters.limit ?? PI_DURABLE_LEAD_CHILDREN_MAX_PAGE
+        ),
       })
     )
   }
@@ -647,7 +654,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     workspaceId: string,
     intentId: string,
     principal: ServicePrincipal,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   ) {
     return this.#admit(
       await this.#resolveRaw(workspaceId, intentId, principal, operation),
@@ -662,7 +669,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     workspaceId: string,
     intentId: string,
     principal: ServicePrincipal,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   ): Promise<PiDurableLeadAdmission | PiDurableLeadFencedResult> {
     return this.options.authority.resolveIntent({ workspaceId, intentId, principal, operation })
   }
@@ -672,7 +679,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     workspaceId: string,
     intentId: string,
     principal: ServicePrincipal,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   ): Promise<PiDurableLeadAdmission> {
     if (!('schemaVersion' in resolved) || resolved.schemaVersion !== 'pi-lead-authority/v1') {
       // Fenced results never reach the admission path (M18.01.3). Fenced observation and
@@ -712,7 +719,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     workspaceId: string,
     dispatchId: string,
     principal: ServicePrincipal,
-    operation: 'status' | 'progress' | 'cancel'
+    operation: 'status' | 'progress' | 'children' | 'cancel'
   ) {
     const receipt = await this.options.receipts.get(dispatchId)
     if (!receipt) fail('PI_LEAD_MISSING')
@@ -992,14 +999,19 @@ function observedTarget(
  * lead's own is a repository contract violation and fails the read; a record of another attempt
  * of the same execution is not this dispatch's child and is left out.
  */
-function childViews(receipt: PiDurableLeadReceipt, records: readonly DelegationRecord[]) {
-  const views = []
+function childViews(
+  receipt: PiDurableLeadReceipt,
+  records: readonly DelegationRecord[]
+): PiDurableLeadChild[] {
+  const views: PiDurableLeadChild[] = []
   for (const record of records) {
     if (record.parentExecutionId !== receipt.executionId) fail('PI_LEAD_AUTHORITY_CONFLICT')
     if (record.parentAttemptId !== undefined && record.parentAttemptId !== receipt.attemptId)
       continue
-    const terminal =
+    const outcomeState =
       record.state === 'completed' || record.state === 'failed' || record.state === 'cancelled'
+        ? record.state
+        : undefined
     views.push({
       delegationId: record.delegationId,
       childExecutionId: record.childExecutionId,
@@ -1011,10 +1023,10 @@ function childViews(receipt: PiDurableLeadReceipt, records: readonly DelegationR
       acceptedAt: record.acceptedAt,
       updatedAt: record.updatedAt,
       revision: record.revision,
-      ...(terminal
+      ...(outcomeState
         ? {
             outcome: {
-              state: record.state,
+              state: outcomeState,
               ...(record.terminalResultRef ? { resultRef: record.terminalResultRef } : {}),
               ...(record.failureCode ? { failureCode: record.failureCode } : {}),
               publication: {
@@ -1028,15 +1040,39 @@ function childViews(receipt: PiDurableLeadReceipt, records: readonly DelegationR
         : {}),
     })
   }
-  return views.sort((left, right) =>
-    left.acceptedAt === right.acceptedAt
-      ? left.delegationId < right.delegationId
-        ? -1
-        : 1
-      : left.acceptedAt < right.acceptedAt
-        ? -1
-        : 1
-  )
+  return views.sort(compareChildren)
+}
+
+type ChildView = PiDurableLeadChild
+type ChildCursor = Pick<ChildView, 'acceptedAt' | 'delegationId'>
+
+function compareChildren(left: ChildCursor, right: ChildCursor): number {
+  const byTime = Date.parse(left.acceptedAt) - Date.parse(right.acceptedAt)
+  if (byTime !== 0) return byTime
+  return left.delegationId < right.delegationId
+    ? -1
+    : left.delegationId > right.delegationId
+      ? 1
+      : 0
+}
+
+/**
+ * One page of the ordered children. The set is never silently cut: `totalChildren` counts all
+ * matching children, and a page that does not end the set carries the cursor of its last child.
+ */
+function childPage(ordered: readonly ChildView[], after: ChildCursor | undefined, limit: number) {
+  const remaining = after ? ordered.filter((child) => compareChildren(child, after) > 0) : ordered
+  const children = remaining.slice(0, limit)
+  const last = children.at(-1)
+  const more = remaining.length > children.length && last !== undefined
+  return {
+    children,
+    totalChildren: ordered.length,
+    complete: !more,
+    ...(more && last
+      ? { next: { acceptedAt: last.acceptedAt, delegationId: last.delegationId } }
+      : {}),
+  }
 }
 
 function success(request: z.output<typeof command> | z.output<typeof read>, data: unknown) {

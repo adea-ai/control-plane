@@ -2721,7 +2721,7 @@
         "delivery": "Bounded read of retained delegation records: child state, input/approval state and terminal outcome identifiers, live audience reread before and after",
         "cleanup": "Read only; no session, child or publication state is opened, advanced or closed"
       },
-      "assessment": "Strict SDK/OpenAPI/controller route returns the authorized, retained child state, approval/input state and terminal outcome of a lead dispatch from canonical delegation records, with the original actor and current audience rechecked around the read. Prompts, objectives, plans, digests and native payloads never cross. It is an observation only: it grants, starts, cancels and publishes nothing. Child runtime progress, deployed and live-provider evidence and Adea consumption remain partial.",
+      "assessment": "Strict SDK/OpenAPI/controller route returns the authorized, retained child state, approval/input state and terminal outcome of a lead dispatch from canonical delegation records, with the original actor and current audience rechecked around the read by its own authority operation, which every rollback fence refuses, and paged with an explicit total and completeness so a large set is never truncated. Prompts, objectives, plans, digests and native payloads never cross. It is an observation only: it grants, starts, cancels and publishes nothing. Child runtime progress, deployed and live-provider evidence and Adea consumption remain partial.",
       "evidence": [
         {
           "kind": "test",

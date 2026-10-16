@@ -855,6 +855,119 @@ describe('composed Pi Durable lead HTTP endpoints', () => {
       )
     })
 
+    const many = (count, extraOtherAttempt = 3) => {
+      const key = (n) => String(n).padStart(8, '0')
+      return [
+        ...Array.from({ length: count }, (_, n) =>
+          record('X', {
+            delegationId: `dlg_01JABCDEF012345678${key(n)}`,
+            childExecutionId: `exe_01JABCDEF012345678${key(n)}`,
+            childAttemptId: `att_01JABCDEF012345678${key(n)}`,
+            acceptedAt: new Date(Date.parse(at) + n * 1000).toISOString(),
+          })
+        ),
+        ...Array.from({ length: extraOtherAttempt }, (_, n) =>
+          record('Y', {
+            delegationId: `dlg_01JABCDEF012345679${key(n)}`,
+            parentAttemptId: 'att_01JABCDEF0123456789ABCDEFZ',
+          })
+        ),
+      ]
+    }
+    const pageOf = async (context, receipt, parameters = {}) => {
+      const response = await context.inject(
+        'children',
+        context.read('pi-durable.lead.children', { dispatchId: receipt.dispatchId, ...parameters })
+      )
+      expect(response.statusCode).toBe(200)
+      return response.json().data
+    }
+    const dispatchLead = async (context) => {
+      const receipt = (
+        await context.inject('dispatch', context.envelope('pi-durable.lead.dispatch', { intentId }))
+      ).json().data
+      await context.adapter.drain()
+      return receipt
+    }
+
+    test('256 matching children are one complete page and 257 are paged with a cursor, never truncated', () => {
+      let count = 256
+      return fixture(
+        async (context) => {
+          const receipt = await dispatchLead(context)
+          // Exactly the page maximum: complete, no cursor; other-attempt records are not counted.
+          const exact = await pageOf(context, receipt)
+          expect(exact.children).toHaveLength(256)
+          expect(exact).toMatchObject({ totalChildren: 256, complete: true })
+          expect(exact.next).toBeUndefined()
+          // One more matching child: the first page says it is not the whole set.
+          count = 257
+          const first = await pageOf(context, receipt)
+          expect(first.children).toHaveLength(256)
+          expect(first).toMatchObject({ totalChildren: 257, complete: false })
+          expect(first.next).toEqual({
+            acceptedAt: first.children.at(-1).acceptedAt,
+            delegationId: first.children.at(-1).delegationId,
+          })
+          const second = await pageOf(context, receipt, { after: first.next })
+          expect(second.children).toHaveLength(1)
+          expect(second).toMatchObject({ totalChildren: 257, complete: true })
+          expect(second.next).toBeUndefined()
+          const ids = [...first.children, ...second.children].map((child) => child.delegationId)
+          expect(new Set(ids).size).toBe(257)
+          expect(ids).toEqual([...ids].toSorted())
+          expect(ids.every((id) => id.startsWith('dlg_01JABCDEF012345678'))).toBe(true)
+          // Smaller pages walk the same set in the same order.
+          const walked = []
+          let after
+          let pages = 0
+          do {
+            const page = await pageOf(context, receipt, { limit: 100, ...(after ? { after } : {}) })
+            walked.push(...page.children.map((child) => child.delegationId))
+            after = page.next
+            pages++
+          } while (after)
+          expect(pages).toBe(3)
+          expect(walked).toEqual(ids)
+        },
+        {
+          childDelegations: {
+            async listChildren(parentExecutionId) {
+              return many(count).map((child) => ({ ...child, parentExecutionId }))
+            },
+          },
+        }
+      )
+    })
+
+    test('a cursor past the last child is an empty complete page and bad paging input is rejected', () =>
+      fixture(
+        async (context) => {
+          const receipt = await dispatchLead(context)
+          const end = await pageOf(context, receipt, {
+            after: { acceptedAt: '2100-01-01T00:00:00.000Z', delegationId: childId('Z') },
+          })
+          expect(end).toMatchObject({ children: [], totalChildren: 3, complete: true })
+          for (const parameters of [{ limit: 0 }, { limit: 257 }, { after: { acceptedAt: 'x' } }]) {
+            const response = await context.inject(
+              'children',
+              context.read('pi-durable.lead.children', {
+                dispatchId: receipt.dispatchId,
+                ...parameters,
+              })
+            )
+            expect(response.statusCode).toBe(400)
+          }
+        },
+        {
+          childDelegations: {
+            async listChildren(parentExecutionId) {
+              return many(3).map((child) => ({ ...child, parentExecutionId }))
+            },
+          },
+        }
+      ))
+
     test('denies without reading children when the audience, receipt or command scope is wrong', () => {
       let listings = 0
       return fixture(

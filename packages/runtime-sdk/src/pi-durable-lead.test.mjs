@@ -215,10 +215,22 @@ test('children read is a strict read-only contract of opaque references and boun
     operation: 'pi-durable.lead.children',
     scope: 'execution:read',
   })
+  const cursor = { acceptedAt: at, delegationId: id('dlg') }
+  expect(
+    PiDurableLeadChildrenRequestSchema.safeParse({
+      ...read,
+      parameters: { dispatchId, after: cursor, limit: 256 },
+    }).success
+  ).toBe(true)
   for (const parameters of [
     { dispatchId, delegationId: id('dlg') },
     { dispatchId: 'dispatch_x' },
     { intentId },
+    { dispatchId, limit: 0 },
+    { dispatchId, limit: 257 },
+    { dispatchId, limit: 1.5 },
+    { dispatchId, after: { ...cursor, extra: true } },
+    { dispatchId, after: { acceptedAt: 'yesterday', delegationId: cursor.delegationId } },
   ])
     expect(PiDurableLeadChildrenRequestSchema.safeParse({ ...read, parameters }).success).toBe(
       false
@@ -247,6 +259,8 @@ test('children read is a strict read-only contract of opaque references and boun
       attemptId: id('att'),
       runtimeSessionId: id('ses'),
       children: [child],
+      totalChildren: 1,
+      complete: true,
     },
   }
   expect(PiDurableLeadChildrenResponseSchema.safeParse(response).success).toBe(true)
@@ -264,10 +278,20 @@ test('children read is a strict read-only contract of opaque references and boun
         data: { ...response.data, children: [invalid] },
       }).success
     ).toBe(false)
-  expect(
+  // A page holds at most 256 children; the total says how many exist, and a page is complete
+  // exactly when it carries no next cursor.
+  const page = (data) =>
     PiDurableLeadChildrenResponseSchema.safeParse({
       ...response,
-      data: { ...response.data, children: Array.from({ length: 257 }, () => child) },
+      data: { ...response.data, ...data },
     }).success
-  ).toBe(false)
+  const many = (count) => Array.from({ length: count }, () => child)
+  expect(page({ children: many(256), totalChildren: 256, complete: true })).toBe(true)
+  expect(page({ children: many(257), totalChildren: 257, complete: true })).toBe(false)
+  expect(page({ children: many(256), totalChildren: 257, complete: false, next: cursor })).toBe(
+    true
+  )
+  expect(page({ children: many(256), totalChildren: 257, complete: false })).toBe(false)
+  expect(page({ children: many(1), totalChildren: 1, complete: true, next: cursor })).toBe(false)
+  expect(page({ children: many(2), totalChildren: 1, complete: true })).toBe(false)
 })

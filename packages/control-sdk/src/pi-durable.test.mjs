@@ -138,6 +138,8 @@ const responses = {
         },
       },
     ],
+    totalChildren: 1,
+    complete: true,
   },
   cancelPiDurableLead: { ...receipt, state: 'cancelled', status },
 }
@@ -218,6 +220,12 @@ test('strict opaque-reference requests reject caller prompt, credentials, native
     client.getPiDurableLeadChildren({
       ...requests.getPiDurableLeadChildren,
       parameters: { dispatchId, childExecutionId: id('exe') },
+    })
+  ).rejects.toThrow()
+  await expect(
+    client.getPiDurableLeadChildren({
+      ...requests.getPiDurableLeadChildren,
+      parameters: { dispatchId, limit: 257 },
     })
   ).rejects.toThrow()
   await expect(
