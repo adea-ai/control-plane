@@ -325,7 +325,7 @@ test('sweep: a quota fault at every named authority boundary stops every later p
     expect(baseline.faulted).toBeUndefined()
     const second = await run()
     expect(second).toMatchObject({ outcome: 'completed', sends: 1 })
-    expect(Object.keys(second.counts).sort()).toEqual(Object.keys(baseline.counts).sort())
+    expect(Object.keys(second.counts).toSorted()).toEqual(Object.keys(baseline.counts).toSorted())
     const names = Object.keys(baseline.counts).map((name) => JSON.parse(name))
     // The production path must cross every claimed authority boundary.
     const has = (match) =>
@@ -362,7 +362,7 @@ test('sweep: a quota fault at every named authority boundary stops every later p
     // Reset isolation: after every fault was applied and undone, an unfaulted run is unchanged.
     const again = await run()
     expect(again).toMatchObject({ outcome: 'completed', sends: 1, reads: baseline.reads })
-    expect(Object.keys(again.counts).sort()).toEqual(Object.keys(baseline.counts).sort())
+    expect(Object.keys(again.counts).toSorted()).toEqual(Object.keys(baseline.counts).toSorted())
   } finally {
     await host.close()
   }
