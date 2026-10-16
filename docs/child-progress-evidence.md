@@ -90,10 +90,18 @@ stay wired to the canonical durable paths rather than a parallel ledger.
   The standalone crash cases also read the attempt-release fence from a fresh
   connection before resuming. Neither repeats a debit, release, start, send
   or publication, and a child whose send outcome is
-  unknown is never settled. The provider transport, funding records and policy
-  decision are scripted fixtures, and the child settlement driver is test-only:
-  production settles leads only and no composition root runs a child
-  settlement yet.
+  unknown is never settled. A child that makes two priced model calls in one
+  turn (a governed management tool call, then its answer) settles from its two
+  real receipts: the reported usage is their composite aggregate, and each
+  constituent must match its own canonical ledger row. An attempt that ran more
+  than one turn is refused. The provider transport, funding records and policy
+  decision are scripted fixtures. Child settlement is the production
+  `PiChildTerminalSettlement` (see `architecture/pi-production-model-binding.md`),
+  run by the node composition's recovery pass; the interruption and
+  standalone-crash cases drive the test-only `createChildTerminalSettlement`
+  driver over the same ledger and projection. This repository has no composition
+  root that supplies the child bridge outside tests: the launcher, funding
+  records and policy decision belong to the #1047/#1048 owners.
 - `tests/child-progress-two-siblings-composition.test.mjs` — **two sibling
   children under one real parent**: coordinator admission over durable SQLite
   repositories, canonical per-child reservations and settlements in the

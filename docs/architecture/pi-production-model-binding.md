@@ -231,7 +231,13 @@ Terminal child settlement is `PiChildTerminalSettlement`, run by the node compos
 pass (and available as `settleChildTerminalAccounting`). It reports the child's priced usage into
 the cost-state projection, settles the attempt reservation, finalizes the child budget back into
 the parent's funding reservation, then reconciles and settles the projection, in that order, each
-step idempotent and restartable from durable state alone. A completed child with no priced usage,
+step idempotent and restartable from durable state alone. A completed child's reported usage is one inference's, or the composite
+`pi-turn-usage:` aggregate of a turn's several; the composite is resolved from the journal's retained
+inference receipts, which must reproduce it exactly, and every constituent must be a `model_usage`
+row in the canonical ledger with matching scope, amount, currency, exactness and funding. An attempt
+that retains receipts of another turn is refused (`PI_CHILD_SETTLEMENT_MULTI_TURN_UNSUPPORTED`),
+because the settled spend is the whole attempt's while the reported usage covers one turn. A
+completed child with no priced usage,
 or whose usage entry is not yet retained, is left as recorded; failed, cancelled and unknown
 children keep their reservation until reconciled.
 
