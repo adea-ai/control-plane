@@ -186,7 +186,8 @@ Owners are existing issues. Where no open issue names a gap, the row says so.
    fail closed. A composition whose parent ends its pipe closes itself and its
    Restate child, and the test runner runs its registered cleanups when it
    receives SIGINT, SIGTERM or SIGHUP, serialized with afterEach so a signal waits
-   for cleanup already in flight. A runner killed by SIGKILL cannot run
+   for cleanup already in flight (EventEmitter tests and real-process SIGINT, SIGTERM
+   and SIGHUP tests). A runner killed by SIGKILL cannot run
    cleanup; the composition then closes on the ended pipe. This is test cleanup,
    not product orphan adoption or recovery.
    Unexpected Restate launcher death before the parent pins the complete chain

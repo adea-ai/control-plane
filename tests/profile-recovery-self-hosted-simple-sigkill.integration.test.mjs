@@ -1577,6 +1577,88 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       expect(events).toEqual(['first', 'second', 'registered-late'])
     })
 
+    describe('with real process signals', () => {
+      const childPath = join(repositoryRoot, 'tests/fixtures/runner-cleanup-signal.child.mjs')
+
+      async function startCleanupChild(mode) {
+        const work = await mkdtemp(join(tmpdir(), 'runner-cleanup-signal-'))
+        const releasePath = join(work, 'release')
+        const markerPath = join(work, 'markers')
+        const child = spawn(process.execPath, [childPath, releasePath, markerPath, mode], {
+          stdio: ['ignore', 'pipe', 'inherit'],
+        })
+        const exited = processExit(child)
+        cleanup.push(async () => {
+          // Handle-only: the child belongs to this test and is ended through its ChildProcess.
+          try {
+            await stopChild({ child, exited }, { label: 'cleanup signal child', timeoutMs: 10_000 })
+          } finally {
+            await rm(work, { recursive: true, force: true })
+          }
+        })
+        let output = ''
+        child.stdout.setEncoding('utf8')
+        const ready = new Promise((resolve) => {
+          child.stdout.on('data', (chunk) => {
+            output += chunk
+            if (output.includes('ready')) resolve()
+          })
+        })
+        await boundedWait(ready, EXIT_BOUND_MS, 'cleanup signal child ready')
+        const markers = async () =>
+          existsSync(markerPath) ? (await readFile(markerPath, 'utf8')).trim().split('\n') : []
+        return { child, exited, releasePath, markers }
+      }
+
+      for (const [signal, status] of [
+        ['SIGTERM', 143],
+        ['SIGINT', 130],
+        ['SIGHUP', 129],
+      ]) {
+        for (const mode of ['in-flight', 'idle']) {
+          test(`${signal} during ${mode} cleanup holds the process until cleanup finishes, then exits ${status}`, async () => {
+            const { child, exited, releasePath, markers } = await startCleanupChild(mode)
+            expect(child.kill(signal)).toBe(true)
+
+            // The cleanup callback is held. The process must still be alive while it runs, and
+            // must have started it exactly once.
+            for (let attempt = 0; attempt < 200; attempt += 1) {
+              if ((await markers()).includes('cleanup-start')) break
+              await delayMs(10)
+            }
+            await delayMs(300)
+            expect(child.exitCode).toBeNull()
+            expect(child.signalCode).toBeNull()
+            expect(await markers()).toEqual(['cleanup-start'])
+
+            await writeFile(releasePath, 'release')
+            expect(await boundedWait(exited, EXIT_BOUND_MS, 'cleanup signal child exit')).toEqual({
+              code: status,
+              signal: null,
+            })
+            expect(await markers()).toEqual(['cleanup-start', 'cleanup-done', `exit:${status}`])
+          })
+        }
+      }
+
+      test('a second, different signal while cleanup is held neither exits early nor repeats cleanup', async () => {
+        const { child, exited, releasePath, markers } = await startCleanupChild('in-flight')
+        expect(child.kill('SIGTERM')).toBe(true)
+        expect(child.kill('SIGHUP')).toBe(true)
+        await delayMs(300)
+        expect(child.exitCode).toBeNull()
+        expect(await markers()).toEqual(['cleanup-start'])
+        await writeFile(releasePath, 'release')
+        const exit = await boundedWait(exited, EXIT_BOUND_MS, 'cleanup signal child exit')
+        // Whichever signal's listener finishes first decides the status; both are signal statuses.
+        expect([143, 129]).toContain(exit.code)
+        expect(exit.signal).toBeNull()
+        const finalMarkers = await markers()
+        expect(finalMarkers.slice(0, 2)).toEqual(['cleanup-start', 'cleanup-done'])
+        expect(finalMarkers.filter((line) => line === 'cleanup-start')).toHaveLength(1)
+      })
+    })
+
     test('a signal exits with its status after a failed cleanup and reports it', async () => {
       const queue = [
         async () => {
