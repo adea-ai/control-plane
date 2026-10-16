@@ -115,6 +115,7 @@ import {
 } from '@control-plane/workflow-runtime'
 import { ReconciliationScheduler, RetentionSweep } from '@control-plane/deployment'
 import { HostedServerGraphRuntime } from './hosted-graph-runtime.js'
+import { createRetainedGraphReconciliationSubmitter } from './reconciliation-workflow-submitter.js'
 import {
   parseHostedGraphToolConfiguration,
   type HostedGraphToolConfiguration,
@@ -678,7 +679,24 @@ export class HostedServerControlPlaneComposition {
           executions,
           commands: commandAcceptance,
           events: executionEvents,
-          workflowSubmitter,
+          workflowSubmitter:
+            this.#profileWorkflowWakeConfiguration === undefined
+              ? workflowSubmitter
+              : (() => {
+                  const withRetainedGraph = createRetainedGraphReconciliationSubmitter({
+                    plans,
+                    submitter: workflowSubmitter,
+                  })
+                  return {
+                    submit: async (input: ExecutionWorkflowInput) => {
+                      // An unbound wake refuses before the plan is read.
+                      if (this.#profileWorkflowWake === undefined) {
+                        throw new Error('HOSTED_PROFILE_WORKFLOW_WAKE_NOT_BOUND')
+                      }
+                      await withRetainedGraph.submit(input)
+                    },
+                  }
+                })(),
           cancellations,
         })
       this.reconciliationService = new ExecutionReconciliationService({

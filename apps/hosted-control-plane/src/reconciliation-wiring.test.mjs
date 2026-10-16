@@ -16,6 +16,7 @@ import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { HostedServerControlPlaneComposition } from './index.ts'
 import { HostedServerGraphRuntime } from './hosted-graph-runtime.ts'
+import { createRetainedGraphReconciliationSubmitter } from './reconciliation-workflow-submitter.ts'
 
 function fakeConnection() {
   return {
@@ -134,6 +135,85 @@ describe('hosted composition reconciliation wiring', () => {
       batchLimit: 10,
     }
   }
+
+  describe('reconciliation resume carries the retained plan graph', () => {
+    const graphPlan = {
+      correlation: { workspaceId: 'wrk_01JABCDEF0123456789ABCDEFG' },
+      graph: {
+        reference: { graphId: 'graph-one', version: 3 },
+        input: { question: 'approve?' },
+      },
+    }
+    const resumeInput = {
+      executionId,
+      workflowId: 'workflow-one',
+      executionPlan: planPin,
+      deadlineAt: '2026-10-16T01:00:00.000Z',
+    }
+    const plansOf = (plan) => ({
+      get: async (reference) => {
+        expect(reference).toEqual(planPin)
+        return plan
+      },
+    })
+
+    test('adds exactly the graph that acceptance submits, so the retained-wake guard can match it', async () => {
+      const submitted = []
+      const submitter = createRetainedGraphReconciliationSubmitter({
+        plans: plansOf(graphPlan),
+        submitter: { submit: async (input) => submitted.push(input) },
+      })
+      await submitter.submit(resumeInput)
+      expect(submitted).toEqual([
+        {
+          ...resumeInput,
+          graph: {
+            workspaceId: graphPlan.correlation.workspaceId,
+            reference: graphPlan.graph.reference,
+            input: graphPlan.graph.input,
+            threadId: `graph:${executionId}`,
+          },
+        },
+      ])
+    })
+
+    test('passes a non-graph plan, a missing plan and an input that already has a graph through unchanged', async () => {
+      const submitted = []
+      const record = { submit: async (input) => submitted.push(input) }
+      const withGraph = { ...resumeInput, graph: { workspaceId: 'wrk_other' } }
+      await createRetainedGraphReconciliationSubmitter({
+        plans: plansOf({ correlation: graphPlan.correlation }),
+        submitter: record,
+      }).submit(resumeInput)
+      await createRetainedGraphReconciliationSubmitter({
+        plans: plansOf(undefined),
+        submitter: record,
+      }).submit(resumeInput)
+      await createRetainedGraphReconciliationSubmitter({
+        plans: {
+          get: async () => {
+            throw new Error('a submission that already has a graph must not read the plan')
+          },
+        },
+        submitter: record,
+      }).submit(withGraph)
+      expect(submitted).toEqual([resumeInput, resumeInput, withGraph])
+    })
+
+    test('a plan read failure fails the resume closed', async () => {
+      const submitted = []
+      const submitter = createRetainedGraphReconciliationSubmitter({
+        plans: {
+          get: async () => {
+            throw new Error('plan store unavailable')
+          },
+        },
+        submitter: { submit: async (input) => submitted.push(input) },
+      })
+      await expect(submitter.submit(resumeInput)).rejects.toThrow('plan store unavailable')
+      expect(submitted).toEqual([])
+    })
+  })
 
   test('schedules reconciliation only from explicit configuration', () => {
     const unconfigured = new HostedServerControlPlaneComposition({
