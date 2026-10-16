@@ -36,7 +36,7 @@ export type GatewayProtocolVersion = z.output<typeof GatewayProtocolVersionSchem
 
 export const GatewayProtocolManifest = Object.freeze({
   name: 'control-plane-runtime-gateway',
-  current: { major: 1, minor: 7 },
+  current: { major: 1, minor: 8 },
   supported: [
     { major: 1, minor: 0 },
     { major: 1, minor: 1 },
@@ -46,6 +46,7 @@ export const GatewayProtocolManifest = Object.freeze({
     { major: 1, minor: 5 },
     { major: 1, minor: 6 },
     { major: 1, minor: 7 },
+    { major: 1, minor: 8 },
   ],
 })
 
@@ -184,6 +185,7 @@ export const GatewayHelloEnvelopeSchema = CommonEnvelopeSchema.extend({
 
 const GatewayCommandBaseSchema = CommonEnvelopeSchema.extend({
   type: z.literal('command'),
+  canonicalizationVersion: z.union([z.literal(1), z.literal(2)]).optional(),
   commandId: canonicalId('cmd', 'command ID'),
   idempotencyKey: z
     .string()
@@ -222,6 +224,17 @@ const GatewayCommandBaseSchema = CommonEnvelopeSchema.extend({
 
 export const GatewayCommandEnvelopeSchema = GatewayCommandBaseSchema.strict().superRefine(
   (command, context) => {
+    if (
+      command.canonicalizationVersion !== undefined &&
+      command.protocolVersion.major === 1 &&
+      command.protocolVersion.minor < 8
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['canonicalizationVersion'],
+        message: 'Command canonicalization versions require protocol v1.8 or later',
+      })
+    }
     if (Date.parse(command.expiresAt) <= Date.parse(command.issuedAt)) {
       context.addIssue({
         code: 'custom',

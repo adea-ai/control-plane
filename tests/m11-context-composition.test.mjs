@@ -340,7 +340,7 @@ test('composed gateway and node deliver a context command end to end from admini
         JSON.stringify({
           type: 'heartbeat',
           schemaVersion: 1,
-          protocolVersion: { major: 1, minor: 5 },
+          protocolVersion: { major: 1, minor: 8 },
           sequence: nodeState.sequence++,
           nodeId,
           workspaceId,
@@ -385,8 +385,8 @@ test('composed gateway and node deliver a context command end to end from admini
         JSON.stringify({
           type: 'hello',
           schemaVersion: 1,
-          protocolVersion: { major: 1, minor: 5 },
-          supportedVersions: [{ major: 1, minor: 5 }],
+          protocolVersion: { major: 1, minor: 8 },
+          supportedVersions: [{ major: 1, minor: 8 }],
           sequence: 0,
           lastAcknowledgedSequence: 0,
           nodeId,

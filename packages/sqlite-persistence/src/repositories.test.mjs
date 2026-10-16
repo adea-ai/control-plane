@@ -76,6 +76,21 @@ async function seedDefaultPlan(provider) {
   await new SqliteExecutionPlanRepository(provider).put(defaultPlan)
 }
 
+function historicalContextPackage() {
+  const current = contextPackageSerializationFixtures.futurePi
+  const {
+    contextPackageId: _id,
+    contentDigest: _digest,
+    canonicalizationVersion: _version,
+    ...content
+  } = current
+  return {
+    ...content,
+    contextPackageId: 'ctx_57PXZBSKA8RKKX5FKEWVP4Q6F0',
+    contentDigest: 'sha256:29eddfaf33523139f4af9bb9bb12e6786df2c30e93790a8360874e88191eb641',
+  }
+}
+
 function service(provider, now = receivedAt, repositoryOptions) {
   return new CommandInboxService({
     repository: new SqliteCommandAcceptanceRepository(provider, repositoryOptions),
@@ -709,13 +724,28 @@ describe('SQLite domain repositories', () => {
     try {
       await provider.migrate()
       const package_ = contextPackageSerializationFixtures.futurePi
-      await new SqliteContextPackageRepository(provider).put(package_)
+      const initialRepository = new SqliteContextPackageRepository(provider)
+      const reference = await initialRepository.put(package_)
+      expect(reference.canonicalizationVersion).toBe(2)
+      expect(
+        await initialRepository.get({ ...reference, canonicalizationVersion: 1 })
+      ).toBeUndefined()
+
+      const historical = historicalContextPackage()
+      const historicalReference = await initialRepository.put(historical)
+      expect(historicalReference).toEqual({
+        contextPackageId: historical.contextPackageId,
+        contentDigest: historical.contentDigest,
+      })
       provider.close()
 
       provider = new SqlitePersistenceProvider({ path })
       await provider.migrate()
       const repository = new SqliteContextPackageRepository(provider)
       expect(await repository.getById(package_.contextPackageId)).toEqual(package_)
+      expect(await repository.get(reference)).toEqual(package_)
+      expect(await repository.get({ ...reference, canonicalizationVersion: 1 })).toBeUndefined()
+      expect(await repository.get(historicalReference)).toEqual(historical)
       expect(await repository.getById('ctx_01JABCDEF0123456789ABCDEFG')).toBeUndefined()
     } finally {
       provider.close()

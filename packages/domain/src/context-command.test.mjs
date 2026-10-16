@@ -10,6 +10,7 @@ import {
   contextCommandSemanticHash,
   contextCommandSemanticHashV2,
   createQueuedContextCommandRecord,
+  contextCommandTransitionAllowed,
 } from './context-command.ts'
 
 const now = '2026-09-12T12:00:00.000Z'
@@ -50,6 +51,93 @@ function command(overrides = {}) {
 }
 
 describe('context command semantic hash cutover', () => {
+  const fixedParameters = {
+    operationId: 'context-author:operation-test-0001',
+    principalRef: 'service:author',
+    scopeDigest: `sha256:${'a'.repeat(64)}`,
+    objective: 'Find bounded evidence',
+    10: 'ten',
+    2: 'two',
+    'a-b': 1,
+    a_b: 2,
+  }
+
+  function fixedEnvelope(canonicalizationVersion, payloadHash, reordered = false) {
+    const parameters = reordered
+      ? {
+          a_b: 2,
+          2: 'two',
+          objective: 'Find bounded evidence',
+          10: 'ten',
+          'a-b': 1,
+          scopeDigest: fixedParameters.scopeDigest,
+          principalRef: fixedParameters.principalRef,
+          operationId: fixedParameters.operationId,
+        }
+      : fixedParameters
+    const envelope = command({ payload: { version: 1, parameters } })
+    return {
+      ...envelope,
+      ...(canonicalizationVersion === undefined ? {} : { canonicalizationVersion }),
+      ...(canonicalizationVersion === undefined ? {} : { protocolVersion: { major: 1, minor: 8 } }),
+      payloadHash,
+    }
+  }
+
+  test('verifies fixed untagged epochs and directs tagged verification to exactly one version', () => {
+    const legacyHash = 'sha256:5de7fae2b900c9f81deb44c79a9a737cbd7936433e5a43c44524abfde5e9b43f'
+    const sharedHash = 'sha256:bdfded0cfd6ddf9ac1c9e6fd1b5260ccd5a8cdcee447c390bd75a11f44d7e2fe'
+    // These fixed hashes cover the free-form keys above and were captured from
+    // the pre-cutover locale serializer and the shared canonical serializer.
+    expect(
+      createQueuedContextCommandRecord(fixedEnvelope(undefined, legacyHash), now).payloadHash
+    ).toBe(legacyHash)
+    expect(
+      createQueuedContextCommandRecord(fixedEnvelope(undefined, sharedHash), now).payloadHash
+    ).toBe(sharedHash)
+    expect(createQueuedContextCommandRecord(fixedEnvelope(1, legacyHash), now).payloadHash).toBe(
+      legacyHash
+    )
+    expect(createQueuedContextCommandRecord(fixedEnvelope(2, sharedHash), now).payloadHash).toBe(
+      sharedHash
+    )
+
+    expect(() => createQueuedContextCommandRecord(fixedEnvelope(1, sharedHash), now)).toThrow()
+    expect(() => createQueuedContextCommandRecord(fixedEnvelope(2, legacyHash), now)).toThrow()
+    expect(() => createQueuedContextCommandRecord(fixedEnvelope(3, sharedHash), now)).toThrow()
+    expect(() =>
+      createQueuedContextCommandRecord(
+        { ...fixedEnvelope(2, sharedHash), protocolVersion: { major: 1, minor: 7 } },
+        now
+      )
+    ).toThrow()
+  })
+
+  test('version 2 hashes reordered numeric-like and divergent free-form keys identically', () => {
+    const sharedHash = 'sha256:bdfded0cfd6ddf9ac1c9e6fd1b5260ccd5a8cdcee447c390bd75a11f44d7e2fe'
+    const first = fixedEnvelope(2, sharedHash)
+    const reordered = fixedEnvelope(2, sharedHash, true)
+    expect(contextCommandSemanticHashV2(first)).toBe(sharedHash)
+    expect(contextCommandSemanticHashV2(reordered)).toBe(sharedHash)
+    expect(createQueuedContextCommandRecord(reordered, now).payloadHash).toBe(sharedHash)
+  })
+
+  test('compare-and-set cannot remove a command canonicalization version', () => {
+    const sharedHash = 'sha256:bdfded0cfd6ddf9ac1c9e6fd1b5260ccd5a8cdcee447c390bd75a11f44d7e2fe'
+    const current = createQueuedContextCommandRecord(fixedEnvelope(2, sharedHash), now)
+    const next = {
+      ...current,
+      status: 'dispatched',
+      version: 2,
+      deliveryAttempts: 1,
+      lastDelivery: { channelGeneration: 1, sequence: 1, at: now },
+      updatedAt: now,
+      commandEnvelope: { ...current.commandEnvelope },
+    }
+    delete next.commandEnvelope.canonicalizationVersion
+    expect(contextCommandTransitionAllowed(current, next)).toBeFalse()
+  })
+
   test('accepts envelopes hashed with the V2 code-point form on divergent keys', () => {
     const divergent = command({
       payload: {

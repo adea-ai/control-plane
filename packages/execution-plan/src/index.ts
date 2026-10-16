@@ -86,7 +86,9 @@ const SkillPinSchema = z.object({
   contentDigest: DigestSchema,
 })
 
-const ContextPinSchema = ContextPackageReferenceSchema.extend({
+const ContextPinSchema = ContextPackageReferenceSchema.omit({
+  canonicalizationVersion: true,
+}).extend({
   schemaVersion: z.number().int().positive(),
   compilerVersion: SemverSchema,
 })
@@ -1056,12 +1058,9 @@ function assertContext(
 }
 
 function assertContextIntegrity(contextPackage: z.output<typeof ContextPackageSchema>): void {
-  const content = omitIdentity(contextPackage, 'contextPackageId')
-  const expectedDigest = sha256(normalize(content))
-  if (
-    contextPackage.contentDigest !== expectedDigest ||
-    contextPackage.contextPackageId !== hashIdentifier('ctx', expectedDigest)
-  ) {
+  try {
+    assertContextPackageIntegrity(contextPackage)
+  } catch {
     fail('CONTRADICTORY_REFERENCE', contextPackage.contextPackageId)
   }
 }
@@ -1069,13 +1068,10 @@ function assertContextIntegrity(contextPackage: z.output<typeof ContextPackageSc
 function canonicalContextPackage(
   contextPackage: z.output<typeof ContextPackageSchema>
 ): z.output<typeof ContextPackageSchema> {
-  const content = omitIdentity(contextPackage, 'contextPackageId')
-  const contentDigest = sha256(normalize(content))
-  return ContextPackageSchema.parse({
-    ...content,
-    contextPackageId: hashIdentifier('ctx', contentDigest),
-    contentDigest,
-  })
+  assertContextIntegrity(contextPackage)
+  // Keep the original package identity and optional canonicalization version;
+  // historical embedded packages must never be rewritten during plan checks.
+  return contextPackage
 }
 
 function withoutExecutionPlanIdentity(plan: ExecutionPlan): Record<string, unknown> {
