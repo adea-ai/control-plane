@@ -55,6 +55,29 @@ export const childIds = {
 }
 export const childObjective = 'Inspect the bounded child objective'
 
+/**
+ * A store that lives only in memory, as a production restart would lose it. `reset()` replaces it
+ * with an empty one behind the same handle, so a checkpoint restore cannot inherit what an earlier
+ * proof left in it.
+ */
+function resettable(create) {
+  let current = create()
+  return {
+    reset() {
+      current = create()
+    },
+    handle: new Proxy(
+      {},
+      {
+        get(_target, key) {
+          const value = Reflect.get(current, key)
+          return typeof value === 'function' ? value.bind(current) : value
+        },
+      }
+    ),
+  }
+}
+
 /** Late-bound context the test shares with the factory: the host, intent and evidence counters. */
 export function createGovernedDispatchHooks() {
   return {
@@ -196,7 +219,15 @@ export function governedDispatchChildren(hooks) {
         return hooks.executeGoverned(input, version, signal)
       },
     })
-    const interactions = new InMemoryInteractionRepository()
+    const interactionStore = resettable(() => new InMemoryInteractionRepository())
+    const rateLimiterStore = resettable(() => new InMemoryToolRateLimiter())
+    const interactions = interactionStore.handle
+    hooks.interactions = interactions
+    hooks.rateLimiter = rateLimiterStore.handle
+    hooks.resetInMemoryStores = () => {
+      interactionStore.reset()
+      rateLimiterStore.reset()
+    }
     const approvals = new InteractionToolApprovalCoordinator(
       new InteractionService(interactions),
       interactions
@@ -226,7 +257,7 @@ export function governedDispatchChildren(hooks) {
         },
       },
       approvals,
-      rateLimiter: new InMemoryToolRateLimiter(),
+      rateLimiter: rateLimiterStore.handle,
       now: () => at,
     })
     const delegationRecords = new SqliteDelegationRepository(persistence)

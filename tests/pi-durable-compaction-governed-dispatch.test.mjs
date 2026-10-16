@@ -638,6 +638,8 @@ async function restoreCheckpoint({ host, hooks, sent, behavior }, checkpoint) {
   hooks.afterPolicyAllow = undefined
   hooks.authorityOverride = undefined
   hooks.settlementSeam = undefined
+  // Stores the composition keeps only in memory start empty, as after a real restart.
+  hooks.resetInMemoryStores()
   await host.resume()
 }
 
@@ -1448,4 +1450,18 @@ test('a failed child lookup does not prevent a later completed record from settl
   } finally {
     await host.close()
   }
+}, 120000)
+
+test('a restored proof does not inherit the in-memory rate-limiter or interaction state of an earlier one', async () => {
+  const key = 'checkpoint-isolation'
+  const first = await forkDispatchedHost()
+  expect(await first.hooks.rateLimiter.consume(key, 1, 60000, first.hooks.at)).toBe(true)
+  expect(await first.hooks.rateLimiter.consume(key, 1, 60000, first.hooks.at)).toBe(false)
+  expect(first.hooks.interactions.insertSynchronously({ interactionId: key, version: 1 })).toBe(
+    true
+  )
+
+  const second = await forkDispatchedHost()
+  expect(await second.hooks.rateLimiter.consume(key, 1, 60000, second.hooks.at)).toBe(true)
+  expect(await second.hooks.interactions.get(key)).toBeUndefined()
 }, 120000)
