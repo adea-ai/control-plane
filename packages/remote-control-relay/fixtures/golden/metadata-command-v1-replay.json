@@ -1,0 +1,11 @@
+{
+  "format": "relay-metadata-command-v1",
+  "commandJson": "{\"schemaVersion\":1,\"workspaceId\":\"workspace-1\",\"hostId\":\"host-1\",\"commandId\":\"metadata-serialized-v1\",\"operation\":\"cancel\",\"issuedAt\":\"2026-08-30T00:00:00.000Z\",\"expiresAt\":\"2026-08-30T00:10:00.000Z\",\"targetId\":\"execution-1\"}",
+  "result": {
+    "outcome": "accepted",
+    "commandId": "metadata-serialized-v1",
+    "result": {
+      "targetId": "execution-1"
+    }
+  }
+}

@@ -170,7 +170,14 @@ export async function createProductionFactoryFixture(options = {}) {
       .getModels()
       .find((model) => model.id === 'gpt-5').contextWindow
     base.constraints.limits.tokens.maximumTotal = nativeContextWindow + 24
-    if (options.childrenFactory) {
+    // Where the plan states the child allowance. The default states it on the request constraints
+    // and on the published lead profile definition, as before. 'profile' states it only on the
+    // pinned profile version, so the compiled plan can only have taken it from there, and 'none'
+    // states it nowhere (a plan that omits the allowance keeps the legacy behavior).
+    const allowanceSource = options.childAllowanceSource ?? 'request-and-profile'
+    if (!['request-and-profile', 'profile', 'none'].includes(allowanceSource))
+      throw new Error('TEST_UNKNOWN_CHILD_ALLOWANCE_SOURCE')
+    if (options.childrenFactory || options.childAllowanceSource) {
       // One child unless the caller asks for more, so a journey can allocate siblings that share the
       // stated allowance. The concurrency limit follows so it is never what refuses them.
       const maximumChildren = options.maximumChildren ?? 1
@@ -184,12 +191,15 @@ export async function createProductionFactoryFixture(options = {}) {
       // still covers the conservative native request bound, so the child is funded from the
       // unreserved balance instead of finding nothing left.
       base.constraints.limits.tokens.maximumTotal = 2 * (nativeContextWindow + 24)
-      base.constraints.limits.childExecutions.budgetAllowance = {
-        maximumMicrounits: Math.floor(base.constraints.limits.budget.maximumMicrounits / 2),
-        maximumTokens: nativeContextWindow + 24,
-      }
+      if (allowanceSource !== 'none')
+        base.constraints.limits.childExecutions.budgetAllowance = {
+          maximumMicrounits: Math.floor(base.constraints.limits.budget.maximumMicrounits / 2),
+          maximumTokens: nativeContextWindow + 24,
+        }
     }
     base.profile.definition.executionConstraints = structuredClone(base.constraints)
+    if (allowanceSource === 'profile')
+      delete base.constraints.limits.childExecutions.budgetAllowance
     base.profile.definition.skills = []
     base.skills = []
     const catalog = new VersionedCatalog(repositories.catalog, repositories.catalog)
@@ -668,6 +678,8 @@ export async function createProductionFactoryFixture(options = {}) {
         }
       },
       profile: base.profile,
+      childAllowanceSource: allowanceSource,
+      requestConstraints: structuredClone(base.constraints),
       productProfilePin,
       workspaceId,
       actorPrincipalId,

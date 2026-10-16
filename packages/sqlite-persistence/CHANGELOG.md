@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.40.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.40.0...sqlite-persistence-v1.40.1) (2026-10-15)
+
+
+### Performance
+
+* cache SQLite statements and avoid repeated canonical JSON work ([#1142](https://github.com/adea-ai/control-plane/issues/1142)) ([b8b47f5](https://github.com/adea-ai/control-plane/commit/b8b47f5c0261f8e9880fd0572fd05aa353c3c418))
+
+## [1.40.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.39.0...sqlite-persistence-v1.40.0) (2026-10-15)
+
+
+### Features
+
+* **sqlite:** pin owners from child receipt namespaces in retention ([#1022](https://github.com/adea-ai/control-plane/issues/1022) WIP) ([#1132](https://github.com/adea-ai/control-plane/issues/1132)) ([b7bfb0e](https://github.com/adea-ai/control-plane/commit/b7bfb0e9e55c31a15e7ac6e9257f37d9a7bf9f71))
+
 ## [1.39.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.38.1...sqlite-persistence-v1.39.0) (2026-10-14)
 
 

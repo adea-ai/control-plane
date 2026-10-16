@@ -22,7 +22,14 @@ export type {
   OperationsStorageNamespace,
 } from './operations.js'
 export { OperationsMeasurementLifecycle } from './operations-lifecycle.js'
-export type { OperationsMeasurementLifecycleOptions } from './operations-lifecycle.js'
+export {
+  DEFAULT_OPERATIONS_MEASUREMENT_CLOSE_TIMEOUT_MS,
+  DEFAULT_OPERATIONS_MEASUREMENT_PASS_TIMEOUT_MS,
+} from './operations-lifecycle.js'
+export type {
+  OperationsMeasurementContext,
+  OperationsMeasurementLifecycleOptions,
+} from './operations-lifecycle.js'
 export { redactDiagnostics, redactTelemetryValue, sanitizeAttributes } from './redaction.js'
 export { createTelemetry, Telemetry } from './telemetry.js'
 export { createLangSmithTraceAdapter } from './langsmith.js'

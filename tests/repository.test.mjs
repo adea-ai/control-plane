@@ -36,7 +36,7 @@ const runtimeRef =
   (await readFile(new URL('../.github/code-foundry.yml', import.meta.url), 'utf8')).match(
     /^runtime_ref: (\S+)$/m
   )?.[1] ?? ''
-const sharedValidationRef = '4480e8aed1dac8bbb3cb12d8d7fe086a13a8eb3b'
+const sharedValidationRef = '7119b3e2baebfbfdd47d32428cbf5df2f2079afa'
 
 const apps = [
   'control-api',
@@ -281,6 +281,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/pi-child-continuation-sqlite.test.mjs',
     'tests/pi-durable-child-host.test.mjs',
     'tests/pi-durable-child-mapping-recovery.test.mjs',
+    'tests/delegation-receipt-retention-restart.test.mjs',
     'tests/pi-durable-delegation-recovery.test.mjs',
     'tests/pi-durable-canonical-authority.test.mjs',
     'tests/pi-durable-production-child-composition.test.mjs',
