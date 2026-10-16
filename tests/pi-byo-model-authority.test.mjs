@@ -73,34 +73,36 @@ const FAULTS = [
     },
     'READINESS_UNAVAILABLE',
   ],
-  [
-    'credential revoked in the vault',
-    (host) =>
-      host.models.vault.revoke(
-        host.models.refs.credentialRef,
-        host.models.refs.administratorPrincipalRef,
-        {
-          workspaceId: host.workspaceId,
-        }
-      ),
-    'CREDENTIAL_REVOKED',
-  ],
+]
+// Revoking the vault credential cannot be undone, so it gets its own host in each test below.
+const REVOKED = [
+  'credential revoked in the vault',
+  (host) =>
+    host.models.vault.revoke(
+      host.models.refs.credentialRef,
+      host.models.refs.administratorPrincipalRef,
+      {
+        workspaceId: host.workspaceId,
+      }
+    ),
+  'CREDENTIAL_REVOKED',
 ]
 
-// One host serves every fault: each is undone before the next, and the irreversible vault
-// revocation runs last. This keeps the lane inside its time budget without hiding any fault.
+// Reversible faults share one host per test, each undone before the next. Isolation is checked,
+// not assumed: the account evidence must equal the original after every reset, and an unfaulted
+// operation on the same host must still succeed once every fault has been applied and undone.
 const restore = (host, original) => {
   host.models.setCurrentAccount(structuredClone(original))
   host.models.state.accountAvailable = true
+  expect(host.models.currentAccountEvidence()).toEqual(original)
+  expect(host.models.state.accountAvailable).toBe(true)
 }
 
 test('prepare refuses every model fault with its bounded reason, before any allocation or send', async () => {
-  const host = await createProductionFactoryFixture()
-  try {
-    const original = host.models.currentAccountEvidence()
+  const refuseAll = async (host, faults, original) => {
     const intentId = host.setIntent()
     const empty = host.canonicalCounts()
-    for (const [name, inject, reasonCode] of FAULTS) {
+    for (const [name, inject, reasonCode] of faults) {
       await inject(host)
       const refused = await refusal(prepare(host, intentId))
       expect({ name, ...refused }).toEqual({ name, code: 'PI_LEAD_MODEL_NOT_READY', reasonCode })
@@ -108,30 +110,60 @@ test('prepare refuses every model fault with its bounded reason, before any allo
       expect(host.models.secretProvider.resolveCount).toBe(0)
       expect(host.composition.adapter.journal.list()).toHaveLength(0)
       expect(host.canonicalCounts()).toEqual(empty)
-      restore(host, original)
+      if (original) restore(host, original)
     }
+    return intentId
+  }
+  const shared = await createProductionFactoryFixture()
+  try {
+    const intentId = await refuseAll(shared, FAULTS, shared.models.currentAccountEvidence())
+    // Reset isolation: with every fault undone, the same host prepares normally.
+    expect((await prepare(shared, intentId)).data.funding.state).toBe('ready')
   } finally {
-    await host.close()
+    await shared.close()
+  }
+  const revoked = await createProductionFactoryFixture()
+  try {
+    await refuseAll(revoked, [REVOKED])
+  } finally {
+    await revoked.close()
   }
 }, 120000)
 
 test('dispatch refuses a model fault that appears after a successful prepare, and sends nothing', async () => {
-  const host = await createProductionFactoryFixture()
-  try {
-    const original = host.models.currentAccountEvidence()
+  const refuseAll = async (host, faults, original) => {
     const intentId = host.setIntent()
     const prepared = (await prepare(host, intentId)).data
     expect(prepared.funding.state).toBe('ready')
-    for (const [name, inject, reasonCode] of FAULTS) {
+    for (const [name, inject, reasonCode] of faults) {
       await inject(host)
       const refused = await refusal(dispatch(host, intentId, prepared.preparationRef))
       expect({ name, ...refused }).toEqual({ name, code: 'PI_LEAD_MODEL_NOT_READY', reasonCode })
       expect(host.state.physicalSends).toBe(0)
       expect(host.models.secretProvider.resolveCount).toBe(0)
-      restore(host, original)
+      if (original) restore(host, original)
     }
+    return { intentId, prepared }
+  }
+  const shared = await createProductionFactoryFixture()
+  try {
+    const { intentId, prepared } = await refuseAll(
+      shared,
+      FAULTS,
+      shared.models.currentAccountEvidence()
+    )
+    // Reset isolation: the refused dispatches consumed nothing, so the same host dispatches once.
+    await dispatch(shared, intentId, prepared.preparationRef)
+    await shared.composition.adapter.drain()
+    expect(shared.state.physicalSends).toBe(1)
   } finally {
-    await host.close()
+    await shared.close()
+  }
+  const revoked = await createProductionFactoryFixture()
+  try {
+    await refuseAll(revoked, [REVOKED])
+  } finally {
+    await revoked.close()
   }
 }, 120000)
 
@@ -222,53 +254,112 @@ test('a recorded Adea payer cannot fund a bring-your-own key, but a workspace pa
   }
 }, 60000)
 
-test('sweep: a quota fault at any account read stops every later provider send', async () => {
-  const sweep = async (faultAt) => {
-    const host = await createProductionFactoryFixture()
-    try {
+test('sweep: a quota fault at every named authority boundary stops every later provider send', async () => {
+  // One host serves every run, each with a new intent; the fault is undone after each run.
+  // Boundaries are named by observable state, not by a read count: the lead stage, how many
+  // credential leases and secret resolutions the run has made, whether a provider send has begun,
+  // and the journal state. Each boundary is faulted at its first and last account read.
+  const host = await createProductionFactoryFixture()
+  try {
+    const original = host.models.currentAccountEvidence()
+    const run = async (faultAt) => {
+      const startedWith = {
+        sends: host.state.physicalSends,
+        resolves: host.models.secretProvider.resolveCount,
+        leases: host.models.state.leasePolicyChecks,
+        reads: host.models.state.accountReads,
+        records: new Set(host.composition.adapter.journal.list().map((record) => record.handleId)),
+      }
+      let stage = 'prepare'
+      const boundaries = []
       let sendsAtFault
-      const firstRead = host.models.state.accountReads
-      host.models.state.onAccountRead = (read) => {
-        if (read - firstRead !== faultAt) return
-        sendsAtFault = host.state.physicalSends
+      host.models.state.onAccountRead = (absolute) => {
+        const read = absolute - startedWith.reads
+        boundaries.push(
+          JSON.stringify({
+            stage,
+            sends: host.state.physicalSends - startedWith.sends,
+            resolves: host.models.secretProvider.resolveCount - startedWith.resolves,
+            leases: host.models.state.leasePolicyChecks - startedWith.leases,
+            journal: host.composition.adapter.journal
+              .list()
+              .filter((record) => !startedWith.records.has(record.handleId))
+              .map((record) => record.state)
+              .join('|'),
+          })
+        )
+        if (read !== faultAt) return
+        sendsAtFault = host.state.physicalSends - startedWith.sends
         host.models.setCurrentAccount({ quota: 'exhausted' })
       }
       let outcome = 'completed'
       try {
         const intentId = host.setIntent()
         const prepared = (await prepare(host, intentId)).data
+        stage = 'dispatch'
         await dispatch(host, intentId, prepared.preparationRef)
+        stage = 'drain'
         await host.composition.adapter.drain()
       } catch (error) {
         outcome = error.code ?? 'ERROR'
       }
-      return {
-        reads: host.models.state.accountReads - firstRead,
+      host.models.state.onAccountRead = undefined
+      const sends = host.state.physicalSends - startedWith.sends
+      const result = {
+        reads: host.models.state.accountReads - startedWith.reads,
+        boundaries,
         fired: sendsAtFault !== undefined,
-        sendsAfterFault: sendsAtFault === undefined ? 0 : host.state.physicalSends - sendsAtFault,
-        sends: host.state.physicalSends,
+        sendsAtFault,
+        sendsAfterFault: sendsAtFault === undefined ? 0 : sends - sendsAtFault,
+        sends,
         outcome,
       }
-    } finally {
-      await host.close()
+      restore(host, original)
+      return result
     }
+    const never = Number.MAX_SAFE_INTEGER
+    const baseline = await run(never)
+    expect(baseline).toMatchObject({ outcome: 'completed', sends: 1, fired: false })
+    const named = new Map()
+    baseline.boundaries.forEach((name, index) => {
+      const read = index + 1
+      const entry = named.get(name) ?? { name, reads: [] }
+      entry.reads.push(read)
+      named.set(name, entry)
+    })
+    // The production path crosses lead stages, two lease and secret steps, and the send itself.
+    expect(named.size).toBeGreaterThanOrEqual(8)
+    for (const stage of ['prepare', 'dispatch', 'drain'])
+      expect([...named.keys()].some((name) => JSON.parse(name).stage === stage)).toBe(true)
+    const cases = []
+    for (const { name, reads } of named.values())
+      for (const read of new Set([reads[0], reads.at(-1)]))
+        cases.push({ boundary: JSON.parse(name), read })
+    for (const { boundary, read } of cases) {
+      const result = await run(read)
+      expect({ boundary, read, fired: result.fired }).toEqual({ boundary, read, fired: true })
+      // The fault is observed at that exact boundary, and nothing is sent after it.
+      expect({ boundary, read, sendsAfterFault: result.sendsAfterFault }).toEqual({
+        boundary,
+        read,
+        sendsAfterFault: 0,
+      })
+      // A fault before the send boundary means the provider is never called at all.
+      if (boundary.sends === 0)
+        expect({ boundary, read, sends: result.sends }).toEqual({ boundary, read, sends: 0 })
+      else expect(result.sends).toBe(1)
+    }
+    // Reset isolation: after every fault was applied and undone, an unfaulted run is unchanged.
+    // A read next to a state change can land on either side of it, so compare the run's shape.
+    const again = await run(never)
+    expect(again).toMatchObject({
+      outcome: 'completed',
+      sends: 1,
+      fired: false,
+      reads: baseline.reads,
+    })
+    expect(new Set(again.boundaries)).toEqual(new Set(baseline.boundaries))
+  } finally {
+    await host.close()
   }
-  const baseline = await sweep(Number.MAX_SAFE_INTEGER)
-  expect(baseline).toMatchObject({ outcome: 'completed', sends: 1, fired: false })
-  expect(baseline.reads).toBeGreaterThan(5)
-  // One exhaustive pass over every read (about 400) was run once by hand; CI keeps the first and last two
-  // boundaries plus a fixed stride, which still crosses prepare, dispatch, lease and the send itself.
-  const sampled = []
-  for (let read = 1; read <= baseline.reads; read++)
-    if (read <= 2 || read > baseline.reads - 2 || read % 130 === 0) sampled.push(read)
-  const outcomes = []
-  for (const read of sampled) {
-    const result = await sweep(read)
-    expect({ read, fired: result.fired }).toEqual({ read, fired: true })
-    expect({ read, sendsAfterFault: result.sendsAfterFault }).toEqual({ read, sendsAfterFault: 0 })
-    outcomes.push(result.sends)
-  }
-  // Early faults prevent the send; only a fault after the send began can leave it in place.
-  expect(outcomes[0]).toBe(0)
-  expect(outcomes.at(-1)).toBe(1)
 }, 180000)
