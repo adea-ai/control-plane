@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.3](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.9.2...pi-durable-adapter-v0.9.3) (2026-10-16)
+
+
+### Tests
+
+* **pi:** qualify governed child dispatch after native compaction and reopen ([#1134](https://github.com/adea-ai/control-plane/issues/1134)) ([0a453d8](https://github.com/adea-ai/control-plane/commit/0a453d83103a787bdcc6c38a6571de9188f7f559))
+
 ## [0.9.2](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.9.1...pi-durable-adapter-v0.9.2) (2026-10-14)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.3](https://github.com/adea-ai/control-plane/compare/control-api-v1.32.2...control-api-v1.32.3) (2026-10-16)
+
+
+### Tests
+
+* **pi:** qualify governed child dispatch after native compaction and reopen ([#1134](https://github.com/adea-ai/control-plane/issues/1134)) ([0a453d8](https://github.com/adea-ai/control-plane/commit/0a453d83103a787bdcc6c38a6571de9188f7f559))
+
 ## [1.32.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.32.1...control-api-v1.32.2) (2026-10-14)
 
 
