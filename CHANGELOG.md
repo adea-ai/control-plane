@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.100.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.4...workspace-v1.100.5) (2026-10-16)
+
+
+### Documentation
+
+* describe production child settlement and multi-inference accounting ([#1156](https://github.com/adea-ai/control-plane/issues/1156)) ([f9395b0](https://github.com/adea-ai/control-plane/commit/f9395b0c0e46fd26ffb6aaa8d2a8aee8d7204315))
+
 ## [1.100.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.3...workspace-v1.100.4) (2026-10-16)
 
 
