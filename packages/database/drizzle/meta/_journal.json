@@ -498,6 +498,13 @@
       "when": 1791641421419,
       "tag": "0070_langgraph_legacy_drain_fences",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1792096144707,
+      "tag": "0071_event_payload_hash_version",
+      "breakpoints": true
     }
   ]
 }

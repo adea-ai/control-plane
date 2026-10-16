@@ -218,11 +218,13 @@ describe('persistence schema', () => {
         'event_type',
         'payload',
         'payload_hash',
+        'payload_hash_version',
         'publication_status',
         'next_attempt_at',
         'quarantined_at',
       ])
     )
+    expect(event.columns.find(({ name }) => name === 'payload_hash_version').notNull).toBe(false)
     expect(event.indexes.map(({ config }) => config.name)).toEqual(
       expect.arrayContaining([
         'execution_events_execution_sequence_unique',

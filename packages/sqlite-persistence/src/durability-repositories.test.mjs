@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
@@ -7,7 +8,7 @@ import {
   ProjectStateService,
   RecordingProjectStateEventPublisher,
 } from '@control-plane/domain'
-import { ExecutionEventService } from '@control-plane/events'
+import { ExecutionEventService, hashExecutionEventPayloadV2 } from '@control-plane/events'
 import {
   acceptancePlan,
   acceptancePlanReference,
@@ -224,6 +225,63 @@ describe('SQLite standalone durability repositories', () => {
         redaction: 'redacted',
       })
       expect((await durable.get(legacy.eventId)).sensitivity).toBeUndefined()
+    })
+  })
+
+  test('persists explicit event hash versions and preserves historical untagged rows on retry', async () => {
+    await withReopen(async ({ current, reopened }) => {
+      const repository = new SqliteExecutionEventRepository(current())
+      const payload = { schemaVersion: 1, schemas: ['v1'], 'a-b': 1, a_b: 2 }
+      const draft = { ...eventDraft('evt_01BRZ3NDEKTSV4RRFFQ69G5FAV'), payload }
+      const written = await repository.append(draft)
+
+      expect(written).toMatchObject({
+        payloadHashVersion: 2,
+        payloadHash: hashExecutionEventPayloadV2(payload),
+      })
+
+      const historicalPayload = { schemaVersion: 1, schemas: ['v1'], 'a-b': 1, a_b: 2 }
+      const historicalHash = '2a64697fcbc2d74f77b9dceaec97f0bd170aab9592edd2e0248bd5f70f91b735'
+      const historicalDraft = {
+        ...eventDraft('evt_01CRZ3NDEKTSV4RRFFQ69G5FAV'),
+        payload: historicalPayload,
+      }
+      const historicalWritten = await repository.append(historicalDraft)
+      expect(historicalWritten.payloadHashVersion).toBe(2)
+      const { payloadHashVersion: _historicalVersion, ...historical } = historicalWritten
+      const rowId = `r-${createHash('sha256').update(historicalWritten.eventId).digest('hex')}`
+      const row = await current().transaction((transaction) =>
+        transaction.get('execution-events', rowId)
+      )
+      expect(row).toBeDefined()
+      await current().transaction((transaction) =>
+        transaction.put({
+          namespace: 'execution-events',
+          id: row.id,
+          expectedRevision: row.revision,
+          value: {
+            ...historical,
+            payload: historicalPayload,
+            payloadBytes: Buffer.byteLength(JSON.stringify(historicalPayload)),
+            payloadHash: historicalHash,
+          },
+        })
+      )
+
+      const originalTaggedRead = await repository.get(written.eventId)
+      expect(originalTaggedRead?.payloadHashVersion).toBe(2)
+      expect(originalTaggedRead?.payloadHash).toBe(hashExecutionEventPayloadV2(payload))
+      const legacyRead = await repository.get(historicalWritten.eventId)
+      expect(legacyRead?.payloadHashVersion).toBeUndefined()
+      expect(legacyRead?.payloadHash).toBe(historicalHash)
+      await reopened()
+      const durable = new SqliteExecutionEventRepository(current())
+      expect(await durable.get(written.eventId)).toEqual(originalTaggedRead)
+      expect(await durable.get(historicalWritten.eventId)).toEqual(legacyRead)
+      expect(await durable.append(draft)).toBeUndefined()
+      expect(await durable.append(historicalDraft)).toBeUndefined()
+      expect(await durable.get(written.eventId)).toEqual(originalTaggedRead)
+      expect(await durable.get(historicalWritten.eventId)).toEqual(legacyRead)
     })
   })
 
