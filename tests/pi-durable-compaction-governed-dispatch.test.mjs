@@ -165,17 +165,52 @@ function delegateCallResponse() {
   ])
 }
 
-/** Lead sends are told apart from the child's by the governed tool only the lead carries. */
+function managementCallResponse() {
+  const item = {
+    id: 'fc_governed_dispatch_child_management',
+    type: 'function_call',
+    status: 'completed',
+    name: 'management_call',
+    call_id: 'call_governed_dispatch_child_management',
+    arguments: JSON.stringify({ operation: 'workspace.rename', input: { name: 'Renamed' } }),
+  }
+  return eventStream([
+    { type: 'response.created', response: { id: 'resp_child_management', status: 'in_progress' } },
+    {
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: { ...item, status: 'in_progress', arguments: '' },
+    },
+    {
+      type: 'response.function_call_arguments.delta',
+      output_index: 0,
+      item_id: item.id,
+      delta: item.arguments,
+    },
+    {
+      type: 'response.function_call_arguments.done',
+      output_index: 0,
+      item_id: item.id,
+      arguments: item.arguments,
+    },
+    { type: 'response.output_item.done', output_index: 0, item },
+    completed('resp_child_management', item),
+  ])
+}
+
+/**
+ * The child's sends are told apart from the lead's by its objective, which stays the first input item
+ * of every child request, including the one that follows a tool result.
+ */
 function scriptedProvider(sent, behavior = {}) {
   return async ({ body }) => {
     const input = body.input
-    const isChild =
-      input.length === 1 &&
-      input[0].content?.length === 1 &&
-      input[0].content[0].text === childObjective
+    const isChild = input[0]?.content?.length === 1 && input[0].content[0].text === childObjective
     if (isChild) {
       sent.child.push(body)
       if (behavior.childFails) return new Response('upstream failure', { status: 500 })
+      // A child that calls a tool in its first generation and answers in its second.
+      if (behavior.childManagementCall && sent.child.length === 1) return managementCallResponse()
       return textResponse('Bounded child evidence.', 'resp_child')
     }
     sent.lead.push(body)
@@ -1470,11 +1505,12 @@ test('a restored proof does not inherit the in-memory rate-limiter or interactio
 }, 120000)
 
 /**
- * A completed child whose turn made two priced inferences. The scripted provider gives a child one
- * generation (a depth-one child's own delegation is blocked, which ends its turn), so the second
- * inference is added to the completed child the way the production path records one: a ledger
- * dispatch reservation and settlement for the same attempt, its retained receipt in the journal, and
- * the completed result carrying the composite `pi-turn-usage:` aggregate of both.
+ * Constructed evidence for states a real child cannot be driven into: a second inference reserved but
+ * not yet settled in the ledger, a ledger row that differs from its receipt, and a completed result
+ * whose receipts are gone. The second inference is added to a completed child the way the production
+ * path records one (a ledger dispatch reservation and settlement, a retained journal receipt, and the
+ * composite `pi-turn-usage:` aggregate in the result). The real two-call child, with no constructed
+ * receipt, is the test further down.
  */
 const secondCharge = { microunits: 7, inputTokens: 4, outputTokens: 2, durationMs: 50 }
 const secondHex = createHash('sha256')
@@ -1707,6 +1743,221 @@ test('a child attempt that ran more than one turn is refused rather than settled
     expect(host.composition.childTerminalSettlementBlocked).toBe(true)
     expect((await readChildCostState(hooks)).outcome.costState).toBe('reserved')
     expect(kinds((await rowsOf(host, dispatch)).child)).not.toContain('settlement')
+  } finally {
+    await host.close()
+  }
+}, 120000)
+
+/**
+ * A governed management call the child can make in its first generation. It is the child's only tool
+ * that returns to the model, so the child's turn is two real generations: the call, then the answer.
+ */
+function childManagementCall(calls) {
+  let host
+  return {
+    bind: (value) => (host = value),
+    compiler: {
+      prepare: async (authority, verified) => {
+        const workspaceId = authority.request.executionPlan.correlation.workspaceId
+        const profileId = authority.request.executionPlan.profile.profileId
+        const toolDefinitionId = 'tld_01JABCDEF0123456789ABCDEFG'
+        const toolVersionId = 'tlv_01JABCDEF0123456789ABCDEFG'
+        calls.prepared.push(authority.request.executionId)
+        return {
+          requestId: 'req_01JABCDEF0123456789ABCDEFG',
+          executionId: authority.request.executionId,
+          attemptId: authority.request.attemptId,
+          workspaceId,
+          profileId,
+          toolDefinitionId,
+          toolVersionId,
+          operation: verified.args.operation,
+          input: verified.args.input,
+          grant: {
+            workspaceId,
+            profileId,
+            toolDefinitionId,
+            toolVersionId,
+            operations: [verified.args.operation],
+          },
+          audit: {
+            principalRef: authority.admission.canonicalActorPrincipalId,
+            traceId: 'trc_01JABCDEF0123456789ABCDEFG',
+          },
+          toolCallId: 'tlc_01JABCDEF0123456789ABCDEFG',
+          idempotencyKey: `child-management:${verified.sourceKey}`,
+          requestedAt: host.at,
+          policySnapshotRef: 'policy://governed-dispatch-child-management/v1',
+        }
+      },
+      execute: async (request) => {
+        calls.executed.push(request.executionId)
+        return { state: 'succeeded', value: { renamed: true } }
+      },
+    },
+  }
+}
+
+test('a child that makes two priced model calls in one turn settles from its real receipts', async () => {
+  const calls = { prepared: [], executed: [] }
+  const management = childManagementCall(calls)
+  const { host, hooks, sent } = await createHost(
+    { governedManagementCall: management.compiler },
+    { childManagementCall: true }
+  )
+  management.bind(host)
+  try {
+    const { dispatch, adapter } = await dispatchChildAfterCompaction(host, hooks)
+
+    // The child's one turn was two generations around one governed tool call, both really sent.
+    expect(sent.child).toHaveLength(2)
+    expect(sent.child[0].tools.map((tool) => tool.name)).toContain('management_call')
+    expect(calls).toEqual({ prepared: [childExecutionId], executed: [childExecutionId] })
+    const row = childOf(adapter)
+    expect(Object.keys(row.detail.inferenceReceipts)).toHaveLength(2)
+    const reported = row.detail.result.usage
+    expect(reported.accounting.sourceId.startsWith('pi-turn-usage:')).toBe(true)
+
+    // Both generations are priced and in the canonical ledger as they happened, and each receipt
+    // matches its ledger row. The reported usage is their aggregate, not a source of its own.
+    const childEntries = (await rowsOf(host, dispatch)).child
+    expect(kinds(childEntries)).toEqual([
+      'credit',
+      'reservation',
+      'model_reservation',
+      'model_usage',
+      'model_release',
+      'model_reservation',
+      'model_usage',
+      'model_release',
+    ])
+    const usageRows = childEntries.filter((entry) => entry.kind === 'model_usage')
+    const receipts = Object.values(row.detail.inferenceReceipts).map((receipt) => receipt.usage)
+    expect(receipts.map((receipt) => receipt.accounting.sourceId).toSorted()).toEqual(
+      usageRows.map((entry) => entry.source.sourceId).toSorted()
+    )
+    const spent = usageRows.reduce((total, entry) => total + entry.costMicrounits, 0)
+    expect(reported.accounting.chargedMicrounits).toBe(spent)
+    expect(reported.inputTokens).toBe(
+      receipts.reduce((total, receipt) => total + receipt.inputTokens, 0)
+    )
+
+    // The lead settles first. The child is completed but nothing of it is settled yet.
+    expect(await settleLeadTerminal(host)).toEqual({ settled: 1, pending: 0, unbound: 1 })
+    await hooks.scanner.scan(adapter)
+    const published = await publicationsOf(hooks)
+    expectOneTerminalPublication(published, hooks.host.state.parentExecutionId)
+    const counts = () => ({
+      physicalSends: host.state.physicalSends,
+      childSends: sent.child.length,
+      leadSends: sent.lead.length,
+      starts: hooks.evidence.childStarts.length,
+      reservations: hooks.evidence.reservations.length,
+      management: calls.executed.length,
+    })
+    const before = counts()
+    expect(before).toMatchObject({ physicalSends: 5, childSends: 2, starts: 1, reservations: 1 })
+    expect((await readChildCostState(hooks)).outcome.costState).toBe('reserved')
+
+    // A settlement cut off after the attempt settled leaves exactly what was recorded, and a restart
+    // resumes it through the production composition.
+    hooks.settlementSeam = async (reached) => {
+      if (reached === 'attempt-settled') throw new Error('SETTLEMENT_INTERRUPTED')
+    }
+    await expect(childSettlementFor(hooks).settle()).rejects.toThrow('SETTLEMENT_INTERRUPTED')
+    hooks.settlementSeam = undefined
+    await host.ledger.assertRuntimeAttemptReleased(
+      host.workspaceId,
+      childExecutionId,
+      childAttemptId
+    )
+    expect((await readChildCostState(hooks)).outcome.costState).toBe('reported')
+    expect((await summaryOf(host, childExecutionId)).settled).toBe(false)
+    await host.reopenComposition()
+
+    const settled = { settled: 1, pending: 0, unpriced: 0 }
+    expect(await host.composition.settleChildTerminalAccounting()).toEqual(settled)
+    expect(host.composition.childTerminalSettlementBlocked).toBe(false)
+
+    // Exact child accounting: two usages, both releases, one settlement of the attempt and of the budget.
+    const { parent, child } = await rowsOf(host, dispatch)
+    expect(kinds(child)).toEqual([
+      'credit',
+      'reservation',
+      'model_reservation',
+      'model_usage',
+      'model_release',
+      'model_reservation',
+      'model_usage',
+      'model_release',
+      'release',
+      'settlement',
+      'settlement',
+    ])
+    const attemptSettlement = child.at(-2)
+    const budgetSettlement = child.at(-1)
+    expect(attemptSettlement.quantity.value).toBe(spent)
+    expect(budgetSettlement.quantity.value).toBe(spent)
+    expect(await summaryOf(host, childExecutionId)).toMatchObject({
+      spentMicrounits: spent,
+      reservedMicrounits: 0,
+      settled: true,
+    })
+
+    // Exact parent accounting: the allowance funded the child, the unspent part came back, and the
+    // parent's spend is its own three sends plus the child's two.
+    const allowance = host.parentPlanForIntent(hooks.intentId).constraints.limits.childExecutions
+      .budgetAllowance.maximumMicrounits
+    expect(child[0].quantity.value).toBe(allowance)
+    const funding = parent.filter((entry) => entry.reservationKey === `child:${childExecutionId}`)
+    expect(kinds(funding)).toEqual(['reservation', 'release', 'settlement'])
+    expect(funding.map((entry) => entry.quantity.value)).toEqual([
+      allowance,
+      allowance - spent,
+      spent,
+    ])
+    const leadUsage = parent.filter((entry) => entry.kind === 'model_usage')
+    expect(leadUsage).toHaveLength(3)
+    const leadSpent = leadUsage.reduce((total, entry) => total + entry.costMicrounits, 0)
+    const parentSummary = await summaryOf(host, dispatch.executionId)
+    expect(parentSummary).toMatchObject({
+      spentMicrounits: leadSpent + spent,
+      reservedMicrounits: 0,
+      settled: false,
+    })
+    expect(parentSummary.spentMicrounits + parentSummary.availableMicrounits).toBe(
+      parentSummary.maximumMicrounits
+    )
+    expect(
+      await host.ledger.finalizeBudget({
+        workspaceId: host.workspaceId,
+        executionId: dispatch.executionId,
+        source: { sourceId: 'parent-final', idempotencyKey: 'parent-final:finalize' },
+      })
+    ).toMatchObject({ settled: true, spentMicrounits: leadSpent + spent })
+    expect((await readChildCostState(hooks)).outcome).toMatchObject({
+      costState: 'settled',
+      reported: {
+        accounting: { sourceId: reported.accounting.sourceId, chargedMicrounits: spent },
+      },
+      reconciled: { result: 'within_reservation', reportedChargedMicrounits: spent },
+      settled: { settledMicrounits: spent },
+    })
+
+    // Retrying and reopening change no money, no cost state, no publication, and send or start nothing.
+    const afterSettlement = {
+      rows: await rowsOf(host, dispatch),
+      cost: stableSummary(await readChildCostState(hooks)),
+    }
+    expect(await host.composition.settleChildTerminalAccounting()).toEqual(settled)
+    await host.reopenComposition()
+    expect(await host.composition.settleChildTerminalAccounting()).toEqual(settled)
+    await hooks.scanner.scan(host.composition.adapter)
+    expect(host.composition.childTerminalSettlementBlocked).toBe(false)
+    expect(await rowsOf(host, dispatch)).toEqual(afterSettlement.rows)
+    expect(stableSummary(await readChildCostState(hooks))).toBe(afterSettlement.cost)
+    expect(await publicationsOf(hooks)).toEqual(published)
+    expect(counts()).toEqual(before)
   } finally {
     await host.close()
   }
