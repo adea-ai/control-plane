@@ -105,6 +105,34 @@ export const PiDurableLeadReceiptResponseSchema = z
   })
   .strict()
 const response = SuccessResponseEnvelopeSchema.extend({ correlation: Correlation }).strict()
+const PlanDigest = z.string().regex(/^sha256:[a-f0-9]{64}$/)
+const ChildAllowanceBinding = {
+  schemaVersion: z.literal('pi-lead-child-allowance/v1'),
+  /** The accepted plan the statement is read from; the same plan the lead attempt runs under. */
+  executionPlanDigest: PlanDigest,
+  /** Pinned profile version the plan was compiled from; matches a caller's opaque profile pin. */
+  profile: z
+    .strictObject({
+      profileId: IdentifierSchemas.profileId,
+      profileVersionId: IdentifierSchemas.profileVersionId,
+      version: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+      revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    })
+    .readonly(),
+}
+/** What the accepted lead plan holds back for child executions. Disclosure only: never a funding,
+ *  admission or spending capability. `not_stated` means the plan holds nothing back, so only
+ *  balance the lead releases can fund children; it is not an error and not a missing disclosure. */
+export const PiDurableLeadChildAllowanceSchema = z.discriminatedUnion('state', [
+  z.strictObject({
+    ...ChildAllowanceBinding,
+    state: z.literal('stated'),
+    currency: z.literal('USD'),
+    maximumMicrounits: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    maximumTokens: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  }),
+  z.strictObject({ ...ChildAllowanceBinding, state: z.literal('not_stated') }),
+])
 /** Disclosure bound to a prepared canonical attempt; never a spending or runtime capability. */
 export const PiDurableLeadPreparationSchema = z
   .object({
@@ -116,6 +144,8 @@ export const PiDurableLeadPreparationSchema = z
     selectionRef: ModelSelectionRefSchema,
     selectionRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     funding: ModelSelectionFundingViewSchema.options[0],
+    /** Absent from a control plane that predates this disclosure; absence is not `not_stated`. */
+    childAllowance: PiDurableLeadChildAllowanceSchema.optional(),
     expiresAt: z.iso.datetime(),
     replayed: z.boolean(),
   })
@@ -235,6 +265,7 @@ export const PiDurableLeadHttpContract = Object.freeze({
 export type PiDurableLeadPrepareRequest = z.output<typeof PiDurableLeadPrepareRequestSchema>
 export type PiDurableLeadPrepareResponse = z.output<typeof PiDurableLeadPrepareResponseSchema>
 export type PiDurableLeadPreparation = z.output<typeof PiDurableLeadPreparationSchema>
+export type PiDurableLeadChildAllowance = z.output<typeof PiDurableLeadChildAllowanceSchema>
 export type PiDurableLeadLookupRequest = z.output<typeof PiDurableLeadLookupRequestSchema>
 export type PiDurableLeadLookupResponse = z.output<typeof PiDurableLeadLookupResponseSchema>
 export type PiDurableLeadDispatchRequest = z.output<typeof PiDurableLeadDispatchRequestSchema>
