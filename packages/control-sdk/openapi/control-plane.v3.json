@@ -17849,6 +17849,406 @@
         "security": [{ "serviceBearer": [] }]
       }
     },
+    "/v3/pi-durable/lead-dispatches/children": {
+      "post": {
+        "operationId": "pi-durable.lead.children",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "caller": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "servicePrincipalId": {
+                        "maxLength": 64,
+                        "minLength": 5,
+                        "pattern": "^svc_[a-z][a-z0-9-]*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": ["servicePrincipalId"],
+                    "type": "object"
+                  },
+                  "contractVersion": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "major": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                    },
+                    "required": ["major", "minor"],
+                    "type": "object"
+                  },
+                  "correlation": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "causationCommandId": {
+                        "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "parentEventId": {
+                        "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "traceId": { "pattern": "^trc_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                    },
+                    "required": ["traceId"],
+                    "type": "object"
+                  },
+                  "operation": { "const": "pi-durable.lead.children", "type": "string" },
+                  "parameters": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "after": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "acceptedAt": {
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                            "type": "string"
+                          },
+                          "delegationId": {
+                            "pattern": "^dlg_[0-9A-HJKMNP-TV-Z]{26}$",
+                            "type": "string"
+                          }
+                        },
+                        "readOnly": true,
+                        "required": ["acceptedAt", "delegationId"],
+                        "type": "object"
+                      },
+                      "dispatchId": { "pattern": "^dispatch_[a-f0-9]{32}$", "type": "string" },
+                      "limit": { "maximum": 256, "minimum": 1, "type": "integer" }
+                    },
+                    "required": ["dispatchId"],
+                    "type": "object"
+                  },
+                  "projectId": { "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "requestId": { "pattern": "^req_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "requestedAt": {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                    "type": "string"
+                  },
+                  "workspaceId": { "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                },
+                "required": [
+                  "caller",
+                  "contractVersion",
+                  "requestId",
+                  "workspaceId",
+                  "correlation",
+                  "operation",
+                  "requestedAt",
+                  "parameters"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "attemptId": {},
+                        "children": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "acceptedAt": {
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                                "type": "string"
+                              },
+                              "awaitingInput": { "type": "boolean" },
+                              "childAttemptId": {},
+                              "childExecutionId": {},
+                              "delegationId": {},
+                              "outcome": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "failureCode": {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "pattern": "^[A-Za-z0-9._:/-]+$",
+                                    "type": "string"
+                                  },
+                                  "publication": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "resolution": {
+                                        "enum": [
+                                          "continue_parent",
+                                          "manual_intervention",
+                                          "fail_parent"
+                                        ],
+                                        "type": "string"
+                                      },
+                                      "status": {
+                                        "enum": ["pending", "published"],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": ["status"],
+                                    "type": "object"
+                                  },
+                                  "resultRef": {},
+                                  "state": {
+                                    "enum": ["completed", "failed", "cancelled"],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["state", "publication"],
+                                "type": "object"
+                              },
+                              "revision": {
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "type": "integer"
+                              },
+                              "role": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "pattern": "^[A-Za-z0-9._:/-]+$",
+                                "type": "string"
+                              },
+                              "state": {
+                                "enum": [
+                                  "requested",
+                                  "dispatched",
+                                  "running",
+                                  "awaiting_input",
+                                  "completed",
+                                  "failed",
+                                  "cancelled",
+                                  "manual_intervention"
+                                ],
+                                "type": "string"
+                              },
+                              "stopRequested": { "type": "boolean" },
+                              "updatedAt": {
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "delegationId",
+                              "childExecutionId",
+                              "role",
+                              "state",
+                              "awaitingInput",
+                              "stopRequested",
+                              "acceptedAt",
+                              "updatedAt",
+                              "revision"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 256,
+                          "type": "array"
+                        },
+                        "complete": { "type": "boolean" },
+                        "dispatchId": { "pattern": "^dispatch_[a-f0-9]{32}$", "type": "string" },
+                        "executionId": {},
+                        "intentId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "next": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "acceptedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                              "type": "string"
+                            },
+                            "delegationId": {}
+                          },
+                          "readOnly": true,
+                          "required": ["acceptedAt", "delegationId"],
+                          "type": "object"
+                        },
+                        "observedTarget": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
+                            "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
+                          },
+                          "readOnly": true,
+                          "required": ["sessionId", "taskId"],
+                          "type": "object"
+                        },
+                        "requestedTarget": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "generation": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
+                            "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
+                          },
+                          "readOnly": true,
+                          "required": ["sessionId", "taskId", "generation"],
+                          "type": "object"
+                        },
+                        "runtimeSessionId": {},
+                        "schemaVersion": { "const": "pi-lead-dispatch/v1", "type": "string" },
+                        "totalChildren": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "schemaVersion",
+                        "dispatchId",
+                        "intentId",
+                        "executionId",
+                        "attemptId",
+                        "runtimeSessionId",
+                        "children",
+                        "totalChildren",
+                        "complete"
+                      ],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "class": {
+                          "enum": [
+                            "validation",
+                            "authentication",
+                            "authorization",
+                            "conflict",
+                            "stale_reference",
+                            "capability_mismatch",
+                            "runtime_unavailable",
+                            "internal"
+                          ],
+                          "type": "string"
+                        },
+                        "code": {
+                          "maxLength": 96,
+                          "minLength": 1,
+                          "pattern": "^[A-Z][A-Z0-9_]*$",
+                          "type": "string"
+                        },
+                        "details": {
+                          "additionalProperties": {},
+                          "propertyNames": { "maxLength": 64, "type": "string" },
+                          "type": "object"
+                        },
+                        "message": { "maxLength": 512, "minLength": 1, "type": "string" },
+                        "remediation": { "maxLength": 256, "minLength": 1, "type": "string" },
+                        "retryable": { "type": "boolean" },
+                        "source": {
+                          "enum": [
+                            "client",
+                            "auth",
+                            "policy",
+                            "runtime",
+                            "provider",
+                            "persistence",
+                            "workflow",
+                            "system"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["class", "code", "message", "retryable", "source"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "error"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Normalized error response"
+          }
+        },
+        "security": [{ "serviceBearer": [] }]
+      }
+    },
     "/v3/pi-durable/lead-dispatches/dispatch": {
       "post": {
         "operationId": "pi-durable.lead.dispatch",

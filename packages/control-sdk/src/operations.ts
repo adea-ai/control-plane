@@ -7,6 +7,8 @@ import {
   PiDurableLeadDispatchResponseSchema,
   PiDurableLeadStatusRequestSchema,
   PiDurableLeadStatusResponseSchema,
+  PiDurableLeadChildrenRequestSchema,
+  PiDurableLeadChildrenResponseSchema,
   PiDurableLeadProgressRequestSchema,
   PiDurableLeadProgressResponseSchema,
   PiDurableLeadCancelRequestSchema,
@@ -469,6 +471,13 @@ export const ControlApiOperations = Object.freeze({
     path: '/v3/pi-durable/lead-dispatches/progress',
     requestSchema: PiDurableLeadProgressRequestSchema,
     responseSchema: PiDurableLeadProgressResponseSchema,
+  },
+  getPiDurableLeadChildren: {
+    operation: 'pi-durable.lead.children',
+    method: 'POST',
+    path: '/v3/pi-durable/lead-dispatches/children',
+    requestSchema: PiDurableLeadChildrenRequestSchema,
+    responseSchema: PiDurableLeadChildrenResponseSchema,
   },
   cancelPiDurableLead: {
     operation: 'pi-durable.lead.cancel',
