@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.49.1](https://github.com/adea-ai/control-plane/compare/database-v1.49.0...database-v1.49.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* **events:** version persisted payload hashes ([#1152](https://github.com/adea-ai/control-plane/issues/1152)) ([5f678f7](https://github.com/adea-ai/control-plane/commit/5f678f7d1b804f74bd9408629bf0ec50a436e6b5))
+
 ## [1.49.0](https://github.com/adea-ai/control-plane/compare/database-v1.48.0...database-v1.49.0) (2026-10-15)
 
 

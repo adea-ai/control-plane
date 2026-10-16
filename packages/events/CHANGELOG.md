@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.1](https://github.com/adea-ai/control-plane/compare/events-v1.10.0...events-v1.10.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* **events:** version persisted payload hashes ([#1152](https://github.com/adea-ai/control-plane/issues/1152)) ([5f678f7](https://github.com/adea-ai/control-plane/commit/5f678f7d1b804f74bd9408629bf0ec50a436e6b5))
+
 ## [1.10.0](https://github.com/adea-ai/control-plane/compare/events-v1.9.0...events-v1.10.0) (2026-10-08)
 
 

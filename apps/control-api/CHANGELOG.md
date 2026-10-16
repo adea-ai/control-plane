@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.33.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.32.3...control-api-v1.33.0) (2026-10-16)
+
+
+### Features
+
+* **models:** surface BYO lead model readiness and recheck it at every boundary ([#1159](https://github.com/adea-ai/control-plane/issues/1159)) ([83265a6](https://github.com/adea-ai/control-plane/commit/83265a66057006b0ce44f5b24959f871de84e394))
+* **pi-durable:** authorized read of lead child status, input state and outcomes ([#1160](https://github.com/adea-ai/control-plane/issues/1160)) ([f96ff8f](https://github.com/adea-ai/control-plane/commit/f96ff8fb934f3ebfccdd72c749698b775ad7beb1))
+
 ## [1.32.3](https://github.com/adea-ai/control-plane/compare/control-api-v1.32.2...control-api-v1.32.3) (2026-10-16)
 
 

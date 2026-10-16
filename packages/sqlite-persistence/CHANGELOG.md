@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.40.4](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.40.3...sqlite-persistence-v1.40.4) (2026-10-16)
+
+
+### Bug Fixes
+
+* **events:** version persisted payload hashes ([#1152](https://github.com/adea-ai/control-plane/issues/1152)) ([5f678f7](https://github.com/adea-ai/control-plane/commit/5f678f7d1b804f74bd9408629bf0ec50a436e6b5))
+
 ## [1.40.3](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.40.2...sqlite-persistence-v1.40.3) (2026-10-16)
 
 

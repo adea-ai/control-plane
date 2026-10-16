@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.5.3...model-gateway-v1.6.0) (2026-10-16)
+
+
+### Features
+
+* **models:** surface BYO lead model readiness and recheck it at every boundary ([#1159](https://github.com/adea-ai/control-plane/issues/1159)) ([83265a6](https://github.com/adea-ai/control-plane/commit/83265a66057006b0ce44f5b24959f871de84e394))
+
 ## [1.5.3](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.5.2...model-gateway-v1.5.3) (2026-10-14)
 
 

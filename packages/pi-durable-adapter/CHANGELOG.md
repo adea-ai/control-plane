@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.9.3...pi-durable-adapter-v0.10.0) (2026-10-16)
+
+
+### Features
+
+* **models:** surface BYO lead model readiness and recheck it at every boundary ([#1159](https://github.com/adea-ai/control-plane/issues/1159)) ([83265a6](https://github.com/adea-ai/control-plane/commit/83265a66057006b0ce44f5b24959f871de84e394))
+
 ## [0.9.3](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.9.2...pi-durable-adapter-v0.9.3) (2026-10-16)
 
 
