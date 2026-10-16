@@ -59,6 +59,41 @@ stay wired to the canonical durable paths rather than a parallel ledger.
   usage, the production scanner publishes terminal evidence through the feed,
   human input lands ahead of batching, and cost states persist across
   close/reopen.
+- `tests/pi-durable-compaction-governed-dispatch.test.mjs` — the actual
+  production Pi lead factory after a native-session compaction and a full
+  composition reopen: the lead's `delegate_child` call runs the real governed
+  executor and delegation bridge, current grants are read again for the
+  dispatch, the child is allocated, funded from the parent's stated allowance
+  (`DurableChildRuntimeBudgetAdmission`), started once and runs its own
+  priced turn, whose reservation, exact usage and release are retained. A
+  grant withdrawn after the reopen leaves no child, reservation or start.
+  The same file then settles the child: the attempt reservation, the child
+  budget (releasing the unspent funding back into the parent's allowance) and
+  the cost-state projection (`reserved` -> `reported` -> `reconciled` ->
+  `settled`, retained through `SqliteChildUsageOutcomeRepository`). The lead is
+  settled by the production `SqlitePiLeadTerminalSettlement` first, so the
+  child's reservation alone is shown to hold the parent open. Settlement is interrupted after each durable step and
+  resumed twice, and the two scopes are kept apart. Production-composition
+  recovery reopens the real production-factory host in the same process
+  (persistence stays open; the startup scan and later scans must not
+  republish the terminal event). Standalone settlement-process recovery is a
+  real crash of the test-only settlement driver: the host is closed
+  completely, a separate process SIGKILLs itself right after the step and new
+  processes resume and repeat from the on-disk stores alone, with no
+  composition, so they cannot scan, publish, start or send. Both compare the
+  complete durable publication rows (storage id, revision, write time,
+  idempotency key and whole event), not only event types, before the
+  interruption, after it, after the reopen or resume and after repeats, so a
+  changed row id, revision, write time, key, delegation identity or event payload
+  fails. Separate tests tamper with exactly one of those fields on disk, preserving
+  all other fields so a metadata change cannot mask a missing payload comparison.
+  The standalone crash cases also read the attempt-release fence from a fresh
+  connection before resuming. Neither repeats a debit, release, start, send
+  or publication, and a child whose send outcome is
+  unknown is never settled. The provider transport, funding records and policy
+  decision are scripted fixtures, and the child settlement driver is test-only:
+  production settles leads only and no composition root runs a child
+  settlement yet.
 - `tests/child-progress-two-siblings-composition.test.mjs` — **two sibling
   children under one real parent**: coordinator admission over durable SQLite
   repositories, canonical per-child reservations and settlements in the

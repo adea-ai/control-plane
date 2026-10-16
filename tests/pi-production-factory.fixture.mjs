@@ -135,6 +135,7 @@ export async function createProductionFactoryFixture(options = {}) {
   let persistence, composition, models
   let fetchInstalled = false
   let closing
+  let keepDirectory = false
   const close = () =>
     (closing ??= (async () => {
       try {
@@ -144,7 +145,7 @@ export async function createProductionFactoryFixture(options = {}) {
           await persistence?.close()
         } finally {
           if (fetchInstalled) globalThis.fetch = originalFetch
-          await rm(directory, { recursive: true, force: true })
+          if (!keepDirectory) await rm(directory, { recursive: true, force: true })
         }
       }
     })())
@@ -494,7 +495,7 @@ export async function createProductionFactoryFixture(options = {}) {
       : undefined
     globalThis.fetch = scriptedPhysicalFetch(state, options.physicalResponder)
     fetchInstalled = true
-    composition = await createProductionPiLeadComposition({
+    const compositionOptions = {
       ...(children ? { children } : {}),
       ...(options.governedManagementCall
         ? { governedManagementCall: options.governedManagementCall }
@@ -608,7 +609,40 @@ export async function createProductionFactoryFixture(options = {}) {
       ...(options.managementAuthority === undefined
         ? {}
         : { managementAuthority: options.managementAuthority }),
-    })
+    }
+    const openComposition = () => createProductionPiLeadComposition(compositionOptions)
+    composition = await openComposition()
+    // Reopen the production composition in this process over the same canonical stores, directory
+    // and retained authority. Persistence and the scripted transport stay open, and
+    // `whileClosed` runs after the old composition released its files and before the new one opens.
+    const reopenComposition = async (whileClosed) => {
+      const previous = composition
+      composition = undefined
+      await previous.close()
+      await whileClosed?.()
+      composition = await openComposition()
+      return composition
+    }
+    // Closes the composition and the canonical store but keeps the directory and every in-memory
+    // fixture binding, so the files can be copied, replaced or opened by another process.
+    // `resume` opens the store and a fresh composition over whatever the directory then holds.
+    let suspended = false
+    const suspend = async () => {
+      if (suspended) return directory
+      suspended = true
+      const previous = composition
+      composition = undefined
+      await previous?.close()
+      persistence.close()
+      return directory
+    }
+    const resume = async () => {
+      if (!suspended) return composition
+      await persistence.migrate()
+      composition = await openComposition()
+      suspended = false
+      return composition
+    }
     const command = (operation, payload) =>
       StateChangingCommandEnvelopeSchema.parse({
         contractVersion: { major: 1, minor: 0 },
@@ -638,7 +672,12 @@ export async function createProductionFactoryFixture(options = {}) {
       parameters,
     })
     return {
-      composition,
+      get composition() {
+        return composition
+      },
+      reopenComposition,
+      suspend,
+      resume,
       directory,
       principal,
       state,
@@ -684,6 +723,13 @@ export async function createProductionFactoryFixture(options = {}) {
       command,
       read,
       close,
+      // Closes the composition and every store but leaves the directory, for a restart in a new process.
+      // The caller owns removing it.
+      async detach() {
+        keepDirectory = true
+        await close()
+        return directory
+      },
       rawProductEvidence: (intentId) => structuredClone(source.get(intentId)),
       setIntent: (intentId = randomUUID(), intentOptions = {}) => {
         const requestedModelSelections =
