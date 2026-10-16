@@ -9,6 +9,7 @@ import {
   InteractionService,
 } from '@control-plane/domain'
 import {
+  SqliteChildUsageOutcomeRepository,
   SqliteDelegationEventPublisher,
   SqliteDelegationRepository,
   SqliteToolCallRepository,
@@ -243,6 +244,8 @@ function childrenFactory({ denyCurrentScopeRead = true, selfComposed = false } =
         scopeAdmission,
         ...(selfComposed ? {} : { readCurrent: async () => undefined }),
       },
+      usageOutcomes: (delegationId) =>
+        new SqliteChildUsageOutcomeRepository(persistence, delegationId),
       createGovernedDelegateChild(delegationService) {
         state.governedDelegationService = delegationService
         const cancelChildren = delegationService.cancelChildren.bind(delegationService)

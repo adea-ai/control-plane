@@ -20,6 +20,8 @@ import { SqlitePiLeadPreparations, type PiLeadPreparationAuthority } from './lea
 import type { PiDurableChildProgressScanner } from './child-progress-scanner.js'
 import { SqlitePiLeadRunningLifecycle } from './lead-running-lifecycle.js'
 import { SqlitePiLeadTerminalSettlement } from './lead-terminal-settlement.js'
+import { PiChildTerminalSettlement, type ChildSettlementStep } from './child-terminal-settlement.js'
+import type { ChildUsageOutcomesFor } from './child-usage-outcomes.js'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import type { DelegationService } from '@control-plane/orchestration'
 
@@ -51,6 +53,16 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly preparationAuthority?: PiLeadPreparationAuthority
   /** Server-bound canonical child scanner. No child identity is accepted from an HTTP payload. */
   readonly childProgress?: Pick<PiDurableChildProgressScanner, 'scan'>
+  /**
+   * Terminal accounting for completed children: the canonical delegation records, the child cost-state
+   * store and the clock. It runs beside the lead settlement on every recovery pass and shares its ledger.
+   */
+  readonly childSettlement?: {
+    readonly delegations: ConstructorParameters<typeof PiChildTerminalSettlement>[0]['delegations']
+    readonly usageOutcomes: ChildUsageOutcomesFor
+    readonly now: () => string
+    readonly afterStep?: (step: ChildSettlementStep) => Promise<void>
+  }
   /** Cadence of the periodic recovery pass; defaults to 30 seconds. Tests shorten it. */
   readonly periodicRecoveryIntervalMs?: number
 }
@@ -150,6 +162,13 @@ export async function createNodePiDurableLeadComposition(
       journal: runtime.adapter.journal,
       ledger: options.usage.ledger,
     })
+    const childTerminalSettlement = options.childSettlement
+      ? new PiChildTerminalSettlement({
+          journal: runtime.adapter.journal,
+          ledger: options.usage.ledger,
+          ...options.childSettlement,
+        })
+      : undefined
     const recoverUnclaimedPreparations = async () => {
       if (!preparations || !options.preparationAuthority) return undefined
       return admission.recoverUnclaimedPreparations(
@@ -195,6 +214,7 @@ export async function createNodePiDurableLeadComposition(
         .then(async () => {
           // Terminal health lives in the settlement: a refused or failed pass leaves the store blocked.
           await terminalSettlement.settle().catch(() => undefined)
+          await childTerminalSettlement?.settle().catch(() => undefined)
         })
         .finally(() => {
           preparationRecovery = undefined
@@ -220,6 +240,7 @@ export async function createNodePiDurableLeadComposition(
           preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
           childProgressRecovery = await options.childProgress?.scan(initializedRuntime.adapter)
           await terminalSettlement.settle()
+          await childTerminalSettlement?.settle()
         })()
         publicRecoveries.add(recovery)
         try {
@@ -244,6 +265,13 @@ export async function createNodePiDurableLeadComposition(
       get terminalSettlementBlocked() {
         return terminalSettlement.blocked
       },
+      /** Settles completed children now. Undefined when no child settlement is configured. */
+      settleChildTerminalAccounting: childTerminalSettlement
+        ? () => childTerminalSettlement.settle()
+        : undefined,
+      get childTerminalSettlementBlocked() {
+        return childTerminalSettlement?.blocked ?? false
+      },
       close() {
         closePromise ??= (async () => {
           clearInterval(recoveryTimer)
@@ -252,6 +280,7 @@ export async function createNodePiDurableLeadComposition(
           await Promise.allSettled(publicRecoveries)
           await preparationRecovery
           await terminalSettlement.close()
+          await childTerminalSettlement?.close()
           try {
             await initializedRuntime.close()
           } finally {

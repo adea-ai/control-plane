@@ -133,6 +133,7 @@ test('fencedOperationPolicy: v1 refuses all actions; v2 observes status/progress
     'dispatch',
     'status',
     'progress',
+    'children',
     'cancel',
     'resume',
     'publication',
@@ -145,6 +146,8 @@ test('fencedOperationPolicy: v1 refuses all actions; v2 observes status/progress
   expect(v2.publication).toBe('refuse')
   expect(v2.status).toBe('observe')
   expect(v2.progress).toBe('observe')
+  // Child outcomes are outside the pinned fence observation: refused under every fence.
+  expect(v2.children).toBe('refuse')
   expect(v2.cancel).toBe('cancel-as-actor')
 })
 

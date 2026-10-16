@@ -96,6 +96,7 @@ export type LeadOperation =
   | 'dispatch'
   | 'status'
   | 'progress'
+  | 'children'
   | 'cancel'
   | 'resume'
   | 'publication'
@@ -107,6 +108,7 @@ const FENCED_OPERATION_POLICY_V1: Readonly<Record<LeadOperation, LeadFenceDecisi
   dispatch: 'refuse',
   status: 'refuse',
   progress: 'refuse',
+  children: 'refuse',
   cancel: 'refuse',
   resume: 'refuse',
   publication: 'refuse',
@@ -121,6 +123,8 @@ const FENCED_OPERATION_POLICY_V2: Readonly<Record<LeadOperation, LeadFenceDecisi
   dispatch: 'refuse',
   status: 'observe',
   progress: 'observe',
+  // Child outcomes are not part of the pinned fence observation: refused under every fence.
+  children: 'refuse',
   cancel: 'cancel-as-actor',
   resume: 'refuse',
   publication: 'refuse',

@@ -2188,7 +2188,14 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   }
 }
 
-function turnKey(record: JournalRecord): string {
+// claimProcess refuses a stale snapshot or a live owner; either means another process moved first.
+function isOwnerContention(error: unknown): boolean {
+  return (
+    error instanceof Error && ['STALE_STATE', 'PI_SESSION_OWNER_ACTIVE'].includes(error.message)
+  )
+}
+
+function turnKey(record: Pick<JournalRecord, 'attemptId' | 'detail'>): string {
   return (
     (record.detail['turn'] as { requestId: string } | undefined)?.requestId ??
     `pi-turn:${record.attemptId}:initial`
@@ -2294,7 +2301,58 @@ function delegateChildOutcome(outcome: DurableEffectGateOutcome, request: Durabl
   })
 }
 
-function aggregateUsage(receipts: readonly ReturnType<typeof RuntimeUsageSchema.parse>[]) {
+/**
+ * The retained per-inference accounting sources behind a completed turn's reported usage. One inference
+ * reports its own source. Several report a composite `pi-turn-usage:` reference that resolves only
+ * through the journal's retained inference receipts, so those are re-aggregated and must reproduce the
+ * reported usage exactly. `undefined` means the retained evidence does not account for the usage.
+ */
+export function completedTurnUsageSources(
+  record: Pick<JournalRecord, 'attemptId' | 'detail'>,
+  usage: ReturnType<typeof RuntimeUsageSchema.parse>
+): readonly NonNullable<ReturnType<typeof RuntimeUsageSchema.parse>['accounting']>[] | undefined {
+  const accounting = usage.accounting
+  if (!accounting) return undefined
+  if (!accounting.sourceId.startsWith(TURN_USAGE_SOURCE_PREFIX)) return [accounting]
+  const retained = record.detail['inferenceReceipts']
+  if (typeof retained !== 'object' || retained === null) return undefined
+  const turn = turnKey(record)
+  const parts: ReturnType<typeof RuntimeUsageSchema.parse>[] = []
+  for (const receipt of Object.values(retained as Record<string, unknown>)) {
+    if ((receipt as { turnKey?: unknown } | null)?.turnKey !== turn) continue
+    const part = RuntimeUsageSchema.safeParse((receipt as { usage?: unknown }).usage)
+    if (!part.success || !part.data.accounting) return undefined
+    parts.push(part.data)
+  }
+  if (parts.length < 2) return undefined
+  try {
+    if (canonicalJsonStringify(aggregateUsage(parts)) !== canonicalJsonStringify(usage))
+      return undefined
+  } catch {
+    return undefined
+  }
+  return parts.map((part) => part.accounting!)
+}
+
+const TURN_USAGE_SOURCE_PREFIX = 'pi-turn-usage:'
+
+/**
+ * True when the attempt retains inference receipts of a turn other than the one its record is on. The
+ * reported usage of a completed record covers only that turn, while the attempt's reservation and the
+ * canonical ledger cover every turn, so the two only agree for an attempt that ran a single turn.
+ */
+export function retainsOtherTurnUsage(
+  record: Pick<JournalRecord, 'attemptId' | 'detail'>
+): boolean {
+  const retained = record.detail['inferenceReceipts']
+  if (typeof retained !== 'object' || retained === null) return false
+  const turn = turnKey(record)
+  return Object.values(retained as Record<string, unknown>).some(
+    (receipt) => (receipt as { turnKey?: unknown } | null)?.turnKey !== turn
+  )
+}
+
+export function aggregateUsage(receipts: readonly ReturnType<typeof RuntimeUsageSchema.parse>[]) {
   if (!receipts.length) fail('PI_INFERENCE_RECEIPT_REQUIRED', 'validation')
   if (receipts.length === 1) return receipts[0]!
   const accounting = receipts.map((item) => item.accounting)
@@ -2345,7 +2403,7 @@ function aggregateUsage(receipts: readonly ReturnType<typeof RuntimeUsageSchema.
           accounting: {
             ...scope,
             // A bounded composite provenance reference; each underlying source receipt stays retained.
-            sourceId: `pi-turn-usage:${digest(accounting.map((item) => item!.sourceId).toSorted()).slice(7)}`,
+            sourceId: `${TURN_USAGE_SOURCE_PREFIX}${digest(accounting.map((item) => item!.sourceId).toSorted()).slice(7)}`,
             chargedMicrounits: sum(accounting.map((item) => item!.chargedMicrounits)),
           },
         }

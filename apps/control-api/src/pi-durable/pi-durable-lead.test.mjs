@@ -286,6 +286,7 @@ async function fixture(run, changes = {}) {
       },
       receipts: overrides.receipts?.(receipts) ?? receipts,
       ...(changes.delegationService ? { delegationService: changes.delegationService } : {}),
+      ...(changes.childDelegations ? { childDelegations: changes.childDelegations } : {}),
       findRuntimeHandle: (request) => adapter.findExistingHandle(request),
       now: () => at,
       authority: {
@@ -779,6 +780,336 @@ describe('composed Pi Durable lead HTTP endpoints', () => {
       },
       { delegationService }
     )
+  })
+
+  describe('authorized child read', () => {
+    const childId = (suffix) => `dlg_01JABCDEF0123456789ABCDEF${suffix}`
+    const record = (suffix, changes = {}) => ({
+      delegationId: childId(suffix),
+      parentExecutionId: id('exe'),
+      parentAttemptId: id('att'),
+      childExecutionId: `exe_01JABCDEF0123456789ABCDEF${suffix}`,
+      childAttemptId: `att_01JABCDEF0123456789ABCDEF${suffix}`,
+      parentExecutionPlanDigest: `sha256:${'1'.repeat(64)}`,
+      contextPackageDigest: `sha256:${'2'.repeat(64)}`,
+      role: 'researcher',
+      objective: 'PRIVATE-OBJECTIVE-CANARY',
+      state: 'running',
+      retryCount: 0,
+      inputDigest: `sha256:${'3'.repeat(64)}`,
+      revision: 2,
+      acceptedAt: at,
+      updatedAt: at,
+      ...changes,
+    })
+    const records = () => [
+      record('B', {
+        state: 'completed',
+        terminalResultRef: 'art_01JABCDEF0123456789ABCDEFG',
+        terminalPublication: {
+          status: 'published',
+          idempotencyKey: 'delegation:terminal:B',
+        },
+        revision: 4,
+      }),
+      record('A', { state: 'awaiting_input' }),
+      record('C', { state: 'running', pendingCancellationAt: at }),
+      record('D', { state: 'failed', failureCode: 'CHILD_FAILED' }),
+      record('E', { parentAttemptId: 'att_01JABCDEF0123456789ABCDEFZ' }),
+    ]
+    const read = (context, receipt) =>
+      context.inject(
+        'children',
+        context.read('pi-durable.lead.children', { dispatchId: receipt.dispatchId })
+      )
+
+    test('returns bounded canonical child state, input state and outcomes without private payloads', () => {
+      const listed = []
+      return fixture(
+        async (context) => {
+          const receipt = (
+            await context.inject(
+              'dispatch',
+              context.envelope('pi-durable.lead.dispatch', { intentId })
+            )
+          ).json().data
+          await context.adapter.drain()
+          const response = await read(context, receipt)
+          expect(response.statusCode).toBe(200)
+          const { children, ...lead } = response.json().data
+          expect(lead.dispatchId).toBe(receipt.dispatchId)
+          expect(children.map((child) => child.delegationId)).toEqual([
+            childId('A'),
+            childId('B'),
+            childId('C'),
+            childId('D'),
+          ])
+          const [awaiting, completed, stopping, failed] = children
+          expect(awaiting).toMatchObject({ state: 'awaiting_input', awaitingInput: true })
+          expect(awaiting.outcome).toBeUndefined()
+          expect(completed).toMatchObject({
+            state: 'completed',
+            revision: 4,
+            outcome: {
+              state: 'completed',
+              resultRef: 'art_01JABCDEF0123456789ABCDEFG',
+              publication: { status: 'published' },
+            },
+          })
+          expect(stopping).toMatchObject({ state: 'running', stopRequested: true })
+          expect(failed.outcome).toEqual({
+            state: 'failed',
+            failureCode: 'CHILD_FAILED',
+            publication: { status: 'pending' },
+          })
+          const text = response.body
+          for (const secret of ['PRIVATE-OBJECTIVE-CANARY', 'sha256:', 'idempotencyKey'])
+            expect(text).not.toContain(secret)
+          // A read never starts, advances or stops anything.
+          expect(context.state.starts).toBe(1)
+          expect(listed).toEqual([receipt.executionId])
+          // A repeated read returns the same retained view and still starts nothing.
+          expect((await read(context, receipt)).json().data.children).toEqual(children)
+          expect(listed).toHaveLength(2)
+          expect(context.state.starts).toBe(1)
+        },
+        {
+          childDelegations: {
+            async listChildren(parentExecutionId) {
+              listed.push(parentExecutionId)
+              return records().map((child) => ({ ...child, parentExecutionId }))
+            },
+          },
+        }
+      )
+    })
+
+    const many = (count, extraOtherAttempt = 3) => {
+      const key = (n) => String(n).padStart(8, '0')
+      return [
+        ...Array.from({ length: count }, (_, n) =>
+          record('X', {
+            delegationId: `dlg_01JABCDEF012345678${key(n)}`,
+            childExecutionId: `exe_01JABCDEF012345678${key(n)}`,
+            childAttemptId: `att_01JABCDEF012345678${key(n)}`,
+            acceptedAt: new Date(Date.parse(at) + n * 1000).toISOString(),
+          })
+        ),
+        ...Array.from({ length: extraOtherAttempt }, (_, n) =>
+          record('Y', {
+            delegationId: `dlg_01JABCDEF012345679${key(n)}`,
+            parentAttemptId: 'att_01JABCDEF0123456789ABCDEFZ',
+          })
+        ),
+      ]
+    }
+    const pageOf = async (context, receipt, parameters = {}) => {
+      const response = await context.inject(
+        'children',
+        context.read('pi-durable.lead.children', { dispatchId: receipt.dispatchId, ...parameters })
+      )
+      expect(response.statusCode).toBe(200)
+      return response.json().data
+    }
+    const dispatchLead = async (context) => {
+      const receipt = (
+        await context.inject('dispatch', context.envelope('pi-durable.lead.dispatch', { intentId }))
+      ).json().data
+      await context.adapter.drain()
+      return receipt
+    }
+
+    test('256 matching children are one complete page and 257 are paged with a cursor, never truncated', () => {
+      let count = 256
+      return fixture(
+        async (context) => {
+          const receipt = await dispatchLead(context)
+          // Exactly the page maximum: complete, no cursor; other-attempt records are not counted.
+          const exact = await pageOf(context, receipt)
+          expect(exact.children).toHaveLength(256)
+          expect(exact).toMatchObject({ totalChildren: 256, complete: true })
+          expect(exact.next).toBeUndefined()
+          // One more matching child: the first page says it is not the whole set.
+          count = 257
+          const first = await pageOf(context, receipt)
+          expect(first.children).toHaveLength(256)
+          expect(first).toMatchObject({ totalChildren: 257, complete: false })
+          expect(first.next).toEqual({
+            acceptedAt: first.children.at(-1).acceptedAt,
+            delegationId: first.children.at(-1).delegationId,
+          })
+          const second = await pageOf(context, receipt, { after: first.next })
+          expect(second.children).toHaveLength(1)
+          expect(second).toMatchObject({ totalChildren: 257, complete: true })
+          expect(second.next).toBeUndefined()
+          const ids = [...first.children, ...second.children].map((child) => child.delegationId)
+          expect(new Set(ids).size).toBe(257)
+          expect(ids).toEqual([...ids].toSorted())
+          expect(ids.every((id) => id.startsWith('dlg_01JABCDEF012345678'))).toBe(true)
+          // Smaller pages walk the same set in the same order.
+          const walked = []
+          let after
+          let pages = 0
+          do {
+            const page = await pageOf(context, receipt, { limit: 100, ...(after ? { after } : {}) })
+            walked.push(...page.children.map((child) => child.delegationId))
+            after = page.next
+            pages++
+          } while (after)
+          expect(pages).toBe(3)
+          expect(walked).toEqual(ids)
+        },
+        {
+          childDelegations: {
+            async listChildren(parentExecutionId) {
+              return many(count).map((child) => ({ ...child, parentExecutionId }))
+            },
+          },
+        }
+      )
+    })
+
+    test('a cursor past the last child is an empty complete page and bad paging input is rejected', () =>
+      fixture(
+        async (context) => {
+          const receipt = await dispatchLead(context)
+          const end = await pageOf(context, receipt, {
+            after: { acceptedAt: '2100-01-01T00:00:00.000Z', delegationId: childId('Z') },
+          })
+          expect(end).toMatchObject({ children: [], totalChildren: 3, complete: true })
+          for (const parameters of [{ limit: 0 }, { limit: 257 }, { after: { acceptedAt: 'x' } }]) {
+            const response = await context.inject(
+              'children',
+              context.read('pi-durable.lead.children', {
+                dispatchId: receipt.dispatchId,
+                ...parameters,
+              })
+            )
+            expect(response.statusCode).toBe(400)
+          }
+        },
+        {
+          childDelegations: {
+            async listChildren(parentExecutionId) {
+              return many(3).map((child) => ({ ...child, parentExecutionId }))
+            },
+          },
+        }
+      ))
+
+    test('denies without reading children when the audience, receipt or command scope is wrong', () => {
+      let listings = 0
+      return fixture(
+        async (context) => {
+          const receipt = (
+            await context.inject(
+              'dispatch',
+              context.envelope('pi-durable.lead.dispatch', { intentId })
+            )
+          ).json().data
+          await context.adapter.drain()
+          context.state.audience = ['svc_other']
+          expect((await read(context, receipt)).statusCode).toBe(403)
+          context.state.audience = [principalId]
+          expect(
+            (
+              await context.inject(
+                'children',
+                context.read('pi-durable.lead.children', {
+                  dispatchId: `dispatch_${'f'.repeat(32)}`,
+                })
+              )
+            ).statusCode
+          ).toBe(404)
+          context.state.changeAdmission = true
+          expect((await read(context, receipt)).statusCode).toBe(409)
+          expect(listings).toBe(0)
+          context.state.changeAdmission = false
+          expect((await read(context, receipt)).statusCode).toBe(200)
+          expect(listings).toBe(1)
+        },
+        {
+          childDelegations: {
+            async listChildren() {
+              listings++
+              return []
+            },
+          },
+        }
+      )
+    })
+
+    test('authority revoked while children are read returns nothing', () => {
+      let state
+      return fixture(
+        async (context) => {
+          state = context.state
+          const receipt = (
+            await context.inject(
+              'dispatch',
+              context.envelope('pi-durable.lead.dispatch', { intentId })
+            )
+          ).json().data
+          await context.adapter.drain()
+          const response = await read(context, receipt)
+          expect(response.statusCode).toBe(403)
+          expect(response.body).not.toContain('researcher')
+        },
+        {
+          childDelegations: {
+            async listChildren(parentExecutionId) {
+              state.revoked = true
+              return [record('A', { parentExecutionId })]
+            },
+          },
+        }
+      )
+    })
+
+    test('a child record of another execution fails closed and survives reopen unchanged', () => {
+      let foreign = true
+      return fixture(
+        async (context) => {
+          const receipt = (
+            await context.inject(
+              'dispatch',
+              context.envelope('pi-durable.lead.dispatch', { intentId })
+            )
+          ).json().data
+          await context.adapter.drain()
+          expect((await read(context, receipt)).statusCode).toBe(409)
+          foreign = false
+          const first = (await read(context, receipt)).json().data
+          await context.close()
+          await context.open()
+          expect((await read(context, receipt)).json().data).toEqual(first)
+          expect(context.state.requests).toHaveLength(1)
+        },
+        {
+          childDelegations: {
+            async listChildren(parentExecutionId) {
+              return [
+                record('A', {
+                  parentExecutionId: foreign ? id('exe').replace('G', 'H') : parentExecutionId,
+                }),
+              ]
+            },
+          },
+        }
+      )
+    })
+
+    test('stays unavailable when no child record reader is composed', () =>
+      fixture(async (context) => {
+        const receipt = (
+          await context.inject(
+            'dispatch',
+            context.envelope('pi-durable.lead.dispatch', { intentId })
+          )
+        ).json().data
+        await context.adapter.drain()
+        expect((await read(context, receipt)).statusCode).toBe(503)
+      }))
   })
 
   test('unconfigured composition stays unavailable without enabling providers', () =>

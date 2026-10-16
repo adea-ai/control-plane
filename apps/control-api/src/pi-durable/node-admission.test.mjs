@@ -1271,6 +1271,110 @@ test('ordinary admission retains a binding that survives reopen: a v2 fence obse
     ).rejects.toThrow('PI_LEAD_SCOPE_REJECTED')
   }, fencedScope))
 
+const childRecord = (setup, changes = {}) => ({
+  delegationId: 'dlg_01JABCDEF0123456789ABCDEFG',
+  parentExecutionId: setup.ids.executionId,
+  parentAttemptId: setup.ids.attemptId,
+  childExecutionId: 'exe_01JABCDEF0123456789ABCDEFH',
+  childAttemptId: 'att_01JABCDEF0123456789ABCDEFH',
+  role: 'researcher',
+  objective: 'PRIVATE-OBJECTIVE-CANARY',
+  state: 'completed',
+  terminalResultRef: 'art_01JABCDEF0123456789ABCDEFG',
+  terminalPublication: { status: 'published', idempotencyKey: 'delegation:terminal:one' },
+  retryCount: 0,
+  revision: 3,
+  acceptedAt: at,
+  updatedAt: at,
+  ...changes,
+})
+
+test('children read is refused under a v2 fence that appears during the child read, and before it, while status still observes', async () =>
+  fixture(async (setup) => {
+    const { adapter, calls, receipts, dispatchId } = await admitAndDispatch(setup)
+    const listed = []
+    const service = new DurablePiDurableLeadService({
+      authority: setup.bridge,
+      receipts,
+      adapter,
+      now: () => at,
+      childDelegations: {
+        async listChildren(executionId) {
+          listed.push(executionId)
+          // The real Node authority switches from ordinary admission to a matching pinned v2
+          // fence while the child records are being read.
+          if (listed.length === 1) setup.setFenceBody(fenceBodyFrom(setup.bridge))
+          return [childRecord(setup)]
+        },
+      },
+    })
+    const request = readEnvelope(setup, 'pi-durable.lead.children', { dispatchId })
+
+    // Ordinary admission: the read works against the current authority.
+    setup.setFenceBody(undefined)
+    const before = effects(calls)
+    listed.length = 0
+    // First read: the fence appears during listChildren, so the post-read reread refuses and
+    // no child outcome is returned.
+    await expect(service.children(request, setup.principal)).rejects.toThrow('PI_LEAD_UNAVAILABLE')
+    expect(listed).toHaveLength(1)
+
+    // The fence is now present: the lookup refuses before any child record is read.
+    await expect(service.children(request, setup.principal)).rejects.toThrow('PI_LEAD_UNAVAILABLE')
+    expect(listed).toHaveLength(1)
+
+    // The same fence still permits the pinned status observation; children is not part of it.
+    const status = await service.status(
+      readEnvelope(setup, 'pi-durable.lead.status', { dispatchId }),
+      setup.principal
+    )
+    expect(status.data.dispatchId).toBe(dispatchId)
+    expect(effects(calls)).toEqual({ ...before, status: before.status + 1 })
+
+    // The authority itself refuses the new operation under any fence variant.
+    await expect(
+      setup.bridge.resolveIntent({
+        workspaceId: setup.plan.correlation.workspaceId,
+        intentId,
+        principal: setup.principal,
+        operation: 'children',
+      })
+    ).rejects.toThrow('PI_LEAD_UNAVAILABLE')
+
+    // Lifting the fence restores the ordinary read, with the same bounded view.
+    setup.setFenceBody(undefined)
+    const ordinary = await service.children(request, setup.principal)
+    expect(ordinary.data.children).toHaveLength(1)
+    expect(ordinary.data).toMatchObject({ totalChildren: 1, complete: true })
+    expect(JSON.stringify(ordinary)).not.toContain('PRIVATE-OBJECTIVE-CANARY')
+  }, fencedScope))
+
+test('a fence present at the first reread refuses children even when the second reread would pass', async () =>
+  fixture(async (setup) => {
+    const { adapter, receipts, dispatchId } = await admitAndDispatch(setup)
+    let listings = 0
+    const service = new DurablePiDurableLeadService({
+      authority: setup.bridge,
+      receipts,
+      adapter,
+      now: () => at,
+      childDelegations: {
+        async listChildren() {
+          listings++
+          return [childRecord(setup)]
+        },
+      },
+    })
+    setup.setFenceBody(fenceBodyFrom(setup.bridge))
+    await expect(
+      service.children(
+        readEnvelope(setup, 'pi-durable.lead.children', { dispatchId }),
+        setup.principal
+      )
+    ).rejects.toThrow('PI_LEAD_UNAVAILABLE')
+    expect(listings).toBe(0)
+  }, fencedScope))
+
 test('tampered admission binding refuses fenced observation and cancel before any adapter effect', async () =>
   fixture(async (setup) => {
     const { adapter, calls, dispatchId } = await admitAndDispatch(setup)
