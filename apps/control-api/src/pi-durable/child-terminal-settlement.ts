@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import { ChildUsageLedger, type DelegationRepository } from '@control-plane/orchestration'
+import { completedTurnUsageSources } from '@control-plane/pi-durable-adapter'
 import {
   RuntimeStartRequestSchema,
   RuntimeUsageSchema,
@@ -128,6 +129,7 @@ export class PiChildTerminalSettlement {
           childAttemptId: request.data.attemptId,
           delegation,
           usage: usage.data,
+          detail: record.detail,
         })
         if (outcome === 'settled') settled += 1
         else pending += 1
@@ -145,8 +147,9 @@ export class PiChildTerminalSettlement {
     readonly childAttemptId: string
     readonly delegation: NonNullable<Awaited<ReturnType<DelegationRepository['findByChild']>>>
     readonly usage: RuntimeUsage
+    readonly detail: Record<string, unknown>
   }): Promise<'settled' | 'pending'> {
-    const { workspaceId, childAttemptId, delegation, usage } = input
+    const { workspaceId, childAttemptId, delegation, usage, detail } = input
     const accounting = usage.accounting!
     const store = this.options.usageOutcomes(delegation.delegationId)
     const identity = {
@@ -199,23 +202,41 @@ export class PiChildTerminalSettlement {
       return outcome
     }
 
-    const usageEntries = (await this.options.ledger.entries(workspaceId, executionId)).filter(
-      (entry) => entry.kind === 'model_usage' && entry.source.sourceId === accounting.sourceId
-    )
-    if (usageEntries.length > 1) throw mismatch()
-    const usageEntry = usageEntries[0]
-    if (!usageEntry) return 'pending'
-    const publicationSequence = usageEntry.sequence
-    if (
-      usageEntry.workspaceId !== workspaceId ||
-      usageEntry.executionId !== executionId ||
-      usageEntry.attemptId !== childAttemptId ||
-      usageEntry.costMicrounits !== accounting.chargedMicrounits ||
-      usageEntry.currency !== accounting.currency ||
-      usageEntry.costExact !== accounting.costExact ||
-      usageEntry.fundingSource !== accounting.fundingSource
-    )
+    // The reported usage is one inference's, or the aggregate of a turn's several. Either way every
+    // constituent inference must be in the canonical ledger, exactly as that inference reported it,
+    // and together they must account for the reported charge.
+    const sources = completedTurnUsageSources({ attemptId: childAttemptId, detail }, usage)
+    if (!sources || new Set(sources.map((source) => source.sourceId)).size !== sources.length)
       throw mismatch()
+    const ledgerEntries = await this.options.ledger.entries(workspaceId, executionId)
+    let publicationSequence = 0
+    let charged = 0n
+    let missing = false
+    for (const source of sources) {
+      const matches = ledgerEntries.filter(
+        (entry) => entry.kind === 'model_usage' && entry.source.sourceId === source.sourceId
+      )
+      if (matches.length > 1) throw mismatch()
+      const usageEntry = matches[0]
+      charged += BigInt(source.chargedMicrounits)
+      if (!usageEntry) {
+        missing = true
+        continue
+      }
+      if (
+        usageEntry.workspaceId !== workspaceId ||
+        usageEntry.executionId !== executionId ||
+        usageEntry.attemptId !== childAttemptId ||
+        usageEntry.costMicrounits !== source.chargedMicrounits ||
+        usageEntry.currency !== source.currency ||
+        usageEntry.costExact !== source.costExact ||
+        usageEntry.fundingSource !== source.fundingSource
+      )
+        throw mismatch()
+      publicationSequence = Math.max(publicationSequence, usageEntry.sequence)
+    }
+    if (charged !== BigInt(accounting.chargedMicrounits)) throw mismatch()
+    if (missing) return 'pending'
     const reportId = `usage-settle:${childAttemptId}:${createHash('sha256')
       .update(accounting.sourceId)
       .digest('hex')
@@ -235,7 +256,7 @@ export class PiChildTerminalSettlement {
       const receipt = await mutateChildUsage(store, (cost) =>
         cost.recordReportedUsage(identity, usage, {
           reportId,
-          publicationSequence: usageEntry.sequence,
+          publicationSequence,
         })
       )
       if (

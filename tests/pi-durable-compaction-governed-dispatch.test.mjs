@@ -1,9 +1,12 @@
 import { afterAll, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { cp, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { aggregateUsage } from '@control-plane/pi-durable-adapter'
+import { RuntimeUsageSchema } from '@control-plane/runtime-sdk'
 import {
   compactNativeSession,
   nativeSessionPath,
@@ -1464,4 +1467,217 @@ test('a restored proof does not inherit the in-memory rate-limiter or interactio
   const second = await forkDispatchedHost()
   expect(await second.hooks.rateLimiter.consume(key, 1, 60000, second.hooks.at)).toBe(true)
   expect(await second.hooks.interactions.get(key)).toBeUndefined()
+}, 120000)
+
+/**
+ * A completed child whose turn made two priced inferences. The scripted provider gives a child one
+ * generation (a depth-one child's own delegation is blocked, which ends its turn), so the second
+ * inference is added to the completed child the way the production path records one: a ledger
+ * dispatch reservation and settlement for the same attempt, its retained receipt in the journal, and
+ * the completed result carrying the composite `pi-turn-usage:` aggregate of both.
+ */
+const secondCharge = { microunits: 7, inputTokens: 4, outputTokens: 2, durationMs: 50 }
+const secondHex = createHash('sha256')
+  .update('second-inference-of-the-completed-child')
+  .digest('hex')
+const secondSourceId = `pi-inference:${secondHex}`
+const crockford = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+const modelCallIdOf = (hex) => {
+  let value = BigInt(`0x${hex.slice(0, 32)}`)
+  let encoded = ''
+  for (let position = 0; position < 26; position++) {
+    encoded = crockford[Number(value & 31n)] + encoded
+    value >>= 5n
+  }
+  return `mdc_${encoded}`
+}
+
+async function completeWithTwoInferences(host, { settleSecond = true, ledgerMicrounits } = {}) {
+  const adapter = host.composition.adapter
+  const row = childOf(adapter)
+  const entries = await host.ledger.entries(host.workspaceId, childExecutionId)
+  const reservation = entries.find((entry) => entry.kind === 'model_reservation')
+  const [firstKey, first] = Object.entries(row.detail.inferenceReceipts)[0]
+  const hex = secondHex
+  const sourceId = secondSourceId
+  const modelCallId = modelCallIdOf(hex)
+  const ledgerScope = {
+    workspaceId: host.workspaceId,
+    executionId: childExecutionId,
+    attemptId: childAttemptId,
+    reservationKey: reservation.reservationKey,
+    modelCallId,
+  }
+  await host.ledger.reserveModelRequestForDispatch({
+    ...ledgerScope,
+    maximumMicrounits: 100,
+    maximumTokens: 64,
+    fundingSource: reservation.fundingSource,
+    priceSnapshotDigest: reservation.priceSnapshotDigest,
+    requestDigest: `sha256:${hex}`,
+    source: { sourceId, idempotencyKey: `${sourceId}:dispatch` },
+  })
+  if (settleSecond)
+    await host.ledger.settleModelRequest({
+      ...ledgerScope,
+      costMicrounits: ledgerMicrounits ?? secondCharge.microunits,
+      tokens: secondCharge.inputTokens + secondCharge.outputTokens,
+      source: { sourceId, idempotencyKey: `${sourceId}:settle` },
+    })
+  const second = RuntimeUsageSchema.parse({
+    inputTokens: secondCharge.inputTokens,
+    outputTokens: secondCharge.outputTokens,
+    durationMs: secondCharge.durationMs,
+    cost: { amount: `0.${String(secondCharge.microunits).padStart(6, '0')}`, currency: 'USD' },
+    accounting: {
+      schemaVersion: 1,
+      sourceId,
+      fundingSource: first.usage.accounting.fundingSource,
+      currency: 'USD',
+      chargedMicrounits: secondCharge.microunits,
+      costExact: true,
+    },
+  })
+  const turnUsage = aggregateUsage([RuntimeUsageSchema.parse(first.usage), second])
+  expect(turnUsage.accounting.sourceId.startsWith('pi-turn-usage:')).toBe(true)
+  const secondKey = `${firstKey.slice(0, firstKey.lastIndexOf(':') + 1)}pi-generation:second`
+  adapter.journal.update(row.handleId, row.epoch, {
+    detail: {
+      ...row.detail,
+      inferenceReceipts: {
+        ...row.detail.inferenceReceipts,
+        [secondKey]: {
+          turnKey: first.turnKey,
+          nativeDigest: `sha256:${hex}`,
+          usage: second,
+        },
+      },
+      result: { ...row.detail.result, usage: turnUsage },
+    },
+  })
+  return { first: RuntimeUsageSchema.parse(first.usage), second, usage: turnUsage }
+}
+
+test('a completed child with several priced inferences settles from its retained receipts and stays settled', async () => {
+  const { host, hooks, dispatch } = await forkDispatchedHost()
+  try {
+    expect(await settleLeadTerminal(host)).toEqual({ settled: 1, pending: 0, unbound: 1 })
+    const { first, usage: turnUsage } = await completeWithTwoInferences(host, {
+      settleSecond: false,
+    })
+    const total = first.accounting.chargedMicrounits + secondCharge.microunits
+    expect(turnUsage.accounting.chargedMicrounits).toBe(total)
+
+    // The second inference is reserved but not yet settled in the ledger, so the child is pending:
+    // nothing is settled, released or reported, and nothing is inferred from the aggregate alone.
+    expect(await host.composition.settleChildTerminalAccounting()).toEqual({
+      settled: 0,
+      pending: 1,
+      unpriced: 0,
+    })
+    expect(host.composition.childTerminalSettlementBlocked).toBe(true)
+    expect(kinds((await rowsOf(host, dispatch)).child)).not.toContain('settlement')
+    expect((await readChildCostState(hooks)).outcome.costState).toBe('reserved')
+
+    // The ledger then records it, and the next pass settles the aggregate from both receipts.
+    await host.ledger.settleModelRequest({
+      workspaceId: host.workspaceId,
+      executionId: childExecutionId,
+      attemptId: childAttemptId,
+      reservationKey: `runtime-attempt:${childAttemptId}`,
+      modelCallId: modelCallIdOf(secondHex),
+      costMicrounits: secondCharge.microunits,
+      tokens: secondCharge.inputTokens + secondCharge.outputTokens,
+      source: { sourceId: secondSourceId, idempotencyKey: `${secondSourceId}:settle` },
+    })
+    const settled = { settled: 1, pending: 0, unpriced: 0 }
+    expect(await host.composition.settleChildTerminalAccounting()).toEqual(settled)
+    expect(host.composition.childTerminalSettlementBlocked).toBe(false)
+
+    const { child } = await rowsOf(host, dispatch)
+    expect(kinds(child)).toEqual([
+      'credit',
+      'reservation',
+      'model_reservation',
+      'model_usage',
+      'model_release',
+      'model_reservation',
+      'model_usage',
+      'model_release',
+      'release',
+      'settlement',
+      'settlement',
+    ])
+    expect(
+      child.filter((entry) => entry.kind === 'model_usage').map((entry) => entry.costMicrounits)
+    ).toEqual([first.accounting.chargedMicrounits, secondCharge.microunits])
+    expect(await summaryOf(host, childExecutionId)).toMatchObject({
+      spentMicrounits: total,
+      reservedMicrounits: 0,
+      settled: true,
+    })
+    expect((await readChildCostState(hooks)).outcome).toMatchObject({
+      costState: 'settled',
+      reported: {
+        accounting: { sourceId: turnUsage.accounting.sourceId, chargedMicrounits: total },
+      },
+      reconciled: { result: 'within_reservation', reportedChargedMicrounits: total },
+      settled: { settledMicrounits: total },
+    })
+
+    // Repeating the pass and reopening the composition change no money and no cost state.
+    const before = {
+      rows: await rowsOf(host, dispatch),
+      cost: stableSummary(await readChildCostState(hooks)),
+    }
+    expect(await host.composition.settleChildTerminalAccounting()).toEqual(settled)
+    await host.reopenComposition()
+    expect(await host.composition.settleChildTerminalAccounting()).toEqual(settled)
+    expect(host.composition.childTerminalSettlementBlocked).toBe(false)
+    expect(await rowsOf(host, dispatch)).toEqual(before.rows)
+    expect(stableSummary(await readChildCostState(hooks))).toBe(before.cost)
+  } finally {
+    await host.close()
+  }
+}, 120000)
+
+test('a completed child whose retained receipts do not match the canonical ledger settles nothing', async () => {
+  const mismatch = 'PI_CHILD_SETTLEMENT_MISMATCH'
+  // The ledger charged one microunit more than the second receipt reported.
+  const overcharged = await forkDispatchedHost()
+  try {
+    await completeWithTwoInferences(overcharged.host, {
+      ledgerMicrounits: secondCharge.microunits + 1,
+    })
+    await expect(overcharged.host.composition.settleChildTerminalAccounting()).rejects.toThrow(
+      mismatch
+    )
+    expect((await readChildCostState(overcharged.hooks)).outcome.costState).toBe('reserved')
+    expect(kinds((await rowsOf(overcharged.host, overcharged.dispatch)).child)).not.toContain(
+      'settlement'
+    )
+  } finally {
+    await overcharged.host.close()
+  }
+
+  // The completed result claims an aggregate the retained receipts cannot reproduce.
+  const unproven = await forkDispatchedHost()
+  try {
+    await completeWithTwoInferences(unproven.host)
+    const row = childOf(unproven.host.composition.adapter)
+    const [firstKey] = Object.keys(row.detail.inferenceReceipts)
+    const { [firstKey]: _dropped, ...remaining } = row.detail.inferenceReceipts
+    unproven.host.composition.adapter.journal.update(row.handleId, row.epoch, {
+      detail: { ...row.detail, inferenceReceipts: remaining },
+    })
+    await expect(unproven.host.composition.settleChildTerminalAccounting()).rejects.toThrow(
+      mismatch
+    )
+    expect((await readChildCostState(unproven.hooks)).outcome.costState).toBe('reserved')
+    expect(kinds((await rowsOf(unproven.host, unproven.dispatch)).child)).not.toContain(
+      'settlement'
+    )
+  } finally {
+    await unproven.host.close()
+  }
 }, 120000)
