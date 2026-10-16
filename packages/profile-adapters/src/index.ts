@@ -109,6 +109,8 @@ export class ProfileAdapterError extends Error {
       | 'PROFILE_PERSISTENCE_MISMATCH'
       | 'PROFILE_WORKFLOW_MISMATCH'
       | 'PROFILE_WAKE_MISMATCH'
+      | 'PROFILE_WAKE_RETAINED_RECORD_INVALID'
+      | 'PROFILE_WAKE_RETAINED_RECORD_STALE'
       | 'PROFILE_PLACEMENT_MISMATCH'
       | 'PROFILE_RUNTIME_NOT_QUALIFIED'
       | 'PROFILE_RUNTIME_TRANSPORT_MISMATCH'
@@ -125,11 +127,15 @@ export class ProfileAdapterError extends Error {
   }
 }
 
+export type ProfileStorageDeployment = Pick<DeploymentComposition, 'profile' | 'workflow'> & {
+  readonly persistence: Pick<DeploymentComposition['persistence'], 'profile' | 'dialect'>
+}
+
 export interface ProfileStorageBinding {
   readonly profile: ExecutionProfile
   readonly deploymentProfile: DeploymentProfile
   readonly persistenceDialect: 'sqlite' | 'postgresql'
-  readonly deployment: DeploymentComposition
+  readonly deployment: ProfileStorageDeployment
 }
 
 /**
@@ -138,7 +144,7 @@ export interface ProfileStorageBinding {
  */
 export function bindProfileStorage(
   profileInput: unknown,
-  deployment: DeploymentComposition
+  deployment: ProfileStorageDeployment
 ): ProfileStorageBinding {
   const profile = resolveExecutionProfile(profileInput)
   if (!profile) throw new ProfileAdapterError('PROFILE_NAME_INVALID')

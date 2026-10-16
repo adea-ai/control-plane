@@ -4,9 +4,8 @@ import { PiDurableRuntimeAdapter } from './adapter.ts'
 const inputPath = process.argv[2]
 if (!inputPath) throw new Error('CHILD_FIXTURE_INPUT_REQUIRED')
 
-const { admission, at, directory, probe, request, result, workspaceId } = JSON.parse(
-  await readFile(inputPath, 'utf8')
-)
+const { admission, at, directory, probe, request, result, roundTripProbe, workspaceId } =
+  JSON.parse(await readFile(inputPath, 'utf8'))
 
 setInterval(() => {}, 1000)
 const adapter = new PiDurableRuntimeAdapter({
@@ -37,7 +36,7 @@ const adapter = new PiDurableRuntimeAdapter({
     cancel: async () => {},
     close: async () => {
       process.stdout.write(
-        `${JSON.stringify({ ownerPid: process.pid, probe, admissionPrompt: admission.prompt })}\n`
+        `${JSON.stringify({ ownerPid: process.pid, probe, admissionPrompt: admission.prompt, roundTripProbe })}\n`
       )
       await new Promise(() => {})
     },

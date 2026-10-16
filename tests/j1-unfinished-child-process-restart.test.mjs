@@ -345,7 +345,7 @@ test('J1 evidence poll waits for an incomplete trailing record and rejects malfo
   const harness = await createUnfinishedChildProcessHarness()
   try {
     const path = join(harness.directory, 'process-evidence.jsonl')
-    // A writer is mid-record: the complete row is read, the unterminated tail is not parsed.
+    // A live writer is mid-record: the complete row is read, the unterminated tail is not parsed.
     await writeFile(path, '{"stage":"parent_completed"}\n{"stage":"recovery_snap')
     expect(await harness.evidence()).toEqual([{ stage: 'parent_completed' }])
     // The record completes on a later poll and is then read in full.

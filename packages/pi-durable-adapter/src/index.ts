@@ -1,4 +1,5 @@
 export * from './adapter.js'
+export * from './authority-outcome.js'
 export * from './contracts.js'
 export * from './canonical-authority.js'
 export * from './composition.js'

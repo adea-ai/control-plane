@@ -61,6 +61,9 @@ export interface ProductionPiLeadCompositionOptions {
     NodePiDurableLeadCompositionOptions['admission'],
     'product' | 'assertProviderReady'
   >
+  readonly committedCancellationAuthority?: NonNullable<
+    NodePiDurableLeadCompositionOptions['committedCancellationAuthority']
+  >
   readonly ledger: NodePiDurableLeadCompositionOptions['usage']['ledger']
   readonly reconcileInference: NodePiDurableLeadCompositionOptions['reconcileInference']
   readonly releaseExpired: NonNullable<
@@ -498,6 +501,9 @@ export async function createProductionPiLeadComposition(
         : {}),
       onAdapterReady: runtimeBinding.onAdapterReady,
       directory: options.directory,
+      ...(options.committedCancellationAuthority
+        ? { committedCancellationAuthority: options.committedCancellationAuthority }
+        : {}),
       admission: {
         ...options.admission,
         product,

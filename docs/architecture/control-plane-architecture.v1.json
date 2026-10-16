@@ -306,6 +306,7 @@
         "@control-plane/memory-writeback",
         "@control-plane/object-store",
         "@control-plane/orchestration",
+        "@control-plane/profile-adapters",
         "@control-plane/remote-control-relay",
         "@control-plane/restate-runtime",
         "@control-plane/secrets",
@@ -595,6 +596,7 @@
       "externalDependencies": ["zod"],
       "developmentWorkspaceDependencies": [
         "@control-plane/domain",
+        "@control-plane/execution-plan",
         "@control-plane/managed-pi-adapter",
         "@control-plane/pi-durable-adapter"
       ],
@@ -3374,7 +3376,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:6bd56cef0f50263177010fcf01ab37bad3d420ff7a64217df777813febbdb58f"
+      "sourceDigest": "sha256:202e67aea831125426ff27e8199b7081a83b5a481a8b0f437141d61b0ed78466"
     },
     {
       "id": "hosted-simple",

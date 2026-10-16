@@ -32,6 +32,9 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly usage: PiDurableUsageAuthorityOptions
   readonly provider: NodePiDurableCompositionOptions['resolveProvider']
   readonly reconcileInference: NodePiDurableCompositionOptions['reconcileInference']
+  readonly engineFactory?: NodePiDurableCompositionOptions['engineFactory']
+  /** Server-owned transaction/lease coordinator. Omit until product and CP owners share its CAS. */
+  readonly committedCancellationAuthority?: NodePiDurableCompositionOptions['committedCancellationAuthority']
   readonly verifyApproval?: NodePiDurableCompositionOptions['verifyApproval']
   readonly parentInbox?: NodePiDurableCompositionOptions['parentInbox']
   readonly consumeParentInbox?: NodePiDurableCompositionOptions['consumeParentInbox']
@@ -45,7 +48,7 @@ export interface NodePiDurableLeadCompositionOptions {
   /** A child must independently reload its canonical lineage, selection and authority. */
   readonly childAuthority?: Pick<
     NodePiDurableCompositionOptions,
-    'resolveAdmission' | 'assertAuthority'
+    'resolveAdmission' | 'assertAuthority' | 'assertReadAuthority' | 'assertRecoveryAuthority'
   >
   readonly preparationAuthority?: PiLeadPreparationAuthority
   /** Server-bound canonical child scanner. No child identity is accepted from an HTTP payload. */
@@ -107,11 +110,18 @@ export async function createNodePiDurableLeadComposition(
     runtime = await createNodePiDurableRuntime({
       ...(options.onAdapterReady ? { onAdapterReady: options.onAdapterReady } : {}),
       directory: options.directory,
+      ...(options.committedCancellationAuthority
+        ? { committedCancellationAuthority: options.committedCancellationAuthority }
+        : {}),
       ...(options.admission.now ? { now: options.admission.now } : {}),
       ...createPiLeadRuntimeAuthorityRouter(
         {
           resolveAdmission: (request) => admission.canonicalAuthority.resolveAdmission(request),
           assertAuthority: (authority) => admission.canonicalAuthority.assertAuthority(authority),
+          assertRecoveryAuthority: (authority) =>
+            admission.canonicalAuthority.assertRecoveryAuthority(authority),
+          assertReadAuthority: (authority) =>
+            admission.canonicalAuthority.assertReadAuthority(authority),
         },
         options.childAuthority
       ),
@@ -121,6 +131,7 @@ export async function createNodePiDurableLeadComposition(
           await leadLifecycle.onExecutionRunning(authority)
       },
       resolveProvider: options.provider,
+      ...(options.engineFactory ? { engineFactory: options.engineFactory } : {}),
       ...(options.admission.scopeAuthority
         ? { scopeAuthority: options.admission.scopeAuthority }
         : {}),
@@ -175,6 +186,11 @@ export async function createNodePiDurableLeadComposition(
       adapter: runtime.adapter,
       receipts: new SqlitePiDurableLeadReceiptStore(database),
       findRuntimeHandle: (request) => runtime!.adapter.findExistingHandle(request),
+      fence: {
+        findRetainedAdmission: (handle) => runtime!.adapter.findRetainedAdmission(handle),
+        cancelFenced: (handle, input, authorize) =>
+          runtime!.adapter.cancelFenced(handle, input, authorize),
+      },
       ...(preparations ? { preparations } : {}),
       ...(options.delegationService ? { delegationService: options.delegationService } : {}),
       ...(options.admission.now ? { now: options.admission.now } : {}),
@@ -206,6 +222,7 @@ export async function createNodePiDurableLeadComposition(
     }, recoveryIntervalMs)
     recoveryTimer.unref()
     const initializedRuntime = runtime
+    const publicRecoveries = new Set<Promise<void>>()
     let closePromise: Promise<void> | undefined
     const assertOpen = () => {
       if (closePromise !== undefined) throw new Error('PI_LEAD_COMPOSITION_CLOSED')
@@ -216,13 +233,21 @@ export async function createNodePiDurableLeadComposition(
       service,
       async recover() {
         assertOpen()
-        await initializedRuntime.recover()
-        await preparations?.recoverExpired()
-        unclaimedPreparationRecovery = await recoverUnclaimedPreparations()
-        preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
-        childProgressRecovery = await options.childProgress?.scan(initializedRuntime.adapter)
-        await terminalSettlement.settle()
-        await childTerminalSettlement?.settle()
+        const recovery = (async () => {
+          await initializedRuntime.recover()
+          await preparations?.recoverExpired()
+          unclaimedPreparationRecovery = await recoverUnclaimedPreparations()
+          preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
+          childProgressRecovery = await options.childProgress?.scan(initializedRuntime.adapter)
+          await terminalSettlement.settle()
+          await childTerminalSettlement?.settle()
+        })()
+        publicRecoveries.add(recovery)
+        try {
+          await recovery
+        } finally {
+          publicRecoveries.delete(recovery)
+        }
       },
       get preparationRecoveryBlocked() {
         return preparationRecoveryBlocked
@@ -250,9 +275,12 @@ export async function createNodePiDurableLeadComposition(
       close() {
         closePromise ??= (async () => {
           clearInterval(recoveryTimer)
+          // Accepted recovery calls keep their stores and settlement port until
+          // they finish. Their callers receive failures; failures must not skip cleanup.
+          await Promise.allSettled(publicRecoveries)
+          await preparationRecovery
           await terminalSettlement.close()
           await childTerminalSettlement?.close()
-          await preparationRecovery
           try {
             await initializedRuntime.close()
           } finally {

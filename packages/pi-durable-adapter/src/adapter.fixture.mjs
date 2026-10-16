@@ -1,4 +1,5 @@
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import { createMemoryCommittedCancellationAuthority } from './cancellation-authority.test-fixture.mjs'
 
 const at = '2026-10-08T00:00:00.000Z'
 export function fixture(directory, overrides = {}) {
@@ -37,6 +38,7 @@ export function fixture(directory, overrides = {}) {
   }
   const options = {
     directory,
+    committedCancellationAuthority: createMemoryCommittedCancellationAuthority({ now: () => at }),
     now: () => at,
     resolveAdmission: async () => admission,
     assertAuthority: async () => {},

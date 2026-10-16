@@ -497,6 +497,9 @@ export async function createProductionFactoryFixture(options = {}) {
     fetchInstalled = true
     const compositionOptions = {
       ...(children ? { children } : {}),
+      ...(options.committedCancellationAuthority
+        ? { committedCancellationAuthority: options.committedCancellationAuthority }
+        : {}),
       ...(options.governedManagementCall
         ? { governedManagementCall: options.governedManagementCall }
         : {}),

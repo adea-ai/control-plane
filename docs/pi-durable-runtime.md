@@ -131,6 +131,12 @@ expiry cleanup and a fresh canonical attempt are required. Startup and periodic
 scanners release proven unused allocations, including admission interrupted
 before a preparation receipt exists. In-flight or ambiguous sends retain holds.
 
+Lead-composition close refuses new public recovery calls and stops the recovery
+timer. Accepted public and periodic recovery passes finish before terminal
+settlement and runtime stores close. A public recovery failure remains visible
+to its caller and does not skip teardown. Shutdown does not infer cancellation
+authority or cancel admitted inference.
+
 `lookup` reads the actual retained receipt by intent after a lost dispatch reply.
 It may attach the exact existing journal handle to that receipt after current
 read authorization, but never starts or reconciles inference. A missing receipt

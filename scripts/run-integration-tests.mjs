@@ -274,9 +274,9 @@ try {
     run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1', '--log-order=stream'], {
       environment: integrationEnvironment,
     })
-    // Root-level scenarios import these workspace packages through their built entry
-    // points. turbo's test:integration graph builds only the upstream packages of the
-    // integration packages, so build the root's own imports before those scenarios run.
+    // Root-level scenarios import workspace packages through built entry points.
+    // The integration task only builds upstream packages of its selected packages,
+    // so build the root scenarios' imports before running those files.
     run(
       'bun',
       [
@@ -284,12 +284,12 @@ try {
         'turbo',
         'run',
         'build',
+        '--filter=@control-plane/profile-portability',
         '--filter=@control-plane/runtime-gateway...',
         '--filter=@control-plane/control-api...',
+        '--concurrency=1',
       ],
-      {
-        environment: integrationEnvironment,
-      }
+      { environment: integrationEnvironment }
     )
     // Repository-owned scenarios span composition roots; keep their fixtures
     // outside individual workspace packages.
@@ -303,6 +303,9 @@ try {
         './tests/child-progress-sqlite-feed-replay.integration.test.mjs',
         './tests/memory-process-loss.integration.test.mjs',
         './tests/langgraph-retirement-inventory-pg.integration.test.mjs',
+        './tests/profile-recovery-postgres-restore.integration.test.mjs',
+        './tests/profile-recovery-self-hosted-simple.integration.test.mjs',
+        './tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs',
         './tests/langgraph-retirement-status-adapter.integration.test.mjs',
         './tests/runtime-node-credential-revocation.integration.test.mjs',
       ],

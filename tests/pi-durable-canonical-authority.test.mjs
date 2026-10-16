@@ -3,6 +3,8 @@ import { ExecutionLifecycleService, InMemoryExecutionRepository } from '@control
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { InMemoryExecutionPlanRepository } from '@control-plane/execution-plan'
 import { CanonicalPiDurableAuthority } from '../packages/pi-durable-adapter/src/canonical-authority.ts'
+import { authorityOutcome } from '../packages/pi-durable-adapter/src/authority-outcome.ts'
+import { RuntimeAdapterError } from '@control-plane/runtime-sdk'
 import { workspacePlan } from './pi-durable-workspace-scope.fixture.mjs'
 const at = '2026-10-08T00:00:00.000Z'
 const later = '2026-10-08T01:00:00.000Z'
@@ -357,4 +359,64 @@ test('legacy canonical admission keeps absent scope and actor absent from serial
   expect(result.startRequest.executionPlan.contentDigest).toBe(
     'sha256:dc03a107d310cf14591b6d34fba4ed6443faedfb8e972ac31f2a50957b3d86fe'
   )
+})
+
+test('canonical failures keep the sanitized public message and only explicit policy decisions are denials', async () => {
+  const policy = await fixture()
+  const execution = await policy.executions.getExecution(executionId)
+  await policy.lifecycle.transitionExecution({
+    executionId,
+    expectedVersion: execution.version,
+    to: 'cancelled',
+    transitionedAt: at,
+  })
+  const denial = await admitted(policy).catch((error) => error)
+  expect(denial.message).toBe('PI_CANONICAL_AUTHORITY_REJECTED')
+  expect(authorityOutcome(denial)).toBe('denied')
+
+  const port = await fixture()
+  const admittedPort = await admitted(port)
+  const request = { request: admittedPort.startRequest, admission: admittedPort.admission }
+  const withPort = (overrides) =>
+    new CanonicalPiDurableAuthority({ ...port.options, ...overrides })
+      .assertAuthority(request)
+      .catch((error) => error)
+
+  const transport = await withPort({
+    messages: {
+      readCurrent: async () => {
+        throw new Error('connect ECONNRESET secret-access-token')
+      },
+    },
+  })
+  expect(transport.message).toBe('PI_CANONICAL_AUTHORITY_REJECTED')
+  expect(JSON.stringify(transport)).not.toContain('secret-access-token')
+  expect(authorityOutcome(transport)).toBe('unclassified')
+
+  const unavailable = await withPort({
+    executions: {
+      getExecution: async () => {
+        throw new RuntimeAdapterError({
+          code: 'PI_EXECUTION_STORE_UNAVAILABLE',
+          classification: 'unavailable',
+          message: 'PI_EXECUTION_STORE_UNAVAILABLE',
+          retryable: true,
+        })
+      },
+      getAttempt: port.executions.getAttempt.bind(port.executions),
+    },
+  })
+  expect(unavailable.message).toBe('PI_CANONICAL_AUTHORITY_REJECTED')
+  expect(authorityOutcome(unavailable)).toBe('unavailable')
+
+  // A port that throws the public denial string is a caller-supplied failure, never a denial.
+  const forged = await withPort({
+    messages: {
+      readCurrent: async () => {
+        throw new Error('PI_CANONICAL_AUTHORITY_REJECTED')
+      },
+    },
+  })
+  expect(forged.message).toBe('PI_CANONICAL_AUTHORITY_REJECTED')
+  expect(authorityOutcome(forged)).toBe('unclassified')
 })

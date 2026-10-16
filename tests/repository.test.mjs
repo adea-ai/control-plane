@@ -147,6 +147,9 @@ test('repository memory fixtures use declared workspace dependencies', async () 
   const dependencies = { ...manifest.dependencies, ...manifest.devDependencies }
   for (const path of [
     'tests/memory-process-loss.integration.test.mjs',
+    'tests/profile-recovery-postgres-restore.integration.test.mjs',
+    'tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs',
+    'tests/profile-recovery-self-hosted-simple.integration.test.mjs',
     'tests/fixtures/memory-root-process-loss.mjs',
   ]) {
     const source = parse(await readFile(new URL(`../${path}`, import.meta.url), 'utf8'), {
@@ -245,6 +248,9 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/langgraph-retirement-inventory-pg.integration.test.mjs',
     'tests/langgraph-retirement-status-adapter.integration.test.mjs',
     'tests/memory-process-loss.integration.test.mjs',
+    'tests/profile-recovery-postgres-restore.integration.test.mjs',
+    'tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs',
+    'tests/profile-recovery-self-hosted-simple.integration.test.mjs',
     'tests/runtime-node-credential-revocation.integration.test.mjs',
   ])
   const portabilityManifest = await readJson('packages/profile-portability/package.json')
@@ -285,6 +291,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/pi-durable-compaction-governed-dispatch.test.mjs',
     'tests/pi-durable-governed-publisher-regression.test.mjs',
     'tests/j1-unfinished-child-process-restart.test.mjs',
+    'tests/profile-recovery-pi-lead-restart.test.mjs',
     'tests/j1-native-child-store-restart.test.mjs',
     'tests/pi-durable-workspace-scope.test.mjs',
     'tests/pi-production-management-authority.test.mjs',
@@ -329,6 +336,10 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-security-probes.test.mjs',
     'tests/m11-sqlite-benchmark.test.mjs',
     'tests/neon-workflow.test.mjs',
+    'tests/profile-recovery-crash-restore.test.mjs',
+    'tests/profile-recovery-fenced-rollback.test.mjs',
+    'tests/profile-recovery-rebind-fencing.test.mjs',
+    'tests/profile-recovery-selfhosted-server-wake-replay.boundary.test.mjs',
     'tests/skill-library.test.mjs',
     'tests/m11-recovery-rpo-rto.test.mjs',
     'tests/m11-retention-apply-cli.test.mjs',

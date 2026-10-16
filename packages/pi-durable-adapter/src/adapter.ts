@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
+import {
+  authoritativeDenial,
+  authorityOutcome,
+  transientAuthorityFailure,
+} from './authority-outcome.js'
 import { canonicalJsonStringify, IdentifierSchemas } from '@control-plane/contracts'
 import {
   assertExecutionPlanIntegrity,
@@ -27,18 +32,24 @@ import {
 import {
   PiDurableAdmissionSchema,
   PiDurableVersion,
+  PiDurableCancellationGenerationSchema,
+  PiDurableCancellationProposalSchema,
+  PiDurableCommittedCancellationIntentSchema,
   ProviderBindingSchema,
   type DurableExecutionAuthority,
+  type PiDurableCancellationProposal,
+  type PiDurableCommittedCancellationIntent,
   type PiDurableGovernedManagementCallEnginePort,
   type DurablePiEngine,
   type PiDurableRuntimeOptions,
 } from './contracts.js'
-import { SqliteDurableJournal, type JournalRecord } from './journal.js'
+import { SqliteDurableJournal, type JournalRecord, type ProcessClaim } from './journal.js'
 import { createPiDurableEngine, PiDurableEngineToolBlockedError } from './pi-engine.js'
 import { NodeSessionLease } from './lease.js'
 import { DurableToolCallRequestSchema, type DurableToolCallRequest } from '@control-plane/tool-sdk'
 import { z } from 'zod'
 import { PiDurableEffectGate, type DurableEffectGateOutcome } from './effect-gate.js'
+import { issueInferenceResumePermit } from './resume-permit.js'
 import {
   PiDurableToolSourceSchema,
   verifyPiDurableManagementToolSource,
@@ -58,22 +69,17 @@ interface StoredAdmission extends DurableExecutionAuthority {
   readonly providerDigest: string
 }
 
-const PiInferenceGenerationSchema = z
-  .strictObject({
-    schemaVersion: z.literal('pi-inference-generation/v1'),
-    attemptId: IdentifierSchemas.attemptId,
-    turnKey: z.string().min(1).max(4096),
-    inferenceId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/),
-    inferenceKey: z.string().min(1).max(8192),
-  })
-  .superRefine((generation, context) => {
-    if (generation.inferenceKey !== `${generation.turnKey}:${generation.inferenceId}`)
-      context.addIssue({ code: 'custom', path: ['inferenceKey'], message: 'invalid inference key' })
-  })
+/** The admission a retained run started from, with its handle. Immutable once admitted. */
+export interface RetainedAdmission extends DurableExecutionAuthority {
+  readonly handle: RuntimeExecutionHandle
+}
+
+const PiInferenceGenerationSchema = PiDurableCancellationGenerationSchema
 
 const PiCancellationIntentSchema = z
   .strictObject({
     schemaVersion: z.literal('pi-cancellation-intent/v1'),
+    authorityIntentId: z.uuid().optional(),
     attemptId: IdentifierSchemas.attemptId,
     turnKey: z.string().min(1).max(4096),
     requestedAt: z.string().datetime(),
@@ -99,10 +105,33 @@ const PiCancellationIntentSchema = z
 type PiInferenceGeneration = z.infer<typeof PiInferenceGenerationSchema>
 type PiCancellationIntent = z.infer<typeof PiCancellationIntentSchema>
 
+const PiCancellationResolutionSchema = z
+  .strictObject({
+    schemaVersion: z.literal('pi-cancellation-resolution/v1'),
+    authorityIntentId: z.uuid(),
+    requestDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    targetKind: z.enum(['active_generation', 'no_active_generation', 'untracked_generation']),
+    turnKey: z.string().min(1).max(4096),
+    generation: PiInferenceGenerationSchema.nullable(),
+    resolution: z.literal('target_generation_superseded'),
+    observedGeneration: PiInferenceGenerationSchema.nullable(),
+    confirmedAt: z.string().datetime(),
+  })
+  .superRefine((resolution, context) => {
+    if ((resolution.targetKind === 'active_generation') !== (resolution.generation !== null))
+      context.addIssue({ code: 'custom', path: ['generation'], message: 'invalid target binding' })
+    if (resolution.generation && resolution.generation.turnKey !== resolution.turnKey)
+      context.addIssue({ code: 'custom', path: ['generation'], message: 'mismatched target turn' })
+  })
+
+type PiCancellationResolution = z.infer<typeof PiCancellationResolutionSchema>
+
 export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   readonly journal: SqliteDurableJournal
   readonly #options: PiDurableRuntimeOptions
   readonly #active = new Map<string, Promise<void>>()
+  // Recovery claims this process holds and has not handed to a run; shutdown undoes them.
+  readonly #recoveryClaims = new Map<string, ProcessClaim>()
   readonly #engines = new Map<string, DurablePiEngine>()
   readonly #now: () => string
   #closed = false
@@ -121,7 +150,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       'stream.events',
       'interaction.user-input',
       'interaction.approval',
-      'execution.cancel',
+      ...(this.#options.committedCancellationAuthority ? ['execution.cancel'] : []),
       'session.create',
       'session.list',
       'session.load',
@@ -305,6 +334,9 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             engineRunStarted: false,
             activeInference: undefined,
             inferencePending: false,
+            ...(current.detail['cancellationResolutions'] !== undefined
+              ? { cancellationResolutions: current.detail['cancellationResolutions'] }
+              : {}),
             turn: {
               requestId: `pi-input:${record.attemptId}:${request.idempotencyKey}`,
               input: request.text,
@@ -377,82 +409,519 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   }
 
   async cancel(handle: RuntimeExecutionHandle, input: Parameters<RuntimeAdapter['cancel']>[1]) {
-    const request = RuntimeCancelRequestSchema.parse(input)
-    const record = this.#record(handle)
-    await this.#authority(this.#stored(record))
+    return this.#cancel(handle, input, (authority) => this.#authority(authority))
+  }
+
+  /** Cancels a run retained under a lead fence. The canonical prompt cannot be re-derived while the
+   * product withholds it, so the caller's `authorize` verifies the fence and the retained binding
+   * instead. Expiry and execution scope are still enforced here. */
+  async cancelFenced(
+    handle: RuntimeExecutionHandle,
+    input: Parameters<RuntimeAdapter['cancel']>[1],
+    authorize: (retained: RetainedAdmission) => Promise<void>
+  ) {
+    const revalidate = async (authority: DurableExecutionAuthority) => {
+      this.#assertUnexpired(authority)
+      try {
+        await this.#assertExecutionScope(authority)
+      } catch (error) {
+        authorityFailure(error)
+      }
+      // Scope lookup is awaited and can outlive either authority grant.
+      this.#assertUnexpired(authority)
+      await authorize(structuredClone(this.#stored(this.#record(handle))))
+      this.#assertUnexpired(authority)
+    }
+    // Revalidate the current fence immediately before the adapter claims and mutates its journal.
+    // This narrows the async handoff race; separate authority stores prevent an atomic snapshot.
+    return this.#cancel(handle, input, revalidate, revalidate)
+  }
+
+  /** Applies committed cancellation outbox entries before ordinary startup reconciliation. A
+   * committed intent is authoritative even if its response was lost or this process restarted.
+   */
+  async recoverCommittedCancellationIntents(): Promise<readonly string[]> {
+    const authority = this.#options.committedCancellationAuthority
+    if (!authority) return []
     this.#assertOpen()
+    const handles = await authority.pendingHandles()
+    if (
+      handles.some((handleId) => typeof handleId !== 'string' || handleId.length === 0) ||
+      new Set(handles).size !== handles.length
+    )
+      fail('PI_CANCELLATION_AUTHORITY_INVALID', 'unavailable')
+
+    const blocked: string[] = []
+    for (const handleId of handles) {
+      try {
+        for (const untrusted of await authority.pendingForHandle(handleId)) {
+          const intent = PiDurableCommittedCancellationIntentSchema.parse(untrusted)
+          if (intent.handleId !== handleId) fail('PI_CANCELLATION_AUTHORITY_INVALID', 'unavailable')
+          if (!(await this.#deliverCommittedCancellation(intent, authority))) {
+            blocked.push(handleId)
+            break
+          }
+        }
+      } catch (error) {
+        if (this.#closing || this.#closed) throw error
+        // Keep this handle fenced while allowing independent handles to recover.
+        blocked.push(handleId)
+      }
+    }
+    return blocked
+  }
+
+  /** Retained admission and handle for a run this process started. Reads the journal only: it never
+   * starts, reconciles, or calls a provider. */
+  async findRetainedAdmission(
+    handle: RuntimeExecutionHandle
+  ): Promise<RetainedAdmission | undefined> {
+    this.#assertOpen()
+    let record: JournalRecord
+    try {
+      record = this.journal.get(handle.handleId)
+    } catch {
+      return undefined
+    }
+    // Identity is the caller's to compare: a receipt handle that differs from the journal is a conflict.
+    const stored = this.#stored(record)
+    return structuredClone({
+      request: stored.request,
+      admission: stored.admission,
+      handle: stored.handle,
+    })
+  }
+
+  async #cancel(
+    handle: RuntimeExecutionHandle,
+    input: Parameters<RuntimeAdapter['cancel']>[1],
+    authorize: (authority: DurableExecutionAuthority) => Promise<void>,
+    reauthorizeBeforeClaim?: (authority: DurableExecutionAuthority) => Promise<void>
+  ) {
+    const request = RuntimeCancelRequestSchema.parse(input)
+    let record = this.#record(handle)
+    const cancellationAuthority = this.#options.committedCancellationAuthority
+    if (!cancellationAuthority) fail('PI_CANCELLATION_AUTHORITY_UNAVAILABLE', 'unavailable')
     const key = `cancel:${request.idempotencyKey}`
     const actions = record.detail['actions'] as Record<string, string> | undefined
-    if (actions?.[key]) {
-      if (actions[key] !== digest(request)) fail('IDEMPOTENCY_CONFLICT', 'conflict')
+    const requestDigest = digest(request)
+    if (actions?.[key] !== undefined) {
+      if (actions[key] !== requestDigest) fail('IDEMPOTENCY_CONFLICT', 'conflict')
+      const priorIntent = readCancellationIntent(record)
+      const priorResolution = readCancellationResolution(record, key)
+      if (
+        priorIntent?.authorityIntentId !== undefined &&
+        priorIntent.requestDigest === requestDigest
+      ) {
+        const priorProposal = this.#proposalForSavedTarget(
+          record,
+          request,
+          requestDigest,
+          priorIntent.targetKind,
+          priorIntent.generation,
+          priorIntent.turnKey
+        )
+        const intent = this.#parseCommittedCancellation(
+          await cancellationAuthority.commit(priorProposal),
+          priorProposal
+        )
+        if (intent.intentId !== priorIntent.authorityIntentId)
+          fail('PI_CANCELLATION_INTENT_CONFLICT', 'conflict')
+        await this.#deliverCommittedCancellation(intent, cancellationAuthority)
+        return this.status(handle)
+      }
+      if (priorResolution?.requestDigest === requestDigest) {
+        const priorProposal = this.#proposalForSavedTarget(
+          record,
+          request,
+          requestDigest,
+          priorResolution.targetKind,
+          priorResolution.generation,
+          priorResolution.turnKey
+        )
+        const intent = this.#parseCommittedCancellation(
+          await cancellationAuthority.commit(priorProposal),
+          priorProposal
+        )
+        if (
+          intent.intentId !== priorResolution.authorityIntentId ||
+          intent.requestDigest !== priorResolution.requestDigest ||
+          intent.targetKind !== priorResolution.targetKind ||
+          intent.turnKey !== priorResolution.turnKey ||
+          canonicalJsonStringify(intent.generation) !==
+            canonicalJsonStringify(priorResolution.generation)
+        )
+          fail('PI_CANCELLATION_INTENT_CONFLICT', 'conflict')
+        await cancellationAuthority.acknowledge(intent.intentId)
+        return this.status(handle)
+      }
+      fail('PI_CANCELLATION_AUTHORITY_UNAVAILABLE', 'unavailable')
+    }
+    // The owner commit may have succeeded while its response was lost, before the journal
+    // recorded the idempotency action. Recover only the exact already-committed request here,
+    // before fresh authorization can reject it after revocation or expiry. Its saved target is
+    // immutable; delivery classifies it against the current generation without retargeting.
+    const pendingIntent = await this.#matchingPendingCancellationIntent(
+      record.handleId,
+      request,
+      requestDigest,
+      cancellationAuthority
+    )
+    if (pendingIntent) {
+      this.#assertCommittedCancellationBinding(pendingIntent, record)
+      await this.#deliverCommittedCancellation(pendingIntent, cancellationAuthority)
       return this.status(handle)
     }
+    // Ordinary and fenced cancellation both fail closed without the server-owned commit port.
+    // The caller's authorization callback is a preflight only; it never grants cancellation.
+    await authorize(this.#stored(record))
+    this.#assertOpen()
+    // Authorization awaits scope and authority lookups, and a generation can start or finish in
+    // that window. The target is derived from the journal as it is now, not as it was read before.
+    record = this.#record(handle)
     if (record.state === 'completed') fail('PI_EXECUTION_TERMINAL', 'conflict')
     // A stop request can arrive after the native run has already retained a failure.
     // Keep that terminal outcome authoritative; lead orchestration may still cascade
     // cancellation to children after receiving this schema-valid status.
     if (record.state === 'failed' || record.state === 'timed_out') return this.status(handle)
-    const active = this.#engines.get(handle.handleId)
     const retainedIntent = readCancellationIntent(record)
+    if (retainedIntent && retainedIntent.authorityIntentId === undefined)
+      fail('PI_CANCELLATION_AUTHORITY_UNAVAILABLE', 'unavailable')
     const activeInference = readActiveInference(record)
-    const targetKind =
-      retainedIntent?.targetKind ??
-      (activeInference
-        ? 'active_generation'
-        : record.detail['engineRunStarted'] === true && record.detail['inferencePending'] === true
-          ? 'untracked_generation'
-          : record.detail['inferenceTrackingVersion'] === 1
-            ? 'no_active_generation'
-            : 'untracked_generation')
-    const cancellationIntent: PiCancellationIntent =
-      retainedIntent ??
-      PiCancellationIntentSchema.parse({
-        schemaVersion: 'pi-cancellation-intent/v1',
-        attemptId: record.attemptId,
-        turnKey: turnKey(record),
-        requestedAt: request.requestedAt,
-        requestDigest: digest(request),
-        targetKind,
-        generation: activeInference ?? null,
-      })
-    const epoch = this.#claim(record)
-    const cancellationPending =
-      targetKind === 'active_generation' ||
-      record.detail['inferencePending'] === true ||
-      this.#active.has(handle.handleId)
-    const state = cancellationPending ? 'cancelling' : 'cancelled'
-    const retainedCancellationIntent =
-      state === 'cancelled' && targetKind === 'no_active_generation'
-        ? {
-            ...cancellationIntent,
-            resolution: 'safe_to_resume' as const,
-            confirmedAt: this.#now(),
-          }
-        : cancellationIntent
-    this.journal.update(
-      record.handleId,
-      epoch,
-      {
-        state,
-        detail: {
-          ...record.detail,
-          observedAt: this.#now(),
-          actions: { ...actions, [key]: digest(request) },
-          cancellationIntent: retainedCancellationIntent,
-          inferencePending: state === 'cancelling',
-        },
-      },
-      { type: 'status', data: { state }, at: this.#now() }
+    const targetKind = activeInference
+      ? 'active_generation'
+      : record.detail['engineRunStarted'] === true && record.detail['inferencePending'] === true
+        ? 'untracked_generation'
+        : record.detail['inferenceTrackingVersion'] === 1
+          ? 'no_active_generation'
+          : 'untracked_generation'
+    const proposal = this.#proposalForSavedTarget(
+      record,
+      request,
+      requestDigest,
+      targetKind,
+      activeInference ?? null,
+      turnKey(record)
     )
-    // Retain and fence cancellation before abort can complete, fail or crash.
-    if (active) {
-      try {
-        await active.cancel(this.#stored(record).handle.externalSessionId!)
-      } catch {
-        /* The retained cancellation requires trusted reconciliation. */
-      }
+    if (reauthorizeBeforeClaim) {
+      const current = this.#record(handle)
+      if (current.epoch !== record.epoch || current.state !== record.state)
+        fail('PI_EXECUTION_STALE', 'conflict')
+      await reauthorizeBeforeClaim(this.#stored(current))
+      this.#assertOpen()
+      // Refuse a concurrent journal transition rather than applying a decision prepared from an
+      // earlier record. This check cannot be atomic with the separate authority stores.
+      const afterAuthorization = this.#record(handle)
+      if (afterAuthorization.epoch !== record.epoch || afterAuthorization.state !== record.state)
+        fail('PI_EXECUTION_STALE', 'conflict')
     }
+    // This serializable owner commit is the cancellation linearization point. A failure or
+    // ambiguous response leaves the journal and engine untouched; a retry gets the same outbox
+    // intent by idempotency key and digest.
+    const intent = this.#parseCommittedCancellation(
+      await cancellationAuthority.commit(proposal),
+      proposal
+    )
+    const current = this.#record(handle)
+    this.#assertCommittedCancellationBinding(intent, current)
+    await this.#deliverCommittedCancellation(intent, cancellationAuthority)
     return this.status(handle)
+  }
+
+  #proposalForSavedTarget(
+    record: JournalRecord,
+    request: ReturnType<typeof RuntimeCancelRequestSchema.parse>,
+    requestDigest: string,
+    targetKind: PiDurableCancellationProposal['targetKind'],
+    generation: PiDurableCancellationProposal['generation'],
+    targetTurnKey: string
+  ): PiDurableCancellationProposal {
+    const stored = this.#stored(record)
+    return PiDurableCancellationProposalSchema.parse({
+      handleId: record.handleId,
+      executionId: stored.request.executionId,
+      attemptId: record.attemptId,
+      workspaceId: stored.request.attemptBudget?.workspaceId,
+      idempotencyKey: request.idempotencyKey,
+      requestedAt: request.requestedAt,
+      requestDigest,
+      admissionDigest: digest(stored),
+      targetKind,
+      turnKey: targetTurnKey,
+      generation,
+    })
+  }
+
+  async #matchingPendingCancellationIntent(
+    handleId: string,
+    request: ReturnType<typeof RuntimeCancelRequestSchema.parse>,
+    requestDigest: string,
+    authority: NonNullable<PiDurableRuntimeOptions['committedCancellationAuthority']>
+  ): Promise<PiDurableCommittedCancellationIntent | undefined> {
+    let untrusted: readonly unknown[]
+    try {
+      untrusted = await authority.pendingForHandle(handleId)
+    } catch (error) {
+      if (this.#closing || this.#closed) throw error
+      fail('PI_CANCELLATION_AUTHORITY_UNAVAILABLE', 'unavailable')
+    }
+    this.#assertOpen()
+    if (!Array.isArray(untrusted)) fail('PI_CANCELLATION_AUTHORITY_INVALID', 'unavailable')
+
+    let matching: PiDurableCommittedCancellationIntent | undefined
+    for (const unparsed of untrusted) {
+      const parsed = PiDurableCommittedCancellationIntentSchema.safeParse(unparsed)
+      if (!parsed.success || parsed.data.handleId !== handleId)
+        fail('PI_CANCELLATION_AUTHORITY_INVALID', 'unavailable')
+      const intent = parsed.data
+      if (intent.idempotencyKey !== request.idempotencyKey) continue
+      if (matching || intent.requestDigest !== requestDigest)
+        fail('PI_CANCELLATION_INTENT_CONFLICT', 'conflict')
+      matching = intent
+    }
+    return matching
+  }
+
+  #parseCommittedCancellation(
+    input: unknown,
+    proposal: PiDurableCancellationProposal
+  ): PiDurableCommittedCancellationIntent {
+    const parsed = PiDurableCommittedCancellationIntentSchema.safeParse(input)
+    if (!parsed.success) fail('PI_CANCELLATION_AUTHORITY_INVALID', 'unavailable')
+    const {
+      schemaVersion: _version,
+      intentId: _id,
+      committedAuthorityVersion: _authorityVersion,
+      committedAt: _committedAt,
+      ...committedProposal
+    } = parsed.data
+    if (
+      canonicalJsonStringify(cancellationRequestIdentity(committedProposal)) !==
+      canonicalJsonStringify(cancellationRequestIdentity(proposal))
+    )
+      fail('PI_CANCELLATION_AUTHORITY_INVALID', 'unavailable')
+    return parsed.data
+  }
+
+  async #deliverCommittedCancellation(
+    intent: PiDurableCommittedCancellationIntent,
+    authority: NonNullable<PiDurableRuntimeOptions['committedCancellationAuthority']>
+  ): Promise<boolean> {
+    const applied = this.#applyCommittedCancellation(intent)
+    if (applied.disposition === 'unresolved')
+      throw new RuntimeAdapterError({
+        code: 'PI_CANCELLATION_GENERATION_UNRESOLVED',
+        classification: 'unavailable',
+        message: 'PI_CANCELLATION_GENERATION_UNRESOLVED',
+        retryable: true,
+      })
+    if (applied.disposition === 'superseded') {
+      await authority.acknowledge(intent.intentId)
+      return true
+    }
+    // The outbox stays pending if a local abort reports failure. Replays are safe because the
+    // journal intent and engine abort are both idempotent for the same committed intent.
+    if (!(await this.#abortForCancellation(intent.handleId, applied.record))) return false
+    await authority.acknowledge(intent.intentId)
+    return true
+  }
+
+  #cancellationDisposition(
+    intent: PiDurableCommittedCancellationIntent,
+    record: JournalRecord
+  ): 'current' | 'superseded' | 'unresolved' {
+    const prior = readCancellationIntent(record)
+    if (prior?.authorityIntentId === intent.intentId) return 'current'
+    const key = `cancel:${intent.idempotencyKey}`
+    const priorResolution = readCancellationResolution(record, key)
+    if (priorResolution) {
+      if (
+        priorResolution.authorityIntentId !== intent.intentId ||
+        priorResolution.requestDigest !== intent.requestDigest ||
+        priorResolution.targetKind !== intent.targetKind ||
+        priorResolution.turnKey !== intent.turnKey ||
+        canonicalJsonStringify(priorResolution.generation) !==
+          canonicalJsonStringify(intent.generation)
+      )
+        fail('PI_CANCELLATION_INTENT_CONFLICT', 'conflict')
+      return 'superseded'
+    }
+    if (intent.turnKey !== turnKey(record)) return 'superseded'
+    if (['completed', 'failed', 'timed_out', 'cancelled'].includes(record.state))
+      return 'superseded'
+
+    const active = readActiveInference(record)
+    if (intent.targetKind === 'active_generation' && intent.generation) {
+      if (active && canonicalJsonStringify(active) === canonicalJsonStringify(intent.generation))
+        return prior?.authorityIntentId !== undefined ? 'unresolved' : 'current'
+      if (active) return 'superseded'
+      const receipts = record.detail['inferenceReceipts'] as Record<string, unknown> | undefined
+      if (receipts?.[intent.generation.inferenceKey] !== undefined) return 'superseded'
+      return 'unresolved'
+    }
+    if (intent.targetKind === 'no_active_generation') {
+      if (active) return 'superseded'
+      return record.detail['inferenceTrackingVersion'] === 1 &&
+        prior?.authorityIntentId === undefined
+        ? 'current'
+        : 'unresolved'
+    }
+    if (intent.targetKind === 'untracked_generation' && active) {
+      // A null-generation intent cannot adopt a tracked generation that appeared after its commit,
+      // even when both belong to the same turn.
+      return 'superseded'
+    }
+    return prior?.authorityIntentId === undefined ? 'current' : 'unresolved'
+  }
+
+  #assertCommittedCancellationBinding(
+    intent: PiDurableCommittedCancellationIntent,
+    record: JournalRecord
+  ): void {
+    const stored = this.#stored(record)
+    const requestDigest = digest({
+      idempotencyKey: intent.idempotencyKey,
+      requestedAt: intent.requestedAt,
+    })
+    if (
+      record.handleId !== intent.handleId ||
+      record.attemptId !== intent.attemptId ||
+      stored.request.executionId !== intent.executionId ||
+      stored.request.attemptBudget?.workspaceId !== intent.workspaceId ||
+      digest(stored) !== intent.admissionDigest ||
+      requestDigest !== intent.requestDigest
+    )
+      fail('PI_CANCELLATION_AUTHORITY_INVALID', 'unavailable')
+  }
+
+  #applyCommittedCancellation(intent: PiDurableCommittedCancellationIntent): {
+    readonly disposition: 'current' | 'superseded' | 'unresolved'
+    readonly record: JournalRecord
+  } {
+    this.#assertOpen()
+    const updated = this.journal.transitionCurrent<{
+      disposition: 'current' | 'superseded' | 'unresolved'
+    }>(intent.handleId, (record) => {
+      this.#assertCommittedCancellationBinding(intent, record)
+      const disposition = this.#cancellationDisposition(intent, record)
+      if (disposition === 'unresolved') return { value: { disposition } }
+      if (disposition === 'superseded') {
+        const detail = this.#supersededCancellationMetadata(intent, record)
+        return {
+          value: { disposition },
+          ...(detail ? { change: { detail: { ...record.detail, ...detail } } } : {}),
+        }
+      }
+
+      const key = `cancel:${intent.idempotencyKey}`
+      const actions = record.detail['actions'] as Record<string, string> | undefined
+      const priorIntent = readCancellationIntent(record)
+      if (actions?.[key] !== undefined) {
+        if (
+          actions[key] !== intent.requestDigest ||
+          priorIntent?.authorityIntentId !== intent.intentId
+        )
+          fail('PI_CANCELLATION_INTENT_CONFLICT', 'conflict')
+        return { value: { disposition } }
+      }
+      if (
+        record.state === 'cancelled' ||
+        record.state === 'cancelling' ||
+        (priorIntent && priorIntent.authorityIntentId !== intent.intentId)
+      )
+        fail('PI_CANCELLATION_INTENT_CONFLICT', 'conflict')
+      const cancellationIntent: PiCancellationIntent = PiCancellationIntentSchema.parse({
+        schemaVersion: 'pi-cancellation-intent/v1',
+        authorityIntentId: intent.intentId,
+        attemptId: intent.attemptId,
+        turnKey: intent.turnKey,
+        requestedAt: intent.requestedAt,
+        requestDigest: intent.requestDigest,
+        targetKind: intent.targetKind,
+        generation: intent.generation,
+      })
+      const cancellationPending =
+        intent.targetKind === 'active_generation' ||
+        record.detail['inferencePending'] === true ||
+        this.#active.has(record.handleId)
+      const state = cancellationPending ? 'cancelling' : 'cancelled'
+      const retainedCancellationIntent =
+        state === 'cancelled' && intent.targetKind === 'no_active_generation'
+          ? {
+              ...cancellationIntent,
+              resolution: 'safe_to_resume' as const,
+              confirmedAt: this.#now(),
+            }
+          : cancellationIntent
+      return {
+        value: { disposition },
+        change: {
+          epoch: record.epoch + 1,
+          state,
+          detail: {
+            ...record.detail,
+            observedAt: this.#now(),
+            actions: { ...actions, [key]: intent.requestDigest },
+            cancellationIntent: retainedCancellationIntent,
+            inferencePending: state === 'cancelling',
+          },
+        },
+        event: { type: 'status', data: { state }, at: this.#now() },
+      }
+    })
+    return { ...updated.value, record: updated.record }
+  }
+
+  #supersededCancellationMetadata(
+    intent: PiDurableCommittedCancellationIntent,
+    record: JournalRecord
+  ): Record<string, unknown> | undefined {
+    const key = `cancel:${intent.idempotencyKey}`
+    const actions = record.detail['actions'] as Record<string, string> | undefined
+    if (actions?.[key] !== undefined && actions[key] !== intent.requestDigest)
+      fail('PI_CANCELLATION_INTENT_CONFLICT', 'conflict')
+    const resolutions = record.detail['cancellationResolutions'] as
+      | Record<string, PiCancellationResolution>
+      | undefined
+    const existing = readCancellationResolution(record, key)
+    if (existing) {
+      if (
+        existing.authorityIntentId !== intent.intentId ||
+        existing.requestDigest !== intent.requestDigest ||
+        existing.targetKind !== intent.targetKind ||
+        existing.turnKey !== intent.turnKey ||
+        canonicalJsonStringify(existing.generation) !== canonicalJsonStringify(intent.generation)
+      )
+        fail('PI_CANCELLATION_INTENT_CONFLICT', 'conflict')
+      return undefined
+    }
+    const resolution = PiCancellationResolutionSchema.parse({
+      schemaVersion: 'pi-cancellation-resolution/v1',
+      authorityIntentId: intent.intentId,
+      requestDigest: intent.requestDigest,
+      targetKind: intent.targetKind,
+      turnKey: intent.turnKey,
+      generation: intent.generation,
+      resolution: 'target_generation_superseded',
+      observedGeneration: readActiveInference(record) ?? null,
+      confirmedAt: this.#now(),
+    })
+    return {
+      actions: { ...actions, [key]: intent.requestDigest },
+      cancellationResolutions: { ...resolutions, [key]: resolution },
+    }
+  }
+
+  async #abortForCancellation(handleId: string, record: JournalRecord): Promise<boolean> {
+    const active = this.#engines.get(handleId)
+    if (!active) return true
+    try {
+      await active.cancel(this.#stored(record).handle.externalSessionId!)
+      return true
+    } catch {
+      // Keep the owner outbox pending so the same committed effect can be delivered again.
+      return false
+    }
   }
 
   async session(input: Parameters<RuntimeAdapter['session']>[0]) {
@@ -635,148 +1104,238 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   }
 
   async reconcile(handle: RuntimeExecutionHandle): Promise<RuntimeExecutionStatus> {
+    const deadline = Date.now() + RECOVERY_CONTENTION_WAIT_MS
+    let resamples = 0
+    for (;;) {
+      const record = this.#record(handle)
+      if (!this.#needsRecoveryClaim(record)) break
+      // Ownership is the only gate for recovery decisions. A live owner in another process
+      // (or this one) keeps the record; this caller observes and never resumes or re-sends.
+      const claim = this.#claimRecovery(record)
+      if ('claim' in claim) return this.#reconcileClaimed(handle, claim.claim)
+      if (claim.reason === 'stale' && resamples < RECOVERY_RESAMPLE_LIMIT) {
+        resamples += 1
+        continue
+      }
+      // An unknown record is held only while its owner lands a decision, which is short.
+      if (record.state === 'unknown' && Date.now() < deadline) {
+        await recoveryPause(RECOVERY_CONTENTION_POLL_MS)
+        continue
+      }
+      return this.status(handle)
+    }
     const record = this.#record(handle)
     const authority = this.#stored(record)
-    await this.#authority(authority)
+    if (record.state === 'starting') await this.#recoveryAuthority(authority)
+    else await this.#readAuthority(authority)
     this.#assertOpen()
-    if (!this.#active.has(handle.handleId) && record.state === 'cancelling') {
-      const intent = readCancellationIntent(record)
-      let safe: 'safe_to_resume' | 'unresolved'
-      if (intent?.targetKind === 'active_generation' && intent.generation) {
-        safe = await this.#options.reconcileInference(authority, intent.generation.inferenceKey)
-      } else if (
-        intent?.targetKind === 'no_active_generation' &&
-        record.detail['inferenceTrackingVersion'] === 1
-      ) {
-        // No generation was authorized for this turn. The owner epoch fences any late callback.
-        safe = 'safe_to_resume'
-      } else if (intent?.targetKind === 'untracked_generation') {
-        // A run entered the engine without a durable generation identity. Reconcile the
-        // legacy turn scope conservatively instead of treating an unknown send as absent.
-        safe = await this.#options.reconcileInference(authority, intent.turnKey)
-      } else if (intent) {
-        // An old or malformed record has no exact generation identity; never guess by turn.
-        safe = 'unresolved'
-      } else {
-        // Compatibility for cancellation records written before exact generation tracking.
-        safe = await this.#options.reconcileInference(authority, turnKey(record))
-      }
-      await this.#authority(authority)
-      this.#assertOpen()
-      const current = this.journal.get(record.handleId)
-      if (current.epoch !== record.epoch || current.state !== record.state)
-        return this.status(handle)
-      const epoch = this.#claim(current)
-      const state = safe === 'safe_to_resume' ? 'cancelled' : 'cancelling'
-      const resolvedIntent =
-        state === 'cancelled' && intent
-          ? { ...intent, resolution: 'safe_to_resume' as const, confirmedAt: this.#now() }
-          : intent
-      this.journal.update(
-        record.handleId,
-        epoch,
-        {
-          state,
-          detail: {
-            ...current.detail,
-            ...(resolvedIntent ? { cancellationIntent: resolvedIntent } : {}),
-            activeInference: state === 'cancelled' ? undefined : record.detail['activeInference'],
-            inferencePending: state === 'cancelling',
-            observedAt: this.#now(),
-            reasonCode:
-              state === 'cancelling' ? 'PI_CANCELLATION_RECONCILIATION_REQUIRED' : undefined,
-          },
-        },
-        { type: 'status', data: { state }, at: this.#now() }
-      )
-    } else if (
-      !this.#active.has(handle.handleId) &&
-      record.state === 'awaiting_input' &&
-      record.detail['nativeToolBlocked'] &&
-      !record.detail['pendingApproval']
-    ) {
-      // An acknowledgement admits no child effect. Explicit recovery reopens the same
-      // native task; its retained full request still passes the independent effect gate.
-      const epoch = this.#claim(record)
-      const next = this.journal.update(
-        record.handleId,
-        epoch,
-        { state: 'starting', detail: { ...record.detail, observedAt: this.#now() } },
-        { type: 'status', data: { state: 'starting' }, at: this.#now() }
-      )
-      this.#schedule(next)
-    } else if (
-      !this.#active.has(handle.handleId) &&
-      ['running', 'unknown'].includes(record.state)
-    ) {
-      // A live process owns this run and finishes it. Reconciling or fencing it from here would
-      // advance the epoch past its ownerEpoch and reject that owner's own commits.
-      if (this.#hasLiveForeignOwner(this.journal.get(record.handleId))) return this.status(handle)
-      const activeInference = readActiveInference(record)
-      const observe = () =>
-        activeInference
-          ? this.#options.reconcileInference(authority, activeInference.inferenceKey)
-          : this.#options.reconcileInference(authority, turnKey(record))
-      const preliminary = await observe()
-      await this.#authority(authority)
-      this.#assertOpen()
-      const admitted = this.journal.get(record.handleId)
-      if (admitted.epoch !== record.epoch || admitted.state !== record.state)
-        return this.status(handle)
-      // Ownership before the final verdict. claimProcess refuses a live owner, which may still be
-      // between its journal markers and its reservation, where the retained hold is not yet visible.
-      // A claim that succeeds is handed to the run it schedules, so no other process can take the
-      // record between the verdict and the run start.
-      let epoch: number
-      try {
-        epoch = this.journal.claimProcess(record.handleId, record)
-      } catch (error) {
-        if (isOwnerContention(error)) return this.status(handle)
-        throw error
-      }
-      let handedOff = false
-      try {
-        const claimed = this.journal.get(record.handleId)
-        // A safe verdict authorizes a physical send, so it is confirmed under the claimed epoch.
-        const safe = preliminary === 'safe_to_resume' ? await observe() : preliminary
-        await this.#authority(authority)
-        this.#assertOpen()
-        const current = this.journal.get(record.handleId)
-        if (current.epoch !== epoch || current.state !== record.state) return this.status(handle)
-        if (safe === 'safe_to_resume') {
-          // An in-process run admitted during the awaits keeps its own claim; never strand ours.
-          if (this.#active.has(record.handleId)) return this.status(handle)
-          const resumable = this.journal.update(record.handleId, epoch, {
-            detail: {
-              ...claimed.detail,
-              inferenceTrackingVersion: 1,
-              engineRunStarted: false,
-              activeInference: undefined,
-              inferencePending: false,
-              observedAt: this.#now(),
-              reasonCode: undefined,
-            },
-          })
-          // Validate the admission the run will read before handing it the claim, so a failure is
-          // raised here and gives the claim back instead of failing unobserved inside the run.
-          this.#stored(resumable)
-          handedOff = true
-          this.#schedule(resumable, epoch)
-        } else {
-          this.journal.update(record.handleId, epoch, {
-            state: 'unknown',
-            detail: {
-              ...claimed.detail,
-              observedAt: this.#now(),
-              reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
-            },
-          })
-        }
-      } finally {
-        if (!handedOff) this.journal.releaseProcess(record.handleId, epoch)
-      }
-    } else if (record.state === 'starting') this.#schedule(record)
+    if (record.state === 'starting') this.#schedule(record)
     return this.status(handle)
+  }
+
+  #needsRecoveryClaim(record: JournalRecord): boolean {
+    if (this.#active.has(record.handleId)) return false
+    if (record.state === 'cancelling') return true
+    if (record.state === 'awaiting_input')
+      return Boolean(record.detail['nativeToolBlocked']) && !record.detail['pendingApproval']
+    return record.state === 'running' || record.state === 'unknown'
+  }
+
+  #claimRecovery(record: JournalRecord): { claim: ProcessClaim } | { reason: 'live' | 'stale' } {
+    this.#assertOpen()
+    try {
+      return { claim: this.journal.claimProcess(record.handleId, record) }
+    } catch (error) {
+      const code = error instanceof Error ? error.message : ''
+      if (code === 'PI_SESSION_OWNER_ACTIVE') return { reason: 'live' }
+      if (code === 'STALE_STATE') return { reason: 'stale' }
+      throw error
+    }
+  }
+
+  /** Decides a recovery record while this process holds its durable owner claim. A declared
+   * authority denial is persisted by the release below, under that same claim. A claim that
+   * reached no decision for any other reason is undone, so the retained record stays exactly as
+   * it was; a decided claim is released normally. */
+  async #reconcileClaimed(
+    handle: RuntimeExecutionHandle,
+    claim: ProcessClaim
+  ): Promise<RuntimeExecutionStatus> {
+    const epoch = claim.epoch
+    let handedOff = false
+    let decided = false
+    let denied = false
+    this.#recoveryClaims.set(handle.handleId, claim)
+    try {
+      const claimed = this.journal.get(handle.handleId)
+      if (claimed.epoch !== epoch) return this.status(handle)
+      const authority = this.#stored(claimed)
+      await this.#recoveryAuthority(authority)
+      this.#assertOpen()
+      if (claimed.state === 'cancelling') {
+        const intent = readCancellationIntent(claimed)
+        let safe: 'safe_to_resume' | 'unresolved'
+        if (intent?.targetKind === 'active_generation' && intent.generation) {
+          safe = await this.#probeInference(authority, intent.generation.inferenceKey)
+        } else if (
+          intent?.targetKind === 'no_active_generation' &&
+          claimed.detail['inferenceTrackingVersion'] === 1
+        ) {
+          // No generation was authorized for this turn. The owner epoch fences any late callback.
+          safe = 'safe_to_resume'
+        } else if (intent?.targetKind === 'untracked_generation') {
+          // A run entered the engine without a durable generation identity. Reconcile the
+          // legacy turn scope conservatively instead of treating an unknown send as absent.
+          safe = await this.#probeInference(authority, intent.turnKey)
+        } else if (intent) {
+          // An old or malformed record has no exact generation identity; never guess by turn.
+          safe = 'unresolved'
+        } else {
+          // Compatibility for cancellation records written before exact generation tracking.
+          safe = await this.#probeInference(authority, turnKey(claimed))
+        }
+        await this.#recoveryAuthority(authority)
+        this.#assertOpen()
+        const current = this.journal.get(handle.handleId)
+        if (current.epoch !== epoch || current.state !== claimed.state) return this.status(handle)
+        const state = safe === 'safe_to_resume' ? 'cancelled' : 'cancelling'
+        const resolvedIntent =
+          state === 'cancelled' && intent
+            ? { ...intent, resolution: 'safe_to_resume' as const, confirmedAt: this.#now() }
+            : intent
+        const resolved = this.journal.updateUnderProcessClaim(
+          handle.handleId,
+          claim,
+          { epoch: current.epoch, state: current.state },
+          {
+            state,
+            detail: {
+              ...current.detail,
+              ...(resolvedIntent ? { cancellationIntent: resolvedIntent } : {}),
+              activeInference:
+                state === 'cancelled' ? undefined : claimed.detail['activeInference'],
+              inferencePending: state === 'cancelling',
+              observedAt: this.#now(),
+              reasonCode:
+                state === 'cancelling' ? 'PI_CANCELLATION_RECONCILIATION_REQUIRED' : undefined,
+            },
+          },
+          { type: 'status', data: { state }, at: this.#now() }
+        )
+        if (!resolved) return this.status(handle)
+        decided = true
+      } else if (claimed.state === 'awaiting_input') {
+        // An acknowledgement admits no child effect. Explicit recovery reopens the same
+        // native task; its retained full request still passes the independent effect gate.
+        const next = this.journal.updateUnderProcessClaim(
+          handle.handleId,
+          claim,
+          { epoch: claimed.epoch, state: claimed.state },
+          { state: 'starting', detail: { ...claimed.detail, observedAt: this.#now() } },
+          { type: 'status', data: { state: 'starting' }, at: this.#now() }
+        )
+        if (!next) return this.status(handle)
+        decided = true
+        handedOff = this.#schedule(next, claim)
+      } else {
+        const activeInference = readActiveInference(claimed)
+        // `resumeGenerationKey` is the identity of the generation reconciliation observes; it
+        // outlives a failure before the engine authorizes its first inference (for example engine
+        // creation) and any unresolved verdict, so a later probe still asks about that exact
+        // generation and never falls back to the turn scope. `safeResumeInferenceKey` is the
+        // separate permission to execute: only a verdict confirmed under this claim grants it.
+        const retainedKey = (['resumeGenerationKey', 'safeResumeInferenceKey'] as const)
+          .map((field) => claimed.detail[field])
+          .find((value): value is string => typeof value === 'string')
+        const resumeKey = activeInference?.inferenceKey ?? retainedKey
+        const observe = () => this.#probeInference(authority, resumeKey ?? turnKey(claimed))
+        const preliminary = await observe()
+        await this.#recoveryAuthority(authority)
+        this.#assertOpen()
+        const admitted = this.journal.get(handle.handleId)
+        if (admitted.epoch !== epoch || admitted.state !== claimed.state) return this.status(handle)
+        // Confirm a safe-to-resume verdict while this durable process claim is held; only this
+        // second observation authorizes a possible physical send.
+        const safe = preliminary === 'safe_to_resume' ? await observe() : preliminary
+        await this.#recoveryAuthority(authority)
+        this.#assertOpen()
+        const current = this.journal.get(handle.handleId)
+        if (current.epoch !== epoch || current.state !== claimed.state) return this.status(handle)
+        if (safe === 'safe_to_resume') {
+          const resumable = this.journal.updateUnderProcessClaim(
+            handle.handleId,
+            claim,
+            { epoch: current.epoch, state: current.state },
+            {
+              detail: {
+                ...current.detail,
+                inferenceTrackingVersion: 1,
+                engineRunStarted: false,
+                activeInference: undefined,
+                resumeGenerationKey: resumeKey,
+                safeResumeInferenceKey: resumeKey,
+                inferencePending: false,
+                observedAt: this.#now(),
+                reasonCode: undefined,
+              },
+            }
+          )
+          if (!resumable) return this.status(handle)
+          decided = true
+          // Validate the record before handing the claim to background work. If retained
+          // admission is corrupt, fail closed under this claim so the recovery call reports
+          // the error and a later repaired record can be claimed and resumed.
+          try {
+            this.#stored(resumable)
+          } catch (error) {
+            this.#abandonClaim(handle.handleId, claim, 'PI_RUN_ABORTED_BEFORE_DRIVE')
+            throw error
+          }
+          handedOff = this.#schedule(resumable, claim)
+        } else {
+          const unresolved = this.journal.updateUnderProcessClaim(
+            handle.handleId,
+            claim,
+            { epoch: current.epoch, state: current.state },
+            {
+              state: 'unknown',
+              detail: {
+                ...current.detail,
+                // The verdict revokes permission to execute but keeps the generation identity.
+                resumeGenerationKey: resumeKey,
+                safeResumeInferenceKey: undefined,
+                observedAt: this.#now(),
+                reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
+              },
+            }
+          )
+          if (!unresolved) return this.status(handle)
+          decided = true
+        }
+      }
+      return this.status(handle)
+    } catch (error) {
+      denied = isRecoveryAuthorityDenial(error)
+      throw error
+    } finally {
+      this.#recoveryClaims.delete(handle.handleId)
+      // A closed journal cannot be written; close() already undid this claim.
+      if (!handedOff && !this.#closed) {
+        if (denied)
+          this.journal.releaseRecoveryDenial(handle.handleId, claim, RECOVERY_AUTHORITY_BLOCKED)
+        else if (decided) this.journal.releaseProcess(handle.handleId, claim)
+        else this.journal.releaseRecoveryClaim(handle.handleId, claim)
+      }
+    }
+  }
+
+  /** Inference reconciliation port. Only an explicit authoritative denial it raises is a
+   * revocation under the held claim; every other failure stays unclassified. */
+  async #probeInference(
+    authority: DurableExecutionAuthority,
+    key: string
+  ): Promise<'safe_to_resume' | 'unresolved'> {
+    return this.#options.reconcileInference(authority, key)
   }
 
   async drain(): Promise<void> {
@@ -793,6 +1352,14 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         [...this.#engines.values()].map((engine) => Promise.resolve().then(() => engine.close()))
       )
       this.#engines.clear()
+      for (const [handleId, claim] of this.#recoveryClaims) {
+        try {
+          this.journal.releaseRecoveryClaim(handleId, claim)
+        } catch {
+          /* The owner pid still ends with this process; a restart may claim it. */
+        }
+      }
+      this.#recoveryClaims.clear()
       this.#closed = true
       this.journal.close()
       const failure = [...work, ...engines].find((item) => item.status === 'rejected')
@@ -801,29 +1368,54 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     return this.#closePromise
   }
 
-  #schedule(record: JournalRecord, owned?: number): void {
-    this.#assertOpen()
-    if (this.#active.has(record.handleId)) {
-      // A run already holds this record, so the claim handed to this schedule is not kept.
-      if (owned !== undefined) this.journal.releaseProcess(record.handleId, owned)
-      return
+  /** Ends a claim this process holds without driving the record. A record still marked as
+   * starting or running is left in the reconcilable unknown state, never ownerless and running.
+   * Nothing is written for a claim that no longer holds the record. */
+  #abandonClaim(handleId: string, claim: ProcessClaim, reasonCode: string): void {
+    try {
+      const current = this.journal.get(handleId)
+      if (current.epoch === claim.epoch && ['starting', 'running'].includes(current.state))
+        this.journal.updateUnderProcessClaim(
+          handleId,
+          claim,
+          { epoch: current.epoch, state: current.state },
+          { state: 'unknown', detail: { ...current.detail, observedAt: this.#now(), reasonCode } }
+        )
+    } catch {
+      /* A newer owner keeps its record. */
     }
-    const work = this.#run(record, owned).finally(() => this.#active.delete(record.handleId))
-    this.#active.set(record.handleId, work)
+    this.journal.releaseProcess(handleId, claim)
   }
 
-  async #run(record: JournalRecord, owned?: number): Promise<void> {
-    const { authority, plan } = this.#releasingClaimOnFailure(record.handleId, owned, () => {
-      const stored = this.#stored(record)
-      return { authority: stored, plan: assertExecutionPlanIntegrity(stored.request.executionPlan) }
-    })
-    const nativeAdmissions = new Map<string, DurableToolCallRequest>()
-    let epoch: number
+  /** Starts a run. A `heldClaim` hands over a claim the caller already holds in this process.
+   * #run owns that claim from the handover on and ends it exactly once. */
+  #schedule(record: JournalRecord, heldClaim?: ProcessClaim): boolean {
+    this.#assertOpen()
+    if (this.#active.has(record.handleId)) return false
+    const work = this.#run(record, heldClaim).finally(() => this.#active.delete(record.handleId))
+    this.#active.set(record.handleId, work)
+    return true
+  }
+
+  async #run(record: JournalRecord, heldClaim?: ProcessClaim): Promise<void> {
+    let authority: StoredAdmission
+    let plan: ReturnType<typeof assertExecutionPlanIntegrity>
     try {
-      epoch = owned ?? this.journal.claimProcess(record.handleId, record)
+      authority = this.#stored(record)
+      plan = assertExecutionPlanIntegrity(authority.request.executionPlan)
+    } catch (error) {
+      if (heldClaim !== undefined && !this.#closed)
+        this.#abandonClaim(record.handleId, heldClaim, 'PI_RUN_ABORTED_BEFORE_DRIVE')
+      throw error
+    }
+    const nativeAdmissions = new Map<string, DurableToolCallRequest>()
+    let claim: ProcessClaim
+    try {
+      claim = heldClaim ?? this.journal.claimProcess(record.handleId, record)
     } catch {
       return
     }
+    const epoch = claim.epoch
     let lease: NodeSessionLease
     try {
       lease = new NodeSessionLease(
@@ -831,13 +1423,21 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         authority.handle.externalSessionId!
       )
     } catch {
-      this.journal.releaseProcess(record.handleId, epoch)
+      this.#abandonClaim(record.handleId, claim, 'PI_SESSION_LEASE_UNAVAILABLE')
       return // A live owner is responsible; do not fence it or open its Pi store.
     }
+    const retainedAdmission = canonicalJsonStringify(record.admission)
+    const assertRetainedAdmission = () => {
+      const current = this.journal.get(record.handleId)
+      this.journal.assertOwner(record.handleId, epoch)
+      if (canonicalJsonStringify(current.admission) !== retainedAdmission)
+        fail('PI_JOURNAL_AUTHORITY_INVALID', 'conflict')
+      this.#stored(current)
+    }
     const assertCurrent = async () => {
-      this.journal.assertOwner(record.handleId, epoch)
+      assertRetainedAdmission()
       await this.#authority(authority)
-      this.journal.assertOwner(record.handleId, epoch)
+      assertRetainedAdmission()
     }
     try {
       await this.#authority(authority)
@@ -999,23 +1599,23 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             }
           : undefined
       const runningAt = this.#now()
-      this.journal.update(
-        record.handleId,
-        epoch,
-        {
-          state: 'running',
-          detail: {
-            ...record.detail,
-            ownerPid: process.pid,
-            ownerEpoch: epoch,
-            observedAt: runningAt,
-            inferenceTrackingVersion: 1,
-            engineRunStarted: false,
-            inferencePending: true,
+      this.journal.transitionCurrent(record.handleId, (current) => {
+        if (current.epoch !== epoch) throw new Error('STALE_OWNER')
+        return {
+          value: undefined,
+          change: {
+            state: 'running',
+            detail: {
+              ...current.detail,
+              observedAt: runningAt,
+              inferenceTrackingVersion: 1,
+              engineRunStarted: false,
+              inferencePending: true,
+            },
           },
-        },
-        { type: 'status', data: { state: 'running' }, at: runningAt }
-      )
+          event: { type: 'status', data: { state: 'running' }, at: runningAt },
+        }
+      })
       await this.#options.onExecutionRunning?.({
         request: structuredClone(authority.request),
         admission: structuredClone(authority.admission),
@@ -1061,9 +1661,14 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               inferencePending: true,
             },
           })
+          const safeResume =
+            current.detail['safeResumeInferenceKey'] === generation.inferenceKey
+              ? issueInferenceResumePermit(generation.inferenceKey)
+              : undefined
           const allowance = await this.#options.authorizeInference(
             authority,
-            generation.inferenceKey
+            generation.inferenceKey,
+            safeResume
           )
           if (typeof allowance.assertActive !== 'function')
             fail('PI_MODEL_SPENDING_AUTHORITY_REQUIRED', 'validation')
@@ -1082,6 +1687,19 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           )
             fail('PI_INFERENCE_ALLOWANCE_INVALID', 'validation')
           await assertCurrent()
+          if (safeResume) {
+            const authorized = this.journal.get(record.handleId)
+            if (
+              authorized.epoch !== epoch ||
+              authorized.state !== 'running' ||
+              authorized.detail['safeResumeInferenceKey'] !== generation.inferenceKey ||
+              readActiveInference(authorized)?.inferenceKey !== generation.inferenceKey
+            )
+              fail('PI_INFERENCE_GENERATION_CONFLICT', 'conflict')
+            this.journal.update(record.handleId, epoch, {
+              detail: { ...authorized.detail, safeResumeInferenceKey: undefined },
+            })
+          }
           return allowance
         },
         withModels: async (use) => {
@@ -1135,10 +1753,10 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             error: undefined,
             terminalUsage: undefined,
             activeInference: undefined,
+            resumeGenerationKey: undefined,
+            safeResumeInferenceKey: undefined,
             inferenceTrackingVersion: 1,
             engineRunStarted: false,
-            ownerPid: process.pid,
-            ownerEpoch: epoch,
             inferencePending: false,
             observedAt: this.#now(),
             result: { outcome: 'completed', output: { text: result.text }, usage, artifacts: [] },
@@ -1194,6 +1812,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               detail: {
                 ...this.journal.get(record.handleId).detail,
                 activeInference: undefined,
+                resumeGenerationKey: undefined,
+                safeResumeInferenceKey: undefined,
                 inferenceTrackingVersion: 1,
                 engineRunStarted: false,
                 inferencePending: false,
@@ -1240,11 +1860,19 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           epoch,
           {
             state: 'unknown',
-            detail: {
-              ...this.journal.get(record.handleId).detail,
-              observedAt: this.#now(),
-              reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
-            },
+            detail: (() => {
+              const failed = this.journal.get(record.handleId).detail
+              return {
+                ...failed,
+                // An undecided run holds no permission to execute. An unconsumed permit survives
+                // only as the generation identity that the next reconciliation observes.
+                resumeGenerationKey:
+                  failed['resumeGenerationKey'] ?? failed['safeResumeInferenceKey'],
+                safeResumeInferenceKey: undefined,
+                observedAt: this.#now(),
+                reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
+              }
+            })(),
           },
           {
             type: 'status',
@@ -1256,15 +1884,32 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         /* A replacement owner retains the journal. */
       }
     } finally {
-      const engine = this.#engines.get(record.handleId)
-      try {
-        if (engine) await engine.close()
-      } finally {
-        this.#engines.delete(record.handleId)
-        lease.release()
-        this.journal.releaseProcess(record.handleId, epoch)
-      }
+      await this.#finishRun(record, claim, lease)
     }
+  }
+
+  /** Ends a run's claim exactly once. A failed engine close still releases the claim, marks an
+   * undecided record reconcilable, and only then reports the close failure to the caller. */
+  async #finishRun(
+    record: JournalRecord,
+    claim: ProcessClaim,
+    lease: NodeSessionLease
+  ): Promise<void> {
+    const engine = this.#engines.get(record.handleId)
+    let closeFailure: { readonly error: unknown } | undefined
+    try {
+      if (engine) await engine.close()
+    } catch (error) {
+      closeFailure = { error }
+    }
+    this.#engines.delete(record.handleId)
+    try {
+      lease.release()
+    } finally {
+      if (closeFailure === undefined) this.journal.releaseProcess(record.handleId, claim)
+      else this.#abandonClaim(record.handleId, claim, 'PI_RUN_ABORTED_BEFORE_DRIVE')
+    }
+    if (closeFailure !== undefined) throw closeFailure.error
   }
 
   async #retainInferences(
@@ -1365,11 +2010,51 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     })
   }
 
-  async #authority(authority: DurableExecutionAuthority): Promise<void> {
+  #assertUnexpired(authority: DurableExecutionAuthority): void {
     if (Date.parse(authority.admission.authority.expiresAt) <= Date.parse(this.#now()))
-      fail('PI_AUTHORITY_EXPIRED', 'conflict')
+      denyAuthority('PI_AUTHORITY_EXPIRED')
+  }
+
+  async #authority(authority: DurableExecutionAuthority): Promise<void> {
+    this.#assertUnexpired(authority)
     try {
       await this.#options.assertAuthority(authority)
+      await this.#assertExecutionScope(authority)
+    } catch (error) {
+      authorityFailure(error)
+    }
+  }
+
+  async #recoveryAuthority(authority: DurableExecutionAuthority): Promise<void> {
+    this.#assertUnexpired(authority)
+    try {
+      // Scope is rechecked first so canonical recovery authority is the final awaited check.
+      await this.#assertExecutionScope(authority)
+      await (this.#options.assertRecoveryAuthority ?? this.#options.assertAuthority)(authority)
+    } catch (error) {
+      authorityFailure(error)
+    }
+    this.#assertUnexpired(authority)
+  }
+
+  async #readAuthority(authority: DurableExecutionAuthority): Promise<void> {
+    this.#assertUnexpired(authority)
+    try {
+      await this.#assertExecutionScope(authority)
+      await (
+        this.#options.assertReadAuthority ??
+        this.#options.assertRecoveryAuthority ??
+        this.#options.assertAuthority
+      )(authority)
+    } catch (error) {
+      authorityFailure(error)
+    }
+    this.#assertUnexpired(authority)
+  }
+
+  /** Current execution scope for a scoped plan. Shared by the canonical and the fenced paths. */
+  async #assertExecutionScope(authority: DurableExecutionAuthority): Promise<void> {
+    {
       const plan = assertExecutionPlanIntegrity(authority.request.executionPlan)
       if (plan.schemaVersion === 2) {
         const actor = authority.admission.canonicalActorPrincipalId
@@ -1390,10 +2075,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             this.#now()
           ))
         )
-          fail('PI_EXECUTION_SCOPE_REJECTED', 'conflict')
+          denyAuthority('PI_EXECUTION_SCOPE_REJECTED')
       }
-    } catch {
-      fail('PI_AUTHORITY_REJECTED', 'conflict')
     }
   }
 
@@ -1447,29 +2130,6 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       return this.journal.claim(record.handleId, record)
     } catch {
       fail('PI_RUNTIME_STATE_CONFLICT', 'conflict')
-    }
-  }
-
-  // A claim handed in by reconcile is given back if the run fails before it starts. The release
-  // matches this claim's own epoch and pid, so a newer owner's fence is never cleared.
-  #releasingClaimOnFailure<T>(handleId: string, owned: number | undefined, operation: () => T): T {
-    try {
-      return operation()
-    } catch (error) {
-      if (owned !== undefined) this.journal.releaseProcess(handleId, owned)
-      throw error
-    }
-  }
-
-  // The liveness test claimProcess applies, for an owner other than this process.
-  #hasLiveForeignOwner(record: JournalRecord): boolean {
-    const ownerPid = record.detail['ownerPid']
-    if (typeof ownerPid !== 'number' || ownerPid === process.pid) return false
-    try {
-      process.kill(ownerPid, 0)
-      return true
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code !== 'ESRCH'
     }
   }
 
@@ -1528,13 +2188,6 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   }
 }
 
-// claimProcess refuses a stale snapshot or a live owner; either means another process moved first.
-function isOwnerContention(error: unknown): boolean {
-  return (
-    error instanceof Error && ['STALE_STATE', 'PI_SESSION_OWNER_ACTIVE'].includes(error.message)
-  )
-}
-
 function turnKey(record: Pick<JournalRecord, 'attemptId' | 'detail'>): string {
   return (
     (record.detail['turn'] as { requestId: string } | undefined)?.requestId ??
@@ -1566,6 +2219,40 @@ function readCancellationIntent(record: JournalRecord): PiCancellationIntent | u
   )
     fail('PI_CANCELLATION_INTENT_INVALID', 'conflict')
   return parsed.data
+}
+
+function readCancellationResolution(
+  record: JournalRecord,
+  key: string
+): PiCancellationResolution | undefined {
+  const resolutions = record.detail['cancellationResolutions'] as
+    | Record<string, unknown>
+    | undefined
+  const value = resolutions?.[key]
+  if (value === undefined) return undefined
+  const parsed = PiCancellationResolutionSchema.safeParse(value)
+  if (
+    !parsed.success ||
+    (parsed.data.generation !== null &&
+      (parsed.data.generation.attemptId !== record.attemptId ||
+        parsed.data.generation.turnKey !== parsed.data.turnKey)) ||
+    (parsed.data.observedGeneration !== null &&
+      parsed.data.observedGeneration.attemptId !== record.attemptId)
+  )
+    fail('PI_CANCELLATION_RESOLUTION_INVALID', 'conflict')
+  return parsed.data
+}
+
+function cancellationRequestIdentity(
+  proposal: PiDurableCancellationProposal
+): Omit<PiDurableCancellationProposal, 'targetKind' | 'turnKey' | 'generation'> {
+  const {
+    targetKind: _targetKind,
+    turnKey: _turnKey,
+    generation: _generation,
+    ...identity
+  } = proposal
+  return identity
 }
 
 function digest(value: unknown): string {
@@ -1726,6 +2413,49 @@ function externalSession(hex: string): string {
   }
   return `ses_${encoded}`
 }
+// Recovery constants. Contention waits only for an unknown record's decision to land.
+const RECOVERY_RESAMPLE_LIMIT = 3
+const RECOVERY_CONTENTION_WAIT_MS = 10_000
+const RECOVERY_CONTENTION_POLL_MS = 25
+// Persisted on a retained record whose recovery claim ended in a declared authority denial.
+const RECOVERY_AUTHORITY_BLOCKED = 'PI_RECOVERY_AUTHORITY_BLOCKED'
+
+/** Throws an explicit local authority denial. Recovery may persist it under the claim it holds. */
+function denyAuthority(code: string): never {
+  throw authoritativeDenial(
+    new RuntimeAdapterError({ code, classification: 'conflict', message: code, retryable: false })
+  )
+}
+
+/** Maps a failed authority check. Only an explicit denial may become a revocation. A typed
+ * unavailable failure keeps its contract. Everything else fails closed and persists nothing. */
+function authorityFailure(error: unknown): never {
+  const outcome = authorityOutcome(error)
+  if (outcome === 'denied') denyAuthority('PI_AUTHORITY_REJECTED')
+  if (error instanceof RuntimeAdapterError && outcome === 'unavailable') throw error
+  const failure = new RuntimeAdapterError({
+    code: 'PI_AUTHORITY_REJECTED',
+    classification: 'conflict',
+    message: 'PI_AUTHORITY_REJECTED',
+    retryable: false,
+  })
+  throw outcome === 'unavailable' ? transientAuthorityFailure(failure) : failure
+}
+
+/** True only for an authority denial observed while a recovery claim was held. */
+export function isRecoveryAuthorityDenial(error: unknown): boolean {
+  return authorityOutcome(error) === 'denied'
+}
+
+/** True for a transient authority failure: retryable, and never a revocation. */
+export function isRecoveryUnavailable(error: unknown): boolean {
+  return authorityOutcome(error) === 'unavailable'
+}
+
+function recoveryPause(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
 function fail(
   code: string,
   classification: 'validation' | 'conflict' | 'unavailable' | 'unsupported'
