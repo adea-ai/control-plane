@@ -45,6 +45,9 @@ Prepare and dispatch refuse with code `PI_LEAD_MODEL_NOT_READY`.
   `PROVIDER_POLICY_DENIED`, `READINESS_UNAVAILABLE`.
 - A blocked funding view carries the same `reasonCode`; a ready view is unchanged.
 - No secret, provider message or account detail is included.
+- `@adea-ai/sdk` `ControlPlaneClientError` exposes the closed reason as an optional
+  `reasonCode` (also in `toJSON()`); other `details` stay server-side. `READY`, free text and
+  unknown values are dropped. It ships with the next release after this merges.
 
 Status, progress, lookup and cancel of an already admitted lead never require model
 readiness, so an operator can always see and stop a run after quota, grant or credential

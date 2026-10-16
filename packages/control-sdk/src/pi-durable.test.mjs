@@ -479,3 +479,42 @@ test('Pi Durable OpenAPI routes remain additive to the frozen v3 baseline with s
     expect(body.properties.executionPlan).toBeUndefined()
   }
 })
+
+test('model not ready errors expose only the closed readiness reason, never other details', async () => {
+  const refuse = async (httpStatus, reasonCode, retryable) => {
+    const client = new ControlPlaneClient({
+      baseUrl: 'https://control-plane.example',
+      credential: 'test-service-credential',
+      fetch: async () =>
+        Response.json(
+          {
+            ...response(undefined),
+            error: {
+              class: retryable ? 'runtime_unavailable' : 'conflict',
+              code: 'PI_LEAD_MODEL_NOT_READY',
+              message: 'The selected model is not ready',
+              retryable,
+              source: 'policy',
+              details: { reasonCode, diagnostics: ['private-diagnostic-canary'] },
+            },
+          },
+          { status: httpStatus }
+        ),
+    })
+    return client.dispatchPiDurableLead(requests.dispatchPiDurableLead).catch((error) => error)
+  }
+  const quota = await refuse(409, 'QUOTA_EXHAUSTED', false)
+  expect(quota).toBeInstanceOf(ControlPlaneClientError)
+  expect(quota.reasonCode).toBe('QUOTA_EXHAUSTED')
+  expect(quota.toJSON()).toMatchObject({
+    code: 'PI_LEAD_MODEL_NOT_READY',
+    reasonCode: 'QUOTA_EXHAUSTED',
+  })
+  expect(JSON.stringify(quota)).not.toContain('private-diagnostic-canary')
+  const unreadable = await refuse(503, 'READINESS_UNAVAILABLE', true)
+  expect(unreadable.reasonCode).toBe('READINESS_UNAVAILABLE')
+  expect(unreadable.retryable).toBe(true)
+  // Free text, READY and unknown values are dropped rather than passed to callers.
+  for (const bad of ['READY', 'free text with secret', 'UNKNOWN_REASON'])
+    expect((await refuse(409, bad, false)).reasonCode).toBeUndefined()
+})
