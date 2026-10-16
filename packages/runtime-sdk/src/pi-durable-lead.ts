@@ -87,6 +87,10 @@ export const PiDurableLeadProgressRequestSchema = PiDurableLeadReadEnvelopeSchem
     })
     .strict(),
 })
+export const PiDurableLeadChildrenRequestSchema = PiDurableLeadReadEnvelopeSchema.extend({
+  operation: z.literal('pi-durable.lead.children'),
+  parameters: z.object({ dispatchId: DispatchId }).strict(),
+})
 export const PiDurableLeadCancelRequestSchema = PiDurableLeadCommandEnvelopeSchema.extend({
   operation: z.literal('pi-durable.lead.cancel'),
   payload: z.object({ dispatchId: DispatchId }).strict(),
@@ -183,6 +187,61 @@ export const PiDurableLeadProgressResponseSchema = response.extend({
 })
 export const PiDurableLeadCancelResponseSchema = PiDurableLeadStatusResponseSchema
 
+const ChildReference = z
+  .string()
+  .trim()
+  .min(1)
+  .max(256)
+  .regex(/^[A-Za-z0-9._:/-]+$/)
+/** Terminal child outcome as retained by the delegation record; identifiers and bounded codes only. */
+export const PiDurableLeadChildOutcomeSchema = z
+  .object({
+    state: z.enum(['completed', 'failed', 'cancelled']),
+    resultRef: IdentifierSchemas.artifactId.optional(),
+    failureCode: ChildReference.optional(),
+    publication: z
+      .object({
+        status: z.enum(['pending', 'published']),
+        resolution: z.enum(['continue_parent', 'manual_intervention', 'fail_parent']).optional(),
+      })
+      .strict(),
+  })
+  .strict()
+/**
+ * Canonical, authorized view of one child job of a lead dispatch. It is read from retained
+ * delegation records only: no prompt, objective, plan, digest, credential or native payload.
+ * `awaitingInput` is the child's own approval/input state; it is observation, never a grant.
+ */
+export const PiDurableLeadChildSchema = z
+  .object({
+    delegationId: IdentifierSchemas.delegationId,
+    childExecutionId: IdentifierSchemas.executionId,
+    childAttemptId: IdentifierSchemas.attemptId.optional(),
+    role: ChildReference,
+    state: z.enum([
+      'requested',
+      'dispatched',
+      'running',
+      'awaiting_input',
+      'completed',
+      'failed',
+      'cancelled',
+      'manual_intervention',
+    ]),
+    awaitingInput: z.boolean(),
+    stopRequested: z.boolean(),
+    acceptedAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+    revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    outcome: PiDurableLeadChildOutcomeSchema.optional(),
+  })
+  .strict()
+export const PiDurableLeadChildrenResponseSchema = response.extend({
+  data: PiDurableLeadReceiptResponseSchema.extend({
+    children: z.array(PiDurableLeadChildSchema).max(256),
+  }),
+})
+
 /** Existing versioned authenticated envelopes; payloads contain opaque references only. */
 export const PiDurableLeadHttpContract = Object.freeze({
   schemaVersion: 'pi-lead-dispatch/v1',
@@ -223,6 +282,13 @@ export const PiDurableLeadHttpContract = Object.freeze({
     requestSchema: PiDurableLeadProgressRequestSchema,
     responseSchema: PiDurableLeadProgressResponseSchema,
   }),
+  children: Object.freeze({
+    route: 'children',
+    operation: 'pi-durable.lead.children',
+    scope: 'execution:read',
+    requestSchema: PiDurableLeadChildrenRequestSchema,
+    responseSchema: PiDurableLeadChildrenResponseSchema,
+  }),
   cancel: Object.freeze({
     route: 'cancel',
     operation: 'pi-durable.lead.cancel',
@@ -243,5 +309,8 @@ export type PiDurableLeadStatusRequest = z.output<typeof PiDurableLeadStatusRequ
 export type PiDurableLeadStatusResponse = z.output<typeof PiDurableLeadStatusResponseSchema>
 export type PiDurableLeadProgressRequest = z.output<typeof PiDurableLeadProgressRequestSchema>
 export type PiDurableLeadProgressResponse = z.output<typeof PiDurableLeadProgressResponseSchema>
+export type PiDurableLeadChildrenRequest = z.output<typeof PiDurableLeadChildrenRequestSchema>
+export type PiDurableLeadChildrenResponse = z.output<typeof PiDurableLeadChildrenResponseSchema>
+export type PiDurableLeadChild = z.output<typeof PiDurableLeadChildSchema>
 export type PiDurableLeadCancelRequest = z.output<typeof PiDurableLeadCancelRequestSchema>
 export type PiDurableLeadCancelResponse = z.output<typeof PiDurableLeadCancelResponseSchema>

@@ -8,7 +8,7 @@ import {
   type ServicePrincipal,
 } from '@control-plane/contracts'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
-import type { DelegationService } from '@control-plane/orchestration'
+import type { DelegationRecord, DelegationService } from '@control-plane/orchestration'
 import { PiLeadPreparationError, type SqlitePiLeadPreparations } from './lead-preparation.js'
 import {
   RuntimeExecutionHandleSchema,
@@ -30,6 +30,8 @@ import {
   PiDurableLeadLookupResponseSchema,
   PiDurableLeadStatusRequestSchema,
   PiDurableLeadProgressRequestSchema,
+  PiDurableLeadChildrenRequestSchema,
+  PiDurableLeadChildrenResponseSchema,
   PiDurableLeadCancelRequestSchema,
   PiDurableLeadDispatchResponseSchema,
   PiDurableLeadStatusResponseSchema,
@@ -49,6 +51,8 @@ export {
   PiDurableLeadRequestedTargetSchema,
   PiDurableLeadStatusRequestSchema,
   PiDurableLeadProgressRequestSchema,
+  PiDurableLeadChildrenRequestSchema,
+  PiDurableLeadChildrenResponseSchema,
   PiDurableLeadCancelRequestSchema,
   PiDurableLeadReceiptResponseSchema,
   PiDurableLeadDispatchResponseSchema,
@@ -245,6 +249,7 @@ export interface PiDurableLeadService {
   dispatch(input: unknown, principal: ServicePrincipal): Promise<unknown>
   status(input: unknown, principal: ServicePrincipal): Promise<unknown>
   progress(input: unknown, principal: ServicePrincipal): Promise<unknown>
+  children(input: unknown, principal: ServicePrincipal): Promise<unknown>
   cancel(input: unknown, principal: ServicePrincipal): Promise<unknown>
 }
 
@@ -256,6 +261,8 @@ export interface DurablePiDurableLeadServiceOptions {
   readonly preparations?: SqlitePiLeadPreparations
   /** Canonical cascade-only child stop. The supplied service must use the admitted parent stores. */
   readonly delegationService?: Pick<DelegationService, 'cancelChildren'>
+  /** Read-only retained child records for the children operation; it never advances or publishes. */
+  readonly childDelegations?: Pick<DelegationService, 'listChildren'>
   /** Metadata-only journal read. Must never start, reconcile or invoke a provider. */
   readonly findRuntimeHandle?: (
     request: RuntimeStartRequest
@@ -572,6 +579,31 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     )
   }
 
+  async children(input: unknown, principal: ServicePrincipal) {
+    const request = parse(PiDurableLeadChildrenRequestSchema, input)
+    checkPrincipal(request, principal, 'execution:read')
+    if (!this.options.childDelegations) fail('PI_LEAD_NOT_CONFIGURED')
+    const looked = await this.#lookup(
+      request.workspaceId,
+      request.parameters.dispatchId,
+      principal,
+      'status'
+    )
+    // A fenced receipt proves no current child authority: the read fails closed.
+    if ('fenced' in looked) fail('PI_LEAD_UNAVAILABLE')
+    const { receipt, admission } = looked
+    await this.options.authority.assertCurrent(admission, principal, 'status')
+    const records = await this.options.childDelegations.listChildren(receipt.executionId)
+    await this.options.authority.assertCurrent(admission, principal, 'status')
+    return PiDurableLeadChildrenResponseSchema.parse(
+      success(request, {
+        ...publicReceipt(receipt),
+        ...observedTarget(receipt, admission),
+        children: childViews(receipt, records),
+      })
+    )
+  }
+
   async cancel(input: unknown, principal: ServicePrincipal) {
     const request = parse(PiDurableLeadCancelRequestSchema, input)
     checkPrincipal(request, principal, 'execution:cancel')
@@ -845,6 +877,9 @@ export class UnavailablePiDurableLeadService implements PiDurableLeadService {
   async status(): Promise<never> {
     fail('PI_LEAD_NOT_CONFIGURED')
   }
+  async children(): Promise<never> {
+    fail('PI_LEAD_NOT_CONFIGURED')
+  }
   async progress(): Promise<never> {
     fail('PI_LEAD_NOT_CONFIGURED')
   }
@@ -952,6 +987,58 @@ function observedTarget(
   if (typeof sessionId !== 'string' || typeof taskId !== 'string') return {}
   return { observedTarget: { sessionId, taskId } }
 }
+/**
+ * Public child views come from retained delegation records only. A record that is not this
+ * lead's own is a repository contract violation and fails the read; a record of another attempt
+ * of the same execution is not this dispatch's child and is left out.
+ */
+function childViews(receipt: PiDurableLeadReceipt, records: readonly DelegationRecord[]) {
+  const views = []
+  for (const record of records) {
+    if (record.parentExecutionId !== receipt.executionId) fail('PI_LEAD_AUTHORITY_CONFLICT')
+    if (record.parentAttemptId !== undefined && record.parentAttemptId !== receipt.attemptId)
+      continue
+    const terminal =
+      record.state === 'completed' || record.state === 'failed' || record.state === 'cancelled'
+    views.push({
+      delegationId: record.delegationId,
+      childExecutionId: record.childExecutionId,
+      ...(record.childAttemptId ? { childAttemptId: record.childAttemptId } : {}),
+      role: record.role,
+      state: record.state,
+      awaitingInput: record.state === 'awaiting_input',
+      stopRequested: record.pendingCancellationAt !== undefined,
+      acceptedAt: record.acceptedAt,
+      updatedAt: record.updatedAt,
+      revision: record.revision,
+      ...(terminal
+        ? {
+            outcome: {
+              state: record.state,
+              ...(record.terminalResultRef ? { resultRef: record.terminalResultRef } : {}),
+              ...(record.failureCode ? { failureCode: record.failureCode } : {}),
+              publication: {
+                status: record.terminalPublication?.status ?? 'pending',
+                ...(record.terminalPublication?.resolution
+                  ? { resolution: record.terminalPublication.resolution }
+                  : {}),
+              },
+            },
+          }
+        : {}),
+    })
+  }
+  return views.sort((left, right) =>
+    left.acceptedAt === right.acceptedAt
+      ? left.delegationId < right.delegationId
+        ? -1
+        : 1
+      : left.acceptedAt < right.acceptedAt
+        ? -1
+        : 1
+  )
+}
+
 function success(request: z.output<typeof command> | z.output<typeof read>, data: unknown) {
   return {
     contractVersion: request.contractVersion,

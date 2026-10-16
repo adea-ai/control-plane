@@ -6,6 +6,8 @@ import {
   PiDurableLeadDispatchRequestSchema,
   PiDurableLeadLookupRequestSchema,
   PiDurableLeadLookupResponseSchema,
+  PiDurableLeadChildrenRequestSchema,
+  PiDurableLeadChildrenResponseSchema,
   PiDurableLeadHttpContract,
 } from './pi-durable-lead.ts'
 
@@ -193,4 +195,79 @@ test('lookup is a strict read by intent and returns nullable stored receipt meta
       }).success
     ).toBe(false)
   }
+})
+
+test('children read is a strict read-only contract of opaque references and bounded outcomes', () => {
+  const dispatchId = `dispatch_${'a'.repeat(32)}`
+  const read = {
+    caller: request.caller,
+    contractVersion: request.contractVersion,
+    requestId: request.requestId,
+    workspaceId: request.workspaceId,
+    correlation: request.correlation,
+    operation: 'pi-durable.lead.children',
+    requestedAt: at,
+    parameters: { dispatchId },
+  }
+  expect(PiDurableLeadChildrenRequestSchema.safeParse(read).success).toBe(true)
+  expect(PiDurableLeadHttpContract.children).toMatchObject({
+    route: 'children',
+    operation: 'pi-durable.lead.children',
+    scope: 'execution:read',
+  })
+  for (const parameters of [
+    { dispatchId, delegationId: id('dlg') },
+    { dispatchId: 'dispatch_x' },
+    { intentId },
+  ])
+    expect(PiDurableLeadChildrenRequestSchema.safeParse({ ...read, parameters }).success).toBe(
+      false
+    )
+  const child = {
+    delegationId: id('dlg'),
+    childExecutionId: id('exe'),
+    role: 'researcher',
+    state: 'completed',
+    awaitingInput: false,
+    stopRequested: false,
+    acceptedAt: at,
+    updatedAt: at,
+    revision: 2,
+    outcome: { state: 'completed', resultRef: id('art'), publication: { status: 'pending' } },
+  }
+  const response = {
+    contractVersion: request.contractVersion,
+    requestId: request.requestId,
+    correlation: request.correlation,
+    data: {
+      schemaVersion: 'pi-lead-dispatch/v1',
+      dispatchId,
+      intentId,
+      executionId: id('exe'),
+      attemptId: id('att'),
+      runtimeSessionId: id('ses'),
+      children: [child],
+    },
+  }
+  expect(PiDurableLeadChildrenResponseSchema.safeParse(response).success).toBe(true)
+  for (const invalid of [
+    { ...child, objective: 'caller or private text' },
+    { ...child, planDigest: `sha256:${'a'.repeat(64)}` },
+    { ...child, state: 'unknown' },
+    { ...child, outcome: { ...child.outcome, credential: 'canary' } },
+    { ...child, outcome: { ...child.outcome, failureCode: 'has space or secret' } },
+    { ...child, role: 'bad role' },
+  ])
+    expect(
+      PiDurableLeadChildrenResponseSchema.safeParse({
+        ...response,
+        data: { ...response.data, children: [invalid] },
+      }).success
+    ).toBe(false)
+  expect(
+    PiDurableLeadChildrenResponseSchema.safeParse({
+      ...response,
+      data: { ...response.data, children: Array.from({ length: 257 }, () => child) },
+    }).success
+  ).toBe(false)
 })

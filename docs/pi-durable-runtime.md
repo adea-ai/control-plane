@@ -110,6 +110,7 @@ otherwise requests return `PI_LEAD_NOT_CONFIGURED`.
 | `lookup`                                          | `pi-durable.lead.lookup`   | `execution:read`   | UUID `parameters.intentId`               |
 | `status`                                          | `pi-durable.lead.status`   | `execution:read`   | `parameters.dispatchId`                  |
 | `progress`                                        | `pi-durable.lead.progress` | `execution:read`   | Dispatch ID and optional `afterSequence` |
+| `children`                                        | `pi-durable.lead.children` | `execution:read`   | `parameters.dispatchId`                  |
 | `cancel`                                          | `pi-durable.lead.cancel`   | `execution:cancel` | `payload.dispatchId`                     |
 
 Replies use `pi-lead-dispatch/v1`, deterministic `dispatch_<32hex>`, canonical
@@ -136,9 +137,25 @@ read authorization, but never starts or reconciles inference. A missing receipt
 returns null. A receipt without an actual session remains incomplete; consumers
 must not manufacture a session or treat lookup as a funding renewal.
 
+`children` is the authorized, read-only view of a dispatch's child jobs. It reads
+retained delegation records through the composed delegation service (the optional
+`childDelegations` option; without it the route returns `PI_LEAD_NOT_CONFIGURED`)
+and returns at most 256 children ordered by acceptance time. Each child carries its
+delegation, child execution and attempt references, role, state,
+`awaitingInput` (the child's own approval or input wait, an observation that grants
+nothing), `stopRequested` and, once terminal, an outcome with the result artifact
+reference or bounded failure code and whether that outcome is published. It never
+returns the objective, plans, digests, credentials or native payloads, and never
+starts, advances, cancels or publishes anything. The original actor and current
+product audience are rechecked before and after the read; a fenced receipt fails
+closed, a record of another execution is an authority conflict, and a record of
+another attempt of the same execution is left out. A lead stop does not cascade to
+children and a child's `cancelled` state is that child's own record, so an
+acknowledged lead stop is not evidence that any child has terminated.
+
 The public Control SDK adds `preparePiDurableLead`, `lookupPiDurableLead`,
 `dispatchPiDurableLead`, `getPiDurableLeadStatus`,
-`getPiDurableLeadProgress` and `cancelPiDurableLead`, validated against these exact
+`getPiDurableLeadProgress`, `getPiDurableLeadChildren` and `cancelPiDurableLead`, validated against these exact
 schemas. An isolated tarball consumer test covers the SDK/runtime-sdk dependency
 boundary. These source artifacts do not claim a new SDK release is already
 published. Production integration requires a compatible authorized signer; this
