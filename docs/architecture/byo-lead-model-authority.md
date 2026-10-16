@@ -58,7 +58,8 @@ loss. Cancel keeps current actor, scope and lineage checks.
 - `tests/pi-byo-model-authority.test.mjs` runs the production composition against nine
   account faults: prepare and dispatch refuse with the exact reason and zero sends, leases
   or allocations; a running lead stays observable and cancellable; a payer kind case; and
-  a sweep that injects quota loss at each account read and asserts no send starts after it.
+  a sweep that injects quota loss at the first and last account read of every named boundary
+  (lead stage, credential lease and secret steps, send start) and asserts no send starts after it.
 - `apps/control-api/src/pi-durable/pi-lead-model-not-ready.http.test.mjs` pins the HTTP
   envelope for every reason.
 - `packages/model-gateway/src/funding-view.test.mjs` pins the payer kind rule.
