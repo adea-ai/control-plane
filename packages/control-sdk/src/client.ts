@@ -7,6 +7,8 @@ import type {
   PiDurableLeadDispatchResponse,
   PiDurableLeadStatusRequest,
   PiDurableLeadStatusResponse,
+  PiDurableLeadChildrenRequest,
+  PiDurableLeadChildrenResponse,
   PiDurableLeadProgressRequest,
   PiDurableLeadProgressResponse,
   PiDurableLeadCancelRequest,
@@ -454,6 +456,17 @@ export class ControlPlaneClient {
     input: PiDurableLeadProgressRequest
   ): Promise<PiDurableLeadProgressResponse> {
     return this.#request(ControlApiOperations.getPiDurableLeadProgress, input)
+  }
+
+  async getPiDurableLeadChildren(
+    input: PiDurableLeadChildrenRequest
+  ): Promise<PiDurableLeadChildrenResponse> {
+    const request = ControlApiOperations.getPiDurableLeadChildren.requestSchema.parse(input)
+    const response = await this.#request(ControlApiOperations.getPiDurableLeadChildren, request)
+    if (response.data.dispatchId !== request.parameters.dispatchId) {
+      throw invalidResponse(request.requestId, 200)
+    }
+    return response
   }
 
   cancelPiDurableLead(input: PiDurableLeadCancelRequest): Promise<PiDurableLeadCancelResponse> {

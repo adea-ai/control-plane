@@ -83,13 +83,16 @@ export const VerifiedPiLeadIntentEvidenceSchema = z
   .strict()
 export type VerifiedPiLeadIntentEvidence = z.output<typeof VerifiedPiLeadIntentEvidenceSchema>
 /** Why product authority is read. Only `inference` (prepare, dispatch and an absent context, the
- * conservative default) starts or funds inference; `observe` is status, progress, lookup and cancel. */
+ * conservative default) starts or funds inference; `observe` is status, progress, children, lookup and cancel. */
 export interface PiLeadProductReadContext {
   readonly purpose: 'inference' | 'observe'
 }
-type LeadOperationName = 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+type LeadOperationName = 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel' | 'children'
 function productPurpose(operation: LeadOperationName | undefined): 'inference' | 'observe' {
-  return operation === 'status' || operation === 'progress' || operation === 'cancel'
+  return operation === 'status' ||
+    operation === 'progress' ||
+    operation === 'cancel' ||
+    operation === 'children'
     ? 'observe'
     : 'inference'
 }
@@ -594,7 +597,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     workspaceId: string
     intentId: string
     principal: ServicePrincipal
-    operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   }): Promise<PiDurableLeadAdmission | PiDurableLeadFencedResult> {
     return this.#safe(async () => {
       const principal = ServicePrincipalSchema.parse(input.principal)
@@ -850,7 +853,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
   async assertCurrent(
     admission: PiDurableLeadAdmission,
     principal: ServicePrincipal,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   ): Promise<void> {
     return this.#safe(async () => {
       const checked = ServicePrincipalSchema.parse(principal)
@@ -1119,7 +1122,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     input: {
       workspaceId: string
       intentId: string
-      operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+      operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
     },
     variant: LeadFenceVariant,
     facts: LeadIntentFenceFacts,
@@ -1202,7 +1205,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     variant: LeadFenceVariant,
     facts: LeadIntentFenceFacts,
     principalId: string,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel',
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel',
     marker: LeadIntentMarker
   ): void {
     const decision = fencedOperationPolicy(variant)[operation as LeadOperation]

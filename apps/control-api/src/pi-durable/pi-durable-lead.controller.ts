@@ -75,6 +75,17 @@ export class PiDurableLeadController {
     return this.#invoke('progress', input, request)
   }
 
+  @Post('children')
+  @HttpCode(HttpStatus.OK)
+  @RequireServiceAuthentication('execution:read')
+  @ApiOperation({ summary: 'Read the authorized canonical status and outcomes of lead children' })
+  @ApiOkResponse({
+    description: 'Retained child job state, approval/input state and terminal outcome; read only',
+  })
+  children(@Body() input: unknown, @Req() request: FastifyRequest) {
+    return this.#invoke('children', input, request)
+  }
+
   @Post('cancel')
   @HttpCode(HttpStatus.ACCEPTED)
   @RequireServiceAuthentication('execution:cancel')

@@ -67,6 +67,7 @@ const publicOperations = [
   'model-selection.funding.get',
   'model-selection.resolve',
   'pi-durable.lead.cancel',
+  'pi-durable.lead.children',
   'pi-durable.lead.dispatch',
   'pi-durable.lead.lookup',
   'pi-durable.lead.prepare',

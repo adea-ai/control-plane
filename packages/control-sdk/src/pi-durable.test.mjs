@@ -36,6 +36,7 @@ const requests = {
   lookupPiDurableLead: read('pi-durable.lead.lookup', { intentId }),
   getPiDurableLeadStatus: read('pi-durable.lead.status', { dispatchId }),
   getPiDurableLeadProgress: read('pi-durable.lead.progress', { dispatchId, afterSequence: 1 }),
+  getPiDurableLeadChildren: read('pi-durable.lead.children', { dispatchId }),
   cancelPiDurableLead: command('pi-durable.lead.cancel', { dispatchId }),
 }
 const receipt = {
@@ -116,6 +117,30 @@ const responses = {
     ],
     nextSequence: 2,
   },
+  getPiDurableLeadChildren: {
+    ...receipt,
+    children: [
+      {
+        delegationId: id('dlg'),
+        childExecutionId: id('exe'),
+        childAttemptId: id('att'),
+        role: 'researcher',
+        state: 'completed',
+        awaitingInput: false,
+        stopRequested: false,
+        acceptedAt: at,
+        updatedAt: at,
+        revision: 3,
+        outcome: {
+          state: 'completed',
+          resultRef: id('art'),
+          publication: { status: 'published' },
+        },
+      },
+    ],
+    totalChildren: 1,
+    complete: true,
+  },
   cancelPiDurableLead: { ...receipt, state: 'cancelled', status },
 }
 const response = (data) => ({
@@ -146,7 +171,7 @@ test('Pi Durable preparation and execution methods send exact authenticated v3 r
     expect(ControlApiOperations[method].operation).toBe(request.operation)
   }
   expect(calls.map((call) => new URL(call.url).pathname)).toEqual(
-    ['prepare', 'dispatch', 'lookup', 'status', 'progress', 'cancel'].map(
+    ['prepare', 'dispatch', 'lookup', 'status', 'progress', 'children', 'cancel'].map(
       (route) => `/v3/pi-durable/lead-dispatches/${route}`
     )
   )
@@ -189,6 +214,18 @@ test('strict opaque-reference requests reject caller prompt, credentials, native
     client.getPiDurableLeadProgress({
       ...requests.getPiDurableLeadProgress,
       parameters: { dispatchId, afterSequence: -1 },
+    })
+  ).rejects.toThrow()
+  await expect(
+    client.getPiDurableLeadChildren({
+      ...requests.getPiDurableLeadChildren,
+      parameters: { dispatchId, childExecutionId: id('exe') },
+    })
+  ).rejects.toThrow()
+  await expect(
+    client.getPiDurableLeadChildren({
+      ...requests.getPiDurableLeadChildren,
+      parameters: { dispatchId, limit: 257 },
     })
   ).rejects.toThrow()
   await expect(
@@ -460,7 +497,15 @@ test('Pi Durable OpenAPI routes remain additive to the frozen v3 baseline with s
   )
   const generated = createControlApiOpenApiDocument()
   expect(findBreakingContractChanges(baseline, generated)).toEqual([])
-  for (const route of ['prepare', 'dispatch', 'lookup', 'status', 'progress', 'cancel']) {
+  for (const route of [
+    'prepare',
+    'dispatch',
+    'lookup',
+    'status',
+    'progress',
+    'children',
+    'cancel',
+  ]) {
     const operation = generated.paths[`/v3/pi-durable/lead-dispatches/${route}`].post
     expect(operation.operationId).toBe(`pi-durable.lead.${route}`)
     expect(operation.security).toEqual([{ serviceBearer: [] }])
