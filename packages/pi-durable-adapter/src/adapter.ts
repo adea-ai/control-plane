@@ -31,6 +31,7 @@ import {
   type DurableExecutionAuthority,
   type PiDurableGovernedManagementCallEnginePort,
   type DurablePiEngine,
+  type PiDurableAuthorityPurpose,
   type PiDurableRuntimeOptions,
 } from './contracts.js'
 import { SqliteDurableJournal, type JournalRecord } from './journal.js'
@@ -379,7 +380,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   async cancel(handle: RuntimeExecutionHandle, input: Parameters<RuntimeAdapter['cancel']>[1]) {
     const request = RuntimeCancelRequestSchema.parse(input)
     const record = this.#record(handle)
-    await this.#authority(this.#stored(record))
+    await this.#authority(this.#stored(record), 'cancel')
     this.#assertOpen()
     const key = `cancel:${request.idempotencyKey}`
     const actions = record.detail['actions'] as Record<string, string> | undefined
@@ -637,7 +638,9 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   async reconcile(handle: RuntimeExecutionHandle): Promise<RuntimeExecutionStatus> {
     const record = this.#record(handle)
     const authority = this.#stored(record)
-    await this.#authority(authority)
+    // Settling an accepted stop is not inference: it must not wait for the model to be ready.
+    const purpose = record.state === 'cancelling' ? 'cancel' : 'inference'
+    await this.#authority(authority, purpose)
     this.#assertOpen()
     if (!this.#active.has(handle.handleId) && record.state === 'cancelling') {
       const intent = readCancellationIntent(record)
@@ -661,7 +664,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         // Compatibility for cancellation records written before exact generation tracking.
         safe = await this.#options.reconcileInference(authority, turnKey(record))
       }
-      await this.#authority(authority)
+      await this.#authority(authority, 'cancel')
       this.#assertOpen()
       const current = this.journal.get(record.handleId)
       if (current.epoch !== record.epoch || current.state !== record.state)
@@ -1365,11 +1368,16 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     })
   }
 
-  async #authority(authority: DurableExecutionAuthority): Promise<void> {
+  async #authority(
+    authority: DurableExecutionAuthority,
+    purpose: PiDurableAuthorityPurpose = 'inference'
+  ): Promise<void> {
     if (Date.parse(authority.admission.authority.expiresAt) <= Date.parse(this.#now()))
       fail('PI_AUTHORITY_EXPIRED', 'conflict')
     try {
-      await this.#options.assertAuthority(authority)
+      await (purpose === 'cancel'
+        ? this.#options.assertAuthority(authority, purpose)
+        : this.#options.assertAuthority(authority))
       const plan = assertExecutionPlanIntegrity(authority.request.executionPlan)
       if (plan.schemaVersion === 2) {
         const actor = authority.admission.canonicalActorPrincipalId

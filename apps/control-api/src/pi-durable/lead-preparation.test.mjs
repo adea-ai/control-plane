@@ -223,7 +223,12 @@ test.each(['blocked', 'expired', 'foreign', 'secret_extension'])(
         value.credential = canary
         f.setFunding(value)
       }
-      await expect(f.store.prepare(f.admission, f.principal)).rejects.toThrow(stale)
+      // A blocked view is the host saying the model is not usable now, so its bounded reason surfaces.
+      if (fault === 'blocked') {
+        const error = await f.store.prepare(f.admission, f.principal).catch((failure) => failure)
+        expect(error.code).toBe('PI_LEAD_MODEL_NOT_READY')
+        expect(error.reasonCode).toBe('READINESS_UNAVAILABLE')
+      } else await expect(f.store.prepare(f.admission, f.principal)).rejects.toThrow(stale)
       expect(f.physicalReleases()).toBe(1)
       expect(f.rows(f.db)[0].state).toBe('released')
       expect(JSON.stringify(f.rows(f.db))).not.toContain(canary)
@@ -405,7 +410,7 @@ test('dispatch readiness errors are bounded and preserve cleanup evidence withou
     }
     const error = await f.store
       .assertDispatch(prepared.preparationRef, f.admission, f.principal)
-      .catch((value) => value)
+      .catch((failure) => failure)
     expect(error.message).toBe(stale)
     expect(error.message).not.toContain(canary)
     expect(f.rows(f.db).find((row) => row.preparationRef === prepared.preparationRef).state).toBe(
