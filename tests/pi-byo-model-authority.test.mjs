@@ -256,40 +256,41 @@ test('a recorded Adea payer cannot fund a bring-your-own key, but a workspace pa
 
 test('sweep: a quota fault at every named authority boundary stops every later provider send', async () => {
   // One host serves every run, each with a new intent; the fault is undone after each run.
-  // Boundaries are named by observable state, not by a read count: the lead stage, how many
-  // credential leases and secret resolutions the run has made, whether a provider send has begun,
-  // and the journal state. Each boundary is faulted at its first and last account read.
+  // A boundary is named by observable state: the lead stage, how many credential leases and
+  // secret resolutions the run has made, and whether a provider send has begun. The fault is
+  // injected at a chosen occurrence of a named boundary, and the run records the boundary it
+  // actually observed at that read, so the proof is of the boundary hit, not of a read index.
   const host = await createProductionFactoryFixture()
   try {
     const original = host.models.currentAccountEvidence()
-    const run = async (faultAt) => {
+    const run = async (target) => {
       const startedWith = {
         sends: host.state.physicalSends,
         resolves: host.models.secretProvider.resolveCount,
         leases: host.models.state.leasePolicyChecks,
         reads: host.models.state.accountReads,
-        records: new Set(host.composition.adapter.journal.list().map((record) => record.handleId)),
       }
       let stage = 'prepare'
       const boundaries = []
-      let sendsAtFault
+      const seen = new Map()
+      let faulted
       host.models.state.onAccountRead = (absolute) => {
-        const read = absolute - startedWith.reads
-        boundaries.push(
-          JSON.stringify({
-            stage,
-            sends: host.state.physicalSends - startedWith.sends,
-            resolves: host.models.secretProvider.resolveCount - startedWith.resolves,
-            leases: host.models.state.leasePolicyChecks - startedWith.leases,
-            journal: host.composition.adapter.journal
-              .list()
-              .filter((record) => !startedWith.records.has(record.handleId))
-              .map((record) => record.state)
-              .join('|'),
-          })
-        )
-        if (read !== faultAt) return
-        sendsAtFault = host.state.physicalSends - startedWith.sends
+        const name = JSON.stringify({
+          stage,
+          sends: host.state.physicalSends - startedWith.sends,
+          resolves: host.models.secretProvider.resolveCount - startedWith.resolves,
+          leases: host.models.state.leasePolicyChecks - startedWith.leases,
+        })
+        boundaries.push(name)
+        const occurrence = (seen.get(name) ?? 0) + 1
+        seen.set(name, occurrence)
+        if (faulted || target?.name !== name || target.occurrence !== occurrence) return
+        faulted = {
+          name,
+          occurrence,
+          read: absolute - startedWith.reads,
+          sendsAtFault: host.state.physicalSends - startedWith.sends,
+        }
         host.models.setCurrentAccount({ quota: 'exhausted' })
       }
       let outcome = 'completed'
@@ -308,57 +309,60 @@ test('sweep: a quota fault at every named authority boundary stops every later p
       const result = {
         reads: host.models.state.accountReads - startedWith.reads,
         boundaries,
-        fired: sendsAtFault !== undefined,
-        sendsAtFault,
-        sendsAfterFault: sendsAtFault === undefined ? 0 : sends - sendsAtFault,
+        counts: Object.fromEntries(seen),
+        faulted,
+        sendsAfterFault: faulted ? sends - faulted.sendsAtFault : 0,
         sends,
         outcome,
       }
       restore(host, original)
       return result
     }
-    const never = Number.MAX_SAFE_INTEGER
-    const baseline = await run(never)
-    expect(baseline).toMatchObject({ outcome: 'completed', sends: 1, fired: false })
-    const named = new Map()
-    baseline.boundaries.forEach((name, index) => {
-      const read = index + 1
-      const entry = named.get(name) ?? { name, reads: [] }
-      entry.reads.push(read)
-      named.set(name, entry)
-    })
-    // The production path crosses lead stages, two lease and secret steps, and the send itself.
-    expect(named.size).toBeGreaterThanOrEqual(8)
-    for (const stage of ['prepare', 'dispatch', 'drain'])
-      expect([...named.keys()].some((name) => JSON.parse(name).stage === stage)).toBe(true)
+    // Two unfaulted runs on the reused host must agree on the boundaries, which also shows
+    // that a finished run leaves nothing behind that changes the next one.
+    const baseline = await run()
+    expect(baseline).toMatchObject({ outcome: 'completed', sends: 1 })
+    expect(baseline.faulted).toBeUndefined()
+    const second = await run()
+    expect(second).toMatchObject({ outcome: 'completed', sends: 1 })
+    expect(Object.keys(second.counts).sort()).toEqual(Object.keys(baseline.counts).sort())
+    const names = Object.keys(baseline.counts).map((name) => JSON.parse(name))
+    // The production path must cross every claimed authority boundary.
+    const has = (match) =>
+      names.some((name) => Object.entries(match).every(([k, v]) => name[k] === v))
+    for (const stage of ['prepare', 'dispatch', 'drain']) expect(has({ stage })).toBe(true)
+    expect(has({ leases: 1, resolves: 0 })).toBe(true) // first credential lease
+    expect(has({ leases: 1, resolves: 1 })).toBe(true) // first secret resolved
+    expect(has({ leases: 2, resolves: 1 })).toBe(true) // second credential lease
+    expect(has({ leases: 2, resolves: 2, sends: 0 })).toBe(true) // second secret, before the send
+    expect(has({ sends: 1 })).toBe(true) // after the provider send began
     const cases = []
-    for (const { name, reads } of named.values())
-      for (const read of new Set([reads[0], reads.at(-1)]))
-        cases.push({ boundary: JSON.parse(name), read })
-    for (const { boundary, read } of cases) {
-      const result = await run(read)
-      expect({ boundary, read, fired: result.fired }).toEqual({ boundary, read, fired: true })
-      // The fault is observed at that exact boundary, and nothing is sent after it.
-      expect({ boundary, read, sendsAfterFault: result.sendsAfterFault }).toEqual({
-        boundary,
-        read,
+    for (const name of Object.keys(baseline.counts)) {
+      const stable = Math.min(baseline.counts[name], second.counts[name])
+      // First occurrence, and a late one that still tolerates a read landing on either side of a
+      // state change in another run.
+      for (const occurrence of new Set([1, Math.max(1, stable - 2)]))
+        cases.push({ name, occurrence })
+    }
+    for (const target of cases) {
+      const result = await run(target)
+      // The fault landed on exactly the targeted boundary: the observed name at that read matches.
+      expect(result.faulted).toBeDefined()
+      expect(result.boundaries[result.faulted.read - 1]).toBe(target.name)
+      expect({ name: result.faulted.name, occurrence: result.faulted.occurrence }).toEqual(target)
+      // Nothing is sent after the fault, and a fault before the send means no provider call at all.
+      expect({ target, sendsAfterFault: result.sendsAfterFault }).toEqual({
+        target,
         sendsAfterFault: 0,
       })
-      // A fault before the send boundary means the provider is never called at all.
-      if (boundary.sends === 0)
-        expect({ boundary, read, sends: result.sends }).toEqual({ boundary, read, sends: 0 })
+      if (JSON.parse(target.name).sends === 0)
+        expect({ target, sends: result.sends }).toEqual({ target, sends: 0 })
       else expect(result.sends).toBe(1)
     }
     // Reset isolation: after every fault was applied and undone, an unfaulted run is unchanged.
-    // A read next to a state change can land on either side of it, so compare the run's shape.
-    const again = await run(never)
-    expect(again).toMatchObject({
-      outcome: 'completed',
-      sends: 1,
-      fired: false,
-      reads: baseline.reads,
-    })
-    expect(new Set(again.boundaries)).toEqual(new Set(baseline.boundaries))
+    const again = await run()
+    expect(again).toMatchObject({ outcome: 'completed', sends: 1, reads: baseline.reads })
+    expect(Object.keys(again.counts).sort()).toEqual(Object.keys(baseline.counts).sort())
   } finally {
     await host.close()
   }
