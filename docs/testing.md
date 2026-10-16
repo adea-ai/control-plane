@@ -291,14 +291,24 @@ An explicit caller project remains caller-owned: the runner may stop the Postgre
 service it started, but does not delete that project's volume. The recovery matrix
 removes its own project in its outer cleanup. Pull-request PostgreSQL CI likewise
 uses a run/attempt-specific project and an `always()` cleanup step. These paths never
-prune unrelated resources or shared build caches. `SIGKILL`, daemon loss and machine
-shutdown cannot execute JavaScript `finally`. Explicit `SIGINT`/`SIGTERM` cleanup
-handlers are not implemented either; interrupted runs still need follow-up using
-the recorded project identity. Once the engine is available, the owning operator
-can use that exact `COMPOSE_PROJECT_NAME` with `docker compose down --volumes
---remove-orphans --timeout 60` from this repository; never substitute a shared
-project or global prune. No disk reclamation or full Docker acceptance is implied
-by the command-double lifecycle regression suite.
+prune unrelated resources or shared build caches. Runner-owned children stay in the
+runner's process group and are recorded, so installed `SIGINT`/`SIGTERM` handlers
+reap only those recorded children, refuse to start any new owned command after the
+first signal (the shared cleanup is exempt), and run the same owned cleanup once
+before the process exits with `128 + signal`; a recorded verification failure stays
+observable instead of being masked by the signal or by cleanup. A second signal
+stops immediately with the signal's status, and the bounded readiness probe
+observes a signal delivered during its blocking wait instead of surfacing it as a
+probe timeout. The command-double lifecycle suite injects a frozen startup,
+readiness, test and cleanup command and delivers a real signal to prove those
+paths. `SIGKILL`, daemon loss and machine shutdown cannot execute JavaScript
+`finally`, so an interrupted run may still leave the owner-recorded project
+identity behind. Once the
+engine is available, the owning operator can use that exact `COMPOSE_PROJECT_NAME`
+with `docker compose down --volumes --remove-orphans --timeout 60` from this
+repository; never substitute a shared project or global prune. No disk reclamation
+or full Docker acceptance is implied by the command-double lifecycle regression
+suite.
 
 ## Current PostgreSQL integration fixture
 

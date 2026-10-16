@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { parse } from 'acorn'
 import { runInNewContext } from 'node:vm'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import {
   existsSync,
   mkdtempSync,
@@ -27,33 +27,25 @@ const runner = join(repository, 'scripts/run-integration-tests.mjs')
 // budget so the harness timeout above stays the binding bound.
 const runnerTestBudgetMs = 30_000
 
-// These executable doubles exercise the real runner without a Docker engine,
-// network target, database, install, build, or integration suite.
-function executeRunner(overrides = {}) {
-  const record = (entry) => {
-    if (process.env.M11_RESOURCE_LEDGER)
-      appendFileSync(
-        process.env.M11_RESOURCE_LEDGER,
-        JSON.stringify({ owner: 'integration runner lifecycle tests', ...entry }) + '\n'
-      )
-  }
-  record({ prefix: 'cp-integration-lifecycle-', state: 'planned' })
-  const directory = mkdtempSync(join(tmpdir(), 'cp-integration-lifecycle-'))
-  record({ directory, state: 'created' })
-  const commands = join(directory, 'commands.jsonl')
-  try {
-    const fake = `#!${process.execPath}
+// One executable double backs both runner harnesses. FAKE_DOCKER_HANG_ON and
+// FAKE_BUN_HANG let a regression freeze a runner-owned command at a chosen
+// injection point (startup, readiness, test execution or cleanup) after writing
+// its receipt, so the test can send a real SIGINT/SIGTERM and observe the cleanup.
+const runnerDoubleSource = `#!${process.execPath}
 import { appendFileSync } from 'node:fs'
 import { basename } from 'node:path'
 const program = basename(process.argv[1])
 const args = process.argv.slice(2)
 appendFileSync(process.env.COMMAND_RECEIPT, JSON.stringify({ program, args, project: process.env.COMPOSE_PROJECT_NAME ?? null }) + '\\n')
+if (process.env.FAKE_DOCKER_HANG_ON && args.includes(process.env.FAKE_DOCKER_HANG_ON)) await new Promise(() => {})
 if (program === 'docker') {
   if (process.env.FAKE_DOCKER_DISABLED === 'true') process.exit(90)
   if (args.includes('ps') && process.env.FAKE_POSTGRES_RUNNING === 'true') console.log('postgres')
   if (args.includes('exec')) console.log('1')
   if (args.includes('up') && process.env.FAKE_DOCKER_ECHO_PROJECT === 'true') console.log('Created ' + process.env.COMPOSE_PROJECT_NAME + '-postgres')
   if (args.includes(process.env.FAKE_DOCKER_FAIL_ON)) process.exit(7)
+} else if (args.includes('test') && process.env.FAKE_BUN_HANG === 'true') {
+  await new Promise(() => {})
 } else if (args.includes('test') && process.env.FAKE_BUN_OVERSIZED_FAIL === 'true') {
   process.stdout.write('stdout-start-marker\\n' + 'x'.repeat(90_000) + '\\nstdout-end-marker\\n')
   process.stderr.write('stderr-start-marker\\n' + 'y'.repeat(90_000) + '\\nstderr-end-marker\\n')
@@ -70,19 +62,58 @@ if (program === 'docker') {
   process.exit(8)
 } else if (process.env.FAKE_BUN_FAIL === 'true') process.exit(9)
 `
-    for (const name of ['docker', 'bun']) {
-      writeFileSync(join(directory, name), fake, { mode: 0o700 })
+
+function readCommandReceipts(commands) {
+  return existsSync(commands)
+    ? readFileSync(commands, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)
+    : []
+}
+
+// A disposable directory with the two executable doubles ahead of PATH and a
+// receipt file for every invoked command. DATABASE_/COMPOSE_/INTEGRATION_ state
+// from the host is removed so each harness controls its own classification.
+function createRunnerHarness(overrides = {}) {
+  const directory = mkdtempSync(join(tmpdir(), 'cp-integration-lifecycle-'))
+  const commands = join(directory, 'commands.jsonl')
+  for (const name of ['docker', 'bun']) {
+    writeFileSync(join(directory, name), runnerDoubleSource, { mode: 0o700 })
+  }
+  const environment = { ...process.env }
+  for (const key of Object.keys(environment)) {
+    if (
+      key.startsWith('DATABASE_') ||
+      key.startsWith('COMPOSE_') ||
+      key.startsWith('INTEGRATION_')
+    ) {
+      delete environment[key]
     }
-    const environment = { ...process.env }
-    for (const key of Object.keys(environment)) {
-      if (
-        key.startsWith('DATABASE_') ||
-        key.startsWith('COMPOSE_') ||
-        key.startsWith('INTEGRATION_')
-      ) {
-        delete environment[key]
-      }
-    }
+  }
+  return {
+    directory,
+    commands,
+    environment: {
+      ...environment,
+      PATH: `${directory}${delimiter}${process.env.PATH}`,
+      COMMAND_RECEIPT: commands,
+      ...overrides,
+    },
+  }
+}
+
+// These executable doubles exercise the real runner without a Docker engine,
+// network target, database, install, build, or integration suite.
+function executeRunner(overrides = {}) {
+  const record = (entry) => {
+    if (process.env.M11_RESOURCE_LEDGER)
+      appendFileSync(
+        process.env.M11_RESOURCE_LEDGER,
+        JSON.stringify({ owner: 'integration runner lifecycle tests', ...entry }) + '\n'
+      )
+  }
+  record({ prefix: 'cp-integration-lifecycle-', state: 'planned' })
+  const { directory, commands, environment } = createRunnerHarness(overrides)
+  record({ directory, state: 'created' })
+  try {
     record({
       command: [process.execPath, runner],
       cwd: repository,
@@ -99,12 +130,7 @@ if (program === 'docker') {
       // This is only the executable-double harness; production probes retain
       // their independent two-second deadline below.
       timeout: 20_000,
-      env: {
-        ...environment,
-        PATH: `${directory}${delimiter}${process.env.PATH}`,
-        COMMAND_RECEIPT: commands,
-        ...overrides,
-      },
+      env: environment,
     })
     record({
       command: [process.execPath, runner],
@@ -117,13 +143,86 @@ if (program === 'docker') {
       port: null,
     })
     if (result.error) throw result.error
-    const calls = existsSync(commands)
-      ? readFileSync(commands, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)
-      : []
-    return { status: result.status, stdout: result.stdout, stderr: result.stderr, calls }
+    return {
+      status: result.status,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      calls: readCommandReceipts(commands),
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true })
     record({ directory, state: 'removed' })
+  }
+}
+
+function reapHarnessChild(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return
+  try {
+    child.kill('SIGKILL')
+  } catch {
+    // The process already exited between the check and the signal.
+  }
+}
+
+async function waitForReceipt(commands, predicate, description) {
+  const deadline = Date.now() + 10_000
+  for (;;) {
+    if (readCommandReceipts(commands).some(predicate)) return
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${description}`)
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}
+
+// Spawn the real runner asynchronously, wait until its receipt records the
+// injected command, deliver a real signal, and report how it exited. A runner
+// without an installed handler dies from the signal (status null, signal name);
+// a handled interruption exits with 128 + signal number.
+async function executeRunnerInterrupted(
+  overrides,
+  { signal, predicate, description, settleMs = 15_000 }
+) {
+  const { directory, commands, environment } = createRunnerHarness(overrides)
+  let child
+  try {
+    child = spawn(process.execPath, [runner], {
+      cwd: repository,
+      env: environment,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    const exited = new Promise((resolve) =>
+      child.once('close', (status, closeSignal) => resolve({ status, signal: closeSignal }))
+    )
+    await waitForReceipt(commands, predicate, description)
+    child.kill(signal)
+    const outcome = await Promise.race([
+      exited,
+      new Promise((resolve) => {
+        const timer = setTimeout(
+          () => resolve({ status: null, signal: 'settle-timeout' }),
+          settleMs
+        )
+        timer.unref?.()
+      }),
+    ])
+    if (outcome.signal === 'settle-timeout') {
+      reapHarnessChild(child)
+      await exited
+      throw new Error(`Runner did not exit within ${settleMs}ms after ${signal}`)
+    }
+    return { ...outcome, stdout, stderr, calls: readCommandReceipts(commands) }
+  } finally {
+    reapHarnessChild(child)
+    rmSync(directory, { recursive: true, force: true })
   }
 }
 
@@ -509,6 +608,166 @@ describe('integration runner resource ownership', () => {
     },
     runnerTestBudgetMs
   )
+
+  test(
+    'SIGINT during owned startup reaps the frozen command and removes its project once',
+    async () => {
+      const result = await executeRunnerInterrupted(
+        { FAKE_DOCKER_HANG_ON: 'up' },
+        {
+          signal: 'SIGINT',
+          predicate: ({ program, args }) => program === 'docker' && args.includes('up'),
+          description: 'the owned PostgreSQL startup',
+        }
+      )
+      const start = result.calls.find(
+        ({ program, args }) => program === 'docker' && args.includes('up')
+      )
+      const cleanup = destructiveCalls(result)
+      expect(result.status).toBe(130)
+      expect(result.signal).toBe(null)
+      expect(start.project).toMatch(/^control-plane-integration-/)
+      expect(cleanup).toHaveLength(1)
+      expect(cleanup[0].project).toBe(start.project)
+      expect(cleanup[0].args).toEqual([
+        'compose',
+        'down',
+        '--volumes',
+        '--remove-orphans',
+        '--timeout',
+        '60',
+      ])
+    },
+    runnerTestBudgetMs
+  )
+
+  test(
+    'SIGINT during the readiness probe stops it and removes the owned project once',
+    async () => {
+      const result = await executeRunnerInterrupted(
+        { FAKE_DOCKER_HANG_ON: 'exec' },
+        {
+          signal: 'SIGINT',
+          predicate: ({ program, args }) => program === 'docker' && args.includes('exec'),
+          description: 'the PostgreSQL readiness probe',
+        }
+      )
+      const start = result.calls.find(
+        ({ program, args }) => program === 'docker' && args.includes('up')
+      )
+      const cleanup = destructiveCalls(result)
+      expect(result.status).toBe(130)
+      expect(result.signal).toBe(null)
+      expect(cleanup).toHaveLength(1)
+      expect(cleanup[0].project).toBe(start.project)
+      expect(cleanup[0].args).toContain('--volumes')
+    },
+    runnerTestBudgetMs
+  )
+
+  test(
+    'SIGTERM during owned test execution cleans up and retains a nonzero status',
+    async () => {
+      const result = await executeRunnerInterrupted(
+        { FAKE_BUN_HANG: 'true' },
+        {
+          signal: 'SIGTERM',
+          predicate: ({ program, args }) => program === 'bun' && args.includes('test'),
+          description: 'an owned integration test file',
+        }
+      )
+      const start = result.calls.find(
+        ({ program, args }) => program === 'docker' && args.includes('up')
+      )
+      const cleanup = destructiveCalls(result)
+      expect(result.status).toBe(143)
+      expect(cleanup).toHaveLength(1)
+      expect(cleanup[0].project).toBe(start.project)
+      expect(cleanup[0].args).toContain('--volumes')
+    },
+    runnerTestBudgetMs
+  )
+
+  test(
+    'SIGTERM during runner-owned cleanup stops it and keeps a failure status',
+    async () => {
+      const result = await executeRunnerInterrupted(
+        { FAKE_DOCKER_HANG_ON: 'down' },
+        {
+          signal: 'SIGTERM',
+          predicate: ({ program, args }) => program === 'docker' && args.includes('down'),
+          description: 'owned project cleanup',
+        }
+      )
+      const cleanup = destructiveCalls(result)
+      expect(result.status).toBe(143)
+      expect(cleanup).toHaveLength(1)
+      expect(cleanup[0].args).toContain('down')
+    },
+    runnerTestBudgetMs
+  )
+
+  test(
+    'an interrupted cleanup keeps the original verification failure observable',
+    async () => {
+      const result = await executeRunnerInterrupted(
+        { FAKE_BUN_FAIL: 'true', FAKE_DOCKER_HANG_ON: 'down' },
+        {
+          signal: 'SIGTERM',
+          predicate: ({ program, args }) => program === 'docker' && args.includes('down'),
+          description: 'owned project cleanup after a failed verification',
+        }
+      )
+      expect(result.status).toBe(143)
+      expect(result.stderr).toContain('bun exited with status 9')
+      expect(result.stderr).toContain('Integration run interrupted by SIGTERM')
+    },
+    runnerTestBudgetMs
+  )
+
+  test(
+    'SIGINT preserves a caller-owned project while reaping the frozen command',
+    async () => {
+      const result = await executeRunnerInterrupted(
+        { COMPOSE_PROJECT_NAME: 'caller-owned-interrupt', FAKE_BUN_HANG: 'true' },
+        {
+          signal: 'SIGINT',
+          predicate: ({ program, args }) => program === 'bun' && args.includes('test'),
+          description: 'an owned integration test file',
+        }
+      )
+      expect(result.status).toBe(130)
+      expect(destructiveCalls(result).map(({ args }) => args)).toEqual([
+        ['compose', 'stop', '--timeout', '60', 'postgres'],
+      ])
+      expect(
+        result.calls
+          .filter(({ program }) => program === 'docker')
+          .every(({ project }) => project === 'caller-owned-interrupt')
+      ).toBe(true)
+    },
+    runnerTestBudgetMs
+  )
+
+  test(
+    'SIGINT after a pre-existing service creates no cleanup authority',
+    async () => {
+      const result = await executeRunnerInterrupted(
+        { FAKE_POSTGRES_RUNNING: 'true', FAKE_BUN_HANG: 'true' },
+        {
+          signal: 'SIGINT',
+          predicate: ({ program, args }) => program === 'bun' && args.includes('test'),
+          description: 'an owned integration test file',
+        }
+      )
+      expect(result.status).toBe(130)
+      expect(destructiveCalls(result)).toEqual([])
+      expect(
+        result.calls.some(({ program, args }) => program === 'docker' && args.includes('up'))
+      ).toBe(false)
+    },
+    runnerTestBudgetMs
+  )
 })
 
 function readScriptFunction(path, name, globals) {
@@ -531,6 +790,41 @@ test('bounded output tail keeps the final diagnostic within its byte limit', () 
   const tail = appendBoundedOutputTail('', `${'é'.repeat(20_000)}final-marker`, 16 * 1024)
   expect(Buffer.byteLength(tail)).toBeLessThanOrEqual(16 * 1024)
   expect(tail.endsWith('final-marker')).toBe(true)
+})
+
+test('an interrupted runner spends no new owned command beyond cleanup', async () => {
+  const spawnCalls = []
+  const run = readScriptFunction('run-integration-tests.mjs', 'run', {
+    interruptedSignal: 'SIGINT',
+    runnerEnvironment: {},
+    CHILD_COMMAND_TIMEOUT_MS: 90_000,
+    process,
+    setTimeout,
+    trackRunnerChild: (child) => child,
+    terminateChild: (child) => child.kill(),
+    spawn: (command, arguments_) => {
+      spawnCalls.push([command, arguments_])
+      return {
+        once() {},
+        kill() {},
+        stdout: { setEncoding() {}, on() {} },
+        stderr: { setEncoding() {}, on() {} },
+        exitCode: null,
+        signalCode: null,
+      }
+    },
+  })
+
+  // After the first signal a concurrent shard must not start another frozen
+  // command, or it would outlive the interruption and be orphaned.
+  await expect(run('bun', ['test', './tests/example.integration.test.mjs'])).rejects.toThrow(
+    'not started'
+  )
+  expect(spawnCalls).toEqual([])
+
+  // The shared cleanup is the one command allowed past the interruption guard.
+  void run('docker', ['compose', 'down', '--volumes'], { allowInterrupted: true })
+  expect(spawnCalls).toEqual([['docker', ['compose', 'down', '--volumes']]])
 })
 
 for (const script of ['run-integration-tests.mjs', 'run-postgres-disruption-drill.mjs']) {
