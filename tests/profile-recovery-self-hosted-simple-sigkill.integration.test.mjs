@@ -596,6 +596,7 @@ async function releaseSpawnedOwner({ owner, ownerExit, handles, exitBoundMs = EX
   } catch (error) {
     problems.push(error)
   }
+  const unconfirmedHandles = []
   for (const handle of handles()) {
     let terminated = false
     try {
@@ -612,9 +613,16 @@ async function releaseSpawnedOwner({ owner, ownerExit, handles, exitBoundMs = EX
       } catch (error) {
         problems.push(error)
       }
+    } else {
+      unconfirmedHandles.push(handle)
     }
   }
-  if (problems.length > 0) throw new AggregateError(problems, 'owner teardown')
+  if (problems.length > 0) {
+    const failure = new AggregateError(problems, 'owner teardown')
+    // Keep failed pidfd handles reachable and open so callers can safely retry or diagnose them.
+    failure.unconfirmedHandles = unconfirmedHandles
+    throw failure
+  }
 }
 
 afterEach(async () => {
@@ -1417,7 +1425,10 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
           ownerExit: exited,
           handles: () => [stuck],
         })
-      await expect(cleanupOwner()).rejects.toThrow('owner teardown')
+      const outcome = await cleanupOwner().catch((error) => error)
+      expect(outcome).toBeInstanceOf(AggregateError)
+      expect(outcome.message).toBe('owner teardown')
+      expect(outcome.unconfirmedHandles).toEqual([stuck])
       expect(terminationAttempts).toEqual([1])
       expect(closes).toEqual([])
       expect(stuck.identity).toEqual({ pid: 1 })
@@ -1434,7 +1445,9 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
         'tests/fixtures/pinned-process.mjs',
         'tests/fixtures/self-hosted-simple-sigkill.mjs',
       ]) {
-        expect(await readFile(join(repositoryRoot, file), 'utf8')).not.toMatch(/process\.kill\s*\(/)
+        const source = await readFile(join(repositoryRoot, file), 'utf8')
+        expect(source).not.toMatch(/process\.kill\s*\(/)
+        expect(source).not.toMatch(/\bkill\s+(?:(?:-[A-Za-z]+|--)\s+)*\$[A-Za-z_]/)
       }
     })
 
