@@ -183,7 +183,11 @@ Owners are existing issues. Where no open issue names a gap, the row says so.
    If that handshake cannot be completed, it keeps the live owner, partial
    handles, and work directory for diagnosis; it does not force-kill an
    unrecorded process chain. Linux pidfds are required and unsupported platforms
-   fail closed. This is test cleanup, not product orphan adoption or recovery.
+   fail closed. A composition whose parent ends its pipe closes itself and its
+   Restate child, and the test runner runs its registered cleanups when it
+   receives SIGINT, SIGTERM or SIGHUP. A runner killed by SIGKILL cannot run
+   cleanup; the composition then closes on the ended pipe. This is test cleanup,
+   not product orphan adoption or recovery.
    Unexpected Restate launcher death before the parent pins the complete chain
    remains unqualified; this proof does not recover an unanchored native orphan.
    Owner: #1025 crash/recovery, drain, upgrade, and rollback clauses. Its listed

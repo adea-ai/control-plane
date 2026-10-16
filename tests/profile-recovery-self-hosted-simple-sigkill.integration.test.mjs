@@ -625,7 +625,7 @@ async function releaseSpawnedOwner({ owner, ownerExit, handles, exitBoundMs = EX
   }
 }
 
-afterEach(async () => {
+async function runRegisteredCleanup() {
   const failures = []
   for (const entry of cleanup.splice(0)) {
     try {
@@ -635,10 +635,30 @@ afterEach(async () => {
     }
   }
   if (failures.length > 0) throw new AggregateError(failures, 'self-hosted simple SIGKILL cleanup')
-})
+}
+
+afterEach(runRegisteredCleanup)
+
+// A runner ended by a signal (a CI timeout, Ctrl-C) never reaches afterEach, and would leave the
+// composition and its Restate children running. Run the registered cleanups once, through the same
+// handles, then exit with the conventional signal status. The listeners are once-only, so a second
+// signal still ends the runner immediately.
+for (const [signal, status] of [
+  ['SIGINT', 130],
+  ['SIGTERM', 143],
+  ['SIGHUP', 129],
+]) {
+  process.once(signal, () => {
+    runRegisteredCleanup()
+      .catch((error) => {
+        console.error(`runner ${signal} cleanup incomplete: ${error.message}`)
+      })
+      .finally(() => process.exit(status))
+  })
+}
 
 describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan reap (not Pi Durable host wiring, no orphan adoption)', () => {
-  test('SIGKILL of the composition while its pinned Restate child runs recovers the same execution with no duplicate effect', async () => {
+  async function exerciseSigkillRecovery(recoveryCloseVia) {
     const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-sigkill-'))
     const dataDirectory = join(work, 'data')
     const evidencePath = join(work, 'effects.jsonl')
@@ -715,8 +735,10 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
       result: { decision: 'approve' },
     })
 
-    // Graceful close of the recovery composition stops its own Restate child.
-    recovery.child.stdin.write('close\n')
+    // Graceful close of the recovery composition stops its own Restate child. Either an explicit
+    // close request or the parent ending its pipe (a parent that died) closes it.
+    if (recoveryCloseVia === 'stdin-eof') recovery.child.stdin.end()
+    else recovery.child.stdin.write('close\n')
     await recovery.next('closed')
     expect(await boundedWait(recovery.exited, EXIT_BOUND_MS, 'recovery composition exit')).toEqual({
       code: 0,
@@ -740,6 +762,40 @@ describe('M17.02.2 legacy LangGraph test composition: SIGKILL with manual orphan
     ])
     expect(effects.filter((entry) => entry.kind === 'artifact')).toHaveLength(1)
     expect(new Set(effects.map((entry) => entry.pid)).size).toBe(2)
+  }
+
+  test('SIGKILL of the composition while its pinned Restate child runs recovers the same execution with no duplicate effect', async () => {
+    await exerciseSigkillRecovery('close-line')
+  }, 120000)
+
+  test('a recovered composition whose parent ends its pipe closes itself and its Restate child instead of waiting forever', async () => {
+    await exerciseSigkillRecovery('stdin-eof')
+  }, 120000)
+
+  test('a stranded initial composition closes its Restate child when its parent ends its pipe', async () => {
+    const work = await mkdtemp(join(tmpdir(), 'self-hosted-simple-parent-gone-'))
+    const owned = []
+    const incarnations = []
+    cleanup.push(() => releaseOwnership({ work, incarnations, owned }))
+    const config = {
+      dataDirectory: join(work, 'data'),
+      ports: await isolatedPorts(),
+      evidencePath: join(work, 'effects.jsonl'),
+    }
+    const initial = spawnSelfHostedSimpleComposition('initial', config)
+    incarnations.push(initial)
+    const started = await initial.next('started')
+    const initialOwned = await recordOwnedRestate(initial, owned, 'initial', started)
+    await initial.next('awaiting_input', 60_000)
+
+    // The parent goes away without SIGKILLing the composition. It must not sit out its keep-alive
+    // holding the ports, the data directory and its Restate child.
+    initial.child.stdin.end()
+    expect(
+      await boundedWait(initial.exited, EXIT_BOUND_MS, 'stranded initial composition exit')
+    ).toEqual({ code: 0, signal: null })
+    expect(await liveIdentity(initialOwned.native.identity)).toBeUndefined()
+    expect(await liveIdentity(initialOwned.launcher.identity)).toBeUndefined()
   }, 120000)
 
   describe('pinned process termination', () => {

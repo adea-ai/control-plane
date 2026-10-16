@@ -306,6 +306,12 @@ async function rejectAfterRestateStarts(health, failure) {
  *  This only reports an ownership anchor; the parent must pin the full chain before SIGKILL. */
 function cleanupControl(composition, processes) {
   const lines = createInterface({ input: process.stdin })
+  // The parent ending its pipe means it is gone. Nothing else will ever close this composition,
+  // so a wait on the parent must also end here.
+  const parentGone = new Promise((resolve) => {
+    process.stdin.once('end', resolve)
+    process.stdin.once('close', resolve)
+  })
   let startup
   let startupSettled = false
   let requested = false
@@ -335,6 +341,7 @@ function cleanupControl(composition, processes) {
       return startup
     },
     closeRequested,
+    parentGone,
     dispose: () => lines.close(),
     disposeWhenStopped() {
       // Runtime.stop clears its process reference before awaiting stop. Only the original
@@ -448,8 +455,19 @@ async function runInitial(config) {
       launcherPid: health.details.pid,
       ...summaryOf(paused),
     })
-    // Wait for the parent's SIGKILL. The bounded keep-alive stops a stranded composition.
-    await delay(120_000)
+    // Wait for the parent's SIGKILL. The bounded keep-alive, or the parent ending its pipe, stops a
+    // stranded composition.
+    let keepAlive
+    try {
+      await Promise.race([
+        new Promise((resolve) => {
+          keepAlive = setTimeout(resolve, 120_000)
+        }),
+        control.parentGone,
+      ])
+    } finally {
+      clearTimeout(keepAlive)
+    }
   } finally {
     await closeComposition()
     await control.disposeWhenStopped()
@@ -499,7 +517,7 @@ async function runRecover(config) {
       terminalResultRef: finished.terminalResultRef,
       result: JSON.parse(new TextDecoder().decode(result.body)),
     })
-    await control.closeRequested
+    await Promise.race([control.closeRequested, control.parentGone])
     control.dispose()
     await closeComposition()
     // Explicit exit once the composition has released its Restate child and storage.
