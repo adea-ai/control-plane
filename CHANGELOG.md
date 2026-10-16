@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.100.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.2...workspace-v1.100.3) (2026-10-15)
+
+
+### Bug Fixes
+
+* **m612:** preserve relay and checkpoint replay bytes ([#1150](https://github.com/adea-ai/control-plane/issues/1150)) ([a00ce81](https://github.com/adea-ai/control-plane/commit/a00ce8174f150973d1a0a8b8f8fea63d2cf1ec78))
+* **orchestration:** version graph catalog digests ([bdc2fbb](https://github.com/adea-ai/control-plane/commit/bdc2fbb6afc00e97bfdba0f686a5ba08fc643cf7))
+* preserve graph digest compatibility ([#1149](https://github.com/adea-ai/control-plane/issues/1149)) ([bdc2fbb](https://github.com/adea-ai/control-plane/commit/bdc2fbb6afc00e97bfdba0f686a5ba08fc643cf7))
+
 ## [1.100.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.1...workspace-v1.100.2) (2026-10-15)
 
 
