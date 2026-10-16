@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createPiDurableUsageAuthority } from './usage-authority.ts'
+import { issueInferenceResumePermit } from './resume-permit.ts'
 import { withUsageAuthorityContext, at, ids } from './usage-authority.fixture.mjs'
 import { createSubprocessFixtureProbe } from './subprocess-fixture-data.fixture.mjs'
 
@@ -31,16 +32,25 @@ test('trusted no-send reconciliation reuses only the exact retained inference ho
     await bridge.authorizeInference(authority, key)
     const { bridge: reopened, ledger: reopenedLedger } = await reopen()
     await expect(
-      reopened.authorizeInference(authority, key, {
-        schemaVersion: 'pi-inference-resume-permit/v1',
-        inferenceKey: 'pi-turn:one:pi-generation:3',
-      })
+      reopened.authorizeInference(
+        authority,
+        key,
+        issueInferenceResumePermit('pi-turn:one:pi-generation:3')
+      )
     ).rejects.toThrow('PI_INFERENCE_RESUME_PERMIT_MISMATCH')
+    // A literal with the right shape is not a permit: only the adapter's recovery issues one, and
+    // a forged one would skip the ledger's physical-dispatch replay fence.
+    for (const forged of [
+      { schemaVersion: 'pi-inference-resume-permit/v1', inferenceKey: key },
+      Object.freeze({ schemaVersion: 'pi-inference-resume-permit/v1', inferenceKey: key }),
+      structuredClone(issueInferenceResumePermit(key)),
+    ]) {
+      await expect(reopened.authorizeInference(authority, key, forged)).rejects.toThrow(
+        'PI_INFERENCE_RESUME_PERMIT_INVALID'
+      )
+    }
     await expect(
-      reopened.authorizeInference(authority, key, {
-        schemaVersion: 'pi-inference-resume-permit/v1',
-        inferenceKey: key,
-      })
+      reopened.authorizeInference(authority, key, issueInferenceResumePermit(key))
     ).resolves.toMatchObject({ maxOutputTokens: 32, maximumInputTokens: 64 })
     expect(
       (await reopenedLedger.entries(workspaceId, ids.executionId)).filter(
