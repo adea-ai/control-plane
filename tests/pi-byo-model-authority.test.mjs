@@ -192,8 +192,9 @@ test('status, progress, lookup and cancel keep working for a running lead after 
     const prepared = (await prepare(host, intentId)).data
     const dispatched = (await dispatch(host, intentId, prepared.preparationRef)).data
     await started
-    for (const [, inject] of FAULTS) await inject(host)
     const service = lead(host)
+    // The vault revocation is permanent for this host, so it is applied after the reversible faults.
+    for (const [, inject] of [...FAULTS, REVOKED]) await inject(host)
     const status = (
       await service.status(
         host.read('pi-durable.lead.status', { dispatchId: dispatched.dispatchId }),

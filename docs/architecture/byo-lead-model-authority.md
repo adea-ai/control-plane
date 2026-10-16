@@ -60,6 +60,11 @@ loss. Cancel keeps current actor, scope and lineage checks.
   or allocations; a running lead stays observable and cancellable; a payer kind case; and
   a sweep that injects quota loss at the first and last account read of every named boundary
   (lead stage, credential lease and secret steps, send start) and asserts no send starts after it.
+- `apps/control-api/src/pi-durable/node-admission.test.mjs` pins the read purpose per
+  operation: prepare and dispatch read inference authority; status, progress, children and
+  cancel read observe authority. The production composition does not wire the children read yet
+  (`PI_LEAD_NOT_CONFIGURED`), so children under faults is proved at the purpose boundary, not
+  end to end.
 - `apps/control-api/src/pi-durable/pi-lead-model-not-ready.http.test.mjs` pins the HTTP
   envelope for every reason.
 - `packages/model-gateway/src/funding-view.test.mjs` pins the payer kind rule.
