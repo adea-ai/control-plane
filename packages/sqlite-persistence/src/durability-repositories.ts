@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto'
 import { compareCodePointOrder } from '@control-plane/contracts'
 import { isDeepStrictEqual } from 'node:util'
-import type { JsonValue, PersistenceProvider } from '@control-plane/deployment'
+import type {
+  JsonValue,
+  PersistenceProvider,
+  PersistenceTransaction,
+} from '@control-plane/deployment'
 import {
   ExecutionAttemptSchema,
   executionRetentionScope,
@@ -14,6 +18,7 @@ import {
   type RetentionDeletionResult,
   type RetentionJournalSink,
   type RetentionHoldPolicy,
+  type CredentialRevocationFence,
   RetentionJournalOperationSchema,
   evaluateRetentionEligibility,
   type RetentionAssessment,
@@ -507,11 +512,47 @@ function filterPendingDelivery(events: readonly ExecutionEvent[], executionId: s
     .toSorted((left, right) => compareCodePointOrder(left.recordedAt, right.recordedAt))
 }
 
+type SqliteCredentialFenceValidator = (
+  transaction: PersistenceTransaction,
+  fence: CredentialRevocationFence,
+  scope: { readonly nodeId: string; readonly workspaceId: string }
+) => Promise<void>
+
+/**
+ * Applies runtime progress and terminal effects. Mirrors the PostgreSQL sink: every effect, replays
+ * included, first validates the delivering channel's credential fence against the stored command's
+ * node and workspace inside the same transaction as the execution write. A missing command, a
+ * malformed fence, or an absent validator fails closed, so a revoked or superseded credential can
+ * never settle an execution (the later fenced command update would otherwise leave the ledger split).
+ */
 export class SqliteRuntimeEventEffectSink implements RuntimeEventEffectSink {
-  constructor(readonly provider: PersistenceProvider) {}
+  constructor(
+    readonly provider: PersistenceProvider,
+    private readonly validateCredentialFence?: SqliteCredentialFenceValidator
+  ) {}
+
+  async #assertCredentialFence(
+    transaction: PersistenceTransaction,
+    effect: RuntimeProgressEffect | RuntimeTerminalEffect
+  ): Promise<void> {
+    const record = await transaction.get(namespaces.runtimeCommands, recordId(effect.commandId))
+    if (
+      record === undefined ||
+      this.validateCredentialFence === undefined ||
+      !validCredentialFenceShape(effect.credentialFence)
+    ) {
+      throw new SqliteRuntimeCommandCredentialFenceInvalidError()
+    }
+    const command = RuntimeCommandRecordSchema.parse(record.value)
+    await this.validateCredentialFence(transaction, effect.credentialFence, {
+      nodeId: command.nodeId,
+      workspaceId: command.workspaceId,
+    })
+  }
 
   applyProgress(effect: RuntimeProgressEffect): Promise<RuntimeEventEffectResult> {
     return this.provider.transaction(async (transaction) => {
+      await this.#assertCredentialFence(transaction, effect)
       const key = receiptKey(effect.commandId, 'progress', effect.eventSequence)
       const replay = await replayReceipt(transaction, key, effect.frameHash, effect.legacyFrameHash)
       if (replay !== undefined) return replay
@@ -550,6 +591,7 @@ export class SqliteRuntimeEventEffectSink implements RuntimeEventEffectSink {
 
   applyTerminal(effect: RuntimeTerminalEffect): Promise<RuntimeEventEffectResult> {
     return this.provider.transaction(async (transaction) => {
+      await this.#assertCredentialFence(transaction, effect)
       const key = receiptKey(effect.commandId, 'terminal', effect.messageSequence)
       const replay = await replayReceipt(transaction, key, effect.frameHash, effect.legacyFrameHash)
       if (replay !== undefined) return replay
@@ -672,8 +714,102 @@ export class SqliteReconciliationCheckpointRepository implements ReconciliationC
   }
 }
 
+/** Mirrors the PG port's InventoryCredentialFenceInvalidError (same wire code). */
+/**
+ * Structural authority for a SQLite credential fence. The authority must read both the
+ * canonical credential binding and current revocation state through the supplied transaction.
+ */
+export interface RuntimeNodeCredentialFenceAuthorityPort {
+  validateCredentialFenceInTransaction?(
+    transaction: PersistenceTransaction,
+    fence: CredentialRevocationFence,
+    scope: { readonly nodeId: string; readonly workspaceId: string }
+  ): Promise<boolean>
+}
+
+/**
+ * Builds a fail-closed validator for SQLite runtime-command settlements. A plain asynchronous
+ * `isRevoked` call cannot prove command scope or share SQLite's write transaction, so it is not
+ * accepted here. The authority must validate credential id/version, node, workspace, and current
+ * revocation using this transaction. SQLite serializes writers, which orders an invalidation
+ * through the same provider strictly before this check or after the fenced command update.
+ */
+export function createRuntimeNodeCredentialFenceValidator(
+  authority: RuntimeNodeCredentialFenceAuthorityPort
+) {
+  return async (
+    transaction: PersistenceTransaction,
+    fence: CredentialRevocationFence,
+    scope: { readonly nodeId: string; readonly workspaceId: string }
+  ) => {
+    if (
+      authority.validateCredentialFenceInTransaction === undefined ||
+      (await authority.validateCredentialFenceInTransaction(transaction, fence, scope)) !== true
+    ) {
+      throw new SqliteRuntimeCommandCredentialFenceInvalidError()
+    }
+  }
+}
+
+export class SqliteRuntimeCommandCredentialFenceInvalidError extends Error {
+  readonly code = 'INVENTORY_CREDENTIAL_FENCE_INVALID' as const
+
+  constructor() {
+    super('INVENTORY_CREDENTIAL_FENCE_INVALID')
+    this.name = 'SqliteRuntimeCommandCredentialFenceInvalidError'
+  }
+}
+
+/** Mirrors the PG repository's trigger: inbound ACK/result transitions require the fence. */
+function requiresRuntimeCommandCredentialFence(
+  current: RuntimeCommandRecord,
+  next: RuntimeCommandRecord
+): boolean {
+  return (
+    next.status === 'acknowledged' ||
+    next.status === 'succeeded' ||
+    next.status === 'failed' ||
+    next.status === 'cancelled' ||
+    next.acknowledgementReference !== current.acknowledgementReference ||
+    next.resultRecordedAt !== current.resultRecordedAt ||
+    next.resultStatus !== current.resultStatus ||
+    next.resultReference !== current.resultReference
+  )
+}
+
+function validCredentialFenceShape(
+  fence: CredentialRevocationFence | undefined
+): fence is CredentialRevocationFence {
+  return (
+    typeof fence === 'object' &&
+    fence !== null &&
+    typeof fence.credentialId === 'string' &&
+    fence.credentialId.length > 0 &&
+    Number.isSafeInteger(fence.revocationVersion) &&
+    fence.revocationVersion >= 1 &&
+    Object.keys(fence).length === 2 &&
+    Object.hasOwn(fence, 'credentialId') &&
+    Object.hasOwn(fence, 'revocationVersion')
+  )
+}
+
 export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository {
-  constructor(readonly provider: PersistenceProvider) {}
+  constructor(
+    readonly provider: PersistenceProvider,
+    /**
+     * Canonical identity/revocation verification (the PG port locks through its SECURITY
+     * DEFINER function inside the same transaction). It receives the LIVE in-transaction
+     * handle so the check is tied to the same transaction/locking authority as the fenced
+     * write — never a disconnected callback. When absent, every required or explicitly
+     * fenced transition REJECTS (fail closed): a well-formed fence without a verifier must
+     * never pass.
+     */
+    private readonly validateCredentialFence?: (
+      transaction: PersistenceTransaction,
+      fence: CredentialRevocationFence,
+      scope: { readonly nodeId: string; readonly workspaceId: string }
+    ) => Promise<void>
+  ) {}
 
   /**
    * Deletes settled runtime commands and their event receipts (#194). A command
@@ -837,7 +973,11 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
     })
   }
 
-  compareAndSet(expectedVersion: number, input: RuntimeCommandRecord): Promise<boolean> {
+  compareAndSet(
+    expectedVersion: number,
+    input: RuntimeCommandRecord,
+    credentialFence?: CredentialRevocationFence
+  ): Promise<boolean> {
     const command = RuntimeCommandRecordSchema.parse(input)
     return this.provider.transaction(async (transaction) => {
       const id = recordId(command.commandId)
@@ -849,6 +989,27 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
         !runtimeCommandRecordsShareIdentity(current, command)
       ) {
         return false
+      }
+      // Atomic credential-revocation fence, mirroring the PG port: inbound
+      // ACK/result transitions (or any explicitly fenced update) fail closed
+      // unless the fence is present, well-formed, and host-verified — all
+      // inside the same provider transaction.
+      if (
+        requiresRuntimeCommandCredentialFence(current, command) ||
+        credentialFence !== undefined
+      ) {
+        if (
+          !validCredentialFenceShape(credentialFence) ||
+          this.validateCredentialFence === undefined
+        ) {
+          // Fail closed: a missing/malformed fence OR an absent verifier can
+          // never authorize a fenced transition.
+          throw new SqliteRuntimeCommandCredentialFenceInvalidError()
+        }
+        await this.validateCredentialFence(transaction, credentialFence, {
+          nodeId: current.nodeId,
+          workspaceId: current.workspaceId,
+        })
       }
       await transaction.put({
         namespace: namespaces.runtimeCommands,

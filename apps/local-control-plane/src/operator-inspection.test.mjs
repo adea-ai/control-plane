@@ -507,7 +507,10 @@ async function seed() {
       ),
       acceptedAt: '2026-08-30T12:02:00.000Z',
     })
-    await put('execution-cancellation-receipts', 'malformed-receipt', { broken: true })
+    await put('execution-cancellation-receipts', 'malformed-receipt', {
+      broken: true,
+      request: { workspaceId: W1, projectId: PRJ1 },
+    })
     await put('reconciliation-checkpoints', 'malformed-checkpoint', { broken: true })
 
     await put(
@@ -571,7 +574,10 @@ async function seed() {
         })
       )
     }
-    await put('executions', 'malformed-execution', { broken: true })
+    await put('executions', 'malformed-execution', {
+      broken: true,
+      correlation: { workspaceId: W1, projectId: PRJ1 },
+    })
     await put('runtime-commands', 'malformed-command', { broken: 'command' })
   })
 

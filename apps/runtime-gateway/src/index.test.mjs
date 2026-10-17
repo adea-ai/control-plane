@@ -1,3 +1,6 @@
+import { spawnSync } from 'node:child_process'
+import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'bun:test'
 import { start } from './index.js'
 
@@ -27,6 +30,21 @@ const productionEnvironment = {
 const testEnvironment = { ...productionEnvironment, APP_ENV: 'test' }
 
 describe('Runtime Gateway production startup', () => {
+  test('forwards the host credential authority in an isolated subprocess', () => {
+    const fixturePath = fileURLToPath(
+      new URL('./runtime-gateway-start-authority.fixture.mjs', import.meta.url)
+    )
+    const result = spawnSync(process.execPath, ['test', fixturePath], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      timeout: 30_000,
+    })
+
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(0)
+    expect(`${result.stdout}\n${result.stderr}`).toContain('forwards the host credential authority')
+  })
+
   test('starts delivery independently and drains channels before the delivery worker', async () => {
     const order = []
     const runtime = await start({

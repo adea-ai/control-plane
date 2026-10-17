@@ -10,7 +10,8 @@
     "start": "bun src/start.ts",
     "dev": "bun --watch src/start.ts",
     "lint": "oxlint src",
-    "test": "bun test src"
+    "test": "bun test src",
+    "test:integration": "bun test --timeout 30000 src/*.integration.test.mjs"
   },
   "dependencies": {
     "@control-plane/bootstrap": "workspace:*",
