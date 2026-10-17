@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.102.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.102.1...workspace-v1.102.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* **models:** allow child cancellation after readiness loss ([#1169](https://github.com/adea-ai/control-plane/issues/1169)) ([4f8e51f](https://github.com/adea-ai/control-plane/commit/4f8e51fc6137f96e9bc0dc37fc2f158b41fbd572))
+
 ## [1.102.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.102.0...workspace-v1.102.1) (2026-10-17)
 
 

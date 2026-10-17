@@ -1,6 +1,6 @@
 {
-  ".": "1.102.1",
-  "apps/control-api": "1.33.0",
+  ".": "1.102.2",
+  "apps/control-api": "1.33.1",
   "apps/hosted-control-plane": "1.21.0",
   "apps/local-control-plane": "1.36.0",
   "apps/runtime-gateway": "1.8.0",
