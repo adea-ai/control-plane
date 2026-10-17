@@ -4,6 +4,7 @@ import {
   RemoteRuntimeGatewayTransport,
   RuntimeCompatibilityMatrixSchema,
 } from '@control-plane/runtime-sdk'
+import { GatewayProtocolManifest } from '@control-plane/runtime-gateway-protocol'
 import { readFile } from 'node:fs/promises'
 import { URL } from 'node:url'
 import { ManagedPiAdapter, ManagedPiDriver } from './index.ts'
@@ -110,7 +111,9 @@ function fixture(scenario = 'complete', transportOptions = {}) {
 
 describe('non-co-located Managed Pi through Runtime Gateway', () => {
   test('matches the exact supported compatibility certification capability claim', async () => {
-    const { adapter, transport } = fixture()
+    const { adapter, transport } = fixture('complete', {
+      gatewayProtocolVersion: { major: 1, minor: 7 },
+    })
     const inspection = await adapter.inspect()
     const inventory = await transport.inventory()
     const matrix = RuntimeCompatibilityMatrixSchema.parse(
@@ -129,9 +132,18 @@ describe('non-co-located Managed Pi through Runtime Gateway', () => {
         protocol: `${inventory.protocolVersion.major}.${inventory.protocolVersion.minor}.0`,
       },
     })
+    expect(inventory.runtimeDrivers[0]?.protocolVersion).toEqual({ major: 1, minor: 7 })
     expect(certification.verifiedCapabilities).toEqual(
       inspection.capabilities.map(({ name }) => name).toSorted()
     )
+  })
+
+  test('reference transport defaults its channel and driver to the current protocol', async () => {
+    const { transport } = fixture()
+    const inventory = await transport.inventory()
+
+    expect(inventory.protocolVersion).toEqual(GatewayProtocolManifest.current)
+    expect(inventory.runtimeDrivers[0]?.protocolVersion).toEqual(GatewayProtocolManifest.current)
   })
 
   test('executes one normalized plan with canonical progress, result, and version provenance', async () => {

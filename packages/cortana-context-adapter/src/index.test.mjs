@@ -185,8 +185,13 @@ describe('Cortana-compatible context adapter', () => {
       nodeId: 'rnr_02JABCDEF0123456789ABCDEFG',
       channelGeneration: 7,
       sequence: 1,
+      protocolVersion: { major: 1, minor: 8 },
       authorizationRef: 'authz:provider-read-policy-v1',
+      canonicalizationVersion: 2,
     })
+    expect(server.requests[0].gatewayCommand.payloadHash).toBe(
+      server.requests[1].gatewayCommand.payloadHash
+    )
     await adapter.retrieve(request())
     expect(bindings).toBe(2)
     expect(server.requests[2].gatewayCommand.commandId).not.toBe(
