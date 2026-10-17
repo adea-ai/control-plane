@@ -647,3 +647,119 @@ describe('a conflicting identity never mutates the generation fence', () => {
     expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(0)
   })
 })
+
+describe('a duplicate coalesced onto a pipeline that is superseded before dispatch is admitted again', () => {
+  const effects = (fixture) => fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)
+
+  /** Store whose first claim completes durably and then parks before the pipeline's final fence read. */
+  function parkAfterFirstClaim(inner) {
+    let announce
+    const reached = new Promise((resolve) => {
+      announce = resolve
+    })
+    let release
+    const gate = new Promise((resolve) => {
+      release = resolve
+    })
+    let armed = true
+    const store = {
+      loadFence: (...args) => inner.loadFence(...args),
+      applyRevocation: (...args) => inner.applyRevocation(...args),
+      countLedger: (...args) => inner.countLedger(...args),
+      readLedger: (...args) => inner.readLedger(...args),
+      claim: async (...args) => {
+        const result = await inner.claim(...args)
+        if (armed) {
+          armed = false
+          announce()
+          await gate
+        }
+        return result
+      },
+      advanceGeneration: (...args) => inner.advanceGeneration(...args),
+      recordOutcome: (...args) => inner.recordOutcome(...args),
+      abandonClaim: (...args) => inner.abandonClaim(...args),
+    }
+    return { store, reached, release }
+  }
+
+  async function untilFence(inner, generation) {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if ((await inner.loadFence()).highestGeneration === generation) return
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    throw new Error(`fence never reached generation ${generation}`)
+  }
+
+  test('generation 1 claims and parks, generation 2 coalesces, and the effect runs once for generation 2', async () => {
+    const inner = new InMemoryAcpRemoteDeviceStateStore()
+    const parking = parkAfterFirstClaim(inner)
+    const fixture = await createSecureFixture({ stateStore: parking.store })
+    const first = captured(
+      fixture.controller.dispatch(
+        runtimeCommand({ commandId: commandIds.first, channelGeneration: 1 })
+      )
+    )
+    await parking.reached
+    const second = captured(
+      fixture.controller.dispatch(
+        runtimeCommand({ commandId: commandIds.first, channelGeneration: 2 })
+      )
+    )
+    await untilFence(inner, 2)
+    expect(effects(fixture)).toBe(0)
+    parking.release()
+
+    // Generation 1 saw the supersession before dispatching: nothing ran for it, so it is refused as
+    // stale. The current generation-2 duplicate is not handed that refusal; it runs the effect once.
+    expect((await first).error).toMatchObject({
+      code: 'RUNTIME_GATEWAY_STALE_CHANNEL',
+      retryable: false,
+    })
+    const result = await second
+    expect(result.error).toBeUndefined()
+    expect(result.value.ack).toBeDefined()
+    expect(effects(fixture)).toBe(1)
+    const record = await inner.readLedger(commandIds.first)
+    expect(record?.outcome?.kind).toBe('exchange')
+
+    // Exactly once: a further generation-2 delivery replays the record and runs nothing.
+    const replay = await fixture.controller.dispatch(
+      runtimeCommand({ commandId: commandIds.first, channelGeneration: 2 })
+    )
+    expect(replay.ack).toBeDefined()
+    expect(effects(fixture)).toBe(1)
+  })
+
+  test('a duplicate that is itself superseded while waiting is not admitted again', async () => {
+    const inner = new InMemoryAcpRemoteDeviceStateStore()
+    const parking = parkAfterFirstClaim(inner)
+    const fixture = await createSecureFixture({ stateStore: parking.store })
+    const first = captured(
+      fixture.controller.dispatch(
+        runtimeCommand({ commandId: commandIds.first, channelGeneration: 1 })
+      )
+    )
+    await parking.reached
+    const second = captured(
+      fixture.controller.dispatch(
+        runtimeCommand({ commandId: commandIds.first, channelGeneration: 2 })
+      )
+    )
+    await untilFence(inner, 2)
+    const third = captured(
+      fixture.controller.dispatch(
+        runtimeCommand({ commandId: commandIds.first, channelGeneration: 3 })
+      )
+    )
+    await untilFence(inner, 3)
+    parking.release()
+
+    expect((await first).error).toMatchObject({ code: 'RUNTIME_GATEWAY_STALE_CHANNEL' })
+    // Generation 2 is superseded by generation 3 and nothing ran for it yet, so it must not execute;
+    // generation 3 is the only delivery that does.
+    expect((await second).error).toMatchObject({ code: 'RUNTIME_GATEWAY_STALE_CHANNEL' })
+    expect((await third).error).toBeUndefined()
+    expect(effects(fixture)).toBe(1)
+  })
+})

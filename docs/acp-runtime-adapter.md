@@ -93,7 +93,15 @@ delivery of the same semantic identity advances it: a different command reusing 
 is never overwritten by a window or generation fence that trips afterwards, including after an
 executor throw: only revocation is reported as itself.
 `response_unknown` is retryable on the same command identity, whose recorded outcome the device
-replays. After a successful claim, a fresh durable
+replays. Another endpoint over the shared store may record the same command between this delivery's
+ledger read and its fence or claim, so the claim-time and fence-time refusals (`stale_channel_generation`,
+`command_expired`, `command_not_yet_valid`) read the ledger again before a plain refusal is signed:
+a recorded exchange is `response_unknown`, a claim without an outcome `outcome_uncertain`, and only
+a command with no record gets the plain refusal (a conflicting identity and a revocation are
+unchanged). A duplicate of the same command at a newer generation that coalesced onto a pipeline
+which was superseded before it dispatched anything (claim abandoned or never made) is admitted
+again on its own pipeline, at most twice: it claims afresh and runs the effect once, or replays the
+record another delivery left; an uncertain or recorded outcome is never re-run. After a successful claim, a fresh durable
 fence read immediately before dispatch refuses the command before the executor is called (see the
 pre-dispatch boundary below). A non-finite clock or malformed window fails
 closed. Unauthenticated input receives no signed reply, so an intermediary cannot harvest a device

@@ -73,7 +73,7 @@ function endpointOver(fixture, stateStore) {
 }
 
 /** Two endpoints over one SQLite provider file, both scoped to the same authenticated route. */
-async function withSharedProvider(run) {
+async function withSharedProvider(run, wrapStoreA = (store) => store) {
   const directory = await mkdtemp(join(tmpdir(), 'acp-shared-provider-'))
   const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
   try {
@@ -82,7 +82,7 @@ async function withSharedProvider(run) {
     const scope = acpRemoteDeviceStateScope(fixture.route)
     const endpointA = endpointOver(
       fixture,
-      new PersistenceProviderAcpRemoteDeviceStateStore(provider, scope)
+      wrapStoreA(new PersistenceProviderAcpRemoteDeviceStateStore(provider, scope))
     )
     const endpointB = endpointOver(
       fixture,
@@ -217,4 +217,133 @@ describe('two endpoints over one shared SQLite provider fence each other', () =>
       expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
     })
   })
+})
+
+/** A barrier a test opens by hand: `reached` settles when the parked call arrives, `release` frees it. */
+function barrier() {
+  let release
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  let announce
+  const reached = new Promise((resolve) => {
+    announce = resolve
+  })
+  return { gate, release, reached, announce }
+}
+
+/** Endpoint A's store: the first `claim` parks BEFORE reaching the shared store. */
+function parkBeforeFirstClaim(inner, point) {
+  let armed = true
+  return {
+    loadFence: (...args) => inner.loadFence(...args),
+    applyRevocation: (...args) => inner.applyRevocation(...args),
+    countLedger: (...args) => inner.countLedger(...args),
+    readLedger: (...args) => inner.readLedger(...args),
+    claim: async (...args) => {
+      if (armed) {
+        armed = false
+        point.announce()
+        await point.gate
+      }
+      return inner.claim(...args)
+    },
+    advanceGeneration: (...args) => inner.advanceGeneration(...args),
+    recordOutcome: (...args) => inner.recordOutcome(...args),
+    abandonClaim: (...args) => inner.abandonClaim(...args),
+  }
+}
+
+/** Endpoint A's store: the first ledger read misses, then parks before the pipeline sees the miss. */
+function parkAfterFirstLedgerMiss(inner, point) {
+  let armed = true
+  return {
+    loadFence: (...args) => inner.loadFence(...args),
+    applyRevocation: (...args) => inner.applyRevocation(...args),
+    countLedger: (...args) => inner.countLedger(...args),
+    readLedger: async (...args) => {
+      const record = await inner.readLedger(...args)
+      if (armed) {
+        armed = false
+        point.announce()
+        await point.gate
+      }
+      return record
+    },
+    claim: (...args) => inner.claim(...args),
+    advanceGeneration: (...args) => inner.advanceGeneration(...args),
+    recordOutcome: (...args) => inner.recordOutcome(...args),
+    abandonClaim: (...args) => inner.abandonClaim(...args),
+  }
+}
+
+describe('a semantic command that another endpoint executed is never refused as "nothing ran"', () => {
+  const sealGeneration = (fixture, commandId, channelGeneration) =>
+    sealFor(fixture, runtimeCommand({ commandId, channelGeneration }))
+
+  for (const [label, park] of [
+    ['before its claim', parkBeforeFirstClaim],
+    ['between its initial ledger miss and its current fence read', parkAfterFirstLedgerMiss],
+  ]) {
+    test(`endpoint A paused ${label} reports response_unknown after endpoint B ran the command`, async () => {
+      const point = barrier()
+      await withSharedProvider(
+        async ({ fixture, endpointA, endpointB }) => {
+          const generationOne = await sealGeneration(fixture, commandIds.first, 1)
+          const generationTwo = await sealGeneration(fixture, commandIds.first, 2)
+          const pending = endpointA.handleCommand(generationOne)
+          await point.reached
+
+          // The peer accepts the same semantic command at the newer generation and executes it.
+          expect(await endpointB.handleCommand(generationTwo)).toMatchObject({ kind: 'exchange' })
+          expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+          point.release()
+
+          // A's fence now refuses generation 1, but the command DID execute: the controller must not be
+          // told the terminal, non-retryable "nothing ran" stale refusal, and no output is released.
+          expect(await pending).toMatchObject({ kind: 'denial', reason: 'response_unknown' })
+          expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+
+          // A distinct command that never executed still gets the plain refusal.
+          const neverRan = await sealGeneration(fixture, commandIds.second, 1)
+          expect(await endpointA.handleCommand(neverRan)).toMatchObject({
+            kind: 'denial',
+            reason: 'stale_channel_generation',
+          })
+          expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+        },
+        (store) => park(store, point)
+      )
+    })
+
+    test(`endpoint A paused ${label} reports outcome_uncertain while endpoint B's effect is still pending`, async () => {
+      const point = barrier()
+      const effect = barrier()
+      await withSharedProvider(
+        async ({ fixture, endpointA, endpointB }) => {
+          const originalDispatch = fixture.executor.dispatch.bind(fixture.executor)
+          fixture.executor.dispatch = async (command) => {
+            effect.announce()
+            await effect.gate
+            return originalDispatch(command)
+          }
+          const generationOne = await sealGeneration(fixture, commandIds.first, 1)
+          const generationTwo = await sealGeneration(fixture, commandIds.first, 2)
+          const pending = endpointA.handleCommand(generationOne)
+          await point.reached
+
+          const peer = endpointB.handleCommand(generationTwo)
+          await effect.reached
+          point.release()
+
+          // The peer's claim is durable but its effect has not finished: its outcome is unknown.
+          expect(await pending).toMatchObject({ kind: 'denial', reason: 'outcome_uncertain' })
+          effect.release()
+          expect(await peer).toMatchObject({ kind: 'exchange' })
+          expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+        },
+        (store) => park(store, point)
+      )
+    })
+  }
 })
