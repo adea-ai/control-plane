@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.102.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.102.3...workspace-v1.102.4) (2026-10-17)
+
+
+### Bug Fixes
+
+* **deps:** preserve classic TypeScript compiler API alias ([987d721](https://github.com/adea-ai/control-plane/commit/987d721998e628226684e52d59bf7d4213dc15e2))
+* **deps:** preserve TypeScript compiler API compatibility ([#1176](https://github.com/adea-ai/control-plane/issues/1176)) ([987d721](https://github.com/adea-ai/control-plane/commit/987d721998e628226684e52d59bf7d4213dc15e2))
+
+
+### Tests
+
+* **ci:** qualify production task caches across runners ([#1173](https://github.com/adea-ai/control-plane/issues/1173)) ([3f8f5be](https://github.com/adea-ai/control-plane/commit/3f8f5bebe3bce2d6784692927963a39474825e93))
+
 ## [1.102.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.102.2...workspace-v1.102.3) (2026-10-17)
 
 
