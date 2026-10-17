@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.2](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.21.1...hosted-control-plane-v1.21.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* version tool idempotency digests ([#1151](https://github.com/adea-ai/control-plane/issues/1151)) ([9629e97](https://github.com/adea-ai/control-plane/commit/9629e97ae00290876b76eac53fc46b236c4fce1e))
+
 ## [1.21.1](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.21.0...hosted-control-plane-v1.21.1) (2026-10-17)
 
 
