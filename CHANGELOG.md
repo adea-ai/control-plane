@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.101.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.101.1...workspace-v1.101.2) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** check the Railway definition with bun check ([#1163](https://github.com/adea-ai/control-plane/issues/1163)) ([ab1f28f](https://github.com/adea-ai/control-plane/commit/ab1f28f221a4530ce815fbe9331080ea354139ef))
+
 ## [1.101.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.101.0...workspace-v1.101.1) (2026-10-17)
 
 
