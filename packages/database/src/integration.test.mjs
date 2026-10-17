@@ -2418,12 +2418,6 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       const plan = createExecutionPlanTestFixture({ contextPackage })
       const ninetyDaysMs = 90 * 24 * 60 * 60 * 1_000
       const assessedAt = new Date(Date.parse(plan.compiledAt) + ninetyDaysMs + 60_000)
-      const options = {
-        policyRetainMs: ninetyDaysMs,
-        bound: 1,
-        dryRun: false,
-        afterId: await retentionCursorBefore(isolated.application, 'plans', plan.executionPlanId),
-      }
       const reference = {
         executionPlanId: plan.executionPlanId,
         contentDigest: plan.contentDigest,
@@ -2434,9 +2428,21 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
 
       // An execution compiled from the plan pins it.
       await seedAcceptancePlan(isolated.application)
+      // Compute the one-row scan window only after every fixture plan exists.
+      // Seeding a lower identity after this cursor can make the sweep miss the target.
+      const options = {
+        policyRetainMs: ninetyDaysMs,
+        bound: 1,
+        dryRun: false,
+        afterId: await retentionCursorBefore(isolated.application, 'plans', plan.executionPlanId),
+      }
       const beforeExecutionReference = await retention.deleteEligibleExecutionPlans(
         assessedAt,
         options
+      )
+      expect(beforeExecutionReference.scanned).toBe(1)
+      expect(beforeExecutionReference.nextAfterId).toBe(
+        beforeExecutionReference.truncated ? plan.executionPlanId : undefined
       )
       expect(beforeExecutionReference.retainedByReason).toEqual({ not_expired: 1 })
       const [beforeExecutionClock] = await isolated.application
