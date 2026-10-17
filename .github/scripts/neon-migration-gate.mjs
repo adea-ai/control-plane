@@ -42,7 +42,9 @@ const relevantPaths = new Set([
   'tests/cp1-embedded-durable-execution.test.mjs',
   'tests/integration-shards.test.mjs',
   'tsconfig.json',
-  'turbo.json',
+  'vite.config.ts',
+  'scripts/orch-graph.mjs',
+  'scripts/orch-toolchain.mjs',
 ])
 
 function publishVerification(outputPath, required, reason) {

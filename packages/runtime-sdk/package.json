@@ -36,6 +36,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "compatibility:check": "bun scripts/compatibility.mjs --check",
     "compatibility:generate": "bun scripts/compatibility.mjs",
     "lint": "oxlint src",

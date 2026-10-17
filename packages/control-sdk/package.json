@@ -42,6 +42,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "lint": "oxlint src",
     "openapi:check": "bun scripts/openapi.mjs --check",
     "openapi:generate": "bun scripts/openapi.mjs --write",

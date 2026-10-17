@@ -1370,7 +1370,7 @@ describe('Neon trusted-main migration gating', () => {
       'bun.lock',
       'bunfig.toml',
       'package.json',
-      'turbo.json',
+      'vite.config.ts',
       'tsconfig.json',
     ]) {
       expect(isNeonProofRelevantPath(changedPath)).toBe(true)

@@ -93,6 +93,7 @@ const repositoryGroups = {
     'tests/railway-production-plan.test.mjs',
     'tests/replacement-compatibility.test.mjs',
     'tests/repository.test.mjs',
+    'tests/workspace-tooling.test.mjs',
     'tests/restate-identity.test.mjs',
   ],
 }

@@ -25,6 +25,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "db:check": "drizzle-kit check --config=drizzle.config.mjs",
     "db:generate": "drizzle-kit generate --config=drizzle.config.mjs",
     "db:migrate": "bun src/cli/migrate.ts",
