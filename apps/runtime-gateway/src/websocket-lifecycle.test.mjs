@@ -409,7 +409,7 @@ describe('Runtime Gateway WebSocket lifecycle', () => {
       results: { persist: async () => 'art_01JABCDEF0123456789ABCDEFG' },
       now,
     })
-    const recovery = new ContextCommandRecoveryService(delivery, async () => {})
+    const recovery = new ContextCommandRecoveryService(delivery, async () => {}, 1)
     const fixture = setup(
       'gateway-context-version-recovery',
       coordination,
@@ -479,6 +479,26 @@ describe('Runtime Gateway WebSocket lifecycle', () => {
         })
       )
 
+      // One bounded page visits only the incompatible first command. It must
+      // neither persist dispatch nor spend a sequence or disconnect the channel.
+      expect(socket.closed).toBeUndefined()
+      expect(socket.sent.map((frame) => JSON.parse(frame).type)).toEqual(['hello'])
+      expect(reservations).toBe(generation === 1 ? 0 : 1)
+      expect(await delivery.get(workspaceId, command.commandId)).toMatchObject({
+        status: 'queued',
+        version: 1,
+        deliveryAttempts: 0,
+      })
+      // The heartbeat continues from that cursor, allowing compatible later work.
+      await gateway.receive(
+        connectionId,
+        JSON.stringify({
+          ...golden.heartbeat,
+          protocolVersion: { major: 1, minor },
+          channelGeneration: generation,
+          sentAt: now().toISOString(),
+        })
+      )
       expect(socket.closed).toBeUndefined()
       const frames = socket.sent.map((frame) => JSON.parse(frame))
       const commandFrames = frames.filter((frame) => frame.type === 'command')
