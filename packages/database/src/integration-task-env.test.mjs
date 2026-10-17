@@ -1,17 +1,17 @@
-import { readFile } from 'node:fs/promises'
 import { expect, test } from 'bun:test'
+import { fileURLToPath } from 'node:url'
+import { buildTasks } from '../../../scripts/orch-graph.mjs'
 
-const turbo = JSON.parse(await readFile(new URL('../../../turbo.json', import.meta.url), 'utf8'))
+const root = fileURLToPath(new URL('../../../', import.meta.url))
+const tasks = buildTasks(root, 'fixture-toolchain')
 
-test('the integration task forwards database URLs and runner timeout budgets', () => {
-  expect(turbo.tasks['test:integration'].env).toEqual(
-    expect.arrayContaining([
-      'DATABASE_ADMIN_URL',
-      'DATABASE_MIGRATION_URL',
-      'DATABASE_URL',
-      'DATABASE_URL_UNPOOLED',
-      'INTEGRATION_TEST_TIMEOUT_MS',
-      'RUN_DATABASE_INTEGRATION',
-    ])
-  )
+test('integration tasks retain the complete database and timeout environment', () => {
+  // Vite+ uncached commands receive the full caller environment. Database URLs
+  // and runner timeout budgets are therefore not restricted to a cache whitelist.
+  for (const [name, task] of Object.entries(tasks)) {
+    if (!name.endsWith(':test:integration') || name === 'orch:test:integration') continue
+    expect(task.cache, name).toBe(false)
+    expect(task.command, name).toContain('bun run --cwd')
+  }
+  expect(tasks['orch:database:test:integration'].dependsOn).toContain('orch:database:build')
 })
