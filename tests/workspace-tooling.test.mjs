@@ -29,6 +29,8 @@ test('boundary guard rejects undeclared type-only and cross-package imports', ()
       "import type { A } from 'declared/subpath'; import { readFile } from 'node:fs';"
     )
     expect(checkBoundaries(root).errors).toEqual([])
+    writeFileSync(file, "import './index.js';")
+    expect(checkBoundaries(root).errors).toEqual([])
     writeFileSync(file, "import type { A } from 'undeclared';")
     expect(checkBoundaries(root).errors).toHaveLength(1)
     writeFileSync(file, "export type { A } from '../../other/src/index.js';")
@@ -84,6 +86,8 @@ test('boundary parser enforces createRequire aliases and import.meta.resolve', (
     "import { createRequire as makeRequire } from 'node:module'; const requireFromAdapter = makeRequire(import.meta.url); requireFromAdapter('undeclared')",
     "import * as Module from 'node:module'; const first = Module.createRequire(import.meta.url); const second = first; second.resolve('undeclared')",
     "import.meta.resolve('undeclared')",
+    "import { createRequire } from 'node:module'; createRequire(import.meta.resolve('./index.js'))('undeclared')",
+    "import { createRequire } from 'node:module'; const localRequire = createRequire(import.meta.resolve('./index.js')); localRequire('undeclared')",
   ]
   const root = mkdtempSync(join(tmpdir(), 'cp-require-boundary-'))
   const directory = join(root, 'packages/a/src')

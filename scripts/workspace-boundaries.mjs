@@ -68,7 +68,11 @@ export function specifiers(source, filename = 'source.ts') {
     ts.isCallExpression(node) &&
     ts.isPropertyAccessExpression(node.expression) &&
     node.expression.name.text === 'resolve' &&
-    ts.isMetaProperty(node.expression.expression)
+    ts.isMetaProperty(node.expression.expression) &&
+    node.expression.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
+    node.arguments[0] &&
+    ts.isStringLiteralLike(node.arguments[0]) &&
+    /^(?:@[a-z0-9._~-]+\/)?[a-z0-9_~][a-z0-9._~-]*(?:\/[^\s]*)?$/i.test(node.arguments[0].text)
   // A require anchored at another declared package resolves that package's
   // dependencies, not this workspace's. Its import.meta.resolve edge is still
   // checked below; do not falsely require its transitives in this manifest.
@@ -164,7 +168,7 @@ export function checkBoundaries(directory = root) {
       for (const specifier of imports) {
         if (isBuiltin(specifier) || specifier === 'bun' || specifier.startsWith('bun:')) continue
         if (specifier.startsWith('.') || specifier.startsWith('/')) {
-          const target = resolve(dirname(file), specifier)
+          const target = resolve(realpathSync(dirname(file)), specifier)
           const resolved = existsSync(target) ? realpathSync(target) : target
           if (!inside(realpathSync(dir), resolved)) {
             errors.push(`${relative(directory, file)}: import ${specifier} leaves ${manifest.name}`)
