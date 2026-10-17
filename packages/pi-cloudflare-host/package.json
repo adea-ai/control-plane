@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/pi-cloudflare-host",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": true,
   "files": [
     "dist"
@@ -17,6 +17,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "lint": "oxlint src",
     "test": "bun test src",
     "test:emulator": "RUN_CLOUDFLARE_EMULATOR=true bun test src/emulator.test.mjs --timeout 30000"

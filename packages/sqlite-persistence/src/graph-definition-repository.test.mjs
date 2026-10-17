@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +12,21 @@ import { SqliteGraphDefinitionRepository, SqlitePersistenceProvider } from './in
 const workspaceA = 'wsp_01JABCDEF0123456789ABCDEFG'
 const workspaceB = 'wsp_01JABCDEF0123456789ABCDEFH'
 const publishedAt = '2026-09-30T12:00:00.000Z'
+
+function legacyLocaleJson(value) {
+  if (Array.isArray(value)) return `[${value.map(legacyLocaleJson).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value)
+      .toSorted(([left], [right]) => left.localeCompare(right, 'en'))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${legacyLocaleJson(entry)}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+function legacyLocaleDigest(value) {
+  return `sha256:${createHash('sha256').update(legacyLocaleJson(value)).digest('hex')}`
+}
 
 function definition(graphDefinitionId, graphVersion) {
   return {
@@ -89,6 +105,46 @@ test('SQLite graph definitions validate constructor scope and preserve definitio
     expect(
       await reopened.get(version.reference.graphDefinitionId, version.reference.graphVersion)
     ).toEqual(version)
+  })
+})
+
+test('SQLite preserves unversioned canonical and historical locale digest records', async () => {
+  await withDatabase(async ({ provider }) => {
+    const repository = new SqliteGraphDefinitionRepository(provider(), workspaceA)
+    const post618 = await published('graph:catalog:post-618', '1.0.0')
+    delete post618.digestVersion
+
+    expect(await repository.insert(post618)).toBe(true)
+    expect(
+      await repository.get(post618.reference.graphDefinitionId, post618.reference.graphVersion)
+    ).toEqual(post618)
+
+    const historical = await published('graph:catalog:pre-618', '1.0.0')
+    delete historical.digestVersion
+    historical.reference.contentDigest = legacyLocaleDigest(historical.content)
+    expect(await repository.insert(historical)).toBe(true)
+    expect(
+      await repository.get(
+        historical.reference.graphDefinitionId,
+        historical.reference.graphVersion
+      )
+    ).toEqual(historical)
+
+    const deprecated = {
+      ...historical,
+      revision: 2,
+      lifecycle: 'deprecated',
+      changedAt: '2026-09-30T13:00:00.000Z',
+      reason: 'replaced by a newer graph version',
+    }
+    expect(await repository.compareAndSet(1, deprecated)).toBe(true)
+    const stored = await repository.get(
+      historical.reference.graphDefinitionId,
+      historical.reference.graphVersion
+    )
+    expect(stored).toEqual(deprecated)
+    expect(stored).not.toHaveProperty('digestVersion')
+    expect(stored.reference.contentDigest).toBe(historical.reference.contentDigest)
   })
 })
 

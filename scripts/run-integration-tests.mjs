@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
+import { postgresImageVariable } from './docker-pull-backoff.mjs'
 import { pullPostgresImage } from './pull-postgres-image.mjs'
 import {
   INTEGRATION_SHARD_IDS,
@@ -43,7 +44,10 @@ function run(command, arguments_, options = {}) {
 // Retry only the digest-pinned image pull. Container startup and health checks
 // run once, so a startup failure cannot be hidden by repeating `compose up`.
 async function composeUpPostgres() {
-  await pullPostgresImage({ environment: runnerEnvironment })
+  const { image } = await pullPostgresImage({ environment: runnerEnvironment })
+  // A rate-limited registry falls over to the same digest elsewhere; compose then has to
+  // start the image that is now present locally, here and in every later compose command.
+  if (image !== undefined) runnerEnvironment[postgresImageVariable] = image
   run('docker', ['compose', 'up', '-d', '--wait', 'postgres'], {
     environment: runnerEnvironment,
   })
@@ -267,26 +271,15 @@ try {
     // Preserve the full remote command for callers that do not select explicit
     // integration shards; trusted-main provider compatibility is a separate
     // bounded workflow and does not invoke this portable suite.
-    run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1', '--log-order=stream'], {
+    run('bun', ['x', '--no-install', 'vp', 'run', '--concurrency=1', 'orch:test:integration'], {
       environment: integrationEnvironment,
     })
     // Root-level scenarios import these workspace packages through their built entry
-    // points. turbo's test:integration graph builds only the upstream packages of the
+    // points. the package integration graph builds only the upstream packages of the
     // integration packages, so build the root's own imports before those scenarios run.
-    run(
-      'bun',
-      [
-        'x',
-        'turbo',
-        'run',
-        'build',
-        '--filter=@control-plane/runtime-gateway...',
-        '--filter=@control-plane/control-api...',
-      ],
-      {
-        environment: integrationEnvironment,
-      }
-    )
+    run('bun', ['x', '--no-install', 'vp', 'run', 'orch:build:integration-roots'], {
+      environment: integrationEnvironment,
+    })
     // Repository-owned scenarios span composition roots; keep their fixtures
     // outside individual workspace packages.
     run(
@@ -298,6 +291,7 @@ try {
         './tests/child-progress-scanner.integration.test.mjs',
         './tests/child-progress-sqlite-feed-replay.integration.test.mjs',
         './tests/memory-process-loss.integration.test.mjs',
+        './tests/acp-remote-device-postgres.integration.test.mjs',
         './tests/langgraph-retirement-inventory-pg.integration.test.mjs',
         './tests/langgraph-retirement-status-adapter.integration.test.mjs',
         './tests/runtime-node-credential-revocation.integration.test.mjs',

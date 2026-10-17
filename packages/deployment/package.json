@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/deployment",
-  "version": "1.10.5",
+  "version": "1.10.7",
   "private": true,
   "files": [
     "dist"
@@ -21,6 +21,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "lint": "oxlint src",
     "test": "bun test src/*.test.mjs"
   },

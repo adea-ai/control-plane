@@ -8,7 +8,8 @@ import {
   type ServicePrincipal,
 } from '@control-plane/contracts'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
-import type { DelegationService } from '@control-plane/orchestration'
+import type { DelegationRecord, DelegationService } from '@control-plane/orchestration'
+import { ModelSelectionError, type ModelReadinessReason } from '@control-plane/model-gateway'
 import { PiLeadPreparationError, type SqlitePiLeadPreparations } from './lead-preparation.js'
 import {
   RuntimeExecutionHandleSchema,
@@ -30,11 +31,15 @@ import {
   PiDurableLeadLookupResponseSchema,
   PiDurableLeadStatusRequestSchema,
   PiDurableLeadProgressRequestSchema,
+  PiDurableLeadChildrenRequestSchema,
+  PiDurableLeadChildrenResponseSchema,
+  PI_DURABLE_LEAD_CHILDREN_MAX_PAGE,
   PiDurableLeadCancelRequestSchema,
   PiDurableLeadDispatchResponseSchema,
   PiDurableLeadStatusResponseSchema,
   PiDurableLeadProgressResponseSchema,
   PiDurableLeadCancelResponseSchema,
+  type PiDurableLeadChild,
   PiDurableLeadCommandEnvelopeSchema as command,
   PiDurableLeadReadEnvelopeSchema as read,
 } from '@control-plane/runtime-sdk'
@@ -49,6 +54,8 @@ export {
   PiDurableLeadRequestedTargetSchema,
   PiDurableLeadStatusRequestSchema,
   PiDurableLeadProgressRequestSchema,
+  PiDurableLeadChildrenRequestSchema,
+  PiDurableLeadChildrenResponseSchema,
   PiDurableLeadCancelRequestSchema,
   PiDurableLeadReceiptResponseSchema,
   PiDurableLeadDispatchResponseSchema,
@@ -138,13 +145,13 @@ export interface PiDurableLeadAuthority {
     readonly workspaceId: string
     readonly intentId: string
     readonly principal: ServicePrincipal
-    readonly operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    readonly operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   }): Promise<PiDurableLeadAdmission | PiDurableLeadFencedResult>
   /** Checks canonical audience, current accepted attempt, pinned plan, deadline and budget. */
   assertCurrent(
     admission: PiDurableLeadAdmission,
     principal: ServicePrincipal,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   ): Promise<void>
 }
 
@@ -232,11 +239,29 @@ export type PiDurableLeadErrorCode =
   | 'PI_LEAD_NOT_CONFIGURED'
   | 'PI_LEAD_PREPARATION_REQUIRED'
   | 'PI_LEAD_FUNDING_CONFIRMATION_STALE'
+  | 'PI_LEAD_MODEL_NOT_READY'
+/** Bounded model readiness vocabulary shared with model-connections.list and the funding view. */
+export type PiDurableLeadModelNotReadyReason = Exclude<ModelReadinessReason, 'READY'>
 export class PiDurableLeadError extends Error {
-  constructor(readonly code: PiDurableLeadErrorCode) {
+  /** Present only with `PI_LEAD_MODEL_NOT_READY`. Never carries provider or credential detail. */
+  readonly reasonCode: PiDurableLeadModelNotReadyReason | undefined
+  constructor(code: 'PI_LEAD_MODEL_NOT_READY', reasonCode: PiDurableLeadModelNotReadyReason)
+  constructor(code: Exclude<PiDurableLeadErrorCode, 'PI_LEAD_MODEL_NOT_READY'>)
+  constructor(
+    readonly code: PiDurableLeadErrorCode,
+    reasonCode?: PiDurableLeadModelNotReadyReason
+  ) {
     super(code)
     this.name = 'PiDurableLeadError'
+    this.reasonCode = code === 'PI_LEAD_MODEL_NOT_READY' ? reasonCode : undefined
   }
+}
+/** Maps a gateway readiness refusal to the bounded lead refusal; anything else is unchanged. */
+export function asModelNotReady(error: unknown): PiDurableLeadError | undefined {
+  if (error instanceof PiDurableLeadError) return error
+  if (error instanceof ModelSelectionError && error.code !== 'READY')
+    return new PiDurableLeadError('PI_LEAD_MODEL_NOT_READY', error.code)
+  return undefined
 }
 
 export interface PiDurableLeadService {
@@ -245,6 +270,7 @@ export interface PiDurableLeadService {
   dispatch(input: unknown, principal: ServicePrincipal): Promise<unknown>
   status(input: unknown, principal: ServicePrincipal): Promise<unknown>
   progress(input: unknown, principal: ServicePrincipal): Promise<unknown>
+  children(input: unknown, principal: ServicePrincipal): Promise<unknown>
   cancel(input: unknown, principal: ServicePrincipal): Promise<unknown>
 }
 
@@ -256,6 +282,8 @@ export interface DurablePiDurableLeadServiceOptions {
   readonly preparations?: SqlitePiLeadPreparations
   /** Canonical cascade-only child stop. The supplied service must use the admitted parent stores. */
   readonly delegationService?: Pick<DelegationService, 'cancelChildren'>
+  /** Read-only retained child records for the children operation; it never advances or publishes. */
+  readonly childDelegations?: Pick<DelegationService, 'listChildren'>
   /** Metadata-only journal read. Must never start, reconcile or invoke a provider. */
   readonly findRuntimeHandle?: (
     request: RuntimeStartRequest
@@ -573,6 +601,36 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     )
   }
 
+  async children(input: unknown, principal: ServicePrincipal) {
+    const request = parse(PiDurableLeadChildrenRequestSchema, input)
+    checkPrincipal(request, principal, 'execution:read')
+    if (!this.options.childDelegations) fail('PI_LEAD_NOT_CONFIGURED')
+    // `children` is its own authority operation: unlike status and progress it is refused under
+    // every rollback fence, at the lookup and at both rereads around the child read.
+    const looked = await this.#lookup(
+      request.workspaceId,
+      request.parameters.dispatchId,
+      principal,
+      'children'
+    )
+    if ('fenced' in looked) fail('PI_LEAD_UNAVAILABLE')
+    const { receipt, admission } = looked
+    await this.options.authority.assertCurrent(admission, principal, 'children')
+    const records = await this.options.childDelegations.listChildren(receipt.executionId)
+    await this.options.authority.assertCurrent(admission, principal, 'children')
+    return PiDurableLeadChildrenResponseSchema.parse(
+      success(request, {
+        ...publicReceipt(receipt),
+        ...observedTarget(receipt, admission),
+        ...childPage(
+          childViews(receipt, records),
+          request.parameters.after,
+          request.parameters.limit ?? PI_DURABLE_LEAD_CHILDREN_MAX_PAGE
+        ),
+      })
+    )
+  }
+
   async cancel(input: unknown, principal: ServicePrincipal) {
     const request = parse(PiDurableLeadCancelRequestSchema, input)
     checkPrincipal(request, principal, 'execution:cancel')
@@ -616,7 +674,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     workspaceId: string,
     intentId: string,
     principal: ServicePrincipal,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   ) {
     return this.#admit(
       await this.#resolveRaw(workspaceId, intentId, principal, operation),
@@ -631,7 +689,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     workspaceId: string,
     intentId: string,
     principal: ServicePrincipal,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   ): Promise<PiDurableLeadAdmission | PiDurableLeadFencedResult> {
     return this.options.authority.resolveIntent({ workspaceId, intentId, principal, operation })
   }
@@ -641,7 +699,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     workspaceId: string,
     intentId: string,
     principal: ServicePrincipal,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   ): Promise<PiDurableLeadAdmission> {
     if (!('schemaVersion' in resolved) || resolved.schemaVersion !== 'pi-lead-authority/v1') {
       // Fenced results never reach the admission path (M18.01.3). Fenced observation and
@@ -681,7 +739,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     workspaceId: string,
     dispatchId: string,
     principal: ServicePrincipal,
-    operation: 'status' | 'progress' | 'cancel'
+    operation: 'status' | 'progress' | 'children' | 'cancel'
   ) {
     const receipt = await this.options.receipts.get(dispatchId)
     if (!receipt) fail('PI_LEAD_MISSING')
@@ -827,7 +885,10 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     try {
       return await operation()
     } catch (error) {
-      if (error instanceof PiLeadPreparationError) fail(error.code)
+      if (error instanceof PiLeadPreparationError)
+        throw error.code === 'PI_LEAD_MODEL_NOT_READY'
+          ? new PiDurableLeadError(error.code, error.reasonCode ?? 'READINESS_UNAVAILABLE')
+          : new PiDurableLeadError(error.code)
       throw error
     }
   }
@@ -844,6 +905,9 @@ export class UnavailablePiDurableLeadService implements PiDurableLeadService {
     fail('PI_LEAD_NOT_CONFIGURED')
   }
   async status(): Promise<never> {
+    fail('PI_LEAD_NOT_CONFIGURED')
+  }
+  async children(): Promise<never> {
     fail('PI_LEAD_NOT_CONFIGURED')
   }
   async progress(): Promise<never> {
@@ -980,6 +1044,87 @@ function childAllowanceDisclosure(admission: PiDurableLeadAdmission) {
         maximumTokens: allowance.maximumTokens,
       }
 }
+/**
+ * Public child views come from retained delegation records only. A record that is not this
+ * lead's own is a repository contract violation and fails the read; a record of another attempt
+ * of the same execution is not this dispatch's child and is left out.
+ */
+function childViews(
+  receipt: PiDurableLeadReceipt,
+  records: readonly DelegationRecord[]
+): PiDurableLeadChild[] {
+  const views: PiDurableLeadChild[] = []
+  for (const record of records) {
+    if (record.parentExecutionId !== receipt.executionId) fail('PI_LEAD_AUTHORITY_CONFLICT')
+    if (record.parentAttemptId !== undefined && record.parentAttemptId !== receipt.attemptId)
+      continue
+    const outcomeState =
+      record.state === 'completed' || record.state === 'failed' || record.state === 'cancelled'
+        ? record.state
+        : undefined
+    views.push({
+      delegationId: record.delegationId,
+      childExecutionId: record.childExecutionId,
+      ...(record.childAttemptId ? { childAttemptId: record.childAttemptId } : {}),
+      role: record.role,
+      state: record.state,
+      awaitingInput: record.state === 'awaiting_input',
+      stopRequested: record.pendingCancellationAt !== undefined,
+      acceptedAt: record.acceptedAt,
+      updatedAt: record.updatedAt,
+      revision: record.revision,
+      ...(outcomeState
+        ? {
+            outcome: {
+              state: outcomeState,
+              ...(record.terminalResultRef ? { resultRef: record.terminalResultRef } : {}),
+              ...(record.failureCode ? { failureCode: record.failureCode } : {}),
+              publication: {
+                status: record.terminalPublication?.status ?? 'pending',
+                ...(record.terminalPublication?.resolution
+                  ? { resolution: record.terminalPublication.resolution }
+                  : {}),
+              },
+            },
+          }
+        : {}),
+    })
+  }
+  return views.sort(compareChildren)
+}
+
+type ChildView = PiDurableLeadChild
+type ChildCursor = Pick<ChildView, 'acceptedAt' | 'delegationId'>
+
+function compareChildren(left: ChildCursor, right: ChildCursor): number {
+  const byTime = Date.parse(left.acceptedAt) - Date.parse(right.acceptedAt)
+  if (byTime !== 0) return byTime
+  return left.delegationId < right.delegationId
+    ? -1
+    : left.delegationId > right.delegationId
+      ? 1
+      : 0
+}
+
+/**
+ * One page of the ordered children. The set is never silently cut: `totalChildren` counts all
+ * matching children, and a page that does not end the set carries the cursor of its last child.
+ */
+function childPage(ordered: readonly ChildView[], after: ChildCursor | undefined, limit: number) {
+  const remaining = after ? ordered.filter((child) => compareChildren(child, after) > 0) : ordered
+  const children = remaining.slice(0, limit)
+  const last = children.at(-1)
+  const more = remaining.length > children.length && last !== undefined
+  return {
+    children,
+    totalChildren: ordered.length,
+    complete: !more,
+    ...(more && last
+      ? { next: { acceptedAt: last.acceptedAt, delegationId: last.delegationId } }
+      : {}),
+  }
+}
+
 function success(request: z.output<typeof command> | z.output<typeof read>, data: unknown) {
   return {
     contractVersion: request.contractVersion,
@@ -993,7 +1138,7 @@ function hash(input: unknown): string {
     .update(canonicalJsonStringify(input) ?? 'null')
     .digest('hex')}`
 }
-function fail(code: PiDurableLeadErrorCode): never {
+function fail(code: Exclude<PiDurableLeadErrorCode, 'PI_LEAD_MODEL_NOT_READY'>): never {
   throw new PiDurableLeadError(code)
 }
 function deepFreeze(value: unknown): void {

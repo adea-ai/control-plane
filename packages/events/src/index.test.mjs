@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, test } from 'bun:test'
 import {
   ExecutionEventError,
+  ExecutionEventSchema,
   ExecutionEventService,
   hashExecutionEventPayload,
   hashExecutionEventPayloadV2,
@@ -8,6 +10,9 @@ import {
 } from './index.ts'
 
 const executionId = 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+const historicalLocalePayload = { schemaVersion: 1, schemas: ['v1'], 'a-b': 1, a_b: 2 }
+const historicalLocaleBytes = '{"a_b":2,"a-b":1,"schemas":["v1"],"schemaVersion":1}'
+const historicalLocaleHash = '2a64697fcbc2d74f77b9dceaec97f0bd170aab9592edd2e0248bd5f70f91b735'
 const base = (eventId, type = 'execution.progressed') => ({
   eventId,
   executionId,
@@ -57,6 +62,110 @@ describe('ExecutionEvent log', () => {
     expect(hashExecutionEventPayloadV2(divergent)).not.toBe(hashExecutionEventPayload(divergent))
   })
 
+  test('writes tagged code-point hashes without consulting localeCompare', async () => {
+    const { service } = setup()
+    const payload = { schemaVersion: 1, schemas: ['v1'], 'a-b': 1, a_b: 2 }
+    const expectedHash = hashExecutionEventPayloadV2(payload)
+    const reorderedPayload = { a_b: 2, 'a-b': 1, schemas: ['v1'], schemaVersion: 1 }
+    const originalDescriptor = Object.getOwnPropertyDescriptor(String.prototype, 'localeCompare')
+    // oxlint-disable-next-line no-extend-native -- test-only sabotage proves the new writer avoids the legacy sorter.
+    Object.defineProperty(String.prototype, 'localeCompare', {
+      configurable: true,
+      value() {
+        throw new Error('new event hashing must not use localeCompare')
+      },
+    })
+
+    let event
+    let reorderedEvent
+    try {
+      event = await service.append({
+        ...base('evt_01HRZ3NDEKTSV4RRFFQ69G5FAV'),
+        payload,
+      })
+      reorderedEvent = await service.append({
+        ...base('evt_01MRZ3NDEKTSV4RRFFQ69G5FAV'),
+        payload: reorderedPayload,
+      })
+    } finally {
+      if (originalDescriptor) {
+        // oxlint-disable-next-line no-extend-native -- restore the test-only sabotage.
+        Object.defineProperty(String.prototype, 'localeCompare', originalDescriptor)
+      } else {
+        delete String.prototype.localeCompare
+      }
+    }
+
+    expect(event).toMatchObject({ payloadHashVersion: 2, payloadHash: expectedHash })
+    expect(reorderedEvent?.payloadHash).toBe(expectedHash)
+  })
+
+  test('verifies fixed historical locale bytes and untagged canonical rows', async () => {
+    const { service } = setup()
+    const event = await service.append(base('evt_01JRZ3NDEKTSV4RRFFQ69G5FAV'))
+    const { payloadHashVersion: _version, ...legacyEvent } = event
+    const historical = {
+      ...legacyEvent,
+      payload: historicalLocalePayload,
+      payloadBytes: Buffer.byteLength(JSON.stringify(historicalLocalePayload)),
+      payloadHash: historicalLocaleHash,
+    }
+
+    expect(createHash('sha256').update(historicalLocaleBytes).digest('hex')).toBe(
+      historicalLocaleHash
+    )
+    expect(hashExecutionEventPayload(historicalLocalePayload)).toBe(historicalLocaleHash)
+    expect(hashExecutionEventPayload(historicalLocalePayload, 'en-US')).toBe(historicalLocaleHash)
+    expect(ExecutionEventSchema.parse(historical).payloadHashVersion).toBeUndefined()
+
+    const canonicalRecord = {
+      ...legacyEvent,
+      payloadHash: hashExecutionEventPayloadV2(legacyEvent.payload),
+    }
+    expect(ExecutionEventSchema.parse(canonicalRecord).payloadHashVersion).toBeUndefined()
+  })
+
+  test('rejects malformed versions and payload hash mismatches', async () => {
+    const { service } = setup()
+    const event = await service.append(base('evt_01KRZ3NDEKTSV4RRFFQ69G5FAV'))
+    const { payloadHashVersion: _version, ...untagged } = event
+    const legacyPayload = historicalLocalePayload
+    const legacyDigest = historicalLocaleHash
+
+    expect(() =>
+      ExecutionEventSchema.parse({
+        ...untagged,
+        payload: legacyPayload,
+        payloadBytes: Buffer.byteLength(JSON.stringify(legacyPayload)),
+        payloadHash: legacyDigest,
+        payloadHashVersion: 2,
+      })
+    ).toThrow()
+    expect(() =>
+      ExecutionEventSchema.parse({
+        ...untagged,
+        payloadHash: '0'.repeat(64),
+        payloadHashVersion: 2,
+      })
+    ).toThrow()
+    // Untagged rows keep the old structural read contract; their locale or ICU
+    // environment may no longer be available to verify a historical digest.
+    expect(
+      ExecutionEventSchema.parse({ ...untagged, payloadHash: '0'.repeat(64) }).payloadHash
+    ).toBe('0'.repeat(64))
+    expect(() => ExecutionEventSchema.parse({ ...untagged, payloadHashVersion: 3 })).toThrow()
+    expect(() => ExecutionEventSchema.parse({ ...untagged, payloadHashVersion: '2' })).toThrow()
+
+    const { repository } = setup()
+    await expect(
+      repository.append({
+        ...base('evt_01LRZ3NDEKTSV4RRFFQ69G5FAV'),
+        payloadHashVersion: 3,
+      })
+    ).rejects.toThrow()
+    expect(await repository.get('evt_01LRZ3NDEKTSV4RRFFQ69G5FAV')).toBeUndefined()
+  })
+
   test('appends immutable normalized events in deterministic per-execution order', async () => {
     const { repository, service } = setup()
     const inputs = Array.from({ length: 8 }, (_, index) =>
@@ -71,6 +180,7 @@ describe('ExecutionEvent log', () => {
     expect(replay.map(({ sequence }) => sequence)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
     expect(await repository.queryAfter(executionId, 5, 2)).toEqual(replay.slice(5, 7))
     expect(events.every(({ payloadHash }) => /^[a-f0-9]{64}$/.test(payloadHash))).toBe(true)
+    expect(events.every(({ payloadHashVersion }) => payloadHashVersion === 2)).toBe(true)
   })
 
   test('keeps a secret canary out of persisted events', async () => {
@@ -157,6 +267,13 @@ describe('ExecutionEvent log', () => {
     const event = await service.append(
       base('evt_01ERZ3NDEKTSV4RRFFQ69G5FAV', 'execution.completed')
     )
+    expect(
+      await repository.compareAndSetPublication(1, {
+        ...event,
+        payloadHashVersion: undefined,
+        publication: { ...event.publication, version: 2 },
+      })
+    ).toBe(false)
     expect(await repository.queryPending(10)).toEqual([event])
     const failed = await service.recordPublicationFailure({
       eventId: event.eventId,
@@ -173,6 +290,8 @@ describe('ExecutionEvent log', () => {
     expect(published).toMatchObject({
       eventId: event.eventId,
       sequence: event.sequence,
+      payloadHashVersion: 2,
+      payloadHash: event.payloadHash,
       publication: { status: 'published', attempts: 2, version: 3 },
     })
     expect(await repository.queryAfter(executionId, 0, 10)).toHaveLength(1)

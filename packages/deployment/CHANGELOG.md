@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.10.7](https://github.com/adea-ai/control-plane/compare/deployment-v1.10.6...deployment-v1.10.7) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** replace Control Plane Turbo with Vite+ and Bun checks ([#1170](https://github.com/adea-ai/control-plane/issues/1170)) ([84e12db](https://github.com/adea-ai/control-plane/commit/84e12dbab1b2fea2380e8747a466db9fb1449959))
+
+## [1.10.6](https://github.com/adea-ai/control-plane/compare/deployment-v1.10.5...deployment-v1.10.6) (2026-10-15)
+
+
+### Bug Fixes
+
+* **m612:** preserve relay and checkpoint replay bytes ([#1150](https://github.com/adea-ai/control-plane/issues/1150)) ([a00ce81](https://github.com/adea-ai/control-plane/commit/a00ce8174f150973d1a0a8b8f8fea63d2cf1ec78))
+
 ## [1.10.5](https://github.com/adea-ai/control-plane/compare/deployment-v1.10.4...deployment-v1.10.5) (2026-10-14)
 
 

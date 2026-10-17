@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.8.1](https://github.com/adea-ai/control-plane/compare/telemetry-v1.8.0...telemetry-v1.8.1) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** replace Control Plane Turbo with Vite+ and Bun checks ([#1170](https://github.com/adea-ai/control-plane/issues/1170)) ([84e12db](https://github.com/adea-ai/control-plane/commit/84e12dbab1b2fea2380e8747a466db9fb1449959))
+
+## [1.8.0](https://github.com/adea-ai/control-plane/compare/telemetry-v1.7.0...telemetry-v1.8.0) (2026-10-15)
+
+
+### Features
+
+* **telemetry:** bound measurement producer cancellation and shutdown ([#1133](https://github.com/adea-ai/control-plane/issues/1133)) ([c07c770](https://github.com/adea-ai/control-plane/commit/c07c770ed7f05974b86c43f45bd4eb1de1042df7))
+
 ## [1.7.0](https://github.com/adea-ai/control-plane/compare/telemetry-v1.6.0...telemetry-v1.7.0) (2026-10-13)
 
 

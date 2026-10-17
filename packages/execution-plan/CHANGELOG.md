@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.11.1](https://github.com/adea-ai/control-plane/compare/execution-plan-v1.11.0...execution-plan-v1.11.1) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** replace Control Plane Turbo with Vite+ and Bun checks ([#1170](https://github.com/adea-ai/control-plane/issues/1170)) ([84e12db](https://github.com/adea-ai/control-plane/commit/84e12dbab1b2fea2380e8747a466db9fb1449959))
+
+## [1.11.0](https://github.com/adea-ai/control-plane/compare/execution-plan-v1.10.1...execution-plan-v1.11.0) (2026-10-17)
+
+
+### Features
+
+* m17-runtime-ownership-baseline-941 ([#1047](https://github.com/adea-ai/control-plane/issues/1047)) ([0c90043](https://github.com/adea-ai/control-plane/commit/0c90043bddfbdcf404fb7a3539479665a7812384))
+
+## [1.10.1](https://github.com/adea-ai/control-plane/compare/execution-plan-v1.10.0...execution-plan-v1.10.1) (2026-10-15)
+
+
+### Performance
+
+* memoize execution plan verification on an immutable snapshot ([#1143](https://github.com/adea-ai/control-plane/issues/1143)) ([4e1bf3d](https://github.com/adea-ai/control-plane/commit/4e1bf3d3c58dd8e6326c8722bbcdb3e7d62de24f))
+
 ## [1.10.0](https://github.com/adea-ai/control-plane/compare/execution-plan-v1.9.1...execution-plan-v1.10.0) (2026-10-14)
 
 

@@ -8,6 +8,20 @@ export {
   createProductionChildModelAuthority,
   ProductionChildModelRequestSchema,
 } from './models/production-child-model-authority.js'
+export {
+  createProductionChildRuntimeBridge,
+  type ProductionChildBridgeContext,
+  type ProductionChildBridgeOptions,
+} from './pi-durable/production-child-bridge.js'
+export {
+  PiChildTerminalSettlement,
+  type ChildSettlementStep,
+  type ChildTerminalSettlementResult,
+} from './pi-durable/child-terminal-settlement.js'
+export type {
+  ChildUsageOutcomeStore,
+  ChildUsageOutcomesFor,
+} from './pi-durable/child-usage-outcomes.js'
 export { createProductionRoleModelSelection } from './models/production-role-selection.js'
 export { ProductionLeadProductEvidenceSchema } from './models/production-lead-product.js'
 export { createProductionProductHttpReader } from './models/production-product-http.js'

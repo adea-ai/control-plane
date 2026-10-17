@@ -85,6 +85,74 @@ describe('SQLite persistence provider', () => {
     }
   }, 10000)
 
+  test('prepares each statement once per connection and never reuses one across a reopen or restore', async () => {
+    const { instance } = await provider()
+    const originalPrepare = DatabaseSync.prototype.prepare
+    let prepared = 0
+    DatabaseSync.prototype.prepare = function (sql, ...parameters) {
+      prepared += 1
+      return originalPrepare.call(this, sql, ...parameters)
+    }
+    try {
+      const read = () => instance.transaction((transaction) => transaction.get('cache-probe', 'a'))
+      expect(await read()).toBeUndefined()
+      const afterFirst = prepared
+      for (let index = 0; index < 5; index += 1) expect(await read()).toBeUndefined()
+      expect(prepared).toBe(afterFirst)
+
+      await instance.transaction((transaction) =>
+        transaction.put({ namespace: 'cache-probe', id: 'a', value: { n: 1 } })
+      )
+      expect((await read()).value).toEqual({ n: 1 })
+      const snapshot = await instance.backup()
+      await instance.transaction((transaction) =>
+        transaction.put({ namespace: 'cache-probe', id: 'a', value: { n: 2 }, expectedRevision: 1 })
+      )
+      expect((await read()).value).toEqual({ n: 2 })
+
+      // A reopened connection must prepare afresh: cached statements belong to the old one.
+      const beforeReopen = prepared
+      instance.close()
+      await instance.migrate()
+      expect((await read()).value).toEqual({ n: 2 })
+      expect(prepared).toBeGreaterThan(beforeReopen)
+
+      // Restore swaps the database file; a stale statement would read the replaced one.
+      const beforeRestore = prepared
+      await instance.restore(snapshot)
+      expect((await read()).value).toEqual({ n: 1 })
+      expect(prepared).toBeGreaterThan(beforeRestore)
+    } finally {
+      DatabaseSync.prototype.prepare = originalPrepare
+    }
+  })
+
+  test('keeps cached statements correct across schema changes and failed writes', async () => {
+    const { instance } = await provider()
+    await instance.transaction((transaction) =>
+      transaction.put({ namespace: 'cache-probe', id: 'b', value: { n: 1 } })
+    )
+    await expect(
+      instance.transaction((transaction) =>
+        transaction.put({ namespace: 'cache-probe', id: 'b', value: { n: 2 } })
+      )
+    ).rejects.toMatchObject({ code: 'SQLITE_REVISION_CONFLICT' })
+    await expect(
+      instance.transaction((transaction) =>
+        transaction.put({ namespace: 'cache-probe', id: 'b', value: { n: 3 }, expectedRevision: 1 })
+      )
+    ).resolves.toMatchObject({ revision: 2, value: { n: 3 } })
+    expect(
+      await instance.transaction((transaction) => transaction.list('cache-probe'))
+    ).toHaveLength(1)
+    expect(
+      await instance.transaction((transaction) => transaction.delete('cache-probe', 'b', 2))
+    ).toBe(true)
+    expect(
+      await instance.transaction((transaction) => transaction.get('cache-probe', 'b'))
+    ).toBeUndefined()
+  })
+
   test('restore invalidates reference clocks but ordinary reopen preserves them', async () => {
     const { instance } = await provider()
     const namespaces = Object.values(REFERENCE_RETENTION_NAMESPACES)
@@ -292,8 +360,16 @@ describe('SQLite persistence provider', () => {
 
   test('fails closed on stale revisions and rolls the transaction back', async () => {
     const { instance } = await provider()
+    const correlation = { workspaceId: 'wsp_test', projectId: 'prj_test' }
     await instance.transaction((transaction) =>
-      transaction.put({ namespace: 'executions', id: 'execution-1', value: { state: 'queued' } })
+      transaction.put({
+        namespace: 'executions',
+        id: 'execution-1',
+        value: {
+          state: 'queued',
+          correlation,
+        },
+      })
     )
 
     await expect(
@@ -302,13 +378,13 @@ describe('SQLite persistence provider', () => {
           namespace: 'executions',
           id: 'execution-1',
           expectedRevision: 1,
-          value: { state: 'running' },
+          value: { state: 'running', correlation },
         })
         await transaction.put({
           namespace: 'executions',
           id: 'execution-1',
           expectedRevision: 1,
-          value: { state: 'completed' },
+          value: { state: 'completed', correlation },
         })
       })
     ).rejects.toMatchObject({ code: 'SQLITE_REVISION_CONFLICT' })

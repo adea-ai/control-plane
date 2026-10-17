@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/runtime-gateway-protocol",
-  "version": "1.7.0",
+  "version": "1.8.1",
   "description": "Versioned wire protocol between the Control Plane and external runtimes: schemas, emulator, fixtures, and authentication.",
   "keywords": [
     "agents",
@@ -41,6 +41,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "lint": "oxlint src",
     "schema:check": "bun scripts/schema.mjs --check",
     "schema:generate": "bun scripts/schema.mjs",

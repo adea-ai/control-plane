@@ -204,13 +204,19 @@ again (1M spent plus 3M outstanding).
 
 #### Composition contract for `DurableChildRuntimeBudgetAdmission`
 
-No composition root builds `CanonicalDelegationRuntimeBridge` in this repository yet, so the class
-is exported but unused. A root that builds the bridge wires it as follows; this contract is for the
-Local and Hosted composition owners (CP #1047, #1048):
+`createProductionChildRuntimeBridge` (`apps/control-api/src/pi-durable/production-child-bridge.ts`)
+builds `CanonicalDelegationRuntimeBridge` from the production Pi lead composition's own canonical
+child ports. `createProductionPiLeadComposition` hands `createGovernedDelegateChild` that composition's
+child authority reader, derived model binding and lazily resolved adapter, so the root supplies only
+what the composition cannot own: the delegation records, lifecycle, plans, publisher, the usage
+store and the funding source. The launcher that supplies `piDurableProduction` is not in this
+repository, and neither the Local nor the Hosted composition builds the Pi lead yet, so no root calls
+the builder outside tests. A root that builds the bridge directly wires it as follows; this contract
+is for the Local and Hosted composition owners (CP #1047, #1048):
 
 ```ts
-new CanonicalDelegationRuntimeBridge({
-  // ...records, lifecycle, plans, delegations, runtime, runtimeConnectionId, assertAuthority...
+createProductionChildRuntimeBridge({
+  // ...records, lifecycle, plans, delegations, events, runtimeConnectionId, context, fundChildAttempt...
   reserveBudget: new DurableChildRuntimeBudgetAdmission({ store: usageStore, plans }).reserve,
 })
 ```

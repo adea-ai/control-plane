@@ -114,8 +114,9 @@ deleted after evidence is recorded.
 The required Code Foundry `Test/Integration` lane builds once, starts one runner-owned disposable
 PostgreSQL service, and runs the three `test:integration` shards from
 `scripts/integration-shards.mjs` concurrently against it. Files remain serial within each shard;
-bounded test cases create isolated databases. The separate local PostgreSQL pull-request workflow
-checks migration/schema consistency, the PostgreSQL profile conformance matrix, and Hosted
+bounded test cases create isolated databases. Repository-level integration files that span
+composition roots are assigned to those same shards. The separate local PostgreSQL pull-request
+workflow checks migration/schema consistency, the PostgreSQL profile conformance matrix, and Hosted
 PostgreSQL/Restate graph behavior. The ruleset check is `Validation / Gate`; it depends on the mode,
 Code Foundry runtime, and PostgreSQL qualification results, and fails closed if any dependency is
 not successful, including when a dependency is skipped or cancelled. The local aggregate uses
@@ -263,6 +264,17 @@ and removes that project's containers, network and volume in `finally`, includin
 partial startup and test failures. Before startup, the runner and pull-request CI
 use `scripts/pull-postgres-image.mjs` to retry only a registry rate-limit response
 (`toomanyrequests`, HTTP 429, or pull-rate-limit text), with three bounded backoffs.
+Before each backoff it first tries the same digest on `mirror.gcr.io` and then
+`docker.io`, without credentials: a digest names the content, so a fallback cannot
+change which image runs. The digest comes from the image Compose itself resolves
+(`docker compose config` with the same working directory and environment as the pull, so
+`.env`, `COMPOSE_FILE` and override files count); when Compose cannot name a pinned ECR
+Public image, or exporting the variable would not make Compose select the fallback
+(an override that fixes the image), the fallback is disabled and only the bounded
+backoff applies. The compose files read the image as
+`${CONTROL_PLANE_POSTGRES_IMAGE:-<pinned reference>}`; the runner, the Hosted Compose
+script and the pull-request workflow (through `GITHUB_ENV`) set that variable to the
+fallback they pulled, so Postgres starts from the local image.
 `docker compose up --wait` and health checks then run once; startup errors are not
 retried. The runner's Docker commands and the nested
 PostgreSQL disruption/restore Docker calls have a 90-second process bound;

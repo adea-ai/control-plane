@@ -7,6 +7,8 @@ import type {
   PiDurableLeadDispatchResponse,
   PiDurableLeadStatusRequest,
   PiDurableLeadStatusResponse,
+  PiDurableLeadChildrenRequest,
+  PiDurableLeadChildrenResponse,
   PiDurableLeadProgressRequest,
   PiDurableLeadProgressResponse,
   PiDurableLeadCancelRequest,
@@ -47,6 +49,8 @@ import {
   type InteractionResponseCommandResult,
   ContractVersionSchema,
   ErrorResponseEnvelopeSchema,
+  ModelReadinessReasonSchema,
+  type ModelReadinessReason,
   PublicContractManifest,
   assessContractCompatibility,
   type ContextPackageResolutionRequest,
@@ -132,6 +136,7 @@ export interface ControlPlaneClientErrorInput {
   readonly requestId: string
   readonly retryable: boolean
   readonly status?: number
+  readonly reasonCode?: ModelReadinessReason | undefined
 }
 
 export class ControlPlaneClientError extends Error {
@@ -140,6 +145,8 @@ export class ControlPlaneClientError extends Error {
   readonly requestId: string
   readonly retryable: boolean
   readonly status: number | undefined
+  /** Bounded model readiness reason carried by PI_LEAD_MODEL_NOT_READY; never free text. */
+  readonly reasonCode: ModelReadinessReason | undefined
 
   constructor(input: ControlPlaneClientErrorInput) {
     super(input.message)
@@ -149,6 +156,7 @@ export class ControlPlaneClientError extends Error {
     this.requestId = input.requestId
     this.retryable = input.retryable
     this.status = input.status
+    this.reasonCode = input.reasonCode
   }
 
   toJSON() {
@@ -160,6 +168,7 @@ export class ControlPlaneClientError extends Error {
       requestId: this.requestId,
       retryable: this.retryable,
       status: this.status,
+      ...(this.reasonCode === undefined ? {} : { reasonCode: this.reasonCode }),
     }
   }
 }
@@ -449,6 +458,17 @@ export class ControlPlaneClient {
     return this.#request(ControlApiOperations.getPiDurableLeadProgress, input)
   }
 
+  async getPiDurableLeadChildren(
+    input: PiDurableLeadChildrenRequest
+  ): Promise<PiDurableLeadChildrenResponse> {
+    const request = ControlApiOperations.getPiDurableLeadChildren.requestSchema.parse(input)
+    const response = await this.#request(ControlApiOperations.getPiDurableLeadChildren, request)
+    if (response.data.dispatchId !== request.parameters.dispatchId) {
+      throw invalidResponse(request.requestId, 200)
+    }
+    return response
+  }
+
   cancelPiDurableLead(input: PiDurableLeadCancelRequest): Promise<PiDurableLeadCancelResponse> {
     return this.#request(ControlApiOperations.cancelPiDurableLead, input)
   }
@@ -495,6 +515,7 @@ export class ControlPlaneClient {
         requestId: parsedError.data.requestId,
         retryable: parsedError.data.error.retryable,
         status: response.status,
+        reasonCode: readinessReason(parsedError.data.error.details),
       })
     }
 
@@ -557,6 +578,12 @@ function assertCompatibleVersion(version: unknown, requestId: string, status: nu
       status,
     })
   }
+}
+
+/** Only the closed readiness vocabulary crosses; other details stay server-side diagnostics. */
+function readinessReason(details: Readonly<Record<string, unknown>> | undefined) {
+  const parsed = ModelReadinessReasonSchema.safeParse(details?.['reasonCode'])
+  return parsed.success && parsed.data !== 'READY' ? parsed.data : undefined
 }
 
 function invalidResponse(requestId: string, status: number): ControlPlaneClientError {

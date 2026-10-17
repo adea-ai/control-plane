@@ -1,16 +1,18 @@
 {
   "name": "@control-plane/runtime-gateway",
-  "version": "1.7.4",
+  "version": "1.8.1",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "browser": false,
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "start": "bun src/start.ts",
     "dev": "bun --watch src/start.ts",
     "lint": "oxlint src",
-    "test": "bun test src"
+    "test": "bun test src",
+    "test:integration": "bun test --timeout 30000 src/*.integration.test.mjs"
   },
   "dependencies": {
     "@control-plane/bootstrap": "workspace:*",

@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/testing",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "private": true,
   "files": [
     "dist"
@@ -22,6 +22,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "lint": "oxlint src",
     "test": "bun test src/index.test.mjs",
     "test:integration": "bun test --timeout 30000 src/postgres.integration.test.mjs"

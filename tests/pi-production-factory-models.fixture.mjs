@@ -115,6 +115,8 @@ export function createProductionFactoryModels(options) {
       async readCurrent(input) {
         state.accountReads++
         state.accountRequests.push(structuredClone(input))
+        // Lets a test change the account at an exact authority read, before that read answers.
+        state.onAccountRead?.(state.accountReads)
         if (
           !state.accountAvailable ||
           input.schemaVersion !== 'model-account-authority/v1' ||

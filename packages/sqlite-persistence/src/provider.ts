@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { chmod, mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
-import { backup, DatabaseSync, type SQLInputValue } from 'node:sqlite'
+import { backup, DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite'
 import type {
   DeploymentComponentHealth,
   JsonValue,
@@ -12,18 +12,14 @@ import type {
   PersistenceTransaction,
   PersistenceWrite,
 } from '@control-plane/deployment'
-import { and, eq, gt } from 'drizzle-orm'
-import {
-  drizzle,
-  type AsyncRemoteCallback,
-  type SqliteRemoteDatabase,
-} from 'drizzle-orm/sqlite-proxy'
-import { records, sqliteSchema } from './schema.js'
+import { sqliteSchema } from './schema.js'
 import { clearReferenceRetentionWindows } from './retention-reference-metadata.js'
 import {
   applyMigrations,
   EXPIRY_INDEX_STATEMENTS,
   EXECUTION_SCOPE_STATEMENTS,
+  PROJECT_REQUIRED_STATEMENTS,
+  SCOPE_SCHEMA_VERSION_STATEMENTS,
   SCHEMA_STATEMENTS,
   SCHEMA_VERSION,
   SqliteMigrationError,
@@ -54,15 +50,13 @@ export interface SqlitePersistenceProviderOptions {
   readonly now?: () => Date
 }
 
-type LocalDatabase = SqliteRemoteDatabase<typeof sqliteSchema>
-
 export class SqlitePersistenceProvider implements PersistenceProvider {
   readonly profile: 'local' | 'hosted-simple'
   readonly dialect = 'sqlite' as const
   readonly #path: string
   readonly #now: () => Date
   #native: DatabaseSync | undefined
-  #drizzle: LocalDatabase | undefined
+  #statements: StatementCache | undefined
   #transactionActive = false
   #transactionTail: Promise<void> = Promise.resolve()
 
@@ -119,7 +113,7 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
     database.exec('BEGIN IMMEDIATE')
     this.#transactionActive = true
     try {
-      const result = await operation(new SqliteRecordTransaction(this.#orm(), this.#now))
+      const result = await operation(new SqliteRecordTransaction(this.#records(), this.#now))
       database.exec('COMMIT')
       return result
     } catch (error) {
@@ -176,7 +170,7 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
       if (this.#transactionActive) throw new SqlitePersistenceError('SQLITE_REVISION_CONFLICT')
       this.#native?.close()
       this.#native = undefined
-      this.#drizzle = undefined
+      this.#statements = undefined
       await unlink(`${this.#path}-wal`).catch(() => undefined)
       await unlink(`${this.#path}-shm`).catch(() => undefined)
       await rename(temporaryPath, this.#path)
@@ -206,7 +200,7 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
     } finally {
       database?.close()
       this.#native = undefined
-      this.#drizzle = undefined
+      this.#statements = undefined
     }
   }
 
@@ -226,13 +220,13 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
     `)
     await chmod(this.#path, 0o600)
     this.#native = database
-    this.#drizzle = drizzle(createRemoteCallback(database), { schema: sqliteSchema })
+    this.#statements = new StatementCache(database)
     return database
   }
 
-  #orm(): LocalDatabase {
-    if (this.#drizzle === undefined) throw new SqlitePersistenceError('SQLITE_CLOSED')
-    return this.#drizzle
+  #records(): StatementCache {
+    if (this.#statements === undefined) throw new SqlitePersistenceError('SQLITE_CLOSED')
+    return this.#statements
   }
 
   #assertOpen(): DatabaseSync {
@@ -277,6 +271,8 @@ function validateRestoreDatabase(path: string, expectedSnapshotVersion: number):
     for (const [name, expected] of Object.entries({
       ...EXPIRY_INDEX_STATEMENTS,
       ...EXECUTION_SCOPE_STATEMENTS,
+      ...PROJECT_REQUIRED_STATEMENTS,
+      ...SCOPE_SCHEMA_VERSION_STATEMENTS,
     })) {
       const actual = database.prepare('SELECT sql FROM sqlite_master WHERE name = ?').get(name)
       if (
@@ -304,26 +300,83 @@ function normalizeSchema(sql: string): string {
     .toLowerCase()
 }
 
+/**
+ * Prepared statements are cached per connection: the cache is created with
+ * each native connection and dropped with it (`close()`/`restore()`), so a
+ * cached statement never outlives or crosses the connection that prepared it.
+ * SQLite re-prepares a statement itself when the schema changes.
+ */
+const MAX_CACHED_STATEMENTS = 256
+
+class StatementCache {
+  readonly #statements = new Map<string, StatementSync>()
+
+  constructor(readonly database: DatabaseSync) {}
+
+  get(query: string, ...params: unknown[]): Record<string, unknown> | undefined {
+    return this.#prepare(query).get(...params.map(sqliteInput))
+  }
+
+  all(query: string, ...params: unknown[]): Record<string, unknown>[] {
+    return this.#prepare(query).all(...params.map(sqliteInput))
+  }
+
+  run(query: string, ...params: unknown[]): void {
+    this.#prepare(query).run(...params.map(sqliteInput))
+  }
+
+  #prepare(query: string): StatementSync {
+    const cached = this.#statements.get(query)
+    if (cached !== undefined) return cached
+    const statement = this.database.prepare(query)
+    if (this.#statements.size >= MAX_CACHED_STATEMENTS) {
+      const oldest = this.#statements.keys().next()
+      if (!oldest.done) this.#statements.delete(oldest.value)
+    }
+    this.#statements.set(query, statement)
+    return statement
+  }
+}
+
+const RECORD_COLUMNS = 'namespace, id, revision, value, updated_at'
+const SELECT_RECORD = `SELECT ${RECORD_COLUMNS} FROM control_plane_records WHERE namespace = ? AND id = ? LIMIT 1`
+const INSERT_RECORD = `INSERT INTO control_plane_records (${RECORD_COLUMNS}) VALUES (?, ?, ?, ?, ?)`
+const UPDATE_RECORD =
+  'UPDATE control_plane_records SET revision = ?, value = ?, updated_at = ? WHERE namespace = ? AND id = ? AND revision = ?'
+const DELETE_RECORD =
+  'DELETE FROM control_plane_records WHERE namespace = ? AND id = ? AND revision = ?'
+const LIST_RECORDS = `SELECT ${RECORD_COLUMNS} FROM control_plane_records WHERE namespace = ? ORDER BY updated_at, id`
+const SCAN_RECORDS = `SELECT ${RECORD_COLUMNS} FROM control_plane_records WHERE namespace = ? ORDER BY id LIMIT ?`
+const SCAN_RECORDS_AFTER = `SELECT ${RECORD_COLUMNS} FROM control_plane_records WHERE namespace = ? AND id > ? ORDER BY id LIMIT ?`
+
+interface StoredRecord {
+  readonly namespace: string
+  readonly id: string
+  readonly revision: number
+  readonly value: string
+  readonly updatedAt: string
+}
+
 class SqliteRecordTransaction implements PersistenceTransaction {
   constructor(
-    readonly database: LocalDatabase,
+    readonly statements: StatementCache,
     readonly now: () => Date
   ) {}
 
   async get(namespace: string, id: string): Promise<PersistenceRecord | undefined> {
     validIdentity(namespace, id)
-    const result = await this.database
-      .select()
-      .from(records)
-      .where(and(eq(records.namespace, namespace), eq(records.id, id)))
-      .limit(1)
-    return result[0] === undefined ? undefined : decodeRecord(result[0])
+    return this.#read(namespace, id)
+  }
+
+  #read(namespace: string, id: string): PersistenceRecord | undefined {
+    const row = this.statements.get(SELECT_RECORD, namespace, id)
+    return row === undefined ? undefined : decodeRecord(storedRecord(row))
   }
 
   async put(write: PersistenceWrite): Promise<PersistenceRecord> {
     validIdentity(write.namespace, write.id)
     const encoded = encodeValue(write.value)
-    const existing = await this.get(write.namespace, write.id)
+    const existing = this.#read(write.namespace, write.id)
     if (write.expectedRevision !== undefined && existing?.revision !== write.expectedRevision) {
       throw new SqlitePersistenceError('SQLITE_REVISION_CONFLICT')
     }
@@ -338,49 +391,44 @@ class SqliteRecordTransaction implements PersistenceTransaction {
       updatedAt: this.now().toISOString(),
     }
     if (existing === undefined) {
-      await this.database.insert(records).values(next)
+      this.statements.run(
+        INSERT_RECORD,
+        next.namespace,
+        next.id,
+        next.revision,
+        next.value,
+        next.updatedAt
+      )
     } else {
-      await this.database
-        .update(records)
-        .set({ revision: next.revision, value: next.value, updatedAt: next.updatedAt })
-        .where(
-          and(
-            eq(records.namespace, next.namespace),
-            eq(records.id, next.id),
-            eq(records.revision, existing.revision)
-          )
-        )
+      this.statements.run(
+        UPDATE_RECORD,
+        next.revision,
+        next.value,
+        next.updatedAt,
+        next.namespace,
+        next.id,
+        existing.revision
+      )
     }
     return decodeRecord(next)
   }
 
   async delete(namespace: string, id: string, expectedRevision?: number): Promise<boolean> {
     validIdentity(namespace, id)
-    const existing = await this.get(namespace, id)
+    const existing = this.#read(namespace, id)
     if (existing === undefined) return false
     if (expectedRevision !== undefined && existing.revision !== expectedRevision) {
       throw new SqlitePersistenceError('SQLITE_REVISION_CONFLICT')
     }
-    await this.database
-      .delete(records)
-      .where(
-        and(
-          eq(records.namespace, namespace),
-          eq(records.id, id),
-          eq(records.revision, existing.revision)
-        )
-      )
+    this.statements.run(DELETE_RECORD, namespace, id, existing.revision)
     return true
   }
 
   async list(namespace: string): Promise<readonly PersistenceRecord[]> {
     validName(namespace)
-    const result = await this.database
-      .select()
-      .from(records)
-      .where(eq(records.namespace, namespace))
-      .orderBy(records.updatedAt, records.id)
-    return result.map(decodeRecord)
+    return this.statements
+      .all(LIST_RECORDS, namespace)
+      .map((row) => decodeRecord(storedRecord(row)))
   }
 
   async scan(namespace: string, options: PersistenceScan): Promise<readonly PersistenceRecord[]> {
@@ -389,34 +437,21 @@ class SqliteRecordTransaction implements PersistenceTransaction {
       throw new SqlitePersistenceError('SQLITE_INVALID_RECORD')
     }
     if (options.afterId !== undefined) validIdentity(namespace, options.afterId)
-    const result = await this.database
-      .select()
-      .from(records)
-      .where(
-        and(
-          eq(records.namespace, namespace),
-          options.afterId === undefined ? undefined : gt(records.id, options.afterId)
-        )
-      )
-      .orderBy(records.id)
-      .limit(options.limit)
-    return result.map(decodeRecord)
+    const rows =
+      options.afterId === undefined
+        ? this.statements.all(SCAN_RECORDS, namespace, options.limit)
+        : this.statements.all(SCAN_RECORDS_AFTER, namespace, options.afterId, options.limit)
+    return rows.map((row) => decodeRecord(storedRecord(row)))
   }
 }
 
-function createRemoteCallback(database: DatabaseSync): AsyncRemoteCallback {
-  return async (query: string, params: unknown[], method: 'run' | 'all' | 'values' | 'get') => {
-    const statement = database.prepare(query)
-    const values = params.map(sqliteInput)
-    if (method === 'run') {
-      statement.run(...values)
-      return { rows: [] }
-    }
-    statement.setReturnArrays(true)
-    if (method === 'get') {
-      return { rows: (statement.get(...values) ?? []) as unknown[] }
-    }
-    return { rows: statement.all(...values) as unknown as unknown[][] }
+function storedRecord(row: Record<string, unknown>): StoredRecord {
+  return {
+    namespace: row['namespace'] as string,
+    id: row['id'] as string,
+    revision: row['revision'] as number,
+    value: row['value'] as string,
+    updatedAt: row['updated_at'] as string,
   }
 }
 
@@ -457,7 +492,7 @@ function encodeValue(value: JsonValue): string {
   return encoded
 }
 
-function decodeRecord(record: typeof records.$inferSelect): PersistenceRecord {
+function decodeRecord(record: StoredRecord): PersistenceRecord {
   return {
     namespace: record.namespace,
     id: record.id,

@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.36.1](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.0...local-control-plane-v1.36.1) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** replace Control Plane Turbo with Vite+ and Bun checks ([#1170](https://github.com/adea-ai/control-plane/issues/1170)) ([84e12db](https://github.com/adea-ai/control-plane/commit/84e12dbab1b2fea2380e8747a466db9fb1449959))
+
+## [1.36.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.35.0...local-control-plane-v1.36.0) (2026-10-17)
+
+
+### Features
+
+* m17-runtime-ownership-baseline-941 ([#1047](https://github.com/adea-ai/control-plane/issues/1047)) ([0c90043](https://github.com/adea-ai/control-plane/commit/0c90043bddfbdcf404fb7a3539479665a7812384))
+
+## [1.35.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.34.0...local-control-plane-v1.35.0) (2026-10-15)
+
+
+### Features
+
+* **telemetry:** bound measurement producer cancellation and shutdown ([#1133](https://github.com/adea-ai/control-plane/issues/1133)) ([c07c770](https://github.com/adea-ai/control-plane/commit/c07c770ed7f05974b86c43f45bd4eb1de1042df7))
+
 ## [1.34.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.33.0...local-control-plane-v1.34.0) (2026-10-13)
 
 

@@ -91,7 +91,7 @@ This core verification does not change the repository's CI runtime pin.
 ## Control Plane commands
 
 Run from the repository root unless a package directory is specified.
-`package.json` and `.bun-version` pin Bun 1.4.2; `.node-version` pins Node 24.21.0.
+`package.json` and `.bun-version` pin Bun 1.4.3; `.node-version` pins Node 24.21.0.
 
 | Task                        | Command                                                                                      |
 | --------------------------- | -------------------------------------------------------------------------------------------- |
@@ -162,7 +162,7 @@ This repository uses the `direct` workflow. Topic pull requests target `main`.
 
 These instructions are the repository-level operating contract for coding agents, including Hermes, OpenCode, and other automation.
 
-They complement `CONTRIBUTING.md`. More specific instructions in nested `AGENTS.md` files and project documentation take precedence for their directory.
+They complement `.github/CONTRIBUTING.md`. More specific instructions in nested `AGENTS.md` files and project documentation take precedence for their directory.
 
 <!-- /code-foundry-managed: config-aware-policy -->
 
@@ -314,7 +314,22 @@ them:
 
 ## Validation
 
-Use the shared scripts when present. They detect supported tools and skip inapplicable checks:
+From a consumer repository, use its documented package scripts or the installed
+Code Foundry CLI:
+
+```sh
+npx code-foundry plan --tier fast
+npx code-foundry check --tier fast
+npx code-foundry check --tier audit
+```
+
+`plan` discovers tasks without running them. `check` invokes the shared runtime;
+`fast` includes CI tasks, unit tests and performance, while `audit` adds
+integration, E2E and smoke.
+
+From a Code Foundry source checkout only, the shared runtime is also available.
+The paths below are relative to that checkout, not a consumer repository. The
+runtime detects supported tools and skips inapplicable checks:
 
 ```sh
 node src/runtime.mjs ci format
@@ -327,8 +342,9 @@ node src/runtime.mjs ci e2e
 node src/runtime.mjs ci smoke
 node src/runtime.mjs ci eval
 node src/runtime.mjs ci performance
-Security and dependency audits run through the GitHub Security workflow.
 ```
+
+Security and dependency audits run through the GitHub Security workflow.
 
 Run focused tests first, then the complete applicable set for release, security, workflow, dependency, and configuration changes.
 
@@ -411,3 +427,14 @@ Branch/PR:
 Use exact command names and outcomes. Mention external changes separately from local changes, and distinguish completed work from recommendations.
 
 <!-- /code-foundry-managed: completion-report -->
+
+<!-- BEGIN:turborepo-agent-rules -->
+
+# This is NOT the Turborepo you know
+
+Turborepo configuration, task behavior, and CLI commands can vary between installed versions and may differ from your training data. Resolve the `turbo` package from this file's directory or relevant workspace; in monorepos, it may not be visible from the repository root. For example, run `node -p "require.resolve('turbo/package.json')"` from a workspace that depends on `turbo`.
+
+Read `docs/README.md` inside that installed package first, then read the relevant pages from its `docs/` directory before changing Turborepo configuration or commands. Heed deprecation notices. These bundled docs match the installed package version and are available without network access.
+
+This block is written and re-added by `turbo` before repository-scoped commands when an AI agent is detected. In the Turborepo source repository, its template is defined in `crates/turborepo-cli/src/cli/agent_guidance.rs`. Removing the managed block while updates are enabled means a later qualifying invocation will add it again. Set `"agentGuidance": false` in the root `turbo.json` or `turbo.jsonc` to opt out; this does not remove an existing block. Keep the block committed with your work to avoid an uncommitted change on the next agent invocation.
+<!-- END:turborepo-agent-rules -->

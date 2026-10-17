@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.50.1](https://github.com/adea-ai/control-plane/compare/database-v1.50.0...database-v1.50.1) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** replace Control Plane Turbo with Vite+ and Bun checks ([#1170](https://github.com/adea-ai/control-plane/issues/1170)) ([84e12db](https://github.com/adea-ai/control-plane/commit/84e12dbab1b2fea2380e8747a466db9fb1449959))
+
+## [1.50.0](https://github.com/adea-ai/control-plane/compare/database-v1.49.1...database-v1.50.0) (2026-10-17)
+
+
+### Features
+
+* m17-runtime-ownership-baseline-941 ([#1047](https://github.com/adea-ai/control-plane/issues/1047)) ([0c90043](https://github.com/adea-ai/control-plane/commit/0c90043bddfbdcf404fb7a3539479665a7812384))
+
+## [1.49.1](https://github.com/adea-ai/control-plane/compare/database-v1.49.0...database-v1.49.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* **events:** version persisted payload hashes ([#1152](https://github.com/adea-ai/control-plane/issues/1152)) ([5f678f7](https://github.com/adea-ai/control-plane/commit/5f678f7d1b804f74bd9408629bf0ec50a436e6b5))
+
+## [1.49.0](https://github.com/adea-ai/control-plane/compare/database-v1.48.0...database-v1.49.0) (2026-10-15)
+
+
+### Features
+
+* **telemetry:** bound measurement producer cancellation and shutdown ([#1133](https://github.com/adea-ai/control-plane/issues/1133)) ([c07c770](https://github.com/adea-ai/control-plane/commit/c07c770ed7f05974b86c43f45bd4eb1de1042df7))
+
 ## [1.48.0](https://github.com/adea-ai/control-plane/compare/database-v1.47.0...database-v1.48.0) (2026-10-14)
 
 
