@@ -53,6 +53,18 @@ Status, progress, lookup and cancel of an already admitted lead never require mo
 readiness, so an operator can always see and stop a run after quota, grant or credential
 loss. Cancel keeps current actor, scope and lineage checks.
 
+Cancellation of an already admitted child uses the same distinction. Its current
+product reads use `observe`, and the child model host re-derives the accepted actor,
+principal, scope, revision, expiry, objective and plan from canonical records without
+resolving a model or reading funding records. The raw product revision must equal the
+retained intent revision, and the existing immutable product/profile digest fence remains
+required without creating a missing pin. Full host identity validation is the final
+awaited authority check, so later canonical reads cannot discard principal/scope/objective
+changes. New admission, continuation and inference
+still require model and funding readiness. An uncertain physical send retains the
+existing cancellation/reconciliation fence across reopen; stopping does not release
+its accounting holds or assert that the send was undone.
+
 ## Proof
 
 - `tests/pi-byo-model-authority.test.mjs` runs the production composition against nine
@@ -68,10 +80,15 @@ loss. Cancel keeps current actor, scope and lineage checks.
 - `apps/control-api/src/pi-durable/pi-lead-model-not-ready.http.test.mjs` pins the HTTP
   envelope for every reason.
 - `packages/model-gateway/src/funding-view.test.mjs` pins the payer kind rule.
+- Child authority/current-reader tests pin cancellation purpose, model/funding independence
+  and refusals for changed actor, audience, scope, revision, expiry and lineage.
+- The child cancellation case in `tests/pi-durable-compaction-governed-dispatch.test.mjs`
+  uses the production factory, canonical SQLite stores and native Pi with a scripted held
+  send. It checks scope refusal, stop delivery after model and payer readiness loss, and
+  retained uncertain-send fencing across reopen, with no new sends, leases or reservations.
 
 ## Not covered
 
 - Live OpenAI qualification and a real account reader.
 - The reason for a denial that happens after a send has started is not carried back to the
   run result; the run fails closed without a bounded reason code.
-- Child run cancel is still gated by child model readiness.
