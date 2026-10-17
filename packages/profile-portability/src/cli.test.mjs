@@ -120,7 +120,14 @@ describe('profile portability CLI', () => {
     const provider = new SqlitePersistenceProvider({ path: databasePath, profile: 'local' })
     await provider.migrate()
     await provider.transaction((transaction) =>
-      transaction.put({ namespace: 'executions', id: 'active-1', value: { state: 'running' } })
+      transaction.put({
+        namespace: 'executions',
+        id: 'active-1',
+        value: {
+          state: 'running',
+          correlation: { workspaceId: 'wsp_portability', projectId: 'prj_portability' },
+        },
+      })
     )
     provider.close()
     const errors = []

@@ -431,8 +431,13 @@ describe('legacy LangGraph retirement controls (M16.03, #940)', () => {
         contentDigest: `sha256:${'c'.repeat(64)}`,
       }
       const plan = {
+        schemaVersion: 2,
         executionPlanId: 'pln_01JABCDEF0123456789ABCDEFG',
         contentDigest: `sha256:${'d'.repeat(64)}`,
+        correlation: {
+          workspaceId: request.workspaceId,
+          executionScope: { schemaVersion: 1, kind: 'workspace' },
+        },
         graph: { reference: graph },
       }
       await provider.transaction(async (tx) => {
@@ -447,7 +452,10 @@ describe('legacy LangGraph retirement controls (M16.03, #940)', () => {
           value: {
             executionId: request.executionId,
             state: 'completed',
-            correlation: { workspaceId: request.workspaceId },
+            correlation: {
+              workspaceId: request.workspaceId,
+              executionScope: { schemaVersion: 1, kind: 'workspace' },
+            },
             executionPlan: {
               executionPlanId: plan.executionPlanId,
               contentDigest: plan.contentDigest,

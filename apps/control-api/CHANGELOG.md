@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.33.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.33.1...control-api-v1.33.2) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** replace Control Plane Turbo with Vite+ and Bun checks ([#1170](https://github.com/adea-ai/control-plane/issues/1170)) ([84e12db](https://github.com/adea-ai/control-plane/commit/84e12dbab1b2fea2380e8747a466db9fb1449959))
+
+## [1.33.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.33.0...control-api-v1.33.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **models:** allow child cancellation after readiness loss ([#1169](https://github.com/adea-ai/control-plane/issues/1169)) ([4f8e51f](https://github.com/adea-ai/control-plane/commit/4f8e51fc6137f96e9bc0dc37fc2f158b41fbd572))
+
+## [1.33.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.32.3...control-api-v1.33.0) (2026-10-16)
+
+
+### Features
+
+* **models:** surface BYO lead model readiness and recheck it at every boundary ([#1159](https://github.com/adea-ai/control-plane/issues/1159)) ([83265a6](https://github.com/adea-ai/control-plane/commit/83265a66057006b0ce44f5b24959f871de84e394))
+* **pi-durable:** authorized read of lead child status, input state and outcomes ([#1160](https://github.com/adea-ai/control-plane/issues/1160)) ([f96ff8f](https://github.com/adea-ai/control-plane/commit/f96ff8fb934f3ebfccdd72c749698b775ad7beb1))
+
+## [1.32.3](https://github.com/adea-ai/control-plane/compare/control-api-v1.32.2...control-api-v1.32.3) (2026-10-16)
+
+
+### Tests
+
+* **pi:** qualify governed child dispatch after native compaction and reopen ([#1134](https://github.com/adea-ai/control-plane/issues/1134)) ([0a453d8](https://github.com/adea-ai/control-plane/commit/0a453d83103a787bdcc6c38a6571de9188f7f559))
+
 ## [1.32.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.32.1...control-api-v1.32.2) (2026-10-14)
 
 

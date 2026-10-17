@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/domain",
-  "version": "1.31.0",
+  "version": "1.31.1",
   "private": true,
   "files": [
     "dist"
@@ -47,6 +47,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "lint": "oxlint src",
     "test": "bun test src/*.test.mjs"
   },

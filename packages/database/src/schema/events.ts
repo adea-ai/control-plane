@@ -58,6 +58,8 @@ export const executionEvents = pgTable(
     payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
     payloadBytes: integer('payload_bytes').notNull(),
     payloadHash: varchar('payload_hash', { length: 64 }).notNull(),
+    /** Nullable for historical rows written before the event hash format was explicit. */
+    payloadHashVersion: integer('payload_hash_version'),
     occurredAt: timestamp('occurred_at', { mode: 'date', withTimezone: true }).notNull(),
     recordedAt: timestamp('recorded_at', { mode: 'date', withTimezone: true }).notNull(),
     retentionExpiresAt: timestamp('retention_expires_at', {

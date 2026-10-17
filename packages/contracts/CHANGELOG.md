@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.21.4](https://github.com/adea-ai/control-plane/compare/contracts-v1.21.3...contracts-v1.21.4) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** replace Control Plane Turbo with Vite+ and Bun checks ([#1170](https://github.com/adea-ai/control-plane/issues/1170)) ([84e12db](https://github.com/adea-ai/control-plane/commit/84e12dbab1b2fea2380e8747a466db9fb1449959))
+
+## [1.21.3](https://github.com/adea-ai/control-plane/compare/contracts-v1.21.2...contracts-v1.21.3) (2026-10-15)
+
+
+### Bug Fixes
+
+* **orchestration:** version graph catalog digests ([bdc2fbb](https://github.com/adea-ai/control-plane/commit/bdc2fbb6afc00e97bfdba0f686a5ba08fc643cf7))
+* preserve graph digest compatibility ([#1149](https://github.com/adea-ai/control-plane/issues/1149)) ([bdc2fbb](https://github.com/adea-ai/control-plane/commit/bdc2fbb6afc00e97bfdba0f686a5ba08fc643cf7))
+
 ## [1.21.2](https://github.com/adea-ai/control-plane/compare/contracts-v1.21.1...contracts-v1.21.2) (2026-10-15)
 
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.2](https://github.com/adea-ai/control-plane/compare/remote-control-relay-v1.3.1...remote-control-relay-v1.3.2) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** replace Control Plane Turbo with Vite+ and Bun checks ([#1170](https://github.com/adea-ai/control-plane/issues/1170)) ([84e12db](https://github.com/adea-ai/control-plane/commit/84e12dbab1b2fea2380e8747a466db9fb1449959))
+
+## [1.3.1](https://github.com/adea-ai/control-plane/compare/remote-control-relay-v1.3.0...remote-control-relay-v1.3.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **m612:** preserve relay and checkpoint replay bytes ([#1150](https://github.com/adea-ai/control-plane/issues/1150)) ([a00ce81](https://github.com/adea-ai/control-plane/commit/a00ce8174f150973d1a0a8b8f8fea63d2cf1ec78))
+
 ## [1.3.0](https://github.com/adea-ai/control-plane/compare/remote-control-relay-v1.2.3...remote-control-relay-v1.3.0) (2026-10-01)
 
 

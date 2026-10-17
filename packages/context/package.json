@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/context",
-  "version": "1.10.0",
+  "version": "1.10.1",
   "private": true,
   "files": [
     "dist"
@@ -17,6 +17,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "lint": "oxlint src",
     "test": "bun test src/*.test.mjs"
   },

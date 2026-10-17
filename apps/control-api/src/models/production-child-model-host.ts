@@ -16,6 +16,7 @@ import {
   PiDurableAdmissionSchema,
   type DurableExecutionAuthority,
   type PiDurableAdmission,
+  type PiDurableAuthorityPurpose,
 } from '@control-plane/pi-durable-adapter'
 import { RuntimeStartRequestSchema, type RuntimeStartRequest } from '@control-plane/runtime-sdk'
 import type { ProductionChildRecord } from './production-child-current.js'
@@ -72,7 +73,10 @@ export function childExecutionBinding(input: {
 export interface ProductionChildModelHostOptions {
   /** Server-owned child lineage; callers supply identifiers only. */
   readonly current: {
-    readRecord(input: { executionId: string; attemptId: string }): Promise<ProductionChildRecord>
+    readRecord(
+      input: { executionId: string; attemptId: string },
+      purpose?: PiDurableAuthorityPurpose
+    ): Promise<ProductionChildRecord>
   }
   readonly product: Pick<
     ReturnType<typeof createProductionLeadProductAuthority>,
@@ -210,10 +214,44 @@ export function createProductionChildModelHost(options: ProductionChildModelHost
       return admission
     },
 
-    /** Re-derives the admitted identity from retained records and requires its funding confirmation. */
-    async assertCurrent(authority: DurableExecutionAuthority) {
+    /** Re-derives admitted identity from current records; inference also requires confirmed funding. */
+    async assertCurrent(
+      authority: DurableExecutionAuthority,
+      purpose: PiDurableAuthorityPurpose = 'inference'
+    ) {
       const start = RuntimeStartRequestSchema.parse(authority.request)
       const admission = PiDurableAdmissionSchema.parse(authority.admission)
+      if (purpose === 'cancel') {
+        // Re-derive the accepted identity without touching model readiness or payer
+        // records. The current product/lineage reader still checks revocation and expiry.
+        const record = await options.current.readRecord(
+          { executionId: start.executionId ?? deny(), attemptId: start.attemptId },
+          purpose
+        )
+        const child = ProductionChildModelRequestSchema.parse(record.current)
+        const plan = assertExecutionPlanIntegrity(start.executionPlan)
+        const expected = PiDurableAdmissionSchema.parse({
+          schemaVersion: 'pi-durable-admission/v1',
+          prompt: record.objective,
+          canonicalActorPrincipalId: child.canonicalActorPrincipalId,
+          selection: admission.selection,
+          authority: {
+            revision: child.authorityRevision,
+            principalRef: record.principalRef,
+            scopeRef: record.scopeRef,
+            expiresAt: child.expiresAt,
+          },
+        })
+        if (
+          child.executionId !== start.executionId ||
+          child.attemptId !== start.attemptId ||
+          child.executionPlanId !== plan.executionPlanId ||
+          child.executionPlanDigest !== plan.contentDigest ||
+          !sameJson(expected, admission)
+        )
+          deny()
+        return
+      }
       const { binding } = await derive({
         executionId: start.executionId ?? deny(),
         attemptId: start.attemptId,
