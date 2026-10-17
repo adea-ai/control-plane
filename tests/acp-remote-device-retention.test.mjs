@@ -185,3 +185,32 @@ describe('claim release', () => {
     })
   })
 })
+
+describe('generation advance without a claim', () => {
+  test('a delivery answered from the ledger moves the fence, never lowers it, and writes no entry', async () => {
+    await withStores(async (name, create) => {
+      const store = create()
+      expect(await store.claim(claim(1)), name).toBe('claimed')
+      expect(await store.advanceGeneration(2), name).toBe('advanced')
+      expect((await store.loadFence()).highestGeneration, name).toBe(2)
+      // Equal is accepted; lower is stale and leaves the fence where it was.
+      expect(await store.advanceGeneration(2), name).toBe('advanced')
+      expect(await store.advanceGeneration(1), name).toBe('stale_channel_generation')
+      expect((await store.loadFence()).highestGeneration, name).toBe(2)
+      expect(await store.countLedger(), name).toBe(1)
+      // The advanced fence now refuses a distinct command on the older generation.
+      expect(await store.claim(claim(2, { channelGeneration: 1 })), name).toBe(
+        'stale_channel_generation'
+      )
+    })
+  })
+
+  test('a revoked fence refuses the advance without writing', async () => {
+    await withStores(async (name, create) => {
+      const store = create()
+      await store.applyRevocation('2026-08-25T12:00:10.000Z')
+      expect(await store.advanceGeneration(5), name).toBe('device_revoked')
+      expect((await store.loadFence()).highestGeneration, name).toBe(0)
+    })
+  })
+})

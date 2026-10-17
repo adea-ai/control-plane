@@ -86,6 +86,7 @@ function plannedStore() {
       countLedger: () => inner.countLedger(),
       readLedger: (commandId) => inner.readLedger(commandId),
       claim: (input) => inner.claim(input),
+      advanceGeneration: (generation) => inner.advanceGeneration(generation),
       recordOutcome: (commandId, outcome) => inner.recordOutcome(commandId, outcome),
     },
     /** Starts the plan for the next delivery and restarts the read count. */

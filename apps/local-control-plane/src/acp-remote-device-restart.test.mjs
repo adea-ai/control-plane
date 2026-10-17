@@ -192,6 +192,50 @@ test('restart preserves recorded replay outcomes and the channel-generation fenc
   }
 })
 
+test('a higher-generation replay persists the generation fence across a restart', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'control-plane-acp-remote-replay-generation-'))
+  const path = join(directory, 'device-state.sqlite')
+  const clock = { current: new Date(NOW) }
+  let provider = new SqlitePersistenceProvider({ path })
+  try {
+    await provider.migrate()
+    let store = new PersistenceProviderAcpRemoteDeviceStateStore(
+      provider,
+      acpRemoteDeviceStateScope(route)
+    )
+    const first = await openDevice(store, clock)
+    const channel = openController(first.device, clock)
+    await channel.controller.dispatch(buildCommand({ commandId: COMMAND_A, channelGeneration: 1 }))
+    expect(first.driver.effectCount(ATTEMPT_ID, RUNTIME_SESSION)).toBe(1)
+    // The same command arrives again on generation 2: answered from the ledger, no new claim.
+    const replay = await channel.controller.dispatch(
+      buildCommand({ commandId: COMMAND_A, channelGeneration: 2 })
+    )
+    expect(replay.ack).toBeDefined()
+    expect(first.driver.effectCount(ATTEMPT_ID, RUNTIME_SESSION)).toBe(1)
+    await provider.close()
+
+    provider = new SqlitePersistenceProvider({ path })
+    await provider.migrate()
+    store = new PersistenceProviderAcpRemoteDeviceStateStore(
+      provider,
+      acpRemoteDeviceStateScope(route)
+    )
+    expect((await store.loadFence()).highestGeneration).toBe(2)
+    const second = await openDevice(store, clock)
+    const reopened = openController(second.device, clock)
+    await expect(
+      reopened.controller.dispatch(buildCommand({ commandId: COMMAND_B, channelGeneration: 1 }))
+    ).rejects.toMatchObject({ code: 'RUNTIME_GATEWAY_STALE_CHANNEL', retryable: false })
+    expect(second.driver.effectCount(ATTEMPT_ID, RUNTIME_SESSION)).toBe(0)
+    await provider.close()
+    provider = undefined
+  } finally {
+    if (provider !== undefined) await provider.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('a revocation applied before a restart still fences the device after it', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'control-plane-acp-remote-revocation-'))
   const path = join(directory, 'device-state.sqlite')

@@ -255,3 +255,163 @@ describe('the replay ledger recovers from capacity once windows close', () => {
     expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(effectsBefore)
   })
 })
+
+describe('an accepted delivery that is answered without a new claim still advances the generation fence', () => {
+  const effects = (fixture) => fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)
+
+  test('a higher-generation replay supersedes the older generation for a distinct command', async () => {
+    const store = new InMemoryAcpRemoteDeviceStateStore()
+    const fixture = await createSecureFixture({ stateStore: store })
+    await fixture.controller.dispatch(
+      runtimeCommand({ commandId: commandIds.first, channelGeneration: 1 })
+    )
+    expect(effects(fixture)).toBe(1)
+
+    // A/gen2 is the recorded command again: served from the ledger, with no new claim.
+    const replay = await fixture.controller.dispatch(
+      runtimeCommand({ commandId: commandIds.first, channelGeneration: 2 })
+    )
+    expect(replay.ack).toBeDefined()
+    expect(effects(fixture)).toBe(1)
+    expect((await store.loadFence()).highestGeneration).toBe(2)
+
+    await expect(
+      fixture.controller.dispatch(
+        runtimeCommand({ commandId: commandIds.second, channelGeneration: 1 })
+      )
+    ).rejects.toMatchObject({ code: 'RUNTIME_GATEWAY_STALE_CHANNEL', retryable: false })
+    expect(effects(fixture)).toBe(1)
+  })
+
+  test('a coalesced in-flight duplicate at a higher generation advances the fence while the effect runs', async () => {
+    const store = new InMemoryAcpRemoteDeviceStateStore()
+    const fixture = await createSecureFixture({ stateStore: store })
+    const dispatch = fixture.executor.dispatch.bind(fixture.executor)
+    let entered
+    const running = new Promise((resolve) => {
+      entered = resolve
+    })
+    let release
+    const gate = new Promise((resolve) => {
+      release = resolve
+    })
+    fixture.executor.dispatch = async (command) => {
+      entered()
+      await gate
+      return dispatch(command)
+    }
+
+    const first = captured(
+      fixture.controller.dispatch(
+        runtimeCommand({ commandId: commandIds.first, channelGeneration: 1 })
+      )
+    )
+    await running
+    const duplicate = captured(
+      fixture.controller.dispatch(
+        runtimeCommand({ commandId: commandIds.first, channelGeneration: 2 })
+      )
+    )
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if ((await store.loadFence()).highestGeneration === 2) break
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    expect((await store.loadFence()).highestGeneration).toBe(2)
+    release()
+    // The generation-1 delivery was superseded while it ran, so its reply is withheld as an unknown
+    // outcome; the generation-2 duplicate coalesced onto the same effect and receives it.
+    expect((await first).error).toMatchObject({ code: 'RUNTIME_NODE_RESPONSE_UNKNOWN' })
+    expect((await duplicate).error).toBeUndefined()
+    expect(effects(fixture)).toBe(1)
+
+    await expect(
+      fixture.controller.dispatch(
+        runtimeCommand({ commandId: commandIds.second, channelGeneration: 1 })
+      )
+    ).rejects.toMatchObject({ code: 'RUNTIME_GATEWAY_STALE_CHANNEL', retryable: false })
+    expect(effects(fixture)).toBe(1)
+  })
+
+  test('a replay refused by a newer fence is withheld and does not lower or move the fence', async () => {
+    const store = new InMemoryAcpRemoteDeviceStateStore()
+    const fixture = await createSecureFixture({ stateStore: store })
+    await fixture.controller.dispatch(
+      runtimeCommand({ commandId: commandIds.first, channelGeneration: 3 })
+    )
+    await expect(
+      fixture.controller.dispatch(
+        runtimeCommand({ commandId: commandIds.first, channelGeneration: 2 })
+      )
+    ).rejects.toMatchObject({ code: 'RUNTIME_GATEWAY_STALE_CHANNEL', retryable: false })
+    expect((await store.loadFence()).highestGeneration).toBe(3)
+  })
+})
+
+describe('an executed command is never reported as expired once its reply is withheld', () => {
+  const effects = (fixture) => fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)
+
+  test('a sealed command redelivered after expiry reaches the outstanding controller as an unknown outcome', async () => {
+    const fixture = await createSecureFixture()
+    fixture.wire.holdCommands()
+    const pending = captured(
+      fixture.controller.dispatch(runtimeCommand({ commandId: commandIds.first }))
+    )
+    await fixture.wire.whenHeld(1)
+    const sealed = structuredClone(
+      fixture.wire.log.find(({ direction }) => direction === 'command').message
+    )
+
+    // An earlier delivery of this sealed command executes; its reply never reaches the controller.
+    expect(await fixture.device.handleCommand(structuredClone(sealed))).toMatchObject({
+      kind: 'exchange',
+    })
+    expect(effects(fixture)).toBe(1)
+
+    fixture.clock.current = new Date(fixture.clock.current.getTime() + 61_000)
+    await fixture.wire.releaseHeld()
+
+    const settled = await pending
+    expect(settled.value).toBeUndefined()
+    expect(settled.error).toMatchObject({ code: 'RUNTIME_NODE_RESPONSE_UNKNOWN', retryable: true })
+    expect(settled.error.code).not.toBe('RUNTIME_GATEWAY_COMMAND_EXPIRED')
+    expect(effects(fixture)).toBe(1)
+
+    // The retry under a fresh window gets the recorded outcome, still without a second effect.
+    const retried = await fixture.controller.dispatch(
+      runtimeCommand({ commandId: commandIds.first, issuedAt: iso(fixture.clock) })
+    )
+    expect(retried.ack).toBeDefined()
+    expect(effects(fixture)).toBe(1)
+  })
+
+  test('a pending claim stays outcome_uncertain when redelivered after expiry', async () => {
+    const fixture = await createSecureFixture()
+    fixture.executor.dispatch = async () => {
+      throw new Error('executor failed after an unknown effect')
+    }
+    await captured(fixture.controller.dispatch(runtimeCommand({ commandId: commandIds.first })))
+    const sealed = fixture.wire.log.find(({ direction }) => direction === 'command').message
+
+    fixture.clock.current = new Date(fixture.clock.current.getTime() + 61_000)
+    const reply = await fixture.wire.resend(sealed)
+
+    expect(reply).toMatchObject({ kind: 'denial', reason: 'outcome_uncertain' })
+  })
+
+  test('a command that never ran still gets command_expired after its window closes', async () => {
+    const fixture = await createSecureFixture()
+    fixture.wire.holdCommands()
+    const pending = captured(
+      fixture.controller.dispatch(runtimeCommand({ commandId: commandIds.first }))
+    )
+    await fixture.wire.whenHeld(1)
+    fixture.clock.current = new Date(fixture.clock.current.getTime() + 61_000)
+    await fixture.wire.releaseHeld()
+
+    expect((await pending).error).toMatchObject({
+      code: 'RUNTIME_GATEWAY_COMMAND_EXPIRED',
+      retryable: false,
+    })
+    expect(effects(fixture)).toBe(0)
+  })
+})

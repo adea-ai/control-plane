@@ -89,6 +89,16 @@ export type AcpRemoteDeviceClaimResult =
   | 'stale_channel_generation'
 
 /**
+ * Result of advancing the persisted channel generation for a delivery that is served WITHOUT a new
+ * claim (a replay, a coalesced duplicate, or a lost claim race). `advanced` covers both a higher
+ * generation now persisted and one already at the fence.
+ */
+export type AcpRemoteDeviceAdvanceResult =
+  | 'advanced'
+  | 'device_revoked'
+  | 'stale_channel_generation'
+
+/**
  * Authenticated identity of one device route. Every durable fence and ledger
  * key is derived from it, so two routes sharing one `PersistenceProvider`
  * store can never observe each other's revocation, generation, or recorded
@@ -140,6 +150,15 @@ export interface AcpRemoteDeviceStateStore {
    * transaction, so two distinct commands racing at capacity one admit exactly one effect.
    */
   claim(input: AcpRemoteDeviceClaim): Promise<AcpRemoteDeviceClaimResult>
+  /**
+   * Persists an accepted delivery's channel generation without creating a ledger entry. Every
+   * accepted delivery moves the generation fence, including one that is answered from the ledger:
+   * a replay or duplicate at a higher generation must supersede older channels exactly as a fresh
+   * claim does. Evaluated against the persisted fence in one transaction: a revoked fence returns
+   * `device_revoked` and a generation below the fence returns `stale_channel_generation`, both
+   * without writing.
+   */
+  advanceGeneration(channelGeneration: number): Promise<AcpRemoteDeviceAdvanceResult>
   /** Records the finished outcome over the claimed entry. */
   recordOutcome(commandId: string, outcome: AcpRemoteDeviceOutcome): Promise<void>
   /**
@@ -283,6 +302,16 @@ export class InMemoryAcpRemoteDeviceStateStore implements AcpRemoteDeviceStateSt
       highestGeneration: Math.max(this.#fence.highestGeneration, input.channelGeneration),
     }
     return 'claimed'
+  }
+
+  async advanceGeneration(channelGeneration: number): Promise<AcpRemoteDeviceAdvanceResult> {
+    if (this.#fence.revokedAt !== undefined) return 'device_revoked'
+    if (channelGeneration < this.#fence.highestGeneration) return 'stale_channel_generation'
+    this.#fence = {
+      ...this.#fence,
+      highestGeneration: Math.max(this.#fence.highestGeneration, channelGeneration),
+    }
+    return 'advanced'
   }
 
   async recordOutcome(commandId: string, outcome: AcpRemoteDeviceOutcome): Promise<void> {
@@ -476,6 +505,27 @@ export class PersistenceProviderAcpRemoteDeviceStateStore implements AcpRemoteDe
           value: fenceValue({ ...fence, highestGeneration }),
         })
         return 'claimed' as const
+      })
+    )
+  }
+
+  async advanceGeneration(channelGeneration: number): Promise<AcpRemoteDeviceAdvanceResult> {
+    return this.#withConflictRetry(() =>
+      this.#provider.transaction(async (transaction) => {
+        const stored = await transaction.get(FENCE_NAMESPACE, this.#fenceId)
+        const fence = readFenceRecord(stored?.value)
+        if (fence.revokedAt !== undefined) return 'device_revoked' as const
+        if (channelGeneration < fence.highestGeneration) return 'stale_channel_generation' as const
+        if (channelGeneration === fence.highestGeneration) return 'advanced' as const
+        // Revision-checked like a claim: a racing revocation or higher generation conflicts, the
+        // bounded retry re-reads the fresh fence and decides again.
+        await transaction.put({
+          namespace: FENCE_NAMESPACE,
+          id: this.#fenceId,
+          ...(stored === undefined ? {} : { expectedRevision: stored.revision }),
+          value: fenceValue({ ...fence, highestGeneration: channelGeneration }),
+        })
+        return 'advanced' as const
       })
     )
   }

@@ -632,7 +632,7 @@ describe('recorded outcomes stay gated by current authority', () => {
     expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
   })
 
-  test('a recorded command whose sealed delivery window has expired is denied, not re-sealed', async () => {
+  test('a recorded command whose sealed delivery window has expired is withheld as an unknown outcome, not re-sealed', async () => {
     const fixture = await createSecureFixture()
     const sealed = await captureSealedCommand({ commandId: commandIds.third })
 
@@ -641,8 +641,10 @@ describe('recorded outcomes stay gated by current authority', () => {
     expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
 
     fixture.clock.current = new Date(Date.parse(NOW) + 61_000)
+    // The effect ran in the closed window, so the late redelivery is not "nothing executed": it is
+    // an unknown outcome the controller may retry under a fresh window, and it carries no output.
     const replay = await fixture.device.handleCommand(structuredClone(sealed))
-    expect(replay).toMatchObject({ kind: 'denial', reason: 'command_expired' })
+    expect(replay).toMatchObject({ kind: 'denial', reason: 'response_unknown' })
     expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
   })
 
@@ -794,6 +796,7 @@ function parkNextStoreCall(inner, method) {
     countLedger: (...args) => inner.countLedger(...args),
     readLedger: (...args) => inner.readLedger(...args),
     claim: (...args) => inner.claim(...args),
+    advanceGeneration: (...args) => inner.advanceGeneration(...args),
     recordOutcome: (...args) => inner.recordOutcome(...args),
   }
   store[method] = async (...args) => {

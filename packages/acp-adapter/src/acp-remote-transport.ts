@@ -714,6 +714,25 @@ export class SecureAcpDeviceEndpoint {
   }
 
   /**
+   * Persists the generation of an accepted delivery that is answered without a new claim. A replay,
+   * a coalesced duplicate, and a lost claim race are accepted deliveries too: a higher generation
+   * must supersede older channels durably, or a distinct command on an older generation would be
+   * accepted afterwards. A store failure is `state_unavailable`, never a served replay.
+   */
+  async #advanceGeneration(
+    header: AcpRemoteCommandHeader
+  ): Promise<AcpRemoteDenialReason | undefined> {
+    try {
+      const result = await this.#stateStore.advanceGeneration(header.channelGeneration)
+      if (result !== 'advanced') return result
+    } catch {
+      return 'state_unavailable'
+    }
+    this.#highestGeneration = Math.max(this.#highestGeneration, header.channelGeneration)
+    return undefined
+  }
+
+  /**
    * Applies a controller-signed revocation: the local mirror flips synchronously so a command parked
    * in flight is fenced immediately, and the durable record is written before this resolves so the
    * revocation survives a restart. Notices from any other key are rejected, never applied.
@@ -816,7 +835,7 @@ export class SecureAcpDeviceEndpoint {
       }
     }
     const preDecrypt = this.#commandFenceReason(header)
-    if (preDecrypt !== undefined) return this.#refuse(header, preDecrypt)
+    if (preDecrypt !== undefined) return this.#refuseBeforeEffect(header, preDecrypt)
     let plaintext: Uint8Array
     try {
       plaintext = await hpkeOpen({
@@ -838,7 +857,7 @@ export class SecureAcpDeviceEndpoint {
     // prevent the executor below. The command-scoped fence also gates every replay of a recorded
     // outcome, so cached output is never re-sealed under stale delivery context.
     const postDecrypt = this.#commandFenceReason(header)
-    if (postDecrypt !== undefined) return this.#refuse(header, postDecrypt)
+    if (postDecrypt !== undefined) return this.#refuseBeforeEffect(header, postDecrypt)
     const identity = semanticIdentityOf(command)
     const outcome = await this.#outcomeFor(header, command, identity)
     return this.#reply(outcome, header, identity)
@@ -856,9 +875,12 @@ export class SecureAcpDeviceEndpoint {
   ): Promise<AcpRemoteDeviceOutcome> {
     const inflight = this.#inflight.get(header.commandId)
     if (inflight !== undefined) {
+      // A coalesced duplicate is an accepted delivery: it advances the durable generation fence
+      // even though it never claims, then waits for the one pipeline that runs the effect.
+      const advanced = await this.#advanceGeneration(header)
       if (inflight.identity !== identity) return { kind: 'denial', reason: 'command_conflict' }
       const outcome = await inflight.outcome
-      const fenced = this.#commandFenceReason(header)
+      const fenced = advanced ?? this.#commandFenceReason(header)
       if (fenced !== undefined) return withholdExchange(fenced, outcome)
       return outcome
     }
@@ -885,7 +907,11 @@ export class SecureAcpDeviceEndpoint {
       const fencedAfterRead = await this.#currentCommandFence(header)
       const replayed = replayOutcome(stored, identity)
       if (fencedAfterRead !== undefined) return withholdExchange(fencedAfterRead, replayed)
-      if (replayed !== undefined) return replayed
+      if (replayed !== undefined) {
+        // Served from the ledger without a claim: the delivery still moves the generation fence.
+        const advanced = await this.#advanceGeneration(header)
+        return advanced === undefined ? replayed : withholdExchange(advanced, replayed)
+      }
       const fencedBeforeClaim = this.#commandFenceReason(header)
       if (fencedBeforeClaim !== undefined) return { kind: 'denial', reason: fencedBeforeClaim }
       let claimResult: AcpRemoteDeviceClaimResult
@@ -919,7 +945,8 @@ export class SecureAcpDeviceEndpoint {
       if (claimResult === 'already_claimed') {
         // Another delivery recorded this command first; replay its record instead of executing.
         const winner = await this.#stateStore.readLedger(header.commandId)
-        const fencedAfterRace = await this.#currentCommandFence(header)
+        const fencedAfterRace =
+          (await this.#currentCommandFence(header)) ?? (await this.#advanceGeneration(header))
         const raced = replayOutcome(winner, identity)
         if (fencedAfterRace !== undefined) return withholdExchange(fencedAfterRace, raced)
         return raced ?? { kind: 'denial', reason: 'state_unavailable' }
@@ -1028,6 +1055,37 @@ export class SecureAcpDeviceEndpoint {
   ): Promise<AcpRemoteSealedResponse> {
     const withheld = withholdExchange(reason, outcome)
     return this.#sealOutcome(withheld, header)
+  }
+
+  /**
+   * A delivery whose window is not open is refused before the ledger is consulted, but the same
+   * command id may already have run in an earlier window. `command_expired` and
+   * `command_not_yet_valid` tell the controller that nothing executed, so they are only sent when
+   * the ledger holds no record. With a record, the controller gets the truth without any output:
+   * a recorded exchange is `response_unknown` (retryable: a fresh window replays it), a claim
+   * without an outcome or a compacted record is `outcome_uncertain`, and a recorded denial keeps its
+   * reason. Identity is not compared here (the plaintext is not opened); a different command that
+   * reuses the id gets `command_conflict` on its retry with a fresh window.
+   */
+  async #refuseBeforeEffect(
+    header: AcpRemoteCommandHeader,
+    reason: AcpRemoteDenialReason
+  ): Promise<AcpRemoteSealedResponse> {
+    if (reason !== 'command_expired' && reason !== 'command_not_yet_valid') {
+      return this.#refuse(header, reason)
+    }
+    let stored: AcpRemoteDeviceLedgerRecord | undefined
+    try {
+      stored = await this.#stateStore.readLedger(header.commandId)
+    } catch {
+      return this.#refuse(header, 'state_unavailable')
+    }
+    if (stored === undefined) return this.#refuse(header, reason)
+    if (stored.outcome === undefined) return this.#refuse(header, 'outcome_uncertain')
+    return this.#refuse(
+      header,
+      stored.outcome.kind === 'exchange' ? 'response_unknown' : stored.outcome.reason
+    )
   }
 
   #refuse(

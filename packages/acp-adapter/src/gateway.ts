@@ -30,6 +30,7 @@ export {
   SecureAcpRemoteTransport,
 } from './acp-remote-transport.js'
 export type {
+  AcpRemoteDeviceAdvanceResult,
   AcpRemoteDeviceClaim,
   AcpRemoteDeviceClaimResult,
   AcpRemoteDeviceDenialOutcome,

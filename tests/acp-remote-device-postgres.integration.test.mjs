@@ -471,6 +471,37 @@ describe.skipIf(!enabled)('hosted PostgreSQL durable state qualification', () =>
     })
   })
 
+  test('a generation advance racing a higher-generation claim on another connection never lowers the fence', async () => {
+    await withPostgresProvider(async (provider, database) => {
+      const gate = parkingGate()
+      const advancer = new PersistenceProviderAcpRemoteDeviceStateStore(
+        new PostgresPersistenceProvider({ database: parkingDatabase(database.application, gate) }),
+        acpRemoteDeviceStateScope(route)
+      )
+      const other = new PersistenceProviderAcpRemoteDeviceStateStore(
+        provider,
+        acpRemoteDeviceStateScope(route)
+      )
+      const pending = captured(advancer.advanceGeneration(2))
+      await gate.reached
+      // A higher generation commits on a DIFFERENT pool connection while the advance is parked.
+      expect(
+        await other.claim({
+          commandId: COMMAND_B,
+          identity: 'race-b',
+          channelGeneration: 3,
+          capacity: 1024,
+        })
+      ).toBe('claimed')
+      gate.release()
+
+      // The advance either lost the revision race and re-decided as stale, or committed first and
+      // was superseded; it never leaves the fence below the claim's generation.
+      expect(['advanced', 'stale_channel_generation']).toContain((await pending).value)
+      expect(await other.loadFence()).toMatchObject({ highestGeneration: 3 })
+    })
+  })
+
   test('a delete whose observed revision is replaced by a concurrent update reports revision-conflict', async () => {
     await withPostgresProvider(async (provider, database) => {
       await provider.transaction((transaction) =>
