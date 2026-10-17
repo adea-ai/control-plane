@@ -271,26 +271,15 @@ try {
     // Preserve the full remote command for callers that do not select explicit
     // integration shards; trusted-main provider compatibility is a separate
     // bounded workflow and does not invoke this portable suite.
-    run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1', '--log-order=stream'], {
+    run('bun', ['x', '--no-install', 'vp', 'run', '--concurrency=1', 'orch:test:integration'], {
       environment: integrationEnvironment,
     })
     // Root-level scenarios import these workspace packages through their built entry
-    // points. turbo's test:integration graph builds only the upstream packages of the
+    // points. the package integration graph builds only the upstream packages of the
     // integration packages, so build the root's own imports before those scenarios run.
-    run(
-      'bun',
-      [
-        'x',
-        'turbo',
-        'run',
-        'build',
-        '--filter=@control-plane/runtime-gateway...',
-        '--filter=@control-plane/control-api...',
-      ],
-      {
-        environment: integrationEnvironment,
-      }
-    )
+    run('bun', ['x', '--no-install', 'vp', 'run', 'orch:build:integration-roots'], {
+      environment: integrationEnvironment,
+    })
     // Repository-owned scenarios span composition roots; keep their fixtures
     // outside individual workspace packages.
     run(

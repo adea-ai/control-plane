@@ -36,7 +36,7 @@ const runtimeRef =
   (await readFile(new URL('../.github/code-foundry.yml', import.meta.url), 'utf8')).match(
     /^runtime_ref: (\S+)$/m
   )?.[1] ?? ''
-const sharedValidationRef = '7119b3e2baebfbfdd47d32428cbf5df2f2079afa'
+const sharedValidationRef = runtimeRef
 
 const apps = [
   'control-api',
@@ -108,7 +108,7 @@ test('defines root quality and build commands', async () => {
     assert.equal(typeof manifest.scripts[script], 'string', `${script} must be defined`)
   }
 
-  assert.match(manifest.scripts['type-check'], /turbo run build openapi:check/)
+  assert.match(manifest.scripts['type-check'], /vp run orch:check/)
   assert.match(manifest.scripts['type-check'], /bun run db:check/)
   assert.match(manifest.scripts['requirements:check'], /--check-issues/)
   assert.match(manifest.scripts['db:check'], /packages\/database/)
@@ -348,6 +348,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/railway-production-plan.test.mjs',
     'tests/replacement-compatibility.test.mjs',
     'tests/repository.test.mjs',
+    'tests/workspace-tooling.test.mjs',
     'tests/restate-identity.test.mjs',
   ])
   const inventory = await discoverTestInventory()
@@ -764,7 +765,7 @@ test('provides a documented isolated integration-test runner', async () => {
   assert.match(runner, /RUN_DATABASE_INTEGRATION/)
   assert.match(runner, /SELECT 1/)
   assert.match(runner, /database system is accepting SQL connections/)
-  assert.match(runner, /'test:integration', '--concurrency=1'/)
+  assert.match(runner, /'--concurrency=1', 'orch:test:integration'/)
   assert.match(runner, /async function runLocalIntegrationShards/)
   assert.match(runner, /INTEGRATION_SHARD_IDS\.map\(async \(shard\)/)
   assert.match(runner, /Local PostgreSQL integration shard .* starting/)
@@ -1039,7 +1040,7 @@ test('configures strict TypeScript and dependency-boundary checks', async () => 
   assert.equal(tsconfig.compilerOptions.noUncheckedSideEffectImports, true)
   assert.equal(tsconfig.compilerOptions.allowUnreachableCode, false)
   assert.equal(tsconfig.compilerOptions.allowUnusedLabels, false)
-  assert.match(manifest.scripts['check:boundaries'], /turbo boundaries/)
+  assert.match(manifest.scripts['check:boundaries'], /bun scripts\/workspace-boundaries\.mjs/)
   for (const prohibited of [
     '@langchain/langgraph',
     '@modelcontextprotocol',

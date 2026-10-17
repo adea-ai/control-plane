@@ -63,7 +63,7 @@ Key documentation:
 
 | Command                      | Purpose                                                                                                |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `bun run build`              | Build every app and package through Turborepo                                                          |
+| `bun run build`              | Build every app and package through Vite+                                                              |
 | `bun run lint`               | Lint source/configuration and enforce package boundaries                                               |
 | `bun test`                   | Run workspace test groups                                                                              |
 | `bun run test:acceptance`    | Run the repository acceptance baseline currently implemented in source                                 |
