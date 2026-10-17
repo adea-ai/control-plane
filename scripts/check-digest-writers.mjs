@@ -364,15 +364,16 @@ function isIntlCollatorFactory(node) {
   )
 }
 
-function isIntlCollatorCompare(node, file, record, seen = new Set()) {
+function isIntlCollatorCompare(node, file, seen = new Set()) {
   if (node?.type !== 'MemberExpression' || memberName(node) !== 'compare') return false
   const object = node.object
   if (isIntlCollatorFactory(object)) return true
-  if (object.type === 'Identifier' && !seen.has(object.name)) {
-    seen.add(object.name)
-    const initial =
-      record?.variableInitializers.get(object.name) ?? file.variableInitializers.get(object.name)
-    return isIntlCollatorFactory(initial) || isIntlCollatorCompare(initial, file, record, seen)
+  if (object.type === 'Identifier') {
+    const binding = lexicalBinding(file, object)
+    if (!binding || seen.has(binding.id)) return false
+    seen.add(binding.id)
+    const initial = binding.initializer
+    return isIntlCollatorFactory(initial) || isIntlCollatorCompare(initial, file, seen)
   }
   return false
 }
@@ -380,12 +381,10 @@ function isIntlCollatorCompare(node, file, record, seen = new Set()) {
 function findLocaleComparatorNodes(expression, file, record, fileRecords, seen = new Set()) {
   if (!isNode(expression)) return []
   if (expression.type === 'Identifier') {
-    const identifierKey = `${file.path}:${record?.owner ?? '<module>'}:identifier:${expression.name}`
-    if (seen.has(identifierKey)) return []
-    seen.add(identifierKey)
-    const initializer =
-      record?.variableInitializers.get(expression.name) ??
-      file.variableInitializers.get(expression.name)
+    const binding = lexicalBinding(file, expression)
+    if (!binding || seen.has(binding.id)) return []
+    seen.add(binding.id)
+    const initializer = binding.initializer
     if (initializer) return findLocaleComparatorNodes(initializer, file, record, fileRecords, seen)
     const target = resolveFunctionTarget(expression, file, fileRecords)
     return target ? findFunctionLocaleComparators(target, fileRecords, seen) : []
@@ -396,11 +395,11 @@ function findLocaleComparatorNodes(expression, file, record, fileRecords, seen =
       fileRecords,
       seen
     )
-  if (isIntlCollatorCompare(expression, file, record)) return [{ file, node: expression }]
+  if (isIntlCollatorCompare(expression, file)) return [{ file, node: expression }]
   const result = []
   visit(expression, (node) => {
     if (isLocaleCompareCall(node)) result.push({ file, node })
-    else if (isIntlCollatorCompare(node, file, record)) result.push({ file, node })
+    else if (isIntlCollatorCompare(node, file)) result.push({ file, node })
   })
   return result
 }
@@ -417,7 +416,7 @@ function findFunctionLocaleComparators(record, fileRecords, seen) {
     if (!isNode(node)) return
     if (isFunctionNode(node)) return
     if (isLocaleCompareCall(node)) result.push({ file, node })
-    else if (isIntlCollatorCompare(node, file, record)) result.push({ file, node })
+    else if (isIntlCollatorCompare(node, file)) result.push({ file, node })
 
     if (node.type === 'CallExpression') {
       const target = resolveFunctionTarget(node.callee, file, fileRecords)
@@ -1175,8 +1174,22 @@ function createAnalyzer(fileRecords) {
   }
 
   for (const file of fileRecords.values()) moduleEnvironments.set(file, new Map())
-  for (const file of fileRecords.values())
-    evaluateStatement(file.program, moduleEnvironments.get(file), file, undefined, new Set())
+  // Imports may be enumerated before their dependencies. Reach a monotone
+  // fixed point over finite binding/taint sets instead of trusting file order.
+  let moduleTaintsChanged
+  do {
+    moduleTaintsChanged = false
+    for (const file of fileRecords.values()) {
+      const previous = moduleEnvironments.get(file)
+      const evaluated = cloneEnvironment(previous)
+      evaluateStatement(file.program, evaluated, file, undefined, new Set())
+      for (const [binding, taints] of evaluated) {
+        const combined = union(previous.get(binding), taints)
+        if (combined.size > (previous.get(binding)?.size ?? 0)) moduleTaintsChanged = true
+        previous.set(binding, combined)
+      }
+    }
+  } while (moduleTaintsChanged)
   for (const file of fileRecords.values()) {
     for (const record of file.functions) {
       evaluateFunction(

@@ -25,6 +25,9 @@ named methods in different classes cannot share cached taint or recursion state.
 Declaration lookup follows lexical AST scopes, including nested helpers and
 shadowed names. Taint environments use binding identity, preserve module and
 closure values across calls, and include captured taints in memoization keys.
+Comparator aliases use the same lexical bindings, including block shadowing.
+Module initialization reaches a finite taint fixed point across imports, so
+source-file enumeration order cannot hide a captured module value.
 
 The AST-identity correction exposed three additional exact baseline context-index
 edges. Their source and both SQLite sink files are byte-identical to `main` at

@@ -179,6 +179,71 @@ test('an imported helper retains the taints of its own module', () => {
   )
 })
 
+test('a nested block comparator does not replace its enclosing comparator binding', () => {
+  const results = flows({
+    'writer.ts': `
+      import { createHash } from 'node:crypto'
+      export function digest(input: string[]) {
+        const compare = (a, b) => a.localeCompare(b)
+        { const compare = (a, b) => 0 }
+        return createHash('sha256').update(JSON.stringify(input.toSorted(compare))).digest('hex')
+      }
+    `,
+  })
+  assert.ok(results.some((flow) => flow.sink.kind === 'crypto-hash'))
+})
+
+test('a block-local collator does not replace the enclosing Intl.Collator binding', () => {
+  const results = flows({
+    'writer.ts': `
+      import { createHash } from 'node:crypto'
+      export function digest(input: string[]) {
+        const collator = new Intl.Collator('sv-SE')
+        { const collator = { compare: (a, b) => 0 } }
+        return createHash('sha256').update(JSON.stringify(input.toSorted(collator.compare))).digest('hex')
+      }
+    `,
+  })
+  assert.ok(results.some((flow) => flow.sink.kind === 'crypto-hash'))
+})
+
+test('an unused locale comparator in a nested block does not taint the safe outer comparator', () => {
+  const results = flows({
+    'writer.ts': `
+      import { createHash } from 'node:crypto'
+      export function digest(input: string[]) {
+        const compare = (a, b) => 0
+        { const compare = (a, b) => a.localeCompare(b) }
+        return createHash('sha256').update(JSON.stringify(input.toSorted(compare))).digest('hex')
+      }
+    `,
+  })
+  assert.deepEqual(results, [])
+})
+
+for (const order of ['importer-first', 'dependency-first']) {
+  test(`module initialization propagates imported return taint with ${order}`, () => {
+    const writer = `
+      import { createHash } from 'node:crypto'
+      import { bytes } from './legacy.js'
+      const result = bytes()
+      export function digest() { return createHash('sha256').update(result).digest('hex') }
+    `
+    const legacy = `
+      const ordered = ['z', 'ä'].toSorted((a, b) => a.localeCompare(b))
+      export function bytes() { return JSON.stringify(ordered) }
+    `
+    const sources =
+      order === 'importer-first'
+        ? { 'writer.ts': writer, 'legacy.ts': legacy }
+        : { 'legacy.ts': legacy, 'writer.ts': writer }
+    const results = flows(sources)
+    assert.ok(
+      results.some((flow) => flow.sink.path === 'writer.ts' && flow.sink.kind === 'crypto-hash')
+    )
+  })
+}
+
 test('follows aliased local serializers and imported aliases into a hash', () => {
   const results = flows({
     'canonical.ts': `
