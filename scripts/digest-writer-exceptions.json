@@ -220,7 +220,7 @@
       "source": {
         "path": "packages/events/src/index.ts",
         "owner": "canonicalJson",
-        "fingerprint": "4732263a0bd9e6bd5f3a1e5b3453fcb0134594cc9a6335ce1f1c327a16ccfcf8",
+        "fingerprint": "a043bff914a7f71d0f55ea8a4954d83344ee1df559e49d7dfc82a0cd67ef44b5",
         "sitePath": "packages/events/src/index.ts",
         "siteOwner": "canonicalJson",
         "occurrence": 1
@@ -234,6 +234,7 @@
       },
       "reason": "Static analysis merges fields returned by frameHashes; this exact edge is a property-insensitive false positive because reject compares the s2 frameHash, while the legacy field is separate.",
       "provenance": [
+        "origin/main d1d1d3bd1 (merge of PR #1154; canonicalJson now carries both optional-locale comparator branches, both conservatively included)",
         "main baseline 311c3a83",
         "PR #1149 head 5a9cc866",
         "PR #1150 head 8abf8290",
@@ -246,7 +247,34 @@
       "source": {
         "path": "packages/events/src/index.ts",
         "owner": "canonicalJson",
-        "fingerprint": "4732263a0bd9e6bd5f3a1e5b3453fcb0134594cc9a6335ce1f1c327a16ccfcf8",
+        "fingerprint": "db763d56cac913502435ea2346d1713dc20343045ca48ddec940c8f5d83475f1",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "apps/runtime-gateway/src/runtime-event-ingestion.ts",
+        "owner": "#reject",
+        "fingerprint": "678846b529f5d43a457a411fa90367cff2e5ff9c08a69078bfb68852470e22a2",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Static analysis merges fields returned by frameHashes; this exact edge is a property-insensitive false positive because reject compares the s2 frameHash, while the legacy field is separate.",
+      "provenance": [
+        "origin/main d1d1d3bd1 (merge of PR #1154; canonicalJson now carries both optional-locale comparator branches, both conservatively included)",
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "a043bff914a7f71d0f55ea8a4954d83344ee1df559e49d7dfc82a0cd67ef44b5",
         "sitePath": "packages/events/src/index.ts",
         "siteOwner": "canonicalJson",
         "occurrence": 1
@@ -260,6 +288,34 @@
       },
       "reason": "Replay receipts retain the legacy frame hash so pre-cutover receipt bytes can still be verified; the current frameHash is separately versioned.",
       "provenance": [
+        "origin/main d1d1d3bd1 (merge of PR #1154; canonicalJson now carries both optional-locale comparator branches, both conservatively included)",
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "db763d56cac913502435ea2346d1713dc20343045ca48ddec940c8f5d83475f1",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "apps/runtime-gateway/src/runtime-event-ingestion.ts",
+        "owner": "frameHashes",
+        "fingerprint": "633bd2605bec1efa84f482b1122c157293302e9138878b789f3706d6cb1d096a",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Replay receipts retain the legacy frame hash so pre-cutover receipt bytes can still be verified; the current frameHash is separately versioned.",
+      "provenance": [
+        "origin/main d1d1d3bd1 (merge of PR #1154; canonicalJson now carries both optional-locale comparator branches, both conservatively included)",
         "main baseline 311c3a83",
         "PR #1149 head 5a9cc866",
         "PR #1150 head 8abf8290",
@@ -298,7 +354,7 @@
       "source": {
         "path": "packages/events/src/index.ts",
         "owner": "canonicalJson",
-        "fingerprint": "4732263a0bd9e6bd5f3a1e5b3453fcb0134594cc9a6335ce1f1c327a16ccfcf8",
+        "fingerprint": "a043bff914a7f71d0f55ea8a4954d83344ee1df559e49d7dfc82a0cd67ef44b5",
         "sitePath": "packages/events/src/index.ts",
         "siteOwner": "canonicalJson",
         "occurrence": 1
@@ -306,12 +362,40 @@
       "sink": {
         "path": "packages/events/src/index.ts",
         "owner": "hashExecutionEventPayload",
-        "fingerprint": "7c5e168a4ed84c9c0ef5d6ab813696a8c40c574e1ecb3795d6deb3840c7faa3f",
+        "fingerprint": "30eaba359b1a5f112077226a1ac2d563c5d1477501eae2617f0546caf1385c42",
         "kind": "crypto-hash",
         "occurrence": 1
       },
       "reason": "The legacy event payload hash is retained for pre-cutover replay receipt verification; new event-row hashes use the versioned v2 helper.",
       "provenance": [
+        "origin/main d1d1d3bd1 (merge of PR #1154; canonicalJson now carries both optional-locale comparator branches, both conservatively included; the legacy hash site threads the optional locale through)",
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "db763d56cac913502435ea2346d1713dc20343045ca48ddec940c8f5d83475f1",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/events/src/index.ts",
+        "owner": "hashExecutionEventPayload",
+        "fingerprint": "30eaba359b1a5f112077226a1ac2d563c5d1477501eae2617f0546caf1385c42",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The legacy event payload hash is retained for pre-cutover replay receipt verification; new event-row hashes use the versioned v2 helper.",
+      "provenance": [
+        "origin/main d1d1d3bd1 (merge of PR #1154; canonicalJson now carries both optional-locale comparator branches, both conservatively included; the legacy hash site threads the optional locale through)",
         "main baseline 311c3a83",
         "PR #1149 head 5a9cc866",
         "PR #1150 head 8abf8290",

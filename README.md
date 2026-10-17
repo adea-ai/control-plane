@@ -15,7 +15,7 @@ The original M9 managed-cloud and M10 portability work remains historical implem
 ## Prerequisites
 
 - Node.js 24.21.0 (`.node-version`)
-- Bun 1.4.2 (`.bun-version` and `packageManager`)
+- Bun 1.4.3 (`.bun-version` and `packageManager`)
 
 Newer compatible Bun 1.x patch releases may run the workspace, but the pinned version is the reproducible baseline.
 
@@ -63,7 +63,7 @@ Key documentation:
 
 | Command                      | Purpose                                                                                                |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `bun run build`              | Build every app and package through Turborepo                                                          |
+| `bun run build`              | Build every app and package through Vite+                                                              |
 | `bun run lint`               | Lint source/configuration and enforce package boundaries                                               |
 | `bun test`                   | Run workspace test groups                                                                              |
 | `bun run test:acceptance`    | Run the repository acceptance baseline currently implemented in source                                 |

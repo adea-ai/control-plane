@@ -1,7 +1,7 @@
-// DECISION (#612): insertion order is CONTRACTUAL here — the serialized bytes
-// are persisted and compared verbatim across versions, so this site must not
-// adopt canonicalJsonStringify; altering the format requires a versioned
-// envelope migration with an explicit cutover.
+// DECISION (#612): the execution processor compares JSON.stringify of the
+// schema-parsed envelope while a command is in flight. That map is volatile;
+// durable restart replay uses the stored plaintext digest after a result
+// receipt is written. These envelope bytes are not an on-disk format.
 import {
   ExecutionAcceptanceRequestSchema,
   ExecutionAcceptanceResponseSchema,
@@ -146,17 +146,17 @@ export class RelayExecutionCommandProcessor implements RelayHostCommandProcessor
       throw new RelayEnvelopeError('RELAY_ENVELOPE_INVALID')
     }
     // CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-    // insertion-order stringify of a schema-pinned envelope; replay comparisons persist these strings byte-for-byte
-    const canonical = JSON.stringify(envelope)
+    // Schema-ordered envelope bytes are used only for in-flight equality.
+    const replayBytes = JSON.stringify(envelope)
     const inFlight = this.#inFlight.get(envelope.commandId)
     if (inFlight !== undefined) {
-      if (inFlight.envelope !== canonical) {
+      if (inFlight.envelope !== replayBytes) {
         throw new RelayExecutionCommandError('RELAY_COMMAND_SCOPE_MISMATCH')
       }
       return { ...(await inFlight.operation), outcome: 'duplicate' }
     }
     const operation = this.#processOnce(envelope, now)
-    this.#inFlight.set(envelope.commandId, { envelope: canonical, operation })
+    this.#inFlight.set(envelope.commandId, { envelope: replayBytes, operation })
     try {
       return await operation
     } finally {

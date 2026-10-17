@@ -3,6 +3,8 @@ import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import type { DurableExecutionAuthority } from '@control-plane/pi-durable-adapter'
 import type { ProductionPiLeadCompositionOptions } from './production-model-composition.js'
 
+const binding = ({ request, admission }: DurableExecutionAuthority) => ({ request, admission })
+
 /** Only drops reference caches after canonical terminal state and released/reconciled usage.
  * Never settles unknown sends, renews grants or authorizes models.
  */
@@ -22,7 +24,12 @@ export function createProductionChildModelRetention(options: {
       if (!authority.request.executionId) throw new Error('PI_CHILD_MODEL_EXECUTION_REQUIRED')
       const key = `${authority.request.executionId}/${authority.request.attemptId}`
       const retained = authorities.get(key)
-      if (retained && canonicalJsonStringify(retained) !== canonicalJsonStringify(authority))
+      // `start()` carries `{request, admission}`; later runs of the same attempt add the adapter's
+      // handle, provider digest and version. Only the model binding itself must stay stable.
+      if (
+        retained &&
+        canonicalJsonStringify(binding(retained)) !== canonicalJsonStringify(binding(authority))
+      )
         throw new Error('PI_CHILD_MODEL_BINDING_CHANGED')
       if (!retained && authorities.size >= options.maximum)
         throw new Error('PI_CHILD_MODEL_FACADE_LIMIT_EXCEEDED')

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.16.1](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.16.0...runtime-sdk-v1.16.1) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** replace Control Plane Turbo with Vite+ and Bun checks ([#1170](https://github.com/adea-ai/control-plane/issues/1170)) ([84e12db](https://github.com/adea-ai/control-plane/commit/84e12dbab1b2fea2380e8747a466db9fb1449959))
+
+## [1.16.0](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.15.1...runtime-sdk-v1.16.0) (2026-10-16)
+
+
+### Features
+
+* **pi-durable:** authorized read of lead child status, input state and outcomes ([#1160](https://github.com/adea-ai/control-plane/issues/1160)) ([f96ff8f](https://github.com/adea-ai/control-plane/commit/f96ff8fb934f3ebfccdd72c749698b775ad7beb1))
+
 ## [1.15.1](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.15.0...runtime-sdk-v1.15.1) (2026-10-10)
 
 

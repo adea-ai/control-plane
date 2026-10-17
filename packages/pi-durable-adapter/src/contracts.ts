@@ -208,11 +208,18 @@ export interface PiDurableGovernedManagementCallCompiler {
   ) => Promise<PiDurableGovernedManagementCallOutcome>
 }
 
+export type PiDurableAuthorityPurpose = 'inference' | 'cancel'
+
 export interface PiDurableRuntimeOptions {
   readonly directory: string
   readonly now?: () => string
   readonly resolveAdmission: (request: RuntimeStartRequest) => Promise<PiDurableAdmission>
-  readonly assertAuthority: (authority: DurableExecutionAuthority) => Promise<void>
+  /** `cancel` re-derives authority to stop or settle a stop: current actor, audience, scope and
+   * lineage, but never model readiness. Every other call is `inference` (the default). */
+  readonly assertAuthority: (
+    authority: DurableExecutionAuthority,
+    purpose?: PiDurableAuthorityPurpose
+  ) => Promise<void>
   /** Synchronize canonical host lifecycle before constructing or resuming native tasks. */
   readonly onExecutionRunning?: (authority: PiDurableRunningAuthority) => Promise<void>
   /** Server-owned current scope read; required for every explicit plan2 scope. */

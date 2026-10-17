@@ -1,12 +1,13 @@
 {
   "name": "@control-plane/runtime-worker",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "browser": false,
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "start": "bun src/start.ts",
     "dev": "bun --watch src/start.ts",
     "lint": "oxlint src",

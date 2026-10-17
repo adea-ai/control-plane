@@ -114,8 +114,9 @@ deleted after evidence is recorded.
 The required Code Foundry `Test/Integration` lane builds once, starts one runner-owned disposable
 PostgreSQL service, and runs the three `test:integration` shards from
 `scripts/integration-shards.mjs` concurrently against it. Files remain serial within each shard;
-bounded test cases create isolated databases. The separate local PostgreSQL pull-request workflow
-checks migration/schema consistency, the PostgreSQL profile conformance matrix, and Hosted
+bounded test cases create isolated databases. Repository-level integration files that span
+composition roots are assigned to those same shards. The separate local PostgreSQL pull-request
+workflow checks migration/schema consistency, the PostgreSQL profile conformance matrix, and Hosted
 PostgreSQL/Restate graph behavior. The ruleset check is `Validation / Gate`; it depends on the mode,
 Code Foundry runtime, and PostgreSQL qualification results, and fails closed if any dependency is
 not successful, including when a dependency is skipped or cancelled. The local aggregate uses

@@ -11,6 +11,7 @@ test('incomplete child authority or runtime denies before directory or SQLite cr
     authority: { readCurrent: fn, admit: fn, assertCurrent: fn },
     forgetCanonicalModels: () => {},
     createGovernedDelegateChild: fn,
+    usageOutcomes: fn,
     delegation: {
       records: {
         insert: fn,
@@ -46,6 +47,7 @@ test('incomplete child authority or runtime denies before directory or SQLite cr
   }
   malformed.push({ ...complete, forgetCanonicalModels: undefined })
   malformed.push({ ...complete, createGovernedDelegateChild: undefined })
+  malformed.push({ ...complete, usageOutcomes: undefined })
   for (const [group, key] of [['childProgress', 'scan']]) {
     malformed.push({
       ...complete,

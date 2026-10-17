@@ -42,6 +42,7 @@ import {
   type CanonicalPiDurableAdmission,
 } from '@control-plane/pi-durable-adapter'
 import {
+  asModelNotReady,
   PiDurableLeadError,
   type PiDurableLeadAdmission,
   type PiDurableLeadAuthority,
@@ -81,14 +82,34 @@ export const VerifiedPiLeadIntentEvidenceSchema = z
   })
   .strict()
 export type VerifiedPiLeadIntentEvidence = z.output<typeof VerifiedPiLeadIntentEvidenceSchema>
+/** Why product authority is read. Only `inference` (prepare, dispatch and an absent context, the
+ * conservative default) starts or funds inference; `observe` is status, progress, children, lookup and cancel. */
+export interface PiLeadProductReadContext {
+  readonly purpose: 'inference' | 'observe'
+}
+type LeadOperationName = 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel' | 'children'
+function productPurpose(operation: LeadOperationName | undefined): 'inference' | 'observe' {
+  return operation === 'status' ||
+    operation === 'progress' ||
+    operation === 'cancel' ||
+    operation === 'children'
+    ? 'observe'
+    : 'inference'
+}
 export interface PiLeadProductAuthorityPort {
-  /** Signed, bounded product authority; checks current workspace/message/channel lead/audience. */
-  readCurrent(input: {
-    schemaVersion: 'pi-lead-intent/v1'
-    intentId: string
-    workspaceId: string
-    principalId: string
-  }): Promise<VerifiedPiLeadIntentEvidence | LeadIntentFenceFacts | undefined>
+  /** Signed, bounded product authority; checks current workspace/message/channel lead/audience.
+   * An implementation that gates on model readiness MUST do so only for the `inference` purpose:
+   * observing or cancelling stays available when a model becomes not ready.
+   */
+  readCurrent(
+    input: {
+      schemaVersion: 'pi-lead-intent/v1'
+      intentId: string
+      workspaceId: string
+      principalId: string
+    },
+    context?: PiLeadProductReadContext
+  ): Promise<VerifiedPiLeadIntentEvidence | LeadIntentFenceFacts | undefined>
 }
 export interface PiLeadIntentIds {
   readonly executionId: z.output<typeof IdentifierSchemas.executionId>
@@ -518,7 +539,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       plans: options.plans,
       now: this.#now,
       messages: {
-        readCurrent: async (intent) => {
+        readCurrent: async (intent, purpose) => {
           const marker = this.store.marker(intent.intentId)
           const ownPending =
             pending !== undefined &&
@@ -529,7 +550,8 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
           const evidence = await this.#evidence(
             intent.workspaceId,
             intent.intentId,
-            marker.actorPrincipalId
+            marker.actorPrincipalId,
+            purpose === 'read' ? 'observe' : 'inference'
           )
           if (hash({ evidence, planPin: marker.planPin }) !== marker.evidenceDigest) conflict()
           return {
@@ -575,7 +597,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     workspaceId: string
     intentId: string
     principal: ServicePrincipal
-    operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   }): Promise<PiDurableLeadAdmission | PiDurableLeadFencedResult> {
     return this.#safe(async () => {
       const principal = ServicePrincipalSchema.parse(input.principal)
@@ -593,7 +615,8 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       const current = await this.#readUnion(
         input.workspaceId,
         input.intentId,
-        principal.principalId
+        principal.principalId,
+        productPurpose(input.operation)
       )
       if (current === undefined) VerifiedPiLeadIntentEvidenceSchema.parse(undefined)
       if (current === undefined) throw new Error('unreachable')
@@ -830,7 +853,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
   async assertCurrent(
     admission: PiDurableLeadAdmission,
     principal: ServicePrincipal,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   ): Promise<void> {
     return this.#safe(async () => {
       const checked = ServicePrincipalSchema.parse(principal)
@@ -856,7 +879,8 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       const product = await this.#readUnion(
         admission.workspaceId,
         admission.intentId,
-        checked.principalId
+        checked.principalId,
+        productPurpose(operation)
       )
       if (product === undefined) VerifiedPiLeadIntentEvidenceSchema.parse(undefined)
       if (product === undefined) throw new Error('unreachable')
@@ -1051,7 +1075,8 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
   async #readUnion(
     workspaceId: string,
     intentId: string,
-    principalId: string
+    principalId: string,
+    purpose: 'inference' | 'observe' = 'inference'
   ): Promise<
     | { readonly kind: 'evidence'; readonly evidence: VerifiedPiLeadIntentEvidence }
     | {
@@ -1062,12 +1087,15 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     | undefined
   > {
     z.uuid().parse(intentId)
-    const raw = await this.options.product.readCurrent({
-      schemaVersion: 'pi-lead-intent/v1',
-      intentId,
-      workspaceId,
-      principalId,
-    })
+    const raw = await this.options.product.readCurrent(
+      {
+        schemaVersion: 'pi-lead-intent/v1',
+        intentId,
+        workspaceId,
+        principalId,
+      },
+      { purpose }
+    )
     if (raw === undefined) return undefined
     const fenced = parseLeadProductFence(raw, { workspaceId, intentId }, () =>
       Date.parse(this.#now())
@@ -1094,7 +1122,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     input: {
       workspaceId: string
       intentId: string
-      operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel'
+      operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
     },
     variant: LeadFenceVariant,
     facts: LeadIntentFenceFacts,
@@ -1177,7 +1205,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
     variant: LeadFenceVariant,
     facts: LeadIntentFenceFacts,
     principalId: string,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'cancel',
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel',
     marker: LeadIntentMarker
   ): void {
     const decision = fencedOperationPolicy(variant)[operation as LeadOperation]
@@ -1206,9 +1234,10 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
   async #evidence(
     workspaceId: string,
     intentId: string,
-    principalId: string
+    principalId: string,
+    purpose: 'inference' | 'observe' = 'inference'
   ): Promise<VerifiedPiLeadIntentEvidence> {
-    const current = await this.#readUnion(workspaceId, intentId, principalId)
+    const current = await this.#readUnion(workspaceId, intentId, principalId, purpose)
     if (current === undefined) VerifiedPiLeadIntentEvidenceSchema.parse(undefined)
     if (current === undefined) throw new Error('unreachable')
     if (current.kind === 'fenced') throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
@@ -1219,7 +1248,7 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       return await operation()
     } catch (error) {
       if (error instanceof PiDurableLeadError) throw error
-      throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
+      throw asModelNotReady(error) ?? new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
     }
   }
 }

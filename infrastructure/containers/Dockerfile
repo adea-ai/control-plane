@@ -1,9 +1,10 @@
-FROM oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f AS dependencies
+FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS dependencies
 
 WORKDIR /workspace
 
-COPY package.json bun.lock bunfig.toml turbo.json tsconfig.base.json ./
+COPY package.json bun.lock bunfig.toml vite.config.ts tsconfig.base.json ./
 COPY patches ./patches
+COPY scripts ./scripts
 COPY apps ./apps
 COPY packages ./packages
 
@@ -33,7 +34,7 @@ RUN bun install --frozen-lockfile --production --ignore-scripts \
         -cf /tmp/runtime-artifact.tar . \
     && tar -xf /tmp/runtime-artifact.tar -C /runtime-artifact
 
-FROM oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f AS runtime
+FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS runtime
 
 ARG APP_NAME
 ARG COMMIT_SHA
