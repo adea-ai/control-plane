@@ -11,6 +11,7 @@ import {
   PiDurableAdmissionSchema,
   type DurableExecutionAuthority,
   type PiDurableAdmission,
+  type PiDurableAuthorityPurpose,
 } from '@control-plane/pi-durable-adapter'
 import type { RuntimeProviderSelection } from '@control-plane/model-gateway'
 import type { createProductionLeadProductAuthority } from './production-lead-product.js'
@@ -60,20 +61,31 @@ export function resolveChildModelSelection(
  */
 export function createProductionChildModelAuthority(options: {
   product: Pick<ReturnType<typeof createProductionLeadProductAuthority>, 'resolveChildSelection'>
-  readCurrent(request: RuntimeStartRequest): Promise<unknown | undefined>
+  readCurrent(
+    request: RuntimeStartRequest,
+    purpose?: PiDurableAuthorityPurpose
+  ): Promise<unknown | undefined>
   /** Existing canonical admission/allocation, called only AFTER selection readiness succeeds. */
   admit(
     request: RuntimeStartRequest,
     selection: RuntimeProviderSelection
   ): Promise<PiDurableAdmission>
-  assertCurrent(authority: DurableExecutionAuthority): Promise<void>
+  assertCurrent(
+    authority: DurableExecutionAuthority,
+    purpose?: PiDurableAuthorityPurpose
+  ): Promise<void>
   now?: () => string
 }) {
   const now = options.now ?? (() => new Date().toISOString())
-  const readCanonical = async (raw: RuntimeStartRequest) => {
+  const readCanonical = async (
+    raw: RuntimeStartRequest,
+    purpose: PiDurableAuthorityPurpose = 'inference'
+  ) => {
     const request = RuntimeStartRequestSchema.parse(raw)
     const plan = assertExecutionPlanIntegrity(request.executionPlan)
-    const child = ProductionChildModelRequestSchema.parse(await options.readCurrent(request))
+    const child = ProductionChildModelRequestSchema.parse(
+      await options.readCurrent(request, purpose)
+    )
     const observedAt = Date.parse(now())
     if (
       !plan.parentExecutionPlan ||
@@ -123,8 +135,26 @@ export function createProductionChildModelAuthority(options: {
       assertMatches(authority, await resolve(current.request))
       return admission
     },
-    async assertAuthority(authority: DurableExecutionAuthority) {
-      await options.assertCurrent(authority)
+    async assertAuthority(
+      authority: DurableExecutionAuthority,
+      purpose: PiDurableAuthorityPurpose = 'inference'
+    ) {
+      await options.assertCurrent(authority, purpose)
+      if (purpose === 'cancel') {
+        // The journal owns the accepted selection. Stopping it must not resolve a new
+        // model or funding grant, but still requires the same current actor and lineage.
+        const first = await readCanonical(authority.request, purpose)
+        const current = await readCanonical(authority.request, purpose)
+        const admission = PiDurableAdmissionSchema.parse(authority.admission)
+        if (
+          canonicalJsonStringify(first.child) !== canonicalJsonStringify(current.child) ||
+          admission.canonicalActorPrincipalId !== current.child.canonicalActorPrincipalId ||
+          admission.authority.revision !== current.child.authorityRevision ||
+          Date.parse(admission.authority.expiresAt) <= Date.parse(now())
+        )
+          throw new Error('PI_CHILD_MODEL_AUTHORITY_CHANGED')
+        return
+      }
       assertMatches(authority, await resolve(authority.request))
     },
   }

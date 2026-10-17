@@ -203,11 +203,12 @@ function managementCallResponse() {
  * of every child request, including the one that follows a tool result.
  */
 function scriptedProvider(sent, behavior = {}) {
-  return async ({ body }) => {
+  return async ({ request, body }) => {
     const input = body.input
     const isChild = input[0]?.content?.length === 1 && input[0].content[0].text === childObjective
     if (isChild) {
       sent.child.push(body)
+      if (behavior.childResponder) return behavior.childResponder({ request, body })
       if (behavior.childFails) return new Response('upstream failure', { status: 500 })
       // A child that calls a tool in its first generation and answers in its second.
       if (behavior.childManagementCall && sent.child.length === 1) return managementCallResponse()
@@ -331,6 +332,97 @@ const submitSecondTurn = (adapter, handle) =>
     idempotencyKey: 'lead-turn-two',
     text: 'Delegate the bounded objective.',
   })
+
+test('production child cancellation bypasses lost model and payer readiness but preserves current scope and retained stop fencing', async () => {
+  let aborted = false
+  let releaseChild = () => {}
+  const { host, hooks, sent } = await createHost(
+    {},
+    {
+      childResponder: ({ request }) => {
+        return new Promise((_resolve, reject) => {
+          releaseChild = () => reject(new Error('TEST_CHILD_TEARDOWN'))
+          request.signal.addEventListener(
+            'abort',
+            () => {
+              aborted = true
+              reject(new Error('TEST_CHILD_SEND_ABORTED'))
+            },
+            { once: true }
+          )
+        })
+      },
+    }
+  )
+  try {
+    const { handle } = await runLeadFirstTurn(host, hooks)
+    const adapter = host.composition.adapter
+    await submitSecondTurn(adapter, handle)
+    await waitFor(() => sent.child.length === 1, 'held child send')
+    await waitFor(
+      async () => (await adapter.status(handle)).state === 'completed',
+      'parent complete'
+    )
+    const row = childOf(adapter)
+    const childHandle = row.admission.handle
+    const authority = { request: row.admission.request, admission: row.admission.admission }
+    expect(row.state).toBe('running')
+    expect(sent.child).toHaveLength(1)
+
+    host.models.setCurrentAccount({ quota: 'exhausted' })
+    await expect(host.composition.childAuthority.assertAuthority(authority)).rejects.toThrow()
+    await host.composition.childAuthority.assertAuthority(authority, 'cancel')
+    host.models.state.accountAvailable = false
+    await host.models.vault.revoke(
+      host.models.refs.credentialRef,
+      host.models.refs.administratorPrincipalRef,
+      { workspaceId: host.workspaceId }
+    )
+    // A stop is still possible with no readable payer record; it cannot prepare new funding.
+    await rm(join(host.directory, 'private-funding', host.workspaceId, childExecutionId), {
+      recursive: true,
+    })
+    await expect(host.composition.childAuthority.assertAuthority(authority)).rejects.toThrow()
+    const before = {
+      reads: host.models.state.accountReads,
+      leases: host.models.secretProvider.resolveCount,
+      sends: host.state.physicalSends,
+      entries: await host.ledger.entries(host.workspaceId, childExecutionId),
+    }
+    const cancel = {
+      idempotencyKey: 'cancel:child-model-unavailable',
+      requestedAt: host.at,
+    }
+    host.state.denyNextScopeAuthorityRead = true
+    await expect(adapter.cancel(childHandle, cancel)).rejects.toMatchObject({
+      code: 'PI_AUTHORITY_REJECTED',
+    })
+    expect(aborted).toBe(false)
+    expect(adapter.journal.get(childHandle.handleId).detail.cancellationIntent).toBeUndefined()
+
+    const cancelled = await adapter.cancel(childHandle, cancel)
+    expect(['cancelling', 'cancelled']).toContain(cancelled.state)
+    expect(aborted).toBe(true)
+    await adapter.drain()
+    const retained = adapter.journal.get(childHandle.handleId).detail.cancellationIntent
+    expect(retained).toMatchObject({ targetKind: 'active_generation' })
+    // Unknown physical outcomes keep the existing reconciliation fence, including on reopen.
+    expect((await adapter.reconcile(childHandle)).state).toBe('cancelling')
+    await host.reopenComposition()
+    expect((await host.composition.adapter.reconcile(childHandle)).state).toBe('cancelling')
+    expect(
+      host.composition.adapter.journal.get(childHandle.handleId).detail.cancellationIntent
+    ).toEqual(retained)
+    expect(host.models.state.accountReads).toBe(before.reads)
+    expect(host.models.secretProvider.resolveCount).toBe(before.leases)
+    expect(host.state.physicalSends).toBe(before.sends)
+    expect(await host.ledger.entries(host.workspaceId, childExecutionId)).toEqual(before.entries)
+    expect(hooks.evidence.reservations).toHaveLength(1)
+  } finally {
+    releaseChild()
+    await host.close()
+  }
+}, 120000)
 
 test('governed child dispatch after native compaction and reopen runs once with current grants and retained usage', async () => {
   const { host, hooks, sent } = await createHost()
