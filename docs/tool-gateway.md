@@ -71,7 +71,8 @@ the untagged code-point form written during the #664 cutover, including its mixe
 request digest was canonicalized while the input digest remained legacy. It also accepts only these
 evidenced locale-dependent legacy forms: historical `en-US` and `sv-SE` collations, both pinned from Bun
 1.4.2 / ICU 78.1 receipt bytes. Those locale candidates are evaluated only on the exact Bun 1.4.2 /
-ICU 78.1 and Bun 1.4.3 / ICU 78.1 reader pairs; the code-point form remains verifiable on other
+ICU 78.1, Bun 1.4.3 / ICU 78.1, and Bun 1.4.3 / ICU 78.3 reader pairs; the code-point form remains
+verifiable on other
 runtimes. The Swedish ordering for the tested free-form keys is `z`, `å`, `ä`; the English ordering is `å`, `ä`, `z`. Other
 locale/runtime forms, including the Turkish-specific fixture, cannot be inferred from untagged rows
 and fail closed with an idempotency conflict. The original locale/runtime is not stored, so this

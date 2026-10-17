@@ -487,6 +487,28 @@ describe.skipIf(!integrationEnabled)('PostgreSQL tool storage', () => {
   })
 
   test('coexisting tagged and Swedish legacy tool receipts replay after PostgreSQL reconnect without repeating effects', async () => {
+    // Qualify the actual reader against fixed bytes before exercising persistence.
+    // This is independent of the production matcher and its runtime allowlist.
+    const collator = new Intl.Collator('sv-SE')
+    const serialize = (value) => {
+      if (Array.isArray(value)) return '[' + value.map(serialize).join(',') + ']'
+      if (value !== null && typeof value === 'object')
+        return (
+          '{' +
+          Object.keys(value)
+            .toSorted(collator.compare)
+            .map((key) => JSON.stringify(key) + ':' + serialize(value[key]))
+            .join(',') +
+          '}'
+        )
+      return JSON.stringify(value)
+    }
+    for (const bytes of [
+      historicalSwedishToolReceipt.inputBytes,
+      historicalSwedishToolReceipt.requestBytes,
+    ]) {
+      expect(serialize(JSON.parse(bytes))).toBe(bytes)
+    }
     let connection = await openIndependentConnection()
     const registryRepository = new PostgresToolRegistryRepository(connection.database, workspaceId)
     expect(

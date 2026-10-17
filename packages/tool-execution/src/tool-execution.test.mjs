@@ -209,8 +209,11 @@ async function assertUnqualifiedLegacyLocaleRuntime(runtimeVersions) {
 }
 
 test('qualified readers reproduce the independently pinned historical bytes with Intl.Collator', () => {
-  expect(['1.4.2', '1.4.3']).toContain(process.versions.bun)
-  expect(process.versions.icu).toBe('78.1')
+  expect([
+    { bun: '1.4.2', icu: '78.1' },
+    { bun: '1.4.3', icu: '78.1' },
+    { bun: '1.4.3', icu: '78.3' },
+  ]).toContainEqual({ bun: process.versions.bun, icu: process.versions.icu })
   for (const [locale, receipts] of [
     ['en-US', historicalLocaleReceiptBytes.enUS],
     ['sv-SE', historicalLocaleReceiptBytes.svSE],
@@ -823,6 +826,9 @@ describe('policy-controlled durable tool execution', () => {
 
   test('locale history requires the qualified Bun and ICU pair while code-point replays remain valid', async () => {
     for (const runtimeVersions of [
+      { bun: '1.4.2', icu: '78.3' },
+      { bun: '1.4.3', icu: '78.2' },
+      { bun: '1.4.3', icu: '78.4' },
       { bun: '1.4.2', icu: '79.0' },
       { bun: '1.4.3', icu: '79.0' },
       { bun: '1.4.4', icu: '78.1' },

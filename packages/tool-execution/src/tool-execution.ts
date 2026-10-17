@@ -27,6 +27,7 @@ const VERIFIABLE_UNTAGGED_LOCALES = ['en-US', 'sv-SE'] as const
 const QUALIFIED_LEGACY_LOCALE_RUNTIMES = [
   { bun: '1.4.2', icu: '78.1' },
   { bun: '1.4.3', icu: '78.1' },
+  { bun: '1.4.3', icu: '78.3' },
 ] as const
 
 export interface ToolCallRepository {
