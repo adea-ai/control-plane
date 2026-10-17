@@ -11,13 +11,17 @@ import {
   type ServicePrincipal,
 } from '@control-plane/contracts'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
+import { ModelSelectionError } from '@control-plane/model-gateway'
 import {
   RuntimeStartRequestSchema,
   RuntimeExecutionHandleSchema,
   type RuntimeStartRequest,
   type RuntimeExecutionHandle,
 } from '@control-plane/runtime-sdk'
-import type { PiDurableLeadAdmission } from './pi-durable-lead.service.js'
+import type {
+  PiDurableLeadAdmission,
+  PiDurableLeadModelNotReadyReason,
+} from './pi-durable-lead.service.js'
 
 // The qualified host is one main Node realm. Duplicate module loads share both
 // generation and active tokens; worker realms with the same PID are unsupported.
@@ -87,8 +91,14 @@ const Record = z.strictObject({
 })
 type Preparation = z.output<typeof Record>
 export class PiLeadPreparationError extends Error {
+  constructor(code: 'PI_LEAD_PREPARATION_REQUIRED' | 'PI_LEAD_FUNDING_CONFIRMATION_STALE')
+  constructor(code: 'PI_LEAD_MODEL_NOT_READY', reasonCode: PiDurableLeadModelNotReadyReason)
   constructor(
-    readonly code: 'PI_LEAD_PREPARATION_REQUIRED' | 'PI_LEAD_FUNDING_CONFIRMATION_STALE'
+    readonly code:
+      | 'PI_LEAD_PREPARATION_REQUIRED'
+      | 'PI_LEAD_FUNDING_CONFIRMATION_STALE'
+      | 'PI_LEAD_MODEL_NOT_READY',
+    readonly reasonCode?: PiDurableLeadModelNotReadyReason
   ) {
     super(code)
   }
@@ -170,8 +180,8 @@ export class SqlitePiLeadPreparations {
           expiresAt: retained.expiresAt,
           replayed: true,
         }
-      } catch {
-        this.#stale()
+      } catch (error) {
+        this.#refuse(error)
       }
     }
     try {
@@ -209,7 +219,7 @@ export class SqlitePiLeadPreparations {
           replayed: false,
         }
       })
-    } catch {
+    } catch (error) {
       // Never retain callback diagnostics. Cleanup failure keeps release_pending.
       const current = this.#get(provisional.preparationRef)
       if (current?.state === 'preparing')
@@ -219,7 +229,7 @@ export class SqlitePiLeadPreparations {
       } catch {
         /* Startup/periodic recovery retries retained evidence. */
       }
-      this.#stale()
+      this.#refuse(error)
     }
   }
   async assertDispatch(
@@ -239,8 +249,8 @@ export class SqlitePiLeadPreparations {
       // Funding may await a refresh, expiry scanner or another dispatcher.
       const retained = this.#dispatchable(preparationRef, admission, principal)
       if (digest(retained) !== digest(stored)) this.#stale()
-    } catch {
-      this.#stale()
+    } catch (error) {
+      this.#refuse(error)
     }
   }
   /** Pure retained-reference check before any mutating canonical admission. */
@@ -428,8 +438,24 @@ export class SqlitePiLeadPreparations {
         this.#stale()
     }
   }
+  /** A bounded gateway readiness refusal stays distinguishable from a stale confirmation. */
+  #refuse(error: unknown): never {
+    if (error instanceof PiLeadPreparationError && error.code === 'PI_LEAD_MODEL_NOT_READY')
+      throw error
+    if (error instanceof ModelSelectionError && error.code !== 'READY')
+      throw new PiLeadPreparationError('PI_LEAD_MODEL_NOT_READY', error.code)
+    return this.#stale()
+  }
   #ready(value: ModelSelectionFundingView, admission: PiDurableLeadAdmission): ReadyFunding {
     const parsed = ModelSelectionFundingViewSchema.safeParse(value)
+    if (
+      parsed.success &&
+      parsed.data.state === 'blocked' &&
+      parsed.data.workspaceId === admission.workspaceId &&
+      parsed.data.executionId === admission.admittedAttempt.executionId &&
+      parsed.data.attemptId === admission.admittedAttempt.attemptId
+    )
+      throw new PiLeadPreparationError('PI_LEAD_MODEL_NOT_READY', parsed.data.reasonCode)
     if (
       !parsed.success ||
       parsed.data.state !== 'ready' ||

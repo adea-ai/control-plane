@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/pi-durable-adapter",
-  "version": "0.9.3",
+  "version": "0.10.2",
   "private": true,
   "files": [
     "dist"
@@ -17,6 +17,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "lint": "oxlint src",
     "test": "bun test src"
   },

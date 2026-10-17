@@ -919,6 +919,39 @@ test('read operations cannot mint an execution even for a principal with accept 
   })
 })
 
+test('product authority is read for observation on status, progress, children and cancel, and for inference on prepare and dispatch', async () => {
+  await fixture(async (setup) => {
+    const purposes = []
+    const read = setup.bridge.options.product.readCurrent
+    setup.bridge.options.product.readCurrent = async (input, context) => {
+      purposes.push(context?.purpose)
+      return read(input, context)
+    }
+    const seen = {}
+    for (const operation of ['prepare', 'dispatch', 'status', 'progress', 'children', 'cancel']) {
+      purposes.length = 0
+      // Each call may refuse later (nothing is admitted here); only the product read purpose matters.
+      await setup.bridge
+        .resolveIntent({
+          workspaceId: setup.plan.correlation.workspaceId,
+          intentId,
+          principal: setup.principal,
+          operation,
+        })
+        .catch(() => undefined)
+      seen[operation] = [...new Set(purposes)]
+    }
+    expect(seen).toEqual({
+      prepare: ['inference'],
+      dispatch: ['inference'],
+      status: ['observe'],
+      progress: ['observe'],
+      children: ['observe'],
+      cancel: ['observe'],
+    })
+  })
+})
+
 test('provider readiness is bound to the canonical actor and denies before markers or funding', async () => {
   await fixture(async (setup) => {
     let seen

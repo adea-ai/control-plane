@@ -59,8 +59,15 @@ export class NormalizedExceptionFilter implements ExceptionFilter {
             : classification === 'conflict' || classification === 'runtime_unavailable'
               ? 'workflow'
               : 'system'
+    const diagnostics =
+      'details' in error && error.details !== undefined ? error.details : undefined
     const details =
-      'details' in error && error.details !== undefined ? { diagnostics: error.details } : undefined
+      diagnostics !== undefined || error.reasonCode !== undefined
+        ? {
+            ...(diagnostics !== undefined ? { diagnostics } : {}),
+            ...(error.reasonCode !== undefined ? { reasonCode: error.reasonCode } : {}),
+          }
+        : undefined
     const envelope = ErrorResponseEnvelopeSchema.safeParse({
       ...identity.data,
       error: {
@@ -96,6 +103,10 @@ function normalizedError(exception: unknown, status: number) {
       return {
         code: response.code,
         ...(response.details === undefined ? {} : { details: response.details }),
+        ...(typeof response.reasonCode === 'string' &&
+        /^[A-Z][A-Z0-9_]{0,63}$/.test(response.reasonCode)
+          ? { reasonCode: response.reasonCode }
+          : {}),
         message: response.message,
       }
     }
@@ -136,6 +147,7 @@ function isSchemaValidationError(value: unknown): value is {
 function isApiError(value: unknown): value is {
   code: string
   details?: unknown
+  reasonCode?: unknown
   message: string
 } {
   if (typeof value !== 'object' || value === null) return false

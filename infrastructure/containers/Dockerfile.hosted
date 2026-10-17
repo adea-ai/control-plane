@@ -1,9 +1,10 @@
-FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS dependencies
+FROM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS dependencies
 
 WORKDIR /workspace
 
-COPY package.json bun.lock bunfig.toml turbo.json tsconfig.base.json ./
+COPY package.json bun.lock bunfig.toml vite.config.ts tsconfig.base.json ./
 COPY patches ./patches
+COPY scripts ./scripts
 COPY apps ./apps
 COPY packages ./packages
 
@@ -13,7 +14,7 @@ FROM dependencies AS build
 
 RUN bun run build
 
-FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS runtime
+FROM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS runtime
 
 ARG APP_NAME=local-control-plane
 ENV APP_NAME=${APP_NAME} \

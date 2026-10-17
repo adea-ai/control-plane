@@ -49,6 +49,8 @@ import {
   type InteractionResponseCommandResult,
   ContractVersionSchema,
   ErrorResponseEnvelopeSchema,
+  ModelReadinessReasonSchema,
+  type ModelReadinessReason,
   PublicContractManifest,
   assessContractCompatibility,
   type ContextPackageResolutionRequest,
@@ -134,6 +136,7 @@ export interface ControlPlaneClientErrorInput {
   readonly requestId: string
   readonly retryable: boolean
   readonly status?: number
+  readonly reasonCode?: ModelReadinessReason | undefined
 }
 
 export class ControlPlaneClientError extends Error {
@@ -142,6 +145,8 @@ export class ControlPlaneClientError extends Error {
   readonly requestId: string
   readonly retryable: boolean
   readonly status: number | undefined
+  /** Bounded model readiness reason carried by PI_LEAD_MODEL_NOT_READY; never free text. */
+  readonly reasonCode: ModelReadinessReason | undefined
 
   constructor(input: ControlPlaneClientErrorInput) {
     super(input.message)
@@ -151,6 +156,7 @@ export class ControlPlaneClientError extends Error {
     this.requestId = input.requestId
     this.retryable = input.retryable
     this.status = input.status
+    this.reasonCode = input.reasonCode
   }
 
   toJSON() {
@@ -162,6 +168,7 @@ export class ControlPlaneClientError extends Error {
       requestId: this.requestId,
       retryable: this.retryable,
       status: this.status,
+      ...(this.reasonCode === undefined ? {} : { reasonCode: this.reasonCode }),
     }
   }
 }
@@ -508,6 +515,7 @@ export class ControlPlaneClient {
         requestId: parsedError.data.requestId,
         retryable: parsedError.data.error.retryable,
         status: response.status,
+        reasonCode: readinessReason(parsedError.data.error.details),
       })
     }
 
@@ -570,6 +578,12 @@ function assertCompatibleVersion(version: unknown, requestId: string, status: nu
       status,
     })
   }
+}
+
+/** Only the closed readiness vocabulary crosses; other details stay server-side diagnostics. */
+function readinessReason(details: Readonly<Record<string, unknown>> | undefined) {
+  const parsed = ModelReadinessReasonSchema.safeParse(details?.['reasonCode'])
+  return parsed.success && parsed.data !== 'READY' ? parsed.data : undefined
 }
 
 function invalidResponse(requestId: string, status: number): ControlPlaneClientError {

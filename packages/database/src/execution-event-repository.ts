@@ -403,7 +403,11 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
       .where(
         and(
           eq(executionEvents.eventId, parsed.eventId),
-          eq(executionEvents.publicationVersion, expectedVersion)
+          eq(executionEvents.publicationVersion, expectedVersion),
+          eq(executionEvents.payloadHash, parsed.payloadHash),
+          parsed.payloadHashVersion === undefined
+            ? isNull(executionEvents.payloadHashVersion)
+            : eq(executionEvents.payloadHashVersion, parsed.payloadHashVersion)
         )
       )
       .returning({ eventId: executionEvents.eventId })
@@ -560,6 +564,7 @@ export async function appendExecutionEventInTransaction(
     sequence: nextSequence,
     payloadBytes: Buffer.byteLength(JSON.stringify(sanitized.payload)),
     payloadHash: hashExecutionEventPayloadV2(sanitized.payload),
+    payloadHashVersion: 2,
     publication: { status: 'pending', attempts: 0, version: 1 },
   })
   const [inserted] = await transaction
@@ -592,6 +597,7 @@ function toRow(event: ExecutionEvent): typeof executionEvents.$inferInsert {
     payload: event.payload,
     payloadBytes: event.payloadBytes,
     payloadHash: event.payloadHash,
+    payloadHashVersion: event.payloadHashVersion ?? null,
     occurredAt: new Date(event.occurredAt),
     recordedAt: new Date(event.recordedAt),
     retentionExpiresAt: new Date(event.retentionExpiresAt),
@@ -630,6 +636,7 @@ export function fromExecutionEventRow(row: EventRow): ExecutionEvent {
     payload: row.payload,
     payloadBytes: row.payloadBytes,
     payloadHash: row.payloadHash,
+    ...(row.payloadHashVersion === null ? {} : { payloadHashVersion: row.payloadHashVersion }),
     occurredAt: row.occurredAt.toISOString(),
     recordedAt: row.recordedAt.toISOString(),
     retentionExpiresAt: row.retentionExpiresAt.toISOString(),

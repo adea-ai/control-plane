@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/local-control-plane",
-  "version": "1.35.0",
+  "version": "1.36.1",
   "private": true,
   "files": [
     "dist"
@@ -10,6 +10,7 @@
   "browser": false,
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "start": "bun src/start.ts",
     "dev": "bun --watch src/start.ts",
     "lint": "oxlint src",

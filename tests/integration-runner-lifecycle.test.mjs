@@ -244,8 +244,9 @@ describe('integration runner resource ownership', () => {
       const result = executeRunner(remoteTarget)
       expect(result.status).toBe(0)
       expect(result.calls.filter(({ program }) => program === 'docker')).toEqual([])
-      // turbo integration, consumed-package builds, root-level files, and the cloud drill.
-      expect(result.calls.filter(({ program }) => program === 'bun')).toHaveLength(4)
+      // integration graph, root-level build roots, the profile-portability build,
+      // root-level files, and the cloud drill.
+      expect(result.calls.filter(({ program }) => program === 'bun')).toHaveLength(5)
     },
     runnerTestBudgetMs
   )
@@ -401,15 +402,19 @@ describe('integration runner resource ownership', () => {
       const result = executeRunner(remoteTarget)
       expect(result.status).toBe(0)
       const bunCalls = result.calls.filter(({ program }) => program === 'bun')
-      const build = bunCalls.findIndex(
-        ({ args }) =>
-          args.includes('build') && args.includes('--filter=@control-plane/profile-portability')
+      const rootsBuild = bunCalls.findIndex(({ args }) =>
+        args.includes('orch:build:integration-roots')
+      )
+      const portabilityBuild = bunCalls.findIndex(({ args }) =>
+        args.includes('orch:profile-portability:build')
       )
       const rootFile = bunCalls.findIndex(({ args }) =>
         args.includes('./tests/profile-recovery-postgres-restore.integration.test.mjs')
       )
-      expect(build).toBeGreaterThanOrEqual(0)
-      expect(rootFile).toBeGreaterThan(build)
+      expect(rootsBuild).toBeGreaterThanOrEqual(0)
+      expect(portabilityBuild).toBeGreaterThanOrEqual(0)
+      expect(rootFile).toBeGreaterThan(rootsBuild)
+      expect(rootFile).toBeGreaterThan(portabilityBuild)
     },
     runnerTestBudgetMs
   )

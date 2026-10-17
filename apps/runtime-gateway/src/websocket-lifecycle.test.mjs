@@ -350,6 +350,71 @@ describe('Runtime Gateway WebSocket lifecycle', () => {
     })
   })
 
+  test('does not send a command when channel ownership changes during credential validation', async () => {
+    const base = new InMemoryRuntimeNodeCoordination()
+    const coordination = {
+      claim: (...args) => base.claim(...args),
+      heartbeat: (...args) => base.heartbeat(...args),
+      lookup: base.lookup.bind(base),
+      release: base.release.bind(base),
+      // Keep this race deterministic: assert the send-time lookup catches replacement even without a push notification.
+      subscribeReplacements: () => () => undefined,
+    }
+    const fixture = setup('gateway-a', coordination)
+    const socket = new FakeSocket()
+    let pauseValidation = false
+    let signalValidationStarted
+    const validationStarted = new Promise((resolve) => {
+      signalValidationStarted = resolve
+    })
+    let resumeValidation
+    const validationGate = new Promise((resolve) => {
+      resumeValidation = resolve
+    })
+    const authenticated = new RuntimeNodeChannel(
+      channel(1).claims,
+      {
+        async isRevoked() {
+          if (pauseValidation) {
+            signalValidationStarted()
+            await validationGate
+          }
+          return false
+        },
+        consumeCredential: async () => 'consumed',
+        subscribeRevocations: () => () => undefined,
+        verify: async () => undefined,
+      },
+      { now: () => new Date('2026-08-25T12:00:01.000Z') }
+    )
+    fixture.gateway.open(connection('gwc-a', authenticated, socket))
+    try {
+      await fixture.gateway.receive('gwc-a', JSON.stringify(golden.hello))
+      const sentBeforeCommand = socket.sent.length
+      pauseValidation = true
+      const sending = fixture.gateway.send(golden.command)
+      await validationStarted
+
+      const owner = await coordination.lookup(nodeId)
+      await coordination.claim(
+        { ...owner, connectionId: 'gwc-replacement', channelGeneration: 2 },
+        {
+          credentialId: authenticated.claims.credentialId,
+          revocationVersion: authenticated.claims.revocationVersion,
+        }
+      )
+      resumeValidation()
+
+      await expect(sending).rejects.toMatchObject({
+        code: 'RUNTIME_GATEWAY_CHANNEL_UNAVAILABLE',
+      })
+      expect(socket.sent).toHaveLength(sentBeforeCommand)
+    } finally {
+      resumeValidation()
+      await fixture.gateway.close()
+    }
+  })
+
   test('reconnects across instances and replaces stale logical sessions deterministically', async () => {
     const coordination = new InMemoryRuntimeNodeCoordination()
     const durableState = new Map([['cmd_pending', { result: 'retained' }]])

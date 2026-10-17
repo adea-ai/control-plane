@@ -49,7 +49,10 @@ const repositoryGroups = {
     'tests/pi-production-management-forwarding.test.mjs',
     'tests/pi-production-runtime-startup.test.mjs',
     'tests/pi-production-factory.test.mjs',
+    'tests/pi-byo-model-authority.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
+    'tests/acp-remote-shared-provider.test.mjs',
+    'tests/acp-remote-device-retention.test.mjs',
   ],
   smoke: [
     'tests/agent-skill-library.test.mjs',
@@ -95,6 +98,7 @@ const repositoryGroups = {
     'tests/railway-production-plan.test.mjs',
     'tests/replacement-compatibility.test.mjs',
     'tests/repository.test.mjs',
+    'tests/workspace-tooling.test.mjs',
     'tests/restate-identity.test.mjs',
   ],
 }

@@ -21,7 +21,7 @@
         "@control-plane/runtime-gateway-protocol",
         "@control-plane/runtime-sdk"
       ],
-      "externalDependencies": ["zod"],
+      "externalDependencies": ["@hpke/core", "@hpke/dhkem-x25519", "zod"],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
@@ -3415,7 +3415,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:622e32acac52d2f7581b9df796669e306204436dd1ee0b4540cf91d7e31b311b"
+      "sourceDigest": "sha256:31a06098ed2da7f769ae13528fae13dc5f6b8ce65c724ad3ad20e55ccb9ce74b"
     },
     {
       "id": "local",
@@ -3458,7 +3458,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:622e32acac52d2f7581b9df796669e306204436dd1ee0b4540cf91d7e31b311b"
+      "sourceDigest": "sha256:31a06098ed2da7f769ae13528fae13dc5f6b8ce65c724ad3ad20e55ccb9ce74b"
     }
   ],
   "ownership": [

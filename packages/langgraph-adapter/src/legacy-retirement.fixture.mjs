@@ -48,6 +48,7 @@ export const executionIds = Object.freeze({
 })
 export const planId = 'pln_01JABCDEF0123456789ABCDEFG'
 export const planDigest = `sha256:${'d'.repeat(64)}`
+const workspaceExecutionScope = { schemaVersion: 1, kind: 'workspace' }
 
 // Injected plan verifier: stands in for canonical verification where a trusted graph is needed. It is not evidence.
 export function injectedVerifier(value) {
@@ -143,7 +144,10 @@ export async function writeExecution(
       value: {
         executionId,
         state,
-        correlation: { workspaceId: request.workspaceId },
+        correlation: {
+          workspaceId: request.workspaceId,
+          executionScope: workspaceExecutionScope,
+        },
         ...(executionPlan === undefined ? {} : { executionPlan }),
       },
     })
@@ -152,7 +156,18 @@ export async function writeExecution(
 
 export async function writePlanRecord(provider, executionPlanId, value) {
   await provider.transaction((tx) =>
-    tx.put({ namespace: LEGACY_EXECUTION_PLAN_NAMESPACE, id: executionPlanId, value })
+    tx.put({
+      namespace: LEGACY_EXECUTION_PLAN_NAMESPACE,
+      id: executionPlanId,
+      value: {
+        schemaVersion: 2,
+        ...value,
+        correlation: value.correlation ?? {
+          workspaceId: request.workspaceId,
+          executionScope: workspaceExecutionScope,
+        },
+      },
+    })
   )
 }
 

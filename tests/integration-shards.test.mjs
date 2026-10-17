@@ -182,6 +182,7 @@ describe('integration shard partition', () => {
       'apps/local-control-plane/src',
       'tests',
       'apps/hosted-control-plane/src',
+      'apps/runtime-gateway/src',
     ]
     const assigned = new Map()
     for (const entry of INTEGRATION_SHARDS) {
@@ -222,6 +223,12 @@ describe('integration shard partition', () => {
         expect(owners.every((owner) => typeof owner.pattern === 'string')).toBe(true)
       }
     }
+    expect(
+      assigned.get('packages/database/src/execution-event-repository.integration.test.mjs')
+    ).toEqual([{ kind: 'shard', shard: 3, pattern: undefined }])
+    expect(
+      assigned.get('apps/workflow-worker/src/remote-runtime-waiter.integration.test.mjs')
+    ).toEqual([{ kind: 'shard', shard: 3, pattern: undefined }])
   })
 
   test('every foundation case belongs to one bounded slice across the existing shards', () => {

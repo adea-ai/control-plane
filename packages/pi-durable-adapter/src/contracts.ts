@@ -303,11 +303,18 @@ export interface PiDurableGovernedManagementCallCompiler {
   ) => Promise<PiDurableGovernedManagementCallOutcome>
 }
 
+export type PiDurableAuthorityPurpose = 'inference' | 'cancel'
+
 export interface PiDurableRuntimeOptions {
   readonly directory: string
   readonly now?: () => string
   readonly resolveAdmission: (request: RuntimeStartRequest) => Promise<PiDurableAdmission>
-  readonly assertAuthority: (authority: DurableExecutionAuthority) => Promise<void>
+  /** `cancel` re-derives authority to stop or settle a stop: current actor, audience, scope and
+   * lineage, but never model readiness. Every other call is `inference` (the default). */
+  readonly assertAuthority: (
+    authority: DurableExecutionAuthority,
+    purpose?: PiDurableAuthorityPurpose
+  ) => Promise<void>
   /** Missing in current production composition: cancellation then fails closed before any
    * journal mutation or engine abort. This port must be wired only by a server-owned coordinator.
    */

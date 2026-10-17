@@ -10,6 +10,7 @@ import {
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import type { PiDurableAdmission } from '@control-plane/pi-durable-adapter'
 import type { DelegationRecord, DelegationService } from '@control-plane/orchestration'
+import { ModelSelectionError, type ModelReadinessReason } from '@control-plane/model-gateway'
 import { PiLeadPreparationError, type SqlitePiLeadPreparations } from './lead-preparation.js'
 import {
   RuntimeExecutionHandleSchema,
@@ -251,11 +252,29 @@ export type PiDurableLeadErrorCode =
   | 'PI_LEAD_NOT_CONFIGURED'
   | 'PI_LEAD_PREPARATION_REQUIRED'
   | 'PI_LEAD_FUNDING_CONFIRMATION_STALE'
+  | 'PI_LEAD_MODEL_NOT_READY'
+/** Bounded model readiness vocabulary shared with model-connections.list and the funding view. */
+export type PiDurableLeadModelNotReadyReason = Exclude<ModelReadinessReason, 'READY'>
 export class PiDurableLeadError extends Error {
-  constructor(readonly code: PiDurableLeadErrorCode) {
+  /** Present only with `PI_LEAD_MODEL_NOT_READY`. Never carries provider or credential detail. */
+  readonly reasonCode: PiDurableLeadModelNotReadyReason | undefined
+  constructor(code: 'PI_LEAD_MODEL_NOT_READY', reasonCode: PiDurableLeadModelNotReadyReason)
+  constructor(code: Exclude<PiDurableLeadErrorCode, 'PI_LEAD_MODEL_NOT_READY'>)
+  constructor(
+    readonly code: PiDurableLeadErrorCode,
+    reasonCode?: PiDurableLeadModelNotReadyReason
+  ) {
     super(code)
     this.name = 'PiDurableLeadError'
+    this.reasonCode = code === 'PI_LEAD_MODEL_NOT_READY' ? reasonCode : undefined
   }
+}
+/** Maps a gateway readiness refusal to the bounded lead refusal; anything else is unchanged. */
+export function asModelNotReady(error: unknown): PiDurableLeadError | undefined {
+  if (error instanceof PiDurableLeadError) return error
+  if (error instanceof ModelSelectionError && error.code !== 'READY')
+    return new PiDurableLeadError('PI_LEAD_MODEL_NOT_READY', error.code)
+  return undefined
 }
 
 export interface PiDurableLeadService {
@@ -859,7 +878,10 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     try {
       return await operation()
     } catch (error) {
-      if (error instanceof PiLeadPreparationError) fail(error.code)
+      if (error instanceof PiLeadPreparationError)
+        throw error.code === 'PI_LEAD_MODEL_NOT_READY'
+          ? new PiDurableLeadError(error.code, error.reasonCode ?? 'READINESS_UNAVAILABLE')
+          : new PiDurableLeadError(error.code)
       throw error
     }
   }
@@ -1098,7 +1120,7 @@ function hash(input: unknown): string {
     .update(canonicalJsonStringify(input) ?? 'null')
     .digest('hex')}`
 }
-function fail(code: PiDurableLeadErrorCode): never {
+function fail(code: Exclude<PiDurableLeadErrorCode, 'PI_LEAD_MODEL_NOT_READY'>): never {
   throw new PiDurableLeadError(code)
 }
 function deepFreeze(value: unknown): void {

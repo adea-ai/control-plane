@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/sdk",
-  "version": "1.18.1",
+  "version": "1.19.1",
   "description": "Typed client for the Control Plane API with transport, response mapping, OpenAPI baseline, and testing helpers.",
   "keywords": [
     "agents",
@@ -42,6 +42,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "lint": "oxlint src",
     "openapi:check": "bun scripts/openapi.mjs --check",
     "openapi:generate": "bun scripts/openapi.mjs --write",

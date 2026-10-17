@@ -281,6 +281,7 @@ export async function createProductionPiLeadComposition(
           delegations: children.delegation.records,
           toolCalls: children.tools.service.calls,
           product: options.product,
+          assertRetainedProductCurrent: product.assertRetainedProductCurrent,
           ...(options.admission.now ? { now: options.admission.now } : {}),
         })
       : undefined

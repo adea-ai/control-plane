@@ -168,6 +168,7 @@ export {
   credentialCommands,
   credentialLeases,
   credentials,
+  persistenceRecords,
 } from './schema/index.js'
 export { PostgresToolCallRepository, PostgresToolRegistryRepository } from './tool-repositories.js'
 export { PostgresToolRateLimiter } from './tool-rate-limiter.js'

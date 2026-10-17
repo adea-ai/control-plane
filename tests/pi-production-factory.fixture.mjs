@@ -360,7 +360,7 @@ export async function createProductionFactoryFixture(options = {}) {
       }
       const fundingOwner = {
         ownerRef: 'payer:production-fixture',
-        kind: 'provider_account',
+        kind: options.payerKind ?? 'provider_account',
         displayName: 'Synthetic explicit payer',
         revision: 1,
         evidenceRef: 'payer-evidence:fixture',

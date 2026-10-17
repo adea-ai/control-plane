@@ -117,7 +117,8 @@ export async function createNodePiDurableLeadComposition(
       ...createPiLeadRuntimeAuthorityRouter(
         {
           resolveAdmission: (request) => admission.canonicalAuthority.resolveAdmission(request),
-          assertAuthority: (authority) => admission.canonicalAuthority.assertAuthority(authority),
+          assertAuthority: (authority, purpose) =>
+            admission.canonicalAuthority.assertAuthority(authority, purpose),
           assertRecoveryAuthority: (authority) =>
             admission.canonicalAuthority.assertRecoveryAuthority(authority),
           assertReadAuthority: (authority) =>

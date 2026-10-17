@@ -132,7 +132,10 @@ export function createProductionLeadProductAuthority(options: {
     const evidenceDigest = `sha256:${createHash('sha256').update(canonicalJsonStringify(evidence)).digest('hex')}`
     return { evidence, profile, evidenceDigest }
   }
-  const readCurrent: PiLeadProductAuthorityPort['readCurrent'] = async (input) => {
+  const readCurrent: PiLeadProductAuthorityPort['readCurrent'] = async (input, context) => {
+    // Model readiness gates only operations that start or fund inference. Observing or stopping
+    // an already admitted lead must keep working after a quota, grant or credential change.
+    const observing = context?.purpose === 'observe'
     const current = await readCanonicalProduct(input)
     if (current === undefined) return undefined
     if ('fenced' in current) return current.fenced
@@ -191,12 +194,14 @@ export function createProductionLeadProductAuthority(options: {
       pin.profileContentDigest !== profile.profileContentDigest
     )
       throw new Error('PI_PRODUCTION_PRODUCT_CHANGED')
-    const selection = await options.selections.resolveSelection({
-      workspaceId: evidence.workspaceId,
-      selectionRef: pin.selectionRef,
-      selectionRevision: pin.selectionRevision,
-    })
-    await options.selections.assertReady(selection)
+    if (!observing) {
+      const selection = await options.selections.resolveSelection({
+        workspaceId: evidence.workspaceId,
+        selectionRef: pin.selectionRef,
+        selectionRevision: pin.selectionRevision,
+      })
+      await options.selections.assertReady(selection)
+    }
     const {
       profileId: _id,
       profileVersion: _version,
@@ -212,8 +217,29 @@ export function createProductionLeadProductAuthority(options: {
       selectionRevision: pin.selectionRevision,
     })
   }
+  /** The same immutable product/profile fence as child selection, without model readiness. */
+  const retainedProductCurrent = async (
+    input: Parameters<PiLeadProductAuthorityPort['readCurrent']>[0]
+  ) => {
+    const current = await readCanonicalProduct(input)
+    if (!current || !('evidence' in current)) throw new Error('PI_CHILD_MODEL_AUTHORITY_DENIED')
+    const pin = read(input.workspaceId, input.intentId)
+    if (
+      !pin ||
+      pin.evidenceDigest !== current.evidenceDigest ||
+      pin.profileVersionId !== current.profile.profileVersionId ||
+      pin.profileContentDigest !== current.profile.profileContentDigest
+    )
+      throw new Error('PI_CHILD_MODEL_AUTHORITY_DENIED')
+    return { current, pin }
+  }
   return {
     readCurrent,
+    async assertRetainedProductCurrent(
+      input: Parameters<PiLeadProductAuthorityPort['readCurrent']>[0]
+    ): Promise<void> {
+      await retainedProductCurrent(input)
+    },
     /** Readiness/selection only. Canonical child authority must call this BEFORE allocation,
      * then retain this exact selection in its admission, spending record and continuation grant.
      * The override is supplied by an independent current canonical child request reader.
@@ -238,20 +264,8 @@ export function createProductionLeadProductAuthority(options: {
         .parse(child)
       // Recheck canonical product actor, audience, message and immutable profile without
       // coupling a child's independent model to lead-model readiness.
-      const current = await readCanonicalProduct(input)
-      if (
-        !current ||
-        !('evidence' in current) ||
-        current.evidence.canonicalActorPrincipalId !== currentChild.canonicalActorPrincipalId
-      )
-        throw new Error('PI_CHILD_MODEL_AUTHORITY_DENIED')
-      const pin = read(input.workspaceId, input.intentId)
-      if (
-        !pin ||
-        pin.evidenceDigest !== current.evidenceDigest ||
-        pin.profileVersionId !== current.profile.profileVersionId ||
-        pin.profileContentDigest !== current.profile.profileContentDigest
-      )
+      const { current, pin } = await retainedProductCurrent(input)
+      if (current.evidence.canonicalActorPrincipalId !== currentChild.canonicalActorPrincipalId)
         throw new Error('PI_CHILD_MODEL_AUTHORITY_DENIED')
       return roles.resolve({
         workspaceId: input.workspaceId,

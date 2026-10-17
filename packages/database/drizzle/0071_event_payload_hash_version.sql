@@ -1,0 +1,1 @@
+ALTER TABLE "execution_events" ADD COLUMN "payload_hash_version" integer;

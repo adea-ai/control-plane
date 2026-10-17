@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.19.1](https://github.com/adea-ai/control-plane/compare/sdk-v1.19.0...sdk-v1.19.1) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** replace Control Plane Turbo with Vite+ and Bun checks ([#1170](https://github.com/adea-ai/control-plane/issues/1170)) ([84e12db](https://github.com/adea-ai/control-plane/commit/84e12dbab1b2fea2380e8747a466db9fb1449959))
+
+## [1.19.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.18.1...sdk-v1.19.0) (2026-10-16)
+
+
+### Features
+
+* **models:** surface BYO lead model readiness and recheck it at every boundary ([#1159](https://github.com/adea-ai/control-plane/issues/1159)) ([83265a6](https://github.com/adea-ai/control-plane/commit/83265a66057006b0ce44f5b24959f871de84e394))
+* **pi-durable:** authorized read of lead child status, input state and outcomes ([#1160](https://github.com/adea-ai/control-plane/issues/1160)) ([f96ff8f](https://github.com/adea-ai/control-plane/commit/f96ff8fb934f3ebfccdd72c749698b775ad7beb1))
+
 ## [1.18.1](https://github.com/adea-ai/control-plane/compare/sdk-v1.18.0...sdk-v1.18.1) (2026-10-15)
 
 

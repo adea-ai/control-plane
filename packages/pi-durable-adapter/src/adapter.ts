@@ -41,6 +41,7 @@ import {
   type PiDurableCommittedCancellationIntent,
   type PiDurableGovernedManagementCallEnginePort,
   type DurablePiEngine,
+  type PiDurableAuthorityPurpose,
   type PiDurableRuntimeOptions,
 } from './contracts.js'
 import { SqliteDurableJournal, type JournalRecord, type ProcessClaim } from './journal.js'
@@ -409,7 +410,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   }
 
   async cancel(handle: RuntimeExecutionHandle, input: Parameters<RuntimeAdapter['cancel']>[1]) {
-    return this.#cancel(handle, input, (authority) => this.#authority(authority))
+    return this.#cancel(handle, input, (authority) => this.#authority(authority, 'cancel'))
   }
 
   /** Cancels a run retained under a lead fence. The canonical prompt cannot be re-derived while the
@@ -2015,10 +2016,13 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       denyAuthority('PI_AUTHORITY_EXPIRED')
   }
 
-  async #authority(authority: DurableExecutionAuthority): Promise<void> {
+  async #authority(
+    authority: DurableExecutionAuthority,
+    purpose: PiDurableAuthorityPurpose = 'inference'
+  ): Promise<void> {
     this.#assertUnexpired(authority)
     try {
-      await this.#options.assertAuthority(authority)
+      await this.#options.assertAuthority(authority, purpose)
       await this.#assertExecutionScope(authority)
     } catch (error) {
       authorityFailure(error)
