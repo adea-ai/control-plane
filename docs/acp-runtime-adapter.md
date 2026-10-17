@@ -99,7 +99,13 @@ lost-claim path waits), so every refusal that follows a ledger read or a claim (
 `command_expired`, `command_not_yet_valid`, and also `clock_invalid`, `device_stale`,
 `state_unavailable`) reads the ledger again before it is signed, and a record already read survives a failed
 re-read. A revocation is still reported as itself. The same lookup covers `clock_invalid` and `device_stale`
-refused before the plaintext is opened. The result:
+refused before the plaintext is opened. Unavailable evidence is its own outcome: when the ledger read or
+the claim fails (and no record was read), the answer is `state_unavailable` (retryable), and a window or
+generation fence that trips before the reply is published never turns it into `command_expired` or
+`stale_channel_generation`. The outcome/fence matrix is therefore: recorded effect `response_unknown`,
+pending effect `outcome_uncertain`, unavailable evidence `state_unavailable` (each kept against any later
+fence, never re-running an effect), and only a proven no-effect denial yields to the fence reason;
+revocation is reported as itself over all of them. The result:
 a recorded exchange is `response_unknown`, a claim without an outcome `outcome_uncertain`, and only
 a command with no record gets the plain refusal (a conflicting identity and a revocation are
 unchanged). A duplicate of the same command at a newer generation that coalesced onto a pipeline

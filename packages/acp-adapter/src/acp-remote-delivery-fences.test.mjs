@@ -813,3 +813,156 @@ describe('an executed command redelivered while the device trust record or clock
     expect(effects(fixture)).toBe(0)
   })
 })
+
+describe('storage-unknown evidence is never published as a terminal "nothing ran" refusal', () => {
+  const effects = (fixture) => fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)
+
+  /**
+   * Store with injectable faults. `onFault` runs when a fault fires and moves the fence that the
+   * publication step will see (window expiry or generation supersession), so each case crosses a
+   * storage failure with a fence that trips while it is in flight.
+   */
+  function faultyStore(inner, faults) {
+    return {
+      loadFence: (...args) => inner.loadFence(...args),
+      applyRevocation: (...args) => inner.applyRevocation(...args),
+      countLedger: (...args) => inner.countLedger(...args),
+      readLedger: async (...args) => {
+        faults.reads += 1
+        if (faults.failRead?.(faults.reads)) {
+          await faults.onFault?.()
+          throw new Error('ledger read failed')
+        }
+        const record = await inner.readLedger(...args)
+        await faults.afterRead?.(faults.reads)
+        return record
+      },
+      claim: async (...args) => {
+        if (faults.failClaim) {
+          await faults.onFault?.()
+          throw new Error('claim failed')
+        }
+        return inner.claim(...args)
+      },
+      advanceGeneration: (...args) => inner.advanceGeneration(...args),
+      recordOutcome: (...args) => inner.recordOutcome(...args),
+      abandonClaim: (...args) => inner.abandonClaim(...args),
+    }
+  }
+
+  const fences = {
+    expiry: {
+      expected: 'command_expired',
+      trip: (fixture) => {
+        fixture.clock.current = new Date(fixture.clock.current.getTime() + 100_000)
+      },
+    },
+    supersession: {
+      expected: 'stale_channel_generation',
+      trip: (_fixture, inner) => inner.advanceGeneration(5),
+    },
+  }
+
+  /** Device with a controllable store; commands are sealed by a separate producer. */
+  async function setup() {
+    const inner = new InMemoryAcpRemoteDeviceStateStore()
+    const faults = { reads: 0 }
+    const fixture = await createSecureFixture({ stateStore: faultyStore(inner, faults) })
+    const deliver = async (overrides) => {
+      const sealed = await sealedByProducer(overrides)
+      return { sealed, send: () => fixture.device.handleCommand(structuredClone(sealed)) }
+    }
+    return { inner, faults, fixture, deliver }
+  }
+
+  for (const [fenceName, fence] of Object.entries(fences)) {
+    describe(`with ${fenceName} landing during the failure`, () => {
+      test('recorded effect, ledger read fails: state_unavailable, not the terminal fence reason', async () => {
+        const { inner, faults, fixture, deliver } = await setup()
+        const command = await deliver({ commandId: commandIds.first })
+        expect(await command.send()).toMatchObject({ kind: 'exchange' })
+        faults.failRead = () => true
+        faults.onFault = () => fence.trip(fixture, inner)
+
+        const retry = await command.send()
+        expect(retry).toMatchObject({ kind: 'denial', reason: 'state_unavailable' })
+        expect(retry.reason).not.toBe(fence.expected)
+        expect(effects(fixture)).toBe(1)
+      })
+
+      test('no record, claim fails: state_unavailable, not the terminal fence reason', async () => {
+        const { inner, faults, fixture, deliver } = await setup()
+        const command = await deliver({ commandId: commandIds.first })
+        faults.failClaim = true
+        faults.onFault = () => fence.trip(fixture, inner)
+
+        expect(await command.send()).toMatchObject({ kind: 'denial', reason: 'state_unavailable' })
+        expect(effects(fixture)).toBe(0)
+      })
+
+      test('fence trips after the initial miss and the reconciliation re-read fails: state_unavailable', async () => {
+        const { inner, faults, fixture, deliver } = await setup()
+        const command = await deliver({ commandId: commandIds.first })
+        faults.afterRead = (read) => (read === 1 ? fence.trip(fixture, inner) : undefined)
+        faults.failRead = (read) => read === 2
+
+        expect(await command.send()).toMatchObject({ kind: 'denial', reason: 'state_unavailable' })
+        expect(effects(fixture)).toBe(0)
+      })
+
+      test('recorded effect already read, reconciliation re-read fails: response_unknown from the known record', async () => {
+        const { inner, faults, fixture, deliver } = await setup()
+        const command = await deliver({ commandId: commandIds.first })
+        expect(await command.send()).toMatchObject({ kind: 'exchange' })
+        const before = faults.reads
+        faults.afterRead = (read) => (read === before + 1 ? fence.trip(fixture, inner) : undefined)
+        faults.failRead = (read) => read === before + 2
+
+        expect(await command.send()).toMatchObject({ kind: 'denial', reason: 'response_unknown' })
+        expect(effects(fixture)).toBe(1)
+      })
+
+      test('pending effect, ledger read fails: state_unavailable, and the effect is never re-run', async () => {
+        const { inner, faults, fixture, deliver } = await setup()
+        const dispatch = fixture.executor.dispatch.bind(fixture.executor)
+        fixture.executor.dispatch = async (command) => {
+          await dispatch(command)
+          throw new Error('executor failed after its effect')
+        }
+        const command = await deliver({ commandId: commandIds.first })
+        expect(await command.send()).toMatchObject({ kind: 'denial', reason: 'outcome_uncertain' })
+        expect(effects(fixture)).toBe(1)
+        faults.failRead = () => true
+        faults.onFault = () => fence.trip(fixture, inner)
+
+        expect(await command.send()).toMatchObject({ kind: 'denial', reason: 'state_unavailable' })
+        faults.failRead = undefined
+        faults.onFault = undefined
+        expect(effects(fixture)).toBe(1)
+      })
+
+      test('proven no-effect keeps the plain fence reason', async () => {
+        const { inner, faults, fixture, deliver } = await setup()
+        const command = await deliver({ commandId: commandIds.first })
+        faults.afterRead = (read) => (read === 1 ? fence.trip(fixture, inner) : undefined)
+
+        expect(await command.send()).toMatchObject({ kind: 'denial', reason: fence.expected })
+        expect(effects(fixture)).toBe(0)
+      })
+
+      test('a revocation keeps precedence over the storage failure', async () => {
+        const { inner, faults, fixture, deliver } = await setup()
+        const command = await deliver({ commandId: commandIds.first })
+        expect(await command.send()).toMatchObject({ kind: 'exchange' })
+        faults.failRead = () => true
+        faults.onFault = async () => {
+          await fence.trip(fixture, inner)
+          await fixture.device.applyRevocation(fixture.controller.revoke(iso(fixture.clock)))
+        }
+
+        expect(await command.send()).toMatchObject({ kind: 'denial', reason: 'device_revoked' })
+        expect(effects(fixture)).toBe(1)
+      })
+    })
+  }
+})

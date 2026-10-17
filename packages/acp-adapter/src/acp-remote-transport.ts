@@ -1019,8 +1019,8 @@ export class SecureAcpDeviceEndpoint {
    * is read again, and the evidence decides: a recorded exchange is `response_unknown`, a claim
    * without an outcome `outcome_uncertain`, whatever the fence reason is (`stale_channel_generation`,
    * a window, `clock_invalid`, `device_stale`, `state_unavailable`). If that read fails, a record this
-   * delivery already read (`known`) still counts; with neither, the transient window and generation
-   * reasons cannot claim "nothing ran" and become `state_unavailable`. Only a refusal with no record
+   * delivery already read (`known`) still counts; with neither, the evidence is unavailable and the
+   * answer is `state_unavailable` (kept through publication by `withholdExchange`). Only a refusal with no record
    * for this identity is a no-effect refusal, and only that one may later be re-admitted for a
    * current-generation duplicate. A conflicting identity keeps the plain reason, and a revocation is
    * reported as itself before any evidence is consulted.
@@ -1042,8 +1042,8 @@ export class SecureAcpDeviceEndpoint {
       record = known
     }
     if (record === undefined) {
-      if (!fresh)
-        return isPreEffectClaim(reason) ? { kind: 'denial', reason: 'state_unavailable' } : denial
+      // No fresh read and nothing known: the evidence is unavailable, which proves nothing either way.
+      if (!fresh) return { kind: 'denial', reason: 'state_unavailable' }
       this.#preDispatchRefusals.add(denial)
       return denial
     }
@@ -1155,7 +1155,7 @@ export class SecureAcpDeviceEndpoint {
     try {
       stored = await this.#stateStore.readLedger(header.commandId)
     } catch {
-      return this.#refuse(header, isPreEffectClaim(reason) ? 'state_unavailable' : reason)
+      return this.#refuse(header, 'state_unavailable')
     }
     if (stored === undefined) return this.#refuse(header, reason)
     if (stored.outcome === undefined) return this.#refuse(header, 'outcome_uncertain')
@@ -1241,7 +1241,9 @@ function replayOutcome(
  * is an exchange the effect already ran, so a transient reason (`command_expired`,
  * `stale_channel_generation`, ...) must not read as "nothing ran": it becomes `response_unknown`
  * (retryable on the same command identity, which replays the recorded outcome). A terminal
- * revocation is reported as itself. Denial outcomes ran nothing, so their reason stays.
+ * revocation is reported as itself. Outcome/fence matrix: a recorded effect is `response_unknown`, a
+ * pending effect `outcome_uncertain`, unavailable evidence `state_unavailable` (all kept against any
+ * later fence); only a proven no-effect denial yields to the fence reason.
  */
 function withholdExchange(
   reason: AcpRemoteDenialReason,
@@ -1251,9 +1253,14 @@ function withholdExchange(
   if (outcome?.kind === 'exchange') return { kind: 'denial', reason: 'response_unknown' }
   // An outcome the device already knows is unknown stays unknown: a window or generation fence that
   // trips afterwards must not turn "an effect may have run" into a terminal pre-effect denial.
+  // `state_unavailable` is storage-unknown evidence: the ledger or claim could not be read or written,
+  // so nothing proves the command did not run, and a later window or generation fence must not turn it
+  // into the terminal "nothing ran" `command_expired` / `stale_channel_generation`.
   if (
     outcome?.kind === 'denial' &&
-    (outcome.reason === 'outcome_uncertain' || outcome.reason === 'response_unknown')
+    (outcome.reason === 'outcome_uncertain' ||
+      outcome.reason === 'response_unknown' ||
+      outcome.reason === 'state_unavailable')
   ) {
     return { kind: 'denial', reason: outcome.reason }
   }
