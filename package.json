@@ -9,7 +9,7 @@
   "type": "module",
   "scripts": {
     "build": "vp run orch:build",
-    "dev": "vp run orch:dev",
+    "dev": "vp run orch:toolchain && vp run --parallel orch:dev",
     "context:admin": "bun scripts/context-provider-admin.mjs",
     "admission:admin": "bun scripts/admission-rollout-admin.mjs",
     "type-check": "vp run orch:check && bun run db:check && bun run compatibility:check && bun run requirements:check && bun run architecture:check && bun run infra:typecheck",
