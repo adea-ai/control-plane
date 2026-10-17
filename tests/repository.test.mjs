@@ -36,7 +36,7 @@ const runtimeRef =
   (await readFile(new URL('../.github/code-foundry.yml', import.meta.url), 'utf8')).match(
     /^runtime_ref: (\S+)$/m
   )?.[1] ?? ''
-const sharedValidationRef = '7119b3e2baebfbfdd47d32428cbf5df2f2079afa'
+const sharedValidationRef = runtimeRef
 
 const apps = [
   'control-api',
@@ -67,7 +67,7 @@ test('pins the required Node and Bun toolchain', async () => {
   const manifest = await readJson('package.json')
   const testTsconfig = await readJson('tsconfig.json')
 
-  assert.equal(manifest.packageManager, 'bun@1.4.2')
+  assert.equal(manifest.packageManager, 'bun@1.4.3')
   assert.equal(manifest.engines.node, '24.21.0')
   assert.equal(manifest.engines.bun, '>=1.4.0 <2')
   assert.match(
@@ -76,7 +76,7 @@ test('pins the required Node and Bun toolchain', async () => {
   )
   assert.equal(
     (await readFile(new URL('../.bun-version', import.meta.url), 'utf8')).trim(),
-    '1.4.2'
+    '1.4.3'
   )
   assert.equal(testTsconfig.extends, './tsconfig.base.json')
   assert.equal(testTsconfig.compilerOptions.experimentalDecorators, true)
@@ -108,7 +108,7 @@ test('defines root quality and build commands', async () => {
     assert.equal(typeof manifest.scripts[script], 'string', `${script} must be defined`)
   }
 
-  assert.match(manifest.scripts['type-check'], /turbo run build openapi:check/)
+  assert.match(manifest.scripts['type-check'], /vp run orch:check/)
   assert.match(manifest.scripts['type-check'], /bun run db:check/)
   assert.match(manifest.scripts['requirements:check'], /--check-issues/)
   assert.match(manifest.scripts['db:check'], /packages\/database/)
@@ -208,13 +208,16 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'apps/hosted-control-plane/src/hosted-http.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-metrics.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-projection.integration.test.mjs',
+    'apps/runtime-gateway/src/runtime-node-credential-binding.integration.test.mjs',
     'apps/workflow-worker/src/child-runtime-budget-admission.integration.test.mjs',
+    'apps/workflow-worker/src/remote-runtime-waiter.integration.test.mjs',
     'apps/workflow-worker/src/runtime-budget-admission.integration.test.mjs',
     'packages/database/src/admission-rollout-admin.integration.test.mjs',
     'packages/database/src/budget-admission.integration.test.mjs',
     'packages/database/src/child-budget-admission.integration.test.mjs',
     'packages/database/src/credential-vault-repository.integration.test.mjs',
     'packages/database/src/delegation-reference.integration.test.mjs',
+    'packages/database/src/execution-event-repository.integration.test.mjs',
     'packages/database/src/graph-definition-repository.integration.test.mjs',
     'packages/database/src/hosted-graph-operations.integration.test.mjs',
     'packages/database/src/integration.test.mjs',
@@ -232,14 +235,18 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/database/src/retention-hold-owner-activation.integration.test.mjs',
     'packages/database/src/retention-hold-repository.integration.test.mjs',
     'packages/database/src/retention-reference-windows.integration.test.mjs',
+    'packages/database/src/runtime-node-credential-binding.integration.test.mjs',
+    'packages/database/src/runtime-node-credential-restricted.integration.test.mjs',
     'packages/database/src/runtime-node-identity-repository.integration.test.mjs',
     'packages/database/src/tool-repositories.integration.test.mjs',
     'packages/database/src/usage-store.integration.test.mjs',
     'packages/database/src/workspace-catalog.integration.test.mjs',
+    'packages/database/src/workspace-execution-scope-version-pairing.integration.test.mjs',
     'packages/database/src/workspace-execution-scope.integration.test.mjs',
     'packages/langgraph-adapter/src/postgres-checkpointer.integration.test.mjs',
     'packages/profile-portability/src/postgres.integration.test.mjs',
     'packages/testing/src/postgres.integration.test.mjs',
+    'tests/acp-remote-device-postgres.integration.test.mjs',
     'tests/child-progress-scanner.integration.test.mjs',
     'tests/child-progress-sqlite-feed-replay.integration.test.mjs',
     'tests/langgraph-retirement-inventory-pg.integration.test.mjs',
@@ -279,8 +286,10 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/pi-durable-delegation-recovery.test.mjs',
     'tests/pi-durable-canonical-authority.test.mjs',
     'tests/pi-durable-production-child-composition.test.mjs',
+    'tests/pi-durable-production-child-bridge-recovery.test.mjs',
     'tests/pi-durable-execution-model-composition.test.mjs',
     'tests/pi-durable-governed-child-composition.test.mjs',
+    'tests/pi-durable-compaction-governed-dispatch.test.mjs',
     'tests/pi-durable-governed-publisher-regression.test.mjs',
     'tests/j1-unfinished-child-process-restart.test.mjs',
     'tests/j1-native-child-store-restart.test.mjs',
@@ -289,7 +298,10 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/pi-production-management-forwarding.test.mjs',
     'tests/pi-production-runtime-startup.test.mjs',
     'tests/pi-production-factory.test.mjs',
+    'tests/pi-byo-model-authority.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
+    'tests/acp-remote-shared-provider.test.mjs',
+    'tests/acp-remote-device-retention.test.mjs',
   ])
   const manifest = await readJson('package.json')
   assert.match(
@@ -336,6 +348,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/railway-production-plan.test.mjs',
     'tests/replacement-compatibility.test.mjs',
     'tests/repository.test.mjs',
+    'tests/workspace-tooling.test.mjs',
     'tests/restate-identity.test.mjs',
   ])
   const inventory = await discoverTestInventory()
@@ -752,7 +765,7 @@ test('provides a documented isolated integration-test runner', async () => {
   assert.match(runner, /RUN_DATABASE_INTEGRATION/)
   assert.match(runner, /SELECT 1/)
   assert.match(runner, /database system is accepting SQL connections/)
-  assert.match(runner, /'test:integration', '--concurrency=1'/)
+  assert.match(runner, /'--concurrency=1', 'orch:test:integration'/)
   assert.match(runner, /async function runLocalIntegrationShards/)
   assert.match(runner, /INTEGRATION_SHARD_IDS\.map\(async \(shard\)/)
   assert.match(runner, /Local PostgreSQL integration shard .* starting/)
@@ -1027,7 +1040,7 @@ test('configures strict TypeScript and dependency-boundary checks', async () => 
   assert.equal(tsconfig.compilerOptions.noUncheckedSideEffectImports, true)
   assert.equal(tsconfig.compilerOptions.allowUnreachableCode, false)
   assert.equal(tsconfig.compilerOptions.allowUnusedLabels, false)
-  assert.match(manifest.scripts['check:boundaries'], /turbo boundaries/)
+  assert.match(manifest.scripts['check:boundaries'], /bun scripts\/workspace-boundaries\.mjs/)
   for (const prohibited of [
     '@langchain/langgraph',
     '@modelcontextprotocol',

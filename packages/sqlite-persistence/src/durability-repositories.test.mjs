@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
@@ -7,7 +8,7 @@ import {
   ProjectStateService,
   RecordingProjectStateEventPublisher,
 } from '@control-plane/domain'
-import { ExecutionEventService } from '@control-plane/events'
+import { ExecutionEventService, hashExecutionEventPayloadV2 } from '@control-plane/events'
 import {
   acceptancePlan,
   acceptancePlanReference,
@@ -23,6 +24,7 @@ import {
   SqliteRuntimeInventoryCheckpointRepository,
   SqliteRuntimeEventEffectSink,
   SqliteStatePromotionProposalRepository,
+  createRuntimeNodeCredentialFenceValidator,
 } from './index.ts'
 
 const now = '2026-08-30T12:00:00.000Z'
@@ -227,6 +229,63 @@ describe('SQLite standalone durability repositories', () => {
     })
   })
 
+  test('persists explicit event hash versions and preserves historical untagged rows on retry', async () => {
+    await withReopen(async ({ current, reopened }) => {
+      const repository = new SqliteExecutionEventRepository(current())
+      const payload = { schemaVersion: 1, schemas: ['v1'], 'a-b': 1, a_b: 2 }
+      const draft = { ...eventDraft('evt_01BRZ3NDEKTSV4RRFFQ69G5FAV'), payload }
+      const written = await repository.append(draft)
+
+      expect(written).toMatchObject({
+        payloadHashVersion: 2,
+        payloadHash: hashExecutionEventPayloadV2(payload),
+      })
+
+      const historicalPayload = { schemaVersion: 1, schemas: ['v1'], 'a-b': 1, a_b: 2 }
+      const historicalHash = '2a64697fcbc2d74f77b9dceaec97f0bd170aab9592edd2e0248bd5f70f91b735'
+      const historicalDraft = {
+        ...eventDraft('evt_01CRZ3NDEKTSV4RRFFQ69G5FAV'),
+        payload: historicalPayload,
+      }
+      const historicalWritten = await repository.append(historicalDraft)
+      expect(historicalWritten.payloadHashVersion).toBe(2)
+      const { payloadHashVersion: _historicalVersion, ...historical } = historicalWritten
+      const rowId = `r-${createHash('sha256').update(historicalWritten.eventId).digest('hex')}`
+      const row = await current().transaction((transaction) =>
+        transaction.get('execution-events', rowId)
+      )
+      expect(row).toBeDefined()
+      await current().transaction((transaction) =>
+        transaction.put({
+          namespace: 'execution-events',
+          id: row.id,
+          expectedRevision: row.revision,
+          value: {
+            ...historical,
+            payload: historicalPayload,
+            payloadBytes: Buffer.byteLength(JSON.stringify(historicalPayload)),
+            payloadHash: historicalHash,
+          },
+        })
+      )
+
+      const originalTaggedRead = await repository.get(written.eventId)
+      expect(originalTaggedRead?.payloadHashVersion).toBe(2)
+      expect(originalTaggedRead?.payloadHash).toBe(hashExecutionEventPayloadV2(payload))
+      const legacyRead = await repository.get(historicalWritten.eventId)
+      expect(legacyRead?.payloadHashVersion).toBeUndefined()
+      expect(legacyRead?.payloadHash).toBe(historicalHash)
+      await reopened()
+      const durable = new SqliteExecutionEventRepository(current())
+      expect(await durable.get(written.eventId)).toEqual(originalTaggedRead)
+      expect(await durable.get(historicalWritten.eventId)).toEqual(legacyRead)
+      expect(await durable.append(draft)).toBeUndefined()
+      expect(await durable.append(historicalDraft)).toBeUndefined()
+      expect(await durable.get(written.eventId)).toEqual(originalTaggedRead)
+      expect(await durable.get(historicalWritten.eventId)).toEqual(legacyRead)
+    })
+  })
+
   test('persists reconciliation decisions with observation-hash CAS across reopen', async () => {
     await withReopen(async ({ current, reopened }) => {
       const checkpoint = reconciliationCheckpoint()
@@ -278,12 +337,14 @@ describe('SQLite standalone durability repositories', () => {
       const executions = new SqliteExecutionRepository(current())
       const lifecycle = new ExecutionLifecycleService(executions)
       await lifecycle.createExecution(executionInput())
-      const effects = new SqliteRuntimeEventEffectSink(current())
+      await new SqliteRuntimeCommandRepository(current()).create(runtimeCommand())
+      const effects = fencedEffectSink(current())
       // Pre-cutover receipt: stored under the legacy sha256 form only.
       expect(
         await effects.applyProgress({
           commandId: ids.commandId,
           eventSequence: 2,
+          credentialFence: validFence,
           frameHash: `sha256:${'a'.repeat(64)}`,
           draft: eventDraft('evt_01BRZ3NDEKTSV4RRFFQ69G5FAV'),
         })
@@ -294,6 +355,7 @@ describe('SQLite standalone durability repositories', () => {
         await effects.applyProgress({
           commandId: ids.commandId,
           eventSequence: 2,
+          credentialFence: validFence,
           frameHash: `s2:${'b'.repeat(64)}`,
           legacyFrameHash: `sha256:${'a'.repeat(64)}`,
           draft: eventDraft('evt_01BRZ3NDEKTSV4RRFFQ69G5FAV'),
@@ -304,6 +366,7 @@ describe('SQLite standalone durability repositories', () => {
         await effects.applyProgress({
           commandId: ids.commandId,
           eventSequence: 2,
+          credentialFence: validFence,
           frameHash: `s2:${'c'.repeat(64)}`,
           legacyFrameHash: `sha256:${'d'.repeat(64)}`,
           draft: eventDraft('evt_01BRZ3NDEKTSV4RRFFQ69G5FAV'),
@@ -324,10 +387,12 @@ describe('SQLite standalone durability repositories', () => {
         expectedExecutionVersion: execution.version,
         queuedAt: '2026-08-30T12:00:01.000Z',
       })
-      const effects = new SqliteRuntimeEventEffectSink(current())
+      await new SqliteRuntimeCommandRepository(current()).create(runtimeCommand())
+      const effects = fencedEffectSink(current())
       const progress = {
         commandId: ids.commandId,
         eventSequence: 2,
+        credentialFence: validFence,
         frameHash: 'a'.repeat(64),
         draft: {
           ...eventDraft('evt_01BRZ3NDEKTSV4RRFFQ69G5FAV'),
@@ -366,6 +431,7 @@ describe('SQLite standalone durability repositories', () => {
       const terminal = {
         commandId: ids.commandId,
         messageSequence: 3,
+        credentialFence: validFence,
         frameHash: 'd'.repeat(64),
         execution: currentExecution,
         attempt: currentAttempt,
@@ -381,7 +447,7 @@ describe('SQLite standalone durability repositories', () => {
       expect(await effects.applyTerminal(terminal)).toMatchObject({ outcome: 'applied' })
 
       await reopened()
-      const durableEffects = new SqliteRuntimeEventEffectSink(current())
+      const durableEffects = fencedEffectSink(current())
       const durableExecutions = new SqliteExecutionRepository(current())
       expect(await durableEffects.applyTerminal(terminal)).toMatchObject({ outcome: 'duplicate' })
       expect(JSON.stringify(await durableEffects.applyProgress(progress))).not.toContain(
@@ -398,6 +464,29 @@ describe('SQLite standalone durability repositories', () => {
     })
   })
 })
+
+const validFence = { credentialId: 'rnc_valid', revocationVersion: 1 }
+
+/**
+ * An effect sink whose credential authority accepts exactly `validFence` for the stored command's
+ * node and workspace, recording every in-transaction validation it is asked to make.
+ */
+function fencedEffectSink(provider, calls = []) {
+  return new SqliteRuntimeEventEffectSink(
+    provider,
+    createRuntimeNodeCredentialFenceValidator({
+      validateCredentialFenceInTransaction: async (transaction, fence, scope) => {
+        calls.push({ inTransaction: typeof transaction.get === 'function', fence, scope })
+        return (
+          fence.credentialId === validFence.credentialId &&
+          fence.revocationVersion === validFence.revocationVersion &&
+          scope.nodeId === ids.nodeId &&
+          scope.workspaceId === ids.workspaceId
+        )
+      },
+    })
+  )
+}
 
 async function withReopen(run) {
   const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-durability-'))
@@ -596,5 +685,115 @@ describe('SQLite event retention sweep', () => {
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
+  })
+})
+
+describe('SQLite runtime event effects enforce the credential fence (parity with PostgreSQL)', () => {
+  async function seeded(current) {
+    await seedAcceptancePlan(current())
+    const executions = new SqliteExecutionRepository(current())
+    const lifecycle = new ExecutionLifecycleService(executions)
+    const execution = await lifecycle.createExecution(executionInput())
+    await lifecycle.createAttempt({
+      executionId: execution.executionId,
+      attemptId: ids.attemptId,
+      expectedExecutionVersion: execution.version,
+      queuedAt: '2026-08-30T12:00:01.000Z',
+    })
+    await new SqliteRuntimeCommandRepository(current()).create(runtimeCommand())
+    return executions
+  }
+
+  function terminalFor(execution, attempt, credentialFence) {
+    return {
+      commandId: ids.commandId,
+      messageSequence: 3,
+      ...(credentialFence === undefined ? {} : { credentialFence }),
+      frameHash: 'd'.repeat(64),
+      execution,
+      attempt,
+      state: 'completed',
+      resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      draft: {
+        ...eventDraft('evt_01DRZ3NDEKTSV4RRFFQ69G5FAV'),
+        type: 'execution.completed',
+        occurredAt: '2026-08-30T12:00:02.000Z',
+        recordedAt: '2026-08-30T12:00:02.000Z',
+      },
+    }
+  }
+
+  test('a terminal result without a valid fence never settles the execution', async () => {
+    await withReopen(async ({ current }) => {
+      const executions = await seeded(current)
+      const calls = []
+      const effects = fencedEffectSink(current(), calls)
+      const execution = await executions.getExecution(ids.executionId)
+      const attempt = await executions.getAttempt(ids.attemptId)
+      const rejected = [
+        undefined,
+        { credentialId: '', revocationVersion: -1 },
+        { credentialId: 'rnc_revoked', revocationVersion: 1 },
+        { credentialId: validFence.credentialId, revocationVersion: 2 },
+        { ...validFence, extra: true },
+      ]
+      for (const fence of rejected) {
+        await expect(
+          effects.applyTerminal(terminalFor(execution, attempt, fence))
+        ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
+      }
+      expect(await executions.getExecution(ids.executionId)).toMatchObject({ state: 'accepted' })
+      expect(await executions.getAttempt(ids.attemptId)).toMatchObject({ state: 'queued' })
+
+      expect(
+        await effects.applyTerminal(terminalFor(execution, attempt, validFence))
+      ).toMatchObject({ outcome: 'applied' })
+      // The authority is asked in-transaction with the stored command's node and workspace.
+      expect(calls.at(-1)).toEqual({
+        inTransaction: true,
+        fence: validFence,
+        scope: { nodeId: ids.nodeId, workspaceId: ids.workspaceId },
+      })
+    })
+  })
+
+  test('progress, an unknown command, and a missing or non-boolean authority all fail closed', async () => {
+    await withReopen(async ({ current }) => {
+      await seeded(current)
+      const progress = {
+        commandId: ids.commandId,
+        eventSequence: 2,
+        credentialFence: validFence,
+        frameHash: 'a'.repeat(64),
+        draft: eventDraft('evt_01BRZ3NDEKTSV4RRFFQ69G5FAV'),
+      }
+      const fenced = fencedEffectSink(current())
+      await expect(
+        fenced.applyProgress({ ...progress, credentialFence: undefined })
+      ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
+      await expect(
+        fenced.applyProgress({ ...progress, commandId: 'cmd_01BRZ3NDEKTSV4RRFFQ69G5FAV' })
+      ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
+      // No authority configured: nothing can be settled.
+      await expect(
+        new SqliteRuntimeEventEffectSink(current()).applyProgress(progress)
+      ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
+      // A truthy non-boolean answer is not an authorization.
+      const truthy = new SqliteRuntimeEventEffectSink(
+        current(),
+        createRuntimeNodeCredentialFenceValidator({
+          validateCredentialFenceInTransaction: async () => ({ valid: false }),
+        })
+      )
+      await expect(truthy.applyProgress(progress)).rejects.toMatchObject({
+        code: 'INVENTORY_CREDENTIAL_FENCE_INVALID',
+      })
+
+      expect(await fenced.applyProgress(progress)).toMatchObject({ outcome: 'applied' })
+      // Replays are fenced too: a revoked channel cannot probe recorded receipts.
+      await expect(
+        fenced.applyProgress({ ...progress, credentialFence: { ...validFence, credentialId: 'x' } })
+      ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
+    })
   })
 })

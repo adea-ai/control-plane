@@ -1,8 +1,13 @@
 import { expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
+import { DatabaseSync } from 'node:sqlite'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { ExecutionPlanCompiler, deriveExecutionPlan } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
 import { createProductionChildModelAuthority } from './production-child-model-authority.ts'
+import { createProductionChildModelHost } from './production-child-model-host.ts'
 
 const at = '2026-10-08T00:00:00.000Z'
 const actor = `user:${randomUUID()}`
@@ -95,6 +100,193 @@ test('child selection readiness runs before canonical admission; exact selection
   )
   expect(state.admits).toBe(1)
 })
+
+test('cancellation rechecks child authority without resolving an unavailable model', async () => {
+  const { request, state, options } = fixture()
+  const purposes = []
+  options.assertCurrent = async (_authority, purpose) => {
+    purposes.push(purpose)
+    if (state.denied && purpose !== 'cancel') throw new Error('CHILD_FUNDING_UNAVAILABLE')
+  }
+  const port = createProductionChildModelAuthority(options)
+  const admission = await port.resolveAdmission(request)
+  state.denied = true
+  const selects = state.selects
+  await port.assertAuthority({ request, admission }, 'cancel')
+  expect(purposes.at(-1)).toBe('cancel')
+  expect(state.selects).toBe(selects)
+  expect(state.admits).toBe(1)
+  await expect(port.assertAuthority({ request, admission })).rejects.toThrow(
+    'CHILD_FUNDING_UNAVAILABLE'
+  )
+})
+
+test('cancellation still refuses changed actor, revision, lineage, expired authority or a denied current grant', async () => {
+  for (const fault of ['actor', 'revision', 'lineage', 'expiry', 'clock', 'grant']) {
+    const { request, state, options } = fixture()
+    const port = createProductionChildModelAuthority(options)
+    const admission = await port.resolveAdmission(request)
+    state.denied = true
+    if (fault === 'actor') state.record.canonicalActorPrincipalId = `user:${randomUUID()}`
+    if (fault === 'revision') state.record.authorityRevision++
+    if (fault === 'lineage') state.record.parentExecutionPlanDigest = `sha256:${'a'.repeat(64)}`
+    if (fault === 'expiry') state.record.expiresAt = at
+    if (fault === 'clock') options.now = () => 'invalid'
+    if (fault === 'grant')
+      options.assertCurrent = async () => {
+        throw new Error('CURRENT_GRANT_REVOKED')
+      }
+    // Recreate only the callback wrapper so the changed clock is read too; the
+    // admitted authority and canonical records are the originals.
+    await expect(
+      createProductionChildModelAuthority(options).assertAuthority({ request, admission }, 'cancel')
+    ).rejects.toThrow()
+  }
+})
+
+test('an audience reader change during the final cancellation read cannot reuse the admitted authority', async () => {
+  const { request, state, options } = fixture()
+  const port = createProductionChildModelAuthority(options)
+  const admission = await port.resolveAdmission(request)
+  let reads = 0
+  options.readCurrent = async (_request, purpose) => {
+    expect(purpose).toBe('cancel')
+    if (++reads === 2) state.record.productReaderPrincipalId = 'svc_replacement'
+    return state.record
+  }
+  await expect(
+    createProductionChildModelAuthority(options).assertAuthority({ request, admission }, 'cancel')
+  ).rejects.toThrow('PI_CHILD_MODEL_AUTHORITY_CHANGED')
+})
+
+test('child model host verifies the admitted configuration for cancellation without model or funding reads', async () => {
+  const { request, state, options } = fixture()
+  const admission = await options.admit(request, selection)
+  const original = {
+    current: state.record,
+    plan: request.executionPlan,
+    objective: admission.prompt,
+    principalRef: admission.authority.principalRef,
+    scopeRef: admission.authority.scopeRef,
+    allowedPrincipalIds: ['svc_product'],
+  }
+  const database = new DatabaseSync(':memory:')
+  const fundingDirectory = mkdtempSync(join(tmpdir(), 'pi-child-cancel-funding-'))
+  let record = structuredClone(original)
+  let modelReads = 0
+  const purposes = []
+  const host = createProductionChildModelHost({
+    current: {
+      readRecord: async (_ids, purpose) => {
+        purposes.push(purpose)
+        return record
+      },
+    },
+    product: {
+      resolveChildSelection: async () => {
+        modelReads++
+        throw new Error('TEST_MODEL_REVOKED')
+      },
+    },
+    selections: {},
+    // The directory is empty. Cancellation must never try to read funding records.
+    fundingDirectory,
+    database,
+    leasePrincipalRef: 'svc_child_lease',
+    modelAlias: 'reasoning.standard',
+    now: () => at,
+  })
+  try {
+    await host.assertCurrent({ request, admission }, 'cancel')
+    expect(purposes).toEqual(['cancel'])
+    expect(modelReads).toBe(0)
+    await expect(host.assertCurrent({ request, admission })).rejects.toThrow('TEST_MODEL_REVOKED')
+    expect(modelReads).toBe(1)
+    for (const mutate of [
+      (value) => {
+        value.current.canonicalActorPrincipalId = `user:${randomUUID()}`
+      },
+      (value) => {
+        value.current.authorityRevision++
+      },
+      (value) => {
+        value.principalRef = 'svc_other'
+      },
+      (value) => {
+        value.scopeRef = 'scope:other'
+      },
+      (value) => {
+        value.objective = 'Changed objective'
+      },
+      (value) => {
+        value.current.executionPlanDigest = `sha256:${'a'.repeat(64)}`
+      },
+      (value) => {
+        value.current.attemptId = 'att_01JCBCDEF0123456789ABCDEFG'
+      },
+      (value) => {
+        value.current.expiresAt = at
+      },
+    ]) {
+      record = structuredClone(original)
+      mutate(record)
+      await expect(host.assertCurrent({ request, admission }, 'cancel')).rejects.toThrow(
+        'PI_CHILD_MODEL_AUTHORITY_DENIED'
+      )
+    }
+    expect(modelReads).toBe(1)
+  } finally {
+    database.close()
+    rmSync(fundingDirectory, { recursive: true, force: true })
+  }
+})
+
+for (const field of ['principalRef', 'scopeRef', 'objective']) {
+  test(`cancellation refuses ${field} drift during its final canonical reads`, async () => {
+    const { request, state, options } = fixture()
+    const admission = await options.admit(request, selection)
+    const record = {
+      current: state.record,
+      plan: request.executionPlan,
+      objective: admission.prompt,
+      principalRef: admission.authority.principalRef,
+      scopeRef: admission.authority.scopeRef,
+      allowedPrincipalIds: ['svc_product'],
+    }
+    const database = new DatabaseSync(':memory:')
+    const fundingDirectory = mkdtempSync(join(tmpdir(), 'pi-child-cancel-final-read-'))
+    const host = createProductionChildModelHost({
+      current: { readRecord: async () => structuredClone(record) },
+      product: options.product,
+      selections: {},
+      fundingDirectory,
+      database,
+      leasePrincipalRef: 'svc_child_lease',
+      modelAlias: 'reasoning.standard',
+      now: () => at,
+    })
+    try {
+      const port = createProductionChildModelAuthority({
+        ...options,
+        assertCurrent: host.assertCurrent,
+        readCurrent: async () => {
+          // Host validation has already read the old accepted identity at the defective head.
+          // The model-request projection carries none of these three fields.
+          await Promise.resolve()
+          record[field] = `changed:${field}`
+          return record.current
+        },
+      })
+      await expect(port.assertAuthority({ request, admission }, 'cancel')).rejects.toThrow(
+        'PI_CHILD_MODEL_AUTHORITY_DENIED'
+      )
+      expect(state.selects).toBe(0)
+    } finally {
+      database.close()
+      rmSync(fundingDirectory, { recursive: true, force: true })
+    }
+  })
+}
 test('missing current child, changed lineage, expiry or revoked selection cannot allocate', async () => {
   for (const fault of ['missing', 'parent', 'attempt', 'expired', 'revoked']) {
     const { request, state, options } = fixture()

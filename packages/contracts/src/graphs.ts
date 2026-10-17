@@ -157,6 +157,7 @@ export const GraphDefinitionVersionSchema = z
     reference: GraphReferenceSchema,
     revision: z.number().int().positive(),
     lifecycle: z.enum(['published', 'deprecated', 'revoked']),
+    digestVersion: z.literal('canonical-json-v1').optional(),
     content: GraphDefinitionContentSchema,
     publishedAt: z.iso.datetime(),
     changedAt: z.iso.datetime(),

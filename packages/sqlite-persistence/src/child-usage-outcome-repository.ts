@@ -86,9 +86,12 @@ export class SqliteChildUsageOutcomeRepository {
           )
         }
       }
+      // Replacing the stored record is a compare-and-set against the row revision just read; the
+      // snapshot `revision` above is the owner's monotonic number, not the row's.
       await transaction.put({
         namespace,
         id,
+        ...(existing === undefined ? {} : { expectedRevision: existing.revision }),
         value: json({ revision, snapshot }),
       })
     })

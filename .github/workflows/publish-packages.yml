@@ -59,7 +59,7 @@ jobs:
       - name: Build published packages
         # The tarballs must contain dist/ output: the exports map serves
         # dist types and entry points to registry consumers.
-        run: bunx turbo run build --filter=@control-plane/contracts --filter=@control-plane/runtime-gateway-protocol --filter=@control-plane/sdk --filter=@control-plane/telemetry --filter=@control-plane/tool-sdk --filter=@control-plane/runtime-sdk
+        run: bunx --no-install vp run orch:build:published
 
       - name: Publish changed packages
         env:

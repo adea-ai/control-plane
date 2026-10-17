@@ -1,7 +1,7 @@
-// DECISION (#612): insertion order is CONTRACTUAL here — the serialized bytes
-// are persisted and compared verbatim across versions, so this site must not
-// adopt canonicalJsonStringify; altering the format requires a versioned
-// envelope migration with an explicit cutover.
+// DECISION (#612): checkpoint schema-v1 digests use compact JSON.stringify of
+// { schemaVersion, profile, entries } in this literal's field order. Entry
+// order and field order come from inventory(); verification parses the pretty
+// file before recomputing this digest. Keep v1 readable across releases.
 import { createHash, randomUUID } from 'node:crypto'
 import {
   chmod,
@@ -182,10 +182,9 @@ function finalizeManifest(
   profile: FilesystemCheckpointProfile,
   entries: readonly FilesystemCheckpointEntry[]
 ): FilesystemCheckpointManifest {
-  // CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-  // plain stringify of a fixed literal; the digest is persisted on disk — changing the byte format invalidates existing checkpoints
-  const canonical = JSON.stringify({ schemaVersion: 1, profile, entries })
-  return { schemaVersion: 1, profile, entries, contentDigest: digest(canonical) }
+  // Legacy checkpoint digest format, schema v1: this compact sequence is the digest input.
+  const digestInput = JSON.stringify({ schemaVersion: 1, profile, entries })
+  return { schemaVersion: 1, profile, entries, contentDigest: digest(digestInput) }
 }
 
 function parseManifest(value: string): FilesystemCheckpointManifest {

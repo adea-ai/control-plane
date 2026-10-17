@@ -193,3 +193,18 @@ test('funding expiry during the last current-read boundary cannot produce an exp
   expect(result.reasonCode).toBe('PROVIDER_POLICY_DENIED')
   expect(f.leases()).toBe(0)
 })
+
+test('a bring-your-own key is never disclosed as Adea-funded, and each other payer kind stays allowed', async () => {
+  expect(selection.fundingSource).toBe('byo_api')
+  for (const kind of ['provider_account', 'workspace_account']) {
+    const f = fixture()
+    f.record({ ...decision, fundingOwner: { ...decision.fundingOwner, kind } })
+    expect((await f.resolve()).state).toBe('ready')
+  }
+  const f = fixture()
+  f.record({ ...decision, fundingOwner: { ...decision.fundingOwner, kind: 'adea_account' } })
+  const result = await f.resolve()
+  expect(result.state).toBe('blocked')
+  expect(result.reasonCode).toBe('PROVIDER_POLICY_DENIED')
+  expect(f.leases()).toBe(0)
+})
