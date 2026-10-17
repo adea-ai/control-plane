@@ -3,6 +3,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { dirname, extname, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import { Parser } from 'acorn'
+import ts from 'typescript6'
 
 const repositoryRoot = new URL('..', import.meta.url)
 const scanRoots = ['packages', 'apps', 'scripts']
@@ -1314,39 +1315,41 @@ export async function collectDigestWriterFlows(root = repositoryRoot.pathname) {
   return flows
 }
 
-function staticImportRecords(source) {
+function staticImportRecords(path, source) {
+  if (!/\b(?:import|export)\b/.test(source)) return []
+  const program = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, false)
+  const usedNames = new Set()
+  const collectUses = (node) => {
+    if (ts.isIdentifier(node)) usedNames.add(node.text)
+    ts.forEachChild(node, collectUses)
+  }
   const records = []
-  const expression =
-    /\b(import|export)\s+(?:type\s+)?(?:([$\w]+)\s*,?\s*)?(?:(\*\s*(?:as\s+([$\w]+))?)|\{([^}]+)\})?\s*from\s*['"]([^'"]+)['"]/g
-  for (const match of source.matchAll(expression)) {
-    const named = match[5]
-    const localNames = named
-      ? named
-          .split(',')
-          .map((specifier) =>
-            specifier
-              .trim()
-              .replace(/^type\s+/, '')
-              .split(/\s+as\s+/)
-              .at(-1)
-          )
-          .filter(Boolean)
-      : []
-    if (match[2]) localNames.push(match[2])
-    if (match[4]) localNames.push(match[4])
+  for (const statement of program.statements) {
+    const isImport = ts.isImportDeclaration(statement)
+    const isExport = ts.isExportDeclaration(statement)
+    if ((!isImport && !isExport) || (isExport && !statement.moduleSpecifier)) {
+      collectUses(statement)
+      continue
+    }
+    if (!statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier)) continue
+    const localNames = []
+    const clause = isImport ? statement.importClause : statement.exportClause
+    if (isImport && clause?.name) localNames.push(clause.name.text)
+    const bindings = isImport ? clause?.namedBindings : clause
+    if (bindings && ts.isNamedImports(bindings)) {
+      localNames.push(...bindings.elements.map((specifier) => specifier.name.text))
+    }
+    const namespace = bindings && ts.isNamespaceImport(bindings) ? bindings.name.text : undefined
+    if (namespace) localNames.push(namespace)
     records.push({
-      isExport: match[1] === 'export',
+      isExport,
       localNames,
-      moduleName: match[6],
-      namespace: match[4],
+      moduleName: statement.moduleSpecifier.text,
+      namespace,
+      usedNames,
     })
   }
   return records
-}
-
-function hasIdentifierUseOutsideImport(source, localName) {
-  const pattern = new RegExp(`\\b${localName.replace(/[$]/g, '\\$&')}\\b`, 'g')
-  return [...source.matchAll(pattern)].length > 1
 }
 
 export function selectRelevantSources(sources) {
@@ -1356,7 +1359,7 @@ export function selectRelevantSources(sources) {
   for (const [path, source] of sources) {
     const dependencies = []
     const bindings = []
-    for (const record of staticImportRecords(source)) {
+    for (const record of staticImportRecords(path, source)) {
       const dependency = resolveImportPath(path, record.moduleName, fileSet)
       if (!dependency) continue
       dependencies.push(dependency)
@@ -1393,8 +1396,7 @@ export function selectRelevantSources(sources) {
       if (selected.has(importer) || importer === 'scripts/check-digest-writers.mjs') continue
       const importerSource = sources.get(importer) ?? ''
       const importsAffectedBinding =
-        edge.isExport ||
-        edge.localNames.some((name) => hasIdentifierUseOutsideImport(importerSource, name))
+        edge.isExport || edge.localNames.some((name) => edge.usedNames.has(name))
       const exportedWrapper =
         /\bexport\s+(?:async\s+)?(?:function|const|let|var|class|default)\b/.test(importerSource)
       if (

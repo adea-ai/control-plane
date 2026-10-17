@@ -496,6 +496,97 @@ test('full static frontier follows innocuously named wrappers beyond three impor
   )
 })
 
+test('static frontier matches escaped, Unicode, and dollar identifiers as complete tokens', () => {
+  const aliases = [
+    'café',
+    '转换',
+    '$convert',
+    'convert$',
+    '$',
+    String.raw`\u0063onvert`,
+    String.raw`caf\u00e9`,
+  ]
+  for (const alias of aliases) {
+    const sources = new Map([
+      [
+        'packages/legacy/src/index.ts',
+        `export const encode = values => values.toSorted((a, b) => a.localeCompare(b))`,
+      ],
+      [
+        'apps/records/src/writer.ts',
+        `import { encode as ${alias} } from '@control-plane/legacy'
+        export const describe = values => ${alias}(values)`,
+      ],
+    ])
+    assert.equal(selectRelevantSources(sources).has('apps/records/src/writer.ts'), true, alias)
+  }
+})
+
+test('static frontier decodes escapes across default, namespace, and named imports', () => {
+  for (const binding of [
+    String.raw`\u0063onvert`,
+    String.raw`* as \u0063onvert`,
+    String.raw`{ encode as \u0063onvert }`,
+  ]) {
+    const sources = new Map([
+      [
+        'packages/legacy/src/index.ts',
+        `export const encode = values => values.toSorted((a, b) => a.localeCompare(b))`,
+      ],
+      [
+        'apps/records/src/writer.ts',
+        `import ${binding} from '@control-plane/legacy'
+        export const describe = values => convert(values)`,
+      ],
+    ])
+    assert.equal(selectRelevantSources(sources).has('apps/records/src/writer.ts'), true, binding)
+  }
+})
+
+test('static frontier retains a separately imported local re-export', () => {
+  const sources = new Map([
+    [
+      'packages/legacy/src/index.ts',
+      `export const encode = values => values.toSorted((a, b) => a.localeCompare(b))`,
+    ],
+    [
+      'packages/wrapper/src/index.ts',
+      `import { encode as convert } from '@control-plane/legacy'; export { convert }`,
+    ],
+    [
+      'apps/records/src/writer.ts',
+      `import { convert } from '@control-plane/wrapper'; export const describe = values => convert(values)`,
+    ],
+  ])
+  assert.deepEqual(
+    [...selectRelevantSources(sources).keys()].toSorted(),
+    [...sources.keys()].toSorted()
+  )
+})
+
+test('static frontier excludes import-only names, strings, comments, and identifier substrings', () => {
+  for (const [alias, other] of [
+    ['convert', '$convert'],
+    ['$convert', '$convertExtra'],
+    ['convert$', 'convert$extra'],
+    ['café', 'caféExtra'],
+  ]) {
+    const sources = new Map([
+      [
+        'packages/legacy/src/index.ts',
+        `export const encode = values => values.toSorted((a, b) => a.localeCompare(b))`,
+      ],
+      [
+        'apps/records/src/writer.ts',
+        `import { encode as ${alias} } from '@control-plane/legacy'
+        // ${alias}
+        export const describe = '${alias}' + ${other}`,
+      ],
+    ])
+    assert.equal(selectRelevantSources(sources).has('apps/records/src/writer.ts'), false, alias)
+  }
+})
+
 test('includes script-path writers while excluding only the guard implementation', () => {
   const selected = selectRelevantSources(
     new Map([
