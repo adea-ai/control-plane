@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.10.0...pi-durable-adapter-v0.10.1) (2026-10-17)
+
+
+### Tests
+
+* **pi:** qualify effect receipt gaps across process death ([#1167](https://github.com/adea-ai/control-plane/issues/1167)) ([288a43c](https://github.com/adea-ai/control-plane/commit/288a43c51360fdd53442266044e7277bf2e8a396))
+
 ## [0.10.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.9.3...pi-durable-adapter-v0.10.0) (2026-10-16)
 
 

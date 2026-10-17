@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.102.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.102.0...workspace-v1.102.1) (2026-10-17)
+
+
+### Tests
+
+* **pi:** qualify effect receipt gaps across process death ([#1167](https://github.com/adea-ai/control-plane/issues/1167)) ([288a43c](https://github.com/adea-ai/control-plane/commit/288a43c51360fdd53442266044e7277bf2e8a396))
+
 ## [1.102.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.101.2...workspace-v1.102.0) (2026-10-17)
 
 
