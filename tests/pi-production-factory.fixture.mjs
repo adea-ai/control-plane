@@ -135,6 +135,7 @@ export async function createProductionFactoryFixture(options = {}) {
   let persistence, composition, models
   let fetchInstalled = false
   let closing
+  let keepDirectory = false
   const close = () =>
     (closing ??= (async () => {
       try {
@@ -144,7 +145,7 @@ export async function createProductionFactoryFixture(options = {}) {
           await persistence?.close()
         } finally {
           if (fetchInstalled) globalThis.fetch = originalFetch
-          await rm(directory, { recursive: true, force: true })
+          if (!keepDirectory) await rm(directory, { recursive: true, force: true })
         }
       }
     })())
@@ -170,11 +171,36 @@ export async function createProductionFactoryFixture(options = {}) {
       .getModels()
       .find((model) => model.id === 'gpt-5').contextWindow
     base.constraints.limits.tokens.maximumTotal = nativeContextWindow + 24
-    if (options.childrenFactory) {
-      base.constraints.limits.childExecutions.maximumTotal = 1
+    // Where the plan states the child allowance. The default states it on the request constraints
+    // and on the published lead profile definition, as before. 'profile' states it only on the
+    // pinned profile version, so the compiled plan can only have taken it from there, and 'none'
+    // states it nowhere (a plan that omits the allowance keeps the legacy behavior).
+    const allowanceSource = options.childAllowanceSource ?? 'request-and-profile'
+    if (!['request-and-profile', 'profile', 'none'].includes(allowanceSource))
+      throw new Error('TEST_UNKNOWN_CHILD_ALLOWANCE_SOURCE')
+    if (options.childrenFactory || options.childAllowanceSource) {
+      // One child unless the caller asks for more, so a journey can allocate siblings that share the
+      // stated allowance. The concurrency limit follows so it is never what refuses them.
+      const maximumChildren = options.maximumChildren ?? 1
+      base.constraints.limits.childExecutions.maximumTotal = maximumChildren
       base.constraints.limits.childExecutions.maximumDepth = 1
+      base.constraints.limits.concurrency.maximumParallel = Math.max(
+        base.constraints.limits.concurrency.maximumParallel,
+        maximumChildren
+      )
+      // The plan states what is held back for the child. The lead's attempt keeps the rest, which
+      // still covers the conservative native request bound, so the child is funded from the
+      // unreserved balance instead of finding nothing left.
+      base.constraints.limits.tokens.maximumTotal = 2 * (nativeContextWindow + 24)
+      if (allowanceSource !== 'none')
+        base.constraints.limits.childExecutions.budgetAllowance = {
+          maximumMicrounits: Math.floor(base.constraints.limits.budget.maximumMicrounits / 2),
+          maximumTokens: nativeContextWindow + 24,
+        }
     }
     base.profile.definition.executionConstraints = structuredClone(base.constraints)
+    if (allowanceSource === 'profile')
+      delete base.constraints.limits.childExecutions.budgetAllowance
     base.profile.definition.skills = []
     base.skills = []
     const catalog = new VersionedCatalog(repositories.catalog, repositories.catalog)
@@ -334,7 +360,7 @@ export async function createProductionFactoryFixture(options = {}) {
       }
       const fundingOwner = {
         ownerRef: 'payer:production-fixture',
-        kind: 'provider_account',
+        kind: options.payerKind ?? 'provider_account',
         displayName: 'Synthetic explicit payer',
         revision: 1,
         evidenceRef: 'payer-evidence:fixture',
@@ -469,7 +495,7 @@ export async function createProductionFactoryFixture(options = {}) {
       : undefined
     globalThis.fetch = scriptedPhysicalFetch(state, options.physicalResponder)
     fetchInstalled = true
-    composition = await createProductionPiLeadComposition({
+    const compositionOptions = {
       ...(children ? { children } : {}),
       ...(options.governedManagementCall
         ? { governedManagementCall: options.governedManagementCall }
@@ -583,7 +609,40 @@ export async function createProductionFactoryFixture(options = {}) {
       ...(options.managementAuthority === undefined
         ? {}
         : { managementAuthority: options.managementAuthority }),
-    })
+    }
+    const openComposition = () => createProductionPiLeadComposition(compositionOptions)
+    composition = await openComposition()
+    // Reopen the production composition in this process over the same canonical stores, directory
+    // and retained authority. Persistence and the scripted transport stay open, and
+    // `whileClosed` runs after the old composition released its files and before the new one opens.
+    const reopenComposition = async (whileClosed) => {
+      const previous = composition
+      composition = undefined
+      await previous.close()
+      await whileClosed?.()
+      composition = await openComposition()
+      return composition
+    }
+    // Closes the composition and the canonical store but keeps the directory and every in-memory
+    // fixture binding, so the files can be copied, replaced or opened by another process.
+    // `resume` opens the store and a fresh composition over whatever the directory then holds.
+    let suspended = false
+    const suspend = async () => {
+      if (suspended) return directory
+      suspended = true
+      const previous = composition
+      composition = undefined
+      await previous?.close()
+      persistence.close()
+      return directory
+    }
+    const resume = async () => {
+      if (!suspended) return composition
+      await persistence.migrate()
+      composition = await openComposition()
+      suspended = false
+      return composition
+    }
     const command = (operation, payload) =>
       StateChangingCommandEnvelopeSchema.parse({
         contractVersion: { major: 1, minor: 0 },
@@ -613,7 +672,12 @@ export async function createProductionFactoryFixture(options = {}) {
       parameters,
     })
     return {
-      composition,
+      get composition() {
+        return composition
+      },
+      reopenComposition,
+      suspend,
+      resume,
       directory,
       principal,
       state,
@@ -650,6 +714,8 @@ export async function createProductionFactoryFixture(options = {}) {
         }
       },
       profile: base.profile,
+      childAllowanceSource: allowanceSource,
+      requestConstraints: structuredClone(base.constraints),
       productProfilePin,
       workspaceId,
       actorPrincipalId,
@@ -657,6 +723,13 @@ export async function createProductionFactoryFixture(options = {}) {
       command,
       read,
       close,
+      // Closes the composition and every store but leaves the directory, for a restart in a new process.
+      // The caller owns removing it.
+      async detach() {
+        keepDirectory = true
+        await close()
+        return directory
+      },
       rawProductEvidence: (intentId) => structuredClone(source.get(intentId)),
       setIntent: (intentId = randomUUID(), intentOptions = {}) => {
         const requestedModelSelections =

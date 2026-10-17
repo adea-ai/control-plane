@@ -1,6 +1,7 @@
 import type { Execution, RuntimeCommandRecord } from '@control-plane/domain'
 import {
   ExecutionEventSchema,
+  hashExecutionEventPayload,
   hashExecutionEventPayloadV2,
   type ExecutionEvent,
 } from '@control-plane/events'
@@ -134,7 +135,7 @@ export class PollingRemoteRuntimeOutcomeWaiter implements RemoteRuntimeOutcomeWa
       execution.correlation.workspaceId !== envelope.workspaceId ||
       event.executionId !== execution.executionId ||
       event.attemptId !== attemptId ||
-      event.payloadHash !== hashExecutionEventPayloadV2(event.payload) ||
+      !terminalPayloadHashMatches(event) ||
       (['workspaceId', 'projectId', 'taskId', 'agentId'] as const).some(
         (key) => event.correlation[key] !== execution.correlation[key]
       ) ||
@@ -193,6 +194,20 @@ export class PollingRemoteRuntimeOutcomeWaiter implements RemoteRuntimeOutcomeWa
       ? { outcome: 'awaiting_input', interactionId }
       : undefined
   }
+}
+
+function terminalPayloadHashMatches(event: ExecutionEvent): boolean {
+  if (event.payloadHashVersion === 2) {
+    return event.payloadHash === hashExecutionEventPayloadV2(event.payload)
+  }
+  // Before hashes were tagged, rows came from both the locale-sorted serializer
+  // and the code-point serializer. Preserve those stored forms without changing
+  // or assigning a version to the historical row.
+  return (
+    event.payloadHash === hashExecutionEventPayload(event.payload) ||
+    event.payloadHash === hashExecutionEventPayload(event.payload, 'en-US') ||
+    event.payloadHash === hashExecutionEventPayloadV2(event.payload)
+  )
 }
 
 function sleep(milliseconds: number): Promise<void> {

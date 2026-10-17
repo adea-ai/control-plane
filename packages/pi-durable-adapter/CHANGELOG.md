@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.10.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.9.3...pi-durable-adapter-v0.10.0) (2026-10-16)
+
+
+### Features
+
+* **models:** surface BYO lead model readiness and recheck it at every boundary ([#1159](https://github.com/adea-ai/control-plane/issues/1159)) ([83265a6](https://github.com/adea-ai/control-plane/commit/83265a66057006b0ce44f5b24959f871de84e394))
+
+## [0.9.3](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.9.2...pi-durable-adapter-v0.9.3) (2026-10-16)
+
+
+### Tests
+
+* **pi:** qualify governed child dispatch after native compaction and reopen ([#1134](https://github.com/adea-ai/control-plane/issues/1134)) ([0a453d8](https://github.com/adea-ai/control-plane/commit/0a453d83103a787bdcc6c38a6571de9188f7f559))
+
+## [0.9.2](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.9.1...pi-durable-adapter-v0.9.2) (2026-10-14)
+
+
+### Tests
+
+* **pi:** qualify child admission after native compaction ([#1127](https://github.com/adea-ai/control-plane/issues/1127)) ([1500ebb](https://github.com/adea-ai/control-plane/commit/1500ebb9cc05d61f9d19189986e1060cd48204e0))
+
+## [0.9.1](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.9.0...pi-durable-adapter-v0.9.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **pi-durable:** preflight retained approval tool pins ([#1124](https://github.com/adea-ai/control-plane/issues/1124)) ([128b396](https://github.com/adea-ai/control-plane/commit/128b396eca07f45185c6abf2ab476612b922968a))
+
 ## [0.9.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.8.0...pi-durable-adapter-v0.9.0) (2026-10-13)
 
 

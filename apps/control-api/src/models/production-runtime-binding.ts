@@ -10,6 +10,11 @@ export function createProductionRuntimeBinding() {
       if (adapter && adapter !== ready) throw new Error('PI_RUNTIME_BINDING_CHANGED')
       adapter = ready
     },
+    /** The adapter once the composition has bound it; callers that reach it earlier are refused. */
+    current() {
+      if (!adapter) throw new Error('PI_RUNTIME_NOT_INITIALIZED')
+      return adapter
+    },
     async assertSupported() {
       if (!adapter) throw new Error('PI_RUNTIME_NOT_INITIALIZED')
       const inspection = await adapter.inspect()

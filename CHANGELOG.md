@@ -1,5 +1,133 @@
 # Changelog
 
+## [1.101.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.101.1...workspace-v1.101.2) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** check the Railway definition with bun check ([#1163](https://github.com/adea-ai/control-plane/issues/1163)) ([ab1f28f](https://github.com/adea-ai/control-plane/commit/ab1f28f221a4530ce815fbe9331080ea354139ef))
+
+## [1.101.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.101.0...workspace-v1.101.1) (2026-10-17)
+
+
+### Maintenance
+
+* **bun:** align pins and digest-pinned images to Bun 1.4.3 ([#1162](https://github.com/adea-ai/control-plane/issues/1162)) ([3e7326b](https://github.com/adea-ai/control-plane/commit/3e7326b9df69296b948f327c2a864bb48bb219df))
+
+## [1.101.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.5...workspace-v1.101.0) (2026-10-16)
+
+
+### Features
+
+* **models:** surface BYO lead model readiness and recheck it at every boundary ([#1159](https://github.com/adea-ai/control-plane/issues/1159)) ([83265a6](https://github.com/adea-ai/control-plane/commit/83265a66057006b0ce44f5b24959f871de84e394))
+* **pi-durable:** authorized read of lead child status, input state and outcomes ([#1160](https://github.com/adea-ai/control-plane/issues/1160)) ([f96ff8f](https://github.com/adea-ai/control-plane/commit/f96ff8fb934f3ebfccdd72c749698b775ad7beb1))
+
+
+### Bug Fixes
+
+* **events:** version persisted payload hashes ([#1152](https://github.com/adea-ai/control-plane/issues/1152)) ([5f678f7](https://github.com/adea-ai/control-plane/commit/5f678f7d1b804f74bd9408629bf0ec50a436e6b5))
+
+## [1.100.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.4...workspace-v1.100.5) (2026-10-16)
+
+
+### Documentation
+
+* describe production child settlement and multi-inference accounting ([#1156](https://github.com/adea-ai/control-plane/issues/1156)) ([f9395b0](https://github.com/adea-ai/control-plane/commit/f9395b0c0e46fd26ffb6aaa8d2a8aee8d7204315))
+
+## [1.100.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.3...workspace-v1.100.4) (2026-10-16)
+
+
+### Tests
+
+* **pi:** qualify governed child dispatch after native compaction and reopen ([#1134](https://github.com/adea-ai/control-plane/issues/1134)) ([0a453d8](https://github.com/adea-ai/control-plane/commit/0a453d83103a787bdcc6c38a6571de9188f7f559))
+
+## [1.100.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.2...workspace-v1.100.3) (2026-10-15)
+
+
+### Bug Fixes
+
+* **m612:** preserve relay and checkpoint replay bytes ([#1150](https://github.com/adea-ai/control-plane/issues/1150)) ([a00ce81](https://github.com/adea-ai/control-plane/commit/a00ce8174f150973d1a0a8b8f8fea63d2cf1ec78))
+* **orchestration:** version graph catalog digests ([bdc2fbb](https://github.com/adea-ai/control-plane/commit/bdc2fbb6afc00e97bfdba0f686a5ba08fc643cf7))
+* preserve graph digest compatibility ([#1149](https://github.com/adea-ai/control-plane/issues/1149)) ([bdc2fbb](https://github.com/adea-ai/control-plane/commit/bdc2fbb6afc00e97bfdba0f686a5ba08fc643cf7))
+
+## [1.100.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.1...workspace-v1.100.2) (2026-10-15)
+
+
+### Performance
+
+* cache SQLite statements and avoid repeated canonical JSON work ([#1142](https://github.com/adea-ai/control-plane/issues/1142)) ([b8b47f5](https://github.com/adea-ai/control-plane/commit/b8b47f5c0261f8e9880fd0572fd05aa353c3c418))
+* memoize execution plan verification on an immutable snapshot ([#1143](https://github.com/adea-ai/control-plane/issues/1143)) ([4e1bf3d](https://github.com/adea-ai/control-plane/commit/4e1bf3d3c58dd8e6326c8722bbcdb3e7d62de24f))
+
+## [1.100.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.0...workspace-v1.100.1) (2026-10-15)
+
+
+### CI
+
+* pin the shared validation workflow to the merged code-foundry fix ([#1144](https://github.com/adea-ai/control-plane/issues/1144)) ([db154ff](https://github.com/adea-ai/control-plane/commit/db154ff5083a14820285b6ff01ca59f8c41ccd87))
+
+## [1.100.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.99.0...workspace-v1.100.0) (2026-10-15)
+
+
+### Features
+
+* **telemetry:** bound measurement producer cancellation and shutdown ([#1133](https://github.com/adea-ai/control-plane/issues/1133)) ([c07c770](https://github.com/adea-ai/control-plane/commit/c07c770ed7f05974b86c43f45bd4eb1de1042df7))
+
+## [1.99.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.98.2...workspace-v1.99.0) (2026-10-15)
+
+
+### Features
+
+* **sqlite:** pin owners from child receipt namespaces in retention ([#1022](https://github.com/adea-ai/control-plane/issues/1022) WIP) ([#1132](https://github.com/adea-ai/control-plane/issues/1132)) ([b7bfb0e](https://github.com/adea-ai/control-plane/commit/b7bfb0e9e55c31a15e7ac6e9257f37d9a7bf9f71))
+
+## [1.98.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.98.1...workspace-v1.98.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **ci:** fall back to mirror registries for rate-limited Postgres image pulls ([#1138](https://github.com/adea-ai/control-plane/issues/1138)) ([db15d06](https://github.com/adea-ai/control-plane/commit/db15d066c216102154bfc923b90cd9499132d6df))
+
+## [1.98.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.98.0...workspace-v1.98.1) (2026-10-14)
+
+
+### Tests
+
+* **pi:** let the factory fixture state the child allowance only on the lead profile ([#1131](https://github.com/adea-ai/control-plane/issues/1131)) ([7d36f9b](https://github.com/adea-ai/control-plane/commit/7d36f9bb78e32be9cb2e508884f010a9ad670c6b))
+
+## [1.98.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.97.0...workspace-v1.98.0) (2026-10-14)
+
+
+### Features
+
+* **telemetry:** add Hosted PostgreSQL operations measurement producer ([#1030](https://github.com/adea-ai/control-plane/issues/1030)) ([#1122](https://github.com/adea-ai/control-plane/issues/1122)) ([8f40281](https://github.com/adea-ai/control-plane/commit/8f4028196e1fcef6f41e52c77d7e6ee25156c27c))
+
+## [1.97.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.5...workspace-v1.97.0) (2026-10-14)
+
+
+### Features
+
+* **usage:** hold a stated child allowance out of the lead attempt reservation ([#1123](https://github.com/adea-ai/control-plane/issues/1123)) ([dff1541](https://github.com/adea-ai/control-plane/commit/dff15411b66c9cd4fe9c3e72121c3f6db3588264))
+
+## [1.96.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.4...workspace-v1.96.5) (2026-10-14)
+
+
+### Tests
+
+* **pi:** qualify child admission after native compaction ([#1127](https://github.com/adea-ai/control-plane/issues/1127)) ([1500ebb](https://github.com/adea-ai/control-plane/commit/1500ebb9cc05d61f9d19189986e1060cd48204e0))
+
+## [1.96.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.3...workspace-v1.96.4) (2026-10-14)
+
+
+### Bug Fixes
+
+* **pi-durable:** preflight retained approval tool pins ([#1124](https://github.com/adea-ai/control-plane/issues/1124)) ([128b396](https://github.com/adea-ai/control-plane/commit/128b396eca07f45185c6abf2ab476612b922968a))
+
+## [1.96.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.2...workspace-v1.96.3) (2026-10-14)
+
+
+### Tests
+
+* **models:** characterize source profile scope ([#1178](https://github.com/adea-ai/control-plane/issues/1178) WIP) ([#1118](https://github.com/adea-ai/control-plane/issues/1118)) ([cc5dd03](https://github.com/adea-ai/control-plane/commit/cc5dd03f5f4a5f12f70aeefa3cb55fa9adf1e47a))
+
 ## [1.96.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.96.1...workspace-v1.96.2) (2026-10-14)
 
 

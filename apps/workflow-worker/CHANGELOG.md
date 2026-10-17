@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.17.1](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.17.0...workflow-worker-v1.17.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* **events:** version persisted payload hashes ([#1152](https://github.com/adea-ai/control-plane/issues/1152)) ([5f678f7](https://github.com/adea-ai/control-plane/commit/5f678f7d1b804f74bd9408629bf0ec50a436e6b5))
+
+## [1.17.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.16.1...workflow-worker-v1.17.0) (2026-10-14)
+
+
+### Features
+
+* **usage:** hold a stated child allowance out of the lead attempt reservation ([#1123](https://github.com/adea-ai/control-plane/issues/1123)) ([dff1541](https://github.com/adea-ai/control-plane/commit/dff15411b66c9cd4fe9c3e72121c3f6db3588264))
+
 ## [1.16.1](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.16.0...workflow-worker-v1.16.1) (2026-10-10)
 
 

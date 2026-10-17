@@ -9,7 +9,7 @@ import { RuntimeStartRequestSchema } from '@control-plane/runtime-sdk'
 import { createSqliteChildAdmissionReader } from './child-admission-reader.js'
 import { ExecutionAttemptSchema, ExecutionSchema } from '@control-plane/domain'
 import { assertExecutionPlanDerivedFrom } from '@control-plane/execution-plan'
-import { DurableUsageLedger } from '@control-plane/usage-ledger'
+import { childAllowanceStatementOf, DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
   ChildAdmissionAllocationError,
   ChildAdmissionReceiptSchema,
@@ -29,6 +29,7 @@ import {
   readChildRuntimeContext,
   childRuntimeLookupNamespace,
 } from './delegation-runtime-receipt.js'
+import { retainReceiptOwnerPins } from './delegation-retention.js'
 import { json, recordId } from './record-storage.js'
 import { assertSqliteStoredPlanReference } from './repositories.js'
 import { SqliteDurableUsageStore } from './usage-store.js'
@@ -81,8 +82,10 @@ export class SqliteDelegationRepository implements DelegationRepository, ChildAd
     await this.provider.transaction(async (tx) => {
       const snapshot = await readChildRuntimeContext(tx, input.delegationId, request)
       const id = recordId(snapshot.receipt.childAttemptId)
-      if (!(await tx.get(childRuntimeLookupNamespace, id)))
+      if (!(await tx.get(childRuntimeLookupNamespace, id))) {
         await tx.put({ namespace: childRuntimeLookupNamespace, id, value: json(snapshot.receipt) })
+        await retainReceiptOwnerPins(tx, childRuntimeLookupNamespace, snapshot.receipt)
+      }
     })
   }
 
@@ -431,6 +434,7 @@ export class SqliteDelegationRepository implements DelegationRepository, ChildAd
           currency: childPlan.constraints.limits.budget.currency,
           maximumMicrounits: childPlan.constraints.limits.budget.maximumMicrounits,
           maximumTokens: childPlan.constraints.limits.tokens.maximumTotal,
+          ...parentChildAllowanceOf(parentPlan.constraints.limits),
           source: {
             sourceId: `child-budget:${record.delegationId}`,
             idempotencyKey: `child-budget-open:${record.delegationId}`,
@@ -590,4 +594,10 @@ async function assertReferences(
     )
       throw new Error('DELEGATION_REFERENCE_INVALID')
   }
+}
+
+/** The parent plan's child allowance, so a child is never funded beyond it from freed balance. */
+function parentChildAllowanceOf(limits: Parameters<typeof childAllowanceStatementOf>[0]) {
+  const parentChildAllowance = childAllowanceStatementOf(limits)
+  return parentChildAllowance === undefined ? {} : { parentChildAllowance }
 }

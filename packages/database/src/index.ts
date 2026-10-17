@@ -215,3 +215,17 @@ export {
   type LegacyDrainFenceHandle,
   type LegacyDrainFenceRepositoryErrorCode,
 } from './legacy-drain-fence-repository.js'
+export {
+  assemblePostgresOperationsPoints,
+  createPostgresOperationsMeasurementProducer,
+  createPostgresRuntimeMeasurements,
+  postgresMeasuredNamespaces,
+  type PostgresMeasuredNamespace,
+  type PostgresMeasurementDatabase,
+  type PostgresMeasurementSourceReason,
+  type PostgresMeasurementSourceStatus,
+  type PostgresOperationsMeasurementOptions,
+  type PostgresOperationsMeasurementProducer,
+  type PostgresOperationsMeasurementResult,
+  type PostgresRuntimeMeasurementsOptions,
+} from './operations-measurements.js'

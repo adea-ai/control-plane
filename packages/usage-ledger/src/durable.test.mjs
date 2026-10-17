@@ -644,6 +644,138 @@ describe('durable usage ledger', () => {
     })
   })
 
+  test('caps child funding at the parent plan allowance, including after the lead attempt settles', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = makeLedger(store)
+    await ledger.openBudget(rootBudget({ maximumMicrounits: 1_000, maximumTokens: 100 }))
+    const statement = {
+      allowance: { maximumMicrounits: 400, maximumTokens: 40 },
+      planCeiling: { maximumMicrounits: 1_000, maximumTokens: 100 },
+    }
+    // The lead's attempt holds everything except the allowance, then ends and releases its envelope.
+    await ledger.reserve({
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      reservationKey: attemptReservationKey,
+      maximumMicrounits: 600,
+      maximumTokens: 60,
+      source: source('lead-reserve'),
+    })
+    await ledger.settle({
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      reservationKey: attemptReservationKey,
+      source: source('lead-settle'),
+    })
+    expect(await ledger.summary(ids.workspaceId, ids.executionId)).toMatchObject({
+      availableMicrounits: 1_000,
+      availableTokens: 100,
+    })
+    const open = (executionId, maximumMicrounits, maximumTokens, extra = {}) =>
+      ledger.openBudget({
+        workspaceId: ids.workspaceId,
+        executionId,
+        parentExecutionId: ids.executionId,
+        currency: 'USD',
+        maximumMicrounits,
+        maximumTokens,
+        source: source(`open-${executionId}`),
+        ...extra,
+      })
+    const second = 'exe_01JABCDEF0123456789ABCDEFJ'
+    const third = 'exe_01JABCDEF0123456789ABCDEFK'
+
+    // 1000 is available, but the plan states 400 for children.
+    expect(
+      await open(ids.childExecutionId, 300, 30, { parentChildAllowance: statement })
+    ).toMatchObject({ maximumMicrounits: 300, maximumTokens: 30 })
+    expect(await open(second, 900, 90, { parentChildAllowance: statement })).toMatchObject({
+      maximumMicrounits: 100,
+      maximumTokens: 10,
+    })
+    await expect(open(third, 50, 5, { parentChildAllowance: statement })).rejects.toMatchObject({
+      code: 'BUDGET_EXHAUSTED',
+    })
+    // A child whose funding settles at less than its ceiling frees only what it did not spend.
+    await ledger.reserve({
+      workspaceId: ids.workspaceId,
+      executionId: second,
+      reservationKey: 'second-work',
+      maximumMicrounits: 60,
+      maximumTokens: 6,
+      source: source('second-reserve'),
+    })
+    await ledger.charge({
+      workspaceId: ids.workspaceId,
+      executionId: second,
+      attemptId: ids.attemptId,
+      reservationKey: 'second-work',
+      kind: 'model_usage',
+      quantity: { unit: 'tokens', value: 6 },
+      costMicrounits: 60,
+      fundingSource: 'hq_managed',
+      source: source('second-charge'),
+    })
+    await ledger.settle({
+      workspaceId: ids.workspaceId,
+      executionId: second,
+      reservationKey: 'second-work',
+      source: source('second-settle'),
+    })
+    await ledger.finalizeBudget({
+      workspaceId: ids.workspaceId,
+      executionId: second,
+      source: source('second-finalize'),
+    })
+    // 400 stated - 300 open - 60 spent = 40 money; 40 - 30 - 6 = 4 tokens.
+    expect(await open(third, 500, 50, { parentChildAllowance: statement })).toMatchObject({
+      maximumMicrounits: 40,
+      maximumTokens: 4,
+    })
+    // The same statement replays the same opening; a changed one is a conflicting request.
+    expect(
+      await makeLedger(store).openBudget({
+        workspaceId: ids.workspaceId,
+        executionId: ids.childExecutionId,
+        parentExecutionId: ids.executionId,
+        currency: 'USD',
+        maximumMicrounits: 300,
+        maximumTokens: 30,
+        parentChildAllowance: statement,
+        source: source(`open-${ids.childExecutionId}`),
+      })
+    ).toMatchObject({ maximumMicrounits: 300, maximumTokens: 30 })
+    await expect(
+      makeLedger(store).openBudget({
+        workspaceId: ids.workspaceId,
+        executionId: ids.childExecutionId,
+        parentExecutionId: ids.executionId,
+        currency: 'USD',
+        maximumMicrounits: 300,
+        maximumTokens: 30,
+        source: source(`open-${ids.childExecutionId}`),
+      })
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+  })
+
+  test('without a stated allowance a child is still funded from everything available', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = makeLedger(store)
+    await ledger.openBudget(rootBudget({ maximumMicrounits: 1_000, maximumTokens: 100 }))
+    expect(
+      await ledger.openBudget({
+        workspaceId: ids.workspaceId,
+        executionId: ids.childExecutionId,
+        parentExecutionId: ids.executionId,
+        currency: 'USD',
+        maximumMicrounits: 5_000,
+        maximumTokens: 500,
+        source: source('open-uncapped'),
+      })
+    ).toMatchObject({ maximumMicrounits: 1_000, maximumTokens: 100 })
+  })
+
   test('binds child and parent finalized summaries to settled rollups after parent activity', async () => {
     const store = new TransactionalMemoryStore()
     const ledger = makeLedger(store)

@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.33.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.32.3...control-api-v1.33.0) (2026-10-16)
+
+
+### Features
+
+* **models:** surface BYO lead model readiness and recheck it at every boundary ([#1159](https://github.com/adea-ai/control-plane/issues/1159)) ([83265a6](https://github.com/adea-ai/control-plane/commit/83265a66057006b0ce44f5b24959f871de84e394))
+* **pi-durable:** authorized read of lead child status, input state and outcomes ([#1160](https://github.com/adea-ai/control-plane/issues/1160)) ([f96ff8f](https://github.com/adea-ai/control-plane/commit/f96ff8fb934f3ebfccdd72c749698b775ad7beb1))
+
+## [1.32.3](https://github.com/adea-ai/control-plane/compare/control-api-v1.32.2...control-api-v1.32.3) (2026-10-16)
+
+
+### Tests
+
+* **pi:** qualify governed child dispatch after native compaction and reopen ([#1134](https://github.com/adea-ai/control-plane/issues/1134)) ([0a453d8](https://github.com/adea-ai/control-plane/commit/0a453d83103a787bdcc6c38a6571de9188f7f559))
+
+## [1.32.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.32.1...control-api-v1.32.2) (2026-10-14)
+
+
+### Bug Fixes
+
+* **pi-durable:** preflight retained approval tool pins ([#1124](https://github.com/adea-ai/control-plane/issues/1124)) ([128b396](https://github.com/adea-ai/control-plane/commit/128b396eca07f45185c6abf2ab476612b922968a))
+
+## [1.32.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.32.0...control-api-v1.32.1) (2026-10-14)
+
+
+### Tests
+
+* **models:** characterize source profile scope ([#1178](https://github.com/adea-ai/control-plane/issues/1178) WIP) ([#1118](https://github.com/adea-ai/control-plane/issues/1118)) ([cc5dd03](https://github.com/adea-ai/control-plane/commit/cc5dd03f5f4a5f12f70aeefa3cb55fa9adf1e47a))
+
 ## [1.32.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.31.0...control-api-v1.32.0) (2026-10-13)
 
 

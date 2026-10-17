@@ -184,7 +184,7 @@ transaction hook.
 only, through `PostgresPersistenceProvider`; no Hosted composition constructs it or a device endpoint
 over it yet, and the only production device endpoint is the Local/SQLite one
 (`packages/profile-portability/src/postgres-persistence-provider.ts`) over the new
-`persistence_records` table (drizzle migration `0071_persistence_records`; the canonical migration
+`persistence_records` table (drizzle migration `0072_persistence_records`; the canonical migration
 chain, applied by the migration role, owns DDL — the provider verifies presence and never creates
 tables). The device fence/ledger store is proven on real PostgreSQL — atomic claims, revoked and
 superseded rejection without writes, restart persistence, concurrent same-key races, and per-route

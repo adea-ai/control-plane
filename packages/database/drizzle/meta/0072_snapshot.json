@@ -1,6 +1,6 @@
 {
-  "id": "6ee2df2c-2e5b-437c-93ee-5a8c498bfcd7",
-  "prevId": "98a8f780-8624-430f-89ee-8f3f0eee270c",
+  "id": "98a8f780-8624-430f-89ee-8f3f0eee270c",
+  "prevId": "c479f67b-840d-4447-9427-26482fa1cc33",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -972,10 +972,6 @@
         "context_packages_scope_check": {
           "name": "context_packages_scope_check",
           "value": "((\"context_packages\".\"execution_scope\" is null and \"context_packages\".\"project_id\" is not null) or (\"context_packages\".\"project_id\" is null and \"context_packages\".\"execution_scope\" = '{\"schemaVersion\":1,\"kind\":\"workspace\"}'::jsonb) or (\"context_packages\".\"project_id\" is not null and \"context_packages\".\"execution_scope\" = jsonb_build_object('schemaVersion', 1, 'kind', 'project', 'projectId', \"context_packages\".\"project_id\"))) is true"
-        },
-        "context_packages_scope_version_check": {
-          "name": "context_packages_scope_version_check",
-          "value": "((\"context_packages\".\"schema_version\" = 1 and \"context_packages\".\"execution_scope\" is null) or (\"context_packages\".\"schema_version\" = 2 and \"context_packages\".\"execution_scope\" is not null))"
         }
       },
       "isRLSEnabled": false
@@ -2255,6 +2251,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "payload_hash_version": {
+          "name": "payload_hash_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "occurred_at": {
           "name": "occurred_at",
           "type": "timestamp with time zone",
@@ -2564,10 +2566,6 @@
         "execution_plans_scope_check": {
           "name": "execution_plans_scope_check",
           "value": "((\"execution_plans\".\"execution_scope\" is null and \"execution_plans\".\"project_id\" is not null) or (\"execution_plans\".\"project_id\" is null and \"execution_plans\".\"execution_scope\" = '{\"schemaVersion\":1,\"kind\":\"workspace\"}'::jsonb) or (\"execution_plans\".\"project_id\" is not null and \"execution_plans\".\"execution_scope\" = jsonb_build_object('schemaVersion', 1, 'kind', 'project', 'projectId', \"execution_plans\".\"project_id\"))) is true"
-        },
-        "execution_plans_scope_version_check": {
-          "name": "execution_plans_scope_version_check",
-          "value": "((\"execution_plans\".\"schema_version\" = 1 and \"execution_plans\".\"execution_scope\" is null) or (\"execution_plans\".\"schema_version\" = 2 and \"execution_plans\".\"execution_scope\" is not null))"
         }
       },
       "isRLSEnabled": false
@@ -4513,54 +4511,6 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.persistence_records": {
-      "name": "persistence_records",
-      "schema": "",
-      "columns": {
-        "namespace": {
-          "name": "namespace",
-          "type": "varchar(128)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "id": {
-          "name": "id",
-          "type": "varchar(512)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "revision": {
-          "name": "revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "value": {
-          "name": "value",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "persistence_records_scope_pk": {
-          "name": "persistence_records_scope_pk",
-          "columns": ["namespace", "id"]
-        }
-      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -7864,6 +7814,54 @@
           "value": "jsonb_typeof(\"workspace_catalog_commands\".\"receipt\") = 'object' or \"workspace_catalog_commands\".\"receipt\" is null"
         }
       },
+      "isRLSEnabled": false
+    },
+    "public.persistence_records": {
+      "name": "persistence_records",
+      "schema": "",
+      "columns": {
+        "namespace": {
+          "name": "namespace",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "varchar(512)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "persistence_records_scope_pk": {
+          "name": "persistence_records_scope_pk",
+          "columns": ["namespace", "id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     }
   },

@@ -132,7 +132,10 @@ export function createProductionLeadProductAuthority(options: {
     const evidenceDigest = `sha256:${createHash('sha256').update(canonicalJsonStringify(evidence)).digest('hex')}`
     return { evidence, profile, evidenceDigest }
   }
-  const readCurrent: PiLeadProductAuthorityPort['readCurrent'] = async (input) => {
+  const readCurrent: PiLeadProductAuthorityPort['readCurrent'] = async (input, context) => {
+    // Model readiness gates only operations that start or fund inference. Observing or stopping
+    // an already admitted lead must keep working after a quota, grant or credential change.
+    const observing = context?.purpose === 'observe'
     const current = await readCanonicalProduct(input)
     if (current === undefined) return undefined
     if ('fenced' in current) return current.fenced
@@ -191,12 +194,14 @@ export function createProductionLeadProductAuthority(options: {
       pin.profileContentDigest !== profile.profileContentDigest
     )
       throw new Error('PI_PRODUCTION_PRODUCT_CHANGED')
-    const selection = await options.selections.resolveSelection({
-      workspaceId: evidence.workspaceId,
-      selectionRef: pin.selectionRef,
-      selectionRevision: pin.selectionRevision,
-    })
-    await options.selections.assertReady(selection)
+    if (!observing) {
+      const selection = await options.selections.resolveSelection({
+        workspaceId: evidence.workspaceId,
+        selectionRef: pin.selectionRef,
+        selectionRevision: pin.selectionRevision,
+      })
+      await options.selections.assertReady(selection)
+    }
     const {
       profileId: _id,
       profileVersion: _version,

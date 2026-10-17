@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { InteractionService } from '@control-plane/domain'
+import { createRetainedApprovalWriteRunner } from '@control-plane/pi-durable-adapter'
 import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
 import { fixture } from '../models/canonical-model-host-fixtures.mjs'
 import {
@@ -25,6 +26,27 @@ async function withDirectory(run) {
   }
 }
 
+function trackedRunner({ effects, interactions, registry }, observations) {
+  const readVersion = registry.readVersion.bind(registry)
+  registry.readVersion = async (...args) => {
+    observations.registryReads = (observations.registryReads ?? 0) + 1
+    const version = await readVersion(...args)
+    return observations.rewriteVersion?.(version, observations.registryReads) ?? version
+  }
+
+  return createRetainedApprovalWriteRunner({
+    registry,
+    interactions,
+    effects: {
+      async execute(request) {
+        observations.effectCalls += 1
+        await observations.beforeExecute?.({ interactions, registry })
+        return effects.execute(request)
+      },
+    },
+  })
+}
+
 test('approval gates the authorized write, settles once, and replays after physical reopen without a second write', async () => {
   await withDirectory(async (directory) => {
     const f = await fixture()
@@ -36,6 +58,7 @@ test('approval gates the authorized write, settles once, and replays after physi
       const task = taskFor(f)
       const pending = await first.runner.run(task)
       expect(pending).toMatchObject({ state: 'awaiting_approval' })
+      expect(await first.interactions.get(interactionId)).toMatchObject({ state: 'pending' })
       expect(counter.invocations).toBe(0)
 
       await new InteractionService(first.interactions).respond({
@@ -125,35 +148,143 @@ test('changed pins after restart conflict with the retained effect instead of cr
   })
 })
 
-test('a task pinned to a tool version the registry does not hold is denied before any write', async () => {
+test('missing or stale tool, version, and operation pins are rejected before approval or effects', async () => {
+  const invalidPins = [
+    [
+      (task) => {
+        task.request.toolDefinitionId = 'tld_01JABCDEF0123456789ABCDEFZ'
+        task.request.grant.toolDefinitionId = task.request.toolDefinitionId
+      },
+      'RETAINED_TOOL_PIN_UNAVAILABLE',
+    ],
+    [
+      (task) => {
+        task.request.toolVersionId = 'tlv_01JABCDEF0123456789ABCDEFZ'
+        task.request.grant.toolVersionId = task.request.toolVersionId
+      },
+      'VERSION_MISSING',
+    ],
+    [
+      (task) => {
+        task.request.operation = 'delete-json'
+        task.request.grant.operations = ['delete-json']
+      },
+      'RETAINED_TOOL_PIN_UNAVAILABLE',
+    ],
+  ]
+
+  for (const [mutateTask, expectedCode] of invalidPins) {
+    await withDirectory(async (directory) => {
+      const f = await fixture()
+      await seedDatabase(join(directory, 'state.sqlite'), f)
+      const counter = { invocations: 0 }
+      const observations = { effectCalls: 0 }
+      const session = await compose(directory, f, {
+        counter,
+        clock: { now: working },
+        createRunner: (options) => trackedRunner(options, observations),
+      })
+      try {
+        const task = taskFor(f)
+        mutateTask(task)
+
+        await expect(session.runner.run(task)).rejects.toMatchObject({ code: expectedCode })
+        expect(await session.interactions.get(interactionId)).toBeUndefined()
+        expect(observations.effectCalls).toBe(0)
+        expect(counter.invocations).toBe(0)
+      } finally {
+        session.close()
+      }
+    })
+  }
+})
+
+test('a revoked tool version is refused with a typed preflight error before approval', async () => {
   await withDirectory(async (directory) => {
     const f = await fixture()
     await seedDatabase(join(directory, 'state.sqlite'), f)
     const counter = { invocations: 0 }
-    const clock = { now: working }
-    const session = await compose(directory, f, { counter, clock })
+    const observations = {
+      effectCalls: 0,
+      rewriteVersion: (version) => ({ ...version, lifecycle: 'revoked' }),
+    }
+    const session = await compose(directory, f, {
+      counter,
+      clock: { now: working },
+      createRunner: (options) => trackedRunner(options, observations),
+    })
     try {
-      const task = taskFor(f, {
-        taskId: 'rwt_01JABCDEF0123456789ABCDEFH',
-        version: 'tlv_01JABCDEF0123456789ABCDEFZ',
+      await expect(session.runner.run(taskFor(f))).rejects.toMatchObject({
+        name: 'RetainedApprovalWriteError',
+        code: 'RETAINED_TOOL_PIN_UNAVAILABLE',
       })
-      // The approval request is created first; admission then rejects the stale tool pin, before and after approval.
-      await expect(session.runner.run(task)).rejects.toMatchObject({
+      expect(observations.registryReads).toBe(1)
+      expect(await session.interactions.get(interactionId)).toBeUndefined()
+      expect(observations.effectCalls).toBe(0)
+      expect(counter.invocations).toBe(0)
+    } finally {
+      session.close()
+    }
+  })
+})
+
+test('tool lifecycle drift after preflight is rejected by the final gate before the write', async () => {
+  await withDirectory(async (directory) => {
+    const f = await fixture()
+    await seedDatabase(join(directory, 'state.sqlite'), f)
+    const counter = { invocations: 0 }
+    let drifted = false
+    const observations = {
+      effectCalls: 0,
+      rewriteVersion(version) {
+        return drifted ? { ...version, lifecycle: 'revoked' } : version
+      },
+      beforeExecute() {
+        drifted = true
+      },
+    }
+    const session = await compose(directory, f, {
+      counter,
+      clock: { now: working },
+      createRunner: (options) => trackedRunner(options, observations),
+    })
+    try {
+      await expect(session.runner.run(taskFor(f))).rejects.toMatchObject({
         code: 'PI_EFFECT_AUTHORITY_REJECTED',
       })
-      await new InteractionService(session.interactions).respond({
-        interactionId,
-        executionId: f.intent.executionId,
-        attemptId: f.intent.attemptId,
-        responseId: 'cmd_01JABCDEF0123456789ABCDEFH',
-        action: 'approve',
-        respondingPrincipalId: approverA,
-        expectedVersion: 1,
-        respondedAt: '2026-10-08T12:05:00.000Z',
-      })
-      await expect(session.runner.run(task)).rejects.toMatchObject({
+      expect(drifted).toBe(true)
+      expect(observations.registryReads).toBeGreaterThan(1)
+      expect(await session.interactions.get(interactionId)).toMatchObject({ state: 'pending' })
+      expect(observations.effectCalls).toBe(1)
+      expect(counter.invocations).toBe(0)
+    } finally {
+      session.close()
+    }
+  })
+})
+
+test('approval revocation after preflight is rejected by the final effect gate', async () => {
+  await withDirectory(async (directory) => {
+    const f = await fixture()
+    await seedDatabase(join(directory, 'state.sqlite'), f)
+    const counter = { invocations: 0 }
+    const observations = {
+      effectCalls: 0,
+      async beforeExecute({ interactions }) {
+        await new InteractionService(interactions).resolveTerminal(interactionId, working)
+      },
+    }
+    const session = await compose(directory, f, {
+      counter,
+      clock: { now: working },
+      createRunner: (options) => trackedRunner(options, observations),
+    })
+    try {
+      await expect(session.runner.run(taskFor(f))).rejects.toMatchObject({
         code: 'PI_EFFECT_AUTHORITY_REJECTED',
       })
+      expect(await session.interactions.get(interactionId)).toMatchObject({ state: 'cancelled' })
+      expect(observations.effectCalls).toBe(1)
       expect(counter.invocations).toBe(0)
     } finally {
       session.close()

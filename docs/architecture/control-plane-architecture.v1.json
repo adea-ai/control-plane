@@ -196,6 +196,7 @@
         "@control-plane/production-readiness",
         "@control-plane/runtime-gateway-protocol",
         "@control-plane/runtime-sdk",
+        "@control-plane/telemetry",
         "@control-plane/tool-execution",
         "@control-plane/tool-sdk",
         "@control-plane/usage-ledger"
@@ -2701,6 +2702,53 @@
       "inOpenApi": true,
       "openApiOperationId": "pi-durable.lead.cancel",
       "openApiResponseStatuses": ["202", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-PI-DURABLE-LEAD-CHILDREN",
+      "name": "getPiDurableLeadChildren",
+      "operation": "pi-durable.lead.children",
+      "method": "POST",
+      "path": "/v3/pi-durable/lead-dispatches/children",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing service bearer execution:read scope, immutable original principal, current product audience and canonical attempt",
+        "service": "PiDurableLeadController -> DurablePiDurableLeadService -> explicit Node lead composition",
+        "persistence": "Canonical delegation records read through the composed delegation service; nothing is written, advanced or published",
+        "execution": "Pinned Pi Durable 1.1.0 Node engine; separately recorded spending authority and one physical-send usage hold",
+        "delivery": "Bounded read of retained delegation records: child state, input/approval state and terminal outcome identifiers, live audience reread before and after",
+        "cleanup": "Read only; no session, child or publication state is opened, advanced or closed"
+      },
+      "assessment": "Strict SDK/OpenAPI/controller route returns the authorized, retained child state, approval/input state and terminal outcome of a lead dispatch from canonical delegation records, with the original actor and current audience rechecked around the read by its own authority operation, which every rollback fence refuses, and paged with an explicit total and completeness so a large set is never truncated. Prompts, objectives, plans, digests and native payloads never cross. It is an observation only: it grants, starts, cancels and publishes nothing. Child runtime progress, deployed and live-provider evidence and Adea consumption remain partial.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/pi-durable.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/pi-durable-lead.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/node-composition.test.mjs"
+        },
+        {
+          "kind": "documentation",
+          "path": "docs/pi-durable-runtime.md"
+        }
+      ],
+      "gap": {
+        "issue": 187,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Qualify exact composed public artifacts and Adea current-product integration, terminal/outliving-child authority and the deployed live-provider profile with recorded paid-send/revocation/restart evidence."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "pi-durable.lead.children",
+      "openApiResponseStatuses": ["200", "default"],
       "openApiSecured": true,
       "openApiHasRequestSchema": true,
       "controllerReachable": true

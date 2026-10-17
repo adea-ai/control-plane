@@ -36,7 +36,7 @@ const runtimeRef =
   (await readFile(new URL('../.github/code-foundry.yml', import.meta.url), 'utf8')).match(
     /^runtime_ref: (\S+)$/m
   )?.[1] ?? ''
-const sharedValidationRef = '4480e8aed1dac8bbb3cb12d8d7fe086a13a8eb3b'
+const sharedValidationRef = '7119b3e2baebfbfdd47d32428cbf5df2f2079afa'
 
 const apps = [
   'control-api',
@@ -67,7 +67,7 @@ test('pins the required Node and Bun toolchain', async () => {
   const manifest = await readJson('package.json')
   const testTsconfig = await readJson('tsconfig.json')
 
-  assert.equal(manifest.packageManager, 'bun@1.4.2')
+  assert.equal(manifest.packageManager, 'bun@1.4.3')
   assert.equal(manifest.engines.node, '24.21.0')
   assert.equal(manifest.engines.bun, '>=1.4.0 <2')
   assert.match(
@@ -76,7 +76,7 @@ test('pins the required Node and Bun toolchain', async () => {
   )
   assert.equal(
     (await readFile(new URL('../.bun-version', import.meta.url), 'utf8')).trim(),
-    '1.4.2'
+    '1.4.3'
   )
   assert.equal(testTsconfig.extends, './tsconfig.base.json')
   assert.equal(testTsconfig.compilerOptions.experimentalDecorators, true)
@@ -209,12 +209,15 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'apps/hosted-control-plane/src/reconciliation-metrics.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-projection.integration.test.mjs',
     'apps/runtime-gateway/src/runtime-node-credential-binding.integration.test.mjs',
+    'apps/workflow-worker/src/child-runtime-budget-admission.integration.test.mjs',
+    'apps/workflow-worker/src/remote-runtime-waiter.integration.test.mjs',
     'apps/workflow-worker/src/runtime-budget-admission.integration.test.mjs',
     'packages/database/src/admission-rollout-admin.integration.test.mjs',
     'packages/database/src/budget-admission.integration.test.mjs',
     'packages/database/src/child-budget-admission.integration.test.mjs',
     'packages/database/src/credential-vault-repository.integration.test.mjs',
     'packages/database/src/delegation-reference.integration.test.mjs',
+    'packages/database/src/execution-event-repository.integration.test.mjs',
     'packages/database/src/graph-definition-repository.integration.test.mjs',
     'packages/database/src/hosted-graph-operations.integration.test.mjs',
     'packages/database/src/integration.test.mjs',
@@ -222,6 +225,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/database/src/memory-provenance-retention.integration.test.mjs',
     'packages/database/src/model-selection-repository.integration.test.mjs',
     'packages/database/src/neon-ddl-probe.integration.test.mjs',
+    'packages/database/src/operations-measurements.integration.test.mjs',
     'packages/database/src/project-state-initialization.integration.test.mjs',
     'packages/database/src/retention-ancestry.integration.test.mjs',
     'packages/database/src/retention-claim-budget.integration.test.mjs',
@@ -274,14 +278,18 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-local-native-terminal-usage.test.mjs',
     'tests/m11-standalone-e2e.test.mjs',
     'tests/child-progress-two-siblings-composition.test.mjs',
+    'tests/child-runtime-budget-admission.test.mjs',
     'tests/pi-child-continuation-sqlite.test.mjs',
     'tests/pi-durable-child-host.test.mjs',
     'tests/pi-durable-child-mapping-recovery.test.mjs',
+    'tests/delegation-receipt-retention-restart.test.mjs',
     'tests/pi-durable-delegation-recovery.test.mjs',
     'tests/pi-durable-canonical-authority.test.mjs',
     'tests/pi-durable-production-child-composition.test.mjs',
+    'tests/pi-durable-production-child-bridge-recovery.test.mjs',
     'tests/pi-durable-execution-model-composition.test.mjs',
     'tests/pi-durable-governed-child-composition.test.mjs',
+    'tests/pi-durable-compaction-governed-dispatch.test.mjs',
     'tests/pi-durable-governed-publisher-regression.test.mjs',
     'tests/j1-unfinished-child-process-restart.test.mjs',
     'tests/j1-native-child-store-restart.test.mjs',
@@ -290,6 +298,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/pi-production-management-forwarding.test.mjs',
     'tests/pi-production-runtime-startup.test.mjs',
     'tests/pi-production-factory.test.mjs',
+    'tests/pi-byo-model-authority.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
     'tests/acp-remote-shared-provider.test.mjs',
     'tests/acp-remote-device-retention.test.mjs',

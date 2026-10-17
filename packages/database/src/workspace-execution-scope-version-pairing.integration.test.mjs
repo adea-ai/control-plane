@@ -40,7 +40,7 @@ describe.skipIf(!enabled)('PostgreSQL scope and schema-version pairing migration
     await new PostgresContextPackageRepository(database).put(legacyContext)
     await new PostgresExecutionPlanRepository(database).put(legacyPlan)
 
-    // Before 0072, both columns could be updated to schema version 2 while
+    // Before 0073, both columns could be updated to schema version 2 while
     // execution_scope remained NULL. Roll back the probe so the additive
     // migration can run against valid retained records.
     const rollback = new Error('ROLLBACK_VERSION_PAIR_REPRODUCTION')
