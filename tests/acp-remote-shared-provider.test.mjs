@@ -464,21 +464,6 @@ describe('a pending winner that disappears and is replaced is reconciled against
 })
 
 describe('a recorded outcome survives a fence that fails after the ledger read', () => {
-  /** Endpoint A's store: the first ledger read returns, then the device clock breaks before the fence read. */
-  const breakClockAfterFirstRead = (fixture) => (store) => {
-    let armed = true
-    return storeWith(store, {
-      readLedger: async (...args) => {
-        const record = await store.readLedger(...args)
-        if (armed) {
-          armed = false
-          fixture.clock.current = new Date(Number.NaN)
-        }
-        return record
-      },
-    })
-  }
-
   for (const [label, code] of [
     ['clock becomes invalid', 'clock'],
     ['trust record goes stale', 'stale'],
