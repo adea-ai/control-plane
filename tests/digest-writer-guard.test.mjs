@@ -244,6 +244,19 @@ for (const order of ['importer-first', 'dependency-first']) {
   })
 }
 
+test('exported module declarations initialize captured taints', () => {
+  const results = flows({
+    'writer.ts': `
+      import { createHash } from 'node:crypto'
+      export const ordered = ['z', 'ä'].toSorted((a, b) => a.localeCompare(b))
+      export function digest() {
+        return createHash('sha256').update(JSON.stringify(ordered)).digest('hex')
+      }
+    `,
+  })
+  assert.ok(results.some((flow) => flow.sink.kind === 'crypto-hash'))
+})
+
 test('follows aliased local serializers and imported aliases into a hash', () => {
   const results = flows({
     'canonical.ts': `

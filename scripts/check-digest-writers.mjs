@@ -965,6 +965,7 @@ function createAnalyzer(fileRecords) {
   const evaluateStatement = (statement, environment, file, record, callStack) => {
     if (!isNode(statement)) return { environment, returns: new Set() }
     switch (statement.type) {
+      case 'Program':
       case 'BlockStatement': {
         let current = environment
         let returns = new Set()
@@ -975,6 +976,15 @@ function createAnalyzer(fileRecords) {
         }
         return { environment: current, returns }
       }
+      case 'ExportNamedDeclaration':
+      case 'ExportDefaultDeclaration':
+        if (!statement.declaration) return { environment, returns: new Set() }
+        if (statement.declaration.type.endsWith('Declaration'))
+          return evaluateStatement(statement.declaration, environment, file, record, callStack)
+        return {
+          environment,
+          returns: evalExpression(statement.declaration, environment, file, record, callStack),
+        }
       case 'VariableDeclaration': {
         for (const declaration of statement.declarations) {
           const value = evalExpression(declaration.init, environment, file, record, callStack)
