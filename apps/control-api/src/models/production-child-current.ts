@@ -119,6 +119,10 @@ export interface ProductionChildCurrentOptions {
   readonly delegations: Pick<DelegationRepository, 'get' | 'findByChild'>
   readonly toolCalls: { get(toolCallId: string): Promise<unknown | undefined> }
   readonly product: ProductReader
+  /** Revalidates the retained product/profile pin without resolving a model or creating a pin. */
+  readonly assertRetainedProductCurrent: (
+    input: Parameters<ProductReader['readCurrent']>[0]
+  ) => Promise<void>
   readonly now?: () => string
 }
 
@@ -199,11 +203,19 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
     if (
       evidence.workspaceId !== intent.workspaceId ||
       evidence.intentId !== intent.intentId ||
+      evidence.authorityRevision !== intent.authorityRevision ||
       evidence.canonicalActorPrincipalId !== intent.canonicalActorPrincipalId ||
       !evidence.allowedPrincipalIds.includes(reader) ||
       at >= Date.parse(evidence.expiresAt)
     )
       deny()
+    if (purpose === 'cancel')
+      await options.assertRetainedProductCurrent({
+        schemaVersion: 'pi-lead-intent/v1',
+        intentId: intent.intentId,
+        workspaceId: intent.workspaceId,
+        principalId: reader,
+      })
     const expiries = [
       intent.expiresAt,
       evidence.expiresAt,

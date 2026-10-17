@@ -56,7 +56,11 @@ loss. Cancel keeps current actor, scope and lineage checks.
 Cancellation of an already admitted child uses the same distinction. Its current
 product reads use `observe`, and the child model host re-derives the accepted actor,
 principal, scope, revision, expiry, objective and plan from canonical records without
-resolving a model or reading funding records. New admission, continuation and inference
+resolving a model or reading funding records. The raw product revision must equal the
+retained intent revision, and the existing immutable product/profile digest fence remains
+required without creating a missing pin. Full host identity validation is the final
+awaited authority check, so later canonical reads cannot discard principal/scope/objective
+changes. New admission, continuation and inference
 still require model and funding readiness. An uncertain physical send retains the
 existing cancellation/reconciliation fence across reopen; stopping does not release
 its accounting holds or assert that the send was undone.

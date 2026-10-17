@@ -178,6 +178,7 @@ function fixture({
   const release = deferred()
   const state = { now: at, productReads: 0, productPurposes: [], modelUnavailable: false }
   const current = createProductionChildCurrent({
+    assertRetainedProductCurrent: async () => {},
     executions: {
       async getExecution(id) {
         return id === parentExecutionId ? execution : undefined
@@ -277,11 +278,12 @@ test('child cancellation reads current product authority for observation, while 
 })
 
 test('observation purpose preserves child actor, workspace, expiry and delegation fences', async () => {
-  for (const fault of ['actor', 'workspace', 'expiry', 'delegation']) {
+  for (const fault of ['actor', 'workspace', 'revision', 'expiry', 'delegation']) {
     const f = fixture()
     if (fault === 'actor')
       f.evidence.canonicalActorPrincipalId = 'user:11111111-1111-4111-8111-111111111114'
     if (fault === 'workspace') f.evidence.workspaceId = 'wsp_01JCBCDEF0123456789ABCDEFG'
+    if (fault === 'revision') f.evidence.authorityRevision = 2
     if (fault === 'expiry') f.evidence.expiresAt = at
     if (fault === 'delegation') f.delegation.childAttemptId = 'att_01JCBCDEF0123456789ABCDEFG'
     await expect(

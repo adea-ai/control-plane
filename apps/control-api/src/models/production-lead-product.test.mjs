@@ -76,6 +76,47 @@ function make(database) {
   }
   return { state, ports, authority: createProductionLeadProductAuthority(ports) }
 }
+
+test('retained product fencing needs no model readiness and refuses any changed product or profile pin', async () => {
+  const database = new DatabaseSync(':memory:')
+  try {
+    const { state, authority } = make(database)
+    // A read-only cancellation fence cannot create a missing parent pin or select a model.
+    await expect(authority.assertRetainedProductCurrent(input)).rejects.toThrow(
+      'PI_CHILD_MODEL_AUTHORITY_DENIED'
+    )
+    expect(state.selects).toBe(0)
+    await authority.readCurrent(input)
+    const selects = state.selects
+    state.revoked = true
+    await authority.assertRetainedProductCurrent(input)
+    expect(state.selects).toBe(selects)
+    for (const change of [
+      { authorityRevision: 2 },
+      { principalRef: 'svc_changed' },
+      { scopeRef: 'scope:changed' },
+      { messageRef: 'message:changed' },
+      { allowedPrincipalIds: [input.principalId, 'svc_added'] },
+      { profileRevision: 1 },
+      { prompt: 'Changed prompt' },
+    ]) {
+      state.product = { ...structuredClone(evidence), ...change }
+      await expect(authority.assertRetainedProductCurrent(input)).rejects.toThrow(
+        change.profileRevision
+          ? 'PI_PRODUCTION_PROFILE_UNAVAILABLE'
+          : 'PI_CHILD_MODEL_AUTHORITY_DENIED'
+      )
+      expect(state.selects).toBe(selects)
+    }
+    state.product = structuredClone(evidence)
+    state.profile.profileContentDigest = `sha256:${'b'.repeat(64)}`
+    await expect(authority.assertRetainedProductCurrent(input)).rejects.toThrow(
+      'PI_CHILD_MODEL_AUTHORITY_DENIED'
+    )
+  } finally {
+    database.close()
+  }
+})
 test('actual SQLite restart retains the same selection winner without resolving changed defaults', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'pi-production-selection-'))
   let database = new DatabaseSync(join(directory, 'pins.sqlite'))

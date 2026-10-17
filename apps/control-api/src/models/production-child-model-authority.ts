@@ -139,7 +139,6 @@ export function createProductionChildModelAuthority(options: {
       authority: DurableExecutionAuthority,
       purpose: PiDurableAuthorityPurpose = 'inference'
     ) {
-      await options.assertCurrent(authority, purpose)
       if (purpose === 'cancel') {
         // The journal owns the accepted selection. Stopping it must not resolve a new
         // model or funding grant, but still requires the same current actor and lineage.
@@ -153,8 +152,20 @@ export function createProductionChildModelAuthority(options: {
           Date.parse(admission.authority.expiresAt) <= Date.parse(now())
         )
           throw new Error('PI_CHILD_MODEL_AUTHORITY_CHANGED')
+        // This must be the last awaited authority read. The host compares the full
+        // accepted principal/scope/objective as well as actor, audience and lineage;
+        // readCanonical intentionally projects only the model-request fields.
+        await options.assertCurrent(authority, purpose)
+        const observedAt = Date.parse(now())
+        if (
+          !Number.isFinite(observedAt) ||
+          Date.parse(admission.authority.expiresAt) <= observedAt ||
+          Date.parse(current.child.expiresAt) <= observedAt
+        )
+          throw new Error('PI_CHILD_MODEL_AUTHORITY_CHANGED')
         return
       }
+      await options.assertCurrent(authority, purpose)
       assertMatches(authority, await resolve(authority.request))
     },
   }

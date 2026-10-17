@@ -240,6 +240,53 @@ test('child model host verifies the admitted configuration for cancellation with
     rmSync(fundingDirectory, { recursive: true, force: true })
   }
 })
+
+for (const field of ['principalRef', 'scopeRef', 'objective']) {
+  test(`cancellation refuses ${field} drift during its final canonical reads`, async () => {
+    const { request, state, options } = fixture()
+    const admission = await options.admit(request, selection)
+    const record = {
+      current: state.record,
+      plan: request.executionPlan,
+      objective: admission.prompt,
+      principalRef: admission.authority.principalRef,
+      scopeRef: admission.authority.scopeRef,
+      allowedPrincipalIds: ['svc_product'],
+    }
+    const database = new DatabaseSync(':memory:')
+    const fundingDirectory = mkdtempSync(join(tmpdir(), 'pi-child-cancel-final-read-'))
+    const host = createProductionChildModelHost({
+      current: { readRecord: async () => structuredClone(record) },
+      product: options.product,
+      selections: {},
+      fundingDirectory,
+      database,
+      leasePrincipalRef: 'svc_child_lease',
+      modelAlias: 'reasoning.standard',
+      now: () => at,
+    })
+    try {
+      const port = createProductionChildModelAuthority({
+        ...options,
+        assertCurrent: host.assertCurrent,
+        readCurrent: async () => {
+          // Host validation has already read the old accepted identity at the defective head.
+          // The model-request projection carries none of these three fields.
+          await Promise.resolve()
+          record[field] = `changed:${field}`
+          return record.current
+        },
+      })
+      await expect(port.assertAuthority({ request, admission }, 'cancel')).rejects.toThrow(
+        'PI_CHILD_MODEL_AUTHORITY_DENIED'
+      )
+      expect(state.selects).toBe(0)
+    } finally {
+      database.close()
+      rmSync(fundingDirectory, { recursive: true, force: true })
+    }
+  })
+}
 test('missing current child, changed lineage, expiry or revoked selection cannot allocate', async () => {
   for (const fault of ['missing', 'parent', 'attempt', 'expired', 'revoked']) {
     const { request, state, options } = fixture()

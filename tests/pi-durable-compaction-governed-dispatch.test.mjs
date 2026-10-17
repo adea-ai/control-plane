@@ -336,8 +336,19 @@ const submitSecondTurn = (adapter, handle) =>
 test('production child cancellation bypasses lost model and payer readiness but preserves current scope and retained stop fencing', async () => {
   let aborted = false
   let releaseChild = () => {}
+  let productChanges = {}
+  let currentHost
   const { host, hooks, sent } = await createHost(
-    {},
+    {
+      productReader: {
+        async readCurrent(input) {
+          return {
+            ...currentHost.rawProductEvidence(input.intentId),
+            ...productChanges,
+          }
+        },
+      },
+    },
     {
       childResponder: ({ request }) => {
         return new Promise((_resolve, reject) => {
@@ -354,6 +365,7 @@ test('production child cancellation bypasses lost model and payer readiness but 
       },
     }
   )
+  currentHost = host
   try {
     const { handle } = await runLeadFirstTurn(host, hooks)
     const adapter = host.composition.adapter
@@ -368,6 +380,28 @@ test('production child cancellation bypasses lost model and payer readiness but 
     const authority = { request: row.admission.request, admission: row.admission.admission }
     expect(row.state).toBe('running')
     expect(sent.child).toHaveLength(1)
+
+    // Only the raw product revision changes; the retained intent and all other evidence
+    // stay fixed. Refusal must precede the physical abort and journal stop retention.
+    for (const [fault, change] of [
+      ['revision-only', { authorityRevision: 2 }],
+      ['audience', { allowedPrincipalIds: [host.principal.principalId, 'svc_added'] }],
+      ['message', { messageRef: 'message:changed' }],
+      ['profile', { profileRevision: host.productProfilePin.profileRevision + 1 }],
+      ['principal', { principalRef: 'svc_changed' }],
+      ['scope', { scopeRef: 'scope:changed' }],
+    ]) {
+      productChanges = change
+      await expect(
+        adapter.cancel(childHandle, {
+          idempotencyKey: `cancel:raw-product-${fault}-drift`,
+          requestedAt: host.at,
+        })
+      ).rejects.toMatchObject({ code: 'PI_AUTHORITY_REJECTED' })
+      expect(aborted).toBe(false)
+      expect(adapter.journal.get(childHandle.handleId).detail.cancellationIntent).toBeUndefined()
+    }
+    productChanges = {}
 
     host.models.setCurrentAccount({ quota: 'exhausted' })
     await expect(host.composition.childAuthority.assertAuthority(authority)).rejects.toThrow()
