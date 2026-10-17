@@ -69,10 +69,10 @@ repositories keep each digest and its version tag immutable across compare-and-s
 For rows with no version tag, request and input digests are verified independently. The reader accepts
 the untagged code-point form written during the #664 cutover, including its mixed epoch where the
 request digest was canonicalized while the input digest remained legacy. It also accepts only these
-evidenced locale-dependent legacy forms: process-default `en-US` and `sv-SE`, both pinned from Bun
+evidenced locale-dependent legacy forms: historical `en-US` and `sv-SE` collations, both pinned from Bun
 1.4.2 / ICU 78.1 receipt bytes. Those locale candidates are evaluated only on the exact Bun 1.4.2 /
-ICU 78.1 pair; the code-point form remains verifiable on other runtimes. The Swedish ordering for
-the tested free-form keys is `z`, `å`, `ä`; the English ordering is `å`, `ä`, `z`. Other
+ICU 78.1 and Bun 1.4.3 / ICU 78.1 reader pairs; the code-point form remains verifiable on other
+runtimes. The Swedish ordering for the tested free-form keys is `z`, `å`, `ä`; the English ordering is `å`, `ä`, `z`. Other
 locale/runtime forms, including the Turkish-specific fixture, cannot be inferred from untagged rows
 and fail closed with an idempotency conflict. The original locale/runtime is not stored, so this
 compatibility list must remain explicit.

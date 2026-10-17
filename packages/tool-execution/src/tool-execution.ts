@@ -21,10 +21,13 @@ import {
 import { ToolGateway, ToolGatewayError, type PreparedToolExecution } from './tool-registry.js'
 
 // Untagged ToolCalls have no collation or runtime metadata. These locale forms
-// are evidenced only on this exact Bun/ICU pair. Do not use the reader's
+// are evidenced only on these exact Bun/ICU pairs. Do not use the reader's
 // ambient locale or an unqualified ICU to broaden legacy acceptance.
 const VERIFIABLE_UNTAGGED_LOCALES = ['en-US', 'sv-SE'] as const
-const QUALIFIED_LEGACY_LOCALE_RUNTIME = { bun: '1.4.2', icu: '78.1' } as const
+const QUALIFIED_LEGACY_LOCALE_RUNTIMES = [
+  { bun: '1.4.2', icu: '78.1' },
+  { bun: '1.4.3', icu: '78.1' },
+] as const
 
 export interface ToolCallRepository {
   insert(call: ToolCall): Promise<boolean>
@@ -608,16 +611,15 @@ function digestWithLocale(value: unknown, locale: string): string {
 function matchesUntaggedDigest(value: unknown, expected: string): boolean {
   // The #664 code-point form is independent of locale data and remains
   // verifiable on every runtime. Locale candidates are accepted only on the
-  // exact runtime pair used to pin their historical receipt bytes.
+  // exact reader pairs qualified against the pinned historical receipt bytes.
   if (expected === digestV2(value)) return true
   if (!hasQualifiedLegacyLocaleRuntime()) return false
   return VERIFIABLE_UNTAGGED_LOCALES.some((locale) => expected === digestWithLocale(value, locale))
 }
 
 function hasQualifiedLegacyLocaleRuntime(): boolean {
-  return (
-    process.versions['bun'] === QUALIFIED_LEGACY_LOCALE_RUNTIME.bun &&
-    process.versions['icu'] === QUALIFIED_LEGACY_LOCALE_RUNTIME.icu
+  return QUALIFIED_LEGACY_LOCALE_RUNTIMES.some(
+    (runtime) => process.versions['bun'] === runtime.bun && process.versions['icu'] === runtime.icu
   )
 }
 

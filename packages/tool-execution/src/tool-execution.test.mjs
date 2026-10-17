@@ -208,6 +208,31 @@ async function assertUnqualifiedLegacyLocaleRuntime(runtimeVersions) {
   )
 }
 
+test('qualified readers reproduce the independently pinned historical bytes with Intl.Collator', () => {
+  expect(['1.4.2', '1.4.3']).toContain(process.versions.bun)
+  expect(process.versions.icu).toBe('78.1')
+  for (const [locale, receipts] of [
+    ['en-US', historicalLocaleReceiptBytes.enUS],
+    ['sv-SE', historicalLocaleReceiptBytes.svSE],
+  ]) {
+    const collator = new Intl.Collator(locale)
+    const serialize = (value) => {
+      if (Array.isArray(value)) return '[' + value.map(serialize).join(',') + ']'
+      if (value !== null && typeof value === 'object')
+        return (
+          '{' +
+          Object.keys(value)
+            .toSorted(collator.compare)
+            .map((key) => JSON.stringify(key) + ':' + serialize(value[key]))
+            .join(',') +
+          '}'
+        )
+      return JSON.stringify(value)
+    }
+    for (const bytes of Object.values(receipts)) expect(serialize(JSON.parse(bytes))).toBe(bytes)
+  }
+})
+
 test('tool input digests expose the durable legacy canonical form for authority checks', () => {
   const input = { z: 'artifact', a: 1 }
   const expected = 'sha256:c903c8fedc8d79d9e651f7f42a541a4147ba6f1e3ec5a8c60ae74fe724665fdf'
@@ -799,7 +824,9 @@ describe('policy-controlled durable tool execution', () => {
   test('locale history requires the qualified Bun and ICU pair while code-point replays remain valid', async () => {
     for (const runtimeVersions of [
       { bun: '1.4.2', icu: '79.0' },
-      { bun: '1.4.3', icu: '78.1' },
+      { bun: '1.4.3', icu: '79.0' },
+      { bun: '1.4.4', icu: '78.1' },
+      { bun: undefined, icu: '78.1' },
     ]) {
       await assertUnqualifiedLegacyLocaleRuntime(runtimeVersions)
     }
