@@ -3,6 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { createHash } from 'node:crypto'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import {
   InMemoryToolCallRepository,
   InMemoryToolRateLimiter,
@@ -211,6 +213,30 @@ test('authority is void-only and validates retained sender, execution, plan, sco
       f.helper.assertCurrent({ ...f.request, ...changed }, 'effect')
     ).rejects.toMatchObject({ code: 'PI_TOOL_AUTHORITY_REJECTED' })
   }
+})
+
+test('current authority enforces the persisted input digest version for adversarial key ordering', async () => {
+  const f = await setup()
+  const adversarialInput = { 'a-b': 1, ab: 2, a_: 3, Aa: 4, 'a!': 5 }
+  f.request.input = adversarialInput
+  f.setCall({
+    ...f.call,
+    inputDigest: toolInputDigest(adversarialInput),
+    inputDigestVersion: 2,
+  })
+
+  await expect(f.helper.assertCurrent(f.request, 'effect')).rejects.toMatchObject({
+    code: 'PI_TOOL_AUTHORITY_REJECTED',
+  })
+
+  f.setCall({
+    ...f.call,
+    inputDigest: `sha256:${createHash('sha256')
+      .update(canonicalJsonStringify(adversarialInput))
+      .digest('hex')}`,
+    inputDigestVersion: 2,
+  })
+  await expect(f.helper.assertCurrent(f.request, 'effect')).resolves.toBeUndefined()
 })
 
 test('current product or scope revocation denies every guarded boundary', async () => {

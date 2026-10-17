@@ -38,8 +38,7 @@ import {
   toolExecutionContentDigest,
   toolExecutionContentDigestLegacy,
   toolInputMatchesDigest,
-  toolRequestDigest,
-  toolRequestDigestLegacy,
+  toolRequestMatchesDigest,
   type ToolRateLimiter,
 } from '@control-plane/tool-execution'
 import {
@@ -284,7 +283,11 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
             if (
               candidate.toolCallId !== request.toolCallId ||
               candidate.policySnapshotRef !== policySnapshotRef ||
-              !toolInputMatchesDigest(operation.input, candidate.inputDigest) ||
+              !toolInputMatchesDigest(
+                operation.input,
+                candidate.inputDigest,
+                candidate.inputDigestVersion
+              ) ||
               candidate.principalRef !== command.callerPrincipalId
             )
               throw new Error('GRAPH_TOOL_POLICY_MISMATCH')
@@ -939,7 +942,8 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
         if (idempotencyKey !== call.idempotencyKey) continue
         const matchingInputs = [values, channels['input']].filter(
           (candidate): candidate is Record<string, unknown> =>
-            isJsonObject(candidate) && toolInputMatchesDigest(candidate, call.inputDigest)
+            isJsonObject(candidate) &&
+            toolInputMatchesDigest(candidate, call.inputDigest, call.inputDigestVersion)
         )
         const distinctInputs = new Map(
           matchingInputs.map((candidate) => [canonicalJsonStringify(candidate), candidate])
@@ -998,7 +1002,7 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
       request.toolCallId !== call.toolCallId ||
       request.requestId !== `req_${suffix}` ||
       call.principalRef !== command.callerPrincipalId ||
-      ![toolRequestDigest(request), toolRequestDigestLegacy(request)].includes(call.requestDigest)
+      !toolRequestMatchesDigest(request, call.requestDigest, call.requestDigestVersion)
     )
       throw new Error('TOOL_EFFECT_REQUEST_MISMATCH')
     const operation = GraphNodeOperationSchema.parse({

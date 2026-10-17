@@ -1,6 +1,7 @@
 import { test, expect } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { canonicalJsonStringify } from '@control-plane/contracts'
+import { toolInputDigest, toolRequestDigestLegacy } from '@control-plane/tool-execution'
 import {
   PiChildContinuationGrantSchema,
   piChildContinuationRequestDigest,
@@ -182,6 +183,13 @@ test('full request digest binds action/input/target/audit/approval audience and 
 
 test('succeeded canonical call must match exact projected digest, input, approval, child and session outcome', async () => {
   const f = await fixture()
+  const legacyCall = {
+    ...f.call,
+    requestDigest: toolRequestDigestLegacy(f.request),
+    inputDigest: toolInputDigest(f.request.input),
+  }
+  expect(assertPiChildContinuationToolCall(f.grant, f.request, legacyCall)).toEqual(f.grant)
+
   for (const call of [
     { ...f.call, status: 'executing' },
     { ...f.call, requestDigest: f.grant.requestDigest },
