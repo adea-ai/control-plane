@@ -736,6 +736,23 @@ function isDigestValue(value) {
   return value.startsWith('@digest:')
 }
 
+function hashReceiver(expression, file, seen = new Set()) {
+  if (!expression) return undefined
+  if (expression.type === 'CallExpression') {
+    if (isCreateHashExpression(expression, file)) return { allocation: expression }
+    if (memberName(expression.callee) === 'update')
+      return hashReceiver(expression.callee.object, file, seen)
+  }
+  if (expression.type === 'Identifier') {
+    const binding = lexicalBinding(file, expression)
+    if (!binding || seen.has(binding)) return undefined
+    seen.add(binding)
+    const receiver = hashReceiver(binding.initializer, file, seen)
+    if (receiver) return { ...receiver, binding: receiver.binding ?? binding }
+  }
+  return undefined
+}
+
 function createAnalyzer(fileRecords) {
   const { sources: sortSources, sourceById } = buildSortSources(fileRecords)
   const flows = new Map()
@@ -766,15 +783,6 @@ function createAnalyzer(fileRecords) {
     }
   }
 
-  const isCryptoHashUpdate = (node, file, record) => {
-    if (node.type !== 'CallExpression' || memberName(node.callee) !== 'update') return false
-    const object = node.callee.object
-    if (object?.type === 'CallExpression' && isCreateHashExpression(object, file)) return true
-    if (object?.type === 'Identifier')
-      return record?.hashVariables.has(object.name) || file.hashVariables.has(object.name)
-    return false
-  }
-
   const moduleEnvironments = new Map()
   const capturedEnvironments = new Map()
   const captureFunction = (node, environment, file) => {
@@ -796,8 +804,13 @@ function createAnalyzer(fileRecords) {
       return new Set()
     }
     switch (node.type) {
-      case 'Identifier':
-        return new Set(environment.get(bindingKey(file, node)) ?? [])
+      case 'Identifier': {
+        const receiver = hashReceiver(node, file)
+        return union(
+          environment.get(bindingKey(file, node)),
+          receiver?.binding && environment.get(receiver.binding)
+        )
+      }
       case 'ParenthesizedExpression':
       case 'ChainExpression':
       case 'AwaitExpression':
@@ -859,7 +872,8 @@ function createAnalyzer(fileRecords) {
           environment.set(bindingKey(file, node.callee.object), union(receiverTaints, sortTaints))
         }
 
-        if (isCryptoHashUpdate(node, file, record)) {
+        const hash = calleeName === 'update' ? hashReceiver(node.callee.object, file) : undefined
+        if (hash) {
           report(
             file,
             node,
@@ -873,7 +887,9 @@ function createAnalyzer(fileRecords) {
               .filter(Boolean)
               .map((sourceId) => `@digest:${sourceId}`)
           )
-          return union(receiverTaints, hashed)
+          const state = union(receiverTaints, hashed)
+          if (hash.binding) environment.set(hash.binding, state)
+          return state
         }
         if (persistenceMethods.has(calleeName ?? '')) {
           const persistedDigests = union(

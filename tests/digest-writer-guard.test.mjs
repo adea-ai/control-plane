@@ -597,6 +597,79 @@ test('ignores comment and string mentions of localeCompare', () => {
   )
 })
 
+test('an approved split-update helper does not exempt a downstream digest writer', () => {
+  const legacy = `
+    import { createHash } from 'node:crypto'
+    export function legacy(value: string[]) {
+      const ordered = value.toSorted((a, b) => a.localeCompare(b))
+      const hash = createHash('sha256')
+      hash.update(JSON.stringify(ordered))
+      return hash.digest('hex')
+    }
+  `
+  const baseline = flows({ 'legacy.ts': legacy })
+  assert.equal(baseline.length, 1)
+  assert.equal(baseline[0].sink.kind, 'crypto-hash')
+  const approvedHelper = { source: baseline[0].source, sink: baseline[0].sink }
+  const results = flows({
+    'legacy.ts': legacy,
+    'writer.ts': `
+      import { legacy } from './legacy.js'
+      export function newWriter(value: string[]) {
+        return repository.insert({ payloadHash: legacy(value) })
+      }
+    `,
+  })
+  const unapproved = results.filter((flow) => !matchesDigestWriterException(flow, approvedHelper))
+  assert.ok(
+    unapproved.some((flow) => flow.sink.path === 'writer.ts' && flow.sink.kind === 'digest-field')
+  )
+  assert.ok(
+    unapproved.some((flow) => flow.sink.path === 'writer.ts' && flow.sink.kind === 'persistence')
+  )
+})
+
+for (const [name, operations, returnedHash, tainted] of [
+  ['later safe update', 'hash.update(ordered); hash.update("suffix")', 'hash', true],
+  ['update through alias', 'const alias = hash; alias.update(ordered)', 'hash', true],
+  ['digest through alias', 'const alias = hash; hash.update(ordered)', 'alias', true],
+  ['chained updates', 'hash.update("prefix").update(ordered)', 'hash', true],
+  [
+    'independent receiver',
+    'const other = createHash("sha256"); other.update(ordered)',
+    'hash',
+    false,
+  ],
+]) {
+  test(`split hash state propagates correctly with ${name}`, () => {
+    const results = flows({
+      'legacy.ts': `
+        import { createHash } from 'node:crypto'
+        export function legacy(value: string[]) {
+          const ordered = JSON.stringify(value.toSorted((a, b) => a.localeCompare(b)))
+          const hash = createHash('sha256')
+          ${operations}
+          return ${returnedHash}.digest('hex')
+        }
+      `,
+      'writer.ts': `
+        import { legacy } from './legacy.js'
+        export function write(value: string[]) {
+          return repository.insert({ payloadHash: legacy(value) })
+        }
+      `,
+    })
+    assert.equal(
+      results.some((flow) => flow.sink.path === 'writer.ts' && flow.sink.kind === 'digest-field'),
+      tainted
+    )
+    assert.equal(
+      results.some((flow) => flow.sink.path === 'writer.ts' && flow.sink.kind === 'persistence'),
+      tainted
+    )
+  })
+}
+
 test('uses line-independent source and sink fingerprints for reviewed exceptions', () => {
   const source = `
     import { createHash } from 'node:crypto'

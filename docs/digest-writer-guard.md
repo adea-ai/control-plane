@@ -28,6 +28,10 @@ closure values across calls, and include captured taints in memoization keys.
 Comparator aliases use the same lexical bindings, including block shadowing.
 Module initialization reaches a finite taint fixed point across imports, so
 source-file enumeration order cannot hide a captured module value.
+Hash receiver state retains cumulative digest taint across separate `update` and
+`digest` statements, simple lexical aliases, and chained updates. Independent
+hash receivers remain separate; approving a helper's own hash edge never approves
+a downstream digest field or persistence boundary.
 
 The AST-identity correction exposed three additional exact baseline context-index
 edges. Their source and both SQLite sink files are byte-identical to `main` at
