@@ -126,7 +126,7 @@ describe('two endpoints over one shared SQLite provider fence each other', () =>
     })
   })
 
-  test('a peer generation advance fences replay of an older recorded command on the stale endpoint', async () => {
+  test('a peer generation advance withholds replay of an older recorded command on the stale endpoint as unknown', async () => {
     await withSharedProvider(async ({ fixture, endpointA, endpointB }) => {
       const older = await sealFor(
         fixture,
@@ -140,9 +140,11 @@ describe('two endpoints over one shared SQLite provider fence each other', () =>
       )
       expect(await endpointB.handleCommand(newer)).toMatchObject({ kind: 'exchange' })
 
+      // The older command ran, so its superseded redelivery is an unknown outcome, not a terminal
+      // "nothing executed" stale refusal, and no output is released.
       expect(await endpointA.handleCommand(older)).toMatchObject({
         kind: 'denial',
-        reason: 'stale_channel_generation',
+        reason: 'response_unknown',
       })
       expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(2)
     })

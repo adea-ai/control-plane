@@ -617,18 +617,19 @@ describe('async authority races fail closed (parked regressions)', () => {
 })
 
 describe('recorded outcomes stay gated by current authority', () => {
-  test('a recorded command under a stale channel generation is denied, not re-sealed', async () => {
+  test('a recorded command under a stale channel generation is withheld as an unknown outcome, not re-sealed', async () => {
     const fixture = await createSecureFixture()
     await fixture.controller.dispatch(
       runtimeCommand({ commandId: commandIds.first, channelGeneration: 2 })
     )
     expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
 
+    // The command ran, so the stale delivery is an unknown outcome, never a terminal "nothing ran".
     await expect(
       fixture.controller.dispatch(
         runtimeCommand({ commandId: commandIds.first, channelGeneration: 1 })
       )
-    ).rejects.toMatchObject({ code: 'RUNTIME_GATEWAY_STALE_CHANNEL', retryable: false })
+    ).rejects.toMatchObject({ code: 'RUNTIME_NODE_RESPONSE_UNKNOWN', retryable: true })
     expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
   })
 

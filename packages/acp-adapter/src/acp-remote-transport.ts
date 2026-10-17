@@ -875,10 +875,11 @@ export class SecureAcpDeviceEndpoint {
   ): Promise<AcpRemoteDeviceOutcome> {
     const inflight = this.#inflight.get(header.commandId)
     if (inflight !== undefined) {
-      // A coalesced duplicate is an accepted delivery: it advances the durable generation fence
-      // even though it never claims, then waits for the one pipeline that runs the effect.
-      const advanced = await this.#advanceGeneration(header)
+      // A coalesced duplicate of the SAME command is an accepted delivery: it advances the durable
+      // generation fence even though it never claims, then waits for the one pipeline that runs the
+      // effect. A different command reusing the id is a conflict and mutates no fence.
       if (inflight.identity !== identity) return { kind: 'denial', reason: 'command_conflict' }
+      const advanced = await this.#advanceGeneration(header)
       const outcome = await inflight.outcome
       const fenced = advanced ?? this.#commandFenceReason(header)
       if (fenced !== undefined) return withholdExchange(fenced, outcome)
@@ -908,7 +909,10 @@ export class SecureAcpDeviceEndpoint {
       const replayed = replayOutcome(stored, identity)
       if (fencedAfterRead !== undefined) return withholdExchange(fencedAfterRead, replayed)
       if (replayed !== undefined) {
-        // Served from the ledger without a claim: the delivery still moves the generation fence.
+        // Served from the ledger without a claim: the delivery still moves the generation fence,
+        // but only a delivery of the recorded command. A conflicting identity is refused and
+        // mutates nothing.
+        if (stored?.identity !== identity) return replayed
         const advanced = await this.#advanceGeneration(header)
         return advanced === undefined ? replayed : withholdExchange(advanced, replayed)
       }
@@ -946,7 +950,8 @@ export class SecureAcpDeviceEndpoint {
         // Another delivery recorded this command first; replay its record instead of executing.
         const winner = await this.#stateStore.readLedger(header.commandId)
         const fencedAfterRace =
-          (await this.#currentCommandFence(header)) ?? (await this.#advanceGeneration(header))
+          (await this.#currentCommandFence(header)) ??
+          (winner?.identity === identity ? await this.#advanceGeneration(header) : undefined)
         const raced = replayOutcome(winner, identity)
         if (fencedAfterRace !== undefined) return withholdExchange(fencedAfterRace, raced)
         return raced ?? { kind: 'denial', reason: 'state_unavailable' }
@@ -1058,10 +1063,11 @@ export class SecureAcpDeviceEndpoint {
   }
 
   /**
-   * A delivery whose window is not open is refused before the ledger is consulted, but the same
-   * command id may already have run in an earlier window. `command_expired` and
-   * `command_not_yet_valid` tell the controller that nothing executed, so they are only sent when
-   * the ledger holds no record. With a record, the controller gets the truth without any output:
+   * A delivery whose window is not open, or whose channel generation is already superseded, is
+   * refused before the ledger is consulted, but the same command id may already have run under an
+   * earlier window or generation. `command_expired`, `command_not_yet_valid` and
+   * `stale_channel_generation` tell the controller that nothing executed, so they are only sent
+   * when the ledger holds no record. With a record, the controller gets the truth without any output:
    * a recorded exchange is `response_unknown` (retryable: a fresh window replays it), a claim
    * without an outcome or a compacted record is `outcome_uncertain`, and a recorded denial keeps its
    * reason. Identity is not compared here (the plaintext is not opened); a different command that
@@ -1071,7 +1077,11 @@ export class SecureAcpDeviceEndpoint {
     header: AcpRemoteCommandHeader,
     reason: AcpRemoteDenialReason
   ): Promise<AcpRemoteSealedResponse> {
-    if (reason !== 'command_expired' && reason !== 'command_not_yet_valid') {
+    if (
+      reason !== 'command_expired' &&
+      reason !== 'command_not_yet_valid' &&
+      reason !== 'stale_channel_generation'
+    ) {
       return this.#refuse(header, reason)
     }
     let stored: AcpRemoteDeviceLedgerRecord | undefined
@@ -1161,8 +1171,15 @@ function withholdExchange(
   reason: AcpRemoteDenialReason,
   outcome: AcpRemoteDeviceOutcome | undefined
 ): AcpRemoteDeviceOutcome & { readonly kind: 'denial' } {
-  if (outcome?.kind === 'exchange' && reason !== 'device_revoked') {
-    return { kind: 'denial', reason: 'response_unknown' }
+  if (reason === 'device_revoked') return { kind: 'denial', reason }
+  if (outcome?.kind === 'exchange') return { kind: 'denial', reason: 'response_unknown' }
+  // An outcome the device already knows is unknown stays unknown: a window or generation fence that
+  // trips afterwards must not turn "an effect may have run" into a terminal pre-effect denial.
+  if (
+    outcome?.kind === 'denial' &&
+    (outcome.reason === 'outcome_uncertain' || outcome.reason === 'response_unknown')
+  ) {
+    return { kind: 'denial', reason: outcome.reason }
   }
   return { kind: 'denial', reason }
 }

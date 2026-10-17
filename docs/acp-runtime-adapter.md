@@ -81,13 +81,17 @@ reported as undelivered: once a reply is in hand the controller ignores a wire t
 offline and maps a window that closed afterwards to `response_unknown`, and the device reports a
 transient publication refusal (expired window, superseded generation) after an exchange was recorded
 as `response_unknown` rather than as the pre-effect denial. Only revocation is reported as itself.
-The same holds for a delivery whose window is not open: before replying `command_expired` or
-`command_not_yet_valid` the device looks the command id up in the ledger, because an earlier window
-may have run it. A recorded exchange is reported as `response_unknown`, a claim without an outcome
+The same holds for a delivery whose window is not open or whose generation is superseded: before
+replying `command_expired`, `command_not_yet_valid` or `stale_channel_generation` the device looks
+the command id up in the ledger, because an earlier window or generation may have run it. A recorded exchange is reported as `response_unknown`, a claim without an outcome
 or a compacted record as `outcome_uncertain`, and only an id with no record gets `command_expired`;
 no sealed output is released for the closed window. Every accepted delivery also moves the persisted
 generation fence, including one answered from the ledger or coalesced onto an in-flight command
-(`advanceGeneration`), so a distinct command on an older generation is refused afterwards.
+(`advanceGeneration`), so a distinct command on an older generation is refused afterwards. Only a
+delivery of the same semantic identity advances it: a different command reusing a recorded id is a
+`command_conflict` and mutates no fence. An uncertain outcome (`outcome_uncertain`, `response_unknown`)
+is never overwritten by a window or generation fence that trips afterwards, including after an
+executor throw: only revocation is reported as itself.
 `response_unknown` is retryable on the same command identity, whose recorded outcome the device
 replays. After a successful claim, a fresh durable
 fence read immediately before dispatch refuses the command before the executor is called (see the
