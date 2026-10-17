@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.102.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.101.2...workspace-v1.102.0) (2026-10-17)
+
+
+### Features
+
+* m17-runtime-ownership-baseline-941 ([#1047](https://github.com/adea-ai/control-plane/issues/1047)) ([0c90043](https://github.com/adea-ai/control-plane/commit/0c90043bddfbdcf404fb7a3539479665a7812384))
+
 ## [1.101.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.101.1...workspace-v1.101.2) (2026-10-17)
 
 

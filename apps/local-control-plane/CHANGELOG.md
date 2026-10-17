@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.35.0...local-control-plane-v1.36.0) (2026-10-17)
+
+
+### Features
+
+* m17-runtime-ownership-baseline-941 ([#1047](https://github.com/adea-ai/control-plane/issues/1047)) ([0c90043](https://github.com/adea-ai/control-plane/commit/0c90043bddfbdcf404fb7a3539479665a7812384))
+
 ## [1.35.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.34.0...local-control-plane-v1.35.0) (2026-10-15)
 
 

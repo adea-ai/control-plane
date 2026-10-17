@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.41.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.40.4...sqlite-persistence-v1.41.0) (2026-10-17)
+
+
+### Features
+
+* m17-runtime-ownership-baseline-941 ([#1047](https://github.com/adea-ai/control-plane/issues/1047)) ([0c90043](https://github.com/adea-ai/control-plane/commit/0c90043bddfbdcf404fb7a3539479665a7812384))
+
 ## [1.40.4](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.40.3...sqlite-persistence-v1.40.4) (2026-10-16)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.9.0...acp-adapter-v1.10.0) (2026-10-17)
+
+
+### Features
+
+* m17-runtime-ownership-baseline-941 ([#1047](https://github.com/adea-ai/control-plane/issues/1047)) ([0c90043](https://github.com/adea-ai/control-plane/commit/0c90043bddfbdcf404fb7a3539479665a7812384))
+
 ## [1.9.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.8.3...acp-adapter-v1.9.0) (2026-10-08)
 
 
