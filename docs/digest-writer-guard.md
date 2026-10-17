@@ -19,6 +19,17 @@ fields remain allowed, including when the same function hashes unrelated
 canonical data. A `CANONICAL-JSON` comment does not exempt a file or a call
 site.
 
+Function memoization and recursion tracking use the source path and AST source
+position as identity. Human-readable owner names remain diagnostics; identically
+named methods in different classes cannot share cached taint or recursion state.
+
+The AST-identity correction exposed three additional exact baseline context-index
+edges. Their source and both SQLite sink files are byte-identical to `main` at
+`311c3a83`: two preserve existing operation-index writes, and one is a
+property-insensitive edge to `recordId`, which hashes a validated command ID.
+Only those exact fingerprints/occurrences are pinned; duplicate or new writer
+sites still fail the guard.
+
 This is a bounded static analysis, not a TypeScript type checker. Its importer
 frontier follows relevant static named imports and re-exports through local
 wrappers and workspace source barrels; crypto dependencies of selected writers

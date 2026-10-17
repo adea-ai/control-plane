@@ -43,6 +43,31 @@ test('detects a locale-dependent sort serialized directly into a hash', () => {
   assert.equal(results[0].source.owner, 'digest')
 })
 
+test('same-named methods in separate classes do not share taint analysis state', () => {
+  const results = flows({
+    'writers.ts': `
+      import { createHash } from 'node:crypto'
+      class SafeWriter {
+        digest(value: string[]) {
+          return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+        }
+      }
+      class LegacyWriter {
+        digest(value: string[]) {
+          const ordered = value.toSorted((left, right) => left.localeCompare(right))
+          return createHash('sha256').update(JSON.stringify(ordered)).digest('hex')
+        }
+      }
+    `,
+  })
+
+  assert.equal(results.length, 1)
+  assert.equal(results[0].source.path, 'writers.ts')
+  assert.equal(results[0].source.owner, 'digest')
+  assert.equal(results[0].sink.owner, 'digest')
+  assert.equal(results[0].sink.kind, 'crypto-hash')
+})
+
 test('follows aliased local serializers and imported aliases into a hash', () => {
   const results = flows({
     'canonical.ts': `

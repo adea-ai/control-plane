@@ -1050,7 +1050,8 @@ function createAnalyzer(fileRecords) {
   }
 
   const evaluateFunction = (record, argumentTaints, callStack) => {
-    const invocationKey = `${record.path}:${record.owner}`
+    // Diagnostic owner names can repeat across classes; AST offsets identify functions.
+    const invocationKey = `${record.path}:${record.node.start}`
     if (callStack.has(invocationKey)) {
       analyzerStats.recursiveFallbacks += 1
       return union(...argumentTaints)

@@ -1129,6 +1129,72 @@
       },
       "reason": "The legacy event payload hash remains available for historical verification while new event-row hashes use v2. The explicit en-US branch is used only by historical untagged terminal-usage verification; default helper bytes remain unchanged.",
       "provenance": ["PR #1152 published immutable head bf6d40647c5ad8206859c63310fa59b9a0eebf99"]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonical",
+        "fingerprint": "bda382a75d90f40ee3fd0d5dfcedc886f2f9effba2301a163c019e8a3918a130",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-command-repository.ts",
+        "owner": "create",
+        "fingerprint": "31a4b4ecf395950947135fe99bb987ccd6da35a54ce967b45129abe4cc3c8859",
+        "kind": "persistence",
+        "occurrence": 1
+      },
+      "reason": "Existing baseline SQLite context-operation index persistence retains its historical lookup key. The AST-identity correction reveals this previously cached-away exact sink; the source and sink files are byte-identical to main 311c3a83. This does not authorize a new writer or rehash existing indexes.",
+      "provenance": [
+        "main baseline 311c3a83: source and both SQLite sink files byte-identical",
+        "PR #1154 AST-identity correction: exact previously hidden edge inventory"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonical",
+        "fingerprint": "bda382a75d90f40ee3fd0d5dfcedc886f2f9effba2301a163c019e8a3918a130",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-command-repository.ts",
+        "owner": "recordId",
+        "fingerprint": "613cfec8d218a940d00c1cd40f86f806768ba7175fd038a96363e34adc93bfe2",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "Existing baseline property-insensitive analysis edge: recordId hashes the schema-validated canonical command ID, not the legacy operation-key bytes. This exact site is unchanged from main 311c3a83; the legacy taint comes from another field in the enclosing transaction.",
+      "provenance": [
+        "main baseline 311c3a83: source and both SQLite sink files byte-identical",
+        "PR #1154 AST-identity correction: exact previously hidden edge inventory"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonical",
+        "fingerprint": "bda382a75d90f40ee3fd0d5dfcedc886f2f9effba2301a163c019e8a3918a130",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-node-inbox-repository.ts",
+        "owner": "accept",
+        "fingerprint": "4f08dc46b285fb71e8c82bff07d7bd4b5dbfed59934595c19ea04cd5605c0579",
+        "kind": "persistence",
+        "occurrence": 1
+      },
+      "reason": "Existing baseline SQLite context-operation index persistence retains its historical lookup key. The AST-identity correction reveals this previously cached-away exact sink; the source and sink files are byte-identical to main 311c3a83. This does not authorize a new writer or rehash existing indexes.",
+      "provenance": [
+        "main baseline 311c3a83: source and both SQLite sink files byte-identical",
+        "PR #1154 AST-identity correction: exact previously hidden edge inventory"
+      ]
     }
   ]
 }
