@@ -1195,6 +1195,138 @@
         "main baseline 311c3a83: source and both SQLite sink files byte-identical",
         "PR #1154 AST-identity correction: exact previously hidden edge inventory"
       ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "37ee43d5b02d59afefb08b046b27bd1fec3ca4f2fbcc494cfd004cdf1bb15ca7",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-command-repository.ts",
+        "owner": "create",
+        "fingerprint": "31a4b4ecf395950947135fe99bb987ccd6da35a54ce967b45129abe4cc3c8859",
+        "kind": "persistence",
+        "occurrence": 1
+      },
+      "reason": "The same exact baseline context-index sink under the already-pinned PR #1153 canonicalLegacy comparator. Source and sink files are byte-identical to candidate20c55cd8158ea09e1e4234d6069afa4f532ad739; the analyzer conservatively includes both optional-locale branches although the operation-key call uses the default. Existing durable operation-index bytes are preserved; this does not authorize a new writer.",
+      "provenance": [
+        "PR #1153 candidate 20c55cd8158ea09e1e4234d6069afa4f532ad739: exact source/sink files unchanged",
+        "PR #1153 published repair33bcf78ff46a4c62de97d543bebe7407557cd431 cross-scan after AST-identity fix"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "37ee43d5b02d59afefb08b046b27bd1fec3ca4f2fbcc494cfd004cdf1bb15ca7",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-command-repository.ts",
+        "owner": "recordId",
+        "fingerprint": "613cfec8d218a940d00c1cd40f86f806768ba7175fd038a96363e34adc93bfe2",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The same exact baseline context-index sink under the already-pinned PR #1153 canonicalLegacy comparator. Source and sink files are byte-identical to candidate20c55cd8158ea09e1e4234d6069afa4f532ad739; the analyzer conservatively includes both optional-locale branches although the operation-key call uses the default. recordId hashes a validated canonical command ID; this taint edge is property-insensitive.",
+      "provenance": [
+        "PR #1153 candidate 20c55cd8158ea09e1e4234d6069afa4f532ad739: exact source/sink files unchanged",
+        "PR #1153 published repair33bcf78ff46a4c62de97d543bebe7407557cd431 cross-scan after AST-identity fix"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "37ee43d5b02d59afefb08b046b27bd1fec3ca4f2fbcc494cfd004cdf1bb15ca7",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-node-inbox-repository.ts",
+        "owner": "accept",
+        "fingerprint": "4f08dc46b285fb71e8c82bff07d7bd4b5dbfed59934595c19ea04cd5605c0579",
+        "kind": "persistence",
+        "occurrence": 1
+      },
+      "reason": "The same exact baseline context-index sink under the already-pinned PR #1153 canonicalLegacy comparator. Source and sink files are byte-identical to candidate20c55cd8158ea09e1e4234d6069afa4f532ad739; the analyzer conservatively includes both optional-locale branches although the operation-key call uses the default. Existing durable operation-index bytes are preserved; this does not authorize a new writer.",
+      "provenance": [
+        "PR #1153 candidate 20c55cd8158ea09e1e4234d6069afa4f532ad739: exact source/sink files unchanged",
+        "PR #1153 published repair33bcf78ff46a4c62de97d543bebe7407557cd431 cross-scan after AST-identity fix"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "9faf4f2a8e2fe9e302c3106121102e7cb1518d184034851ca74a16b3b75cb574",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-command-repository.ts",
+        "owner": "create",
+        "fingerprint": "31a4b4ecf395950947135fe99bb987ccd6da35a54ce967b45129abe4cc3c8859",
+        "kind": "persistence",
+        "occurrence": 1
+      },
+      "reason": "The same exact baseline context-index sink under the already-pinned PR #1153 canonicalLegacy comparator. Source and sink files are byte-identical to candidate20c55cd8158ea09e1e4234d6069afa4f532ad739; the analyzer conservatively includes both optional-locale branches although the operation-key call uses the default. Existing durable operation-index bytes are preserved; this does not authorize a new writer.",
+      "provenance": [
+        "PR #1153 candidate 20c55cd8158ea09e1e4234d6069afa4f532ad739: exact source/sink files unchanged",
+        "PR #1153 published repair33bcf78ff46a4c62de97d543bebe7407557cd431 cross-scan after AST-identity fix"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "9faf4f2a8e2fe9e302c3106121102e7cb1518d184034851ca74a16b3b75cb574",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-command-repository.ts",
+        "owner": "recordId",
+        "fingerprint": "613cfec8d218a940d00c1cd40f86f806768ba7175fd038a96363e34adc93bfe2",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The same exact baseline context-index sink under the already-pinned PR #1153 canonicalLegacy comparator. Source and sink files are byte-identical to candidate20c55cd8158ea09e1e4234d6069afa4f532ad739; the analyzer conservatively includes both optional-locale branches although the operation-key call uses the default. recordId hashes a validated canonical command ID; this taint edge is property-insensitive.",
+      "provenance": [
+        "PR #1153 candidate 20c55cd8158ea09e1e4234d6069afa4f532ad739: exact source/sink files unchanged",
+        "PR #1153 published repair33bcf78ff46a4c62de97d543bebe7407557cd431 cross-scan after AST-identity fix"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "9faf4f2a8e2fe9e302c3106121102e7cb1518d184034851ca74a16b3b75cb574",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-node-inbox-repository.ts",
+        "owner": "accept",
+        "fingerprint": "4f08dc46b285fb71e8c82bff07d7bd4b5dbfed59934595c19ea04cd5605c0579",
+        "kind": "persistence",
+        "occurrence": 1
+      },
+      "reason": "The same exact baseline context-index sink under the already-pinned PR #1153 canonicalLegacy comparator. Source and sink files are byte-identical to candidate20c55cd8158ea09e1e4234d6069afa4f532ad739; the analyzer conservatively includes both optional-locale branches although the operation-key call uses the default. Existing durable operation-index bytes are preserved; this does not authorize a new writer.",
+      "provenance": [
+        "PR #1153 candidate 20c55cd8158ea09e1e4234d6069afa4f532ad739: exact source/sink files unchanged",
+        "PR #1153 published repair33bcf78ff46a4c62de97d543bebe7407557cd431 cross-scan after AST-identity fix"
+      ]
     }
   ]
 }

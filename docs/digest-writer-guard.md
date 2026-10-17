@@ -28,7 +28,10 @@ edges. Their source and both SQLite sink files are byte-identical to `main` at
 `311c3a83`: two preserve existing operation-index writes, and one is a
 property-insensitive edge to `recordId`, which hashes a validated command ID.
 Only those exact fingerprints/occurrences are pinned; duplicate or new writer
-sites still fail the guard.
+sites still fail the guard. The same three sinks are pinned to each of the two already
+reviewed `canonicalLegacy` comparator branches from PR #1153 candidate
+`20c55cd8158ea09e1e4234d6069afa4f532ad739`; those source/sink files remain byte-identical
+in the published repair. The operation-key call still uses only the default branch.
 
 This is a bounded static analysis, not a TypeScript type checker. Its importer
 frontier follows relevant static named imports and re-exports through local
