@@ -68,6 +68,117 @@ test('same-named methods in separate classes do not share taint analysis state',
   assert.equal(results[0].sink.kind, 'crypto-hash')
 })
 
+test('same-named nested helpers resolve within their actual class method scope', () => {
+  const results = flows({
+    'writers.ts': `
+      import { createHash } from 'node:crypto'
+      class SafeWriter {
+        digest(value: string[]) {
+          function canonical(input: string[]) { return JSON.stringify(input) }
+          return createHash('sha256').update(canonical(value)).digest('hex')
+        }
+      }
+      class LegacyWriter {
+        digest(value: string[]) {
+          function canonical(input: string[]) {
+            return JSON.stringify(input.toSorted((a, b) => a.localeCompare(b)))
+          }
+          return createHash('sha256').update(canonical(value)).digest('hex')
+        }
+      }
+    `,
+  })
+  assert.ok(results.some((flow) => flow.sink.kind === 'crypto-hash'))
+})
+
+for (const [name, source] of [
+  [
+    'module',
+    `
+    import { createHash } from 'node:crypto'
+    const ordered = ['z', 'ä'].toSorted((a, b) => a.localeCompare(b))
+    export function digest() {
+      return createHash('sha256').update(JSON.stringify(ordered)).digest('hex')
+    }
+  `,
+  ],
+  [
+    'closure',
+    `
+    import { createHash } from 'node:crypto'
+    export function digest(input: string[]) {
+      const ordered = input.toSorted((a, b) => a.localeCompare(b))
+      function bytes() { return JSON.stringify(ordered) }
+      return createHash('sha256').update(bytes()).digest('hex')
+    }
+  `,
+  ],
+]) {
+  test(`retains ${name} lexical taint across function evaluation`, () => {
+    const results = flows({ 'writer.ts': source })
+    assert.ok(results.some((flow) => flow.sink.kind === 'crypto-hash'))
+  })
+}
+
+test('capture changes participate in return-taint cache identity', () => {
+  const results = flows({
+    'writer.ts': `
+      import { createHash } from 'node:crypto'
+      export function digest(input: string[]) {
+        let ordered = []
+        function bytes() { return JSON.stringify(ordered) }
+        bytes()
+        ordered = input.toSorted((a, b) => a.localeCompare(b))
+        return createHash('sha256').update(bytes()).digest('hex')
+      }
+    `,
+  })
+  assert.ok(results.some((flow) => flow.sink.kind === 'crypto-hash'))
+})
+
+test('an exported returned closure retains its enclosing lexical taint', () => {
+  const results = flows({
+    'writer.ts': `
+      import { createHash } from 'node:crypto'
+      export function writer(input: string[]) {
+        const ordered = input.toSorted((a, b) => a.localeCompare(b))
+        return () => createHash('sha256').update(JSON.stringify(ordered)).digest('hex')
+      }
+    `,
+  })
+  assert.ok(results.some((flow) => flow.sink.kind === 'crypto-hash'))
+})
+
+test('a parameter shadows a tainted module binding with the same name', () => {
+  const results = flows({
+    'writer.ts': `
+      import { createHash } from 'node:crypto'
+      const ordered = ['z', 'ä'].toSorted((a, b) => a.localeCompare(b))
+      export function digest(ordered: string[]) {
+        return createHash('sha256').update(JSON.stringify(ordered)).digest('hex')
+      }
+    `,
+  })
+  assert.deepEqual(results, [])
+})
+
+test('an imported helper retains the taints of its own module', () => {
+  const results = flows({
+    'writer.ts': `
+      import { createHash } from 'node:crypto'
+      import { bytes } from './legacy.js'
+      export function digest() { return createHash('sha256').update(bytes()).digest('hex') }
+    `,
+    'legacy.ts': `
+      const ordered = ['z', 'ä'].toSorted((a, b) => a.localeCompare(b))
+      export function bytes() { return JSON.stringify(ordered) }
+    `,
+  })
+  assert.ok(
+    results.some((flow) => flow.sink.path === 'writer.ts' && flow.sink.kind === 'crypto-hash')
+  )
+})
+
 test('follows aliased local serializers and imported aliases into a hash', () => {
   const results = flows({
     'canonical.ts': `

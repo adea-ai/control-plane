@@ -140,11 +140,46 @@ function functionName(node, parent) {
   return undefined
 }
 
+function patternIdentifiers(pattern) {
+  if (!pattern) return []
+  if (pattern.type === 'Identifier') return [pattern]
+  if (pattern.type === 'AssignmentPattern') return patternIdentifiers(pattern.left)
+  if (pattern.type === 'RestElement') return patternIdentifiers(pattern.argument)
+  if (pattern.type === 'ArrayPattern') return pattern.elements.flatMap(patternIdentifiers)
+  if (pattern.type === 'ObjectPattern')
+    return pattern.properties.flatMap((property) =>
+      patternIdentifiers(property.type === 'RestElement' ? property.argument : property.value)
+    )
+  return []
+}
+
+function lexicalBinding(file, node, name = node?.name) {
+  for (let scope = file.scopeByNode.get(node); scope; scope = scope.parent) {
+    if (scope.bindings.has(name)) return scope.bindings.get(name)
+  }
+  return undefined
+}
+
+function bindingKey(file, node) {
+  return lexicalBinding(file, node) ?? node.name
+}
+
 function parseFile(path, source) {
   const { javascript, program } = transpileAndParse(path, source)
   const parents = new WeakMap()
   const ownerByNode = new WeakMap()
   const functionByNode = new WeakMap()
+  const scopeByNode = new WeakMap()
+  const moduleScope = { kind: 'module', bindings: new Map() }
+  const declare = (scope, pattern, initializer, kind = 'local') => {
+    for (const identifier of patternIdentifiers(pattern)) {
+      scope.bindings.set(identifier.name, {
+        id: `${path}:${identifier.start}:${identifier.name}`,
+        initializer,
+        kind,
+      })
+    }
+  }
   const functions = []
   const variableInitializers = new Map()
   const imports = new Map()
@@ -152,12 +187,42 @@ function parseFile(path, source) {
   const cryptoBindings = new Set()
   const hashVariables = new Set()
 
-  const visitNode = (node, parent, key, inheritedOwner, enclosingFunction) => {
+  const visitNode = (node, parent, key, inheritedOwner, enclosingFunction, inheritedScope) => {
     if (!isNode(node)) return
     if (parent) parents.set(node, parent)
+    let scope = inheritedScope
+    if (node.type === 'FunctionDeclaration' && node.id) declare(scope, node.id, node)
+    if (node.type === 'VariableDeclarator') {
+      let declarationScope = scope
+      if (parent.kind === 'var') {
+        while (declarationScope.parent && declarationScope.kind === 'block')
+          declarationScope = declarationScope.parent
+      }
+      declare(declarationScope, node.id, node.init)
+    }
+    if (node.type === 'ImportDeclaration') {
+      for (const specifier of node.specifiers) declare(scope, specifier.local, undefined, 'import')
+    }
+    if (node.type === 'ClassDeclaration' && node.id) declare(scope, node.id, undefined)
+    if (
+      [
+        'BlockStatement',
+        'CatchClause',
+        'ForStatement',
+        'ForInStatement',
+        'ForOfStatement',
+        'SwitchStatement',
+      ].includes(node.type)
+    ) {
+      scope = { kind: 'block', parent: scope, bindings: new Map() }
+      if (node.type === 'CatchClause') declare(scope, node.param, undefined)
+    }
     let owner = inheritedOwner ?? '<module>'
     let currentFunction = enclosingFunction
     if (isFunctionNode(node)) {
+      scope = { kind: 'function', parent: scope, bindings: new Map() }
+      for (const parameter of node.params) declare(scope, parameter, undefined)
+      if (node.type === 'FunctionExpression' && node.id) declare(scope, node.id, node)
       const name = functionName(node, parent)
       if (name)
         owner =
@@ -170,16 +235,18 @@ function parseFile(path, source) {
         params: node.params,
         parentOwner: inheritedOwner ?? '<module>',
         path,
+        scope,
       }
       functions.push(record)
       functionByNode.set(node, record)
       currentFunction = record
     }
     ownerByNode.set(node, owner)
+    scopeByNode.set(node, scope)
     for (const [child, childKey] of children(node))
-      visitNode(child, node, childKey, owner, currentFunction)
+      visitNode(child, node, childKey, owner, currentFunction, scope)
   }
-  visitNode(program, undefined, undefined, '<module>', undefined)
+  visitNode(program, undefined, undefined, '<module>', undefined, moduleScope)
 
   for (const statement of program.body) {
     if (statement.type === 'ImportDeclaration') {
@@ -228,6 +295,8 @@ function parseFile(path, source) {
   const file = {
     functions,
     functionByNode,
+    scopeByNode,
+    moduleScope,
     imports,
     javascript,
     namespaceImports,
@@ -318,7 +387,7 @@ function findLocaleComparatorNodes(expression, file, record, fileRecords, seen =
       record?.variableInitializers.get(expression.name) ??
       file.variableInitializers.get(expression.name)
     if (initializer) return findLocaleComparatorNodes(initializer, file, record, fileRecords, seen)
-    const target = resolveFunctionTarget(expression, file, record, fileRecords)
+    const target = resolveFunctionTarget(expression, file, fileRecords)
     return target ? findFunctionLocaleComparators(target, fileRecords, seen) : []
   }
   if (isFunctionNode(expression))
@@ -351,8 +420,7 @@ function findFunctionLocaleComparators(record, fileRecords, seen) {
     else if (isIntlCollatorCompare(node, file, record)) result.push({ file, node })
 
     if (node.type === 'CallExpression') {
-      const caller = nearestFunction(file, node) ?? record
-      const target = resolveFunctionTarget(node.callee, file, caller, fileRecords)
+      const target = resolveFunctionTarget(node.callee, file, fileRecords)
       if (target) result.push(...findFunctionLocaleComparators(target, fileRecords, seen))
     }
     for (const [child] of children(node)) walkBody(child)
@@ -537,41 +605,31 @@ function resolveImportPath(fromPath, moduleName, fileRecords) {
   return candidates.map(normalizePath).find((candidate) => fileRecords.has(candidate))
 }
 
-function resolveFunctionTarget(expression, file, record, fileRecords, seen = new Set()) {
+function resolveFunctionTarget(expression, file, fileRecords, seen = new Set()) {
   if (!expression) return undefined
   if (expression.type === 'Identifier') {
     const name = expression.name
-    const seenKey = `${file.path}:${record?.owner ?? '<module>'}:${name}`
-    if (seen.has(seenKey)) return undefined
-    seen.add(seenKey)
-
-    const initializer =
-      record?.variableInitializers.get(name) ?? file.variableInitializers.get(name)
+    const binding = lexicalBinding(file, expression)
+    if (!binding) return undefined
+    if (seen.has(binding.id)) return undefined
+    seen.add(binding.id)
+    const initializer = binding.initializer
     if (initializer) {
       if (isFunctionNode(initializer)) return file.functionByNode.get(initializer)
-      if (initializer.type === 'Identifier') {
-        const aliased = resolveFunctionTarget(initializer, file, record, fileRecords, seen)
-        if (aliased) return aliased
-      }
+      return resolveFunctionTarget(initializer, file, fileRecords, seen)
     }
-
+    // A local/parameter declaration shadows an import even without a callable initializer.
+    if (binding.kind !== 'import') return undefined
     const imported = file.imports.get(name)
-    if (imported) {
-      const importedPath = resolveImportPath(file.path, imported.moduleName, fileRecords)
-      const targetFile = importedPath && fileRecords.get(importedPath)
-      return (
-        targetFile && resolveExportedFunction(targetFile, imported.importedName, fileRecords, seen)
-      )
-    }
-
-    const local = file.functions.find(
-      (candidate) =>
-        candidate.name === name &&
-        (candidate.parentOwner === record?.owner || candidate.parentOwner === '<module>')
+    if (!imported) return undefined
+    const importedPath = resolveImportPath(file.path, imported.moduleName, fileRecords)
+    const targetFile = importedPath && fileRecords.get(importedPath)
+    return (
+      targetFile && resolveExportedFunction(targetFile, imported.importedName, fileRecords, seen)
     )
-    return local
   }
   if (expression.type === 'MemberExpression' && expression.object.type === 'Identifier') {
+    if (lexicalBinding(file, expression.object)?.kind !== 'import') return undefined
     const moduleName = file.namespaceImports.get(expression.object.name)
     const importedName = memberName(expression)
     if (!moduleName || !importedName) return undefined
@@ -587,10 +645,8 @@ function resolveExportedFunction(file, exportedName, fileRecords, seen = new Set
   const key = `${file.path}:${exportedName}`
   if (seen.has(key)) return undefined
   seen.add(key)
-  const direct = file.functions.find(
-    (candidate) => candidate.name === exportedName && candidate.parentOwner === '<module>'
-  )
-  if (direct) return direct
+  const direct = file.moduleScope.bindings.get(exportedName)?.initializer
+  if (direct && isFunctionNode(direct)) return file.functionByNode.get(direct)
 
   if (exportedName === 'default') {
     for (const statement of file.program.body) {
@@ -599,7 +655,7 @@ function resolveExportedFunction(file, exportedName, fileRecords, seen = new Set
         return file.functionByNode.get(statement.declaration)
       }
       if (statement.declaration.type === 'Identifier') {
-        return resolveFunctionTarget(statement.declaration, file, undefined, fileRecords, seen)
+        return resolveFunctionTarget(statement.declaration, file, fileRecords, seen)
       }
     }
   }
@@ -609,10 +665,7 @@ function resolveExportedFunction(file, exportedName, fileRecords, seen = new Set
       if (statement.declaration) {
         const declarationName = statement.declaration.id?.name
         if (declarationName === exportedName) {
-          return file.functions.find(
-            (candidate) =>
-              candidate.name === declarationName && candidate.parentOwner === '<module>'
-          )
+          return file.functionByNode.get(statement.declaration)
         }
       }
       for (const specifier of statement.specifiers) {
@@ -625,7 +678,7 @@ function resolveExportedFunction(file, exportedName, fileRecords, seen = new Set
             resolveExportedFunction(targetFile, keyName(specifier.local), fileRecords, seen)
           )
         }
-        return resolveFunctionTarget(specifier.local, file, undefined, fileRecords, seen)
+        return resolveFunctionTarget(specifier.local, file, fileRecords, seen)
       }
     }
     if (statement.type === 'ExportAllDeclaration') {
@@ -639,28 +692,28 @@ function resolveExportedFunction(file, exportedName, fileRecords, seen = new Set
   return undefined
 }
 
-function bindPattern(pattern, value, environment) {
+function bindPattern(pattern, value, environment, file) {
   if (!pattern) return
   if (pattern.type === 'Identifier') {
-    environment.set(pattern.name, new Set(value))
+    environment.set(bindingKey(file, pattern), new Set(value))
     return
   }
   if (pattern.type === 'AssignmentPattern') {
-    bindPattern(pattern.left, value, environment)
+    bindPattern(pattern.left, value, environment, file)
     return
   }
   if (pattern.type === 'RestElement') {
-    bindPattern(pattern.argument, value, environment)
+    bindPattern(pattern.argument, value, environment, file)
     return
   }
   if (pattern.type === 'ArrayPattern') {
-    for (const element of pattern.elements) bindPattern(element, value, environment)
+    for (const element of pattern.elements) bindPattern(element, value, environment, file)
     return
   }
   if (pattern.type === 'ObjectPattern') {
     for (const property of pattern.properties) {
-      if (property.type === 'RestElement') bindPattern(property.argument, value, environment)
-      else bindPattern(property.value, value, environment)
+      if (property.type === 'RestElement') bindPattern(property.argument, value, environment, file)
+      else bindPattern(property.value, value, environment, file)
     }
   }
 }
@@ -723,17 +776,29 @@ function createAnalyzer(fileRecords) {
     return false
   }
 
+  const moduleEnvironments = new Map()
+  const capturedEnvironments = new Map()
+  const captureFunction = (node, environment, file) => {
+    const target = file.functionByNode.get(node)
+    if (!target) return
+    const captures = capturedEnvironments.get(target) ?? new Set()
+    captures.add(environment)
+    capturedEnvironments.set(target, captures)
+  }
+
   const evalExpression = (node, environment, file, record, callStack) => {
     if (!isNode(node)) return new Set()
     if (
       isFunctionNode(node) ||
       node.type === 'FunctionDeclaration' ||
       node.type === 'ClassDeclaration'
-    )
+    ) {
+      captureFunction(node, environment, file)
       return new Set()
+    }
     switch (node.type) {
       case 'Identifier':
-        return new Set(environment.get(node.name) ?? [])
+        return new Set(environment.get(bindingKey(file, node)) ?? [])
       case 'ParenthesizedExpression':
       case 'ChainExpression':
       case 'AwaitExpression':
@@ -792,7 +857,7 @@ function createAnalyzer(fileRecords) {
           node.callee.object?.type === 'Identifier' &&
           sortTaints.size > 0
         ) {
-          environment.set(node.callee.object.name, union(receiverTaints, sortTaints))
+          environment.set(bindingKey(file, node.callee.object), union(receiverTaints, sortTaints))
         }
 
         if (isCryptoHashUpdate(node, file, record)) {
@@ -820,9 +885,9 @@ function createAnalyzer(fileRecords) {
           }
         }
 
-        const target = resolveFunctionTarget(node.callee, file, record, fileRecords)
+        const target = resolveFunctionTarget(node.callee, file, fileRecords)
         if (target) {
-          return union(evaluateFunction(target, argumentTaints, callStack), sortTaints)
+          return union(evaluateFunction(target, argumentTaints, callStack, environment), sortTaints)
         }
 
         if (calleeName === 'digest') return union(receiverTaints)
@@ -866,7 +931,8 @@ function createAnalyzer(fileRecords) {
         )
       case 'AssignmentExpression': {
         const right = evalExpression(node.right, environment, file, record, callStack)
-        if (node.left.type === 'Identifier') environment.set(node.left.name, new Set(right))
+        if (node.left.type === 'Identifier')
+          environment.set(bindingKey(file, node.left), new Set(right))
         if (
           node.left.type === 'MemberExpression' &&
           digestFieldName.test(memberName(node.left) ?? '')
@@ -913,7 +979,7 @@ function createAnalyzer(fileRecords) {
       case 'VariableDeclaration': {
         for (const declaration of statement.declarations) {
           const value = evalExpression(declaration.init, environment, file, record, callStack)
-          bindPattern(declaration.id, value, environment)
+          bindPattern(declaration.id, value, environment, file)
         }
         return { environment, returns: new Set() }
       }
@@ -1025,6 +1091,8 @@ function createAnalyzer(fileRecords) {
         return { environment, returns: union(...outcomes.map((outcome) => outcome.returns)) }
       }
       case 'FunctionDeclaration':
+        captureFunction(statement, environment, file)
+        return { environment, returns: new Set() }
       case 'ClassDeclaration':
         return { environment, returns: new Set() }
       default:
@@ -1049,15 +1117,31 @@ function createAnalyzer(fileRecords) {
     }
   }
 
-  const evaluateFunction = (record, argumentTaints, callStack) => {
-    // Diagnostic owner names can repeat across classes; AST offsets identify functions.
+  const evaluateFunction = (record, argumentTaints, callStack, callerEnvironment) => {
     const invocationKey = `${record.path}:${record.node.start}`
+    const environment = new Map()
+    const inherited = [
+      moduleEnvironments.get(record.file),
+      ...(capturedEnvironments.get(record) ?? []),
+      callerEnvironment,
+    ]
+    for (let scope = record.scope.parent; scope; scope = scope.parent) {
+      for (const binding of scope.bindings.values()) {
+        const taints = union(...inherited.map((values) => values?.get(binding)))
+        if (taints.size > 0) environment.set(binding, taints)
+      }
+    }
     if (callStack.has(invocationKey)) {
       analyzerStats.recursiveFallbacks += 1
-      return union(...argumentTaints)
+      return union(...argumentTaints, ...environment.values())
     }
     const taintKey = JSON.stringify(argumentTaints.map((taints) => [...taints].toSorted()))
-    const cacheKey = `${invocationKey}\n${taintKey}`
+    const captureKey = JSON.stringify(
+      [...environment]
+        .map(([binding, taints]) => [binding.id, [...taints].toSorted()])
+        .toSorted(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    )
+    const cacheKey = `${invocationKey}\n${taintKey}\n${captureKey}`
     const cached = returnTaintCache.get(cacheKey)
     if (cached) {
       analyzerStats.functionCacheHits += 1
@@ -1066,9 +1150,13 @@ function createAnalyzer(fileRecords) {
     analyzerStats.functionEvaluations += 1
     const nextStack = new Set(callStack)
     nextStack.add(invocationKey)
-    const environment = new Map()
     record.params.forEach((parameter, index) => {
-      bindPattern(parameter, argumentTaints[index] ?? new Set([`@parameter:${index}`]), environment)
+      bindPattern(
+        parameter,
+        argumentTaints[index] ?? new Set([`@parameter:${index}`]),
+        environment,
+        record.file
+      )
     })
     let result
     if (record.node.body.type !== 'BlockStatement') {
@@ -1086,6 +1174,9 @@ function createAnalyzer(fileRecords) {
     return result
   }
 
+  for (const file of fileRecords.values()) moduleEnvironments.set(file, new Map())
+  for (const file of fileRecords.values())
+    evaluateStatement(file.program, moduleEnvironments.get(file), file, undefined, new Set())
   for (const file of fileRecords.values()) {
     for (const record of file.functions) {
       evaluateFunction(
@@ -1094,7 +1185,6 @@ function createAnalyzer(fileRecords) {
         new Set()
       )
     }
-    evaluateStatement(file.program, new Map(), file, undefined, new Set())
   }
 
   const result = [...flows.values()].toSorted((left, right) => {

@@ -22,6 +22,9 @@ site.
 Function memoization and recursion tracking use the source path and AST source
 position as identity. Human-readable owner names remain diagnostics; identically
 named methods in different classes cannot share cached taint or recursion state.
+Declaration lookup follows lexical AST scopes, including nested helpers and
+shadowed names. Taint environments use binding identity, preserve module and
+closure values across calls, and include captured taints in memoization keys.
 
 The AST-identity correction exposed three additional exact baseline context-index
 edges. Their source and both SQLite sink files are byte-identical to `main` at
