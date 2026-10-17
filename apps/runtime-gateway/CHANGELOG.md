@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.7.4...runtime-gateway-v1.8.0) (2026-10-17)
+
+
+### Features
+
+* m17-runtime-ownership-baseline-941 ([#1047](https://github.com/adea-ai/control-plane/issues/1047)) ([0c90043](https://github.com/adea-ai/control-plane/commit/0c90043bddfbdcf404fb7a3539479665a7812384))
+
 ## [1.7.4](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.7.3...runtime-gateway-v1.7.4) (2026-10-10)
 
 

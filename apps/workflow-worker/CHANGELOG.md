@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.17.1...workflow-worker-v1.18.0) (2026-10-17)
+
+
+### Features
+
+* m17-runtime-ownership-baseline-941 ([#1047](https://github.com/adea-ai/control-plane/issues/1047)) ([0c90043](https://github.com/adea-ai/control-plane/commit/0c90043bddfbdcf404fb7a3539479665a7812384))
+
 ## [1.17.1](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.17.0...workflow-worker-v1.17.1) (2026-10-16)
 
 
