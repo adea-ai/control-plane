@@ -60,7 +60,7 @@
     "security:scan": "bun scripts/scan-secrets.mjs",
     "containers:build": "docker buildx bake -f infrastructure/containers/docker-bake.hcl",
     "containers:print": "docker buildx bake -f infrastructure/containers/docker-bake.hcl --print",
-    "infra:typecheck": "tsc --ignoreConfig --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2024 --types node .railway/railway.ts",
+    "infra:typecheck": "bun check -p tsconfig.infra.json",
     "infra:validate": "bun scripts/validate-railway.mjs",
     "railway:production-plan": "bun scripts/railway-production-plan.mjs",
     "railway:standby": "bun scripts/railway-standby.mjs",
