@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.103.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.103.0...workspace-v1.103.1) (2026-10-17)
+
+
+### Maintenance
+
+* **lint:** guard locale-dependent digest writers ([#1154](https://github.com/adea-ai/control-plane/issues/1154)) ([9ae6c96](https://github.com/adea-ai/control-plane/commit/9ae6c964e59e40c8e35f5294e592363f0dce477d))
+
 ## [1.103.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.102.6...workspace-v1.103.0) (2026-10-17)
 
 
