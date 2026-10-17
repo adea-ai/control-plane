@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.102.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.102.4...workspace-v1.102.5) (2026-10-17)
+
+
+### Bug Fixes
+
+* **tooling:** start every development task after preflight ([#1174](https://github.com/adea-ai/control-plane/issues/1174)) ([d1d1d3b](https://github.com/adea-ai/control-plane/commit/d1d1d3bd1eb2516af343e1df836b04ebc7cdc057))
+
 ## [1.102.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.102.3...workspace-v1.102.4) (2026-10-17)
 
 
