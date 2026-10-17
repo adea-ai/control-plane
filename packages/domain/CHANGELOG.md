@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.0](https://github.com/adea-ai/control-plane/compare/domain-v1.31.1...domain-v1.32.0) (2026-10-17)
+
+
+### Features
+
+* **context:** version canonical context digests ([#1153](https://github.com/adea-ai/control-plane/issues/1153)) ([c5bb39e](https://github.com/adea-ai/control-plane/commit/c5bb39e08d653f21a0efae8f6034e83de99b063f))
+
 ## [1.31.1](https://github.com/adea-ai/control-plane/compare/domain-v1.31.0...domain-v1.31.1) (2026-10-17)
 
 

@@ -39,6 +39,10 @@ const ids = {
 }
 
 const requestedAt = '2026-08-25T09:00:00.000Z'
+const historicalSwedishToolReceipt = {
+  requestDigest: 'sha256:1e6549b772d8214f37fd72b131a86a979e3147f2d21b63ea28b4825eaeaf6770',
+  inputDigest: 'sha256:13df5d9701ee0f10b54eda343f77b053bf317cf5a8628c41638ae5216993f312',
+}
 
 function definition(workspaceId = ids.workspace, toolDefinitionId = ids.definition) {
   return {
@@ -256,10 +260,12 @@ function waitForWorkerState(worker, expectedState) {
   })
 }
 
-async function seedRegistry(provider) {
+async function seedRegistry(provider, inputSchema) {
   const registry = new ToolRegistry(new SqliteToolRegistryRepository(provider, ids.workspace))
   await registry.createDefinition(definition())
-  await registry.publishVersion(versionDraft())
+  const draft = versionDraft()
+  if (inputSchema) draft.inputSchema = inputSchema
+  await registry.publishVersion(draft)
 }
 
 async function publishedVersion(toolVersionId, semanticVersion) {
@@ -513,7 +519,7 @@ describe('SQLite tool repositories', () => {
       const persistence = provider()
       const first = new SqliteToolCallRepository(persistence, ids.workspace)
       const second = new SqliteToolCallRepository(persistence, ids.workspace)
-      const original = call()
+      const original = call({ requestDigestVersion: 2, inputDigestVersion: 2 })
       expect(await first.insert(original)).toBe(true)
 
       const authorized = {
@@ -536,6 +542,12 @@ describe('SQLite tool repositories', () => {
       expect(await first.compareAndSet(1, { ...authorized, toolVersionId: ids.otherVersion })).toBe(
         false
       )
+      const requestTagDowngrade = { ...authorized }
+      delete requestTagDowngrade.requestDigestVersion
+      expect(await first.compareAndSet(1, requestTagDowngrade)).toBe(false)
+      const inputTagDowngrade = { ...authorized }
+      delete inputTagDowngrade.inputDigestVersion
+      expect(await first.compareAndSet(1, inputTagDowngrade)).toBe(false)
       await expect(
         first.compareAndSet(1, { ...authorized, workspaceId: ids.otherWorkspace })
       ).rejects.toThrow()
@@ -557,7 +569,7 @@ describe('SQLite tool repositories', () => {
   test('policy-controlled tool effects retain in-progress and completed receipts across service instances and reopen', async () => {
     await withDatabase(async ({ path, provider, reopen }) => {
       const persistence = provider()
-      await seedRegistry(persistence)
+      await seedRegistry(persistence, { type: 'object', additionalProperties: true })
       let releaseEffect
       let markStarted
       const started = new Promise((resolve) => {
@@ -571,7 +583,9 @@ describe('SQLite tool repositories', () => {
         return pendingEffect
       })
       const firstService = service(persistence, firstExecutor)
-      const request = executionRequest()
+      const request = executionRequest({
+        input: { ä: 'a-diaeresis', å: 'a-ring', z: 'zee' },
+      })
       const firstExecution = firstService.execute(request)
       await started
       expect(
@@ -601,18 +615,109 @@ describe('SQLite tool repositories', () => {
       const completed = await firstExecution
       expect(completed).toMatchObject({
         state: 'succeeded',
-        call: { status: 'succeeded', result: { output: { saved: true } } },
+        call: {
+          status: 'succeeded',
+          requestDigestVersion: 2,
+          inputDigestVersion: 2,
+          result: { output: { saved: true } },
+        },
       })
       expect(firstExecutor.requests).toHaveLength(1)
 
+      const taggedRetryRequest = executionRequest({
+        toolCallId: ids.otherCall,
+        idempotencyKey: 'tool-effect-co-resident-v2-0001',
+        input: { value: 'tagged companion' },
+      })
+      const taggedExecutor = new FakeToolExecutor(() => ({ saved: false }))
+      const taggedCompleted = await service(persistence, taggedExecutor).execute(taggedRetryRequest)
+      expect(taggedCompleted).toMatchObject({
+        state: 'succeeded',
+        call: { requestDigestVersion: 2, inputDigestVersion: 2 },
+      })
+      expect(taggedExecutor.requests).toHaveLength(1)
+
+      const persisted = storedRecord('tool-calls', ids.workspace, completed.call.toolCallId)
+      await persistence.transaction(async (transaction) => {
+        const record = await transaction.get(persisted.namespace, persisted.id)
+        expect(record).toBeDefined()
+        const historicalCall = { ...record.value.call }
+        delete historicalCall.requestDigestVersion
+        delete historicalCall.inputDigestVersion
+        historicalCall.requestDigest = historicalSwedishToolReceipt.requestDigest
+        historicalCall.inputDigest = historicalSwedishToolReceipt.inputDigest
+        await transaction.put({
+          ...persisted,
+          expectedRevision: record.revision,
+          value: { ...record.value, call: historicalCall },
+        })
+      })
+
       const reopened = await reopen()
       const afterRestartExecutor = new FakeToolExecutor(() => ({ saved: false }))
-      const replay = await service(reopened, afterRestartExecutor).execute(request)
-      expect(replay).toEqual(completed)
+      const legacyReplay = await service(reopened, afterRestartExecutor).execute(request)
+      expect(legacyReplay).toMatchObject({
+        state: 'succeeded',
+        call: {
+          requestDigest: historicalSwedishToolReceipt.requestDigest,
+          inputDigest: historicalSwedishToolReceipt.inputDigest,
+        },
+      })
+      expect(legacyReplay.call.requestDigestVersion).toBeUndefined()
+      expect(legacyReplay.call.inputDigestVersion).toBeUndefined()
       expect(afterRestartExecutor.requests).toHaveLength(0)
+      const taggedReplay = await service(reopened, afterRestartExecutor).execute(taggedRetryRequest)
+      expect(taggedReplay).toEqual(taggedCompleted)
+      expect(afterRestartExecutor.requests).toHaveLength(0)
+
+      const persistedCalls = await new SqliteToolCallRepository(
+        reopened,
+        ids.workspace
+      ).listByExecution(ids.execution)
+      expect(persistedCalls).toHaveLength(2)
+      expect(persistedCalls).toContainEqual(legacyReplay.call)
+      expect(persistedCalls).toContainEqual(taggedReplay.call)
       expect(
-        await new SqliteToolCallRepository(reopened, ids.workspace).listByExecution(ids.execution)
-      ).toEqual([completed.call])
+        persistedCalls.find(({ toolCallId }) => toolCallId === completed.call.toolCallId)
+      ).toMatchObject({
+        requestDigest: historicalSwedishToolReceipt.requestDigest,
+      })
+      expect(
+        persistedCalls.find(({ toolCallId }) => toolCallId === taggedCompleted.call.toolCallId)
+      ).toMatchObject({
+        requestDigestVersion: 2,
+        inputDigestVersion: 2,
+      })
+
+      await expect(
+        service(reopened, afterRestartExecutor).execute(
+          executionRequest({ ...request, input: { ...request.input, z: 'changed' } })
+        )
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+      await expect(
+        service(reopened, afterRestartExecutor).execute({
+          ...taggedRetryRequest,
+          input: { ...taggedRetryRequest.input, value: 'changed' },
+        })
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+      expect(afterRestartExecutor.requests).toHaveLength(0)
+
+      await reopened.transaction(async (transaction) => {
+        const record = await transaction.get(persisted.namespace, persisted.id)
+        expect(record).toBeDefined()
+        await transaction.put({
+          ...persisted,
+          expectedRevision: record.revision,
+          value: {
+            ...record.value,
+            call: { ...record.value.call, inputDigestVersion: 3 },
+          },
+        })
+      })
+      await expect(service(reopened, afterRestartExecutor).execute(request)).rejects.toThrow(
+        'SQLITE_TOOL_CALL_CORRUPT'
+      )
+      expect(afterRestartExecutor.requests).toHaveLength(0)
     })
   })
 

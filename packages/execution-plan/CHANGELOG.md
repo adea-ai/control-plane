@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/adea-ai/control-plane/compare/execution-plan-v1.11.1...execution-plan-v1.12.0) (2026-10-17)
+
+
+### Features
+
+* **context:** version canonical context digests ([#1153](https://github.com/adea-ai/control-plane/issues/1153)) ([c5bb39e](https://github.com/adea-ai/control-plane/commit/c5bb39e08d653f21a0efae8f6034e83de99b063f))
+
 ## [1.11.1](https://github.com/adea-ai/control-plane/compare/execution-plan-v1.11.0...execution-plan-v1.11.1) (2026-10-17)
 
 

@@ -47,6 +47,14 @@ export function gatewayJsonSchema() {
         // oxlint-disable-next-line unicorn/no-thenable
         then: { properties: { protocolVersion: { properties: { minor: { minimum: 7 } } } } },
       },
+      {
+        if: {
+          properties: { type: { const: 'command' }, canonicalizationVersion: {} },
+          required: ['type', 'canonicalizationVersion'],
+        },
+        // oxlint-disable-next-line unicorn/no-thenable
+        then: { properties: { protocolVersion: { properties: { minor: { minimum: 8 } } } } },
+      },
     ],
     'x-control-plane-prohibitedPayloadKeys': [
       'credential',

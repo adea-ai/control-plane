@@ -52,6 +52,9 @@ export class PostgresContextPackageRepository implements ContextPackageRepositor
     const reference = {
       contextPackageId: package_.contextPackageId,
       contentDigest: package_.contentDigest,
+      ...(package_.canonicalizationVersion === undefined
+        ? {}
+        : { canonicalizationVersion: package_.canonicalizationVersion }),
     }
     return this.database.transaction(async (transaction) => {
       const existing = await this.#getById(transaction, package_.contextPackageId, true)
@@ -131,7 +134,12 @@ export class PostgresContextPackageRepository implements ContextPackageRepositor
         )
       )
       .limit(1)
-    return row ? fromRow(row) : undefined
+    if (!row) return undefined
+    const package_ = fromRow(row)
+    return reference.canonicalizationVersion !== undefined &&
+      package_.canonicalizationVersion !== reference.canonicalizationVersion
+      ? undefined
+      : package_
   }
 
   async getById(contextPackageId: string): Promise<ContextPackage | undefined> {
@@ -184,9 +192,20 @@ export async function lockAndResetReferenceRetentionWindows(
   const addContext = (reference: ContextPackageReference): ReferenceRetentionClaim | undefined => {
     const parsed = ContextPackageReferenceSchema.parse(reference)
     const previous = contextReferences.get(parsed.contextPackageId)
-    if (previous && previous.contentDigest !== parsed.contentDigest)
+    if (
+      previous &&
+      (previous.contentDigest !== parsed.contentDigest ||
+        (previous.canonicalizationVersion !== undefined &&
+          parsed.canonicalizationVersion !== undefined &&
+          previous.canonicalizationVersion !== parsed.canonicalizationVersion))
+    )
       return { ok: false, target: 'context-package', id: parsed.contextPackageId }
-    contextReferences.set(parsed.contextPackageId, parsed)
+    const canonicalizationVersion =
+      parsed.canonicalizationVersion ?? previous?.canonicalizationVersion
+    contextReferences.set(
+      parsed.contextPackageId,
+      canonicalizationVersion === undefined ? parsed : { ...parsed, canonicalizationVersion }
+    )
     return undefined
   }
   for (const reference of input.contextPackages ?? []) {
@@ -286,7 +305,9 @@ export async function lockAndResetReferenceRetentionWindows(
     const package_ = fromRow(row)
     if (
       row.contentDigest !== reference.contentDigest ||
-      package_.contentDigest !== reference.contentDigest
+      package_.contentDigest !== reference.contentDigest ||
+      (reference.canonicalizationVersion !== undefined &&
+        package_.canonicalizationVersion !== reference.canonicalizationVersion)
     ) {
       return { ok: false, target: 'context-package', id: contextPackageId }
     }

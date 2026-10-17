@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { compareCodePointOrder } from '@control-plane/contracts'
+import { canonicalJsonStringify, compareCodePointOrder } from '@control-plane/contracts'
 import {
   ContextContributionSchema,
   ContextProviderPolicySchema,
@@ -53,11 +53,13 @@ const ContextArtifactRefSchema = z.object({
 export const ContextPackageReferenceSchema = z.object({
   contextPackageId: IdentifierSchemas.contextPackageId,
   contentDigest: DigestSchema,
+  canonicalizationVersion: z.union([z.literal(1), z.literal(2)]).optional(),
 })
 
 export const ContextPackageSchema = z
   .object({
     schemaVersion: z.union([z.literal(1), z.literal(2)]),
+    canonicalizationVersion: z.union([z.literal(1), z.literal(2)]).optional(),
     // Scope is retained inside projectState; never strip an injected flat scope
     // before checking an existing signed package.
     executionScope: z.never().optional(),
@@ -416,6 +418,9 @@ export function deriveContextPackage(parentInput: unknown, input: unknown): Cont
     parentContextPackage: {
       contextPackageId: parent.contextPackageId,
       contentDigest: parent.contentDigest,
+      ...(parent.canonicalizationVersion === undefined
+        ? {}
+        : { canonicalizationVersion: parent.canonicalizationVersion }),
     },
   })
 }
@@ -500,7 +505,11 @@ export function bindProjectContextPackageToWorkspaceParent(
   if (
     child.parentContextPackage !== undefined &&
     (child.parentContextPackage.contextPackageId !== parent.contextPackageId ||
-      child.parentContextPackage.contentDigest !== parent.contentDigest)
+      child.parentContextPackage.contentDigest !== parent.contentDigest ||
+      (child.parentContextPackage.canonicalizationVersion !== undefined &&
+        child.parentContextPackage.canonicalizationVersion !== parent.canonicalizationVersion) ||
+      (child.canonicalizationVersion === 2 &&
+        child.parentContextPackage.canonicalizationVersion !== parent.canonicalizationVersion))
   )
     fail('CONTRADICTORY_CONTEXT_REFERENCE', child.contextPackageId)
   const parentArtifacts = new Map(
@@ -526,6 +535,9 @@ export function bindProjectContextPackageToWorkspaceParent(
     parentContextPackage: {
       contextPackageId: parent.contextPackageId,
       contentDigest: parent.contentDigest,
+      ...(parent.canonicalizationVersion === undefined
+        ? {}
+        : { canonicalizationVersion: parent.canonicalizationVersion }),
     },
   })
 }
@@ -692,6 +704,9 @@ export class ContextPackageAuthoringService {
           contextPackage: {
             contextPackageId: package_.contextPackageId,
             contentDigest: package_.contentDigest,
+            ...(package_.canonicalizationVersion === undefined
+              ? {}
+              : { canonicalizationVersion: package_.canonicalizationVersion }),
           },
         },
         package_
@@ -826,12 +841,24 @@ export class InMemoryContextPackageRepository implements ContextPackageRepositor
     if (existing && existing.contentDigest !== package_.contentDigest)
       throw new Error('CONTEXT_PACKAGE_ID_CONFLICT')
     this.#packages.set(package_.contextPackageId, structuredClone(package_))
-    return { contextPackageId: package_.contextPackageId, contentDigest: package_.contentDigest }
+    return {
+      contextPackageId: package_.contextPackageId,
+      contentDigest: package_.contentDigest,
+      ...(package_.canonicalizationVersion === undefined
+        ? {}
+        : { canonicalizationVersion: package_.canonicalizationVersion }),
+    }
   }
   async get(input: ContextPackageReference): Promise<ContextPackage | undefined> {
     const reference = ContextPackageReferenceSchema.parse(input)
     const package_ = this.#packages.get(reference.contextPackageId)
-    if (!package_ || package_.contentDigest !== reference.contentDigest) return undefined
+    if (
+      !package_ ||
+      package_.contentDigest !== reference.contentDigest ||
+      (reference.canonicalizationVersion !== undefined &&
+        package_.canonicalizationVersion !== reference.canonicalizationVersion)
+    )
+      return undefined
     return structuredClone(package_)
   }
   async getById(contextPackageId: string): Promise<ContextPackage | undefined> {
@@ -856,7 +883,11 @@ export function assertContextPackageDerivedFrom(
   if (
     parentReference === undefined ||
     parentReference.contextPackageId !== parent.contextPackageId ||
-    parentReference.contentDigest !== parent.contentDigest
+    parentReference.contentDigest !== parent.contentDigest ||
+    (parentReference.canonicalizationVersion !== undefined &&
+      parentReference.canonicalizationVersion !== parent.canonicalizationVersion) ||
+    (child.canonicalizationVersion === 2 &&
+      parentReference.canonicalizationVersion !== parent.canonicalizationVersion)
   ) {
     fail('CONTRADICTORY_CONTEXT_REFERENCE', child.contextPackageId)
   }
@@ -875,7 +906,10 @@ export function assertContextPackageDerivedFrom(
         returnContract: child.returnContract,
         compiledAt: child.compiledAt,
       })
-  if (canonical(withoutPackageIdentity(derived)) !== canonical(withoutPackageIdentity(child))) {
+  if (
+    canonical(withoutDerivationVersion(withoutPackageIdentity(derived))) !==
+    canonical(withoutDerivationVersion(withoutPackageIdentity(child)))
+  ) {
     fail('CONTRADICTORY_CONTEXT_REFERENCE', child.contextPackageId)
   }
   return child
@@ -999,8 +1033,8 @@ function assertSubset<Value extends string>(
   if (expanded) fail('CHILD_SCOPE_EXPANSION', expanded)
 }
 function finalizePackage(input: Record<string, unknown>): ContextPackage {
-  const normalized = normalize(input) as Record<string, unknown>
-  const contentDigest = sha256(normalized)
+  const normalized = normalize({ ...input, canonicalizationVersion: 2 }) as Record<string, unknown>
+  const contentDigest = sha256V2(normalized)
   return ContextPackageSchema.parse({
     ...normalized,
     contextPackageId: hashIdentifier('ctx', contentDigest),
@@ -1013,16 +1047,23 @@ function assertPackageIntegrity(package_: ContextPackage): void {
       ([key]) => key !== 'contextPackageId' && key !== 'contentDigest'
     )
   )
-  const expectedDigest = sha256(normalize(content))
-  // Dual-accept (#612): packages persisted before the code-point cutover carry
-  // digests over the legacy locale-dependent serialization.
   const verifiedDigest =
-    package_.contentDigest === expectedDigest
-      ? expectedDigest
-      : package_.schemaVersion === 1 &&
-          sha256Legacy(normalizeLegacy(content)) === package_.contentDigest
+    package_.canonicalizationVersion === 1
+      ? package_.contentDigest === sha256LegacyLocale(content, 'en')
         ? package_.contentDigest
         : undefined
+      : package_.canonicalizationVersion === 2
+        ? package_.contentDigest === sha256V2(content)
+          ? package_.contentDigest
+          : undefined
+        : package_.contentDigest === sha256(normalize(content))
+          ? package_.contentDigest
+          : package_.schemaVersion === 1 &&
+              [sha256Legacy(content), sha256LegacyLocale(content, 'en')].includes(
+                package_.contentDigest
+              )
+            ? package_.contentDigest
+            : undefined
   if (
     verifiedDigest === undefined ||
     package_.contextPackageId !== hashIdentifier('ctx', verifiedDigest)
@@ -1039,6 +1080,16 @@ function withoutPackageIdentity(
     ...content
   } = package_
   return content
+}
+function withoutDerivationVersion(
+  content: Omit<ContextPackage, 'contextPackageId' | 'contentDigest'>
+): Record<string, unknown> {
+  const { canonicalizationVersion: _canonicalizationVersion, ...semanticContent } = content
+  const parentReference = semanticContent.parentContextPackage
+  if (parentReference === undefined) return semanticContent
+  const { canonicalizationVersion: _parentCanonicalizationVersion, ...semanticParentReference } =
+    parentReference
+  return { ...semanticContent, parentContextPackage: semanticParentReference }
 }
 function hashIdentifier(prefix: string, digest: string): string {
   const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
@@ -1060,10 +1111,14 @@ function hashIdentifier(prefix: string, digest: string): string {
 function sha256(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
-// CANONICAL-JSON: verification-only legacy form, see contracts canonicalJsonStringify.
-// Payload digests cover z.json() state-item values (free-form keys); contentDigest is
-// persisted, so the verifier dual-accepts the legacy locale-dependent form and the V2
-// code-point form (normalize above). Legacy drops with pre-cutover retention.
+function sha256V2(value: unknown): string {
+  return `sha256:${createHash('sha256')
+    .update(canonicalJsonStringify(value) ?? 'undefined')
+    .digest('hex')}`
+}
+// CANONICAL-JSON: verification-only current untagged form. Object.fromEntries
+// followed by JSON.stringify reorders integer-like keys numerically, so this is
+// intentionally kept separate from the shared v2 serializer.
 function canonical(value: unknown): string {
   return JSON.stringify(normalize(value))
 }
@@ -1079,29 +1134,31 @@ function normalize(value: unknown): unknown {
   return value
 }
 
-// CANONICAL-JSON: verification-only legacy form (#612 transition window).
-// Packages persisted before the code-point cutover carry digests over the
-// locale-dependent serialization; sha256Legacy reproduces those bytes so
-// stored packages keep verifying. Drop once pre-cutover packages leave
-// retention.
-function normalizeLegacy(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(normalizeLegacy)
+// CANONICAL-JSON: verification-only legacy locale form (#612 transition window).
+// Untagged packages can lack original locale metadata, so retain the old host
+// default and known English format; unknown locale-produced bytes fail closed.
+function normalizeLegacy(value: unknown, locale?: string): unknown {
+  if (Array.isArray(value)) return value.map((entry) => normalizeLegacy(entry, locale))
   if (value && typeof value === 'object')
     return Object.fromEntries(
       Object.entries(value)
         .filter(([, entry]) => entry !== undefined)
-        .toSorted(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => [key, normalizeLegacy(entry)])
+        .toSorted(([left], [right]) =>
+          locale === undefined ? left.localeCompare(right) : left.localeCompare(right, locale)
+        )
+        .map(([key, entry]) => [key, normalizeLegacy(entry, locale)])
     )
   return value
 }
 
-function canonicalLegacy(value: unknown): string {
-  return JSON.stringify(normalizeLegacy(value))
+function sha256Legacy(value: unknown): string {
+  return sha256LegacyLocale(value)
 }
 
-function sha256Legacy(value: unknown): string {
-  return `sha256:${createHash('sha256').update(canonicalLegacy(value)).digest('hex')}`
+function sha256LegacyLocale(value: unknown, locale?: string): string {
+  return `sha256:${createHash('sha256')
+    .update(JSON.stringify(normalizeLegacy(value, locale)))
+    .digest('hex')}`
 }
 function isAfter(left: string, right: string): boolean {
   return Date.parse(left) > Date.parse(right)

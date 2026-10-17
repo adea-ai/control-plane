@@ -161,6 +161,12 @@
           "maximum": 9007199254740991
         },
         "type": { "type": "string", "const": "command" },
+        "canonicalizationVersion": {
+          "anyOf": [
+            { "type": "number", "const": 1 },
+            { "type": "number", "const": 2 }
+          ]
+        },
         "commandId": { "type": "string", "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$" },
         "idempotencyKey": {
           "type": "string",
@@ -956,6 +962,15 @@
       },
       "then": {
         "properties": { "protocolVersion": { "properties": { "minor": { "minimum": 7 } } } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "command" }, "canonicalizationVersion": {} },
+        "required": ["type", "canonicalizationVersion"]
+      },
+      "then": {
+        "properties": { "protocolVersion": { "properties": { "minor": { "minimum": 8 } } } }
       }
     }
   ],

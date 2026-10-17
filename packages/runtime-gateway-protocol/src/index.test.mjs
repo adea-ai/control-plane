@@ -25,6 +25,34 @@ const ids = {
 }
 
 describe('Runtime Gateway protocol', () => {
+  test('accepts only known command canonicalization versions', () => {
+    for (const canonicalizationVersion of [1, 2]) {
+      expect(
+        GatewayEnvelopeSchema.safeParse({
+          ...runtimeCommand(),
+          canonicalizationVersion,
+          protocolVersion: { major: 1, minor: 8 },
+        }).success
+      ).toBeTrue()
+    }
+    expect(
+      GatewayEnvelopeSchema.safeParse({
+        ...runtimeCommand(),
+        canonicalizationVersion: 2,
+        protocolVersion: { major: 1, minor: 7 },
+      }).success
+    ).toBeFalse()
+    expect(
+      GatewayEnvelopeSchema.safeParse({
+        ...runtimeCommand(),
+        protocolVersion: { major: 1, minor: 5 },
+      }).success
+    ).toBeTrue()
+    expect(
+      GatewayEnvelopeSchema.safeParse({ ...runtimeCommand(), canonicalizationVersion: 3 }).success
+    ).toBeFalse()
+  })
+
   test('binds RuntimeNode proof to a canonical URL-safe WebSocket upgrade challenge', () => {
     expect(runtimeNodeWebSocketChallenge('dGhlIHNhbXBsZSBub25jZQ==')).toBe('dGhlIHNhbXBsZSBub25jZQ')
     expect(() => runtimeNodeWebSocketChallenge('not-a-websocket-key')).toThrow(
@@ -159,7 +187,8 @@ describe('Runtime Gateway protocol', () => {
         payload: { version: 1, parameters: { action: 'resume', sessionRef: 'opaque-session' } },
       }).success
     ).toBeTrue()
-    expect(GatewayProtocolManifest.current).toEqual({ major: 1, minor: 7 })
+    expect(GatewayProtocolManifest.current).toEqual({ major: 1, minor: 8 })
+    expect(GatewayProtocolManifest.supported).toContainEqual({ major: 1, minor: 8 })
   })
 
   test('carries validated terminal usage only on negotiated v1.7 results', async () => {
@@ -373,6 +402,9 @@ describe('Runtime Gateway protocol', () => {
     expect(schema.default.allOf[1].if.properties.type.const).toBe('result')
     expect(schema.default.allOf[1].if.required).toEqual(['type', 'terminalUsage'])
     expect(schema.default.allOf[1].then.properties.protocolVersion.properties.minor.minimum).toBe(7)
+    expect(schema.default.allOf[2].if.properties.type.const).toBe('command')
+    expect(schema.default.allOf[2].if.required).toEqual(['type', 'canonicalizationVersion'])
+    expect(schema.default.allOf[2].then.properties.protocolVersion.properties.minor.minimum).toBe(8)
     expect(Object.keys(manifest.default.dependencies)).toEqual([
       '@control-plane/runtime-sdk',
       'zod',

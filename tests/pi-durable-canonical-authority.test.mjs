@@ -2,6 +2,7 @@ import { test, expect } from 'bun:test'
 import { ExecutionLifecycleService, InMemoryExecutionRepository } from '@control-plane/domain'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { InMemoryExecutionPlanRepository } from '@control-plane/execution-plan'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { CanonicalPiDurableAuthority } from '../packages/pi-durable-adapter/src/canonical-authority.ts'
 import { authorityOutcome } from '../packages/pi-durable-adapter/src/authority-outcome.ts'
 import { RuntimeAdapterError } from '@control-plane/runtime-sdk'
@@ -352,7 +353,9 @@ test('workspace canonical intent requires original actor and rejects cross-scope
 })
 
 test('legacy canonical admission keeps absent scope and actor absent from serialized bytes', async () => {
-  const setup = await fixture()
+  const setup = await fixture(
+    createExecutionPlanTestFixture({ contextPackage: historicalContextPackage() })
+  )
   const result = await admitted(setup)
   expect(Object.hasOwn(result.admission, 'canonicalActorPrincipalId')).toBe(false)
   expect(Object.hasOwn(result.startRequest.executionPlan.correlation, 'executionScope')).toBe(false)
@@ -420,3 +423,19 @@ test('canonical failures keep the sanitized public message and only explicit pol
   expect(forged.message).toBe('PI_CANONICAL_AUTHORITY_REJECTED')
   expect(authorityOutcome(forged)).toBe('unclassified')
 })
+
+function historicalContextPackage() {
+  const {
+    contextPackageId: _contextPackageId,
+    contentDigest: _contentDigest,
+    canonicalizationVersion: _canonicalizationVersion,
+    ...content
+  } = contextPackageSerializationFixtures.futurePi
+  // Fixed pre-cutover identity: keeping this plan proof independent from the
+  // new ContextPackage writer preserves the historical serialized plan bytes.
+  return {
+    ...content,
+    contextPackageId: 'ctx_57PXZBSKA8RKKX5FKEWVP4Q6F0',
+    contentDigest: 'sha256:29eddfaf33523139f4af9bb9bb12e6786df2c30e93790a8360874e88191eb641',
+  }
+}

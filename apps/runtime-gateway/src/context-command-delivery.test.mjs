@@ -22,6 +22,7 @@ import {
   ContextCommandGrantDeniedError,
   InMemoryContextCommandRepository,
   contextCommandSemanticHash,
+  contextCommandSemanticHashV2,
 } from '@control-plane/domain'
 import { ContextCommandDeliveryService } from './context-command-delivery.ts'
 import { ContextCommandRecoveryService } from './context-command-recovery.ts'
@@ -519,6 +520,13 @@ test('read binder authorizes current grants and fences cancellation, revocation 
   const binder = new ContextRuntimeNodeReadBinder(options)
   const input = { providerRef: grant.providerRef, request }
   const signal = new AbortController().signal
+  grant.status = 'revoked'
+  await expect(binder.bind(input, signal)).rejects.toThrow('GRANT_DENIED')
+  expect(sequence).toBe(0)
+  grant.status = 'active'
+  await expect(binder.bind(input, signal)).rejects.toThrow('CORTANA_PROTOCOL_INCOMPATIBLE')
+  expect(sequence).toBe(0)
+  f.replace({ ...f.source, protocolVersion: { major: 1, minor: 8 } })
   const first = await binder.bind(input, signal)
   const second = await binder.bind(input, signal)
   expect(first.commandId).toMatch(/^cmd_[0-9A-HJKMNP-TV-Z]{26}$/)
@@ -559,6 +567,47 @@ test('gateway client rejects mismatched requests before authorization or persist
   ).rejects.toThrow('REQUEST_MISMATCH')
   expect(calls).toBe(0)
   expect(await f.repository.get(f.source.workspaceId, f.command.commandId)).toBeUndefined()
+})
+
+test('gateway client defers tagged commands on an older channel before reserving a sequence', async () => {
+  const { f, request, options, client } = clientFixture()
+  f.command.canonicalizationVersion = 2
+  f.command.protocolVersion = { major: 1, minor: 8 }
+  f.command.payloadHash = contextCommandSemanticHashV2(f.command)
+  let reservations = 0
+  options.nextSequence = async () => ++reservations
+
+  await expect(client.read(request, new AbortController().signal)).rejects.toThrow(
+    'CONTEXT_GATEWAY_PROTOCOL_INCOMPATIBLE'
+  )
+  expect(reservations).toBe(0)
+  expect(f.sent).toEqual([])
+  expect(await f.repository.get(f.source.workspaceId, f.command.commandId)).toMatchObject({
+    status: 'queued',
+    deliveryAttempts: 0,
+    payloadHash: f.command.payloadHash,
+    commandEnvelope: { canonicalizationVersion: 2, protocolVersion: { major: 1, minor: 8 } },
+  })
+})
+
+test('gateway client reports an unsent pending command without waiting for its deadline', async () => {
+  const { f, request, options, client } = clientFixture()
+  options.delivery.deliver = async () => ({
+    record: await f.repository.get(f.source.workspaceId, f.command.commandId),
+    sent: false,
+  })
+
+  await expect(
+    client.read(
+      { ...request, deadline: new Date(Date.now() + 100).toISOString() },
+      new AbortController().signal
+    )
+  ).rejects.toThrow('CONTEXT_GATEWAY_DELIVERY_DEFERRED')
+  expect(f.sent).toEqual([])
+  expect(await f.repository.get(f.source.workspaceId, f.command.commandId)).toMatchObject({
+    status: 'queued',
+    deliveryAttempts: 0,
+  })
 })
 
 test('gateway client bounds an uncooperative authority without admitting a command', async () => {

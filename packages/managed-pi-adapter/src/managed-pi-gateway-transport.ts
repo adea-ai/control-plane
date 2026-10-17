@@ -5,6 +5,7 @@ import {
   ReferenceRuntimeNode,
   type GatewayCommandEnvelope,
   type GatewayInventoryEnvelope,
+  type GatewayProtocolVersion,
 } from '@control-plane/runtime-gateway-protocol'
 import {
   type LocalProjectGrantState,
@@ -22,6 +23,7 @@ export interface ReferenceManagedPiGatewayTransportOptions {
   readonly runtimeOpaqueRef: string
   readonly now?: () => string
   readonly harnessVersion?: string
+  readonly gatewayProtocolVersion?: GatewayProtocolVersion
 }
 
 export class ReferenceManagedPiGatewayTransport implements ManagedPiGatewayTransport {
@@ -33,6 +35,7 @@ export class ReferenceManagedPiGatewayTransport implements ManagedPiGatewayTrans
   readonly #runtimeOpaqueRef: string
   readonly #now: () => string
   readonly #harnessVersion: string
+  readonly #gatewayProtocolVersion: GatewayProtocolVersion
   readonly #commands = new Map<string, GatewayCommandEnvelope>()
   readonly #commandOrder: string[] = []
   readonly #exchanges = new Map<string, ManagedPiGatewayExchange>()
@@ -46,6 +49,7 @@ export class ReferenceManagedPiGatewayTransport implements ManagedPiGatewayTrans
     this.#runtimeOpaqueRef = options.runtimeOpaqueRef
     this.#now = options.now ?? (() => new Date().toISOString())
     this.#harnessVersion = options.harnessVersion ?? '0.52.1'
+    this.#gatewayProtocolVersion = options.gatewayProtocolVersion ?? GatewayProtocolManifest.current
     this.#node = new ReferenceRuntimeNode({ now: () => new Date(this.#now()) })
   }
 
@@ -53,7 +57,7 @@ export class ReferenceManagedPiGatewayTransport implements ManagedPiGatewayTrans
     return GatewayInventoryEnvelopeSchema.parse({
       type: 'inventory',
       schemaVersion: 1,
-      protocolVersion: GatewayProtocolManifest.current,
+      protocolVersion: this.#gatewayProtocolVersion,
       sequence: 1,
       nodeId: this.#nodeId,
       workspaceId: this.#workspaceId,
@@ -70,7 +74,7 @@ export class ReferenceManagedPiGatewayTransport implements ManagedPiGatewayTrans
           adapterVersion: '1.0.0',
           driverVersion: '1.0.0',
           harnessVersion: this.#harnessVersion,
-          protocolVersion: GatewayProtocolManifest.current,
+          protocolVersion: this.#gatewayProtocolVersion,
           health: this.#state === 'online' ? 'healthy' : 'unavailable',
           capabilities: [
             'stream.output',
