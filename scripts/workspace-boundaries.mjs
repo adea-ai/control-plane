@@ -32,6 +32,72 @@ export function specifiers(source, filename = 'source.ts') {
     )
   }
   const found = []
+  const factories = new Set(['createRequire'])
+  const moduleNamespaces = new Set()
+  const requires = new Set(['require'])
+  const visitAll = (node, action) => {
+    action(node)
+    ts.forEachChild(node, (child) => visitAll(child, action))
+  }
+  visitAll(file, (node) => {
+    if (
+      !ts.isImportDeclaration(node) ||
+      !ts.isStringLiteral(node.moduleSpecifier) ||
+      !['node:module', 'module'].includes(node.moduleSpecifier.text)
+    )
+      return
+    const clause = node.importClause
+    if (clause?.name) moduleNamespaces.add(clause.name.text)
+    const bindings = clause?.namedBindings
+    if (bindings && ts.isNamespaceImport(bindings)) moduleNamespaces.add(bindings.name.text)
+    if (bindings && ts.isNamedImports(bindings)) {
+      for (const element of bindings.elements) {
+        if ((element.propertyName?.text ?? element.name.text) === 'createRequire')
+          factories.add(element.name.text)
+      }
+    }
+  })
+  const isFactory = (node) =>
+    ts.isIdentifier(node)
+      ? factories.has(node.text)
+      : ts.isPropertyAccessExpression(node) &&
+        node.name.text === 'createRequire' &&
+        ts.isIdentifier(node.expression) &&
+        moduleNamespaces.has(node.expression.text)
+  const isDependencyResolution = (node) =>
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === 'resolve' &&
+    ts.isMetaProperty(node.expression.expression)
+  // A require anchored at another declared package resolves that package's
+  // dependencies, not this workspace's. Its import.meta.resolve edge is still
+  // checked below; do not falsely require its transitives in this manifest.
+  const isCreatedRequire = (node) =>
+    ts.isCallExpression(node) &&
+    isFactory(node.expression) &&
+    !(node.arguments[0] && isDependencyResolution(node.arguments[0]))
+  // Resolve local aliases before collecting calls, including aliases of aliases.
+  let changed = true
+  while (changed) {
+    changed = false
+    visitAll(file, (node) => {
+      if (
+        !ts.isVariableDeclaration(node) ||
+        !ts.isIdentifier(node.name) ||
+        !node.initializer ||
+        requires.has(node.name.text)
+      )
+        return
+      if (
+        isCreatedRequire(node.initializer) ||
+        (ts.isIdentifier(node.initializer) && requires.has(node.initializer.text))
+      ) {
+        requires.add(node.name.text)
+        changed = true
+      }
+    })
+  }
+
   const add = (node) => {
     if (node && ts.isStringLiteralLike(node)) found.push(node.text)
   }
@@ -43,13 +109,20 @@ export function specifiers(source, filename = 'source.ts') {
     if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) add(node.argument.literal)
     if (ts.isCallExpression(node)) {
       const literalImport = node.expression.kind === ts.SyntaxKind.ImportKeyword
-      const requireCall = ts.isIdentifier(node.expression) && node.expression.text === 'require'
+      const requireCall =
+        (ts.isIdentifier(node.expression) && requires.has(node.expression.text)) ||
+        isCreatedRequire(node.expression)
       const requireResolve =
         ts.isPropertyAccessExpression(node.expression) &&
         ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === 'require' &&
+        requires.has(node.expression.expression.text) &&
         node.expression.name.text === 'resolve'
-      if (literalImport || requireCall || requireResolve) add(node.arguments[0])
+      const importResolve =
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === 'resolve' &&
+        ts.isMetaProperty(node.expression.expression) &&
+        node.expression.expression.keywordToken === ts.SyntaxKind.ImportKeyword
+      if (literalImport || requireCall || requireResolve || importResolve) add(node.arguments[0])
     }
     ts.forEachChild(node, visit)
   }

@@ -78,6 +78,8 @@ export function buildTasks(root, toolchain) {
                 `!${pkg.dir}/dist/**`,
                 `!${pkg.dir}/node_modules/**`,
                 `!${pkg.dir}/coverage/**`,
+                `!${pkg.dir}/.turbo`,
+                `!${pkg.dir}/.turbo/**`,
                 `!${pkg.dir}/.vite/**`,
                 ...upstream(pkg).flatMap((dep) => [
                   `${dep.dir}/src/**`,

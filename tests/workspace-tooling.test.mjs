@@ -77,3 +77,51 @@ test('workspace graph preserves upstream builds, integration ordering and emitte
     'vite.config.ts'
   )
 })
+
+test('boundary parser enforces createRequire aliases and import.meta.resolve', () => {
+  const forms = [
+    "import { createRequire } from 'node:module'; createRequire(import.meta.url)('undeclared')",
+    "import { createRequire as makeRequire } from 'node:module'; const requireFromAdapter = makeRequire(import.meta.url); requireFromAdapter('undeclared')",
+    "import * as Module from 'node:module'; const first = Module.createRequire(import.meta.url); const second = first; second.resolve('undeclared')",
+    "import.meta.resolve('undeclared')",
+  ]
+  const root = mkdtempSync(join(tmpdir(), 'cp-require-boundary-'))
+  const directory = join(root, 'packages/a/src')
+  mkdirSync(directory, { recursive: true })
+  writeFileSync(join(root, 'packages/a/package.json'), JSON.stringify({ name: '@test/a' }))
+  try {
+    for (const source of forms) {
+      expect(specifiers(source)).toContain('undeclared')
+      writeFileSync(join(directory, 'index.mjs'), source)
+      expect(checkBoundaries(root).errors).toHaveLength(1)
+      expect(checkBoundaries(root).errors[0]).toContain('undeclared dependency undeclared')
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('integration tasks retain the complete database and timeout environment', () => {
+  // Vite+ uncached commands receive the full caller environment. Database URLs
+  // and runner timeout budgets are therefore not restricted to a cache whitelist.
+  for (const [name, task] of Object.entries(
+    buildTasks(resolve(import.meta.dir, '..'), 'fixture-toolchain')
+  )) {
+    if (!name.endsWith(':test:integration') || name === 'orch:test:integration') continue
+    expect(task.cache, name).toBe(false)
+    expect(task.command, name).toContain('bun run --cwd')
+  }
+  expect(
+    buildTasks(resolve(import.meta.dir, '..'), 'fixture-toolchain')[
+      'orch:database:test:integration'
+    ].dependsOn
+  ).toContain('orch:database:build')
+})
+
+test('dependency-anchored require counts the declared anchor, not its transitives', () => {
+  expect(
+    specifiers(
+      "import { createRequire } from 'node:module'; const other = createRequire(import.meta.resolve('declared')); other.resolve('transitive')"
+    )
+  ).toEqual(['node:module', 'declared'])
+})

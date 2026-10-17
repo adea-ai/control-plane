@@ -45,6 +45,7 @@ const relevantPaths = new Set([
   'vite.config.ts',
   'scripts/orch-graph.mjs',
   'scripts/orch-toolchain.mjs',
+  'scripts/workspace-boundaries.mjs',
 ])
 
 function publishVerification(outputPath, required, reason) {
