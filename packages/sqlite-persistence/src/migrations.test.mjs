@@ -24,6 +24,63 @@ describe('versioned SQLite forward migrations', () => {
     }
   })
 
+  test('appends the schema-version guard to existing version-three databases', () => {
+    const database = new DatabaseSync(':memory:')
+    const unsupportedPlan = {
+      schemaVersion: 3,
+      correlation: {
+        workspaceId: 'wsp_migration-fixture',
+        projectId: 'prj_migration-fixture',
+        executionScope: {
+          schemaVersion: 1,
+          kind: 'project',
+          projectId: 'prj_migration-fixture',
+        },
+      },
+    }
+    try {
+      applyMigrations(database, SQLITE_MIGRATIONS.slice(0, 3))
+      const insert = database.prepare(
+        'INSERT INTO control_plane_records(namespace, id, revision, value, updated_at) VALUES (?, ?, 1, ?, ?)'
+      )
+      insert.run(
+        'execution-plans',
+        'legacy-v3-row',
+        JSON.stringify(unsupportedPlan),
+        '2026-10-12T00:00:00.000Z'
+      )
+      applyMigrations(database)
+      expect(() =>
+        database
+          .prepare('UPDATE control_plane_records SET value = ? WHERE namespace = ? AND id = ?')
+          .run(JSON.stringify(unsupportedPlan), 'execution-plans', 'legacy-v3-row')
+      ).toThrow('SQLITE_EXECUTION_SCOPE_INVALID')
+      const unsupportedContext = {
+        schemaVersion: 3,
+        projectState: {
+          workspaceId: 'wsp_migration-fixture',
+          projectId: 'prj_migration-fixture',
+          executionScope: unsupportedPlan.correlation.executionScope,
+        },
+      }
+      expect(() =>
+        insert.run(
+          'context-packages',
+          'schema-v3-context',
+          JSON.stringify(unsupportedContext),
+          '2026-10-12T00:00:00.000Z'
+        )
+      ).toThrow('SQLITE_EXECUTION_SCOPE_INVALID')
+      expect(
+        database
+          .prepare("SELECT value FROM control_plane_metadata WHERE key = 'schema_version'")
+          .get().value
+      ).toBe(String(SQLITE_MIGRATIONS.length))
+    } finally {
+      database.close()
+    }
+  })
+
   test('applies ordered forward steps once and rejects changed history', () => {
     const database = new DatabaseSync(':memory:')
     const nextVersion = SQLITE_MIGRATIONS.at(-1).version + 1
@@ -98,19 +155,23 @@ describe('versioned SQLite forward migrations', () => {
       const database = new DatabaseSync(':memory:')
       try {
         applyMigrations(database, SQLITE_MIGRATIONS.slice(0, 1))
+        let migrated = false
         const insert = database.prepare(
           'INSERT INTO control_plane_records(namespace, id, revision, value, updated_at) VALUES (?, ?, 1, ?, ?)'
         )
-        const put = (id, expiry) =>
-          insert.run(
-            namespace,
-            id,
-            JSON.stringify(expiry === undefined ? {} : { retentionExpiresAt: expiry }),
-            '2026-01-01'
-          )
+        const put = (id, expiry) => {
+          const value = expiry === undefined ? {} : { retentionExpiresAt: expiry }
+          const ownership = migrated
+            ? namespace === 'command-inbox'
+              ? { projectId: 'prj_expiry-fixture' }
+              : { correlation: { projectId: 'prj_expiry-fixture' } }
+            : {}
+          insert.run(namespace, id, JSON.stringify({ ...value, ...ownership }), '2026-01-01')
+        }
         put('a', '2026-01-01T00:00:00.000Z')
         put('b', '2027-01-01T00:00:00.000Z')
         applyMigrations(database)
+        migrated = true
         put('c', '2026-01-01T00:00:00.000Z')
         put('future', '2030-01-01T00:00:00.000Z')
         put('invalid', 'not-a-date')
@@ -119,7 +180,16 @@ describe('versioned SQLite forward migrations', () => {
         put('wrong-type', 123)
         database
           .prepare('UPDATE control_plane_records SET value = ? WHERE namespace = ? AND id = ?')
-          .run(JSON.stringify({ retentionExpiresAt: '2025-01-01T00:00:00.000Z' }), namespace, 'b')
+          .run(
+            JSON.stringify({
+              retentionExpiresAt: '2025-01-01T00:00:00.000Z',
+              ...(namespace === 'command-inbox'
+                ? { projectId: 'prj_expiry-fixture' }
+                : { correlation: { projectId: 'prj_expiry-fixture' } }),
+            }),
+            namespace,
+            'b'
+          )
         // Index membership is only a coarse candidate filter. Exact calendar validation
         // remains mandatory; neither this query nor the index authorizes deletion.
         const query = `SELECT id FROM control_plane_records INDEXED BY ${index}

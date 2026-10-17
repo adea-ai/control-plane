@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.6.1](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.6.0...model-gateway-v1.6.1) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** replace Control Plane Turbo with Vite+ and Bun checks ([#1170](https://github.com/adea-ai/control-plane/issues/1170)) ([84e12db](https://github.com/adea-ai/control-plane/commit/84e12dbab1b2fea2380e8747a466db9fb1449959))
+
+## [1.6.0](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.5.3...model-gateway-v1.6.0) (2026-10-16)
+
+
+### Features
+
+* **models:** surface BYO lead model readiness and recheck it at every boundary ([#1159](https://github.com/adea-ai/control-plane/issues/1159)) ([83265a6](https://github.com/adea-ai/control-plane/commit/83265a66057006b0ce44f5b24959f871de84e394))
+
 ## [1.5.3](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.5.2...model-gateway-v1.5.3) (2026-10-14)
 
 

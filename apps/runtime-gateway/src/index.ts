@@ -41,6 +41,8 @@ export interface RuntimeGatewayStartOptions extends ServiceStartOptions {
   readonly store?: RuntimeGatewayCompositionOptions['store']
   /** Public-only RuntimeNode issuer trust; otherwise loaded from the environment for PostgreSQL. */
   readonly runtimeNodeIdentity?: RuntimeNodeIdentityTrustConfig
+  /** Host-provided SQLite credential authority for fenced runtime-command settlements. */
+  readonly runtimeNodeCredentialAuthority?: RuntimeGatewayCompositionOptions['runtimeNodeCredentialAuthority']
   readonly objectStore?: RuntimeGatewayCompositionOptions['objectStore']
   readonly authenticateUpgrade?: RuntimeGatewayCompositionOptions['authenticateUpgrade']
   readonly metrics?: RuntimeGatewayCompositionOptions['metrics']
@@ -58,6 +60,7 @@ export const start = ({
   healthDeliveryWorker,
   store,
   runtimeNodeIdentity,
+  runtimeNodeCredentialAuthority,
   ...options
 }: RuntimeGatewayStartOptions = {}) =>
   bootstrapService({
@@ -88,6 +91,9 @@ export const start = ({
             : runtimeNodeIdentity === undefined
               ? {}
               : { runtimeNodeIdentity }),
+          ...(runtimeNodeCredentialAuthority === undefined
+            ? {}
+            : { runtimeNodeCredentialAuthority }),
           metrics: options.metrics,
           reachability: options.reachability,
           traceId: options.traceId,

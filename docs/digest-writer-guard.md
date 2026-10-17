@@ -33,7 +33,10 @@ always loaded from the guard script's own
 
 The exception file is a snapshot of exact source-to-sink edges observed on
 `main` at `311c3a83` and on the peer compatibility candidates for PRs #1149,
-#1150, #1151, #1152, and #1153. Context entries pin PR #1153 at final head
+#1150, #1151, #1152, and #1153. The event-frame edges were refreshed on
+`main` at `d1d1d3bd1` during the PR #1154 merge: the events helper gained
+both optional-locale comparator branches, so both exact source fingerprints
+are conservatively included for each previously reviewed sink. Context entries pin PR #1153 at final head
 `20c55cd8158ea09e1e4234d6069afa4f532ad739`. Each edge pins the source path and helper,
 the source callsite path and owner, the sink path and owner, token fingerprints,
 sink kind, and an occurrence ordinal among identical sites in that owner.

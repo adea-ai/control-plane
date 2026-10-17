@@ -4,13 +4,13 @@ How to validate changes in this repository. Applies to every task that modifies 
 
 ## Commands
 
-This repository uses Bun and Turborepo. The canonical commands are:
+This repository uses Bun and Vite+. The canonical commands are:
 
 ```sh
 bun run format:check     # oxfmt formatting check
-bun run lint             # oxlint + turbo boundaries
+bun run lint             # oxlint + workspace dependency boundaries
 bun run type-check       # Workspace types + OpenAPI and migration-schema drift
-bun run build            # TypeScript build via Turborepo
+bun run build            # TypeScript emit via Vite+; Bun checks types
 bun run test             # Build + parallel unit, E2E and smoke groups
 bun run openapi:check    # OpenAPI contract validation (control-api only)
 bun run db:check         # Drizzle migration-schema validation

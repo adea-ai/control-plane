@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/cortana-context-adapter",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "private": true,
   "files": [
     "dist",
@@ -19,6 +19,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "lint": "oxlint src",
     "test": "bun test src/*.test.mjs"
   },

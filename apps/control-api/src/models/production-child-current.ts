@@ -18,6 +18,8 @@ import {
   type DelegationRepository,
 } from '@control-plane/orchestration'
 import { RuntimeStartRequestSchema, type RuntimeStartRequest } from '@control-plane/runtime-sdk'
+import type { PiDurableAuthorityPurpose } from '@control-plane/pi-durable-adapter'
+import type { PiLeadProductReadContext } from '../pi-durable/node-admission.js'
 import { z } from 'zod'
 import { ProductionChildBudgetCurrentSchema } from './production-child-budget-admission.js'
 import { ProductionLeadProductEvidenceSchema } from './production-lead-product.js'
@@ -35,12 +37,15 @@ import { ProductionLeadProductEvidenceSchema } from './production-lead-product.j
 type Pin = { executionPlanId: string; contentDigest: string }
 type ChildPlan = ReturnType<typeof assertExecutionPlanIntegrity>
 type ProductReader = {
-  readCurrent(input: {
-    schemaVersion: 'pi-lead-intent/v1'
-    intentId: string
-    workspaceId: string
-    principalId: string
-  }): Promise<unknown | undefined>
+  readCurrent(
+    input: {
+      schemaVersion: 'pi-lead-intent/v1'
+      intentId: string
+      workspaceId: string
+      principalId: string
+    },
+    context?: PiLeadProductReadContext
+  ): Promise<unknown | undefined>
 }
 type IntentReader = {
   getByAttempt(attemptId: string): Promise<unknown | undefined>
@@ -114,6 +119,10 @@ export interface ProductionChildCurrentOptions {
   readonly delegations: Pick<DelegationRepository, 'get' | 'findByChild'>
   readonly toolCalls: { get(toolCallId: string): Promise<unknown | undefined> }
   readonly product: ProductReader
+  /** Revalidates the retained product/profile pin without resolving a model or creating a pin. */
+  readonly assertRetainedProductCurrent: (
+    input: Parameters<ProductReader['readCurrent']>[0]
+  ) => Promise<void>
   readonly now?: () => string
 }
 
@@ -136,7 +145,8 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
   async function parent(
     input: { executionId: string; attemptId: string; plan: Pin },
     canonical: ChildAdmissionReader = repositoryReader,
-    lifecycle: 'live' | 'retained-child' = 'live'
+    lifecycle: 'live' | 'retained-child' = 'live',
+    purpose: PiDurableAuthorityPurpose = 'inference'
   ) {
     const at = nowMs()
     const execution = ExecutionSchema.parse(await canonical.getExecution(input.executionId))
@@ -179,22 +189,33 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
     // The marker actor is the transport principal. The audience check below decides whether it may read.
     const reader = marker.actorPrincipalId
     if (!intent.allowedPrincipalIds.includes(reader)) deny()
-    const current = await options.product.readCurrent({
-      schemaVersion: 'pi-lead-intent/v1',
-      intentId: intent.intentId,
-      workspaceId: intent.workspaceId,
-      principalId: reader,
-    })
+    const current = await options.product.readCurrent(
+      {
+        schemaVersion: 'pi-lead-intent/v1',
+        intentId: intent.intentId,
+        workspaceId: intent.workspaceId,
+        principalId: reader,
+      },
+      { purpose: purpose === 'cancel' ? 'observe' : 'inference' }
+    )
     if (!current) deny()
     const evidence = ProductionLeadProductEvidenceSchema.parse(current)
     if (
       evidence.workspaceId !== intent.workspaceId ||
       evidence.intentId !== intent.intentId ||
+      evidence.authorityRevision !== intent.authorityRevision ||
       evidence.canonicalActorPrincipalId !== intent.canonicalActorPrincipalId ||
       !evidence.allowedPrincipalIds.includes(reader) ||
       at >= Date.parse(evidence.expiresAt)
     )
       deny()
+    if (purpose === 'cancel')
+      await options.assertRetainedProductCurrent({
+        schemaVersion: 'pi-lead-intent/v1',
+        intentId: intent.intentId,
+        workspaceId: intent.workspaceId,
+        principalId: reader,
+      })
     const expiries = [
       intent.expiresAt,
       evidence.expiresAt,
@@ -254,7 +275,8 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
   async function record(
     executionId: string,
     attemptId: string,
-    plan: ChildPlan
+    plan: ChildPlan,
+    purpose: PiDurableAuthorityPurpose = 'inference'
   ): Promise<ProductionChildRecord> {
     const delegation = await options.delegations.findByChild(executionId)
     const parentPin = plan.parentExecutionPlan
@@ -281,7 +303,8 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
         },
       },
       repositoryReader,
-      'retained-child'
+      'retained-child',
+      purpose
     )
     if (actor.workspaceId !== plan.correlation.workspaceId) deny()
     await assertAdmittedCall(delegation.admittedToolCallId, {
@@ -315,16 +338,20 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
   }
 
   /** Runtime start presents a plan and attempt; the retained delegation must bind both. */
-  async function runtimeRecord(input: unknown): Promise<ProductionChildRecord> {
+  async function runtimeRecord(
+    input: unknown,
+    purpose: PiDurableAuthorityPurpose
+  ): Promise<ProductionChildRecord> {
     const start: RuntimeStartRequest = RuntimeStartRequestSchema.parse(input)
     const plan = assertExecutionPlanIntegrity(start.executionPlan)
-    return record(start.executionId ?? deny(), start.attemptId, plan)
+    return record(start.executionId ?? deny(), start.attemptId, plan, purpose)
   }
 
   /** Model binding needs only the child identity; its plan comes from the retained delegation. */
   async function storedRecord(
     executionId: string,
-    attemptId: string
+    attemptId: string,
+    purpose: PiDurableAuthorityPurpose
   ): Promise<ProductionChildRecord> {
     const delegation = await options.delegations.findByChild(executionId)
     if (!delegation) deny()
@@ -333,7 +360,7 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
       contentDigest: delegation.childExecutionPlanDigest,
     })
     if (!stored) deny()
-    return record(executionId, attemptId, assertExecutionPlanIntegrity(stored))
+    return record(executionId, attemptId, assertExecutionPlanIntegrity(stored), purpose)
   }
 
   return {
@@ -383,12 +410,15 @@ export function createProductionChildCurrent(options: ProductionChildCurrentOpti
       })
     },
     /** Runtime start: the retained child delegation must bind the presented child plan and attempt. */
-    readRuntime(input: unknown) {
-      return stable(async () => (await runtimeRecord(input)).current)
+    readRuntime(input: unknown, purpose: PiDurableAuthorityPurpose = 'inference') {
+      return stable(async () => (await runtimeRecord(input, purpose)).current)
     },
     /** Server-owned child lineage for model binding and funding; callers supply identifiers only. */
-    readRecord(input: { executionId: string; attemptId: string }) {
-      return stable(() => storedRecord(input.executionId, input.attemptId))
+    readRecord(
+      input: { executionId: string; attemptId: string },
+      purpose: PiDurableAuthorityPurpose = 'inference'
+    ) {
+      return stable(() => storedRecord(input.executionId, input.attemptId, purpose))
     },
   }
 }

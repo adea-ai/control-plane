@@ -218,7 +218,10 @@ describe('retention restore-time reapplication (#194)', () => {
         transaction.put({
           namespace: 'executions',
           id: ids.executionId,
-          value: { state: 'running' },
+          value: {
+            state: 'running',
+            correlation: { projectId: 'prj_retention-journal-fixture' },
+          },
         })
       )
       await writeFile(

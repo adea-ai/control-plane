@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { golden } from '@control-plane/runtime-gateway-protocol/fixtures'
-import { hashExecutionEventPayloadV2 } from '@control-plane/events'
+import { hashExecutionEventPayload, hashExecutionEventPayloadV2 } from '@control-plane/events'
 import { PollingRemoteRuntimeOutcomeWaiter } from './remote-runtime-waiter.js'
+
+const historicalTerminalUsageHash =
+  '1df92fd148b428dd38446de650c4af83be7a054203b5a4e0891f18fa5dd0dcdb'
 
 const command = {
   commandId: golden.command.commandId,
@@ -25,6 +28,65 @@ describe('remote runtime durable outcome waiter', () => {
     async (state) => {
       const { waiter, event } = terminalFixture(state)
       expect(await waiter.wait(input)).toMatchObject({ terminalUsage: event.payload.terminalUsage })
+    }
+  )
+
+  test('recovers locale-divergent untagged terminal usage without changing its historical hash', async () => {
+    const { waiter, event } = terminalFixture('completed')
+    event.payload = {
+      ...event.payload,
+      schemaVersion: 1,
+      schemas: ['v1'],
+      ä: 1,
+      z: 2,
+    }
+    event.payloadHash = historicalTerminalUsageHash
+    delete event.payloadHashVersion
+    event.payloadBytes = Buffer.byteLength(JSON.stringify(event.payload))
+    const originalEvent = structuredClone(event)
+
+    expect(hashExecutionEventPayloadV2(event.payload)).not.toBe(historicalTerminalUsageHash)
+    await withDefaultLocale('sv-SE', async () => {
+      expect(hashExecutionEventPayload(event.payload)).not.toBe(historicalTerminalUsageHash)
+      expect(hashExecutionEventPayload(event.payload)).toBe(
+        hashExecutionEventPayload(event.payload, 'sv-SE')
+      )
+      expect(hashExecutionEventPayload(event.payload, 'en-US')).toBe(historicalTerminalUsageHash)
+      expect(await waiter.wait(input)).toEqual({
+        outcome: 'completed',
+        resultReference: 'art_01JABCDEF0123456789ABCDEFG',
+        terminalUsage: { inputTokens: 12, outputTokens: 4, durationMs: 120 },
+      })
+    })
+    expect(event).toEqual(originalEvent)
+  })
+
+  test('recovers untagged terminal usage written with the current legacy locale', async () => {
+    const { waiter, event } = terminalFixture('completed')
+    event.payload = { ...event.payload, 'a-b': 1, a_b: 2 }
+    event.payloadHash = hashExecutionEventPayload(event.payload)
+    delete event.payloadHashVersion
+
+    expect(await waiter.wait(input)).toMatchObject({
+      terminalUsage: { inputTokens: 12, outputTokens: 4, durationMs: 120 },
+    })
+  })
+
+  test('does not apply the untagged historical fallback to an explicitly v2 row', async () => {
+    const { waiter, event } = terminalFixture('completed')
+    event.payload = { ...event.payload, 'a-b': 1, a_b: 2 }
+    event.payloadHash = hashExecutionEventPayload(event.payload, 'en-US')
+    event.payloadHashVersion = 2
+    expect(event.payloadHash).not.toBe(hashExecutionEventPayloadV2(event.payload))
+    await expect(waiter.wait(input)).rejects.toThrow()
+  })
+
+  test.each([null, 1, 3, '2'])(
+    'rejects terminal usage with unsupported payload hash version %s',
+    async (payloadHashVersion) => {
+      const { waiter, event } = terminalFixture('completed')
+      event.payloadHashVersion = payloadHashVersion
+      await expect(waiter.wait(input)).rejects.toThrow()
     }
   )
 
@@ -240,6 +302,7 @@ function terminalFixture(state) {
     correlation: { ...correlation },
     payload,
     payloadHash: hashExecutionEventPayloadV2(payload),
+    payloadHashVersion: 2,
     payloadBytes: Buffer.byteLength(JSON.stringify(payload)),
     occurredAt: '2026-08-25T12:00:01.000Z',
     recordedAt: '2026-08-25T12:00:01.000Z',
@@ -280,4 +343,25 @@ function fixture(overrides = {}) {
     sleep: overrides.sleep ?? (async () => undefined),
     pollIntervalMs: 10,
   })
+}
+
+async function withDefaultLocale(locale, body) {
+  const descriptor = Object.getOwnPropertyDescriptor(String.prototype, 'localeCompare')
+  if (typeof descriptor?.value !== 'function') throw new Error('STRING_LOCALE_COMPARE_MISSING')
+  const original = descriptor.value
+  // oxlint-disable-next-line no-extend-native -- test-only locale pin for legacy sorting.
+  Object.defineProperty(String.prototype, 'localeCompare', {
+    ...descriptor,
+    value(compareString, ...args) {
+      return args.length === 0
+        ? original.call(this, compareString, locale)
+        : original.call(this, compareString, ...args)
+    },
+  })
+  try {
+    return await body()
+  } finally {
+    // oxlint-disable-next-line no-extend-native -- restore the locale comparator after the test.
+    Object.defineProperty(String.prototype, 'localeCompare', descriptor)
+  }
 }
