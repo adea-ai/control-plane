@@ -96,7 +96,7 @@ export class ReferenceAcpGatewayTransport implements AcpGatewayTransport {
               adapterVersion: '1.0.0',
               driverVersion: '1.0.0',
               harnessVersion: '2.4.0',
-              protocolVersion: GatewayProtocolManifest.current,
+              protocolVersion: this.#gatewayProtocolVersion,
               health: this.#state === 'online' ? 'healthy' : 'unavailable',
               capabilities: this.#capabilities,
               limitations: [],

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.51.0](https://github.com/adea-ai/control-plane/compare/database-v1.50.2...database-v1.51.0) (2026-10-17)
+
+
+### Features
+
+* **context:** version canonical context digests ([#1153](https://github.com/adea-ai/control-plane/issues/1153)) ([c5bb39e](https://github.com/adea-ai/control-plane/commit/c5bb39e08d653f21a0efae8f6034e83de99b063f))
+
+## [1.50.2](https://github.com/adea-ai/control-plane/compare/database-v1.50.1...database-v1.50.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* version tool idempotency digests ([#1151](https://github.com/adea-ai/control-plane/issues/1151)) ([9629e97](https://github.com/adea-ai/control-plane/commit/9629e97ae00290876b76eac53fc46b236c4fce1e))
+
 ## [1.50.1](https://github.com/adea-ai/control-plane/compare/database-v1.50.0...database-v1.50.1) (2026-10-17)
 
 

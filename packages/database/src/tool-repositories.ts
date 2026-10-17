@@ -428,6 +428,7 @@ function callIdentity(call: ToolCall): unknown {
   return {
     toolCallId: call.toolCallId,
     requestDigest: call.requestDigest,
+    requestDigestVersion: call.requestDigestVersion,
     executionId: call.executionId,
     attemptId: call.attemptId,
     workspaceId: call.workspaceId,
@@ -437,6 +438,7 @@ function callIdentity(call: ToolCall): unknown {
     toolVersionId: call.toolVersionId,
     operation: call.operation,
     inputDigest: call.inputDigest,
+    inputDigestVersion: call.inputDigestVersion,
     policySnapshotRef: call.policySnapshotRef,
     executor: call.executor,
     idempotencyKey: call.idempotencyKey,

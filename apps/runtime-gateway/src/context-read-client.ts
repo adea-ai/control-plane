@@ -107,11 +107,24 @@ export class ContextGatewayReadClient implements CortanaClientPort {
       if (!channel || channel.workspaceId !== record.scope.workspaceId) fail('CHANNEL_UNAVAILABLE')
       await this.options.authorize(structuredClone(record), 'dispatch')
       signal.throwIfAborted()
+      const command = GatewayCommandEnvelopeSchema.parse(record.commandEnvelope)
+      if (!isProtocolCompatible(command.protocolVersion, channel.protocolVersion))
+        fail('PROTOCOL_INCOMPATIBLE')
       const sequence = await this.options.nextSequence(structuredClone(channel))
       signal.throwIfAborted()
       await this.options.authorize(structuredClone(record), 'dispatch')
       signal.throwIfAborted()
-      await this.options.delivery.deliver(channel, record.commandId, sequence, signal)
+      const delivery = await this.options.delivery.deliver(
+        channel,
+        record.commandId,
+        sequence,
+        signal
+      )
+      if (
+        !delivery.sent &&
+        ['queued', 'dispatched', 'acknowledged'].includes(delivery.record.status)
+      )
+        fail('DELIVERY_DEFERRED')
     }
     while (true) {
       signal.throwIfAborted()
@@ -168,4 +181,10 @@ async function delay(ms: number, signal: AbortSignal) {
 }
 function fail(code: string): never {
   throw new ContextGatewayReadError(`CONTEXT_GATEWAY_${code}`)
+}
+function isProtocolCompatible(
+  command: { readonly major: number; readonly minor: number },
+  channel: { readonly major: number; readonly minor: number }
+): boolean {
+  return command.major === channel.major && command.minor <= channel.minor
 }

@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/workspace",
-  "version": "1.102.4",
+  "version": "1.103.1",
   "private": true,
   "workspaces": [
     "apps/*",
@@ -22,7 +22,7 @@
     "requirements:crosswalk:write": "bun scripts/atomic-clause-ledger.mjs --crosswalk --write",
     "requirements:write": "bun scripts/requirements-ledger.mjs --write",
     "requirements:refresh": "bun scripts/requirements-ledger.mjs --refresh-issues",
-    "lint": "vp run orch:lint && oxlint --deny-warnings tests && bun run check:boundaries && bun run check:canonical-ordering",
+    "lint": "vp run orch:lint && oxlint --deny-warnings tests && bun run check:boundaries && bun run check:canonical-ordering && bun run check:digest-writers",
     "openapi:check": "vp run orch:openapi:check",
     "test": "bun run build && bun run --parallel 'test:group:*'",
     "test:group:unit": "bun scripts/run-bun-test-group.mjs unit --coverage --timeout 30000",
@@ -57,6 +57,7 @@
     "format:check": "oxfmt --check .",
     "check:boundaries": "bun scripts/workspace-boundaries.mjs",
     "check:canonical-ordering": "bun scripts/check-locale-compare.mjs",
+    "check:digest-writers": "bun scripts/check-digest-writers.mjs",
     "security:scan": "bun scripts/scan-secrets.mjs",
     "containers:build": "docker buildx bake -f infrastructure/containers/docker-bake.hcl",
     "containers:print": "docker buildx bake -f infrastructure/containers/docker-bake.hcl --print",

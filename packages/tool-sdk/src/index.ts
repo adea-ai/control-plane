@@ -236,6 +236,7 @@ export const ToolCallSchema = z
   .object({
     toolCallId: IdentifierSchemas.toolCallId,
     requestDigest: DigestSchema,
+    requestDigestVersion: z.literal(2).optional(),
     executionId: IdentifierSchemas.executionId,
     attemptId: IdentifierSchemas.attemptId,
     workspaceId: IdentifierSchemas.workspaceId,
@@ -245,6 +246,7 @@ export const ToolCallSchema = z
     toolVersionId: IdentifierSchemas.toolVersionId,
     operation: CanonicalNameSchema,
     inputDigest: DigestSchema,
+    inputDigestVersion: z.literal(2).optional(),
     policySnapshotRef: PolicyReferenceSchema,
     policyDecision: ToolPolicyDecisionSchema.optional(),
     approvalInteractionId: IdentifierSchemas.interactionId.optional(),
@@ -287,6 +289,7 @@ export const ToolAuthorizationRequestSchema = z
     toolVersionId: IdentifierSchemas.toolVersionId,
     operation: CanonicalNameSchema,
     inputDigest: DigestSchema,
+    inputDigestVersion: z.literal(2).optional(),
     riskClass: ToolRiskClassSchema,
     requiredCapabilities: z.array(CanonicalNameSchema).max(64).refine(unique),
     policySnapshotRef: PolicyReferenceSchema,

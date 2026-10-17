@@ -2,6 +2,7 @@ import { test, expect } from 'bun:test'
 import { ExecutionLifecycleService, InMemoryExecutionRepository } from '@control-plane/domain'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { InMemoryExecutionPlanRepository } from '@control-plane/execution-plan'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { CanonicalPiDurableAuthority } from '../packages/pi-durable-adapter/src/canonical-authority.ts'
 import { workspacePlan } from './pi-durable-workspace-scope.fixture.mjs'
 const at = '2026-10-08T00:00:00.000Z'
@@ -350,7 +351,9 @@ test('workspace canonical intent requires original actor and rejects cross-scope
 })
 
 test('legacy canonical admission keeps absent scope and actor absent from serialized bytes', async () => {
-  const setup = await fixture()
+  const setup = await fixture(
+    createExecutionPlanTestFixture({ contextPackage: historicalContextPackage() })
+  )
   const result = await admitted(setup)
   expect(Object.hasOwn(result.admission, 'canonicalActorPrincipalId')).toBe(false)
   expect(Object.hasOwn(result.startRequest.executionPlan.correlation, 'executionScope')).toBe(false)
@@ -358,3 +361,19 @@ test('legacy canonical admission keeps absent scope and actor absent from serial
     'sha256:dc03a107d310cf14591b6d34fba4ed6443faedfb8e972ac31f2a50957b3d86fe'
   )
 })
+
+function historicalContextPackage() {
+  const {
+    contextPackageId: _contextPackageId,
+    contentDigest: _contentDigest,
+    canonicalizationVersion: _canonicalizationVersion,
+    ...content
+  } = contextPackageSerializationFixtures.futurePi
+  // Fixed pre-cutover identity: keeping this plan proof independent from the
+  // new ContextPackage writer preserves the historical serialized plan bytes.
+  return {
+    ...content,
+    contextPackageId: 'ctx_57PXZBSKA8RKKX5FKEWVP4Q6F0',
+    contentDigest: 'sha256:29eddfaf33523139f4af9bb9bb12e6786df2c30e93790a8360874e88191eb641',
+  }
+}

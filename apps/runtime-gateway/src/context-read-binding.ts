@@ -1,10 +1,12 @@
 import { randomBytes } from 'node:crypto'
 import {
+  CortanaContextAdapterError,
   createRuntimeNodeContextCommand,
   RuntimeNodeContextReadBindingSchema,
   type CortanaAdapterOptions,
   type RuntimeNodeContextReadBinding,
 } from '@control-plane/cortana-context-adapter'
+import { GatewayProtocolManifest } from '@control-plane/runtime-gateway-protocol'
 import {
   ContextCommandGrantAuthority,
   ContextCommandGrantSchema,
@@ -97,6 +99,8 @@ export class ContextRuntimeNodeReadBinder {
     )
     await this.#authority.authorize(candidate)
     signal.throwIfAborted()
+    if (!isProtocolCompatible(GatewayProtocolManifest.current, channel.protocolVersion))
+      throw new CortanaContextAdapterError('CORTANA_PROTOCOL_INCOMPATIBLE')
     const sequence = await this.options.nextSequence(structuredClone(channel))
     signal.throwIfAborted()
     if (!Number.isSafeInteger(sequence) || sequence < 1 || sequence > 2147483647)
@@ -128,4 +132,11 @@ function commandId(): string {
     value >>= 5n
   }
   return `cmd_${encoded}`
+}
+
+function isProtocolCompatible(
+  writer: { readonly major: number; readonly minor: number },
+  channel: { readonly major: number; readonly minor: number }
+): boolean {
+  return writer.major === channel.major && writer.minor <= channel.minor
 }
