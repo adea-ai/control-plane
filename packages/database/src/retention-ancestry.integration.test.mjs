@@ -87,6 +87,15 @@ function packageReference(package_) {
   return { contextPackageId: package_.contextPackageId, contentDigest: package_.contentDigest }
 }
 
+async function cursorBefore(database, kind, targetId) {
+  const query =
+    kind === 'plans'
+      ? sql`select execution_plan_id as id from execution_plans where execution_plan_id < ${targetId} order by execution_plan_id desc limit 1`
+      : sql`select context_package_id as id from context_packages where context_package_id < ${targetId} order by context_package_id desc limit 1`
+  const [row] = await database.execute(query)
+  return row?.id
+}
+
 async function waitForLockWait(database, tableName) {
   let waiting = []
   for (let attempt = 0; attempt < 300; attempt += 1) {
@@ -168,12 +177,30 @@ describe.skipIf(!enabled)('PostgreSQL ancestry retention', () => {
         expect(await plans.get(planReference(child))).toBeDefined()
 
         const firstExpiry = new Date(observedAt.getTime() + retentionMs + 1)
+        // Assess the still-pinned parent before removing its child. An unbounded
+        // sweep may visit the child first and validly start the parent's window
+        // in that same sweep; hashed identity order must not choose this phase.
+        const pinnedParent = await retention.deleteEligibleExecutionPlans(firstExpiry, {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+          bound: 1,
+          afterId: await cursorBefore(database, 'plans', parent.executionPlanId),
+        })
+        expect(pinnedParent).toMatchObject({
+          scanned: 1,
+          deleted: 0,
+          retainedByReason: { reference_pending: 1 },
+        })
+        expect(await plans.get(planReference(parent))).toBeDefined()
         const second = await retention.deleteEligibleExecutionPlans(firstExpiry, {
           policyRetainMs: retentionMs,
           dryRun: false,
+          bound: 1,
+          afterId: await cursorBefore(database, 'plans', child.executionPlanId),
         })
+        expect(second.scanned).toBe(1)
         expect(second.deleted).toBe(1)
-        expect(second.retainedByReason).toEqual({ reference_pending: 1 })
+        expect(second.retainedByReason).toEqual({})
         expect(await plans.get(planReference(child))).toBeUndefined()
 
         const ancestorObserved = await retention.deleteEligibleExecutionPlans(firstExpiry, {
@@ -182,6 +209,12 @@ describe.skipIf(!enabled)('PostgreSQL ancestry retention', () => {
         })
         expect(ancestorObserved.deleted).toBe(0)
         expect(ancestorObserved.retainedByReason).toEqual({ not_expired: 1 })
+        const [ancestorClock] = await database
+          .select({ clock: executionPlans.unreferencedSince })
+          .from(executionPlans)
+          .where(eq(executionPlans.executionPlanId, parent.executionPlanId))
+          .limit(1)
+        expect(ancestorClock?.clock?.toISOString()).toBe(firstExpiry.toISOString())
         const parentExpiry = new Date(firstExpiry.getTime() + retentionMs + 1)
         const third = await retention.deleteEligibleExecutionPlans(parentExpiry, {
           policyRetainMs: retentionMs,
@@ -233,12 +266,30 @@ describe.skipIf(!enabled)('PostgreSQL ancestry retention', () => {
         expect(await packages.get(packageReference(child))).toBeDefined()
 
         const firstExpiry = new Date(observedAt.getTime() + retentionMs + 1)
+        // Assess the still-pinned parent before removing its child. An unbounded
+        // sweep may visit the child first and validly start the parent's window
+        // in that same sweep; hashed identity order must not choose this phase.
+        const pinnedParent = await retention.deleteEligibleContextPackages(firstExpiry, {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+          bound: 1,
+          afterId: await cursorBefore(database, 'packages', parent.contextPackageId),
+        })
+        expect(pinnedParent).toMatchObject({
+          scanned: 1,
+          deleted: 0,
+          retainedByReason: { reference_pending: 1 },
+        })
+        expect(await packages.get(packageReference(parent))).toBeDefined()
         const second = await retention.deleteEligibleContextPackages(firstExpiry, {
           policyRetainMs: retentionMs,
           dryRun: false,
+          bound: 1,
+          afterId: await cursorBefore(database, 'packages', child.contextPackageId),
         })
+        expect(second.scanned).toBe(1)
         expect(second.deleted).toBe(1)
-        expect(second.retainedByReason).toEqual({ reference_pending: 1 })
+        expect(second.retainedByReason).toEqual({})
         expect(await packages.get(packageReference(child))).toBeUndefined()
 
         const ancestorObserved = await retention.deleteEligibleContextPackages(firstExpiry, {
@@ -247,6 +298,12 @@ describe.skipIf(!enabled)('PostgreSQL ancestry retention', () => {
         })
         expect(ancestorObserved.deleted).toBe(0)
         expect(ancestorObserved.retainedByReason).toEqual({ not_expired: 1 })
+        const [ancestorClock] = await database
+          .select({ clock: contextPackages.unreferencedSince })
+          .from(contextPackages)
+          .where(eq(contextPackages.contextPackageId, parent.contextPackageId))
+          .limit(1)
+        expect(ancestorClock?.clock?.toISOString()).toBe(firstExpiry.toISOString())
         const parentExpiry = new Date(firstExpiry.getTime() + retentionMs + 1)
         const third = await retention.deleteEligibleContextPackages(parentExpiry, {
           policyRetainMs: retentionMs,

@@ -1263,10 +1263,12 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     const package_ = contextPackageSerializationFixtures.futurePi
     const repository = new PostgresContextPackageRepository(isolated.application)
     const reference = await repository.put(package_)
+    expect(reference.canonicalizationVersion).toBe(2)
     expect(await repository.put(package_)).toEqual(reference)
 
     const restarted = new PostgresContextPackageRepository(isolated.application)
     expect(await restarted.get(reference)).toEqual(package_)
+    expect(await restarted.get({ ...reference, canonicalizationVersion: 1 })).toBeUndefined()
     expect(await restarted.getById(package_.contextPackageId)).toEqual(package_)
     expect(
       await restarted.get({ ...reference, contentDigest: `sha256:${'0'.repeat(64)}` })
@@ -1308,6 +1310,29 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         contentDigest: package_.contentDigest,
       },
     })
+    const versionMismatchPackage = composeProviderContextPackage(
+      contextPackageSerializationFixtures.futurePi,
+      {
+        callerContextRefs: ['contract://authoring-version-mismatch/v1'],
+        localProjectGrantRefs: [],
+        contributions: [],
+      }
+    )
+    expect(versionMismatchPackage.canonicalizationVersion).toBe(2)
+    const versionMismatchRecord = recordFor(
+      versionMismatchPackage,
+      'context-authoring-version-mismatch-0001'
+    )
+    versionMismatchRecord.contextPackage = {
+      ...versionMismatchRecord.contextPackage,
+      canonicalizationVersion: 1,
+    }
+    expect(() => repository.commit(versionMismatchRecord, versionMismatchPackage)).toThrow(
+      'CONTEXT_AUTHORING_COMMAND_SCOPE_MISMATCH'
+    )
+    expect(await packages.getById(versionMismatchPackage.contextPackageId)).toBeUndefined()
+    expect(await repository.get(versionMismatchRecord.scope)).toBeUndefined()
+
     const results = await Promise.all(
       Array.from({ length: 8 }, (_, index) => {
         const package_ = candidates[index % 2]
@@ -2393,12 +2418,6 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       const plan = createExecutionPlanTestFixture({ contextPackage })
       const ninetyDaysMs = 90 * 24 * 60 * 60 * 1_000
       const assessedAt = new Date(Date.parse(plan.compiledAt) + ninetyDaysMs + 60_000)
-      const options = {
-        policyRetainMs: ninetyDaysMs,
-        bound: 1,
-        dryRun: false,
-        afterId: await retentionCursorBefore(isolated.application, 'plans', plan.executionPlanId),
-      }
       const reference = {
         executionPlanId: plan.executionPlanId,
         contentDigest: plan.contentDigest,
@@ -2409,9 +2428,21 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
 
       // An execution compiled from the plan pins it.
       await seedAcceptancePlan(isolated.application)
+      // Compute the one-row scan window only after every fixture plan exists.
+      // Seeding a lower identity after this cursor can make the sweep miss the target.
+      const options = {
+        policyRetainMs: ninetyDaysMs,
+        bound: 1,
+        dryRun: false,
+        afterId: await retentionCursorBefore(isolated.application, 'plans', plan.executionPlanId),
+      }
       const beforeExecutionReference = await retention.deleteEligibleExecutionPlans(
         assessedAt,
         options
+      )
+      expect(beforeExecutionReference.scanned).toBe(1)
+      expect(beforeExecutionReference.nextAfterId).toBe(
+        beforeExecutionReference.truncated ? plan.executionPlanId : undefined
       )
       expect(beforeExecutionReference.retainedByReason).toEqual({ not_expired: 1 })
       const [beforeExecutionClock] = await isolated.application

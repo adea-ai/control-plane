@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.2](https://github.com/adea-ai/control-plane/compare/tool-execution-v1.5.1...tool-execution-v1.5.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* version tool idempotency digests ([#1151](https://github.com/adea-ai/control-plane/issues/1151)) ([9629e97](https://github.com/adea-ai/control-plane/commit/9629e97ae00290876b76eac53fc46b236c4fce1e))
+
 ## [1.5.1](https://github.com/adea-ai/control-plane/compare/tool-execution-v1.5.0...tool-execution-v1.5.1) (2026-10-17)
 
 

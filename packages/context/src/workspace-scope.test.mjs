@@ -18,6 +18,21 @@ const artifactId = 'art_01JABCDEF0123456789ABCDEFG'
 const executionScope = { schemaVersion: 1, kind: 'workspace' }
 const compiler = new ContextPackageCompiler('1.0.0')
 
+function historicalPackage() {
+  const current = contextPackageSerializationFixtures.futurePi
+  const {
+    contextPackageId: _id,
+    contentDigest: _digest,
+    canonicalizationVersion: _version,
+    ...content
+  } = current
+  return {
+    ...content,
+    contextPackageId: 'ctx_57PXZBSKA8RKKX5FKEWVP4Q6F0',
+    contentDigest: 'sha256:29eddfaf33523139f4af9bb9bb12e6786df2c30e93790a8360874e88191eb641',
+  }
+}
+
 function input() {
   const legacy = contextPackageSerializationFixtures.futurePi
   return {
@@ -71,6 +86,7 @@ test('workspace parent binds an independently compiled project child without cre
   expect(child.parentContextPackage).toEqual({
     contextPackageId: parent.contextPackageId,
     contentDigest: parent.contentDigest,
+    canonicalizationVersion: 2,
   })
   expect(child.contentDigest).not.toBe(project.contentDigest)
   expect(assertContextPackageIntegrity(project)).toEqual(project)
@@ -129,7 +145,7 @@ test('project child binding rejects cross-workspace, resource, permission, provi
 })
 
 test('legacy package identity and serialization stay pinned without normalized scope injection', () => {
-  const legacy = contextPackageSerializationFixtures.futurePi
+  const legacy = historicalPackage()
   expect(legacy.contentDigest).toBe(
     'sha256:29eddfaf33523139f4af9bb9bb12e6786df2c30e93790a8360874e88191eb641'
   )
@@ -149,6 +165,36 @@ test('legacy package identity and serialization stay pinned without normalized s
     },
   ])
     expect(() => assertContextPackageIntegrity(mutated)).toThrow()
+})
+
+test('untagged pre-cutover derived child remains valid against its untagged parent', () => {
+  const parent = historicalPackage()
+  const currentChild = deriveContextPackage(parent, {
+    objective: 'Old derived child fixture',
+    allowedStateItemIds: [],
+    allowedArtifactIds: [],
+    budgets: parent.budgets,
+    successCriteria: parent.successCriteria,
+    returnContract: parent.returnContract,
+    compiledAt: parent.compiledAt,
+  })
+  const {
+    contextPackageId: _currentId,
+    contentDigest: _currentDigest,
+    canonicalizationVersion: _version,
+    ...childContent
+  } = currentChild
+  const child = {
+    ...childContent,
+    contextPackageId: 'ctx_SPZARN294Q32PRREJBDQPECB5W',
+    contentDigest: 'sha256:cdbeac544925c62b630e92db7b398b2f4d3c5c60406efc72d74fe7c871425b3d',
+  }
+  expect(child.parentContextPackage).toEqual({
+    contextPackageId: parent.contextPackageId,
+    contentDigest: parent.contentDigest,
+  })
+  expect(assertContextPackageIntegrity(child)).toEqual(child)
+  expect(assertContextPackageDerivedFrom(parent, child)).toEqual(child)
 })
 
 test('trusted workspace compilation and repository round trip need no project row', async () => {
@@ -175,7 +221,7 @@ test('trusted workspace compilation and repository round trip need no project ro
 
 test('workspace schema fails closed on missing scope, fake project and project state items', () => {
   const package_ = compiler.compileWorkspace(input())
-  const legacy = contextPackageSerializationFixtures.futurePi
+  const legacy = historicalPackage()
   for (const mutated of [
     { ...package_, schemaVersion: 1 },
     { ...package_, projectState: { workspaceId, revision: 4 } },

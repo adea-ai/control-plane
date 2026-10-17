@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { golden } from '@control-plane/runtime-gateway-protocol/fixtures'
+import {
+  contextCommandSemanticHash,
+  contextCommandSemanticHashV2,
+  InMemoryContextCommandRepository,
+} from '@control-plane/domain'
 import { RuntimeNodeChannel } from './authentication.js'
+import { ContextCommandDeliveryService } from './context-command-delivery.ts'
+import { ContextCommandRecoveryService } from './context-command-recovery.ts'
 import {
   InMemoryRuntimeNodeCoordination,
   RepositoryRuntimeNodeCoordination,
@@ -348,6 +355,235 @@ describe('Runtime Gateway WebSocket lifecycle', () => {
     await expect(fixture.gateway.send(golden.command)).rejects.toMatchObject({
       code: 'RUNTIME_GATEWAY_CHANNEL_BACKPRESSURED',
     })
+  })
+
+  test.each([5, 6, 7])(
+    'defers tagged protocol v1.8 commands on a v1.%i channel while preserving untagged v1.5 delivery',
+    async (minor) => {
+      const fixture = setup(`gateway-v1-${minor}`)
+      const socket = new FakeSocket()
+      fixture.gateway.open(connection('gwc-v1', channel(1), socket))
+      await fixture.gateway.receive('gwc-v1', JSON.stringify(helloAtMinor(1, minor)))
+
+      const legacyQueued = {
+        ...golden.command,
+        protocolVersion: { major: 1, minor: 5 },
+      }
+      const tagged = {
+        ...golden.command,
+        canonicalizationVersion: 2,
+        protocolVersion: { major: 1, minor: 8 },
+      }
+
+      await fixture.gateway.send(legacyQueued)
+      expect(JSON.parse(socket.sent.at(-1))).toEqual(legacyQueued)
+      await expect(fixture.gateway.send(tagged)).rejects.toMatchObject({
+        code: 'RUNTIME_GATEWAY_PROTOCOL_INCOMPATIBLE',
+      })
+      expect(
+        socket.sent.some((frame) => JSON.parse(frame).canonicalizationVersion === 2)
+      ).toBeFalse()
+      await fixture.gateway.close()
+    }
+  )
+
+  test('recovery defers tagged commands on legacy channels and retries after protocol 1.8 reconnect', async () => {
+    const coordination = new InMemoryRuntimeNodeCoordination()
+    const repository = new InMemoryContextCommandRepository()
+    let gateway
+    let reservations = 0
+    let lastReservedSequence = 0
+    let acknowledgedSequence = 0
+    const now = () => new Date('2026-08-25T12:00:01.000Z')
+    const sequences = {
+      reserve: async ({ minimum }) => {
+        reservations++
+        lastReservedSequence = Math.max(lastReservedSequence + 1, minimum)
+        return lastReservedSequence
+      },
+    }
+    const delivery = new ContextCommandDeliveryService({
+      repository,
+      coordination: { lookup: coordination.lookup.bind(coordination) },
+      sender: { send: (command, signal) => gateway.send(command, signal) },
+      results: { persist: async () => 'art_01JABCDEF0123456789ABCDEFG' },
+      now,
+    })
+    const recovery = new ContextCommandRecoveryService(delivery, async () => {}, 1)
+    const fixture = setup(
+      'gateway-context-version-recovery',
+      coordination,
+      now,
+      {},
+      undefined,
+      undefined,
+      sequences,
+      undefined,
+      recovery
+    )
+    gateway = fixture.gateway
+
+    const command = {
+      type: 'command',
+      schemaVersion: 1,
+      canonicalizationVersion: 2,
+      protocolVersion: { major: 1, minor: 8 },
+      commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+      nodeId,
+      workspaceId,
+      traceId: 'trc_01JABCDEF0123456789ABCDEFG',
+      channelGeneration: 1,
+      sequence: 1,
+      sentAt: '2026-08-25T12:00:00.000Z',
+      issuedAt: '2026-08-25T12:00:00.000Z',
+      expiresAt: '2026-08-25T12:01:00.000Z',
+      idempotencyKey: 'context-command:versioned-recovery-0001',
+      providerRef: 'pvr_01JABCDEF0123456789ABCDEFG',
+      authorizationRef: 'authz:context-read-recovery-v1',
+      family: 'context_provider',
+      operation: 'context.read',
+      driver: { family: 'context-provider', version: '1.0.0' },
+      requiredCapabilities: ['context.read'],
+      payload: {
+        version: 1,
+        parameters: {
+          operationId: 'context-read:versioned-recovery-0001',
+          principalRef: 'service:recovery-test',
+          scopeDigest: `sha256:${'a'.repeat(64)}`,
+        },
+      },
+    }
+    command.payloadHash = contextCommandSemanticHashV2(command)
+    await delivery.enqueue(command)
+    const legacyCommand = structuredClone(command)
+    legacyCommand.commandId = 'cmd_01JABCDEF0123456789ABCDEFH'
+    legacyCommand.idempotencyKey = 'context-command:legacy-compatible-0001'
+    legacyCommand.payload.parameters.operationId = 'context-read:legacy-compatible-0001'
+    legacyCommand.protocolVersion = { major: 1, minor: 5 }
+    delete legacyCommand.canonicalizationVersion
+    legacyCommand.payloadHash = contextCommandSemanticHash(legacyCommand)
+    await delivery.enqueue(legacyCommand)
+
+    for (const [generation, minor] of [5, 6, 7].map((protocolMinor, index) => [
+      index + 1,
+      protocolMinor,
+    ])) {
+      const socket = new FakeSocket()
+      const connectionId = `legacy-${minor}`
+      gateway.open(connection(connectionId, channel(generation), socket))
+      await gateway.receive(
+        connectionId,
+        JSON.stringify({
+          ...helloAtMinor(generation, minor),
+          lastAcknowledgedSequence: acknowledgedSequence,
+        })
+      )
+
+      // One bounded page visits only the incompatible first command. It must
+      // neither persist dispatch nor spend a sequence or disconnect the channel.
+      expect(socket.closed).toBeUndefined()
+      expect(socket.sent.map((frame) => JSON.parse(frame).type)).toEqual(['hello'])
+      expect(reservations).toBe(generation === 1 ? 0 : 1)
+      expect(await delivery.get(workspaceId, command.commandId)).toMatchObject({
+        status: 'queued',
+        version: 1,
+        deliveryAttempts: 0,
+      })
+      // The heartbeat continues from that cursor, allowing compatible later work.
+      await gateway.receive(
+        connectionId,
+        JSON.stringify({
+          ...golden.heartbeat,
+          protocolVersion: { major: 1, minor },
+          channelGeneration: generation,
+          sentAt: now().toISOString(),
+        })
+      )
+      expect(socket.closed).toBeUndefined()
+      const frames = socket.sent.map((frame) => JSON.parse(frame))
+      const commandFrames = frames.filter((frame) => frame.type === 'command')
+      expect(frames[0].type).toBe('hello')
+      expect(commandFrames.map((frame) => frame.commandId)).toEqual(
+        generation === 1 ? [legacyCommand.commandId] : []
+      )
+      expect(commandFrames.some((frame) => frame.canonicalizationVersion === 2)).toBe(false)
+      expect(
+        await gateway.isChannelActive({ nodeId, workspaceId, channelGeneration: generation })
+      ).toBe(true)
+      expect(await delivery.get(workspaceId, command.commandId)).toMatchObject({
+        status: 'queued',
+        deliveryAttempts: 0,
+        commandEnvelope: { canonicalizationVersion: 2, protocolVersion: { minor: 8 } },
+      })
+      expect(await delivery.get(workspaceId, legacyCommand.commandId)).toMatchObject({
+        status: generation === 1 ? 'dispatched' : 'succeeded',
+      })
+      expect(reservations).toBe(1)
+
+      if (generation === 1) {
+        const legacyFrame = commandFrames[0]
+        const source = await coordination.lookup(nodeId)
+        expect(await delivery.deliver(source, command.commandId, 99)).toMatchObject({
+          sent: false,
+          record: { status: 'queued', deliveryAttempts: 0 },
+        })
+        await delivery.recordResult(source, {
+          ...golden.result,
+          protocolVersion: { major: 1, minor },
+          nodeId,
+          workspaceId,
+          channelGeneration: generation,
+          commandId: legacyCommand.commandId,
+          payloadHash: legacyCommand.payloadHash,
+          sequence: legacyFrame.sequence,
+          sentAt: now().toISOString(),
+          completedAt: now().toISOString(),
+        })
+        acknowledgedSequence = legacyFrame.sequence
+      }
+    }
+
+    const upgradedSocket = new FakeSocket()
+    gateway.open(connection('upgraded', channel(4), upgradedSocket))
+    await gateway.receive(
+      'upgraded',
+      JSON.stringify({ ...helloAtMinor(4, 8), lastAcknowledgedSequence: acknowledgedSequence })
+    )
+
+    expect(upgradedSocket.closed).toBeUndefined()
+    const upgradedFrames = upgradedSocket.sent.map((frame) => JSON.parse(frame))
+    expect(upgradedFrames.map((frame) => frame.type)).toEqual(['hello', 'command'])
+    expect(upgradedFrames.at(-1)).toMatchObject({
+      commandId: command.commandId,
+      canonicalizationVersion: 2,
+      protocolVersion: { major: 1, minor: 8 },
+      channelGeneration: 4,
+      sequence: 2,
+    })
+    expect(reservations).toBe(2)
+    expect(await delivery.get(workspaceId, command.commandId)).toMatchObject({
+      status: 'dispatched',
+      deliveryAttempts: 1,
+      payloadHash: command.payloadHash,
+    })
+    await gateway.close()
+  })
+
+  test('sends tagged v1.8 commands after a v1.8 channel negotiates successfully', async () => {
+    const fixture = setup('gateway-v1-8')
+    const socket = new FakeSocket()
+    fixture.gateway.open(connection('gwc-v1-8', channel(1), socket))
+    await fixture.gateway.receive('gwc-v1-8', JSON.stringify(helloAtMinor(1, 8)))
+    const tagged = {
+      ...golden.command,
+      canonicalizationVersion: 2,
+      protocolVersion: { major: 1, minor: 8 },
+    }
+
+    await fixture.gateway.send(tagged)
+
+    expect(JSON.parse(socket.sent.at(-1))).toEqual(tagged)
+    await fixture.gateway.close()
   })
 
   test('does not send a command when channel ownership changes during credential validation', async () => {
@@ -698,6 +934,13 @@ function connection(connectionId, authenticatedChannel, socket) {
 
 function hello(channelGeneration, id = nodeId) {
   return { ...golden.hello, nodeId: id, channelGeneration }
+}
+
+function helloAtMinor(channelGeneration, minor, id = nodeId) {
+  return {
+    ...hello(channelGeneration, id),
+    supportedVersions: [{ major: 1, minor }],
+  }
 }
 
 class FakeSocket {

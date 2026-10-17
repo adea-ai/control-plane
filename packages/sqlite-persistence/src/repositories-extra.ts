@@ -94,7 +94,9 @@ async function assertSqliteStoredContextPackageReference(
   const parent = assertContextPackageIntegrity(stored.value)
   if (
     parent.contextPackageId !== reference.contextPackageId ||
-    parent.contentDigest !== reference.contentDigest
+    parent.contentDigest !== reference.contentDigest ||
+    (reference.canonicalizationVersion !== undefined &&
+      parent.canonicalizationVersion !== reference.canonicalizationVersion)
   ) {
     throw new ContextCompilationError('CONTRADICTORY_CONTEXT_REFERENCE', reference.contextPackageId)
   }
@@ -149,7 +151,9 @@ export class SqliteContextAuthoringCommandRepository implements ContextAuthoring
       record.scope.workspaceId !== package_.projectState.workspaceId ||
       record.scope.projectId !== package_.projectState.projectId ||
       record.contextPackage.contextPackageId !== package_.contextPackageId ||
-      record.contextPackage.contentDigest !== package_.contentDigest
+      record.contextPackage.contentDigest !== package_.contentDigest ||
+      (record.contextPackage.canonicalizationVersion !== undefined &&
+        record.contextPackage.canonicalizationVersion !== package_.canonicalizationVersion)
     )
       throw new Error('CONTEXT_AUTHORING_COMMAND_SCOPE_MISMATCH')
     return this.provider.transaction(async (transaction) => {
@@ -188,6 +192,8 @@ export class SqliteContextAuthoringCommandRepository implements ContextAuthoring
     if (
       package_.contentDigest !== record.contextPackage.contentDigest ||
       package_.contextPackageId !== record.contextPackage.contextPackageId ||
+      (record.contextPackage.canonicalizationVersion !== undefined &&
+        package_.canonicalizationVersion !== record.contextPackage.canonicalizationVersion) ||
       package_.projectState.workspaceId !== scope.workspaceId ||
       package_.projectState.projectId !== scope.projectId
     )
@@ -208,6 +214,9 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
     const reference = {
       contextPackageId: package_.contextPackageId,
       contentDigest: package_.contentDigest,
+      ...(package_.canonicalizationVersion === undefined
+        ? {}
+        : { canonicalizationVersion: package_.canonicalizationVersion }),
     }
     return this.provider.transaction(async (transaction) => {
       await putContextPackageInTransaction(transaction, package_)
@@ -408,7 +417,11 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
       )
       if (record === undefined) return undefined
       const package_ = assertContextPackageIntegrity(record.value)
-      return package_.contentDigest === reference.contentDigest ? package_ : undefined
+      return package_.contentDigest === reference.contentDigest &&
+        (reference.canonicalizationVersion === undefined ||
+          package_.canonicalizationVersion === reference.canonicalizationVersion)
+        ? package_
+        : undefined
     })
   }
 
