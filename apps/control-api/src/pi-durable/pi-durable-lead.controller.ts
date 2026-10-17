@@ -75,6 +75,17 @@ export class PiDurableLeadController {
     return this.#invoke('progress', input, request)
   }
 
+  @Post('children')
+  @HttpCode(HttpStatus.OK)
+  @RequireServiceAuthentication('execution:read')
+  @ApiOperation({ summary: 'Read the authorized canonical status and outcomes of lead children' })
+  @ApiOkResponse({
+    description: 'Retained child job state, approval/input state and terminal outcome; read only',
+  })
+  children(@Body() input: unknown, @Req() request: FastifyRequest) {
+    return this.#invoke('children', input, request)
+  }
+
   @Post('cancel')
   @HttpCode(HttpStatus.ACCEPTED)
   @RequireServiceAuthentication('execution:cancel')
@@ -94,7 +105,18 @@ export class PiDurableLeadController {
       return await this.service[operation](input, request.servicePrincipal)
     } catch (error) {
       const code = error instanceof PiDurableLeadError ? error.code : 'PI_LEAD_UNAVAILABLE'
-      const response = { code, message: 'Lead dispatch request could not be completed' }
+      const reasonCode = error instanceof PiDurableLeadError ? error.reasonCode : undefined
+      const response = {
+        code,
+        message: 'Lead dispatch request could not be completed',
+        ...(reasonCode ? { reasonCode } : {}),
+      }
+      // Model readiness is an actionable state the user can change, not an outage; an unreadable
+      // authority (READINESS_UNAVAILABLE) is transient and stays retryable.
+      if (code === 'PI_LEAD_MODEL_NOT_READY')
+        throw reasonCode === 'READINESS_UNAVAILABLE'
+          ? new ServiceUnavailableException(response)
+          : new ConflictException(response)
       if (code === 'PI_LEAD_INVALID') throw new BadRequestException(response)
       if (code === 'PI_LEAD_SCOPE_REJECTED') throw new ForbiddenException(response)
       if (code === 'PI_LEAD_MISSING') throw new NotFoundException(response)

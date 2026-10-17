@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/sandbox",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "private": true,
   "files": [
     "dist"
@@ -17,6 +17,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "lint": "oxlint src",
     "test": "bun test src/*.test.mjs"
   },

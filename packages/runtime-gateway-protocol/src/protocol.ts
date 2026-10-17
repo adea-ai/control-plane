@@ -203,6 +203,7 @@ const GatewayCommandBaseSchema = CommonEnvelopeSchema.extend({
     'runtime.approval',
     'runtime.status',
     'runtime.session',
+    'runtime.acp-remote-sealed',
     'context.status',
     'context.read',
     'context.write',

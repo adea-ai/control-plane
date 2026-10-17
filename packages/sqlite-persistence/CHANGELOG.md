@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.41.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.41.0...sqlite-persistence-v1.41.1) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** replace Control Plane Turbo with Vite+ and Bun checks ([#1170](https://github.com/adea-ai/control-plane/issues/1170)) ([84e12db](https://github.com/adea-ai/control-plane/commit/84e12dbab1b2fea2380e8747a466db9fb1449959))
+
+## [1.41.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.40.4...sqlite-persistence-v1.41.0) (2026-10-17)
+
+
+### Features
+
+* m17-runtime-ownership-baseline-941 ([#1047](https://github.com/adea-ai/control-plane/issues/1047)) ([0c90043](https://github.com/adea-ai/control-plane/commit/0c90043bddfbdcf404fb7a3539479665a7812384))
+
+## [1.40.4](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.40.3...sqlite-persistence-v1.40.4) (2026-10-16)
+
+
+### Bug Fixes
+
+* **events:** version persisted payload hashes ([#1152](https://github.com/adea-ai/control-plane/issues/1152)) ([5f678f7](https://github.com/adea-ai/control-plane/commit/5f678f7d1b804f74bd9408629bf0ec50a436e6b5))
+
+## [1.40.3](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.40.2...sqlite-persistence-v1.40.3) (2026-10-16)
+
+
+### Tests
+
+* **pi:** qualify governed child dispatch after native compaction and reopen ([#1134](https://github.com/adea-ai/control-plane/issues/1134)) ([0a453d8](https://github.com/adea-ai/control-plane/commit/0a453d83103a787bdcc6c38a6571de9188f7f559))
+
+## [1.40.2](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.40.1...sqlite-persistence-v1.40.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **orchestration:** version graph catalog digests ([bdc2fbb](https://github.com/adea-ai/control-plane/commit/bdc2fbb6afc00e97bfdba0f686a5ba08fc643cf7))
+* preserve graph digest compatibility ([#1149](https://github.com/adea-ai/control-plane/issues/1149)) ([bdc2fbb](https://github.com/adea-ai/control-plane/commit/bdc2fbb6afc00e97bfdba0f686a5ba08fc643cf7))
+
 ## [1.40.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.40.0...sqlite-persistence-v1.40.1) (2026-10-15)
 
 

@@ -84,6 +84,8 @@ export async function resolveModelSelectionFundingView(options: {
         `vault://${selection.credentialRef}/${selection.credentialRevision}`,
       ].includes(grant.credentialRef) ||
       grant.fundingSource !== selection.fundingSource ||
+      // A caller-supplied key is paid for by the key owner. Never disclose or spend it as Adea-funded.
+      (selection.fundingSource === 'byo_api' && fundingOwner.kind === 'adea_account') ||
       price.deploymentId !== grant.deploymentId ||
       price.provider !== selection.provider ||
       price.model !== selection.providerModel ||

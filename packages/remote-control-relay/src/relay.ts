@@ -1,7 +1,7 @@
-// DECISION (#612): insertion order is CONTRACTUAL here — the serialized bytes
-// are persisted and compared verbatim across versions, so this site must not
-// adopt canonicalJsonStringify; altering the format requires a versioned
-// envelope migration with an explicit cutover.
+// DECISION (#612): relay metadata replay receipts preserve schema-v1 command
+// bytes from JSON.stringify of RelayMetadataCommandSchema's parsed output, in
+// the schema's declared field order. Receipts compare those strings verbatim;
+// keep this format until a versioned reader can verify historical records.
 import {
   decryptRelayPayload,
   RelayEnvelopeError,
@@ -397,38 +397,43 @@ export class RelayMetadataCommandProcessor<Result> {
       throw new RelayMetadataCommandError('RELAY_COMMAND_EXPIRED')
     }
     // CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-    // insertion-order stringify of a schema-pinned command; replay comparisons persist these strings byte-for-byte
-    const canonical = JSON.stringify(command)
-    const replay = await this.repository.get(command.commandId)
+    // Legacy relay command format, schema v1: keep its pre-effect bytes and ID.
+    const commandId = command.commandId
+    const replayBytes = JSON.stringify(command)
+    const replay = await this.repository.get(commandId)
     if (replay !== undefined) {
-      if (replay.command !== canonical) {
+      if (replay.command !== replayBytes) {
         throw new RelayMetadataCommandError('RELAY_COMMAND_CONFLICT')
       }
       return { ...replay.result, outcome: 'duplicate' }
     }
-    const inFlight = this.#inFlight.get(command.commandId)
+    const inFlight = this.#inFlight.get(commandId)
     if (inFlight !== undefined) {
-      if (inFlight.command !== canonical) {
+      if (inFlight.command !== replayBytes) {
         throw new RelayMetadataCommandError('RELAY_COMMAND_CONFLICT')
       }
       return { ...(await inFlight.operation), outcome: 'duplicate' }
     }
-    const operation = this.#accept(command)
-    this.#inFlight.set(command.commandId, { command: canonical, operation })
+    const operation = this.#accept(command, commandId, replayBytes)
+    this.#inFlight.set(commandId, { command: replayBytes, operation })
     try {
       return await operation
     } finally {
-      this.#inFlight.delete(command.commandId)
+      this.#inFlight.delete(commandId)
     }
   }
 
-  async #accept(command: RelayMetadataCommand): Promise<RelayMetadataCommandResult<Result>> {
+  async #accept(
+    command: RelayMetadataCommand,
+    commandId: string,
+    replayBytes: string
+  ): Promise<RelayMetadataCommandResult<Result>> {
     const accepted = {
       outcome: 'accepted' as const,
-      commandId: command.commandId,
+      commandId,
       result: await this.accept(command),
     }
-    await this.repository.put(command.commandId, JSON.stringify(command), accepted)
+    await this.repository.put(commandId, replayBytes, accepted)
     return accepted
   }
 }

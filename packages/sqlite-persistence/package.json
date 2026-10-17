@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/sqlite-persistence",
-  "version": "1.40.1",
+  "version": "1.41.1",
   "private": true,
   "files": [
     "dist"
@@ -31,6 +31,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "bun check -p tsconfig.json",
     "lint": "oxlint src",
     "test": "bun test src/*.test.mjs"
   },

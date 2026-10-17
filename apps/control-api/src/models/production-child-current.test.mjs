@@ -176,8 +176,9 @@ function fixture({
   }
   const held = deferred()
   const release = deferred()
-  const state = { now: at, productReads: 0 }
+  const state = { now: at, productReads: 0, productPurposes: [], modelUnavailable: false }
   const current = createProductionChildCurrent({
+    assertRetainedProductCurrent: async () => {},
     executions: {
       async getExecution(id) {
         return id === parentExecutionId ? execution : undefined
@@ -224,7 +225,10 @@ function fixture({
       },
     },
     product: {
-      async readCurrent() {
+      async readCurrent(_input, context) {
+        state.productPurposes.push(context?.purpose)
+        if (state.modelUnavailable && context?.purpose !== 'observe')
+          throw new Error('TEST_MODEL_UNAVAILABLE')
         state.productReads += 1
         if (state.productReads === holdProductReadAt) {
           held.resolve()
@@ -240,6 +244,8 @@ function fixture({
     childPlan,
     current,
     state,
+    evidence,
+    delegation,
     heldProductRead: held.promise,
     advancePastDeadline() {
       state.now = expiredAt
@@ -249,6 +255,67 @@ function fixture({
     },
   }
 }
+
+test('child cancellation reads current product authority for observation, while inference stays blocked', async () => {
+  const f = fixture()
+  const request = {
+    executionId: childExecutionId,
+    attemptId: childAttemptId,
+    idempotencyKey: 'child-cancel-model-unavailable',
+    executionPlan: f.childPlan,
+  }
+  const original = await f.current.readRuntime(request)
+  f.state.modelUnavailable = true
+  await expect(f.current.readRuntime(request)).rejects.toThrow('TEST_MODEL_UNAVAILABLE')
+  f.state.productPurposes = []
+  expect(await f.current.readRuntime(request, 'cancel')).toEqual(original)
+  expect(await f.current.readRecord(request, 'cancel')).toMatchObject({ current: original })
+  expect(f.state.productPurposes).toEqual(['observe', 'observe', 'observe', 'observe'])
+  f.evidence.allowedPrincipalIds = ['svc_other']
+  await expect(f.current.readRuntime(request, 'cancel')).rejects.toThrow(
+    'PI_CHILD_MODEL_AUTHORITY_DENIED'
+  )
+})
+
+test('observation purpose preserves child actor, workspace, expiry and delegation fences', async () => {
+  for (const fault of ['actor', 'workspace', 'revision', 'expiry', 'delegation']) {
+    const f = fixture()
+    if (fault === 'actor')
+      f.evidence.canonicalActorPrincipalId = 'user:11111111-1111-4111-8111-111111111114'
+    if (fault === 'workspace') f.evidence.workspaceId = 'wsp_01JCBCDEF0123456789ABCDEFG'
+    if (fault === 'revision') f.evidence.authorityRevision = 2
+    if (fault === 'expiry') f.evidence.expiresAt = at
+    if (fault === 'delegation') f.delegation.childAttemptId = 'att_01JCBCDEF0123456789ABCDEFG'
+    await expect(
+      f.current.readRuntime(
+        {
+          executionId: childExecutionId,
+          attemptId: childAttemptId,
+          idempotencyKey: 'child-cancel-current-fences',
+          executionPlan: f.childPlan,
+        },
+        'cancel'
+      )
+    ).rejects.toThrow('PI_CHILD_MODEL_AUTHORITY_DENIED')
+  }
+})
+
+test('a deadline expiring during the final cancellation product read is refused', async () => {
+  const f = fixture({ holdProductReadAt: 2 })
+  const pending = f.current.readRuntime(
+    {
+      executionId: childExecutionId,
+      attemptId: childAttemptId,
+      idempotencyKey: 'child-cancel-await-deadline',
+      executionPlan: f.childPlan,
+    },
+    'cancel'
+  )
+  await f.heldProductRead
+  f.advancePastDeadline()
+  f.releaseProductRead()
+  await expect(pending).rejects.toThrow('PI_CHILD_MODEL_AUTHORITY_DENIED')
+})
 
 test('child budget admission rejects a parent deadline that expires during its final stable product read', async () => {
   const f = fixture({ holdProductReadAt: 4 })

@@ -87,11 +87,16 @@ export interface CanonicalLeadIntentReader {
  * Deleted messages, revoked grants or a replaced lead return no authority.
  * Implementations must not accept client prompt/configuration as canonical data.
  */
-export interface CanonicalLeadMessageReader {
-  readCurrent(intent: CanonicalLeadIntent): Promise<CanonicalLeadMessageAuthority | undefined>
-}
-
 export type CanonicalPiDurableAuthorityPurpose = 'inference' | 'read'
+
+export interface CanonicalLeadMessageReader {
+  /** `purpose` is `read` only for status, progress and cancel. A reader that gates on model
+   * readiness must not do so for `read`; absent means `inference`. */
+  readCurrent(
+    intent: CanonicalLeadIntent,
+    purpose?: CanonicalPiDurableAuthorityPurpose
+  ): Promise<CanonicalLeadMessageAuthority | undefined>
+}
 
 export interface CanonicalPiDurableAuthorityOptions {
   readonly intents: CanonicalLeadIntentReader
@@ -142,21 +147,30 @@ export class CanonicalPiDurableAuthority {
     return this.#safe(async () => (await this.#fromRequest(request)).admission)
   }
 
-  async assertAuthority(authority: DurableExecutionAuthority): Promise<void> {
+  async assertAuthority(
+    authority: DurableExecutionAuthority,
+    purpose: 'inference' | 'cancel' = 'inference'
+  ): Promise<void> {
     return this.#safe(async () => {
-      const resolved = await this.#fromRequest(authority.request)
+      const resolved = await this.#fromRequest(
+        authority.request,
+        purpose === 'cancel' ? 'read' : 'inference'
+      )
       const admission = PiDurableAdmissionSchema.parse(authority.admission)
       if (digest(resolved.admission) !== digest(admission)) reject()
     })
   }
 
-  async #fromRequest(input: RuntimeStartRequest): Promise<CanonicalPiDurableAdmission> {
+  async #fromRequest(
+    input: RuntimeStartRequest,
+    purpose: CanonicalPiDurableAuthorityPurpose = 'inference'
+  ): Promise<CanonicalPiDurableAdmission> {
     const request = RuntimeStartRequestSchema.parse(input)
     const intent = CanonicalLeadIntentSchema.parse(
       await this.options.intents.getByAttempt(request.attemptId)
     )
     if (intent.attemptId !== request.attemptId) reject()
-    const resolved = await this.#derive(intent)
+    const resolved = await this.#derive(intent, purpose)
     if (digest(resolved.startRequest) !== digest(request)) reject()
     return resolved
   }
@@ -186,7 +200,7 @@ export class CanonicalPiDurableAuthority {
     )
       reject()
     const [messageInput, budgetInput] = await Promise.all([
-      this.options.messages.readCurrent(structuredClone(intent)),
+      this.options.messages.readCurrent(structuredClone(intent), purpose),
       this.options.budgets.resolve({
         execution: structuredClone(execution),
         attempt: structuredClone(attempt),

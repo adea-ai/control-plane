@@ -16,6 +16,7 @@ import { canonicalJsonStringify } from '@control-plane/contracts'
 
 const TimestampSchema = z.iso.datetime()
 const SemverSchema = z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
+const GraphContentDigestVersionSchema = z.literal('canonical-json-v1')
 const ReferenceSchema = z
   .string()
   .min(1)
@@ -28,6 +29,7 @@ export const PublishedGraphDefinitionSchema = z
     revision: z.number().int().positive(),
     lifecycle: z.enum(['published', 'deprecated', 'revoked']),
     content: GraphDefinitionContentSchema,
+    digestVersion: GraphContentDigestVersionSchema.optional(),
     publishedAt: TimestampSchema,
     changedAt: TimestampSchema,
     reason: z.string().min(1).max(1_024).optional(),
@@ -44,7 +46,7 @@ export const PublishedGraphDefinitionSchema = z
     if (
       version.reference.graphDefinitionId !== version.content.graphDefinitionId ||
       version.reference.graphVersion !== version.content.graphVersion ||
-      version.reference.contentDigest !== contentDigest(version.content)
+      !contentDigestMatches(version.content, version.reference.contentDigest, version.digestVersion)
     ) {
       context.addIssue({
         code: 'custom',
@@ -262,6 +264,7 @@ export class GraphDefinitionCatalog {
       revision: 1,
       lifecycle: 'published',
       content,
+      digestVersion: 'canonical-json-v1',
       publishedAt: input.publishedAt,
       changedAt: input.publishedAt,
     })
@@ -296,10 +299,20 @@ export class GraphDefinitionCatalog {
     const reference = GraphReferenceSchema.parse(referenceInput)
     const version = await this.repository.get(reference.graphDefinitionId, reference.graphVersion)
     if (!version) throw new GraphCatalogError('GRAPH_NOT_FOUND')
-    if (version.reference.contentDigest !== reference.contentDigest) {
+    let parsed: PublishedGraphDefinition
+    try {
+      parsed = PublishedGraphDefinitionSchema.parse(version)
+    } catch {
       throw new GraphCatalogError('GRAPH_DIGEST_MISMATCH')
     }
-    return version
+    if (
+      parsed.reference.graphDefinitionId !== reference.graphDefinitionId ||
+      parsed.reference.graphVersion !== reference.graphVersion ||
+      parsed.reference.contentDigest !== reference.contentDigest
+    ) {
+      throw new GraphCatalogError('GRAPH_DIGEST_MISMATCH')
+    }
+    return parsed
   }
 
   deprecate(input: LifecycleChangeInput): Promise<PublishedGraphDefinition> {
@@ -375,6 +388,7 @@ function sameContent(left: PublishedGraphDefinition, right: PublishedGraphDefini
     left.reference.graphDefinitionId === right.reference.graphDefinitionId &&
     left.reference.graphVersion === right.reference.graphVersion &&
     left.reference.contentDigest === right.reference.contentDigest &&
+    left.digestVersion === right.digestVersion &&
     canonicalJsonStringify(left.content) === canonicalJsonStringify(right.content)
   )
 }
@@ -383,7 +397,39 @@ function contentDigest(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonicalJsonStringify(value)).digest('hex')}`
 }
 
-// Uses the locale-independent canonical serializer from contracts: the
-// GraphDefinitionContent key set contains schemaVersion/schemas, which
-// localeCompare orders differently per host — the digest was host-dependent
-// before this fix (#612 P0).
+function contentDigestMatches(
+  value: unknown,
+  expected: string,
+  digestVersion: PublishedGraphDefinition['digestVersion']
+): boolean {
+  if (digestVersion === 'canonical-json-v1') return contentDigest(value) === expected
+  if (digestVersion !== undefined) return false
+  return (
+    contentDigest(value) === expected ||
+    legacyLocaleContentDigest(value) === expected ||
+    legacyLocaleContentDigest(value, 'en') === expected
+  )
+}
+
+// CANONICAL-JSON: retain the pre-#618 locale serializer only to verify unversioned historical
+// graph records; new publications always carry the explicit canonical-json-v1 version.
+function legacyLocaleContentDigest(value: unknown, locale?: string): string {
+  return `sha256:${createHash('sha256')
+    .update(legacyLocaleCanonicalJson(value, locale))
+    .digest('hex')}`
+}
+
+function legacyLocaleCanonicalJson(value: unknown, locale?: string): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => legacyLocaleCanonicalJson(entry, locale)).join(',')}]`
+  }
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value)
+      .toSorted(([left], [right]) =>
+        locale === undefined ? left.localeCompare(right) : left.localeCompare(right, locale)
+      )
+      .map(([key, entry]) => `${JSON.stringify(key)}:${legacyLocaleCanonicalJson(entry, locale)}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}

@@ -257,7 +257,12 @@ export async function createInventoryFixtureStore({
         await transaction.put({
           namespace: 'executions',
           id: `e-${createHash('sha256').update('fixture-malformed-execution').digest('hex')}`,
-          value: { broken: true },
+          // Keep the ownership envelope admissible while leaving the execution
+          // payload malformed for the inventory parser.
+          value: {
+            broken: true,
+            correlation: { projectId: 'prj_fixture-malformed-execution' },
+          },
         })
       })
     }

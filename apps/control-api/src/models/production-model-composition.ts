@@ -26,6 +26,8 @@ import { createProductionLeadProductAuthority } from './production-lead-product.
 import { createProductionLeadReadiness } from './production-lead-readiness.js'
 import { createProductionFacadeRetention } from './production-facade-retention.js'
 import { createProductionRuntimeBinding } from './production-runtime-binding.js'
+import type { ProductionChildBridgeContext } from '../pi-durable/production-child-bridge.js'
+import type { ChildUsageOutcomesFor } from '../pi-durable/child-usage-outcomes.js'
 import { createPiLeadModelProductAuthority } from '../pi-durable/model-product-authority.js'
 import {
   createNodePiDurableLeadComposition,
@@ -95,8 +97,15 @@ export interface ProductionPiLeadCompositionOptions {
       ProductionChildDelegationOptions,
       'product' | 'readCurrent' | 'now' | 'onEventRetained'
     > & { readonly readCurrent?: ProductionChildDelegationOptions['readCurrent'] }
+    /**
+     * The durable child cost-state projection per delegation. The bridge records a child's estimate and
+     * reservation in it, and the terminal settlement reads and completes it, so both use this one factory.
+     */
+    readonly usageOutcomes: ChildUsageOutcomesFor
+    /** The second argument carries this composition's own canonical child ports for the bridge. */
     readonly createGovernedDelegateChild: (
-      service: DelegationService
+      service: DelegationService,
+      context: ProductionChildBridgeContext
     ) => NonNullable<NodePiDurableLeadCompositionOptions['governedDelegateChild']>
     /** Lease and alias only: child admission, funding and facades are composed by the server. */
     readonly modelAuthority: Pick<
@@ -180,6 +189,7 @@ export async function createProductionPiLeadComposition(
       typeof children.delegation?.scopeAdmission?.resolveCallerPrincipalId !== 'function' ||
       typeof children.delegation?.scopeAdmission?.now !== 'function' ||
       !children.delegation?.scopeAdmission?.authority ||
+      typeof children.usageOutcomes !== 'function' ||
       typeof children.runtime?.childProgress?.scan !== 'function' ||
       typeof children.runtime?.consumeParentInbox !== 'function' ||
       typeof children.tools?.service?.execute !== 'function' ||
@@ -268,6 +278,7 @@ export async function createProductionPiLeadComposition(
           delegations: children.delegation.records,
           toolCalls: children.tools.service.calls,
           product: options.product,
+          assertRetainedProductCurrent: product.assertRetainedProductCurrent,
           ...(options.admission.now ? { now: options.admission.now } : {}),
         })
       : undefined
@@ -301,7 +312,12 @@ export async function createProductionPiLeadComposition(
         : undefined
     const governedDelegateChild =
       children && childDelegation
-        ? children.createGovernedDelegateChild(childDelegation.service)
+        ? children.createGovernedDelegateChild(childDelegation.service, {
+            authority: childCurrent!,
+            modelBinding: childHost!.bindingFor,
+            usageOutcomes: children.usageOutcomes,
+            runtime: { start: (request) => runtimeBinding.current().start(request) },
+          })
         : undefined
     const canonical = createCanonicalModelHostComposition({
       canonical: {
@@ -470,6 +486,11 @@ export async function createProductionPiLeadComposition(
             childAuthority,
             governedDelegateChild,
             delegationService: childDelegation.service,
+            childSettlement: {
+              delegations: options.children.delegation.records,
+              usageOutcomes: options.children.usageOutcomes,
+              now: options.admission.now ?? (() => new Date().toISOString()),
+            },
             tools: {
               service: options.children.tools.service,
               assertAuthority: currentToolAuthority.assertCurrent,
@@ -572,6 +593,13 @@ export async function createProductionPiLeadComposition(
       product,
       resolveChildSelection: product.resolveChildSelection,
       adapter: installed.adapter,
+      /** Settles completed children now, as the recovery pass does. Present with `children`. */
+      ...(installed.settleChildTerminalAccounting
+        ? { settleChildTerminalAccounting: installed.settleChildTerminalAccounting }
+        : {}),
+      get childTerminalSettlementBlocked() {
+        return installed.childTerminalSettlementBlocked
+      },
       collectTerminalModels: collectModels,
       close: () => {
         closing ??= (async () => {

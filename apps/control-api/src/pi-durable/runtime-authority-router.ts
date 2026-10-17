@@ -19,10 +19,10 @@ export function createPiLeadRuntimeAuthorityRouter(
         Boolean(assertExecutionPlanIntegrity(request.executionPlan).parentExecutionPlan)
       ).resolveAdmission(request)
     },
-    async assertAuthority(authority) {
+    async assertAuthority(authority, purpose) {
       await selected(
         Boolean(assertExecutionPlanIntegrity(authority.request.executionPlan).parentExecutionPlan)
-      ).assertAuthority(authority)
+      ).assertAuthority(authority, purpose)
     },
   }
 }

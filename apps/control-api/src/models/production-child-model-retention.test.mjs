@@ -69,3 +69,12 @@ test('immutable child cache slot rejects changed admission and missing execution
   delete missing.request.executionId
   expect(() => collector.remember(missing)).toThrow('PI_CHILD_MODEL_EXECUTION_REQUIRED')
 })
+test('the same attempt may later present the adapter handle, digest and version', () => {
+  const { collector, authority } = fixture()
+  collector.remember(authority(0))
+  const resumed = { ...authority(0), handle: 'handle', providerDigest: 'digest', version: 1 }
+  expect(() => collector.remember(resumed)).not.toThrow()
+  const changed = { ...resumed }
+  changed.admission.selection.selectionRevision = 2
+  expect(() => collector.remember(changed)).toThrow('PI_CHILD_MODEL_BINDING_CHANGED')
+})

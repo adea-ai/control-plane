@@ -1,5 +1,9 @@
 import { expect, test } from 'bun:test'
-import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import { ExecutionPlanCompiler, assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
+import {
+  createExecutionPlanTestFixture,
+  createExecutionPlanTestFixtureInputs,
+} from '@control-plane/execution-plan/testing'
 import { RuntimeDiscoveryAttemptRouter } from './runtime-attempt-router.ts'
 import { ManagedPiRemoteCommandFactory } from './managed-pi-remote-command.ts'
 
@@ -51,6 +55,36 @@ test('legacy router rejects mismatched real projects before discovery', async ()
       },
       executionPlan,
     })
+  ).rejects.toThrow('WORKFLOW_RUNTIME_SCOPE_UNSUPPORTED')
+  expect(reads).toBe(0)
+})
+
+test('legacy runtime router rejects a valid explicit project plan2 before discovery', async () => {
+  let reads = 0
+  const router = new RuntimeDiscoveryAttemptRouter({
+    discovery: {
+      listRuntimeConnections: async () => {
+        reads++
+        return []
+      },
+    },
+  })
+  const input = createExecutionPlanTestFixtureInputs()
+  const executionPlan = new ExecutionPlanCompiler('1.0.0').compile({
+    ...input,
+    correlation: {
+      ...input.correlation,
+      executionScope: {
+        schemaVersion: 1,
+        kind: 'project',
+        projectId: input.correlation.projectId,
+      },
+    },
+  })
+  expect(executionPlan.schemaVersion).toBe(2)
+  expect(assertExecutionPlanIntegrity(executionPlan)).toEqual(executionPlan)
+  await expect(
+    router.resolve({ execution: { correlation: executionPlan.correlation }, executionPlan })
   ).rejects.toThrow('WORKFLOW_RUNTIME_SCOPE_UNSUPPORTED')
   expect(reads).toBe(0)
 })
