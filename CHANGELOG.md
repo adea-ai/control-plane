@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.101.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.101.0...workspace-v1.101.1) (2026-10-17)
+
+
+### Maintenance
+
+* **bun:** align pins and digest-pinned images to Bun 1.4.3 ([#1162](https://github.com/adea-ai/control-plane/issues/1162)) ([3e7326b](https://github.com/adea-ai/control-plane/commit/3e7326b9df69296b948f327c2a864bb48bb219df))
+
 ## [1.101.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.100.5...workspace-v1.101.0) (2026-10-16)
 
 
