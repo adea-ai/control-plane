@@ -1,0 +1,1332 @@
+{
+  "schemaVersion": 1,
+  "exceptions": [
+    {
+      "source": {
+        "path": "packages/context/src/index.ts",
+        "owner": "normalizeLegacy",
+        "fingerprint": "14c3a83ab4dfcd123d30b33adbf08206f1a33a9df634e435eda2c6b111ed6d50",
+        "sitePath": "packages/context/src/index.ts",
+        "siteOwner": "normalizeLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/context/src/index.ts",
+        "owner": "sha256Legacy",
+        "fingerprint": "2b4f5a6acc6100db99c3e638e6987bb2b0b55d146046debb4c27ac1b6b94a22b",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "Legacy context-package integrity verification accepts pre-cutover content digests for schemaVersion 1 and legacy untagged records; records marked canonicalizationVersion 2 use the shared canonical JSON form.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/context/src/index.ts",
+        "owner": "normalizeLegacy",
+        "fingerprint": "7ea7e16f4046cca4bcb17cb49f9cae03e199ef5e7b43eae717ac6248eaafdd95",
+        "sitePath": "packages/context/src/index.ts",
+        "siteOwner": "normalizeLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/context/src/index.ts",
+        "owner": "sha256LegacyLocale",
+        "fingerprint": "4a6c0e88e1a840da13e692ac3defe75877dfd471f1dde754a237a24b0ad4be73",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "Legacy context-package integrity verification accepts pre-cutover content digests for schemaVersion 1 and legacy untagged records; records marked canonicalizationVersion 2 use the shared canonical JSON form.",
+      "provenance": ["PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739"]
+    },
+    {
+      "source": {
+        "path": "packages/context/src/index.ts",
+        "owner": "normalizeLegacy",
+        "fingerprint": "9604f97b22cf49a772ddf2dca1d1f93cbd80460afc1c0269aab124c21d6d5f61",
+        "sitePath": "packages/context/src/index.ts",
+        "siteOwner": "normalizeLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/context/src/index.ts",
+        "owner": "sha256LegacyLocale",
+        "fingerprint": "4a6c0e88e1a840da13e692ac3defe75877dfd471f1dde754a237a24b0ad4be73",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "Legacy context-package integrity verification accepts pre-cutover content digests for schemaVersion 1 and legacy untagged records; records marked canonicalizationVersion 2 use the shared canonical JSON form.",
+      "provenance": ["PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739"]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonical",
+        "fingerprint": "bda382a75d90f40ee3fd0d5dfcedc886f2f9effba2301a163c019e8a3918a130",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "digest",
+        "fingerprint": "3165403068992137d558b6092e6b2a3fa826f519dfd50367960c4d1f79a17afb",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "Legacy context-command semantic digests remain necessary for untagged and explicit v1 inbox records; new v2 envelopes use the shared canonical JSON form.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonical",
+        "fingerprint": "bda382a75d90f40ee3fd0d5dfcedc886f2f9effba2301a163c019e8a3918a130",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-node-inbox-repository.ts",
+        "owner": "key",
+        "fingerprint": "7b7737f6b7c229814cf4e7053a532b89c9f7bc7bf1469576155c038dccb67d16",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The SQLite context-operation index uses this persisted legacy lookup key. Existing index keys are not bulk-rehashed here. In PR #1153, the exact optional-locale helper branches are both conservatively included; the operation-key call uses the default branch.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "37ee43d5b02d59afefb08b046b27bd1fec3ca4f2fbcc494cfd004cdf1bb15ca7",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "digest",
+        "fingerprint": "3165403068992137d558b6092e6b2a3fa826f519dfd50367960c4d1f79a17afb",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "Legacy context-command semantic digests remain necessary for untagged and explicit v1 inbox records; new v2 envelopes use the shared canonical JSON form.",
+      "provenance": ["PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739"]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "37ee43d5b02d59afefb08b046b27bd1fec3ca4f2fbcc494cfd004cdf1bb15ca7",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-node-inbox-repository.ts",
+        "owner": "key",
+        "fingerprint": "7b7737f6b7c229814cf4e7053a532b89c9f7bc7bf1469576155c038dccb67d16",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The SQLite context-operation index uses this persisted legacy lookup key. Existing index keys are not bulk-rehashed here. In PR #1153, the exact optional-locale helper branches are both conservatively included; the operation-key call uses the default branch.",
+      "provenance": ["PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739"]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "9faf4f2a8e2fe9e302c3106121102e7cb1518d184034851ca74a16b3b75cb574",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "digest",
+        "fingerprint": "3165403068992137d558b6092e6b2a3fa826f519dfd50367960c4d1f79a17afb",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "Legacy context-command semantic digests remain necessary for untagged and explicit v1 inbox records; new v2 envelopes use the shared canonical JSON form.",
+      "provenance": ["PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739"]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "9faf4f2a8e2fe9e302c3106121102e7cb1518d184034851ca74a16b3b75cb574",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-node-inbox-repository.ts",
+        "owner": "key",
+        "fingerprint": "7b7737f6b7c229814cf4e7053a532b89c9f7bc7bf1469576155c038dccb67d16",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The SQLite context-operation index uses this persisted legacy lookup key. Existing index keys are not bulk-rehashed here. In PR #1153, the exact optional-locale helper branches are both conservatively included; the operation-key call uses the default branch.",
+      "provenance": ["PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739"]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/project-state.ts",
+        "owner": "normalize",
+        "fingerprint": "87442b3fe256c69128b65ec967294971fa275b54e04e514666c5bde61dfb73b0",
+        "sitePath": "packages/domain/src/project-state.ts",
+        "siteOwner": "normalize",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/domain/src/project-state.ts",
+        "owner": "digest",
+        "fingerprint": "e35db37d73bce0ec732b394f7e7633670e29e952c09b3d9267d17cdfe064cf6d",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The mutation reader dual-accepts the legacy digest for rows written before the code-point cutover; current writes compute the code-point digest helper, while explicit record-version metadata remains separate #612 work.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "a043bff914a7f71d0f55ea8a4954d83344ee1df559e49d7dfc82a0cd67ef44b5",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "apps/runtime-gateway/src/runtime-event-ingestion.ts",
+        "owner": "#reject",
+        "fingerprint": "678846b529f5d43a457a411fa90367cff2e5ff9c08a69078bfb68852470e22a2",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Static analysis merges fields returned by frameHashes; this exact edge is a property-insensitive false positive because reject compares the s2 frameHash, while the legacy field is separate.",
+      "provenance": [
+        "origin/main d1d1d3bd1 (merge of PR #1154; canonicalJson now carries both optional-locale comparator branches, both conservatively included)",
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "db763d56cac913502435ea2346d1713dc20343045ca48ddec940c8f5d83475f1",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "apps/runtime-gateway/src/runtime-event-ingestion.ts",
+        "owner": "#reject",
+        "fingerprint": "678846b529f5d43a457a411fa90367cff2e5ff9c08a69078bfb68852470e22a2",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Static analysis merges fields returned by frameHashes; this exact edge is a property-insensitive false positive because reject compares the s2 frameHash, while the legacy field is separate.",
+      "provenance": [
+        "origin/main d1d1d3bd1 (merge of PR #1154; canonicalJson now carries both optional-locale comparator branches, both conservatively included)",
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "a043bff914a7f71d0f55ea8a4954d83344ee1df559e49d7dfc82a0cd67ef44b5",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "apps/runtime-gateway/src/runtime-event-ingestion.ts",
+        "owner": "frameHashes",
+        "fingerprint": "633bd2605bec1efa84f482b1122c157293302e9138878b789f3706d6cb1d096a",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Replay receipts retain the legacy frame hash so pre-cutover receipt bytes can still be verified; the current frameHash is separately versioned.",
+      "provenance": [
+        "origin/main d1d1d3bd1 (merge of PR #1154; canonicalJson now carries both optional-locale comparator branches, both conservatively included)",
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "db763d56cac913502435ea2346d1713dc20343045ca48ddec940c8f5d83475f1",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "apps/runtime-gateway/src/runtime-event-ingestion.ts",
+        "owner": "frameHashes",
+        "fingerprint": "633bd2605bec1efa84f482b1122c157293302e9138878b789f3706d6cb1d096a",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Replay receipts retain the legacy frame hash so pre-cutover receipt bytes can still be verified; the current frameHash is separately versioned.",
+      "provenance": [
+        "origin/main d1d1d3bd1 (merge of PR #1154; canonicalJson now carries both optional-locale comparator branches, both conservatively included)",
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "4732263a0bd9e6bd5f3a1e5b3453fcb0134594cc9a6335ce1f1c327a16ccfcf8",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/events/src/index.ts",
+        "owner": "append",
+        "fingerprint": "66484bbbcb31a2fbe1e8cdb25279133b6035697b15b063a2359be0e69074aa83",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "This is the pre-PR #1152 in-memory event-row payloadHash writer. The events candidate migrates that row writer to v2; this exact baseline edge remains only for branch-order compatibility.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed",
+        "PR #1152 removes this in-memory legacy writer"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "a043bff914a7f71d0f55ea8a4954d83344ee1df559e49d7dfc82a0cd67ef44b5",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/events/src/index.ts",
+        "owner": "hashExecutionEventPayload",
+        "fingerprint": "30eaba359b1a5f112077226a1ac2d563c5d1477501eae2617f0546caf1385c42",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The legacy event payload hash is retained for pre-cutover replay receipt verification; new event-row hashes use the versioned v2 helper.",
+      "provenance": [
+        "origin/main d1d1d3bd1 (merge of PR #1154; canonicalJson now carries both optional-locale comparator branches, both conservatively included; the legacy hash site threads the optional locale through)",
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "db763d56cac913502435ea2346d1713dc20343045ca48ddec940c8f5d83475f1",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/events/src/index.ts",
+        "owner": "hashExecutionEventPayload",
+        "fingerprint": "30eaba359b1a5f112077226a1ac2d563c5d1477501eae2617f0546caf1385c42",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The legacy event payload hash is retained for pre-cutover replay receipt verification; new event-row hashes use the versioned v2 helper.",
+      "provenance": [
+        "origin/main d1d1d3bd1 (merge of PR #1154; canonicalJson now carries both optional-locale comparator branches, both conservatively included; the legacy hash site threads the optional locale through)",
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/execution-plan/src/index.ts",
+        "owner": "normalizeLegacy",
+        "fingerprint": "14c3a83ab4dfcd123d30b33adbf08206f1a33a9df634e435eda2c6b111ed6d50",
+        "sitePath": "packages/execution-plan/src/index.ts",
+        "siteOwner": "normalizeLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/execution-plan/src/index.ts",
+        "owner": "sha256Legacy",
+        "fingerprint": "4328a186ab72e542f6d2b69da3c93b9ee610b25b71a08f01a93d937f720db81b",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "Stored pre-cutover execution plans require this exact locale-dependent digest during integrity verification; new plans use the code-point canonical form.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/orchestration/src/delegation.ts",
+        "owner": "canonical",
+        "fingerprint": "254999a424c1f4537ad399c8f72f9174a862f1d9fc0cde45e200f87e030c5ddd",
+        "sitePath": "packages/orchestration/src/delegation.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/orchestration/src/delegation.ts",
+        "owner": "digest",
+        "fingerprint": "e35db37d73bce0ec732b394f7e7633670e29e952c09b3d9267d17cdfe064cf6d",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "Delegation reads dual-accept the legacy input digest for pre-cutover durable commands; new writes compute the code-point digest helper, while explicit record-version metadata remains separate #612 work.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/orchestration/src/graph-catalog.ts",
+        "owner": "legacyLocaleCanonicalJson",
+        "fingerprint": "92262d9cef99e674d26ce5acea6b98aa3a0b4c6abf891ceffcc4f042b070a2e0",
+        "sitePath": "packages/orchestration/src/graph-catalog.ts",
+        "siteOwner": "legacyLocaleCanonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/orchestration/src/graph-catalog.ts",
+        "owner": "legacyLocaleContentDigest",
+        "fingerprint": "e4fe8e3537134e02b660a10f17fd0d6ef57ce8c5d1c1adbb4c3da4f67dd9c7a0",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "PR #1149 retains the pre-#618 locale digest only to verify unversioned historical graph records; new publications carry canonical-json-v1.",
+      "provenance": ["PR #1149 head 5a9cc866"]
+    },
+    {
+      "source": {
+        "path": "packages/orchestration/src/graph-catalog.ts",
+        "owner": "legacyLocaleCanonicalJson",
+        "fingerprint": "d124f7fc0a817314e1f400a63c46fb9c65cae5beb8b88ddd58c36a0842e759a1",
+        "sitePath": "packages/orchestration/src/graph-catalog.ts",
+        "siteOwner": "legacyLocaleCanonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/orchestration/src/graph-catalog.ts",
+        "owner": "legacyLocaleContentDigest",
+        "fingerprint": "e4fe8e3537134e02b660a10f17fd0d6ef57ce8c5d1c1adbb4c3da4f67dd9c7a0",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "PR #1149 retains the pre-#618 locale digest only to verify unversioned historical graph records; new publications carry canonical-json-v1.",
+      "provenance": ["PR #1149 head 5a9cc866"]
+    },
+    {
+      "source": {
+        "path": "packages/profile-portability/src/manifest.ts",
+        "owner": "compareRecord",
+        "fingerprint": "ac83bb485573fa753dd778b664999f866436d1c3e04804fac1b111d32070112c",
+        "sitePath": "packages/profile-portability/src/manifest.ts",
+        "siteOwner": "normalizeManifestInput",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/profile-portability/src/cli.ts",
+        "owner": "summary",
+        "fingerprint": "eee9c8e1d9c11f00a463ebfdeca0d11f1ee0148b361f9c8469869eab4eb5b0b2",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "The CLI summary only reports the already computed manifest contentDigest. This exact edge is a report-only analyzer overapproximation, not a digest write or verification.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/profile-portability/src/manifest.ts",
+        "owner": "compareRecord",
+        "fingerprint": "ac83bb485573fa753dd778b664999f866436d1c3e04804fac1b111d32070112c",
+        "sitePath": "packages/profile-portability/src/manifest.ts",
+        "siteOwner": "normalizeManifestInput",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/profile-portability/src/manifest.ts",
+        "owner": "digestJson",
+        "fingerprint": "72a9e5ef303da1b314f97836987a31de2228646632e3769fa217c6c8a62c5c1d",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "Published portability schema-v1 digests are persisted and verified on read. Historical bytes include the locale-ordering epoch and the later unversioned code-point epoch; a separately versioned transition is still required.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/profile-portability/src/manifest.ts",
+        "owner": "compareRecord",
+        "fingerprint": "ac83bb485573fa753dd778b664999f866436d1c3e04804fac1b111d32070112c",
+        "sitePath": "packages/profile-portability/src/manifest.ts",
+        "siteOwner": "normalizeManifestInput",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/profile-portability/src/manifest.ts",
+        "owner": "finalizePortableManifest",
+        "fingerprint": "fb20d1077beec1df5a25f26b45dee544c88ab111db089eb861cd4b178fb607d5",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Published portability schema-v1 digests are persisted and verified on read. Historical bytes include the locale-ordering epoch and the later unversioned code-point epoch; a separately versioned transition is still required.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/profile-portability/src/manifest.ts",
+        "owner": "normalizeManifestInput",
+        "fingerprint": "41891241b53cdfdac7c1441e989d9c186b417236f12a02c996f24b839b631828",
+        "sitePath": "packages/profile-portability/src/manifest.ts",
+        "siteOwner": "normalizeManifestInput",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/profile-portability/src/cli.ts",
+        "owner": "summary",
+        "fingerprint": "eee9c8e1d9c11f00a463ebfdeca0d11f1ee0148b361f9c8469869eab4eb5b0b2",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "The CLI summary only reports the already computed manifest contentDigest. This exact edge is a report-only analyzer overapproximation, not a digest write or verification.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/profile-portability/src/manifest.ts",
+        "owner": "normalizeManifestInput",
+        "fingerprint": "41891241b53cdfdac7c1441e989d9c186b417236f12a02c996f24b839b631828",
+        "sitePath": "packages/profile-portability/src/manifest.ts",
+        "siteOwner": "normalizeManifestInput",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/profile-portability/src/manifest.ts",
+        "owner": "digestJson",
+        "fingerprint": "72a9e5ef303da1b314f97836987a31de2228646632e3769fa217c6c8a62c5c1d",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "Published portability schema-v1 digests are persisted and verified on read. Historical bytes include the locale-ordering epoch and the later unversioned code-point epoch; a separately versioned transition is still required.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/profile-portability/src/manifest.ts",
+        "owner": "normalizeManifestInput",
+        "fingerprint": "41891241b53cdfdac7c1441e989d9c186b417236f12a02c996f24b839b631828",
+        "sitePath": "packages/profile-portability/src/manifest.ts",
+        "siteOwner": "normalizeManifestInput",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/profile-portability/src/manifest.ts",
+        "owner": "finalizePortableManifest",
+        "fingerprint": "fb20d1077beec1df5a25f26b45dee544c88ab111db089eb861cd4b178fb607d5",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Published portability schema-v1 digests are persisted and verified on read. Historical bytes include the locale-ordering epoch and the later unversioned code-point epoch; a separately versioned transition is still required.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/mcp-adapter.ts",
+        "owner": "canonical",
+        "fingerprint": "1959d06639d66c418e6d46640d0eaaa1e68dc644f1d96e6c756a2724b3645254",
+        "sitePath": "packages/tool-execution/src/mcp-adapter.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/tool-execution/src/mcp-adapter.ts",
+        "owner": "#import",
+        "fingerprint": "3fd37ef40258d09583d07b067840232a3203802435e6eddea5a239463dcbc3f8",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "This helper computes the legacy discovered-schema digest needed to preserve and verify pre-cutover tool registrations.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/mcp-adapter.ts",
+        "owner": "canonical",
+        "fingerprint": "1959d06639d66c418e6d46640d0eaaa1e68dc644f1d96e6c756a2724b3645254",
+        "sitePath": "packages/tool-execution/src/mcp-adapter.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/tool-execution/src/mcp-adapter.ts",
+        "owner": "digest",
+        "fingerprint": "e35db37d73bce0ec732b394f7e7633670e29e952c09b3d9267d17cdfe064cf6d",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "This helper computes the legacy discovered-schema digest needed to preserve and verify pre-cutover tool registrations.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "1959d06639d66c418e6d46640d0eaaa1e68dc644f1d96e6c756a2724b3645254",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/pi-durable-adapter/src/child-continuation.fixture.mjs",
+        "owner": "fixture",
+        "fingerprint": "fc54d7a361f5c686a8667b0d09260c223a69d52881f7c5ea5875339c269f765e",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "The durable child-continuation fixture records a historical tool input digest and must keep reproducing its original bytes.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "1959d06639d66c418e6d46640d0eaaa1e68dc644f1d96e6c756a2724b3645254",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "#executePrepared",
+        "fingerprint": "75dfce3980b59033a87880c93371061290ecfb2e9c0c3221ae9665f00f63f479",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "The legacy tool-input digest remains for untagged historical receipt verification; PR #1151 writes versioned v2 digests for new calls.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 head 2ea1f0ed replaces this new-call writer path with versioned v2"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "1959d06639d66c418e6d46640d0eaaa1e68dc644f1d96e6c756a2724b3645254",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "#executePrepared",
+        "fingerprint": "d6d14a5c3a2e5adc5a8559147f6e5b45b6b0871492495da48866647dd547eb04",
+        "kind": "persistence",
+        "occurrence": 1
+      },
+      "reason": "This is the pre-PR #1151 legacy tool-input digest path. Published PR #1151 writes versioned v2 digests and retains legacy hashing only for untagged historical receipt verification.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 head 2ea1f0ed replaces this new-call writer path with versioned v2"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "1959d06639d66c418e6d46640d0eaaa1e68dc644f1d96e6c756a2724b3645254",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "authorizationRequest",
+        "fingerprint": "4672795d4cfcdcaffc2952ba94d99138b087bbb11b92056fe590bd0971a3deab",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "This is the pre-PR #1151 legacy tool-input digest path. Published PR #1151 writes versioned v2 digests and retains legacy hashing only for untagged historical receipt verification.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 head 2ea1f0ed replaces this new-call writer path with versioned v2"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "1959d06639d66c418e6d46640d0eaaa1e68dc644f1d96e6c756a2724b3645254",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "digest",
+        "fingerprint": "e35db37d73bce0ec732b394f7e7633670e29e952c09b3d9267d17cdfe064cf6d",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The legacy tool-input digest remains for untagged historical receipt verification; PR #1151 writes versioned v2 digests for new calls.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-registry.ts",
+        "owner": "legacyCanonical",
+        "fingerprint": "b59a4d6b8c8d53a68ade65da3d66ff5349c67167c58dda4e4da873052d6f4497",
+        "sitePath": "packages/tool-execution/src/tool-registry.ts",
+        "siteOwner": "legacyCanonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "apps/local-control-plane/src/local-graph-tool-operations.ts",
+        "owner": "#resolveEvidence",
+        "fingerprint": "c2bcfee58d5dac9a40307d73b1afdf848b0d13062304721ba498377f5683fdc3",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "The local graph compares a stored legacy tool-version digest while resolving historical evidence; current tool versions use the shared canonical form.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-registry.ts",
+        "owner": "legacyCanonical",
+        "fingerprint": "b59a4d6b8c8d53a68ade65da3d66ff5349c67167c58dda4e4da873052d6f4497",
+        "sitePath": "packages/tool-execution/src/tool-registry.ts",
+        "siteOwner": "legacyCanonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/tool-execution/src/tool-registry.ts",
+        "owner": "toolExecutionContentDigestLegacy",
+        "fingerprint": "fdfa9a6c61b8274e7acf1f278223fb8e38b9d8550aace0ebea54ace2ea75a3f9",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "Only pre-cutover persisted tool versions need this legacy digest verifier; new tool content digests use the shared canonical form.",
+      "provenance": [
+        "main baseline 311c3a83",
+        "PR #1149 head 5a9cc866",
+        "PR #1150 head 8abf8290",
+        "PR #1152 head 565b5cbb",
+        "PR #1153 final source at 20c55cd8158ea09e1e4234d6069afa4f532ad739",
+        "PR #1151 published immutable head 2ea1f0ed"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "03bc7fa408aef348f71eee4312263393578c6070bf5d5e355fc975a391a55975",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/pi-durable-adapter/src/child-continuation.fixture.mjs",
+        "owner": "fixture",
+        "fingerprint": "fc54d7a361f5c686a8667b0d09260c223a69d52881f7c5ea5875339c269f765e",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "The existing child-continuation fixture retains an evidenced untagged inputDigest through toolInputDigest. It is a historical fixture consumer; the analyzer conservatively reports both optional-locale branches from canonical(value, locale).",
+      "provenance": [
+        "PR #1151 published immutable head 2ea1f0ed",
+        "PR #1151 integration candidate at immutable head 93bef9334055db6a3fbb2ca5c452d3fa60bb0520 (candidate snapshot)"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "03bc7fa408aef348f71eee4312263393578c6070bf5d5e355fc975a391a55975",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "digestWithLocale",
+        "fingerprint": "98bff41f995b4a703b579202139e7ab853466d4986113fce0a8a8eb0c185bb8d",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The untagged receipt matchers accept only the evidenced en-US and sv-SE locale forms through this helper; tagged version 2 accepts only digestV2. The analyzer conservatively reports both default and explicit branches of canonical(value, locale), so this edge does not broaden the accepted locale set.",
+      "provenance": [
+        "PR #1151 published immutable head 2ea1f0ed",
+        "PR #1151 integration candidate at immutable head 93bef9334055db6a3fbb2ca5c452d3fa60bb0520 (candidate snapshot)"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "03bc7fa408aef348f71eee4312263393578c6070bf5d5e355fc975a391a55975",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "digest",
+        "fingerprint": "e35db37d73bce0ec732b394f7e7633670e29e952c09b3d9267d17cdfe064cf6d",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "This helper reproduces host-default legacy bytes for existing legacy APIs and fixture reproduction; the untagged matchers do not use it as a fallback, and tagged version 2 uses digestV2. The analyzer conservatively reports both optional-locale comparator branches although digest calls canonical without a locale.",
+      "provenance": [
+        "PR #1151 published immutable head 2ea1f0ed",
+        "PR #1151 integration candidate at immutable head 93bef9334055db6a3fbb2ca5c452d3fa60bb0520 (candidate snapshot)"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "5c0f226cdabcb343f3568e6874280f0a0f9c5ea1f29c676b7193703c4e53cbc8",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/pi-durable-adapter/src/child-continuation.fixture.mjs",
+        "owner": "fixture",
+        "fingerprint": "fc54d7a361f5c686a8667b0d09260c223a69d52881f7c5ea5875339c269f765e",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "The existing child-continuation fixture retains an evidenced untagged inputDigest through toolInputDigest. It is a historical fixture consumer; the analyzer conservatively reports both optional-locale branches from canonical(value, locale).",
+      "provenance": [
+        "PR #1151 published immutable head 2ea1f0ed",
+        "PR #1151 integration candidate at immutable head 93bef9334055db6a3fbb2ca5c452d3fa60bb0520 (candidate snapshot)"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "5c0f226cdabcb343f3568e6874280f0a0f9c5ea1f29c676b7193703c4e53cbc8",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "digestWithLocale",
+        "fingerprint": "98bff41f995b4a703b579202139e7ab853466d4986113fce0a8a8eb0c185bb8d",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The untagged receipt matchers accept only the evidenced en-US and sv-SE locale forms through this helper; tagged version 2 accepts only digestV2. The analyzer conservatively reports both default and explicit branches of canonical(value, locale), so this edge does not broaden the accepted locale set.",
+      "provenance": [
+        "PR #1151 published immutable head 2ea1f0ed",
+        "PR #1151 integration candidate at immutable head 93bef9334055db6a3fbb2ca5c452d3fa60bb0520 (candidate snapshot)"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "canonical",
+        "fingerprint": "5c0f226cdabcb343f3568e6874280f0a0f9c5ea1f29c676b7193703c4e53cbc8",
+        "sitePath": "packages/tool-execution/src/tool-execution.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/tool-execution/src/tool-execution.ts",
+        "owner": "digest",
+        "fingerprint": "e35db37d73bce0ec732b394f7e7633670e29e952c09b3d9267d17cdfe064cf6d",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "This helper reproduces host-default legacy bytes for existing legacy APIs and fixture reproduction; the untagged matchers do not use it as a fallback, and tagged version 2 uses digestV2. The analyzer conservatively reports both optional-locale comparator branches although digest calls canonical without a locale.",
+      "provenance": [
+        "PR #1151 published immutable head 2ea1f0ed",
+        "PR #1151 integration candidate at immutable head 93bef9334055db6a3fbb2ca5c452d3fa60bb0520 (candidate snapshot)"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "a043bff914a7f71d0f55ea8a4954d83344ee1df559e49d7dfc82a0cd67ef44b5",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "apps/runtime-gateway/src/runtime-event-ingestion.ts",
+        "owner": "#reject",
+        "fingerprint": "678846b529f5d43a457a411fa90367cff2e5ff9c08a69078bfb68852470e22a2",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Property-insensitive analysis merges the separately returned legacy frameHash and s2 fields; this exact edge is a false positive because #reject compares s2. In the PR #1152 candidate, explicit en-US is only used for historical untagged terminal-usage verification.",
+      "provenance": ["PR #1152 published immutable head bf6d40647c5ad8206859c63310fa59b9a0eebf99"]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "a043bff914a7f71d0f55ea8a4954d83344ee1df559e49d7dfc82a0cd67ef44b5",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "apps/runtime-gateway/src/runtime-event-ingestion.ts",
+        "owner": "frameHashes",
+        "fingerprint": "633bd2605bec1efa84f482b1122c157293302e9138878b789f3706d6cb1d096a",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Replay receipts retain the legacy frame hash for pre-cutover receipt compatibility. frameHashes calls the helper without a locale, preserving the existing default bytes; the analyzer conservatively includes the optional en-US branch used only by historical untagged terminal-usage verification.",
+      "provenance": ["PR #1152 published immutable head bf6d40647c5ad8206859c63310fa59b9a0eebf99"]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "a043bff914a7f71d0f55ea8a4954d83344ee1df559e49d7dfc82a0cd67ef44b5",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/events/src/index.ts",
+        "owner": "hashExecutionEventPayload",
+        "fingerprint": "30eaba359b1a5f112077226a1ac2d563c5d1477501eae2617f0546caf1385c42",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The legacy event payload hash remains available for historical verification while new event-row hashes use v2. The explicit en-US branch is used only by historical untagged terminal-usage verification; default helper bytes remain unchanged.",
+      "provenance": ["PR #1152 published immutable head bf6d40647c5ad8206859c63310fa59b9a0eebf99"]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "db763d56cac913502435ea2346d1713dc20343045ca48ddec940c8f5d83475f1",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "apps/runtime-gateway/src/runtime-event-ingestion.ts",
+        "owner": "#reject",
+        "fingerprint": "678846b529f5d43a457a411fa90367cff2e5ff9c08a69078bfb68852470e22a2",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Property-insensitive analysis merges the separately returned legacy frameHash and s2 fields; this exact edge is a false positive because #reject compares s2. In the PR #1152 candidate, explicit en-US is only used for historical untagged terminal-usage verification.",
+      "provenance": ["PR #1152 published immutable head bf6d40647c5ad8206859c63310fa59b9a0eebf99"]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "db763d56cac913502435ea2346d1713dc20343045ca48ddec940c8f5d83475f1",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "apps/runtime-gateway/src/runtime-event-ingestion.ts",
+        "owner": "frameHashes",
+        "fingerprint": "633bd2605bec1efa84f482b1122c157293302e9138878b789f3706d6cb1d096a",
+        "kind": "digest-field",
+        "occurrence": 1
+      },
+      "reason": "Replay receipts retain the legacy frame hash for pre-cutover receipt compatibility. frameHashes calls the helper without a locale, preserving the existing default bytes; the analyzer conservatively includes the optional en-US branch used only by historical untagged terminal-usage verification.",
+      "provenance": ["PR #1152 published immutable head bf6d40647c5ad8206859c63310fa59b9a0eebf99"]
+    },
+    {
+      "source": {
+        "path": "packages/events/src/index.ts",
+        "owner": "canonicalJson",
+        "fingerprint": "db763d56cac913502435ea2346d1713dc20343045ca48ddec940c8f5d83475f1",
+        "sitePath": "packages/events/src/index.ts",
+        "siteOwner": "canonicalJson",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/events/src/index.ts",
+        "owner": "hashExecutionEventPayload",
+        "fingerprint": "30eaba359b1a5f112077226a1ac2d563c5d1477501eae2617f0546caf1385c42",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The legacy event payload hash remains available for historical verification while new event-row hashes use v2. The explicit en-US branch is used only by historical untagged terminal-usage verification; default helper bytes remain unchanged.",
+      "provenance": ["PR #1152 published immutable head bf6d40647c5ad8206859c63310fa59b9a0eebf99"]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonical",
+        "fingerprint": "bda382a75d90f40ee3fd0d5dfcedc886f2f9effba2301a163c019e8a3918a130",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-command-repository.ts",
+        "owner": "create",
+        "fingerprint": "31a4b4ecf395950947135fe99bb987ccd6da35a54ce967b45129abe4cc3c8859",
+        "kind": "persistence",
+        "occurrence": 1
+      },
+      "reason": "Existing baseline SQLite context-operation index persistence retains its historical lookup key. The AST-identity correction reveals this previously cached-away exact sink; the source and sink files are byte-identical to main 311c3a83. This does not authorize a new writer or rehash existing indexes.",
+      "provenance": [
+        "main baseline 311c3a83: source and both SQLite sink files byte-identical",
+        "PR #1154 AST-identity correction: exact previously hidden edge inventory"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonical",
+        "fingerprint": "bda382a75d90f40ee3fd0d5dfcedc886f2f9effba2301a163c019e8a3918a130",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-command-repository.ts",
+        "owner": "recordId",
+        "fingerprint": "613cfec8d218a940d00c1cd40f86f806768ba7175fd038a96363e34adc93bfe2",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "Existing baseline property-insensitive analysis edge: recordId hashes the schema-validated canonical command ID, not the legacy operation-key bytes. This exact site is unchanged from main 311c3a83; the legacy taint comes from another field in the enclosing transaction.",
+      "provenance": [
+        "main baseline 311c3a83: source and both SQLite sink files byte-identical",
+        "PR #1154 AST-identity correction: exact previously hidden edge inventory"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonical",
+        "fingerprint": "bda382a75d90f40ee3fd0d5dfcedc886f2f9effba2301a163c019e8a3918a130",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonical",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-node-inbox-repository.ts",
+        "owner": "accept",
+        "fingerprint": "4f08dc46b285fb71e8c82bff07d7bd4b5dbfed59934595c19ea04cd5605c0579",
+        "kind": "persistence",
+        "occurrence": 1
+      },
+      "reason": "Existing baseline SQLite context-operation index persistence retains its historical lookup key. The AST-identity correction reveals this previously cached-away exact sink; the source and sink files are byte-identical to main 311c3a83. This does not authorize a new writer or rehash existing indexes.",
+      "provenance": [
+        "main baseline 311c3a83: source and both SQLite sink files byte-identical",
+        "PR #1154 AST-identity correction: exact previously hidden edge inventory"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "37ee43d5b02d59afefb08b046b27bd1fec3ca4f2fbcc494cfd004cdf1bb15ca7",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-command-repository.ts",
+        "owner": "create",
+        "fingerprint": "31a4b4ecf395950947135fe99bb987ccd6da35a54ce967b45129abe4cc3c8859",
+        "kind": "persistence",
+        "occurrence": 1
+      },
+      "reason": "The same exact baseline context-index sink under the already-pinned PR #1153 canonicalLegacy comparator. Source and sink files are byte-identical to candidate20c55cd8158ea09e1e4234d6069afa4f532ad739; the analyzer conservatively includes both optional-locale branches although the operation-key call uses the default. Existing durable operation-index bytes are preserved; this does not authorize a new writer.",
+      "provenance": [
+        "PR #1153 candidate 20c55cd8158ea09e1e4234d6069afa4f532ad739: exact source/sink files unchanged",
+        "PR #1153 published repair33bcf78ff46a4c62de97d543bebe7407557cd431 cross-scan after AST-identity fix"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "37ee43d5b02d59afefb08b046b27bd1fec3ca4f2fbcc494cfd004cdf1bb15ca7",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-command-repository.ts",
+        "owner": "recordId",
+        "fingerprint": "613cfec8d218a940d00c1cd40f86f806768ba7175fd038a96363e34adc93bfe2",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The same exact baseline context-index sink under the already-pinned PR #1153 canonicalLegacy comparator. Source and sink files are byte-identical to candidate20c55cd8158ea09e1e4234d6069afa4f532ad739; the analyzer conservatively includes both optional-locale branches although the operation-key call uses the default. recordId hashes a validated canonical command ID; this taint edge is property-insensitive.",
+      "provenance": [
+        "PR #1153 candidate 20c55cd8158ea09e1e4234d6069afa4f532ad739: exact source/sink files unchanged",
+        "PR #1153 published repair33bcf78ff46a4c62de97d543bebe7407557cd431 cross-scan after AST-identity fix"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "37ee43d5b02d59afefb08b046b27bd1fec3ca4f2fbcc494cfd004cdf1bb15ca7",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-node-inbox-repository.ts",
+        "owner": "accept",
+        "fingerprint": "4f08dc46b285fb71e8c82bff07d7bd4b5dbfed59934595c19ea04cd5605c0579",
+        "kind": "persistence",
+        "occurrence": 1
+      },
+      "reason": "The same exact baseline context-index sink under the already-pinned PR #1153 canonicalLegacy comparator. Source and sink files are byte-identical to candidate20c55cd8158ea09e1e4234d6069afa4f532ad739; the analyzer conservatively includes both optional-locale branches although the operation-key call uses the default. Existing durable operation-index bytes are preserved; this does not authorize a new writer.",
+      "provenance": [
+        "PR #1153 candidate 20c55cd8158ea09e1e4234d6069afa4f532ad739: exact source/sink files unchanged",
+        "PR #1153 published repair33bcf78ff46a4c62de97d543bebe7407557cd431 cross-scan after AST-identity fix"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "9faf4f2a8e2fe9e302c3106121102e7cb1518d184034851ca74a16b3b75cb574",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-command-repository.ts",
+        "owner": "create",
+        "fingerprint": "31a4b4ecf395950947135fe99bb987ccd6da35a54ce967b45129abe4cc3c8859",
+        "kind": "persistence",
+        "occurrence": 1
+      },
+      "reason": "The same exact baseline context-index sink under the already-pinned PR #1153 canonicalLegacy comparator. Source and sink files are byte-identical to candidate20c55cd8158ea09e1e4234d6069afa4f532ad739; the analyzer conservatively includes both optional-locale branches although the operation-key call uses the default. Existing durable operation-index bytes are preserved; this does not authorize a new writer.",
+      "provenance": [
+        "PR #1153 candidate 20c55cd8158ea09e1e4234d6069afa4f532ad739: exact source/sink files unchanged",
+        "PR #1153 published repair33bcf78ff46a4c62de97d543bebe7407557cd431 cross-scan after AST-identity fix"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "9faf4f2a8e2fe9e302c3106121102e7cb1518d184034851ca74a16b3b75cb574",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-command-repository.ts",
+        "owner": "recordId",
+        "fingerprint": "613cfec8d218a940d00c1cd40f86f806768ba7175fd038a96363e34adc93bfe2",
+        "kind": "crypto-hash",
+        "occurrence": 1
+      },
+      "reason": "The same exact baseline context-index sink under the already-pinned PR #1153 canonicalLegacy comparator. Source and sink files are byte-identical to candidate20c55cd8158ea09e1e4234d6069afa4f532ad739; the analyzer conservatively includes both optional-locale branches although the operation-key call uses the default. recordId hashes a validated canonical command ID; this taint edge is property-insensitive.",
+      "provenance": [
+        "PR #1153 candidate 20c55cd8158ea09e1e4234d6069afa4f532ad739: exact source/sink files unchanged",
+        "PR #1153 published repair33bcf78ff46a4c62de97d543bebe7407557cd431 cross-scan after AST-identity fix"
+      ]
+    },
+    {
+      "source": {
+        "path": "packages/domain/src/context-command.ts",
+        "owner": "canonicalLegacy::compare",
+        "fingerprint": "9faf4f2a8e2fe9e302c3106121102e7cb1518d184034851ca74a16b3b75cb574",
+        "sitePath": "packages/domain/src/context-command.ts",
+        "siteOwner": "canonicalLegacy",
+        "occurrence": 1
+      },
+      "sink": {
+        "path": "packages/sqlite-persistence/src/context-node-inbox-repository.ts",
+        "owner": "accept",
+        "fingerprint": "4f08dc46b285fb71e8c82bff07d7bd4b5dbfed59934595c19ea04cd5605c0579",
+        "kind": "persistence",
+        "occurrence": 1
+      },
+      "reason": "The same exact baseline context-index sink under the already-pinned PR #1153 canonicalLegacy comparator. Source and sink files are byte-identical to candidate20c55cd8158ea09e1e4234d6069afa4f532ad739; the analyzer conservatively includes both optional-locale branches although the operation-key call uses the default. Existing durable operation-index bytes are preserved; this does not authorize a new writer.",
+      "provenance": [
+        "PR #1153 candidate 20c55cd8158ea09e1e4234d6069afa4f532ad739: exact source/sink files unchanged",
+        "PR #1153 published repair33bcf78ff46a4c62de97d543bebe7407557cd431 cross-scan after AST-identity fix"
+      ]
+    }
+  ]
+}
