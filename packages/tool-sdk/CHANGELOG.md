@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.4](https://github.com/adea-ai/control-plane/compare/tool-sdk-v1.4.3...tool-sdk-v1.4.4) (2026-10-17)
+
+
+### Bug Fixes
+
+* version tool idempotency digests ([#1151](https://github.com/adea-ai/control-plane/issues/1151)) ([9629e97](https://github.com/adea-ai/control-plane/commit/9629e97ae00290876b76eac53fc46b236c4fce1e))
+
 ## [1.4.3](https://github.com/adea-ai/control-plane/compare/tool-sdk-v1.4.2...tool-sdk-v1.4.3) (2026-10-17)
 
 
