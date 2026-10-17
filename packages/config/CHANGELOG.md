@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.3](https://github.com/adea-ai/control-plane/compare/config-v1.11.2...config-v1.11.3) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** replace Control Plane Turbo with Vite+ and Bun checks ([#1170](https://github.com/adea-ai/control-plane/issues/1170)) ([84e12db](https://github.com/adea-ai/control-plane/commit/84e12dbab1b2fea2380e8747a466db9fb1449959))
+
 ## [1.11.2](https://github.com/adea-ai/control-plane/compare/config-v1.11.1...config-v1.11.2) (2026-10-01)
 
 

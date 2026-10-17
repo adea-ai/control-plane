@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/adea-ai/control-plane/compare/tool-execution-v1.5.0...tool-execution-v1.5.1) (2026-10-17)
+
+
+### Maintenance
+
+* **tooling:** replace Control Plane Turbo with Vite+ and Bun checks ([#1170](https://github.com/adea-ai/control-plane/issues/1170)) ([84e12db](https://github.com/adea-ai/control-plane/commit/84e12dbab1b2fea2380e8747a466db9fb1449959))
+
 ## [1.5.0](https://github.com/adea-ai/control-plane/compare/tool-execution-v1.4.0...tool-execution-v1.5.0) (2026-10-13)
 
 
