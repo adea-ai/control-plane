@@ -763,3 +763,53 @@ describe('a duplicate coalesced onto a pipeline that is superseded before dispat
     expect(effects(fixture)).toBe(1)
   })
 })
+
+describe('an executed command redelivered while the device trust record or clock fails is not reported as invalid', () => {
+  const effects = (fixture) => fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)
+
+  async function executedAndHeld() {
+    const fixture = await createSecureFixture()
+    fixture.wire.holdCommands()
+    const pending = captured(
+      fixture.controller.dispatch(
+        runtimeCommand({ commandId: commandIds.first, channelGeneration: 1 })
+      )
+    )
+    await fixture.wire.whenHeld(1)
+    const sealed = structuredClone(
+      fixture.wire.log.find(({ direction }) => direction === 'command').message
+    )
+    expect(await fixture.device.handleCommand(structuredClone(sealed))).toMatchObject({
+      kind: 'exchange',
+    })
+    await fixture.wire.releaseHeld()
+    await pending
+    return { fixture, sealed }
+  }
+
+  for (const [label, brokenClock] of [
+    ['the route trust record is stale', () => new Date(Date.parse('2026-08-25T13:00:01.000Z'))],
+    ['the device clock is not a finite time', () => new Date(Number.NaN)],
+  ]) {
+    test(`a recorded exchange is response_unknown when ${label}`, async () => {
+      const { fixture, sealed } = await executedAndHeld()
+      fixture.clock.current = brokenClock()
+      expect(await fixture.device.handleCommand(structuredClone(sealed))).toMatchObject({
+        kind: 'denial',
+        reason: 'response_unknown',
+      })
+      expect(effects(fixture)).toBe(1)
+    })
+  }
+
+  test('a command that never ran keeps the plain trust-record refusal', async () => {
+    const fixture = await createSecureFixture()
+    const sealed = await sealedByProducer({ commandId: commandIds.first })
+    fixture.clock.current = new Date(Date.parse('2026-08-25T13:00:01.000Z'))
+    expect(await fixture.device.handleCommand(structuredClone(sealed))).toMatchObject({
+      kind: 'denial',
+      reason: 'device_stale',
+    })
+    expect(effects(fixture)).toBe(0)
+  })
+})

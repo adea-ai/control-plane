@@ -94,8 +94,12 @@ is never overwritten by a window or generation fence that trips afterwards, incl
 executor throw: only revocation is reported as itself.
 `response_unknown` is retryable on the same command identity, whose recorded outcome the device
 replays. Another endpoint over the shared store may record the same command between this delivery's
-ledger read and its fence or claim, so the claim-time and fence-time refusals (`stale_channel_generation`,
-`command_expired`, `command_not_yet_valid`) read the ledger again before a plain refusal is signed:
+ledger read and its fence or claim (a pending winner can also abandon and be replaced while the
+lost-claim path waits), so every refusal that follows a ledger read or a claim (`stale_channel_generation`,
+`command_expired`, `command_not_yet_valid`, and also `clock_invalid`, `device_stale`,
+`state_unavailable`) reads the ledger again before it is signed, and a record already read survives a failed
+re-read. A revocation is still reported as itself. The same lookup covers `clock_invalid` and `device_stale`
+refused before the plaintext is opened. The result:
 a recorded exchange is `response_unknown`, a claim without an outcome `outcome_uncertain`, and only
 a command with no record gets the plain refusal (a conflicting identity and a revocation are
 unchanged). A duplicate of the same command at a newer generation that coalesced onto a pipeline

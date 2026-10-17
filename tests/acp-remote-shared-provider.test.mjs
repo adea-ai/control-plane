@@ -20,6 +20,7 @@ import {
 } from '../packages/acp-adapter/src/acp-remote-crypto.ts'
 import {
   commandIds,
+  NOW,
   createSecureFixture,
   ids,
   runtimeCommand,
@@ -73,7 +74,11 @@ function endpointOver(fixture, stateStore) {
 }
 
 /** Two endpoints over one SQLite provider file, both scoped to the same authenticated route. */
-async function withSharedProvider(run, wrapStoreA = (store) => store) {
+async function withSharedProvider(
+  run,
+  wrapStoreA = (store, _fixture) => store,
+  wrapStoreB = (store, _fixture) => store
+) {
   const directory = await mkdtemp(join(tmpdir(), 'acp-shared-provider-'))
   const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
   try {
@@ -82,11 +87,11 @@ async function withSharedProvider(run, wrapStoreA = (store) => store) {
     const scope = acpRemoteDeviceStateScope(fixture.route)
     const endpointA = endpointOver(
       fixture,
-      wrapStoreA(new PersistenceProviderAcpRemoteDeviceStateStore(provider, scope))
+      wrapStoreA(new PersistenceProviderAcpRemoteDeviceStateStore(provider, scope), fixture)
     )
     const endpointB = endpointOver(
       fixture,
-      new PersistenceProviderAcpRemoteDeviceStateStore(provider, scope)
+      wrapStoreB(new PersistenceProviderAcpRemoteDeviceStateStore(provider, scope), fixture)
     )
     await run({ fixture, endpointA, endpointB, provider })
   } finally {
@@ -346,4 +351,216 @@ describe('a semantic command that another endpoint executed is never refused as 
       )
     })
   }
+})
+
+/** Delegating store whose named methods are replaced; everything else passes straight through. */
+function storeWith(inner, overrides) {
+  return {
+    loadFence: (...args) => inner.loadFence(...args),
+    applyRevocation: (...args) => inner.applyRevocation(...args),
+    countLedger: (...args) => inner.countLedger(...args),
+    readLedger: (...args) => inner.readLedger(...args),
+    claim: (...args) => inner.claim(...args),
+    advanceGeneration: (...args) => inner.advanceGeneration(...args),
+    recordOutcome: (...args) => inner.recordOutcome(...args),
+    abandonClaim: (...args) => inner.abandonClaim(...args),
+    ...overrides,
+  }
+}
+
+describe('a pending winner that disappears and is replaced is reconciled against the current ledger', () => {
+  test('endpoint A, told already_claimed by a winner that then abandons, reports the replacement winner as response_unknown', async () => {
+    const claimed = barrier() // A is parked before its claim
+    const winnerClaimed = barrier() // B's first delivery holds its claim, before its final fence read
+    const readStarted = barrier() // A's winner read is about to run
+    const readDone = barrier() // A holds its (now obsolete) winner snapshot
+    await withSharedProvider(
+      async ({ fixture, endpointA, endpointB }) => {
+        const issuedLater = new Date(Date.parse(NOW) + 45_000).toISOString()
+        const untilLater = new Date(Date.parse(NOW) + 105_000).toISOString()
+        // A holds the longer window; B's first delivery has a window that closes while it is parked.
+        const fromA = await sealFor(fixture, runtimeCommand({ commandId: commandIds.first }))
+        const shortWindow = await sealFor(
+          fixture,
+          runtimeCommand({
+            commandId: commandIds.first,
+            expiresAt: new Date(Date.parse(NOW) + 10_000).toISOString(),
+          })
+        )
+        const retry = await sealFor(
+          fixture,
+          runtimeCommand({
+            commandId: commandIds.first,
+            channelGeneration: 2,
+            issuedAt: issuedLater,
+            expiresAt: untilLater,
+          })
+        )
+        const pendingA = endpointA.handleCommand(fromA)
+        await claimed.reached
+        const pendingB = endpointB.handleCommand(shortWindow)
+        await winnerClaimed.reached
+
+        // A's claim now loses to B's pending claim and moves on to read the winner.
+        claimed.release()
+        await readStarted.reached
+        // B's window closes (A's is still open), so B abandons its claim with no effect.
+        fixture.clock.current = new Date(Date.parse(NOW) + 45_000)
+        winnerClaimed.release()
+        expect(await pendingB).toMatchObject({ kind: 'denial', reason: 'command_expired' })
+        // A reads the ledger: the abandoned claim is gone. A then holds that obsolete snapshot.
+        readStarted.release()
+        await readDone.reached
+        // B retries with a fresh window at generation 2 and records the exchange.
+        expect(await endpointB.handleCommand(retry)).toMatchObject({ kind: 'exchange' })
+        expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+        readDone.release()
+
+        // A's own window is open but its fence now sees generation 2: the command executed, so the
+        // answer is the unknown outcome, never the obsolete empty snapshot's plain stale refusal.
+        expect(await pendingA).toMatchObject({ kind: 'denial', reason: 'response_unknown' })
+        expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+      },
+      (store) => {
+        let claims = 0
+        let reads = 0
+        return storeWith(store, {
+          readLedger: async (...args) => {
+            reads += 1
+            if (reads !== 2) return store.readLedger(...args)
+            readStarted.announce()
+            await readStarted.gate
+            const record = await store.readLedger(...args)
+            readDone.announce()
+            await readDone.gate
+            return record
+          },
+          claim: async (...args) => {
+            claims += 1
+            if (claims === 1) {
+              claimed.announce()
+              await claimed.gate
+            }
+            return store.claim(...args)
+          },
+        })
+      },
+      (store) => {
+        let claims = 0
+        return storeWith(store, {
+          claim: async (...args) => {
+            const result = await store.claim(...args)
+            claims += 1
+            if (claims === 1) {
+              winnerClaimed.announce()
+              await winnerClaimed.gate
+            }
+            return result
+          },
+        })
+      }
+    )
+  })
+})
+
+describe('a recorded outcome survives a fence that fails after the ledger read', () => {
+  /** Endpoint A's store: the first ledger read returns, then the device clock breaks before the fence read. */
+  const breakClockAfterFirstRead = (fixture) => (store) => {
+    let armed = true
+    return storeWith(store, {
+      readLedger: async (...args) => {
+        const record = await store.readLedger(...args)
+        if (armed) {
+          armed = false
+          fixture.clock.current = new Date(Number.NaN)
+        }
+        return record
+      },
+    })
+  }
+
+  for (const [label, code] of [
+    ['clock becomes invalid', 'clock'],
+    ['trust record goes stale', 'stale'],
+    ['durable fence read fails', 'state'],
+  ]) {
+    const breakAfterRead = (store, fixture) => {
+      let armed = true
+      let failFenceRead = false
+      return storeWith(store, {
+        readLedger: async (...args) => {
+          const record = await store.readLedger(...args)
+          if (armed) {
+            armed = false
+            // `clock`: the device clock stops being a finite time; `stale`: it passes the route's
+            // validity; `state`: the next durable fence read fails.
+            if (code === 'state') failFenceRead = true
+            else {
+              fixture.clock.current =
+                code === 'clock'
+                  ? new Date(Number.NaN)
+                  : new Date(Date.parse(fixture.route.validUntil) + 1)
+            }
+          }
+          return record
+        },
+        loadFence: async (...args) => {
+          if (failFenceRead) {
+            failFenceRead = false
+            throw new Error('fence read failed')
+          }
+          return store.loadFence(...args)
+        },
+      })
+    }
+
+    test(`a recorded exchange is still response_unknown when the ${label} after the read`, async () => {
+      await withSharedProvider(async ({ fixture, endpointA, endpointB }) => {
+        const sealed = await sealFor(fixture, runtimeCommand({ commandId: commandIds.first }))
+        expect(await endpointB.handleCommand(sealed)).toMatchObject({ kind: 'exchange' })
+
+        expect(await endpointA.handleCommand(sealed)).toMatchObject({
+          kind: 'denial',
+          reason: 'response_unknown',
+        })
+        expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBe(1)
+      }, breakAfterRead)
+    })
+
+    test(`a pending record is still outcome_uncertain when the ${label} after the read`, async () => {
+      const effect = barrier()
+      await withSharedProvider(async ({ fixture, endpointA, endpointB }) => {
+        const originalDispatch = fixture.executor.dispatch.bind(fixture.executor)
+        fixture.executor.dispatch = async (command) => {
+          effect.announce()
+          await effect.gate
+          return originalDispatch(command)
+        }
+        const sealed = await sealFor(fixture, runtimeCommand({ commandId: commandIds.first }))
+        const peer = endpointB.handleCommand(sealed)
+        await effect.reached
+
+        expect(await endpointA.handleCommand(sealed)).toMatchObject({
+          kind: 'denial',
+          reason: 'outcome_uncertain',
+        })
+        effect.release()
+        await peer
+        // The broken clock is shared with the peer's reference driver, so only "never twice" holds.
+        expect(fixture.driver.effectCount(ids.attemptId, RUNTIME_SESSION)).toBeLessThanOrEqual(1)
+      }, breakAfterRead)
+    })
+  }
+
+  test('a revocation keeps precedence over the recorded outcome', async () => {
+    await withSharedProvider(async ({ fixture, endpointA, endpointB }) => {
+      const sealed = await sealFor(fixture, runtimeCommand({ commandId: commandIds.first }))
+      expect(await endpointB.handleCommand(sealed)).toMatchObject({ kind: 'exchange' })
+      await endpointB.applyRevocation(fixture.controller.revoke(REVOKED_AT))
+      expect(await endpointA.handleCommand(sealed)).toMatchObject({
+        kind: 'denial',
+        reason: 'device_revoked',
+      })
+    })
+  })
 })

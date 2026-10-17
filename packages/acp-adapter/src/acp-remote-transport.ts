@@ -921,7 +921,7 @@ export class SecureAcpDeviceEndpoint {
       const fencedAfterRead = await this.#currentCommandFence(header)
       const replayed = replayOutcome(stored, identity)
       if (fencedAfterRead !== undefined) {
-        return this.#refusalOutcome(header, identity, fencedAfterRead)
+        return this.#refusalOutcome(header, identity, fencedAfterRead, stored)
       }
       if (replayed !== undefined) {
         // Served from the ledger without a claim: the delivery still moves the generation fence,
@@ -966,13 +966,17 @@ export class SecureAcpDeviceEndpoint {
       }
       if (claimResult === 'already_claimed') {
         // Another delivery recorded this command first; replay its record instead of executing.
+        // The winner can change at every await below (a pending winner may abandon and a replacement
+        // delivery may record an outcome), so a refusal re-reads the ledger rather than reusing
+        // this snapshot.
         const winner = await this.#stateStore.readLedger(header.commandId)
         const fencedAfterRace =
           (await this.#currentCommandFence(header)) ??
           (winner?.identity === identity ? await this.#advanceGeneration(header) : undefined)
-        const raced = replayOutcome(winner, identity)
-        if (fencedAfterRace !== undefined) return withholdExchange(fencedAfterRace, raced)
-        return raced ?? { kind: 'denial', reason: 'state_unavailable' }
+        if (fencedAfterRace !== undefined) {
+          return this.#refusalOutcome(header, identity, fencedAfterRace, winner)
+        }
+        return replayOutcome(winner, identity) ?? { kind: 'denial', reason: 'state_unavailable' }
       }
       this.#highestGeneration = Math.max(this.#highestGeneration, header.channelGeneration)
       // Final pre-effect boundary: a fresh durable fence read, with no await between its completion and
@@ -990,8 +994,9 @@ export class SecureAcpDeviceEndpoint {
         if (refused === 'device_revoked') {
           await this.#recordOutcome(header.commandId, denial)
         } else {
-          await this.#abandonClaim(header.commandId, identity)
-          this.#preDispatchRefusals.add(denial)
+          if (await this.#abandonClaim(header.commandId, identity)) {
+            this.#preDispatchRefusals.add(denial)
+          }
         }
         return denial
       }
@@ -1007,35 +1012,38 @@ export class SecureAcpDeviceEndpoint {
   }
 
   /**
-   * Outcome for a delivery refused by a fence before it could claim or dispatch. The reason says
-   * "nothing ran" for the transient reasons, but another endpoint over the shared store may have
-   * recorded this same command since this pipeline's ledger read (it can complete between the read
-   * and the fence), so the durable record is read again before a plain refusal is signed: a recorded
-   * exchange becomes `response_unknown`, a claim without an outcome `outcome_uncertain`. Only a
-   * refusal with no record for this identity is a no-effect refusal, and only that one may later be
-   * re-admitted for a current-generation duplicate. A conflicting identity and a revocation keep
-   * their policy: the plain reason.
+   * Outcome for a delivery refused by a fence before it could claim or dispatch. The refusal reason
+   * says what the fence saw, not whether the command ran: another endpoint over the shared store
+   * may have recorded this same command since this pipeline's ledger read (it can complete between
+   * the read and the fence, and a pending winner can abandon and be replaced). So the durable record
+   * is read again, and the evidence decides: a recorded exchange is `response_unknown`, a claim
+   * without an outcome `outcome_uncertain`, whatever the fence reason is (`stale_channel_generation`,
+   * a window, `clock_invalid`, `device_stale`, `state_unavailable`). If that read fails, a record this
+   * delivery already read (`known`) still counts; with neither, the transient window and generation
+   * reasons cannot claim "nothing ran" and become `state_unavailable`. Only a refusal with no record
+   * for this identity is a no-effect refusal, and only that one may later be re-admitted for a
+   * current-generation duplicate. A conflicting identity keeps the plain reason, and a revocation is
+   * reported as itself before any evidence is consulted.
    */
   async #refusalOutcome(
     header: AcpRemoteCommandHeader,
     identity: string,
-    reason: AcpRemoteDenialReason
+    reason: AcpRemoteDenialReason,
+    known?: AcpRemoteDeviceLedgerRecord
   ): Promise<AcpRemoteDeviceOutcome> {
     const denial: AcpRemoteDeviceOutcome = { kind: 'denial', reason }
-    if (
-      reason !== 'command_expired' &&
-      reason !== 'command_not_yet_valid' &&
-      reason !== 'stale_channel_generation'
-    ) {
-      return denial
-    }
+    if (reason === 'device_revoked') return denial
     let record: AcpRemoteDeviceLedgerRecord | undefined
+    let fresh = true
     try {
       record = await this.#stateStore.readLedger(header.commandId)
     } catch {
-      return { kind: 'denial', reason: 'state_unavailable' }
+      fresh = false
+      record = known
     }
     if (record === undefined) {
+      if (!fresh)
+        return isPreEffectClaim(reason) ? { kind: 'denial', reason: 'state_unavailable' } : denial
       this.#preDispatchRefusals.add(denial)
       return denial
     }
@@ -1043,11 +1051,14 @@ export class SecureAcpDeviceEndpoint {
     return withholdExchange(reason, replayOutcome(record, identity))
   }
 
-  async #abandonClaim(commandId: string, identity: string): Promise<void> {
+  /** True once the claim is released; a failed release leaves it pending (read as outcome_uncertain). */
+  async #abandonClaim(commandId: string, identity: string): Promise<boolean> {
     try {
       await this.#stateStore.abandonClaim(commandId, identity)
+      return true
     } catch {
       // The claim stays pending and a later delivery reads it as outcome_uncertain: fail closed.
+      return false
     }
   }
 
@@ -1122,11 +1133,12 @@ export class SecureAcpDeviceEndpoint {
   }
 
   /**
-   * A delivery whose window is not open, or whose channel generation is already superseded, is
-   * refused before the ledger is consulted, but the same command id may already have run under an
-   * earlier window or generation. `command_expired`, `command_not_yet_valid` and
-   * `stale_channel_generation` tell the controller that nothing executed, so they are only sent
-   * when the ledger holds no record. With a record, the controller gets the truth without any output:
+   * A delivery whose window is not open, whose channel generation is already superseded, or whose
+   * device clock or trust record fails is refused before the plaintext is opened, but the same command
+   * id may already have run under an earlier window or generation. `command_expired`,
+   * `command_not_yet_valid` and `stale_channel_generation` tell the controller that nothing executed,
+   * so they are only sent when the ledger holds no record; `clock_invalid` and `device_stale` also
+   * yield to a recorded outcome. With a record, the controller gets the truth without any output:
    * a recorded exchange is `response_unknown` (retryable: a fresh window replays it), a claim
    * without an outcome or a compacted record is `outcome_uncertain`, and a recorded denial keeps its
    * reason. Identity is not compared here (the plaintext is not opened); a different command that
@@ -1136,18 +1148,14 @@ export class SecureAcpDeviceEndpoint {
     header: AcpRemoteCommandHeader,
     reason: AcpRemoteDenialReason
   ): Promise<AcpRemoteSealedResponse> {
-    if (
-      reason !== 'command_expired' &&
-      reason !== 'command_not_yet_valid' &&
-      reason !== 'stale_channel_generation'
-    ) {
+    if (!isPreEffectClaim(reason) && reason !== 'clock_invalid' && reason !== 'device_stale') {
       return this.#refuse(header, reason)
     }
     let stored: AcpRemoteDeviceLedgerRecord | undefined
     try {
       stored = await this.#stateStore.readLedger(header.commandId)
     } catch {
-      return this.#refuse(header, 'state_unavailable')
+      return this.#refuse(header, isPreEffectClaim(reason) ? 'state_unavailable' : reason)
     }
     if (stored === undefined) return this.#refuse(header, reason)
     if (stored.outcome === undefined) return this.#refuse(header, 'outcome_uncertain')
@@ -1203,6 +1211,15 @@ export class SecureAcpDeviceEndpoint {
     const body = { kind: 'denial' as const, header, reason }
     return { ...body, signature: signCanonical(DOMAIN.responseSignature, body, this.#signingKey) }
   }
+}
+
+/** Reasons that tell the controller nothing executed, so they are only signed without contrary evidence. */
+function isPreEffectClaim(reason: AcpRemoteDenialReason): boolean {
+  return (
+    reason === 'command_expired' ||
+    reason === 'command_not_yet_valid' ||
+    reason === 'stale_channel_generation'
+  )
 }
 
 /**
