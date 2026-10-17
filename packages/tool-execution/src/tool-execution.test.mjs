@@ -1,8 +1,12 @@
 import { describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import {
   toolInputDigest,
   toolInputMatchesDigest,
+  toolRequestDigest,
   toolRequestDigestLegacy,
+  toolRequestMatchesDigest,
 } from './tool-execution.ts'
 import { InMemoryInteractionRepository, InteractionService } from '@control-plane/domain'
 import {
@@ -48,6 +52,36 @@ test('input digest matching accepts the persisted legacy and code-point forms on
   expect(toolInputMatchesDigest(input, legacy)).toBe(true)
   expect(toolInputMatchesDigest(input, codePoint)).toBe(true)
   expect(toolInputMatchesDigest(input, `sha256:${'0'.repeat(64)}`)).toBe(false)
+})
+
+test('tagged V2 input digests reject locale hashes while untagged history accepts either form', () => {
+  const input = { 'a-b': 1, ab: 2, a_: 3, Aa: 4, 'a!': 5 }
+  const reordered = Object.fromEntries(Object.entries(input).toReversed())
+  const legacy = toolInputDigest(input)
+  const codePoint = digestWithSharedCanonicalJson(input)
+
+  expect(legacy).not.toBe(codePoint)
+  expect(toolInputMatchesDigest(reordered, legacy)).toBe(true)
+  expect(toolInputMatchesDigest(reordered, codePoint)).toBe(true)
+  expect(toolInputMatchesDigest(reordered, codePoint, 2)).toBe(true)
+  expect(toolInputMatchesDigest(reordered, legacy, 2)).toBe(false)
+  expect(toolInputMatchesDigest(reordered, codePoint, 3)).toBe(false)
+})
+
+test('request digest matching keeps both historical untagged forms and enforces tagged V2', () => {
+  const input = { 'a-b': 1, ab: 2, a_: 3, Aa: 4, 'a!': 5 }
+  const reordered = Object.fromEntries(Object.entries(input).toReversed())
+  const current = request({ input })
+  const replay = request({ input: reordered })
+  const legacy = toolRequestDigestLegacy(current)
+  const codePoint = toolRequestDigest(current)
+
+  expect(legacy).not.toBe(codePoint)
+  expect(toolRequestMatchesDigest(replay, legacy)).toBe(true)
+  expect(toolRequestMatchesDigest(replay, codePoint)).toBe(true)
+  expect(toolRequestMatchesDigest(replay, codePoint, 2)).toBe(true)
+  expect(toolRequestMatchesDigest(replay, legacy, 2)).toBe(false)
+  expect(toolRequestMatchesDigest(replay, codePoint, 3)).toBe(false)
 })
 
 const definition = {
@@ -175,6 +209,102 @@ async function fixture({
 }
 
 describe('policy-controlled durable tool execution', () => {
+  test('writes V2 tags on new call and input digests', async () => {
+    const { service } = await fixture({
+      versionOverrides: {
+        operations: [{ ...version().operations[0], approvalMode: 'never' }],
+      },
+    })
+
+    const outcome = await service.execute(request({ approval: undefined }))
+
+    expect(outcome.call).toMatchObject({ requestDigestVersion: 2, inputDigestVersion: 2 })
+    expect(outcome.call.inputDigest).toBe(digestWithSharedCanonicalJson(request().input))
+  })
+
+  test('rejects tagged digests that only match the legacy form before invoking the effect', async () => {
+    const incoming = request({
+      approval: undefined,
+      input: { 'a-b': 1, ab: 2, a_: 3, Aa: 4, 'a!': 5 },
+    })
+    const correctV2Call = {
+      toolCallId: incoming.toolCallId,
+      requestDigest: toolRequestDigest(incoming),
+      requestDigestVersion: 2,
+      executionId: incoming.executionId,
+      attemptId: incoming.attemptId,
+      workspaceId: incoming.workspaceId,
+      profileId: incoming.profileId,
+      principalRef: incoming.audit.principalRef,
+      toolDefinitionId: incoming.toolDefinitionId,
+      toolVersionId: incoming.toolVersionId,
+      operation: incoming.operation,
+      inputDigest: digestWithSharedCanonicalJson(incoming.input),
+      inputDigestVersion: 2,
+      policySnapshotRef: incoming.policySnapshotRef,
+      executor: { type: 'connector', reference: 'records-v1' },
+      idempotencyKey: incoming.idempotencyKey,
+      status: 'requested',
+      revision: 1,
+      requestedAt: incoming.requestedAt,
+      history: [{ status: 'requested', at: incoming.requestedAt }],
+    }
+    const versionMismatches = [
+      {
+        ...correctV2Call,
+        requestDigest: toolRequestDigestLegacy(incoming),
+      },
+      {
+        ...correctV2Call,
+        inputDigest: toolInputDigest(incoming.input),
+      },
+    ]
+
+    for (const storedCall of versionMismatches) {
+      const calls = {
+        async getByIdempotencyKey() {
+          return storedCall
+        },
+        async compareAndSet() {
+          return true
+        },
+      }
+      const { service, executor } = await fixture({
+        calls,
+        versionOverrides: {
+          inputSchema: { type: 'object', additionalProperties: true },
+          operations: [{ ...version().operations[0], approvalMode: 'never' }],
+        },
+      })
+
+      await expect(service.execute(incoming)).rejects.toMatchObject({
+        code: 'IDEMPOTENCY_CONFLICT',
+      })
+      expect(executor.requests).toHaveLength(0)
+    }
+
+    for (const storedCall of [
+      { ...correctV2Call, requestDigestVersion: 3 },
+      { ...correctV2Call, inputDigestVersion: 3 },
+    ]) {
+      const calls = {
+        async getByIdempotencyKey() {
+          return storedCall
+        },
+      }
+      const { service, executor } = await fixture({
+        calls,
+        versionOverrides: {
+          inputSchema: { type: 'object', additionalProperties: true },
+          operations: [{ ...version().operations[0], approvalMode: 'never' }],
+        },
+      })
+
+      await expect(service.execute(incoming)).rejects.toThrow()
+      expect(executor.requests).toHaveLength(0)
+    }
+  })
+
   test('remains compatible with rate limiters that implement the original four-argument contract', async () => {
     const requested = []
     const legacyRateLimiter = {
@@ -237,7 +367,11 @@ describe('policy-controlled durable tool execution', () => {
     expect(requests).toMatchObject([
       {
         action: 'tool:invoke',
-        resource: { type: 'tool', workspaceId: ids.workspace },
+        resource: {
+          type: 'tool',
+          workspaceId: ids.workspace,
+          attributes: { inputDigestVersion: 2 },
+        },
         policySnapshot: snapshot,
       },
     ])
@@ -395,42 +529,83 @@ describe('policy-controlled durable tool execution', () => {
   })
 
   test('a call persisted pre-cutover replays via the legacy request digest', async () => {
-    const input = { value: 'pre-cutover' }
+    const input = { 'a-b': 1, ab: 2, a_: 3, Aa: 4, 'a!': 5 }
     const plainRequest = request({ approval: undefined, input })
     const legacyDigest = toolRequestDigestLegacy(plainRequest)
-    const inner = new InMemoryToolCallRepository()
-    // The first insert simulates a record persisted before the cutover: its
-    // requestDigest carries the legacy locale-dependent bytes (#612).
-    let seeded = false
-    const preCutoverCalls = {
-      async insert(call) {
-        const stored = seeded ? call : { ...call, requestDigest: legacyDigest }
-        seeded = true
-        return inner.insert(stored)
-      },
-      get: (toolCallId) => inner.get(toolCallId),
-      getByIdempotencyKey: (workspaceId, key) => inner.getByIdempotencyKey(workspaceId, key),
-      compareAndSet: (expectedVersion, call) => inner.compareAndSet(expectedVersion, call),
-      listByExecution: (executionId) => inner.listByExecution(executionId),
+    expect(legacyDigest).not.toBe(toolRequestDigest(plainRequest))
+    const historicalCall = {
+      toolCallId: plainRequest.toolCallId,
+      requestDigest: legacyDigest,
+      executionId: plainRequest.executionId,
+      attemptId: plainRequest.attemptId,
+      workspaceId: plainRequest.workspaceId,
+      profileId: plainRequest.profileId,
+      principalRef: plainRequest.audit.principalRef,
+      toolDefinitionId: plainRequest.toolDefinitionId,
+      toolVersionId: plainRequest.toolVersionId,
+      operation: plainRequest.operation,
+      inputDigest: toolInputDigest(input),
+      policySnapshotRef: plainRequest.policySnapshotRef,
+      executor: { type: 'connector', reference: 'records-v1' },
+      idempotencyKey: plainRequest.idempotencyKey,
+      status: 'executing',
+      revision: 2,
+      requestedAt: plainRequest.requestedAt,
+      startedAt: plainRequest.requestedAt,
+      history: [
+        { status: 'requested', at: plainRequest.requestedAt },
+        { status: 'authorized', at: plainRequest.requestedAt },
+        { status: 'executing', at: plainRequest.requestedAt },
+      ],
     }
-    const { service } = await fixture({
+    const preCutoverCalls = {
+      async getByIdempotencyKey() {
+        return historicalCall
+      },
+    }
+    const { service, executor } = await fixture({
       versionOverrides: {
-        operations: [
-          {
-            ...version().operations[0],
-            approvalMode: 'never',
-            retryPolicy: { maxAttempts: 1, retryableErrorCodes: [] },
-          },
-        ],
+        inputSchema: { type: 'object', additionalProperties: true },
+        operations: [{ ...version().operations[0], approvalMode: 'never' }],
       },
       calls: preCutoverCalls,
     })
 
-    // Replay recomputes the current code-point digest plus the legacy
-    // candidate: the pre-cutover record must resolve to an idempotent
-    // replay, never IDEMPOTENCY_CONFLICT.
     const replay = await service.execute(plainRequest)
-    expect(replay).toMatchObject({ state: 'succeeded' })
+    expect(replay).toMatchObject({ state: 'in_progress', call: { requestDigest: legacyDigest } })
+    expect(executor.requests).toHaveLength(0)
+  })
+
+  test('an untagged canonical receipt written during the V2 cutover still replays', async () => {
+    const plainRequest = request({ approval: undefined })
+    const first = await fixture({
+      versionOverrides: {
+        operations: [{ ...version().operations[0], approvalMode: 'never' }],
+      },
+    })
+    const completed = await first.service.execute(plainRequest)
+    const untaggedCall = { ...completed.call }
+    delete untaggedCall.requestDigestVersion
+    delete untaggedCall.inputDigestVersion
+    // #664 wrote canonical request digests while input digests still used the
+    // durable legacy helper; both fields were untagged in that period.
+    untaggedCall.inputDigest = toolInputDigest(plainRequest.input)
+
+    const historicalCalls = {
+      async getByIdempotencyKey() {
+        return untaggedCall
+      },
+    }
+    const replayFixture = await fixture({
+      calls: historicalCalls,
+      versionOverrides: {
+        operations: [{ ...version().operations[0], approvalMode: 'never' }],
+      },
+    })
+    const replay = await replayFixture.service.execute(plainRequest)
+
+    expect(replay).toMatchObject({ state: 'succeeded', call: { status: 'succeeded' } })
+    expect(replayFixture.executor.requests).toHaveLength(0)
   })
 
   test('rejects idempotency conflicts and enforces rate limits before another effect', async () => {
@@ -628,6 +803,12 @@ describe('policy-controlled durable tool execution', () => {
     }
   })
 })
+
+function digestWithSharedCanonicalJson(value) {
+  return `sha256:${createHash('sha256')
+    .update(canonicalJsonStringify(value) ?? 'null')
+    .digest('hex')}`
+}
 
 for (const kind of ['plain', 'primitive', 'foreign-unknown', 'foreign-none', 'forged-none'])
   test(`unrecognized post-invocation ${kind} error remains conservative across replay`, async () => {

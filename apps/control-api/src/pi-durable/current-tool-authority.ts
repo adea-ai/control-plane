@@ -346,6 +346,8 @@ function callAuthorizationInputs(call: CurrentPiDurableToolCallRecord | undefine
     toolVersionId: call.toolVersionId,
     operation: call.operation,
     inputDigest: call.inputDigest,
+    requestDigestVersion: call.requestDigestVersion,
+    inputDigestVersion: call.inputDigestVersion,
     policySnapshotRef: call.policySnapshotRef,
     idempotencyKey: call.idempotencyKey,
     requestedAt: call.requestedAt,
@@ -389,7 +391,7 @@ function matchesToolCall(
     call.toolDefinitionId === request.toolDefinitionId &&
     call.toolVersionId === request.toolVersionId &&
     call.operation === request.operation &&
-    toolInputMatchesDigest(request.input, call.inputDigest) &&
+    toolInputMatchesDigest(request.input, call.inputDigest, call.inputDigestVersion) &&
     call.policySnapshotRef === request.policySnapshotRef &&
     call.idempotencyKey === request.idempotencyKey &&
     call.requestedAt === request.requestedAt &&

@@ -15,7 +15,7 @@ import {
   type RuntimeExecutionHandle,
 } from '@control-plane/runtime-sdk'
 import { DurableToolCallRequestSchema, ToolCallSchema } from '@control-plane/tool-sdk'
-import { toolRequestDigest, toolInputMatchesDigest } from '@control-plane/tool-execution'
+import { toolInputMatchesDigest, toolRequestMatchesDigest } from '@control-plane/tool-execution'
 import {
   PiDurableAdmissionSchema,
   ProviderSelectionReferenceSchema,
@@ -257,8 +257,8 @@ export function assertPiChildContinuationToolCall(
     if (
       call.status !== 'succeeded' ||
       call.policyDecision?.effect !== 'allow' ||
-      call.requestDigest !== toolRequestDigest(request) ||
-      !toolInputMatchesDigest(request.input, call.inputDigest) ||
+      !toolRequestMatchesDigest(request, call.requestDigest, call.requestDigestVersion) ||
+      !toolInputMatchesDigest(request.input, call.inputDigest, call.inputDigestVersion) ||
       call.toolCallId !== request.toolCallId ||
       call.executionId !== request.executionId ||
       call.attemptId !== request.attemptId ||
