@@ -42,6 +42,58 @@ function legacyDigest(content) {
     .digest('hex')}`
 }
 
+function legacyDigestLocale(content, locale) {
+  function normalize(value) {
+    if (Array.isArray(value)) return value.map(normalize)
+    if (value && typeof value === 'object')
+      return Object.fromEntries(
+        Object.entries(value)
+          .filter(([, entry]) => entry !== undefined)
+          .toSorted(([left], [right]) => left.localeCompare(right, locale))
+          .map(([key, entry]) => [key, normalize(entry)])
+      )
+    return value
+  }
+  const { createHash } = require('node:crypto')
+  return `sha256:${createHash('sha256')
+    .update(JSON.stringify(normalize(content)))
+    .digest('hex')}`
+}
+
+function postCutoverDigest(content) {
+  function normalize(value) {
+    if (Array.isArray(value)) return value.map(normalize)
+    if (value && typeof value === 'object')
+      return Object.fromEntries(
+        Object.entries(value)
+          .filter(([, entry]) => entry !== undefined)
+          .toSorted(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+          .map(([key, entry]) => [key, normalize(entry)])
+      )
+    return value
+  }
+  const { createHash } = require('node:crypto')
+  return `sha256:${createHash('sha256')
+    .update(JSON.stringify(normalize(content)))
+    .digest('hex')}`
+}
+
+function sharedCanonicalDigest(content) {
+  function serialize(value) {
+    if (value === undefined || value === null) return 'null'
+    if (Array.isArray(value)) return `[${value.map(serialize).join(',')}]`
+    if (typeof value === 'object')
+      return `{${Object.keys(value)
+        .toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0))
+        .filter((key) => value[key] !== undefined)
+        .map((key) => `${JSON.stringify(key)}:${serialize(value[key])}`)
+        .join(',')}}`
+    return JSON.stringify(value)
+  }
+  const { createHash } = require('node:crypto')
+  return `sha256:${createHash('sha256').update(serialize(content)).digest('hex')}`
+}
+
 function legacyIdentifier(digestValue) {
   const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
   const bytes = Buffer.from(digestValue.slice(7, 39), 'hex')
@@ -64,6 +116,7 @@ function rehashContextPackage(package_) {
   const {
     contextPackageId: _contextPackageId,
     contentDigest: _contentDigest,
+    canonicalizationVersion: _canonicalizationVersion,
     ...content
   } = package_
   const contentDigest = legacyDigest(content)
@@ -75,13 +128,235 @@ function rehashContextPackage(package_) {
 }
 
 describe('context package digest cutover', () => {
+  function fixedPackageFixture({ version, schemaVersion = 1, digest, id }) {
+    const content = {
+      schemaVersion,
+      ...(version === undefined ? {} : { canonicalizationVersion: version }),
+      compiler: { name: 'control-plane-context', version: '1.0.0' },
+      compiledAt: '2026-08-23T12:00:00.000Z',
+      objective: 'Legacy context package fixture',
+      projectState: {
+        workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
+        projectId: 'prj_01JABCDEF0123456789ABCDEFG',
+        revision: 1,
+      },
+      stateItems: [
+        {
+          itemId: 'psi_01JABCDEF0123456789ABCDEFG',
+          itemRevision: 1,
+          key: 'legacy',
+          value: { 10: 'ten', 2: 'two', 'a-b': 1, a_b: 2 },
+          sensitivity: 'internal',
+          freshness: { observedAt: '2026-08-22T12:00:00.000Z' },
+          provenance: {
+            sourceKind: 'principal',
+            sourcePrincipalRef: 'service:legacy-fixture',
+            artifactRefs: [],
+            capturedAt: '2026-08-22T12:00:00.000Z',
+          },
+          usage: { bytes: 16, tokens: 2 },
+        },
+      ],
+      artifactRefs: [],
+      constraints: {
+        allowedSensitivities: ['internal'],
+        allowedStateItemIds: ['psi_01JABCDEF0123456789ABCDEFG'],
+        allowedArtifactIds: [],
+      },
+      permissions: ['project-state:read'],
+      successCriteria: ['Return the fixture'],
+      returnContract: { contractRef: 'contract://legacy/v1' },
+      budgets: { maximumBytes: 512, maximumTokens: 128 },
+      usage: { bytes: 16, tokens: 2 },
+      truncation: { truncated: false, excluded: [] },
+    }
+    return { ...content, contextPackageId: id, contentDigest: digest }
+  }
+
+  test('verifies fixed untagged locale and post-cutover JSON.stringify epochs', () => {
+    const locale = fixedPackageFixture({
+      digest: 'sha256:acfa155561bc3a41915678a4d6e2684562c3d0a3ef0397e548051707e2e882b9',
+      id: 'ctx_NKX1ANB1QGX434APF2JDDRK88M',
+    })
+    const postCutover = fixedPackageFixture({
+      digest: 'sha256:d4341b67fa4f77c13948df282526f047437b8b2a242f6ebebe6f204b0709d928',
+      id: 'ctx_TGT1PSZT9XVW2EA8VWM2A9QG8W',
+    })
+    expect(assertContextPackageIntegrity(locale).contentDigest).toBe(locale.contentDigest)
+    expect(assertContextPackageIntegrity(postCutover).contentDigest).toBe(postCutover.contentDigest)
+
+    const schema2LegacyContent = fixedPackageFixture({
+      schemaVersion: 2,
+      digest: locale.contentDigest,
+      id: locale.contextPackageId,
+    })
+    const {
+      contextPackageId: _id,
+      contentDigest: _digest,
+      canonicalizationVersion: _version,
+      ...content
+    } = schema2LegacyContent
+    content.projectState = {
+      ...content.projectState,
+      executionScope: {
+        schemaVersion: 1,
+        kind: 'project',
+        projectId: 'prj_01JABCDEF0123456789ABCDEFG',
+      },
+    }
+    const schema2PostCutoverDigest = postCutoverDigest(content)
+    const schema2PostCutoverPackage = {
+      ...content,
+      contextPackageId: legacyIdentifier(schema2PostCutoverDigest),
+      contentDigest: schema2PostCutoverDigest,
+    }
+    expect(schema2PostCutoverDigest).toBe(
+      'sha256:ce35d9ad56602354b732204f9ead849ba21e28364e902bcd28102725ada410e8'
+    )
+    expect(assertContextPackageIntegrity(schema2PostCutoverPackage).contentDigest).toBe(
+      schema2PostCutoverDigest
+    )
+
+    const schema2LegacyDigest = legacyDigest(content)
+    const schema2LegacyPackage = {
+      ...content,
+      contextPackageId: legacyIdentifier(schema2LegacyDigest),
+      contentDigest: schema2LegacyDigest,
+    }
+    expect(ContextPackageSchema.safeParse(schema2LegacyPackage).success).toBe(true)
+    expect(() => assertContextPackageIntegrity(schema2LegacyPackage)).toThrow(
+      'CONTEXT_PACKAGE_INTEGRITY_ERROR'
+    )
+  })
+
+  test('uses only the serializer selected by an explicit package version', () => {
+    const version1 = fixedPackageFixture({
+      version: 1,
+      digest: 'sha256:84b5e3f90962211f2e3e60ea63627b36c55001723c0e454709d84338df0c2534',
+      id: 'ctx_GJTY7Y89C8GHYBHYC3N66RKV6R',
+    })
+    const version2 = fixedPackageFixture({
+      version: 2,
+      digest: 'sha256:5a1275dc76ce8c0c3d9a49bc7c65ad3cf2ed3f203a04e0e24f5064ce3a59b020',
+      id: 'ctx_B897BQ3PST60RFCT96Y7RSDD7G',
+    })
+    expect(assertContextPackageIntegrity(version1).canonicalizationVersion).toBe(1)
+    expect(assertContextPackageIntegrity(version2).canonicalizationVersion).toBe(2)
+    expect(() =>
+      assertContextPackageIntegrity({
+        ...version1,
+        contentDigest: version2.contentDigest,
+        contextPackageId: version2.contextPackageId,
+      })
+    ).toThrow('CONTEXT_PACKAGE_INTEGRITY_ERROR')
+    expect(() =>
+      assertContextPackageIntegrity({ ...version2, canonicalizationVersion: 3 })
+    ).toThrow()
+
+    const {
+      contextPackageId: _version2Id,
+      contentDigest: _version2Digest,
+      ...version2Content
+    } = version2
+    const version2LegacyDigest = legacyDigestLocale(version2Content, 'en')
+    expect(version2LegacyDigest).toBe(
+      'sha256:b56eabddcb7106bc69aff248398fe47313947808f7b2c76837193fc20b139335'
+    )
+    expect(() =>
+      assertContextPackageIntegrity({
+        ...version2Content,
+        contentDigest: version2LegacyDigest,
+        contextPackageId: legacyIdentifier(version2LegacyDigest),
+      })
+    ).toThrow('CONTEXT_PACKAGE_INTEGRITY_ERROR')
+
+    const {
+      contextPackageId: _version1Id,
+      contentDigest: _version1Digest,
+      ...version1Content
+    } = version1
+    const version1SharedDigest = sharedCanonicalDigest(version1Content)
+    expect(version1SharedDigest).toBe(
+      'sha256:07dfb260f17608b9a8be055f42d391e4f4cd0057754fbc0fbac7042522931183'
+    )
+    expect(() =>
+      assertContextPackageIntegrity({
+        ...version1Content,
+        contentDigest: version1SharedDigest,
+        contextPackageId: legacyIdentifier(version1SharedDigest),
+      })
+    ).toThrow('CONTEXT_PACKAGE_INTEGRITY_ERROR')
+
+    const otherLocale = fixedPackageFixture({
+      version: 1,
+      digest: `sha256:${'0'.repeat(64)}`,
+      id: 'ctx_00000000000000000000000000',
+    })
+    otherLocale.stateItems[0].value = { ä: 1, z: 2 }
+    const {
+      contextPackageId: _otherId,
+      contentDigest: _otherDigest,
+      ...otherLocaleContent
+    } = otherLocale
+    const swedishDigest = legacyDigestLocale(otherLocaleContent, 'sv')
+    expect(swedishDigest).toBe(
+      'sha256:54f5a3797c7949cf841fec3c0529cd59769c1e47c876df2a1b5c5ab7496a286d'
+    )
+    expect(() =>
+      assertContextPackageIntegrity({
+        ...otherLocaleContent,
+        contextPackageId: legacyIdentifier(swedishDigest),
+        contentDigest: swedishDigest,
+      })
+    ).toThrow('CONTEXT_PACKAGE_INTEGRITY_ERROR')
+  })
+
+  test('canonicalizes reordered keys and creates a distinct reference from an untagged package', async () => {
+    const version2 = fixedPackageFixture({
+      version: 2,
+      digest: 'sha256:5a1275dc76ce8c0c3d9a49bc7c65ad3cf2ed3f203a04e0e24f5064ce3a59b020',
+      id: 'ctx_B897BQ3PST60RFCT96Y7RSDD7G',
+    })
+    version2.stateItems[0].value = { a_b: 2, 2: 'two', 'a-b': 1, 10: 'ten' }
+    expect(assertContextPackageIntegrity(version2).contextPackageId).toBe(version2.contextPackageId)
+
+    const oldFixture = contextPackageSerializationFixtures.futurePi
+    const {
+      contextPackageId: _id,
+      contentDigest: _digest,
+      canonicalizationVersion: _canonicalizationVersion,
+      ...oldContent
+    } = oldFixture
+    const historical = {
+      ...oldContent,
+      contextPackageId: 'ctx_57PXZBSKA8RKKX5FKEWVP4Q6F0',
+      contentDigest: 'sha256:29eddfaf33523139f4af9bb9bb12e6786df2c30e93790a8360874e88191eb641',
+    }
+    const repository = new InMemoryContextPackageRepository()
+    const oldReference = await repository.put(historical)
+    expect(await repository.put(historical)).toEqual(oldReference)
+    const currentReference = await repository.put(oldFixture)
+    expect(currentReference.contextPackageId).not.toBe(oldReference.contextPackageId)
+    expect(oldReference).not.toHaveProperty('canonicalizationVersion')
+    expect(currentReference.canonicalizationVersion).toBe(2)
+    expect(await repository.get(oldReference)).toEqual(historical)
+    expect(
+      await repository.get({ ...currentReference, canonicalizationVersion: 1 })
+    ).toBeUndefined()
+  })
+
   test('a package persisted pre-cutover still passes integrity via the legacy digest', () => {
     const input = baseInput()
     // State-item values are free-form JSON: keys 'a-b'/'a_b' order differently
     // under localeCompare vs code point, so the two canonical forms diverge.
     input.projectState.items[0].value = { 'a-b': 1, a_b: 2 }
     const plan = compile(input)
-    const { contextPackageId, contentDigest, ...content } = plan
+    const {
+      contextPackageId,
+      contentDigest,
+      canonicalizationVersion: _canonicalizationVersion,
+      ...content
+    } = plan
     void contextPackageId
     void contentDigest
     const legacyContentDigest = legacyDigest(content)
@@ -567,6 +842,7 @@ describe('reproducible ContextPackage compilation', () => {
     expect(child.parentContextPackage).toEqual({
       contextPackageId: parent.contextPackageId,
       contentDigest: parent.contentDigest,
+      canonicalizationVersion: 2,
     })
     expect(child.stateItems.map((item) => item.itemId)).toEqual([itemOneId])
     expect(() =>
@@ -598,6 +874,25 @@ describe('reproducible ContextPackage compilation', () => {
     const legacyChild = rehashContextPackage(child)
     expect(assertContextPackageIntegrity(legacyChild)).toEqual(legacyChild)
     expect(assertContextPackageDerivedFrom(parent, legacyChild)).toEqual(legacyChild)
+
+    const historicalParent = rehashContextPackage({
+      ...parent,
+      canonicalizationVersion: undefined,
+    })
+    const historicalChild = rehashContextPackage({
+      ...child,
+      canonicalizationVersion: undefined,
+      parentContextPackage: {
+        contextPackageId: historicalParent.contextPackageId,
+        contentDigest: historicalParent.contentDigest,
+      },
+    })
+    expect(historicalParent).not.toHaveProperty('canonicalizationVersion')
+    expect(historicalChild).not.toHaveProperty('canonicalizationVersion')
+    expect(assertContextPackageIntegrity(historicalParent)).toEqual(historicalParent)
+    expect(assertContextPackageDerivedFrom(historicalParent, historicalChild)).toEqual(
+      historicalChild
+    )
 
     const widenedScope = rehashContextPackage({
       ...child,

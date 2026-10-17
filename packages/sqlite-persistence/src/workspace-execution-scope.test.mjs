@@ -255,8 +255,8 @@ test('workspace concurrent budget admission, cancellation, events and restart re
 
 test('legacy project bytes and replay identities survive reopen and explicit project normalization', async () => {
   await fixture(async ({ provider, reopen }) => {
-    const context = contextPackageSerializationFixtures.futurePi
-    const plan = createExecutionPlanTestFixture()
+    const context = historicalContextPackage()
+    const plan = createExecutionPlanTestFixture({ contextPackage: context })
     expect(plan.contentDigest).toBe(
       'sha256:dc03a107d310cf14591b6d34fba4ed6443faedfb8e972ac31f2a50957b3d86fe'
     )
@@ -306,6 +306,20 @@ test('legacy project bytes and replay identities survive reopen and explicit pro
     expect(Object.hasOwn(plan.correlation, 'executionScope')).toBe(false)
   })
 })
+
+function historicalContextPackage() {
+  const {
+    contextPackageId: _contextPackageId,
+    contentDigest: _contentDigest,
+    canonicalizationVersion: _canonicalizationVersion,
+    ...content
+  } = contextPackageSerializationFixtures.futurePi
+  return {
+    ...content,
+    contextPackageId: 'ctx_57PXZBSKA8RKKX5FKEWVP4Q6F0',
+    contentDigest: 'sha256:29eddfaf33523139f4af9bb9bb12e6786df2c30e93790a8360874e88191eb641',
+  }
+}
 
 test('workspace admission rejects a foreign workspace without owner or budget side effects', async () => {
   await fixture(async ({ provider }) => {

@@ -59,6 +59,38 @@ be safely replayed enters `reconciliation_required` instead of being reported as
 Executor errors are normalized to bounded codes; raw error messages and raw tool input are not kept
 in the durable call record.
 
+### Tool-call digest compatibility and rollout
+
+New `ToolCall` records store code-point canonical JSON SHA-256 digests and set both
+`requestDigestVersion` and `inputDigestVersion` to `2`. A tagged v2 digest is accepted only when its
+bytes match v2; unknown version tags and v2-to-legacy mismatches fail closed. SQLite and PostgreSQL
+repositories keep each digest and its version tag immutable across compare-and-set updates.
+
+For rows with no version tag, request and input digests are verified independently. The reader accepts
+the untagged code-point form written during the #664 cutover, including its mixed epoch where the
+request digest was canonicalized while the input digest remained legacy. It also accepts only these
+evidenced locale-dependent legacy forms: historical `en-US` and `sv-SE` collations, both pinned from Bun
+1.4.2 / ICU 78.1 receipt bytes. Those locale candidates are evaluated only on the exact Bun 1.4.2 /
+ICU 78.1, Bun 1.4.3 / ICU 78.1, and Bun 1.4.3 / ICU 78.3 reader pairs; the code-point form remains
+verifiable on other
+runtimes. The Swedish ordering for the tested free-form keys is `z`, `å`, `ä`; the English ordering is `å`, `ä`, `z`. Other
+locale/runtime forms, including the Turkish-specific fixture, cannot be inferred from untagged rows
+and fail closed with an idempotency conflict. The original locale/runtime is not stored, so this
+compatibility list must remain explicit.
+
+Before upgrading Bun or ICU, qualify the fixed historical receipt bytes on the target runtime and
+update this allowlist before rolling out the upgraded reader. Do not bypass runtime qualification
+with an environment override.
+
+Older strict `ToolCallSchema` readers reject the additive digest-version fields. For a rolling
+deployment, install the strict reader on every tool execution and replay worker before enabling any
+v2 writer. Do not leave a process that ignores digest-version tags able to load and persist
+`ToolCall` rows while v2 writes are active. Once tagged rows have been persisted, rollback to an
+older strict reader is unsafe without a compatibility plan because it cannot parse those rows. No
+data rewrite or migration is performed; existing rows remain unchanged. Keep the strict reader's
+untagged compatibility until retained legacy rows have been removed through the normal retention
+process; only then can the legacy candidates be retired.
+
 ## MCP servers
 
 `McpAdapter` discovers a registered server through a provider-neutral client port and imports each
