@@ -321,6 +321,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
           attemptId: admission.admittedAttempt.attemptId,
           selectionRef: prepared.funding.selectionRef,
           selectionRevision: prepared.funding.selectionRevision,
+          childAllowance: childAllowanceDisclosure(admission),
           ...prepared,
         })
       )
@@ -1015,6 +1016,33 @@ function observedTarget(
   const taskId = plan?.correlation?.taskId
   if (typeof sessionId !== 'string' || typeof taskId !== 'string') return {}
   return { observedTarget: { sessionId, taskId } }
+}
+/** What the admitted, integrity-verified lead plan holds back for children, read from the plan the
+ *  attempt runs under and never from a caller claim. The profile pin is the one the plan was compiled
+ *  from; a plan that states no allowance holds nothing back (balance the lead releases is then the
+ *  only child funding), which is a statement and not an absent disclosure. */
+function childAllowanceDisclosure(admission: PiDurableLeadAdmission) {
+  const plan = assertExecutionPlanIntegrity(admission.startRequest.executionPlan)
+  const allowance = plan.constraints.limits.childExecutions.budgetAllowance
+  const binding = {
+    schemaVersion: 'pi-lead-child-allowance/v1' as const,
+    executionPlanDigest: plan.contentDigest,
+    profile: {
+      profileId: plan.profile.profileId,
+      profileVersionId: plan.profile.profileVersionId,
+      version: plan.profile.version,
+      revision: plan.profile.revision,
+    },
+  }
+  return allowance === undefined
+    ? { ...binding, state: 'not_stated' as const }
+    : {
+        ...binding,
+        state: 'stated' as const,
+        currency: plan.constraints.limits.budget.currency,
+        maximumMicrounits: allowance.maximumMicrounits,
+        maximumTokens: allowance.maximumTokens,
+      }
 }
 /**
  * Public child views come from retained delegation records only. A record that is not this

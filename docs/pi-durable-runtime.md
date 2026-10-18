@@ -123,13 +123,32 @@ current product audience and canonical attempt even after runtime completion.
 With funding preparation configured, `prepare` accepts the canonical intent and
 returns `pi-lead-preparation/v1`: an opaque `prep_<32hex>` reference, execution,
 attempt and selection references, the authenticated payer display and expiry.
-It does not start the runtime, construct Models or lease credentials. Explicit
-dispatch supplies that reference and rechecks the entire immutable funding view.
+It does not start the runtime, construct Models or lease credentials.
+
+Explicit dispatch supplies that reference and rechecks the entire immutable funding view.
 Expiry is bounded by five minutes, the funding record and admission deadline.
 A changed payer cannot refresh the same accepted attempt; cancellation or unused
 expiry cleanup and a fresh canonical attempt are required. Startup and periodic
 scanners release proven unused allocations, including admission interrupted
 before a preparation receipt exists. In-flight or ambiguous sends retain holds.
+
+`prepare` also carries an optional `childAllowance` (`pi-lead-child-allowance/v1`): what the accepted
+lead plan holds back for child executions, read from the integrity-verified plan the attempt runs
+under, bound to its `executionPlanDigest` and to the pinned profile version it was compiled from
+(`profileId`, `profileVersionId`, `version`, `revision`). `state: 'stated'` carries the plan's
+`maximumMicrounits` (USD) and `maximumTokens`; `state: 'not_stated'` means the plan holds nothing
+back, so only balance the lead releases can fund children (see the child allowance section of the
+usage ledger). It is disclosure only: no funding, admission or spending capability, and it is
+replayed unchanged with a retained preparation. The plan composes the pinned profile version's
+constraints with any request constraints (the smaller allowance wins); the production execution path
+supplies the profile only, so there the statement is the pinned profile version's. The disclosure
+does not say which layer stated it. A control plane that predates this field omits it, and an
+omitted field is not `not_stated`: a consumer must show it as not disclosed.
+
+Rollout: the preparation schema is strict, so a consumer built on an `@adea-ai/runtime-sdk` older
+than the release that adds this field rejects a preparation that carries it. Consumers upgrade the
+SDK first (the new schema still accepts a preparation without the field), then the control plane
+emits it.
 
 `lookup` reads the actual retained receipt by intent after a lost dispatch reply.
 It may attach the exact existing journal handle to that receipt after current

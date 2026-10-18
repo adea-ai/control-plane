@@ -3,6 +3,7 @@ import { PublicContractManifest } from '@control-plane/contracts'
 import {
   PiDurableLeadPrepareRequestSchema,
   PiDurableLeadPrepareResponseSchema,
+  PiDurableLeadChildAllowanceSchema,
   PiDurableLeadDispatchRequestSchema,
   PiDurableLeadLookupRequestSchema,
   PiDurableLeadLookupResponseSchema,
@@ -87,6 +88,62 @@ test('preparation exposes ready disclosure without runtime identity or caller gr
         payload: { ...request.payload, ...extra },
       }).success
     ).toBe(false)
+  }
+})
+
+const childBinding = {
+  schemaVersion: 'pi-lead-child-allowance/v1',
+  executionPlanDigest: `sha256:${'e'.repeat(64)}`,
+  profile: {
+    profileId: id('prf'),
+    profileVersionId: id('pfv'),
+    version: 2,
+    revision: 3,
+  },
+}
+const stated = {
+  ...childBinding,
+  state: 'stated',
+  currency: 'USD',
+  maximumMicrounits: 400_000,
+  maximumTokens: 40_000,
+}
+const notStated = { ...childBinding, state: 'not_stated' }
+
+test('preparation may disclose a stated child allowance, none stated, or predate the disclosure', () => {
+  for (const childAllowance of [stated, notStated]) {
+    const withAllowance = { ...response, data: { ...response.data, childAllowance } }
+    expect(PiDurableLeadPrepareResponseSchema.parse(withAllowance)).toEqual(withAllowance)
+  }
+  // A control plane that predates the disclosure omits the field; that parses and is not "none".
+  const parsed = PiDurableLeadPrepareResponseSchema.parse(response)
+  expect(parsed.data.childAllowance).toBeUndefined()
+  expect('childAllowance' in parsed.data).toBe(false)
+})
+
+test('a child allowance disclosure is exact: no half statements, no extra authority', () => {
+  expect(PiDurableLeadChildAllowanceSchema.safeParse(stated).success).toBe(true)
+  const { maximumTokens: _t, ...noTokens } = stated
+  const { profile: _p, ...noProfile } = notStated
+  for (const invalid of [
+    noTokens,
+    noProfile,
+    { ...stated, maximumMicrounits: 0 },
+    { ...stated, maximumTokens: 1.5 },
+    { ...stated, currency: 'EUR' },
+    { ...notStated, maximumMicrounits: 1 },
+    { ...notStated, currency: 'USD' },
+    { ...stated, executionPlanDigest: 'sha256:short' },
+    { ...stated, profile: { ...childBinding.profile, version: 0 } },
+    {
+      ...stated,
+      profile: { ...childBinding.profile, contentDigest: childBinding.executionPlanDigest },
+    },
+    { ...stated, authorizationRef: 'spend:test' },
+    { ...stated, state: 'unknown' },
+    { ...childBinding },
+  ]) {
+    expect(PiDurableLeadChildAllowanceSchema.safeParse(invalid).success).toBe(false)
   }
 })
 
