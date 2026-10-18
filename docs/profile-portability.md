@@ -142,12 +142,16 @@ No CLI default, production writer, stored record or migration provenance is
 changed by this reader-first increment. Old readers reject the new discriminator
 rather than silently verifying it under the wrong algorithm.
 
-Destination equivalence in SQLite and PostgreSQL compares the complete category,
-logical id, revision and value under the incoming record's verified historical
-profile. The profile is admitted only after successful whole-manifest, record
-and reference validation and is bound to the returned record object and retained
-digest. A copied historical record must be verified again; an arbitrary legacy
-hash or a subsequently mutated record cannot authorize equivalence. Credential
+Destination equivalence in SQLite and PostgreSQL first verifies the incoming
+record's retained digest under its admitted historical profile, then compares the
+complete category, logical id, revision and value using canonical structural
+serialization. Distinct Unicode keys that tie under historical en-US collation
+(such as decomposed and composed accented characters) stay distinct; reordering
+them in destination JSON/JSONB does not change equivalence. The profile is admitted
+only after successful whole-manifest, record and reference validation and is bound
+to the returned record object and retained digest. A copied historical record
+must be verified again; an arbitrary legacy hash or a subsequently mutated record
+cannot authorize equivalence. Credential
 comparisons retain the existing strict metadata projection; secret references,
 secret revisions and destination status do not participate. Import and replay
 preserve the incoming record and manifest/provenance digests, without rewriting

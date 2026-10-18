@@ -501,3 +501,71 @@ test('historical duplicate logical identities also fail closed across revisions 
     )
   }
 })
+
+function collationEqualState() {
+  const input = structuredClone(stateRecord)
+  input.value.items[0].value = { é: 'composed', 'e\u0301': 'decomposed' }
+  const existing = structuredClone(input)
+  existing.value.items[0].value = { 'e\u0301': 'decomposed', é: 'composed' }
+  return { input, existing }
+}
+
+test('verified historical equivalence ignores insertion order of collation-equal distinct keys', () => {
+  const { input, existing } = collationEqualState()
+  expect(new Intl.Collator('en-US').compare('e\u0301', 'é')).toBe(0)
+  const manifest = historicalManifest([input])
+  const snapshot = JSON.stringify(manifest)
+  const [verified] = assertPortableManifest(manifest).records
+  expect(verified.contentDigest).not.toBe(legacyDigest(existing))
+  expect(matchesVerifiedPortableRecord(verified, existing)).toBe(true)
+  for (const value of [
+    { é: 'changed', 'e\u0301': 'decomposed' },
+    { é: 'decomposed', 'e\u0301': 'composed' },
+    { é: 'composed' },
+  ]) {
+    const changed = structuredClone(existing)
+    changed.value.items[0].value = value
+    expect(matchesVerifiedPortableRecord(verified, changed)).toBe(false)
+  }
+  expect(matchesVerifiedPortableRecord(structuredClone(verified), existing)).toBe(false)
+  expect(JSON.stringify(manifest)).toBe(snapshot)
+})
+
+for (const adapter of ['sqlite', 'postgresql']) {
+  test(`${adapter} historical replay recognizes reordered collation-equal keys and rejects changed content`, async () => {
+    const { input, existing } = collationEqualState()
+    const manifest = historicalManifest([input])
+    let destination
+    if (adapter === 'sqlite') {
+      const fixture = await sqliteDestination()
+      destination = fixture.destination
+      await applyPortableImport(
+        manifest,
+        await planPortableImport(manifest, destination),
+        destination,
+        {},
+        () => createdAt
+      )
+      const [stored] = await fixture.persistence.transaction((tx) => tx.list('project-states'))
+      await fixture.persistence.transaction((tx) =>
+        tx.put({
+          namespace: 'project-states',
+          id: stored.id,
+          expectedRevision: stored.revision,
+          value: existing.value,
+        })
+      )
+    } else destination = postgresDestination(existing.value).destination
+    const plan = await planPortableImport(manifest, destination)
+    expect(plan.records[0].state).toBe('equivalent')
+    expect(
+      (await applyPortableImport(manifest, plan, destination, {}, () => createdAt)).outcome
+    ).toBe('replayed')
+    expect(plan.records[0].record.contentDigest).toBe(manifest.records[0].contentDigest)
+    const changed = structuredClone(input)
+    changed.value.items[0].value['é'] = 'changed'
+    expect(
+      (await planPortableImport(historicalManifest([changed]), destination)).records[0].state
+    ).toBe('conflict')
+  })
+}

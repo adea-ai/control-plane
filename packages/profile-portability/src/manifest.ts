@@ -254,7 +254,7 @@ export function assertPortableManifest(input: unknown): PortableExportManifest {
   return manifest
 }
 
-/** Compare complete existing content under the incoming record's verified epoch. */
+/** Verify retained historical identity, then compare complete structural content. */
 export function matchesVerifiedPortableRecord(
   record: PortableRecord,
   candidate: Omit<PortableRecord, 'contentDigest'>
@@ -276,7 +276,11 @@ export function matchesVerifiedPortableRecord(
     revision: candidate.revision,
     value: candidate.value,
   }
-  return hash(existing) === contentDigest
+  // Historical collation may tie distinct Unicode keys and preserve their
+  // insertion order. Destination JSON/JSONB may reorder those keys without
+  // changing content; digest verification and structural equivalence are
+  // separate checks. Canonical comparison keeps both distinct keys intact.
+  return canonicalJsonStringify(unsigned) === canonicalJsonStringify(existing)
 }
 
 function assertUniquePortableRecordIdentities(records: readonly PortableRecord[]): void {
