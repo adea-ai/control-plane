@@ -105,3 +105,48 @@ Run `bun run test:m10-conformance`. The suite compares the same versioned cases 
 profiles and identifies the exact profile, port, and adapter when normalized outcomes diverge. Live
 PostgreSQL evidence runs separately against an isolated database on an expiring Neon branch; Local
 and Hosted `simple` use disposable SQLite files.
+
+## Reader-first digest compatibility (#612)
+
+Schema version `1` now has an optional, strict `digestVersion` discriminator.
+Unversioned manifests remain historical documents. Readers verify their retained
+whole-manifest and record digests together under one matching historical epoch:
+
+- Before #614 (`bb10f8e0569834ab9d5a65551868a4e0ff9c6810`), object keys and
+  normalized record/reference arrays used locale ordering. The supported frozen
+  historical verification profile is `en-US`.
+- After #614 (`46897cd99faeda65c1659c312d80ded809dc61d5`), object keys used
+  code-point ordering while record and secret-reference arrays still used locale
+  ordering. Readers hash those arrays in their retained order, independent of
+  the reader's ambient locale.
+
+Verification preserves export identity, content digests, record digests and
+retained array order. It does not rewrite a manifest, recompute a replacement
+identity, relax content validation, or reinterpret a failed digest as success.
+A manifest and its records must match the same epoch. Unknown historical
+collations or a changed digest fail closed; inventory and qualify any additional
+historical profile before importing it. The frozen synthetic fixtures pin both
+writer commits and exact bytes; they are not a production-record inventory.
+
+New canonical documents explicitly use `digestVersion: "code-point-v2"` and
+`finalizeCanonicalPortableManifest()`. This writer uses the shared canonical JSON
+serializer, code-point array ordering and canonical tie-breaks; permutations do
+not change the digest. The discriminator itself is included in the hash. Record
+digests use the same canonical JSON form as post-#614 records. Unknown, malformed
+or removed discriminator claims cannot fall back to legacy verification.
+
+Deploy compatible readers everywhere before choosing the new writer. Existing
+`exportPortableState()` and `finalizePortableManifest()` calls retain the current
+unversioned output; the legacy finalizer refuses an explicit digest version.
+No CLI default, production writer, stored record or migration provenance is
+changed by this reader-first increment. Old readers reject the new discriminator
+rather than silently verifying it under the wrong algorithm.
+
+The compatibility reader is one phase of #612, not acceptance of every historical
+replay obligation. The destination adapters currently reconstruct a current
+record digest when comparing existing state. An unchanged pre-#614 record can
+therefore verify here but be reported as a destination conflict during planning
+or re-import. That equivalence boundary requires a separately admitted repair
+before claiming historical import/replay completion. Other #612 digest sites,
+hosted-Pi obligations, historical inventories and any writer-default cutover remain
+open. No historical or production data rewrite or retirement is authorized here.

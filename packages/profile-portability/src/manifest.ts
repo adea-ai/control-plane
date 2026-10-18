@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { compareCodePointOrder } from '@control-plane/domain'
+import { canonicalJsonStringify, compareCodePointOrder } from '@control-plane/domain'
 import { DeploymentProfiles, type JsonValue } from '@control-plane/deployment'
 import { z } from 'zod'
 import { EvalRunSchema } from '@control-plane/production-readiness'
@@ -17,6 +17,9 @@ import {
 } from '@control-plane/execution-plan'
 
 export const PORTABLE_EXPORT_SCHEMA_VERSION = 1 as const
+
+/** Reader-first opt-in: existing export callers keep their unversioned writer. */
+export const PORTABLE_CANONICAL_DIGEST_VERSION = 'code-point-v2' as const
 export const PORTABLE_CONTRACT_VERSION = 'control-plane-portable-state-v1' as const
 
 const IdentifierSchema = z
@@ -99,6 +102,7 @@ export const PortableCompatibilitySchema = z
 export const PortableExportManifestSchema = z
   .object({
     schemaVersion: z.literal(PORTABLE_EXPORT_SCHEMA_VERSION),
+    digestVersion: z.literal(PORTABLE_CANONICAL_DIGEST_VERSION).optional(),
     contractVersion: z.literal(PORTABLE_CONTRACT_VERSION),
     exportId: IdentifierSchema,
     sourceProfile: ProfileSchema,
@@ -143,11 +147,22 @@ export function finalizePortableManifest(
 export function assertPortableManifest(input: unknown): PortableExportManifest {
   const manifest = PortableExportManifestSchema.parse(input)
   const { contentDigest, ...unsigned } = manifest
-  const normalized = normalizeManifestInput(unsigned)
-  if (digestJson(normalized) !== contentDigest) throw new Error('PORTABLE_MANIFEST_DIGEST_INVALID')
+  const canonical = manifest.digestVersion === PORTABLE_CANONICAL_DIGEST_VERSION
+  // Historical arrays are already in the writer's normalized order. Preserve
+  // that order and the retained digest, rather than normalizing them with the
+  // reader's host locale. The pre-#614 epoch also used en-US object-key sorting;
+  // the later unversioned epoch uses code-point object keys with locale arrays.
+  const order = canonical ? compareCodePointOrder : historicalManifestOrder(unsigned, contentDigest)
+  const expected = canonical
+    ? canonicalDigest(normalizeCanonicalManifestInput(unsigned))
+    : digestWithOrder(unsigned, order)
+  if (expected !== contentDigest) throw new Error('PORTABLE_MANIFEST_DIGEST_INVALID')
   for (const record of manifest.records) {
     const { contentDigest: recordDigest, ...recordUnsigned } = record
-    if (digestJson(recordUnsigned) !== recordDigest) {
+    const expectedRecord = canonical
+      ? canonicalDigest(recordUnsigned)
+      : digestWithOrder(recordUnsigned, order)
+    if (expectedRecord !== recordDigest) {
       throw new Error('PORTABLE_RECORD_DIGEST_INVALID')
     }
     if (record.category === 'context-package' || record.category === 'execution-plan') {
@@ -223,12 +238,33 @@ export function assertPortableManifest(input: unknown): PortableExportManifest {
   return manifest
 }
 
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// digestJson is persisted and verified on read (PORTABLE_MANIFEST_DIGEST_INVALID);
-// stableJson sorts keys with localeCompare, so migrating needs a digest-versioned
-// cutover for previously published manifests (#612), not an in-place swap
+// CANONICAL-JSON: unversioned record/writer bytes remain unchanged during the
+// #612 reader-first deployment. New canonical manifest digests opt in through
+// PORTABLE_CANONICAL_DIGEST_VERSION; legacy verification never rewrites data.
 export function digestJson(value: unknown): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(stableJson(value)).digest('hex')}`
+}
+
+function canonicalDigest(value: unknown): `sha256:${string}` {
+  return `sha256:${createHash('sha256').update(canonicalJsonStringify(value)).digest('hex')}`
+}
+
+type PortableKeyOrder = (left: string, right: string) => number
+
+function digestWithOrder(value: unknown, order: PortableKeyOrder): `sha256:${string}` {
+  return `sha256:${createHash('sha256').update(historicalStableJson(value, order)).digest('hex')}`
+}
+
+function historicalManifestOrder(
+  unsigned: Omit<PortableExportManifest, 'contentDigest'>,
+  digest: string
+): PortableKeyOrder {
+  if (digestWithOrder(unsigned, compareCodePointOrder) === digest) return compareCodePointOrder
+  // Explicit historical profile, never the reader's ambient locale. Other
+  // undocumented historical collations fail verification; no hash is replaced.
+  const legacyOrder = new Intl.Collator('en-US').compare
+  if (digestWithOrder(unsigned, legacyOrder) === digest) return legacyOrder
+  throw new Error('PORTABLE_MANIFEST_DIGEST_INVALID')
 }
 
 export function portableEvaluationRunKey(evalRunId: string): string {
@@ -238,6 +274,8 @@ export function portableEvaluationRunKey(evalRunId: string): string {
 function normalizeManifestInput(
   input: Omit<PortableExportManifest, 'contentDigest'>
 ): Omit<PortableExportManifest, 'contentDigest'> {
+  if (Object.hasOwn(input, 'digestVersion'))
+    throw new Error('PORTABLE_DIGEST_WRITER_VERSION_UNSUPPORTED')
   return {
     ...input,
     componentVersions: Object.fromEntries(
@@ -268,6 +306,16 @@ function compareRecord(left: PortableRecord, right: PortableRecord): number {
   )
 }
 
+function canonicalTieBreak(
+  left: unknown,
+  right: unknown,
+  version: PortableExportManifest['digestVersion']
+): number {
+  return version === PORTABLE_CANONICAL_DIGEST_VERSION
+    ? compareCodePointOrder(canonicalJsonStringify(left), canonicalJsonStringify(right))
+    : 0
+}
+
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
   if (typeof value === 'object' && value !== null) {
@@ -276,6 +324,68 @@ function stableJson(value: unknown): string {
       .map(([key, child]) => `${JSON.stringify(key)}:${stableJson(child)}`)
       .join(',')}}`
   }
+  const encoded = JSON.stringify(value)
+  if (encoded === undefined) throw new Error('PORTABLE_VALUE_INVALID')
+  return encoded
+}
+
+/** Explicit opt-in writer. Deploy compatible readers before using this format. */
+export function finalizeCanonicalPortableManifest(
+  input: Omit<PortableExportManifest, 'contentDigest'>
+): PortableExportManifest {
+  z.literal(PORTABLE_CANONICAL_DIGEST_VERSION).parse(input.digestVersion)
+  const normalized = normalizeCanonicalManifestInput(input)
+  return PortableExportManifestSchema.parse({
+    ...normalized,
+    contentDigest: canonicalDigest(normalized),
+  })
+}
+
+function normalizeCanonicalManifestInput(
+  input: Omit<PortableExportManifest, 'contentDigest'>
+): Omit<PortableExportManifest, 'contentDigest'> {
+  return {
+    ...input,
+    componentVersions: Object.fromEntries(
+      Object.entries(input.componentVersions).toSorted(([left], [right]) =>
+        compareCodePointOrder(left, right)
+      )
+    ),
+    compatibility: {
+      ...input.compatibility,
+      requiredCapabilities: [...new Set(input.compatibility.requiredCapabilities)].toSorted(),
+    },
+    records: [...input.records].toSorted(
+      (left, right) =>
+        compareCodePointOrder(
+          `${left.category}:${left.logicalId}:${left.revision}`,
+          `${right.category}:${right.logicalId}:${right.revision}`
+        ) || canonicalTieBreak(left, right, input.digestVersion)
+    ),
+    artifacts: [...input.artifacts].toSorted(
+      (left, right) =>
+        compareCodePointOrder(left.key, right.key) ||
+        canonicalTieBreak(left, right, input.digestVersion)
+    ),
+    secretReferences: [...input.secretReferences].toSorted(
+      (left, right) =>
+        compareCodePointOrder(
+          `${left.provider}:${left.key}:${left.version ?? ''}`,
+          `${right.provider}:${right.key}:${right.version ?? ''}`
+        ) || canonicalTieBreak(left, right, input.digestVersion)
+    ),
+    unsupportedReferences: [...new Set(input.unsupportedReferences)].toSorted(),
+  }
+}
+
+function historicalStableJson(value: unknown, order: PortableKeyOrder): string {
+  if (Array.isArray(value))
+    return `[${value.map((entry) => historicalStableJson(entry, order)).join(',')}]`
+  if (typeof value === 'object' && value !== null)
+    return `{${Object.entries(value)
+      .toSorted(([a], [b]) => order(a, b))
+      .map(([key, child]) => `${JSON.stringify(key)}:${historicalStableJson(child, order)}`)
+      .join(',')}}`
   const encoded = JSON.stringify(value)
   if (encoded === undefined) throw new Error('PORTABLE_VALUE_INVALID')
   return encoded
