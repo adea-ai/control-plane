@@ -125,6 +125,13 @@ returns `pi-lead-preparation/v1`: an opaque `prep_<32hex>` reference, execution,
 attempt and selection references, the authenticated payer display and expiry.
 It does not start the runtime, construct Models or lease credentials.
 
+Explicit dispatch supplies that reference and rechecks the entire immutable funding view.
+Expiry is bounded by five minutes, the funding record and admission deadline.
+A changed payer cannot refresh the same accepted attempt; cancellation or unused
+expiry cleanup and a fresh canonical attempt are required. Startup and periodic
+scanners release proven unused allocations, including admission interrupted
+before a preparation receipt exists. In-flight or ambiguous sends retain holds.
+
 `prepare` also carries an optional `childAllowance` (`pi-lead-child-allowance/v1`): what the accepted
 lead plan holds back for child executions, read from the integrity-verified plan the attempt runs
 under, bound to its `executionPlanDigest` and to the pinned profile version it was compiled from
@@ -141,13 +148,7 @@ omitted field is not `not_stated`: a consumer must show it as not disclosed.
 Rollout: the preparation schema is strict, so a consumer built on an `@adea-ai/runtime-sdk` older
 than the release that adds this field rejects a preparation that carries it. Consumers upgrade the
 SDK first (the new schema still accepts a preparation without the field), then the control plane
-emits it. Explicit
-dispatch supplies that reference and rechecks the entire immutable funding view.
-Expiry is bounded by five minutes, the funding record and admission deadline.
-A changed payer cannot refresh the same accepted attempt; cancellation or unused
-expiry cleanup and a fresh canonical attempt are required. Startup and periodic
-scanners release proven unused allocations, including admission interrupted
-before a preparation receipt exists. In-flight or ambiguous sends retain holds.
+emits it.
 
 `lookup` reads the actual retained receipt by intent after a lost dispatch reply.
 It may attach the exact existing journal handle to that receipt after current
