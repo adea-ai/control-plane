@@ -1,0 +1,140 @@
+{
+  "sourceCommit": "46897cd99faeda65c1659c312d80ded809dc61d5",
+  "writerEpoch": "post-614",
+  "historicalLocale": "en-US",
+  "manifest": {
+    "schemaVersion": 1,
+    "contractVersion": "control-plane-portable-state-v1",
+    "exportId": "historical-post-614",
+    "sourceProfile": "local",
+    "createdAt": "2026-09-20T00:00:00.000Z",
+    "quiesced": true,
+    "includesSelectedHistory": false,
+    "componentVersions": {
+      "Aa": "1.0.0",
+      "a-b": "1.0.0",
+      "a_b": "1.0.0"
+    },
+    "compatibility": {
+      "minimumSchemaVersion": 1,
+      "contractVersion": "control-plane-portable-state-v1",
+      "requiredCapabilities": ["artifacts", "execution"],
+      "sourcePersistence": "sqlite",
+      "sourceObjectStore": "filesystem"
+    },
+    "records": [
+      {
+        "category": "policy-configuration",
+        "logicalId": "a_b",
+        "revision": 1,
+        "value": {
+          "a_b": 1,
+          "a-b": 2,
+          "Aa": 3,
+          "ab": 4,
+          "nested": {
+            "schemas": "fixture",
+            "schemaVersion": 1
+          }
+        },
+        "contentDigest": "sha256:c3229b78f426c753b1ce91c0cc7268ce92106999dc8ec3dfffb30db31c8ddd45"
+      },
+      {
+        "category": "policy-configuration",
+        "logicalId": "a-b",
+        "revision": 1,
+        "value": {
+          "a_b": 1,
+          "a-b": 2,
+          "Aa": 3,
+          "ab": 4,
+          "nested": {
+            "schemas": "fixture",
+            "schemaVersion": 1
+          }
+        },
+        "contentDigest": "sha256:0c795450cc6e641c99b2e5c2d6a7e5710c00141a61a921bed9abc4923ae1293e"
+      },
+      {
+        "category": "policy-configuration",
+        "logicalId": "Aa",
+        "revision": 1,
+        "value": {
+          "a_b": 1,
+          "a-b": 2,
+          "Aa": 3,
+          "ab": 4,
+          "nested": {
+            "schemas": "fixture",
+            "schemaVersion": 1
+          }
+        },
+        "contentDigest": "sha256:6853a9e67c5b84fd20c19a6a412e846508e9afaf820ab6e1aa0ce27fe7670454"
+      },
+      {
+        "category": "policy-configuration",
+        "logicalId": "ab",
+        "revision": 1,
+        "value": {
+          "a_b": 1,
+          "a-b": 2,
+          "Aa": 3,
+          "ab": 4,
+          "nested": {
+            "schemas": "fixture",
+            "schemaVersion": 1
+          }
+        },
+        "contentDigest": "sha256:b24c7124701b41104ef3596037c5777e1e0f235b47e9e7d7102ead6dac3b80e8"
+      }
+    ],
+    "artifacts": [
+      {
+        "key": "Aa",
+        "size": 0,
+        "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "metadata": {
+          "a_b": "one",
+          "a-b": "two"
+        }
+      },
+      {
+        "key": "a-b",
+        "size": 0,
+        "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "metadata": {
+          "a_b": "one",
+          "a-b": "two"
+        }
+      },
+      {
+        "key": "a_b",
+        "size": 0,
+        "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "metadata": {
+          "a_b": "one",
+          "a-b": "two"
+        }
+      }
+    ],
+    "secretReferences": [
+      {
+        "provider": "fixture-provider",
+        "key": "a_b",
+        "purpose": "synthetic-reference"
+      },
+      {
+        "provider": "fixture-provider",
+        "key": "a-b",
+        "purpose": "synthetic-reference"
+      },
+      {
+        "provider": "fixture-provider",
+        "key": "Aa",
+        "purpose": "synthetic-reference"
+      }
+    ],
+    "unsupportedReferences": [],
+    "contentDigest": "sha256:bcf16f8a878f4ec47d892be34a7e958589f6b360859eb3c1068f4cb5b498c781"
+  }
+}
