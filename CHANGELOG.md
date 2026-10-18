@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.103.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.103.1...workspace-v1.103.2) (2026-10-18)
+
+
+### Bug Fixes
+
+* **portability:** preserve historical verification and replay equivalence ([#1182](https://github.com/adea-ai/control-plane/issues/1182)) ([16ca0b4](https://github.com/adea-ai/control-plane/commit/16ca0b43b6c785ba13ef788510b457b45f2c30ae))
+
 ## [1.103.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.103.0...workspace-v1.103.1) (2026-10-17)
 
 

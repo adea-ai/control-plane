@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.2](https://github.com/adea-ai/control-plane/compare/profile-portability-v1.7.1...profile-portability-v1.7.2) (2026-10-18)
+
+
+### Bug Fixes
+
+* **portability:** preserve historical verification and replay equivalence ([#1182](https://github.com/adea-ai/control-plane/issues/1182)) ([16ca0b4](https://github.com/adea-ai/control-plane/commit/16ca0b43b6c785ba13ef788510b457b45f2c30ae))
+
 ## [1.7.1](https://github.com/adea-ai/control-plane/compare/profile-portability-v1.7.0...profile-portability-v1.7.1) (2026-10-17)
 
 
