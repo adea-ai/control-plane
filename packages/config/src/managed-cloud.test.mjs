@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { loadManagedCloudConfiguration, managedCloudEnvironmentManifest } from './index.ts'
+import {
+  loadDatabaseCredentials,
+  loadManagedCloudConfiguration,
+  managedCloudEnvironmentManifest,
+} from './index.ts'
 
 const metadata = {
   APP_ENV: 'staging',
@@ -10,7 +14,8 @@ const metadata = {
 
 const cloud = {
   ...metadata,
-  DATABASE_URL: 'postgresql://app:database-secret@example.neon.tech/control_plane?sslmode=require',
+  DATABASE_URL:
+    'postgresql://control_plane_app:database-secret@control-plane-db.railway.internal:5432/control_plane?sslmode=verify-full',
   CONTROL_PLANE_SECRET_ENCRYPTION_KEY:
     '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
   CONTROL_PLANE_SERVICE_AUTH_ISSUER: 'https://agent-hq.example',
@@ -123,7 +128,7 @@ describe('managed cloud configuration', () => {
     )
   })
 
-  test('loads Railway, Neon, Restate, and R2 configuration without changing provider-neutral types', () => {
+  test('loads Railway, Restate, and R2 configuration without changing provider-neutral types', () => {
     const configuration = loadManagedCloudConfiguration(cloud, 'control-api')
     expect(configuration).toMatchObject({
       service: 'control-api',
@@ -149,6 +154,31 @@ describe('managed cloud configuration', () => {
         requestIdentityPublicKey: 'publickeyv1_w7YHemBctH5Ck2nQRQ47iBBqhNHy4FV7t2Usbye2A6f',
       },
     })
+  })
+
+  test('qualifies the shared Railway target with separate application, migration and administration roles', () => {
+    const shared = 'control-plane-db.railway.internal:5432/control_plane'
+    const environment = {
+      DATABASE_URL: cloud.DATABASE_URL,
+      DATABASE_MIGRATION_URL: `postgresql://control_plane_migrator:migration-secret@${shared}?sslmode=verify-full`,
+      DATABASE_ADMIN_URL: `postgresql://control_plane_admin:admin-secret@${shared}?sslmode=verify-full`,
+    }
+    const credentials = ['application', 'migration', 'administration'].map((role) =>
+      loadDatabaseCredentials(environment, role)
+    )
+    for (const entry of credentials) {
+      const url = new URL(entry.url)
+      expect(url.hostname).toBe('control-plane-db.railway.internal')
+      expect(url.pathname).toBe('/control_plane')
+      expect(url.searchParams.getAll('sslmode')).toEqual(['verify-full'])
+    }
+    const principals = credentials.map((entry) => new URL(entry.url).username)
+    expect(principals).toEqual([
+      'control_plane_app',
+      'control_plane_migrator',
+      'control_plane_admin',
+    ])
+    expect(new Set(principals).size).toBe(principals.length)
   })
 
   test('accepts only HTTPS or Railway-private HTTP Restate ingress', () => {
