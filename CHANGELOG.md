@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.104.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.103.2...workspace-v1.104.0) (2026-10-18)
+
+
+### Features
+
+* **pi:** disclose the lead plan's child allowance on preparation ([#1211](https://github.com/adea-ai/control-plane/issues/1211)) ([#1136](https://github.com/adea-ai/control-plane/issues/1136)) ([efd457a](https://github.com/adea-ai/control-plane/commit/efd457a36911ee58674a1837964a1e2e6cd735e2))
+
 ## [1.103.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.103.1...workspace-v1.103.2) (2026-10-18)
 
 
