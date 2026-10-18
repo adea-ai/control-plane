@@ -50,7 +50,9 @@ import {
   importedCredential,
 } from '@control-plane/credential-vault'
 import {
+  PortableRecordSchema,
   createPortableRecord,
+  matchesVerifiedPortableRecord,
   portableEvaluationRunKey,
   type PortableArtifactReference,
   type PortableRecord,
@@ -332,7 +334,7 @@ export class PostgresPortableStateDestination implements PortableStateDestinatio
         state:
           current === undefined
             ? 'missing'
-            : current.contentDigest === record.contentDigest
+            : matchesVerifiedPortableRecord(record, current)
               ? 'equivalent'
               : 'conflict',
       }
@@ -346,7 +348,7 @@ export class PostgresPortableStateDestination implements PortableStateDestinatio
     return Promise.resolve({
       put: async (record) => {
         if (settled) throw new Error('PORTABLE_TRANSACTION_SETTLED')
-        records.push(createPortableRecord(record))
+        records.push(PortableRecordSchema.parse(record))
       },
       recordProvenance: async (value) => {
         if (settled) throw new Error('PORTABLE_TRANSACTION_SETTLED')
