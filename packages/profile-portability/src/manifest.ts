@@ -120,6 +120,19 @@ export const PortableExportManifestSchema = z
   .strict()
 
 export type PortableRecord = z.output<typeof PortableRecordSchema>
+
+// Only successful whole-manifest verification admits a historical profile.
+// Weak ownership binds it to that exact returned record; JSON copies must be
+// verified again, and later mutation cannot replace the retained digest.
+const verifiedRecordProfiles = new WeakMap<
+  PortableRecord,
+  Readonly<{
+    digest: string
+    canonical: boolean
+    order: PortableKeyOrder
+  }>
+>()
+
 export type PortableArtifactReference = z.output<typeof PortableArtifactReferenceSchema>
 export type PortableSecretReference = z.output<typeof PortableSecretReferenceSchema>
 export type PortableExportManifest = z.output<typeof PortableExportManifestSchema>
@@ -191,6 +204,7 @@ export function assertPortableManifest(input: unknown): PortableExportManifest {
         throw new Error('PORTABLE_EVALUATION_IDENTITY_INVALID')
     }
   }
+  assertUniquePortableRecordIdentities(manifest.records)
   const packages = new Map(
     manifest.records
       .filter((record) => record.category === 'context-package')
@@ -235,7 +249,44 @@ export function assertPortableManifest(input: unknown): PortableExportManifest {
     )
     assertExecutionValidationCommandPlan(command, plan)
   }
+  for (const record of manifest.records)
+    verifiedRecordProfiles.set(record, { digest: record.contentDigest, canonical, order })
   return manifest
+}
+
+/** Compare complete existing content under the incoming record's verified epoch. */
+export function matchesVerifiedPortableRecord(
+  record: PortableRecord,
+  candidate: Omit<PortableRecord, 'contentDigest'>
+): boolean {
+  const profile = verifiedRecordProfiles.get(record)
+  const parsed = PortableRecordSchema.parse(record)
+  const { contentDigest, ...unsigned } = parsed
+  if (profile && profile.digest !== contentDigest) return false
+  const hash = profile
+    ? (value: unknown) =>
+        profile.canonical ? canonicalDigest(value) : digestWithOrder(value, profile.order)
+    : digestJson
+  // An unverified legacy hash has no fallback. Current-format records may be
+  // checked directly against their one existing, unambiguous digest algorithm.
+  if (hash(unsigned) !== contentDigest) return false
+  const existing = {
+    category: candidate.category,
+    logicalId: candidate.logicalId,
+    revision: candidate.revision,
+    value: candidate.value,
+  }
+  return hash(existing) === contentDigest
+}
+
+function assertUniquePortableRecordIdentities(records: readonly PortableRecord[]): void {
+  const identities = new Set<string>()
+  for (const record of records) {
+    // Reference consumers resolve by logicalId, not by retained array order or
+    // revision. Even different categories/revisions must not shadow that key.
+    if (identities.has(record.logicalId)) throw new Error('PORTABLE_RECORD_IDENTITY_AMBIGUOUS')
+    identities.add(record.logicalId)
+  }
 }
 
 // CANONICAL-JSON: unversioned record/writer bytes remain unchanged during the
@@ -334,6 +385,7 @@ export function finalizeCanonicalPortableManifest(
   input: Omit<PortableExportManifest, 'contentDigest'>
 ): PortableExportManifest {
   z.literal(PORTABLE_CANONICAL_DIGEST_VERSION).parse(input.digestVersion)
+  assertUniquePortableRecordIdentities(input.records)
   const normalized = normalizeCanonicalManifestInput(input)
   return PortableExportManifestSchema.parse({
     ...normalized,

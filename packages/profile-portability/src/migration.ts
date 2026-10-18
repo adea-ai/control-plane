@@ -50,6 +50,7 @@ import {
   PortableSecretReferenceSchema,
   assertPortableManifest,
   createPortableRecord,
+  matchesVerifiedPortableRecord,
   finalizePortableManifest,
   portableEvaluationRunKey,
   type PortableArtifactReference,
@@ -549,12 +550,12 @@ export class PersistencePortableStateDestination implements PortableStateDestina
             if (existing === undefined) return { record, state: 'missing' as const }
             return {
               record,
-              state:
-                createPortableRecord(
-                  portableCredentialRecord(toPortableCredentialMetadata(existing))
-                ).contentDigest === record.contentDigest
-                  ? ('equivalent' as const)
-                  : ('conflict' as const),
+              state: matchesVerifiedPortableRecord(
+                record,
+                portableCredentialRecord(toPortableCredentialMetadata(existing))
+              )
+                ? ('equivalent' as const)
+                : ('conflict' as const),
             }
           }
           const identity = persistenceIdentity(record)
@@ -568,10 +569,9 @@ export class PersistencePortableStateDestination implements PortableStateDestina
           })
           return {
             record,
-            state:
-              existingPortable.contentDigest === record.contentDigest
-                ? ('equivalent' as const)
-                : ('conflict' as const),
+            state: matchesVerifiedPortableRecord(record, existingPortable)
+              ? ('equivalent' as const)
+              : ('conflict' as const),
           }
         })
       )

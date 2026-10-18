@@ -142,11 +142,28 @@ No CLI default, production writer, stored record or migration provenance is
 changed by this reader-first increment. Old readers reject the new discriminator
 rather than silently verifying it under the wrong algorithm.
 
-The compatibility reader is one phase of #612, not acceptance of every historical
-replay obligation. The destination adapters currently reconstruct a current
-record digest when comparing existing state. An unchanged pre-#614 record can
-therefore verify here but be reported as a destination conflict during planning
-or re-import. That equivalence boundary requires a separately admitted repair
-before claiming historical import/replay completion. Other #612 digest sites,
-hosted-Pi obligations, historical inventories and any writer-default cutover remain
-open. No historical or production data rewrite or retirement is authorized here.
+Destination equivalence in SQLite and PostgreSQL compares the complete category,
+logical id, revision and value under the incoming record's verified historical
+profile. The profile is admitted only after successful whole-manifest, record
+and reference validation and is bound to the returned record object and retained
+digest. A copied historical record must be verified again; an arbitrary legacy
+hash or a subsequently mutated record cannot authorize equivalence. Credential
+comparisons retain the existing strict metadata projection; secret references,
+secret revisions and destination status do not participate. Import and replay
+preserve the incoming record and manifest/provenance digests, without rewriting
+historical identity. PostgreSQL staging validates the retained record shape
+instead of replacing its digest with the current writer's digest.
+
+All readers reject repeated record logical ids, including across categories or
+revisions, before constructing context-package or execution-plan reference maps.
+The canonical writer rejects them too. Reference consumers resolve by logical
+id, so retaining duplicates could otherwise let array order select different
+content under the same canonical manifest digest. Existing package, plan and
+command reference integrity checks remain in force.
+
+The compatibility reader and adapter repair are bounded phases of #612. Frozen
+writer fixtures, real disposable SQLite import/replay and scripted PostgreSQL
+query-boundary tests establish those specific contracts; the query fixtures are
+not live PostgreSQL qualification. Other #612 digest sites, hosted-Pi obligations,
+historical inventories and any writer-default cutover remain open. No historical
+or production data rewrite or retirement is authorized here.

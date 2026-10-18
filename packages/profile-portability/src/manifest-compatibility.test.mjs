@@ -1,9 +1,31 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { getTableName } from 'drizzle-orm'
+import { importedCredential } from '@control-plane/credential-vault'
+import { SqlitePersistenceProvider, writeSqliteCredential } from '@control-plane/sqlite-persistence'
+import { ProjectStateSchema } from '@control-plane/domain'
+import {
+  PersistencePortableStateDestination,
+  applyPortableImport,
+  planPortableImport,
+  portableCredentialRecord,
+} from './migration.ts'
+import { PostgresPortableStateDestination } from './postgres.ts'
+import {
+  contextPackageSerializationFixtures,
+  deriveContextPackage,
+  assertContextPackageIntegrity,
+} from '@control-plane/context'
+import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import { canonicalJsonStringify } from '@control-plane/domain'
 import {
   assertPortableManifest,
+  matchesVerifiedPortableRecord,
   createPortableRecord,
   finalizePortableManifest,
   finalizeCanonicalPortableManifest,
@@ -155,17 +177,9 @@ describe('explicit reader-first canonical portability digests', () => {
     expect(result.secretReferences.map((reference) => reference.key)).toEqual(['Aa', 'a-b', 'a_b'])
   })
 
-  test('equal identity keys retain every value and have deterministic canonical tie-breaks', () => {
+  test('equal reference identity keys retain every value and have deterministic canonical tie-breaks', () => {
     const input = canonicalInput()
-    const first = input.records[0]
-    input.records.push(
-      createPortableRecord({
-        category: first.category,
-        logicalId: first.logicalId,
-        revision: first.revision,
-        value: { alternative: true },
-      })
-    )
+
     input.secretReferences.push({ ...input.secretReferences[0], purpose: 'another-purpose' })
     input.artifacts.push({ ...input.artifacts[0], metadata: { alternate: 'metadata' } })
     const reversed = structuredClone(input)
@@ -208,4 +222,282 @@ describe('explicit reader-first canonical portability digests', () => {
     value.contentDigest = digest(unsigned(value))
     expect(() => assertPortableManifest(value)).toThrow('PORTABLE_RECORD_DIGEST_INVALID')
   })
+})
+
+describe('canonical record identity ambiguity', () => {
+  const parent = contextPackageSerializationFixtures.futurePi
+  const child = deriveContextPackage(parent, {
+    objective: 'Different valid portable context',
+    allowedStateItemIds: [],
+    allowedArtifactIds: [],
+    budgets: { maximumBytes: 512, maximumTokens: 128 },
+    successCriteria: ['Keep identities unambiguous'],
+    returnContract: parent.returnContract,
+    compiledAt: '2026-08-30T13:00:00.000Z',
+  })
+  const plans = [
+    createExecutionPlanTestFixture({ contextPackage: parent }),
+    createExecutionPlanTestFixture({ contextPackage: child }),
+  ]
+
+  for (const [category, logicalId, values, verify] of [
+    [
+      'context-package',
+      `context-packages/${parent.contextPackageId}`,
+      [parent, child],
+      assertContextPackageIntegrity,
+    ],
+    [
+      'execution-plan',
+      `execution-plans/${plans[0].executionPlanId}`,
+      plans,
+      assertExecutionPlanIntegrity,
+    ],
+  ]) {
+    test(`${category} duplicate logical identity is refused in either retained order`, () => {
+      for (const value of values) expect(() => verify(value)).not.toThrow()
+      const records = values.map((value) =>
+        createPortableRecord({ category, logicalId, revision: 0, value })
+      )
+      expect(() => finalizeCanonicalPortableManifest({ ...canonicalInput(), records })).toThrow(
+        'PORTABLE_RECORD_IDENTITY_AMBIGUOUS'
+      )
+      const canonical = finalizeCanonicalPortableManifest({ ...canonicalInput(), records: [] })
+      canonical.records = records.toSorted((a, b) =>
+        canonicalJsonStringify(a) < canonicalJsonStringify(b) ? -1 : 1
+      )
+      canonical.contentDigest = digest(unsigned(canonical))
+      const reversed = structuredClone(canonical)
+      reversed.records = reversed.records.toReversed()
+      expect(digest({ ...unsigned(reversed), records: canonical.records })).toBe(
+        canonical.contentDigest
+      )
+      for (const manifest of [canonical, reversed])
+        expect(() => assertPortableManifest(manifest)).toThrow('PORTABLE_RECORD_IDENTITY_AMBIGUOUS')
+    })
+  }
+})
+
+const createdAt = '2026-10-06T12:00:00.000Z'
+const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
+const projectId = 'prj_01JABCDEF0123456789ABCDEFG'
+const state = ProjectStateSchema.parse({
+  schemaVersion: 1,
+  workspaceId,
+  projectId,
+  revision: 1,
+  createdAt,
+  updatedAt: createdAt,
+  items: [
+    {
+      itemId: 'psi_01JABCDEF0123456789ABCDEFG',
+      key: 'compatibility',
+      value: { a_b: 1, 'a-b': 2, Aa: 3, ab: 4 },
+      sensitivity: 'internal',
+      itemRevision: 1,
+      createdAt,
+      updatedAt: createdAt,
+      freshness: { observedAt: createdAt },
+      provenance: { sourceKind: 'system', artifactRefs: [], capturedAt: createdAt },
+    },
+  ],
+})
+const stateRecord = {
+  category: 'project-state',
+  logicalId: `project-states/${workspaceId}:${projectId}`,
+  revision: 1,
+  value: state,
+}
+const credential = {
+  credentialId: 'crd_01JABCDEF0123456789ABCDEFG',
+  workspaceId,
+  connectorRef: 'connector:github',
+  provider: 'github',
+  revision: 1,
+  createdAt,
+}
+function historicalManifest(records) {
+  const input = {
+    ...unsigned(before.manifest),
+    exportId: 'historical-adapter-replay',
+    records: records.map((record) => ({ ...record, contentDigest: legacyDigest(record) })),
+    compatibility: { ...before.manifest.compatibility, requiredCapabilities: [] },
+    artifacts: [],
+    secretReferences: [],
+    unsupportedReferences: [],
+  }
+  return { ...input, contentDigest: legacyDigest(input) }
+}
+const cleanups = []
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).toReversed()) await cleanup()
+})
+async function sqliteDestination() {
+  const directory = await mkdtemp(join(tmpdir(), 'portable-historical-'))
+  const persistence = new SqlitePersistenceProvider({
+    path: join(directory, 'state.sqlite'),
+    profile: 'local',
+  })
+  cleanups.push(async () => rm(directory, { recursive: true, force: true }))
+  cleanups.push(async () => persistence.close())
+  await persistence.migrate()
+  return {
+    persistence,
+    destination: new PersistencePortableStateDestination({
+      persistence,
+      capabilities: [],
+      secretProviders: [],
+    }),
+  }
+}
+// Real PostgreSQL adapter, scripted query boundary only; no live database claim.
+function postgresDestination(stateValue = state) {
+  const rows = {
+    project_states: [{ workspaceId, projectId, revision: stateValue.revision, state: stateValue }],
+  }
+  const provenance = []
+  const database = {
+    select: () => ({
+      from(table) {
+        const values = rows[getTableName(table)] ?? []
+        return Object.assign(Promise.resolve(values), {
+          where: () => ({ limit: async () => provenance }),
+        })
+      },
+    }),
+    insert: () => ({
+      values: async (value) => {
+        provenance.push(value)
+      },
+    }),
+    transaction: async (operation, options) => {
+      expect(options.isolationLevel).toBe('serializable')
+      return operation(database)
+    },
+  }
+  return {
+    provenance,
+    destination: new PostgresPortableStateDestination({
+      database,
+      profile: 'cloud',
+      capabilities: [],
+      secretProviders: [],
+    }),
+  }
+}
+
+describe('verified historical destination equivalence', () => {
+  test('complete verified identity and payload match; unverified legacy hashes and mutated records do not', () => {
+    const raw = historicalManifest([stateRecord])
+    const [verified] = assertPortableManifest(raw).records
+    expect(verified.contentDigest).not.toBe(createPortableRecord(stateRecord).contentDigest)
+    expect(matchesVerifiedPortableRecord(verified, stateRecord)).toBe(true)
+    expect(matchesVerifiedPortableRecord(structuredClone(verified), stateRecord)).toBe(false)
+    for (const candidate of [
+      { ...stateRecord, category: 'selected-history' },
+      { ...stateRecord, logicalId: stateRecord.logicalId + ':other' },
+      { ...stateRecord, revision: 2 },
+      { ...stateRecord, value: { ...state, revision: 2 } },
+    ])
+      expect(matchesVerifiedPortableRecord(verified, candidate)).toBe(false)
+    verified.value.items[0].value['a_b'] = 99
+    expect(matchesVerifiedPortableRecord(verified, stateRecord)).toBe(false)
+    verified.contentDigest = legacyDigest({ ...stateRecord, value: verified.value })
+    expect(matchesVerifiedPortableRecord(verified, { ...stateRecord, value: verified.value })).toBe(
+      false
+    )
+  })
+
+  test('SQLite imports then replays historical ordinary records without rewriting retained digests or provenance', async () => {
+    const { persistence, destination } = await sqliteDestination()
+    const manifest = historicalManifest([stateRecord])
+    const original = JSON.stringify(manifest)
+    const plan = await planPortableImport(manifest, destination)
+    expect(plan.records[0].state).toBe('missing')
+    const first = await applyPortableImport(manifest, plan, destination, {}, () => createdAt)
+    expect(first.outcome).toBe('applied')
+    const replayPlan = await planPortableImport(manifest, destination)
+    expect(replayPlan.records[0].state).toBe('equivalent')
+    expect(replayPlan.records[0].record.contentDigest).toBe(manifest.records[0].contentDigest)
+    const replay = await applyPortableImport(manifest, replayPlan, destination, {}, () => createdAt)
+    expect(replay.outcome).toBe('replayed')
+    expect(replay.provenance.manifestDigest).toBe(manifest.contentDigest)
+    expect(
+      await persistence.transaction((tx) => tx.get('profile-migrations', manifest.exportId))
+    ).toMatchObject({ value: first.provenance })
+    expect(JSON.stringify(manifest)).toBe(original)
+    const changed = structuredClone(stateRecord)
+    changed.value.items[0].value['a_b'] = 99
+    const conflict = await planPortableImport(historicalManifest([changed]), destination)
+    expect(conflict.applicable).toBe(false)
+    expect(conflict.records[0].state).toBe('conflict')
+    expect((await destination.inspect(manifest.records))[0].state).toBe('conflict')
+  })
+
+  test('SQLite credential equality compares only strict portable metadata and refuses changed metadata', async () => {
+    const { persistence, destination } = await sqliteDestination()
+    await persistence.transaction((tx) => writeSqliteCredential(tx, importedCredential(credential)))
+    const manifest = historicalManifest([portableCredentialRecord(credential)])
+    const plan = await planPortableImport(manifest, destination)
+    expect(plan.records[0].state).toBe('equivalent')
+    expect(plan.records[0].record.value).toEqual(credential)
+    expect(JSON.stringify(plan.records)).not.toContain('secret_required')
+    expect(JSON.stringify(plan.records)).not.toContain('secretRevisions')
+    expect(
+      (await applyPortableImport(manifest, plan, destination, {}, () => createdAt)).outcome
+    ).toBe('replayed')
+    const changed = historicalManifest([
+      portableCredentialRecord({ ...credential, provider: 'other' }),
+    ])
+    expect((await planPortableImport(changed, destination)).records[0].state).toBe('conflict')
+  })
+
+  test('PostgreSQL compares the verified historical record and replays its retained provenance', async () => {
+    const { destination, provenance } = postgresDestination()
+    const manifest = historicalManifest([stateRecord])
+    const plan = await planPortableImport(manifest, destination)
+    expect(plan.records[0].state).toBe('equivalent')
+    expect(plan.records[0].record.contentDigest).toBe(manifest.records[0].contentDigest)
+    expect(
+      (await applyPortableImport(manifest, plan, destination, {}, () => createdAt)).outcome
+    ).toBe('replayed')
+    expect(
+      (await applyPortableImport(manifest, plan, destination, {}, () => createdAt)).outcome
+    ).toBe('replayed')
+    expect(provenance).toHaveLength(1)
+    expect(provenance[0].manifestDigest).toBe(manifest.contentDigest)
+    expect(provenance[0].provenance.manifestDigest).toBe(manifest.contentDigest)
+    expect((await destination.inspect(manifest.records))[0].state).toBe('conflict')
+    const changed = structuredClone(state)
+    changed.items[0].value['a_b'] = 99
+    const changedDestination = postgresDestination(changed).destination
+    expect((await planPortableImport(manifest, changedDestination)).records[0].state).toBe(
+      'conflict'
+    )
+    const revision = { ...state, revision: 2 }
+    expect(
+      (await planPortableImport(manifest, postgresDestination(revision).destination)).records[0]
+        .state
+    ).toBe('conflict')
+  })
+
+  test('PostgreSQL staging validates the retained digest rather than replacing malformed identity', async () => {
+    const { destination } = postgresDestination()
+    const transaction = await destination.begin()
+    await expect(transaction.put({ ...stateRecord, contentDigest: 'invalid' })).rejects.toThrow()
+    await transaction.put(historicalManifest([stateRecord]).records[0])
+    await transaction.rollback()
+  })
+})
+
+test('historical duplicate logical identities also fail closed across revisions and categories', () => {
+  for (const other of [
+    stateRecord,
+    { ...stateRecord, revision: 2 },
+    { ...stateRecord, category: 'selected-history' },
+  ]) {
+    expect(() => assertPortableManifest(historicalManifest([stateRecord, other]))).toThrow(
+      'PORTABLE_RECORD_IDENTITY_AMBIGUOUS'
+    )
+  }
 })
