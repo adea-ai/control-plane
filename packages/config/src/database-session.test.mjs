@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { ConfigurationError } from './service.ts'
-import { databaseSessionCredentials, loadDatabaseSessionCredentials } from './database.ts'
+import {
+  databaseSessionCredentials,
+  effectivePostgresTlsMode,
+  loadDatabaseSessionCredentials,
+} from './database.ts'
 
 // Synthetic shared Railway PostgreSQL target: one endpoint, the repository
 // logical database, and the three separated principals. No live host is used.
@@ -29,6 +33,7 @@ function expectConfigurationFailure(operation, missing = [], invalid = []) {
       missing,
       role: 'application',
     })
+    expect(JSON.stringify(error)).not.toContain('synthetic-test-password')
     expect(JSON.stringify(error)).not.toContain('private-password')
     expect(JSON.stringify(error)).not.toContain('postgresql://')
   }
@@ -139,5 +144,137 @@ describe('application database session credentials', () => {
       role: 'application',
       url: `${direct}?sslmode=verify-full`,
     })
+  })
+})
+
+describe('effective TLS across the session endpoint', () => {
+  const base =
+    'postgresql://control_plane_app:synthetic-test-password@database.internal:5432/control_plane'
+  const pooled = (query) => ({
+    role: 'application',
+    url: `postgresql://control_plane_app:synthetic-test-password@pool.internal:6432/control_plane${query}`,
+  })
+
+  test('the system trust root escalates the application endpoint to verify-full', () => {
+    // require plus the system root resolves to verify-full, so a require-only
+    // session endpoint is a downgrade.
+    expectConfigurationFailure(
+      () =>
+        databaseSessionCredentials(
+          pooled('?sslmode=require&sslrootcert=system'),
+          `${base}?sslmode=require`
+        ),
+      [],
+      ['DATABASE_URL_UNPOOLED']
+    )
+    // The system root alone is verify-full, so a session endpoint with no TLS
+    // at all is a downgrade.
+    expectConfigurationFailure(
+      () => databaseSessionCredentials(pooled('?sslrootcert=system'), base),
+      [],
+      ['DATABASE_URL_UNPOOLED']
+    )
+    expectConfigurationFailure(
+      () => databaseSessionCredentials(pooled('?sslrootcert=system'), `${base}?sslmode=require`),
+      [],
+      ['DATABASE_URL_UNPOOLED']
+    )
+  })
+
+  test('accepts every session endpoint that is effectively as strict', () => {
+    const strictSessions = [
+      `${base}?sslmode=verify-full`,
+      `${base}?sslmode=verify-ca`,
+      `${base}?sslrootcert=system`,
+      `${base}?sslmode=require&sslrootcert=system`,
+      `${base}?sslmode=verify-full&sslrootcert=system`,
+    ]
+    for (const query of [
+      '?sslmode=require&sslrootcert=system',
+      '?sslrootcert=system',
+      '?sslmode=verify-full',
+      '?sslmode=verify-ca',
+    ]) {
+      for (const url of strictSessions) {
+        expect(databaseSessionCredentials(pooled(query), url)).toEqual({
+          role: 'application',
+          url,
+        })
+      }
+    }
+    // The system root on the session endpoint only strengthens it.
+    expect(
+      databaseSessionCredentials(pooled('?sslmode=require'), `${base}?sslrootcert=system`)
+    ).toEqual({ role: 'application', url: `${base}?sslrootcert=system` })
+  })
+
+  test('treats verify-ca as the verify-full the driver connects with', () => {
+    expect(
+      databaseSessionCredentials(pooled('?sslmode=verify-full'), `${base}?sslmode=verify-ca`)
+    ).toEqual({
+      role: 'application',
+      url: `${base}?sslmode=verify-ca`,
+    })
+    expect(
+      databaseSessionCredentials(pooled('?sslmode=verify-ca'), `${base}?sslmode=verify-full`)
+    ).toEqual({
+      role: 'application',
+      url: `${base}?sslmode=verify-full`,
+    })
+  })
+
+  test.each([
+    [
+      'repeated sslmode on the session endpoint',
+      '?sslmode=verify-full',
+      '?sslmode=verify-full&sslmode=verify-full',
+    ],
+    [
+      'repeated sslmode on the application endpoint',
+      '?sslmode=require&sslmode=verify-full',
+      '?sslmode=verify-full',
+    ],
+    ['unknown sslmode on the session endpoint', '?sslmode=require', '?sslmode=bogus'],
+    ['unknown sslmode on the application endpoint', '?sslmode=bogus', '?sslmode=verify-full'],
+    [
+      'unknown sslmode paired with the system root',
+      '?sslmode=require',
+      '?sslmode=bogus&sslrootcert=system',
+    ],
+    ['unverified session mode', '?sslmode=require', '?sslmode=disable'],
+    [
+      'unverified mode paired with the system root',
+      '?sslmode=require',
+      '?sslmode=prefer&sslrootcert=system',
+    ],
+    ['unverified application mode', '?sslmode=allow', '?sslmode=verify-full'],
+  ])('fails closed on %s', (_name, applicationQuery, sessionQuery) => {
+    expectConfigurationFailure(
+      () => databaseSessionCredentials(pooled(applicationQuery), `${base}${sessionQuery}`),
+      [],
+      ['DATABASE_URL_UNPOOLED']
+    )
+  })
+
+  test('resolves one effective TLS mode shared with the connection resolver', () => {
+    const cases = [
+      ['', 'unset'],
+      ['?sslmode=require', 'require'],
+      ['?sslmode=verify-ca', 'verify-full'],
+      ['?sslmode=verify-full', 'verify-full'],
+      ['?sslrootcert=system', 'verify-full'],
+      ['?sslmode=require&sslrootcert=system', 'verify-full'],
+      ['?sslmode=verify-ca&sslrootcert=system', 'verify-full'],
+      ['?sslrootcert=/etc/ca.pem', 'unset'],
+      ['?sslmode=disable', undefined],
+      ['?sslmode=allow', undefined],
+      ['?sslmode=prefer', undefined],
+      ['?sslmode=disable&sslrootcert=system', undefined],
+      ['?sslmode=bogus&sslrootcert=system', undefined],
+      ['?sslmode=require&sslmode=require', undefined],
+    ]
+    for (const [query, expected] of cases) {
+      expect(effectivePostgresTlsMode(new URL(`${base}${query}`))).toBe(expected)
+    }
   })
 })

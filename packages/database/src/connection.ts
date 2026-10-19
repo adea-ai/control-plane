@@ -1,4 +1,4 @@
-import type { DatabaseCredentials } from '@control-plane/config'
+import { effectivePostgresTlsMode, type DatabaseCredentials } from '@control-plane/config'
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import * as schema from './schema/index.js'
@@ -137,18 +137,9 @@ function assertBoundedInteger(
  * silently disabled.
  */
 function resolveVerifiedTlsMode(url: URL): 'require' | 'verify-full' | undefined {
-  const systemTrustRoot = url.searchParams.getAll('sslrootcert').includes('system')
-  const modes = url.searchParams.getAll('sslmode')
-  if (modes.length > 1) throw new DatabaseConnectionError('INVALID_DATABASE_TLS')
-  const [mode] = modes
-  if (mode === 'disable' || mode === 'allow' || mode === 'prefer') {
-    throw new DatabaseConnectionError('INVALID_DATABASE_TLS')
-  }
-  if (systemTrustRoot) return 'verify-full'
-  if (mode === undefined) return undefined
-  if (mode === 'require') return 'require'
-  if (mode === 'verify-ca' || mode === 'verify-full') return 'verify-full'
-  throw new DatabaseConnectionError('INVALID_DATABASE_TLS')
+  const mode = effectivePostgresTlsMode(url)
+  if (mode === undefined) throw new DatabaseConnectionError('INVALID_DATABASE_TLS')
+  return mode === 'unset' ? undefined : mode
 }
 
 const DEFAULT_READINESS_PROBE_TIMEOUT_MS = 3000

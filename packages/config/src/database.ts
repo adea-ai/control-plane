@@ -51,8 +51,8 @@ export function databaseSessionCredentials(
 
 /**
  * A session endpoint must keep the application principal and logical database,
- * never be a pooled route itself, and preserve the pooled route's TLS
- * verification strength. When the application endpoint is pooled, its direct
+ * never be a pooled route itself, and preserve the application endpoint's
+ * effective TLS verification strength (see `effectiveTlsRank`). When the application endpoint is pooled, its direct
  * route is the same endpoint with the shared pooler label removed, so the
  * session connection cannot be redirected to another server.
  */
@@ -60,7 +60,10 @@ function isValidSessionEndpoint(applicationUrl: URL, sessionUrl: URL): boolean {
   if (isPooledRoute(sessionUrl)) return false
   if (sessionUrl.username !== applicationUrl.username) return false
   if (sessionUrl.pathname !== applicationUrl.pathname) return false
-  if (tlsVerificationRank(sessionUrl) < tlsVerificationRank(applicationUrl)) return false
+  const sessionTls = effectiveTlsRank(sessionUrl)
+  const applicationTls = effectiveTlsRank(applicationUrl)
+  if (sessionTls === undefined || applicationTls === undefined || sessionTls < applicationTls)
+    return false
   if (!isPooledRoute(applicationUrl)) return true
   return (
     sessionUrl.hostname === directRouteHostname(applicationUrl.hostname) &&
@@ -104,21 +107,57 @@ function directRouteHostname(hostname: string): string {
   return [endpoint.slice(0, -pooledRouteLabelSuffix.length), ...rest].join('.')
 }
 
-const tlsVerificationRanks: Readonly<Record<string, number>> = {
+/** What a PostgreSQL URL's TLS parameters resolve to: no TLS requested, encrypted, or verified. */
+export type PostgresTlsMode = 'unset' | 'require' | 'verify-full'
+
+const postgresTlsRanks: Readonly<Record<PostgresTlsMode, number>> = {
+  unset: 0,
   require: 1,
-  'verify-ca': 2,
-  'verify-full': 3,
+  'verify-full': 2,
 }
 
 /**
- * Verification strength of a PostgreSQL TLS mode. An unset or non-verifying
- * mode ranks below encrypted `require`, and `verify-full` (certificate and
- * hostname) ranks highest, so a session endpoint can never silently weaken the
- * pooled endpoint's verification.
+ * The effective TLS mode of a PostgreSQL URL, or `undefined` when its TLS
+ * parameters are invalid. This is the single definition shared by the
+ * connection resolver in `@control-plane/database` and the session-endpoint
+ * comparison here, so the endpoint a process connects with and the endpoint it
+ * is compared against can never be read differently.
+ *
+ * - `sslrootcert=system` escalates any valid mode, including an unset one, to
+ *   `verify-full`: the driver verifies the certificate and hostname against
+ *   the system trust store.
+ * - `verify-ca` resolves to `verify-full`; the driver cannot express it
+ *   distinctly, so it keeps certificate and hostname verification.
+ * - A repeated or unknown `sslmode`, and the unverified `disable`, `allow` and
+ *   `prefer` modes (with or without the system root), are invalid.
  */
-function tlsVerificationRank(url: URL): number {
-  const mode = url.searchParams.get('sslmode')
-  return mode === null ? 0 : (tlsVerificationRanks[mode] ?? 0)
+export function effectivePostgresTlsMode(url: URL): PostgresTlsMode | undefined {
+  const systemTrustRoot = url.searchParams.getAll('sslrootcert').includes('system')
+  const modes = url.searchParams.getAll('sslmode')
+  if (modes.length > 1) return undefined
+  const [mode] = modes
+  const resolved = resolveSslMode(mode)
+  if (resolved === undefined) return undefined
+  return systemTrustRoot ? 'verify-full' : resolved
+}
+
+function resolveSslMode(mode: string | undefined): PostgresTlsMode | undefined {
+  switch (mode) {
+    case undefined:
+      return 'unset'
+    case 'require':
+      return 'require'
+    case 'verify-ca':
+    case 'verify-full':
+      return 'verify-full'
+    default:
+      return undefined
+  }
+}
+
+function effectiveTlsRank(url: URL): number | undefined {
+  const mode = effectivePostgresTlsMode(url)
+  return mode === undefined ? undefined : postgresTlsRanks[mode]
 }
 
 function isPostgresUrl(value: string): boolean {

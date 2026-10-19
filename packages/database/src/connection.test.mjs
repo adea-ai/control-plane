@@ -20,6 +20,7 @@ function expectDiagnostic(operation, code) {
   } catch (error) {
     expect(error).toBeInstanceOf(DatabaseConnectionError)
     expect(error.diagnostic).toEqual({ code })
+    expect(JSON.stringify(error)).not.toContain('synthetic-test-password')
     expect(JSON.stringify(error)).not.toContain('private-password')
     expect(JSON.stringify(error)).not.toContain('postgresql://')
   }
@@ -91,6 +92,24 @@ describe('resolvePostgresClientOptions', () => {
         ),
       'INVALID_DATABASE_TLS'
     )
+  })
+
+  test('fails closed on an unknown sslmode even with the system trust root', () => {
+    for (const mode of ['bogus', 'verify-none']) {
+      expectDiagnostic(
+        () =>
+          resolvePostgresClientOptions(
+            `${applicationUrl.replace('verify-full', mode)}&sslrootcert=system`
+          ),
+        'INVALID_DATABASE_TLS'
+      )
+    }
+  })
+
+  test('accepts a repeated system trust root as one verified connection', () => {
+    expect(
+      resolvePostgresClientOptions(`${applicationUrl}&sslrootcert=system&sslrootcert=system`).ssl
+    ).toBe('verify-full')
   })
 
   test('does not enable TLS when the URL does not request it', () => {
