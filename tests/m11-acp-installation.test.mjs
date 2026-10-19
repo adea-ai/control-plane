@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test'
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -21,6 +23,153 @@ import { LocalControlPlaneComposition } from '../apps/local-control-plane/dist/i
 import { ExecutionLifecycleService } from '@control-plane/domain'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+
+async function nativeReceiptFixture(directory) {
+  const native = join(directory, 'native')
+  const contents = Buffer.from('synthetic native bytes; never executed')
+  await mkdir(join(native, 'bin'), { recursive: true })
+  await writeFile(join(native, 'bin/codex'), contents)
+  const manifest = {
+    ...pinnedCodexNativeBuild,
+    schemaVersion: 1,
+    status: 'built',
+    profile: 'release',
+    platform: process.platform,
+    arch: process.arch,
+    executable: 'bin/codex',
+    executableSha256: createHash('sha256').update(contents).digest('hex'),
+  }
+  return { native, manifest, path: join(native, 'installation.json') }
+}
+
+function invokeNativeManifestInstaller(destination, native, directory) {
+  const installer = new URL('../scripts/install-m11-codex-acp.mjs', import.meta.url).href
+  // Use the real Node runtime: Bun's compatibility version is not a Node-24 build.
+  // A pre-fix FIFO read cannot strand the runner: this deadline kills/reaps its child.
+  const child = spawnSync(
+    'node',
+    [
+      '--input-type=module',
+      '--eval',
+      `import { installPinnedAcp } from ${JSON.stringify(installer)};
+       try {
+         await installPinnedAcp(${JSON.stringify(destination)}, ${JSON.stringify(native)});
+         console.log(JSON.stringify({ accepted: true }));
+       } catch (error) {
+         console.log(JSON.stringify({ name: error.name, message: error.message, code: error.code }));
+       }`,
+    ],
+    {
+      cwd: directory,
+      env: { PATH: process.env.PATH },
+      encoding: 'utf8',
+      timeout: 2000,
+      killSignal: 'SIGKILL',
+    }
+  )
+  expect(child.error).toBeUndefined()
+  expect(child.signal).toBeNull()
+  expect(child.status).toBe(0)
+  return JSON.parse(child.stdout)
+}
+
+// These exercise the actual installer, which supports only macOS/Linux.
+// Every valid receipt stops at an owned existing destination before any build.
+test.skipIf(!['darwin', 'linux'].includes(process.platform))(
+  'ACP native manifest limits preserve regular receipts, symlinks and verification errors',
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'acp-native-receipt-'))
+    const destination = join(directory, 'destination')
+    try {
+      const fixture = await nativeReceiptFixture(directory)
+      const serialized = JSON.stringify(fixture.manifest)
+      await mkdir(destination)
+      await writeFile(join(destination, 'owner.txt'), 'preserve')
+      const boundary = serialized + ' '.repeat(16384 - Buffer.byteLength(serialized))
+      await writeFile(fixture.path, boundary)
+      expect(invokeNativeManifestInstaller(destination, fixture.native, directory)).toMatchObject({
+        code: 'EEXIST',
+      })
+      const target = join(fixture.native, 'receipt.json')
+      await writeFile(target, boundary)
+      await rm(fixture.path)
+      await symlink(target, fixture.path)
+      expect(invokeNativeManifestInstaller(destination, fixture.native, directory)).toMatchObject({
+        code: 'EEXIST',
+      })
+      await rm(fixture.path)
+      for (const [contents, expected] of [
+        [boundary + ' ', 'ACP_NATIVE_MANIFEST_INVALID'],
+        ['', SyntaxError],
+        ['{', SyntaxError],
+        ['null', TypeError],
+        [
+          JSON.stringify({ ...fixture.manifest, executable: '../codex' }),
+          'ACP_NATIVE_PATH_MISMATCH',
+        ],
+        [
+          JSON.stringify({ ...fixture.manifest, commit: 'wrong' }),
+          'CODEX_NATIVE_MANIFEST_MISMATCH',
+        ],
+        [
+          JSON.stringify({ ...fixture.manifest, executableSha256: '0'.repeat(64) }),
+          'CODEX_NATIVE_EXECUTABLE_MISMATCH',
+        ],
+      ]) {
+        await writeFile(fixture.path, contents)
+        const error = invokeNativeManifestInstaller(destination, fixture.native, directory)
+        if (typeof expected === 'string') expect(error.message).toBe(expected)
+        else expect(error.name).toBe(expected.name)
+        expect(await readFile(join(destination, 'owner.txt'), 'utf8')).toBe('preserve')
+      }
+      await rm(fixture.path)
+      await mkdir(fixture.path)
+      expect(invokeNativeManifestInstaller(destination, fixture.native, directory)).toMatchObject({
+        message: 'ACP_NATIVE_MANIFEST_INVALID',
+      })
+      await rm(fixture.path, { recursive: true })
+      expect(invokeNativeManifestInstaller(destination, fixture.native, directory)).toMatchObject({
+        code: 'ENOENT',
+      })
+      expect(await readFile(join(destination, 'owner.txt'), 'utf8')).toBe('preserve')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+  30000
+)
+
+test.skipIf(!['darwin', 'linux'].includes(process.platform))(
+  'ACP native manifest FIFOs reject without writers or installation side effects',
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'acp-native-manifest-fifo-'))
+    const destination = join(directory, 'destination')
+    try {
+      const native = join(directory, 'native')
+      const manifest = join(native, 'installation.json')
+      const fifo = join(directory, 'fifo')
+      await mkdir(native)
+      const creation = spawnSync('mkfifo', [fifo], { encoding: 'utf8' })
+      expect(creation.error).toBeUndefined()
+      expect(creation.status).toBe(0)
+      for (const kind of ['direct', 'symlink']) {
+        if (kind === 'direct') {
+          const direct = spawnSync('mkfifo', [manifest], { encoding: 'utf8' })
+          expect(direct.error).toBeUndefined()
+          expect(direct.status).toBe(0)
+        } else await symlink(fifo, manifest)
+        expect(invokeNativeManifestInstaller(destination, native, directory)).toMatchObject({
+          message: 'ACP_NATIVE_MANIFEST_INVALID',
+        })
+        expect(existsSync(destination)).toBe(false)
+        await rm(manifest)
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+  10000
+)
 
 test('native Local certification observes the embedded SQLite queue without Restate HTTP', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'm11-native-local-workflow-'))
