@@ -175,6 +175,12 @@ export const INTEGRATION_SHARDS = [
 // qualification step rather than an ordinary shard.
 export const DEDICATED_INTEGRATION_QUALIFICATIONS = [
   {
+    file: 'packages/database/src/fresh-schema-bootstrap.integration.test.mjs',
+    workflow: '.github/workflows/postgres-pull-request.yml',
+    command:
+      'bun test --timeout 30000 ./packages/database/src/fresh-schema-bootstrap.integration.test.mjs',
+  },
+  {
     file: 'apps/hosted-control-plane/src/hosted-graph.integration.test.mjs',
     workflow: '.github/workflows/postgres-pull-request.yml',
     command: 'bash scripts/run-hosted-graph-qualification.sh',
