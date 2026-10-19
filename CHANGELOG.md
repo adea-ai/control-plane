@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.104.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.104.3...workspace-v1.104.4) (2026-10-19)
+
+
+### Bug Fixes
+
+* **installer:** bound native manifest reads before installation ([#1193](https://github.com/adea-ai/control-plane/issues/1193)) ([94874ee](https://github.com/adea-ai/control-plane/commit/94874ee9bd5555d0508da1fd8d6ff4c141b8dd95))
+
 ## [1.104.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.104.2...workspace-v1.104.3) (2026-10-19)
 
 
