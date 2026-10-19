@@ -208,6 +208,17 @@ describe('integration shard partition', () => {
     }
     expect([...assigned.keys()].toSorted()).toEqual(discovered.toSorted())
     expect(assigned.size).toBeGreaterThan(20)
+    expect(
+      assigned.get('packages/database/src/fresh-schema-bootstrap.integration.test.mjs')
+    ).toEqual([
+      {
+        kind: 'qualification',
+        file: 'packages/database/src/fresh-schema-bootstrap.integration.test.mjs',
+        workflow: '.github/workflows/postgres-pull-request.yml',
+        command:
+          'bun test --timeout 30000 ./packages/database/src/fresh-schema-bootstrap.integration.test.mjs',
+      },
+    ])
     for (const [file, owners] of assigned) {
       if (owners[0].kind === 'qualification') {
         expect(owners).toHaveLength(1)

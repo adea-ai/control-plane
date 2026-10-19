@@ -61,6 +61,12 @@ jobs:
           bun run db:check
           bun --cwd=packages/database run db:migrate
 
+      - name: Verify fresh schema bootstrap
+        timeout-minutes: 5
+        env:
+          RUN_CP_FRESH_SCHEMA_ACCEPTANCE: 'true'
+        run: bun test --timeout 30000 ./packages/database/src/fresh-schema-bootstrap.integration.test.mjs
+
       - name: Verify cross-profile conformance matrix (Postgres)
         timeout-minutes: 5
         run: bun test tests/cp1-embedded-durable-execution.test.mjs

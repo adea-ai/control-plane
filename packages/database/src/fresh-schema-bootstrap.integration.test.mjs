@@ -1,5 +1,5 @@
 // A dedicated run sets RUN_CP_FRESH_SCHEMA_ACCEPTANCE=true; absent credentials
-// then fail. Ordinary package discovery leaves this opt-in fixture inactive.
+// then fail. Generic integration discovery leaves this local-only fixture inactive.
 import { expect, test } from 'bun:test'
 import { readMigrationFiles } from 'drizzle-orm/migrator'
 import { sql } from 'drizzle-orm'
@@ -8,10 +8,7 @@ import postgres from 'postgres'
 import { createIsolatedTestDatabase } from './testing.ts'
 
 function fixtureCredentials(environment) {
-  if (
-    environment.RUN_CP_FRESH_SCHEMA_ACCEPTANCE !== 'true' &&
-    environment.RUN_DATABASE_INTEGRATION !== 'true'
-  )
+  if (environment.RUN_CP_FRESH_SCHEMA_ACCEPTANCE !== 'true')
     throw new Error('CP_FRESH_SCHEMA_EXPLICIT_OPT_IN_REQUIRED')
   // Even nominally local URLs must not be rerouted by inherited libpq configuration.
   if (Object.keys(environment).some((key) => /^PG/i.test(key)))
@@ -154,10 +151,7 @@ async function verifyRemoved(credentials, name) {
   }
 }
 
-test.skipIf(
-  process.env.RUN_CP_FRESH_SCHEMA_ACCEPTANCE !== 'true' &&
-    process.env.RUN_DATABASE_INTEGRATION !== 'true'
-)(
+test.skipIf(process.env.RUN_CP_FRESH_SCHEMA_ACCEPTANCE !== 'true')(
   'fresh CP bootstrap preserves complete migration journal and semantic catalog on replay',
   async () => {
     // Evaluated before creating any postgres client. Inputs must identify a dedicated
