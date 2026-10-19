@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.4](https://github.com/adea-ai/control-plane/compare/testing-v1.2.3...testing-v1.2.4) (2026-10-19)
+
+
+### Bug Fixes
+
+* testing-migration-failure-cleanup-task3 ([#1186](https://github.com/adea-ai/control-plane/issues/1186)) ([6fe2b68](https://github.com/adea-ai/control-plane/commit/6fe2b68f32fcb8f71e4d9712180879cdd512b54a))
+* **testing:** dispose database when automatic migration fails ([6fe2b68](https://github.com/adea-ai/control-plane/commit/6fe2b68f32fcb8f71e4d9712180879cdd512b54a))
+
 ## [1.2.3](https://github.com/adea-ai/control-plane/compare/testing-v1.2.2...testing-v1.2.3) (2026-10-17)
 
 

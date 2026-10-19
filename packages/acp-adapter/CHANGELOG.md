@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.1](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.11.0...acp-adapter-v1.11.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **acp-adapter:** reject native FIFOs without blocking ([#1188](https://github.com/adea-ai/control-plane/issues/1188)) ([b5d8641](https://github.com/adea-ai/control-plane/commit/b5d864175d787f771080b92c895f5f23259fa1a7))
+
 ## [1.11.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.10.1...acp-adapter-v1.11.0) (2026-10-17)
 
 

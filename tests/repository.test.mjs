@@ -287,6 +287,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/pi-durable-child-host.test.mjs',
     'tests/pi-durable-child-mapping-recovery.test.mjs',
     'tests/delegation-receipt-retention-restart.test.mjs',
+    'tests/delegation-interaction-publication-restart.test.mjs',
     'tests/pi-durable-delegation-recovery.test.mjs',
     'tests/pi-durable-canonical-authority.test.mjs',
     'tests/pi-durable-production-child-composition.test.mjs',

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.104.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.104.1...workspace-v1.104.2) (2026-10-19)
+
+
+### Bug Fixes
+
+* **acp-adapter:** reject native FIFOs without blocking ([#1188](https://github.com/adea-ai/control-plane/issues/1188)) ([b5d8641](https://github.com/adea-ai/control-plane/commit/b5d864175d787f771080b92c895f5f23259fa1a7))
+
+## [1.104.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.104.0...workspace-v1.104.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* testing-migration-failure-cleanup-task3 ([#1186](https://github.com/adea-ai/control-plane/issues/1186)) ([6fe2b68](https://github.com/adea-ai/control-plane/commit/6fe2b68f32fcb8f71e4d9712180879cdd512b54a))
+* **testing:** dispose database when automatic migration fails ([6fe2b68](https://github.com/adea-ai/control-plane/commit/6fe2b68f32fcb8f71e4d9712180879cdd512b54a))
+
 ## [1.104.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.103.2...workspace-v1.104.0) (2026-10-18)
 
 
