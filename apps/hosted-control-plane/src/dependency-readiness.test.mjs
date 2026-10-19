@@ -43,7 +43,71 @@ describe('Hosted dependency readiness', () => {
   test('reports not ready when the database probe exceeds the readiness budget', async () => {
     const { surface } = compositionSurface({ check: () => new Promise(() => {}) })
     const startedAt = Date.now()
-    expect(await hostedDependencyReadiness(surface, { databaseTimeoutMs: 25 })).toBe(false)
+    expect(await hostedDependencyReadiness(surface, { readinessTimeoutMs: 25 })).toBe(false)
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(20)
+  })
+
+  test('a manifest that never settles cannot hang the readiness endpoint', async () => {
+    // The manifest used to be awaited without a bound, so a manifest that never
+    // settled held the readiness endpoint open indefinitely.
+    const surface = {
+      manifest: () => new Promise(() => {}),
+      connection: { check: async () => undefined },
+    }
+    const startedAt = Date.now()
+    expect(await hostedDependencyReadiness(surface, { readinessTimeoutMs: 30 })).toBe(false)
+    expect(Date.now() - startedAt).toBeLessThan(2000)
+  })
+
+  test('a manifest that rejects fails closed', async () => {
+    const surface = {
+      manifest: async () => {
+        throw new Error('the manifest could not be read')
+      },
+      connection: { check: async () => undefined },
+    }
+    expect(await hostedDependencyReadiness(surface)).toBe(false)
+  })
+
+  test('the manifest and the probe share one budget', async () => {
+    // A manifest that consumes most of the budget leaves the probe only what is
+    // left, so the two steps cannot add up to more than the caller allowed.
+    const { surface, databaseProbes } = compositionSurface({
+      check: () => new Promise(() => {}),
+    })
+    const slowManifest = {
+      manifest: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 40))
+        return { components: [{ ready: true }] }
+      },
+      connection: surface.connection,
+    }
+    const startedAt = Date.now()
+    expect(await hostedDependencyReadiness(slowManifest, { readinessTimeoutMs: 60 })).toBe(false)
+    const elapsed = Date.now() - startedAt
+    expect(elapsed).toBeLessThan(2000)
+    expect(databaseProbes()).toBe(1)
+  })
+
+  test('a manifest that settles after the budget does not surface on its own', async () => {
+    // The step is observed by the budget, so its late rejection is never an
+    // unhandled rejection.
+    const unhandled = []
+    const onUnhandled = (reason) => unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const surface = {
+        manifest: () =>
+          new Promise((_resolve, reject) => {
+            setTimeout(() => reject(new Error('the manifest failed late')), 60)
+          }),
+        connection: { check: async () => undefined },
+      }
+      expect(await hostedDependencyReadiness(surface, { readinessTimeoutMs: 20 })).toBe(false)
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
   })
 })

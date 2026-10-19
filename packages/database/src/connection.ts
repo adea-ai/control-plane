@@ -21,6 +21,12 @@ export const maximumConnectionsPerProcess = 32
 /** Upper bound for an idle connection timeout, in seconds. */
 export const maximumIdleTimeoutSeconds = 3600
 
+/**
+ * The seconds a pool teardown may spend draining before the driver terminates
+ * the pool instead. The driver resolves its end promise either way.
+ */
+export const poolEndTimeoutSeconds = 5
+
 const defaultConnectionsPerProcess = 10
 const defaultIdleTimeoutSeconds = 20
 
@@ -84,8 +90,77 @@ function createConnection(url: string, options: PostgresConnectionOptions): Post
     check: async () => {
       await client`select 1`
     },
-    close: () => client.end({ timeout: 5 }),
+    close: async () => {
+      // The teardown reports, it never throws: a teardown failure must not
+      // replace the failure the caller was already handling.
+      await teardownPostgresPool(client, { timeoutSeconds: poolEndTimeoutSeconds })
+    },
   }
+}
+
+/** The outcome of a pool teardown. */
+export type PoolTeardownOutcome = {
+  /** True when the pool released its connections. */
+  readonly released: boolean
+  /** Why the teardown did not release the pool, when it did not. */
+  readonly reason?: string
+}
+
+/** The part of a postgres.js pool a teardown needs. */
+export interface PostgresPoolEnd {
+  end(options: { timeout: number }): Promise<unknown>
+}
+
+/**
+ * Ends a pool within a bounded time and reports what happened.
+ *
+ * The driver drains the pool, and a pool that does not drain within the
+ * timeout it is given is terminated: the driver rejects the pending queries and
+ * resolves its end promise. That resolution is awaited, so the release is
+ * proven before the caller continues, and it is not an unhandled rejection. A
+ * pool that still has not settled when the bound expires is reported as not
+ * released instead of hanging the teardown, and a late settlement is observed
+ * rather than left to surface on its own.
+ */
+export async function teardownPostgresPool(
+  pool: PostgresPoolEnd,
+  options: { readonly timeoutSeconds?: number; readonly boundSeconds?: number } = {}
+): Promise<PoolTeardownOutcome> {
+  const timeoutSeconds = options.timeoutSeconds ?? poolEndTimeoutSeconds
+  const boundSeconds = options.boundSeconds ?? timeoutSeconds * 2 + 5
+  let failure: unknown
+  let ended = false
+  // The driver's end promise is observed here, so a rejection or a late
+  // resolution never becomes an unhandled rejection.
+  const settled = (async () => {
+    try {
+      await pool.end({ timeout: timeoutSeconds })
+      ended = true
+    } catch (error) {
+      failure = error
+    }
+  })()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      settled,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, boundSeconds * 1000)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+  if (failure !== undefined) {
+    return {
+      released: false,
+      reason: failure instanceof Error ? failure.message : String(failure),
+    }
+  }
+  if (!ended) {
+    return { released: false, reason: 'the pool did not end within the teardown bound' }
+  }
+  return { released: true }
 }
 
 /**
@@ -133,8 +208,15 @@ function assertBoundedInteger(
  * `sslrootcert=system` makes the driver escalate to `verify-full`. Passing an
  * explicit `ssl` option (which this function does for a resolved `sslmode`)
  * would otherwise suppress that escalation, so the system trust root always
- * wins over a weaker `sslmode` and certificate/hostname verification is never
- * silently disabled.
+ * wins over a weaker `sslmode`.
+ *
+ * What the driver receives for a bare `sslmode=require` is `require`, and
+ * postgres 3.4.9 maps that to an encrypted connection that does not verify the
+ * certificate: `rejectUnauthorized` is false for `require`, `allow` and
+ * `prefer`. The strict certificate and hostname verification is therefore
+ * carried by the modes that ask for it, `verify-ca` and `verify-full`, and by
+ * the system trust root. The only connection that carries no TLS at all is one
+ * whose URL asks for none, which is the local disposable test target.
  */
 function resolveVerifiedTlsMode(url: URL): 'require' | 'verify-full' | undefined {
   const mode = effectivePostgresTlsMode(url)
@@ -143,6 +225,64 @@ function resolveVerifiedTlsMode(url: URL): 'require' | 'verify-full' | undefined
 }
 
 const DEFAULT_READINESS_PROBE_TIMEOUT_MS = 3000
+
+/** The default total budget for one readiness evaluation, in milliseconds. */
+export const defaultReadinessBudgetMs = 3000
+
+/** The time one readiness evaluation may still spend. */
+export interface ReadinessBudget {
+  /** The milliseconds still available in the budget. */
+  remainingMs(): number
+  /** True when the budget is exhausted. */
+  expired(): boolean
+}
+
+/** Creates the budget one readiness evaluation shares. */
+export function createReadinessBudget(totalMs: number): ReadinessBudget {
+  const deadline = Date.now() + Math.max(0, totalMs)
+  return {
+    remainingMs: () => Math.max(0, deadline - Date.now()),
+    expired: () => Date.now() >= deadline,
+  }
+}
+
+/**
+ * Evaluates readiness steps inside one bounded, fail-closed budget.
+ *
+ * The budget covers every step, so an unbounded step cannot hang a readiness
+ * endpoint and two bounded steps cannot add up to more than the budget the
+ * caller asked for. When the budget expires the result is incomplete and the
+ * caller fails closed. The timer is released on every path, and a step that
+ * settles after the budget expired is observed rather than left to surface on
+ * its own.
+ */
+export async function evaluateWithinReadinessBudget<Result>(
+  steps: (budget: ReadinessBudget) => Promise<Result>,
+  totalMs: number = defaultReadinessBudgetMs
+): Promise<{ completed: true; value: Result } | { completed: false }> {
+  const budget = createReadinessBudget(totalMs)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const observed = steps(budget).then(
+    (value) => ({ settled: true as const, value }),
+    (error: unknown) => ({ settled: true as const, error })
+  )
+  try {
+    return await Promise.race([
+      observed.then((outcome) => {
+        if ('error' in outcome) throw outcome.error
+        return { completed: true as const, value: outcome.value }
+      }),
+      new Promise<{ completed: false }>((resolve) => {
+        timer = setTimeout(() => resolve({ completed: false }), budget.remainingMs())
+      }),
+    ])
+  } catch {
+    // A step that failed is a failed readiness, not a crash.
+    return { completed: false }
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
 
 /**
  * Bounded database probe for /ready-style dependency checks: resolves false
@@ -154,22 +294,11 @@ export async function databaseReadinessProbe(
   connection: PostgresConnection,
   timeoutMs = DEFAULT_READINESS_PROBE_TIMEOUT_MS
 ): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      connection.check().then(
-        () => true,
-        () => false
-      ),
-      new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), timeoutMs)
-      }),
-    ])
-  } catch {
-    return false
-  } finally {
-    if (timer !== undefined) clearTimeout(timer)
-  }
+  const outcome = await evaluateWithinReadinessBudget(async () => {
+    await connection.check()
+    return true
+  }, timeoutMs)
+  return outcome.completed ? outcome.value : false
 }
 
 export function assertPostgresUrl(value: string): void {
