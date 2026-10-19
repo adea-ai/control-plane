@@ -4,7 +4,8 @@ export {
   databaseSessionCredentials,
   loadDatabaseSessionCredentials,
 } from './database.js'
-export type { DatabaseCredentialRole, DatabaseCredentials } from './database.js'
+export { effectivePostgresTlsMode } from './database.js'
+export type { DatabaseCredentialRole, DatabaseCredentials, PostgresTlsMode } from './database.js'
 export {
   loadManagedCloudConfiguration,
   managedCloudEnvironmentManifest,
