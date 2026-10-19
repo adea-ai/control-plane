@@ -89,6 +89,52 @@ describe('Hosted dependency readiness', () => {
     expect(databaseProbes()).toBe(1)
   })
 
+  test('a manifest that arrives after the budget starts no probe', async () => {
+    // The manifest used to be awaited without a bound, and a manifest that
+    // arrived after the budget had expired still continued and started a
+    // fresh probe with no time left.
+    let databaseProbes = 0
+    const surface = {
+      manifest: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 60))
+        return { components: [{ ready: true }] }
+      },
+      connection: {
+        check: async () => {
+          databaseProbes += 1
+        },
+      },
+    }
+    expect(await hostedDependencyReadiness(surface, { readinessTimeoutMs: 20 })).toBe(false)
+    // The expired manifest must not have started a probe.
+    expect(databaseProbes).toBe(0)
+  })
+
+  test('repeated calls do not accumulate probes for one surface', async () => {
+    let manifests = 0
+    let databaseProbes = 0
+    const surface = {
+      manifest: async () => {
+        manifests += 1
+        await new Promise((resolve) => setTimeout(resolve, 40))
+        return { components: [{ ready: true }] }
+      },
+      connection: {
+        check: async () => {
+          databaseProbes += 1
+          await new Promise((resolve) => setTimeout(resolve, 40))
+        },
+      },
+    }
+    const first = hostedDependencyReadiness(surface, { readinessTimeoutMs: 500 })
+    const second = hostedDependencyReadiness(surface, { readinessTimeoutMs: 500 })
+    expect(await second).toBe(false)
+    await first
+    // The surface owns one connection, so only one manifest and one probe ran.
+    expect(manifests).toBe(1)
+    expect(databaseProbes).toBeLessThanOrEqual(1)
+  })
+
   test('a manifest that settles after the budget does not surface on its own', async () => {
     // The step is observed by the budget, so its late rejection is never an
     // unhandled rejection.

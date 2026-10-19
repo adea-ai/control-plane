@@ -34,8 +34,11 @@ export interface ResolvedPostgresClientOptions {
   readonly max: number
   readonly idle_timeout: number
   readonly prepare: false
-  /** Present only when the URL requests TLS; `verify-full` is certificate and hostname verification. */
-  readonly ssl?: 'require' | 'verify-full'
+  /**
+   * Present only when the URL requests TLS. It is always the verified mode:
+   * certificate and hostname verification.
+   */
+  readonly ssl?: 'verify-full'
 }
 
 export type DatabaseConnectionErrorCode =
@@ -91,9 +94,16 @@ function createConnection(url: string, options: PostgresConnectionOptions): Post
       await client`select 1`
     },
     close: async () => {
-      // The teardown reports, it never throws: a teardown failure must not
-      // replace the failure the caller was already handling.
-      await teardownPostgresPool(client, { timeoutSeconds: poolEndTimeoutSeconds })
+      // A release that did not happen is surfaced, never discarded: a caller
+      // that owns the pool must be able to see that the connections were not
+      // released. Use runWithPoolTeardown when the close accompanies an
+      // operation, so the operation's own failure is retained.
+      const outcome = await teardownPostgresPool(client, {
+        timeoutSeconds: poolEndTimeoutSeconds,
+      })
+      if (!outcome.released) {
+        throw new DatabasePoolTeardownError(outcome.reason)
+      }
     },
   }
 }
@@ -104,6 +114,22 @@ export type PoolTeardownOutcome = {
   readonly released: boolean
   /** Why the teardown did not release the pool, when it did not. */
   readonly reason?: string
+}
+
+/** A pool teardown that did not release the connections it owned. */
+export class DatabasePoolTeardownError extends Error {
+  readonly reason: string
+
+  constructor(reason: string | undefined) {
+    super('the PostgreSQL pool did not release its connections')
+    this.name = 'DatabasePoolTeardownError'
+    this.reason = reason ?? 'the pool did not end within the teardown bound'
+  }
+}
+
+/** Removes the credentials from a URL inside a teardown reason. */
+function scrubTeardownReason(reason: string): string {
+  return reason.replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s]*@/gi, '$1[redacted]@')
 }
 
 /** The part of a postgres.js pool a teardown needs. */
@@ -154,7 +180,7 @@ export async function teardownPostgresPool(
   if (failure !== undefined) {
     return {
       released: false,
-      reason: failure instanceof Error ? failure.message : String(failure),
+      reason: scrubTeardownReason(failure instanceof Error ? failure.message : String(failure)),
     }
   }
   if (!ended) {
@@ -164,10 +190,45 @@ export async function teardownPostgresPool(
 }
 
 /**
+ * Runs an operation and then releases the pool it used.
+ *
+ * The operation's own failure is retained: when both the operation and the
+ * teardown fail, the two are aggregated and the operation's error stays the
+ * first one, so a cleanup failure never replaces it.
+ */
+export async function runWithPoolTeardown<Result>(
+  pool: PostgresPoolEnd,
+  operation: () => Promise<Result>,
+  options: { readonly timeoutSeconds?: number; readonly boundSeconds?: number } = {}
+): Promise<Result> {
+  let value: Result | undefined
+  let operationError: unknown
+  try {
+    value = await operation()
+  } catch (error) {
+    operationError = error
+  }
+  const outcome = await teardownPostgresPool(pool, options)
+  if (operationError !== undefined) {
+    if (!outcome.released) {
+      throw new AggregateError(
+        [operationError, new DatabasePoolTeardownError(outcome.reason)],
+        'the operation and the pool teardown both failed'
+      )
+    }
+    throw operationError
+  }
+  if (!outcome.released) {
+    throw new DatabasePoolTeardownError(outcome.reason)
+  }
+  return value as Result
+}
+
+/**
  * Resolves the bounded client options for a PostgreSQL URL. Pool budgets are
- * validated before a client exists, and TLS is preserved exactly as the URL
- * requests it: strict `verify-full` (certificate and hostname) is never
- * silently downgraded, and an explicitly unverified mode fails closed.
+ * validated before a client exists, and TLS is never weaker than the URL
+ * requests: a URL that asks for TLS is connected with strict `verify-full`
+ * (certificate and hostname), and an explicitly unverified mode fails closed.
  */
 export function resolvePostgresClientOptions(
   url: string,
@@ -210,18 +271,26 @@ function assertBoundedInteger(
  * would otherwise suppress that escalation, so the system trust root always
  * wins over a weaker `sslmode`.
  *
- * What the driver receives for a bare `sslmode=require` is `require`, and
- * postgres 3.4.9 maps that to an encrypted connection that does not verify the
- * certificate: `rejectUnauthorized` is false for `require`, `allow` and
- * `prefer`. The strict certificate and hostname verification is therefore
- * carried by the modes that ask for it, `verify-ca` and `verify-full`, and by
- * the system trust root. The only connection that carries no TLS at all is one
+ * What the driver receives for a bare `sslmode=require` is the verified mode.
+ * postgres 3.4.9 maps the driver option `require` to an encrypted connection
+ * that does not verify the certificate: `rejectUnauthorized` is false for
+ * `require`, `allow` and `prefer`. Every accepted mode that asks for TLS is
+ * therefore connected with certificate and hostname verification, and so is the
+ * system trust root. The only connection that carries no TLS at all is one
  * whose URL asks for none, which is the local disposable test target.
  */
-function resolveVerifiedTlsMode(url: URL): 'require' | 'verify-full' | undefined {
+function resolveVerifiedTlsMode(url: URL): 'verify-full' | undefined {
   const mode = effectivePostgresTlsMode(url)
   if (mode === undefined) throw new DatabaseConnectionError('INVALID_DATABASE_TLS')
-  return mode === 'unset' ? undefined : mode
+  // A URL that asks for TLS is connected with the verified mode. postgres 3.4.9
+  // maps the driver option `require` to an encrypted connection that does not
+  // verify the certificate, so `require` would silently drop the strict
+  // certificate and hostname verification the resolver approves. The shared
+  // definition still ranks the modes as the URL declares them; the driver
+  // never connects with less than the strictest mode the driver can express.
+  // The one connection that carries no TLS is a URL that asks for none, which
+  // is the local disposable test target.
+  return mode === 'unset' ? undefined : 'verify-full'
 }
 
 const DEFAULT_READINESS_PROBE_TIMEOUT_MS = 3000
@@ -261,16 +330,28 @@ export async function evaluateWithinReadinessBudget<Result>(
   totalMs: number = defaultReadinessBudgetMs
 ): Promise<{ completed: true; value: Result } | { completed: false }> {
   const budget = createReadinessBudget(totalMs)
+  // The budget is absolute: an evaluation that starts after the deadline, or
+  // that completes after it, never reports a result. The work is not even
+  // invoked when the budget is already spent.
+  if (budget.expired()) return { completed: false }
   let timer: ReturnType<typeof setTimeout> | undefined
-  const observed = steps(budget).then(
-    (value) => ({ settled: true as const, value }),
-    (error: unknown) => ({ settled: true as const, error })
-  )
+  let observed: Promise<{ settled: true; value?: Result; error?: unknown }>
+  try {
+    observed = Promise.resolve(steps(budget)).then(
+      (value) => ({ settled: true as const, value }),
+      (error: unknown) => ({ settled: true as const, error })
+    )
+  } catch {
+    // A step that throws synchronously is a failed readiness, not a crash.
+    return { completed: false }
+  }
   try {
     return await Promise.race([
       observed.then((outcome) => {
         if ('error' in outcome) throw outcome.error
-        return { completed: true as const, value: outcome.value }
+        // A result that arrives after the deadline is not accepted.
+        if (budget.expired()) return { completed: false as const }
+        return { completed: true as const, value: outcome.value as Result }
       }),
       new Promise<{ completed: false }>((resolve) => {
         timer = setTimeout(() => resolve({ completed: false }), budget.remainingMs())

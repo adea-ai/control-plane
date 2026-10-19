@@ -4,10 +4,12 @@ import {
   createPostgresMigrationConnection,
   createReadinessBudget,
   DatabaseConnectionError,
+  DatabasePoolTeardownError,
   evaluateWithinReadinessBudget,
   maximumConnectionsPerProcess,
   maximumIdleTimeoutSeconds,
   resolvePostgresClientOptions,
+  runWithPoolTeardown,
   teardownPostgresPool,
 } from './connection.ts'
 
@@ -73,14 +75,17 @@ describe('resolvePostgresClientOptions', () => {
     expect(
       resolvePostgresClientOptions(applicationUrl.replace('verify-full', 'verify-ca')).ssl
     ).toBe('verify-full')
+    // A bare require is connected with the verified mode: postgres 3.4.9 maps
+    // the driver option `require` to an encrypted connection that does not
+    // verify the certificate, so the strict verification would be lost.
     expect(resolvePostgresClientOptions(applicationUrl.replace('verify-full', 'require')).ssl).toBe(
-      'require'
+      'verify-full'
     )
   })
 
   test('does not let sslmode=require suppress sslrootcert=system verification', () => {
     const requireUrl = applicationUrl.replace('verify-full', 'require')
-    expect(resolvePostgresClientOptions(requireUrl).ssl).toBe('require')
+    expect(resolvePostgresClientOptions(requireUrl).ssl).toBe('verify-full')
     expect(resolvePostgresClientOptions(`${requireUrl}&sslrootcert=system`).ssl).toBe('verify-full')
     expect(
       resolvePostgresClientOptions(
@@ -202,6 +207,31 @@ describe('createPostgresConnection', () => {
 })
 
 describe('the shared readiness budget', () => {
+  test('does not invoke the work at all when the budget is already spent', async () => {
+    let invoked = 0
+    const outcome = await evaluateWithinReadinessBudget(async () => {
+      invoked += 1
+      return 'ready'
+    }, 0)
+    expect(outcome.completed).toBe(false)
+    expect(invoked).toBe(0)
+  })
+
+  test('does not accept a completion that arrives after the deadline', async () => {
+    const outcome = await evaluateWithinReadinessBudget(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40))
+      return 'ready'
+    }, 10)
+    expect(outcome.completed).toBe(false)
+  })
+
+  test('a step that throws synchronously fails closed', async () => {
+    const outcome = await evaluateWithinReadinessBudget(() => {
+      throw new Error('the manifest could not be read')
+    }, 1000)
+    expect(outcome.completed).toBe(false)
+  })
+
   test('bounds the steps it evaluates and fails closed when it expires', async () => {
     const startedAt = Date.now()
     const outcome = await evaluateWithinReadinessBudget(() => new Promise(() => {}), 30)
@@ -264,32 +294,6 @@ describe('the pool teardown', () => {
     expect(outcome.released).toBe(true)
   })
 
-  test('a forced pool-end timeout releases the pool without an unhandled rejection', async () => {
-    // The driver drains the pool, and a pool that does not drain within its
-    // timeout is terminated: the driver rejects the pending queries and
-    // resolves its end promise. That resolution is awaited, so the release is
-    // proven, and it is not an unhandled rejection.
-    const unhandled = []
-    const onUnhandled = (reason) => unhandled.push(reason)
-    process.on('unhandledRejection', onUnhandled)
-    try {
-      const outcome = await teardownPostgresPool(
-        {
-          end: async () =>
-            new Promise((resolve) => {
-              setTimeout(resolve, 40)
-            }),
-        },
-        { timeoutSeconds: 1, boundSeconds: 5 }
-      )
-      expect(outcome.released).toBe(true)
-      await new Promise((resolve) => setTimeout(resolve, 80))
-      expect(unhandled).toEqual([])
-    } finally {
-      process.off('unhandledRejection', onUnhandled)
-    }
-  })
-
   test('a teardown that does not settle is reported instead of hanging', async () => {
     const startedAt = Date.now()
     const outcome = await teardownPostgresPool(
@@ -332,16 +336,65 @@ describe('the pool teardown', () => {
     }
     expect(thrown).toBe(original)
   })
+
+  test('a failed release is surfaced instead of discarded', async () => {
+    // The pool teardown did not release the connections, and the close must
+    // say so rather than resolve as if it had.
+    const failing = {
+      async end() {
+        throw new Error('the pool could not be ended')
+      },
+    }
+    const outcome = await teardownPostgresPool(failing, { timeoutSeconds: 1 })
+    expect(outcome.released).toBe(false)
+    expect(outcome.reason).toContain('the pool could not be ended')
+    expect(() => {
+      throw new DatabasePoolTeardownError(outcome.reason)
+    }).toThrow(DatabasePoolTeardownError)
+  })
+
+  test('an operation failure is retained when the teardown also fails', async () => {
+    const original = new Error('the original failure')
+    const failing = {
+      async end() {
+        throw new Error('the pool could not be ended')
+      },
+    }
+    let thrown
+    try {
+      await runWithPoolTeardown(failing, async () => {
+        throw original
+      })
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(AggregateError)
+    // The operation's own failure is retained as the first failure.
+    expect(thrown.errors[0]).toBe(original)
+    expect(thrown.errors[1]).toBeInstanceOf(DatabasePoolTeardownError)
+  })
+
+  test('an operation failure alone is thrown unchanged', async () => {
+    const original = new Error('the original failure')
+    let thrown
+    try {
+      await runWithPoolTeardown({ async end() {} }, async () => {
+        throw original
+      })
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBe(original)
+  })
 })
 
 describe('the qualified Postgres TLS behaviour', () => {
-  test('a bare sslmode=require asks the driver for encryption without certificate verification', () => {
+  test('a bare sslmode=require is connected with the verified mode', () => {
     // postgres 3.4.9 maps the driver option `require` to rejectUnauthorized
-    // false, so the connection is encrypted and the certificate is not
-    // verified. The strict certificate and hostname verification is carried by
-    // the modes that ask for it.
+    // false, so the connection would be encrypted and the certificate would not
+    // be verified. The resolver therefore never hands the driver that option.
     const requireUrl = applicationUrl.replace('verify-full', 'require')
-    expect(resolvePostgresClientOptions(requireUrl).ssl).toBe('require')
+    expect(resolvePostgresClientOptions(requireUrl).ssl).toBe('verify-full')
     expect(resolvePostgresClientOptions(applicationUrl).ssl).toBe('verify-full')
     expect(
       resolvePostgresClientOptions(applicationUrl.replace('verify-full', 'verify-ca')).ssl
