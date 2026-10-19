@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.52.0](https://github.com/adea-ai/control-plane/compare/database-v1.51.1...database-v1.52.0) (2026-10-19)
+
+
+### Features
+
+* **database:** verify Postgres TLS and bound the connection profile for Railway ([#1195](https://github.com/adea-ai/control-plane/issues/1195)) ([fdf41db](https://github.com/adea-ai/control-plane/commit/fdf41dba86462dcde9212d528e8a0195f9f9827d))
+
 ## [1.51.1](https://github.com/adea-ai/control-plane/compare/database-v1.51.0...database-v1.51.1) (2026-10-19)
 
 
