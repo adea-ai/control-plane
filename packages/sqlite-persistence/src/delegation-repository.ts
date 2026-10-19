@@ -63,6 +63,7 @@ const mutable = new Set([
   'failureCode',
   'terminalPublication',
   'pendingProgress',
+  'interactionPublications',
   'pendingCancellationAt',
   'pendingDispatch',
 ])
