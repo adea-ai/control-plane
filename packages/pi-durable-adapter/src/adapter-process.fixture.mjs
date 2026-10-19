@@ -103,8 +103,18 @@ export function processAdapterFixture(
   const faux = fauxProvider({ models: [{ id: 'faux-1', contextWindow: 64, maxTokens: 24 }] })
   let inferenceKey
   faux.setResponses([
-    async () => {
-      evidence(directory, { boundary: 'native_send', inferenceKey })
+    async (context) => {
+      const userInputs = context.messages
+        .filter((message) => message.role === 'user')
+        .map((message) =>
+          typeof message.content === 'string'
+            ? message.content
+            : message.content
+                .filter((part) => part.type === 'text')
+                .map((part) => part.text)
+                .join('')
+        )
+      evidence(directory, { boundary: 'native_send', inferenceKey, userInputs })
       if (mode === 'native_send') {
         observe('native_send')
         await new Promise(() => {})
@@ -303,10 +313,32 @@ export async function stopProcessAdapterChild(worker) {
   }
 }
 
-export async function cleanupProcessAdapterFixtures(directory, workers, adapters) {
+async function closeProcessAdapterFixture(adapter, timeoutMs) {
+  let timer
+  try {
+    await Promise.race([
+      adapter.close(),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Adapter close unconfirmed; preserve retained state')),
+          timeoutMs
+        )
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export async function cleanupProcessAdapterFixtures(
+  directory,
+  workers,
+  adapters,
+  { closeTimeoutMs = 10000 } = {}
+) {
   const stopped = await Promise.allSettled(workers.map(stopProcessAdapterChild))
   const closed = await Promise.allSettled(
-    adapters.filter(Boolean).map((adapter) => adapter.close())
+    adapters.filter(Boolean).map((adapter) => closeProcessAdapterFixture(adapter, closeTimeoutMs))
   )
   const failures = [...stopped, ...closed]
     .filter((result) => result.status === 'rejected')

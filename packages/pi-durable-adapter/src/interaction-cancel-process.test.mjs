@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PiDurableRuntimeAdapter } from './adapter.ts'
@@ -98,6 +98,8 @@ test('pending human input and its accepted follow-up survive distinct SIGKILL bo
     expect(completedEvents.filter((event) => event.type === 'interaction')).toHaveLength(1)
     const sends = (await evidence(directory)).filter((entry) => entry.boundary === 'native_send')
     expect(sends).toHaveLength(2)
+    expect(sends[0].userInputs).toEqual(['Persistent adapter question'])
+    expect(sends[1].userInputs.at(-1)).toBe(processInput.text)
     expect(sends[1].inferenceKey).toBe(followUp.inferenceKey)
     expect(sends[1].inferenceKey).not.toBe(sends[0].inferenceKey)
     const completedRecord = adapter.journal.get(handle.handleId)
@@ -118,3 +120,69 @@ test('pending human input and its accepted follow-up survive distinct SIGKILL bo
     await cleanupProcessAdapterFixtures(directory, workers, [adapter])
   }
 }, 15000)
+
+// Hold real inference authorization; always release it so this regression cannot strand its own work.
+test('cleanup bounds a close waiting on active work, attempts every close, and preserves retained state after a late close', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pi-held-close-regression-'))
+  const marker = join(directory, 'retained-state')
+  let adapter, release, cleanupOutcome
+  let healthyCloses = 0
+  try {
+    await writeFile(marker, 'retained')
+    const setup = processAdapterFixture(directory)
+    let entered
+    const atBoundary = new Promise((resolve) => {
+      entered = resolve
+    })
+    const barrier = new Promise((resolve) => {
+      release = resolve
+    })
+    const authorize = setup.options.authorizeInference
+    setup.options.authorizeInference = async (...args) => {
+      entered()
+      await barrier
+      return authorize(...args)
+    }
+    adapter = new PiDurableRuntimeAdapter(setup.options)
+    await adapter.start(setup.request)
+    await atBoundary
+    cleanupOutcome = cleanupProcessAdapterFixtures(
+      directory,
+      [],
+      [
+        adapter,
+        {
+          async close() {
+            healthyCloses++
+          },
+        },
+      ],
+      { closeTimeoutMs: 20 }
+    ).then(
+      () => ({ ok: true }),
+      (error) => ({ ok: false, error })
+    )
+    let timer
+    const observed = await Promise.race([
+      cleanupOutcome,
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(undefined), 100)
+      }),
+    ]).finally(() => clearTimeout(timer))
+    expect(healthyCloses).toBe(1)
+    expect(observed?.ok).toBe(false)
+    expect(observed.error).toBeInstanceOf(AggregateError)
+    expect(
+      observed.error.errors.some((error) => /Adapter close unconfirmed/.test(error.message))
+    ).toBe(true)
+    expect(await readFile(marker, 'utf8')).toBe('retained')
+    release()
+    await adapter.close()
+    expect(await readFile(marker, 'utf8')).toBe('retained')
+  } finally {
+    release?.()
+    await cleanupOutcome
+    await adapter?.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

@@ -77,6 +77,8 @@ test('distinct workspace processes retain isolated input receipts despite shared
     const sentB = await sends(secondDirectory)
     expect(sentA).toHaveLength(1)
     expect(sentB).toHaveLength(1)
+    expect(sentA[0].userInputs).toEqual(['Persistent adapter question'])
+    expect(sentB[0].userInputs).toEqual(['Workspace two question'])
     for (const [adapter, foreign] of [
       [adapterA, b.handle],
       [adapterB, a.handle],
@@ -120,6 +122,8 @@ test('distinct workspace processes retain isolated input receipts despite shared
     expect(await sends(firstDirectory)).toEqual(sendsA)
     const sendsB = await sends(secondDirectory)
     expect(sendsB).toHaveLength(2)
+    expect(sendsA[1].userInputs.at(-1)).toBe(processInput.text)
+    expect(sendsB[1].userInputs).toEqual(['Workspace two question', processInput.text])
     expect(sendsB[1].inferenceKey).not.toBe(sendsA[1].inferenceKey)
     const completedB = adapterB.journal.list()
     expect(completedB).toHaveLength(1)
