@@ -19,7 +19,20 @@ export async function createIsolatedPostgres(
     application: loadDatabaseCredentials(environment, 'application'),
     migration: loadDatabaseCredentials(environment, 'migration'),
   })
-  if (options.migrate ?? true) await database.migrate()
+  try {
+    if (options.migrate ?? true) await database.migrate()
+  } catch (error) {
+    try {
+      await database.dispose()
+    } catch (cleanupError) {
+      // The migration remains the cause; the cleanup failure is retained in errors.
+      // oxlint-disable-next-line preserve-caught-error
+      throw new AggregateError([error, cleanupError], 'ISOLATED_TEST_DATABASE_SETUP_FAILED', {
+        cause: error,
+      })
+    }
+    throw error
+  }
   return database
 }
 
