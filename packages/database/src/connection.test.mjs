@@ -374,6 +374,23 @@ describe('the pool teardown', () => {
     expect(thrown.errors[1]).toBeInstanceOf(DatabasePoolTeardownError)
   })
 
+  test('an operation that rejects with undefined is still a failure', async () => {
+    // The failure was inferred from the value being undefined, so a rejection
+    // with undefined read as a success.
+    let thrown
+    let settled = false
+    try {
+      await runWithPoolTeardown({ async end() {} }, async () => {
+        throw undefined
+      })
+      settled = true
+    } catch (error) {
+      thrown = error
+    }
+    expect(settled).toBe(false)
+    expect(thrown).toBeUndefined()
+  })
+
   test('an operation failure alone is thrown unchanged', async () => {
     const original = new Error('the original failure')
     let thrown

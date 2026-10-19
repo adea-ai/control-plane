@@ -44,26 +44,46 @@ export async function hostedDependencyReadiness(
 ): Promise<boolean> {
   const inFlight = inFlightReadiness.get(composition) ?? 0
   if (inFlight > 0) {
-    // One probe at a time per owned surface. A repeated call starts no work.
+    // One readiness evaluation at a time per owned surface. A repeated call
+    // starts no work.
     return false
   }
   inFlightReadiness.set(composition, inFlight + 1)
-  try {
-    const outcome = await evaluateWithinReadinessBudget(async (budget) => {
-      // The manifest is inside the budget: an unbounded manifest can neither
-      // hang the readiness endpoint nor silently pass it.
-      const manifest = await composition.manifest()
-      // A manifest that arrives after the budget expired must not start
-      // another probe.
-      if (budget.expired()) return false
-      if (!manifest.components.every((component) => component.ready)) return false
-      // The probe shares what is left of the budget.
-      return databaseReadinessProbe(composition.connection, budget.remainingMs())
-    }, options.readinessTimeoutMs ?? DEFAULT_DATABASE_TIMEOUT_MS)
-    return outcome.completed ? outcome.value : false
-  } finally {
+  let released = false
+  const release = () => {
+    if (released) return
+    released = true
     const current = inFlightReadiness.get(composition) ?? 1
     if (current <= 1) inFlightReadiness.delete(composition)
     else inFlightReadiness.set(composition, current - 1)
+  }
+  let started = false
+  try {
+    const outcome = await evaluateWithinReadinessBudget(
+      async (budget) => {
+        // The manifest is inside the budget: an unbounded manifest can neither
+        // hang the readiness endpoint nor silently pass it.
+        const manifest = await composition.manifest()
+        // A manifest that arrives after the budget expired must not start
+        // another probe.
+        if (budget.expired()) return false
+        if (!manifest.components.every((component) => component.ready)) return false
+        // The probe shares what is left of the budget.
+        return databaseReadinessProbe(composition.connection, budget.remainingMs())
+      },
+      options.readinessTimeoutMs ?? DEFAULT_DATABASE_TIMEOUT_MS,
+      (work) => {
+        started = true
+        // The ownership is held until the underlying work settles, not until
+        // the response budget expires. A manifest or a check that is still
+        // pending keeps the surface single-flight, so a later call cannot
+        // start another one while the first is unresolved.
+        void work.then(release, release)
+      }
+    )
+    return outcome.completed ? outcome.value : false
+  } finally {
+    // The work never began, so nothing owns it.
+    if (!started) release()
   }
 }

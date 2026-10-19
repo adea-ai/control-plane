@@ -135,6 +135,49 @@ describe('Hosted dependency readiness', () => {
     expect(databaseProbes).toBeLessThanOrEqual(1)
   })
 
+  test('sequential calls after a timeout do not start another unresolved manifest', async () => {
+    // The ownership used to be released when the response budget expired, while
+    // the raw manifest was still pending, so three sequential calls produced
+    // three unresolved manifests.
+    let manifests = 0
+    const surface = {
+      manifest: () => {
+        manifests += 1
+        return new Promise(() => {})
+      },
+      connection: { check: async () => undefined },
+    }
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect(await hostedDependencyReadiness(surface, { readinessTimeoutMs: 5 })).toBe(false)
+    }
+    // One manifest is pending; the later calls started no work.
+    expect(manifests).toBe(1)
+  })
+
+  test('sequential calls after a timeout do not start another unresolved check', async () => {
+    // The manifest answers immediately and the check never settles, so the
+    // underlying work stays pending across the timeouts.
+    let manifests = 0
+    let databaseProbes = 0
+    const surface = {
+      manifest: async () => {
+        manifests += 1
+        return { components: [{ ready: true }] }
+      },
+      connection: {
+        check: () => {
+          databaseProbes += 1
+          return new Promise(() => {})
+        },
+      },
+    }
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect(await hostedDependencyReadiness(surface, { readinessTimeoutMs: 5 })).toBe(false)
+    }
+    expect(manifests).toBe(1)
+    expect(databaseProbes).toBe(1)
+  })
+
   test('a manifest that settles after the budget does not surface on its own', async () => {
     // The step is observed by the budget, so its late rejection is never an
     // unhandled rejection.

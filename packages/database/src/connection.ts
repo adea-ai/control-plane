@@ -202,14 +202,18 @@ export async function runWithPoolTeardown<Result>(
   options: { readonly timeoutSeconds?: number; readonly boundSeconds?: number } = {}
 ): Promise<Result> {
   let value: Result | undefined
+  let operationFailed = false
   let operationError: unknown
   try {
     value = await operation()
   } catch (error) {
+    // The failure is flagged, not inferred from the value: an operation that
+    // rejects with undefined has still failed.
+    operationFailed = true
     operationError = error
   }
   const outcome = await teardownPostgresPool(pool, options)
-  if (operationError !== undefined) {
+  if (operationFailed) {
     if (!outcome.released) {
       throw new AggregateError(
         [operationError, new DatabasePoolTeardownError(outcome.reason)],
@@ -327,7 +331,8 @@ export function createReadinessBudget(totalMs: number): ReadinessBudget {
  */
 export async function evaluateWithinReadinessBudget<Result>(
   steps: (budget: ReadinessBudget) => Promise<Result>,
-  totalMs: number = defaultReadinessBudgetMs
+  totalMs: number = defaultReadinessBudgetMs,
+  onWork?: (work: Promise<unknown>) => void
 ): Promise<{ completed: true; value: Result } | { completed: false }> {
   const budget = createReadinessBudget(totalMs)
   // The budget is absolute: an evaluation that starts after the deadline, or
@@ -345,6 +350,15 @@ export async function evaluateWithinReadinessBudget<Result>(
     // A step that throws synchronously is a failed readiness, not a crash.
     return { completed: false }
   }
+  // The work is handed to the caller, so a caller that owns the underlying
+  // operation can hold that ownership until the work settles rather than until
+  // the response budget expires.
+  onWork?.(
+    observed.then(
+      () => undefined,
+      () => undefined
+    )
+  )
   try {
     return await Promise.race([
       observed.then((outcome) => {
