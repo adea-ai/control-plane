@@ -53,9 +53,16 @@ test('native verification rejects directories, empty and oversized files before 
   const manifest = manifestFor('fixture')
   try {
     await mkdir(executable)
-    await expect(verifyPinnedCodexNativeBinary(executable, manifest)).rejects.toThrow(
-      'CODEX_NATIVE_EXECUTABLE_INVALID'
+    // Windows runtimes may refuse directory handles during open, before fstat.
+    // Both paths must reject; POSIX still requires our descriptor-type refusal.
+    const directoryError = await verifyPinnedCodexNativeBinary(executable, manifest).then(
+      () => null,
+      (error) => error
     )
+    expect(
+      directoryError?.message === 'CODEX_NATIVE_EXECUTABLE_INVALID' ||
+        (process.platform === 'win32' && directoryError?.code === 'EISDIR')
+    ).toBe(true)
     await rm(executable, { recursive: true })
     await writeFile(executable, '')
     await expect(verifyPinnedCodexNativeBinary(executable, manifest)).rejects.toThrow(
@@ -81,7 +88,8 @@ test('native verification preserves missing-path error codes', async () => {
   }
 })
 
-// Windows symlink creation can require privileges and POSIX FIFOs do not exist there.
+// This target-changing symlink fixture uses POSIX semantics. Windows symlinks
+// are typed as file/directory links and may require privileges; FIFOs are POSIX-only.
 test.skipIf(process.platform === 'win32')(
   'native verification follows symlinks and hashes the regular-file target',
   async () => {
