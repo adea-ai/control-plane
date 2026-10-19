@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.3](https://github.com/adea-ai/control-plane/compare/orchestration-v1.10.2...orchestration-v1.10.3) (2026-10-19)
+
+
+### Bug Fixes
+
+* **orchestration:** retain interaction notifications across crashes ([#1190](https://github.com/adea-ai/control-plane/issues/1190)) ([3402ac8](https://github.com/adea-ai/control-plane/commit/3402ac8ff25e642de253a1dcce88413404d9ced6))
+
 ## [1.10.2](https://github.com/adea-ai/control-plane/compare/orchestration-v1.10.1...orchestration-v1.10.2) (2026-10-17)
 
 

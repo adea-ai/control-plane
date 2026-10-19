@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.104.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.104.2...workspace-v1.104.3) (2026-10-19)
+
+
+### Bug Fixes
+
+* **orchestration:** retain interaction notifications across crashes ([#1190](https://github.com/adea-ai/control-plane/issues/1190)) ([3402ac8](https://github.com/adea-ai/control-plane/commit/3402ac8ff25e642de253a1dcce88413404d9ced6))
+
+
+### Tests
+
+* **database:** qualify fresh bootstrap and migration replay ([#1185](https://github.com/adea-ai/control-plane/issues/1185)) ([c892fa4](https://github.com/adea-ai/control-plane/commit/c892fa4fd057b9446e7dfb5e21928dd3de8393b1))
+* **pi:** prove durable input replay and workspace isolation ([#1189](https://github.com/adea-ai/control-plane/issues/1189)) ([a0644a7](https://github.com/adea-ai/control-plane/commit/a0644a7bf5a7e26ee939d4e316d614264d1dadb6))
+
 ## [1.104.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.104.1...workspace-v1.104.2) (2026-10-19)
 
 
