@@ -628,3 +628,44 @@ test('replaying a newer pending wait drains the older receipt before retrying it
     newer.interaction,
   ])
 })
+
+test('repairing receipt 1024 refuses a distinct new wait before retaining its intent', async () => {
+  const { f, input } = await setup()
+  const record = await f.delegations.get(ids.delegationId)
+  const publications = Array.from({ length: 1023 }, (_, i) => ({
+    childAttemptId: input.childAttemptId,
+    interaction: { interactionId: `int_${String(i).padStart(26, '0')}`, kind: 'input' },
+    observedAt: input.observedAt,
+    status: 'published',
+  }))
+  await f.delegations.compareAndSet(record.revision, {
+    ...record,
+    revision: record.revision + 1,
+    interactionPublications: publications,
+    pendingProgress: input,
+  })
+  const next = {
+    ...input,
+    observedAt: '2026-08-25T18:03:00.000Z',
+    interaction: { ...input.interaction, interactionId: 'int_01JCBCDEF0123456789ABCDEFG' },
+  }
+  const s = service(f, async () => {})
+  await expect(s.recordChildProgress(next)).rejects.toMatchObject({
+    code: 'DELEGATION_INTERACTION_PUBLICATION_LIMIT',
+  })
+  const repaired = await f.delegations.get(ids.delegationId)
+  expect(repaired.interactionPublications).toHaveLength(1024)
+  expect(repaired.pendingProgress).toBeUndefined()
+  expect(repaired.updatedAt).toBe(input.observedAt)
+  expect((await f.lifecycle.repository.getAttempt(input.childAttemptId)).updatedAt).toBe(
+    input.observedAt
+  )
+  await expect(s.recordChildProgress(next)).rejects.toMatchObject({
+    code: 'DELEGATION_INTERACTION_PUBLICATION_LIMIT',
+  })
+  expect(await f.delegations.get(ids.delegationId)).toEqual(repaired)
+  const replay = await s.recordChildProgress({ ...input, interaction: publications[0].interaction })
+  expect(replay.record.interactionPublications).toHaveLength(1024)
+  await s.recordChildProgress(input)
+  expect((await f.delegations.get(ids.delegationId)).interactionPublications).toHaveLength(1024)
+})
