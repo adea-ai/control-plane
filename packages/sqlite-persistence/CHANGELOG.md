@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.42.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.42.0...sqlite-persistence-v1.42.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **orchestration:** retain interaction notifications across crashes ([#1190](https://github.com/adea-ai/control-plane/issues/1190)) ([3402ac8](https://github.com/adea-ai/control-plane/commit/3402ac8ff25e642de253a1dcce88413404d9ced6))
+
 ## [1.42.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.41.2...sqlite-persistence-v1.42.0) (2026-10-17)
 
 

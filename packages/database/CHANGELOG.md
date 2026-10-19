@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.51.1](https://github.com/adea-ai/control-plane/compare/database-v1.51.0...database-v1.51.1) (2026-10-19)
+
+
+### Tests
+
+* **database:** qualify fresh bootstrap and migration replay ([#1185](https://github.com/adea-ai/control-plane/issues/1185)) ([c892fa4](https://github.com/adea-ai/control-plane/commit/c892fa4fd057b9446e7dfb5e21928dd3de8393b1))
+
 ## [1.51.0](https://github.com/adea-ai/control-plane/compare/database-v1.50.2...database-v1.51.0) (2026-10-17)
 
 
