@@ -114,6 +114,20 @@ export const ChildProgressInputSchema = z
 
 export type ChildProgressInput = z.output<typeof ChildProgressInputSchema>
 
+// One canonical interaction per delegation/attempt/interactionId. Observation time
+// is not identity: retries retain the first envelope, while a changed kind conflicts.
+// Receipts are never evicted; capacity refuses new waits rather than reopening old IDs.
+const maximumInteractionPublications = 1024
+const InteractionPublicationSchema = z
+  .object({
+    childAttemptId: IdentifierSchemas.attemptId,
+    interaction: DelegationInteractionContextSchema,
+    observedAt: TimestampSchema,
+    status: z.enum(['pending', 'published']),
+  })
+  .strict()
+type InteractionPublication = z.output<typeof InteractionPublicationSchema>
+
 export const DispatchInputSchema = z
   .object({
     delegationId: IdentifierSchemas.delegationId,
@@ -169,6 +183,10 @@ export const DelegationRecordSchema = z
     terminalResultRef: IdentifierSchemas.artifactId.optional(),
     failureCode: ReferenceSchema.optional(),
     pendingProgress: ChildProgressInputSchema.optional(),
+    interactionPublications: z
+      .array(InteractionPublicationSchema)
+      .max(maximumInteractionPublications)
+      .optional(),
     pendingDispatch: DispatchInputSchema.optional(),
     pendingCancellationAt: TimestampSchema.optional(),
     terminalPublication: z
@@ -195,7 +213,9 @@ export const DelegationRecordSchema = z
       record.pendingProgress &&
       (record.pendingProgress.delegationId !== record.delegationId ||
         record.pendingProgress.childAttemptId !== record.childAttemptId ||
-        !['completed', 'failed', 'cancelled'].includes(record.pendingProgress.state))
+        !['awaiting_input', 'completed', 'failed', 'cancelled'].includes(
+          record.pendingProgress.state
+        ))
     ) {
       context.addIssue({
         code: 'custom',
@@ -223,6 +243,15 @@ export const DelegationRecordSchema = z
         message: 'Publication must bind the retained terminal outcome',
       })
     }
+    const interactionKeys =
+      record.interactionPublications?.map((publication) =>
+        interactionPublicationKey(record, publication)
+      ) ?? []
+    if (new Set(interactionKeys).size !== interactionKeys.length)
+      context.addIssue({
+        code: 'custom',
+        message: 'Interaction publication identities must be unique',
+      })
     if (record.terminalResultRef && record.state !== 'completed') {
       context.addIssue({ code: 'custom', message: 'Only completed delegation may have a result' })
     }
@@ -370,6 +399,7 @@ export type DelegationErrorCode =
   | 'PROFILE_EXPANSION'
   | 'CHILD_DEADLINE_EXPANSION'
   | 'DELEGATION_STATE_CONFLICT'
+  | 'DELEGATION_INTERACTION_PUBLICATION_LIMIT'
   | 'DELEGATION_ATTEMPT_MISMATCH'
   | 'GRAPH_ADMISSION_DENIED'
   | 'SCOPE_ADMISSION_DENIED'
@@ -928,14 +958,73 @@ export class DelegationService {
     return { record: next, attempt }
   }
 
-  async recordChildProgress(input: unknown): Promise<ChildProgressOutcome> {
-    const parsed = ChildProgressInputSchema.parse(input)
+  recordChildProgress(input: unknown): Promise<ChildProgressOutcome> {
+    return this.#recordChildProgress(input)
+  }
+
+  async #recordChildProgress(
+    input: unknown,
+    retainInteractionOnly = false
+  ): Promise<ChildProgressOutcome> {
+    let parsed = ChildProgressInputSchema.parse(input)
     let record = await this.#required(parsed.delegationId)
     if (record.pendingCancellationAt) throw new DelegationError('DELEGATION_STATE_CONFLICT')
     if (record.childAttemptId !== parsed.childAttemptId)
       throw new DelegationError('DELEGATION_ATTEMPT_MISMATCH')
     if (!record.childAttemptId) throw new DelegationError('DELEGATION_STATE_CONFLICT')
 
+    const interaction = parsed.interaction
+    if (interaction) {
+      const retained = record.interactionPublications?.find(
+        (publication) =>
+          publication.childAttemptId === parsed.childAttemptId &&
+          publication.interaction.interactionId === interaction.interactionId
+      )
+      if (retained) {
+        if (canonicalJsonStringify(retained.interaction) !== canonicalJsonStringify(interaction))
+          throw new DelegationError('DELEGATION_STATE_CONFLICT')
+        return {
+          record: retainInteractionOnly
+            ? record
+            : await this.#publishInteractions(record, retained),
+        }
+      }
+      if ((record.interactionPublications?.length ?? 0) >= maximumInteractionPublications)
+        throw new DelegationError('DELEGATION_INTERACTION_PUBLICATION_LIMIT')
+    }
+
+    if (
+      record.pendingProgress?.interaction &&
+      record.pendingProgress.interaction.interactionId !== parsed.interaction?.interactionId
+    ) {
+      // A newer observation must not wait for delivery of the interrupted wait.
+      // Finish only its canonical transition/receipt, then process the new state.
+      record = (await this.#recordChildProgress(record.pendingProgress, true)).record
+      // Repair may consume the final receipt slot. Refuse this new identity
+      // before persisting its intent or advancing either lifecycle record.
+      if (
+        interaction &&
+        (record.interactionPublications?.length ?? 0) >= maximumInteractionPublications
+      )
+        throw new DelegationError('DELEGATION_INTERACTION_PUBLICATION_LIMIT')
+    }
+
+    // Recover the first waiting envelope even if its sender re-observed the same
+    // interaction after a lifecycle/record interruption. Time does not create a new ID.
+    const retainedPendingProgress = record.pendingProgress
+    if (
+      retainedPendingProgress?.interaction &&
+      parsed.interaction &&
+      retainedPendingProgress.childAttemptId === parsed.childAttemptId &&
+      retainedPendingProgress.interaction.interactionId === parsed.interaction.interactionId
+    ) {
+      if (
+        canonicalJsonStringify(retainedPendingProgress.interaction) !==
+        canonicalJsonStringify(parsed.interaction)
+      )
+        throw new DelegationError('DELEGATION_STATE_CONFLICT')
+      parsed = retainedPendingProgress
+    }
     if (['completed', 'failed', 'cancelled'].includes(record.state)) {
       if (
         record.state === parsed.state &&
@@ -948,7 +1037,7 @@ export class DelegationService {
       throw new DelegationError('DELEGATION_STATE_CONFLICT')
     }
 
-    const attempt = await this.#lifecycle.repository.getAttempt(record.childAttemptId)
+    const attempt = await this.#lifecycle.repository.getAttempt(parsed.childAttemptId)
     if (!attempt || attempt.executionId !== record.childExecutionId)
       throw new DelegationError('DELEGATION_STATE_CONFLICT')
     const execution = await this.#lifecycle.getExecution(record.childExecutionId)
@@ -996,7 +1085,10 @@ export class DelegationService {
       canonicalJsonStringify(record.pendingProgress) !== canonicalJsonStringify(parsed)
     )
       throw new DelegationError('DELEGATION_STATE_CONFLICT')
-    if (['completed', 'failed', 'cancelled'].includes(parsed.state) && !record.pendingProgress) {
+    if (
+      ['awaiting_input', 'completed', 'failed', 'cancelled'].includes(parsed.state) &&
+      !record.pendingProgress
+    ) {
       const pending = DelegationRecordSchema.parse({
         ...record,
         pendingProgress: parsed,
@@ -1027,9 +1119,22 @@ export class DelegationService {
     }
 
     const state = retrying ? 'requested' : manual ? 'manual_intervention' : parsed.state
-    const next = DelegationRecordSchema.parse({
+    let next = DelegationRecordSchema.parse({
       ...record,
       pendingProgress: undefined,
+      ...(interaction
+        ? {
+            interactionPublications: [
+              ...(record.interactionPublications ?? []),
+              {
+                childAttemptId: parsed.childAttemptId,
+                interaction,
+                observedAt: parsed.observedAt,
+                status: 'pending',
+              },
+            ],
+          }
+        : {}),
       state,
       revision: record.revision + 1,
       updatedAt: parsed.observedAt,
@@ -1057,10 +1162,30 @@ export class DelegationService {
         replay.terminalResultRef === parsed.terminalResultRef &&
         replay.failureCode === (parsed.failure && !retrying ? parsed.failure.code : undefined)
       ) {
-        const published = await this.#publishTerminal(replay)
+        const retained =
+          interaction &&
+          replay.interactionPublications?.find(
+            (publication) =>
+              publication.childAttemptId === parsed.childAttemptId &&
+              publication.interaction.interactionId === interaction.interactionId
+          )
+        if (
+          retained &&
+          canonicalJsonStringify(retained.interaction) !== canonicalJsonStringify(interaction)
+        )
+          throw new DelegationError('DELEGATION_STATE_CONFLICT')
+        const published = retained
+          ? retainInteractionOnly
+            ? replay
+            : await this.#publishInteractions(replay, retained)
+          : await this.#publishTerminal(replay)
         return { record: published, ...(resolution ? { resolution } : {}) }
       }
       throw new DelegationError('DELEGATION_STATE_CONFLICT')
+    }
+    if (interaction) {
+      if (!retainInteractionOnly) next = await this.#publishInteractions(next)
+      return { record: next }
     }
     if (next.terminalPublication) {
       const published = await this.#publishTerminal(next)
@@ -1075,6 +1200,9 @@ export class DelegationService {
           : state === 'failed' || state === 'manual_intervention'
             ? 'delegation.failed'
             : 'delegation.progress'
+    // Publish historical waits before a newer progress notification, but only
+    // after committing the newer canonical state so inbox outages cannot block it.
+    next = await this.#publishInteractions(next)
     await this.#publish(next, eventType, parsed.observedAt, {
       state,
       ...(parsed.interaction ? { interaction: parsed.interaction } : {}),
@@ -1102,6 +1230,8 @@ export class DelegationService {
         reconciled.push(await this.#required(record.delegationId))
         continue
       }
+      // Recover canonical intent first; delivery can fail without stranding a
+      // retained terminal transition behind an older unpublished interaction.
       reconciled.push(
         record.pendingProgress
           ? (await this.recordChildProgress(record.pendingProgress)).record
@@ -1127,7 +1257,17 @@ export class DelegationService {
         await this.#publishTerminal(record)
         continue
       }
-      if (record.pendingProgress || record.pendingDispatch) {
+      if (record.pendingProgress?.state === 'awaiting_input') {
+        // Complete the canonical wait transition, retaining its publication, but
+        // never make cancellation wait for a nonterminal inbox acknowledgement.
+        const retained = await this.#recordChildProgress(record.pendingProgress, true)
+        cancelled.push(
+          await this.#cancelChild(
+            retained.record,
+            retained.record.pendingCancellationAt ?? cancelledAt
+          )
+        )
+      } else if (record.pendingProgress || record.pendingDispatch) {
         await this.reconcileChildPublications(parentExecutionId)
         const current = await this.#required(record.delegationId)
         if (['completed', 'failed', 'cancelled'].includes(current.state)) continue
@@ -1244,7 +1384,22 @@ export class DelegationService {
     return record
   }
 
+  async #publishInteractions(
+    record: DelegationRecord,
+    through?: InteractionPublication
+  ): Promise<DelegationRecord> {
+    return recoverDelegationInteractionPublications(
+      this.#delegations,
+      { publish: (event, key) => this.#publishRetained(event, key) },
+      record,
+      through
+    )
+  }
+
   async #publishTerminal(record: DelegationRecord): Promise<DelegationRecord> {
+    // Canonical completion/cancellation already committed. Inbox failure cannot
+    // undo it, but its notification must follow the retained waiting evidence.
+    record = await this.#publishInteractions(record)
     const publication = record.terminalPublication
     // Legacy terminal records have no reliable publication receipt. Do not invent one.
     if (!publication || publication.status === 'published') return record
@@ -1400,4 +1555,77 @@ function canonical(value: unknown): string {
       .join(',')}}`
   }
   return JSON.stringify(value)
+}
+
+/** Drain retained waits before a later notification, sharing service/repository
+ * recovery ordering and merge-only acknowledgement semantics. */
+export async function recoverDelegationInteractionPublications(
+  repository: Pick<DelegationRepository, 'get' | 'compareAndSet'>,
+  publisher: DelegationEventPublisher,
+  record: DelegationRecord,
+  through?: InteractionPublication
+): Promise<DelegationRecord> {
+  const required = async () => {
+    const current = await repository.get(record.delegationId)
+    if (!current) throw new DelegationError('DELEGATION_NOT_FOUND')
+    return current
+  }
+  const publishInteraction = async (
+    snapshot: DelegationRecord,
+    publication: InteractionPublication
+  ): Promise<DelegationRecord> => {
+    if (publication.status === 'published') return snapshot
+    const key = interactionPublicationKey(snapshot, publication)
+    await publisher.publish(
+      {
+        type: 'delegation.progress',
+        delegationId: snapshot.delegationId,
+        parentExecutionId: snapshot.parentExecutionId,
+        childExecutionId: snapshot.childExecutionId,
+        occurredAt: publication.observedAt,
+        details: { state: 'awaiting_input', interaction: publication.interaction },
+      },
+      key
+    )
+    // An unrelated progress/terminal CAS may win while the inbox accepts the event.
+    // Merge only this acknowledgement into the latest snapshot; never restore old state.
+    for (let retry = 0; retry < 8; retry += 1) {
+      const current = await required()
+      const retained = current.interactionPublications?.find(
+        (candidate) => interactionPublicationKey(current, candidate) === key
+      )
+      if (
+        !retained ||
+        retained.observedAt !== publication.observedAt ||
+        canonicalJsonStringify(retained.interaction) !==
+          canonicalJsonStringify(publication.interaction)
+      )
+        throw new DelegationError('DELEGATION_STATE_CONFLICT')
+      if (retained.status === 'published') return current
+      const acknowledged = DelegationRecordSchema.parse({
+        ...current,
+        revision: current.revision + 1,
+        interactionPublications: current.interactionPublications!.map((candidate) =>
+          interactionPublicationKey(current, candidate) === key
+            ? { ...candidate, status: 'published' }
+            : candidate
+        ),
+      })
+      if (await repository.compareAndSet(current.revision, acknowledged)) return acknowledged
+    }
+    throw new DelegationError('DELEGATION_STATE_CONFLICT')
+  }
+  const lastKey = through && interactionPublicationKey(record, through)
+  for (const publication of record.interactionPublications ?? []) {
+    record = await publishInteraction(record, publication)
+    if (interactionPublicationKey(record, publication) === lastKey) break
+  }
+  return record
+}
+
+function interactionPublicationKey(
+  record: Pick<DelegationRecord, 'delegationId'>,
+  publication: Pick<InteractionPublication, 'childAttemptId' | 'interaction'>
+): string {
+  return `delegation:${record.delegationId}:${publication.childAttemptId}:${publication.interaction.interactionId}`
 }

@@ -16,6 +16,7 @@ import {
   ChildAdmissionRequestSchema,
   assertChildAdmissionReceiptMatches,
   DelegationRecordSchema,
+  recoverDelegationInteractionPublications,
   type ChildAdmissionAllocator,
   type DelegationRecord,
   type DelegationRepository,
@@ -63,6 +64,7 @@ const mutable = new Set([
   'failureCode',
   'terminalPublication',
   'pendingProgress',
+  'interactionPublications',
   'pendingCancellationAt',
   'pendingDispatch',
 ])
@@ -165,7 +167,7 @@ export class SqliteDelegationRepository implements DelegationRepository, ChildAd
     publisher: DelegationEventPublisher
   ): Promise<DelegationRecord> {
     IdentifierSchemas.delegationId.parse(delegationId)
-    const record = await this.provider.transaction(async (tx) => {
+    let record = await this.provider.transaction(async (tx) => {
       const row = await tx.get(namespace, recordId(delegationId))
       const current = row ? DelegationRecordSchema.parse(row.value) : undefined
       if (!current || current.delegationId !== delegationId || !current.terminalPublication)
@@ -175,6 +177,7 @@ export class SqliteDelegationRepository implements DelegationRepository, ChildAd
       await retainTerminalReceipt(tx, current, current)
       return current
     })
+    record = await recoverDelegationInteractionPublications(this, publisher, record)
     const receipt = terminalReceipt(record)!
     if (receipt.status === 'published') return record
     await publisher.publish(receipt.event, receipt.idempotencyKey)
