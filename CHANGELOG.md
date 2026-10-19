@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.104.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.104.1...workspace-v1.104.2) (2026-10-19)
+
+
+### Bug Fixes
+
+* **acp-adapter:** reject native FIFOs without blocking ([#1188](https://github.com/adea-ai/control-plane/issues/1188)) ([b5d8641](https://github.com/adea-ai/control-plane/commit/b5d864175d787f771080b92c895f5f23259fa1a7))
+
 ## [1.104.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.104.0...workspace-v1.104.1) (2026-10-19)
 
 
