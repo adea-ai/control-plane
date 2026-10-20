@@ -71,12 +71,16 @@ test('public recovery and process reopen replay a retained terminal inbox into t
   const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
   const events = []
   const delivered = []
+  let refuseDelivery = false
   const options = baseOptions(directory, {
     periodicRecoveryIntervalMs: 60_000,
     parentInbox: { list: async () => events },
     childTimelineDelivery: {
       principalId: 'svc_adea',
-      notify: async (input) => delivered.push(input),
+      notify: async (input) => {
+        if (refuseDelivery) throw new Error('PRODUCT_OFFLINE')
+        delivered.push(input)
+      },
     },
   })
   let composition
@@ -116,8 +120,14 @@ test('public recovery and process reopen replay a retained terminal inbox into t
       occurredAt: at,
       details: { state: 'completed', childAttemptId: 'att_01JABCDEF0123456789ABCDEFG' },
     })
+    refuseDelivery = true
+    await composition.recover()
+    expect(composition.childTimelineRecovery).toEqual({ delivered: 0, blocked: [dispatchId] })
+    expect(composition.childTimelineDeliveryBlocked).toBe(true)
+    refuseDelivery = false
     await composition.recover()
     expect(composition.childTimelineRecovery).toEqual({ delivered: 1, blocked: [] })
+    expect(composition.childTimelineDeliveryBlocked).toBe(false)
     await composition.close()
     composition = await createNodePiDurableLeadComposition(options)
     expect(composition.childTimelineRecovery).toEqual({ delivered: 1, blocked: [] })
@@ -125,6 +135,15 @@ test('public recovery and process reopen replay a retained terminal inbox into t
       { workspaceId, intentId, principalId: 'svc_adea' },
       { workspaceId, intentId, principalId: 'svc_adea' },
     ])
+    await composition.close()
+    composition = await createNodePiDurableLeadComposition({
+      ...options,
+      periodicRecoveryIntervalMs: fastInterval,
+    })
+    const initialWakes = delivered.length
+    for (let index = 0; index < 30 && delivered.length === initialWakes; index++)
+      await pause(fastInterval)
+    expect(delivered.length).toBeGreaterThan(initialWakes)
   } finally {
     await composition?.close()
     await rm(directory, { recursive: true, force: true })

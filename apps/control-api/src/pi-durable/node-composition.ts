@@ -267,6 +267,9 @@ export async function createNodePiDurableLeadComposition(
       get childTimelineRecovery() {
         return childTimelineRecovery
       },
+      get childTimelineDeliveryBlocked() {
+        return (childTimelineRecovery?.blocked.length ?? 0) > 0
+      },
       get unclaimedPreparationRecovery() {
         return unclaimedPreparationRecovery
       },
