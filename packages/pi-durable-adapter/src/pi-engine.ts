@@ -616,12 +616,16 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
                     if (reservation?.preparePhysicalSend || reservation?.armPhysicalSend) {
                       if (!reservation.preparePhysicalSend || !reservation.armPhysicalSend)
                         throw new Error('PI_PHYSICAL_SEND_MARKER_INCOMPLETE')
-                      const requestDigest = await physicalRequestDigest(input, physicalInit)
+                      const physicalRequest = new Request(input, physicalInit)
+                      const requestDigest = await physicalRequestDigest(physicalRequest)
                       await reservation.preparePhysicalSend(requestDigest)
                       // An ambiguous arm result must never reach physicalFetch.
                       await reservation.armPhysicalSend(requestDigest)
-                      await options.assertAuthority()
                       await reservation.assertActive()
+                      // This is the last await before fetch: a spending check may yield while
+                      // another owner or cancellation advances the journal epoch.
+                      await options.assertAuthority()
+                      return physicalFetch(physicalRequest)
                     }
                     return physicalFetch(input, physicalInit)
                   },
@@ -886,11 +890,7 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
 }
 
 /** Fingerprint the actual SDK request without retaining its URL, headers, or body in the journal. */
-async function physicalRequestDigest(
-  input: Parameters<typeof fetch>[0],
-  init?: RequestInit
-): Promise<string> {
-  const request = new Request(input, init)
+async function physicalRequestDigest(request: Request): Promise<string> {
   const body = Buffer.from(await request.clone().arrayBuffer())
   const headers = [...request.headers.entries()].toSorted(([a], [b]) => a.localeCompare(b))
   return `sha256:${createHash('sha256')
