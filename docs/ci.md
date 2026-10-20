@@ -23,6 +23,10 @@ The gate covers:
   builds;
 - unit, E2E, and smoke groups as independent parallel jobs, including isolated
   databases, deterministic migration replay, enforced 80% unit coverage, and LCOV upload;
+- the E2E group split into two balanced shards, so the lane's wall clock is the
+  slower shard instead of the sum of all 43 files. The shards run the same
+  files, tests and assertions, and each shard is measured against the same
+  reviewed lane ceiling;
 - OpenAPI drift and Drizzle migration-schema drift through `bun run type-check`;
 - dependency auditing that does not require production or vendor credentials.
 - repository credential-pattern scanning through `bun run security:scan` without echoing matches.
