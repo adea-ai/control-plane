@@ -105,9 +105,10 @@ jobs:
       # every file: run 39346283807 measured 128.7s on a runner that was 1.55x
       # slower than the main run, over the 120s ceiling. Two shards keep every
       # file, every test and the same ceiling while the lane's wall clock
-      # becomes the slower shard.
-      e2e-shard-list: 1,2
-      e2e-total-shards: 2
+      # becomes the slower shard. Both inputs are strings in the pinned
+      # Code Foundry workflow, so both values are quoted.
+      e2e-shard-list: '1,2'
+      e2e-total-shards: '2'
     secrets:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
       NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
