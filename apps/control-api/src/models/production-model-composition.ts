@@ -49,6 +49,7 @@ import {
   type PiLeadPublicationPorts,
 } from '../pi-durable/publication-current.service.js'
 import { createSqlitePiLeadPublicationReader } from '../pi-durable/sqlite-publication-reader.js'
+import { PiChildPublicationService } from '../pi-durable/child-publication-current.service.js'
 
 export interface ProductionPiLeadCompositionOptions {
   readonly directory: string
@@ -574,6 +575,20 @@ export async function createProductionPiLeadComposition(
       assertCurrent: options.publicationAuthority,
       ...(options.publicationNow ? { now: options.publicationNow } : {}),
     })
+    const childPublicationService =
+      options.children && childDelegation
+        ? new PiChildPublicationService({
+            readRetained: createSqlitePiLeadPublicationReader({
+              database: intentDatabase,
+              adapter: installed.adapter,
+              includeStatus: false,
+            }),
+            listChildren: (executionId) => childDelegation.service.listChildren(executionId),
+            listParentEvents: async () => options.children!.delegation.events.list(),
+            assertCurrent: options.publicationAuthority,
+            ...(options.publicationNow ? { now: options.publicationNow } : {}),
+          })
+        : undefined
     let closing: Promise<void> | undefined
     return {
       piDurableLeadService: installed.service,
@@ -585,6 +600,7 @@ export async function createProductionPiLeadComposition(
       /** Server-derived child binding for a retained attempt; never a credential or spend grant. */
       ...(childHost ? { childModelBinding: childHost.bindingFor } : {}),
       publicationService,
+      ...(childPublicationService ? { childPublicationService } : {}),
       ...(piDurableCurrentToolAuthority ? { piDurableCurrentToolAuthority } : {}),
       modelConnectionService: new ConfiguredModelConnectionService(
         metadata.selections,
