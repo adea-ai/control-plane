@@ -219,3 +219,60 @@ Conclusion: the current public abort API has no source-proven compare-and-cancel
 or commit-time authority hook. An outer check, Context cancellation, journal
 intent or parsed permit cannot be described as that hook. Native guarded abort,
 all-writer coordination and production acceptance remain gated.
+
+## PostgreSQL request retention slice
+
+`apps/control-api/src/pi-durable/postgres-cancellation-requests.ts` adds a
+standalone repository operation, with no production composition or delivery wiring.
+It uses the existing `persistence_records` namespace
+`pi.cancellation.requests.v1` and `outbox_events`; no schema, migration journal,
+credential or grant changes are needed. The published old #1048 diff contains
+memory/SQLite cancellation-owner fixtures but no overlapping PostgreSQL request
+repository. Its unpublished checkout is untouched. This slice does not replace
+its missing production authorization owner.
+
+First retention takes an advisory transaction lock for the scoped request key,
+then `FOR SHARE` locks on the accepting command, execution and exact attempt.
+It validates deterministic Pi intent IDs, accepting service principal, workspace,
+command/request/plan/scope bindings, latest attempt and sequence, exact execution
+and attempt versions, and any already-retained canonical external session ID.
+The immutable request and its pending retry outbox row are inserted in that same
+PostgreSQL transaction. An outbox insertion failure rolls both writes back.
+Same-key/same-digest replay returns the existing pair; changed content conflicts.
+The key includes workspace, product intent, accepting service principal and
+request idempotency key, so changing target generation cannot create a second
+record under the same scoped key.
+
+The native handle, admission digest, original actor, product scope and restore
+generation in the intent remain retained request data. Their current provenance
+and permission are not proved by these PostgreSQL rows. In particular, current
+Pi running receipts retain the exact native handle in SQLite while canonical
+attempt runtime metadata stays immutable. An absent CP external session ID is
+not manufactured into a mapping. No request record or outbox payload is a
+permit, and the repository neither advances lifecycle state nor aborts an engine.
+Historical retrieval/replay after a CP version change is request evidence only;
+any eventual effect still needs the separately qualified current authority and
+native fence. Missing or corrupted paired rows fail closed rather than silently
+recreating an outbox entry.
+
+The existing generic record namespace has no request-specific pruning policy.
+This source slice creates only pending outbox records and neither publishes nor
+marks them delivered. Retention/cleanup and any execution-reference pinning must
+be reviewed with the future delivery owner before activation; existing generic
+messaging retention must not be mistaken for that authority.
+
+The integration suite uses the real existing migration chain on an owned,
+disposable PostgreSQL 18 cluster. It covers duplicate and conflicting requests,
+stale versions and wrong bindings, a real failing outbox trigger with rollback,
+competing writers, both orders of lifecycle-write versus retention lock admission,
+and fresh OS-process retrieval. The private UNIX socket uses OS peer
+identity, no TCP listener and no new credential or persistent access grant.
+Run with `PI_CANCELLATION_TEST_PG_SOCKET` pointing to an owned
+`/tmp/pi-cancellation-pg.<suffix>/socket` and:
+
+```sh
+bun test ./apps/control-api/src/pi-durable/postgres-cancellation-requests.integration.test.mjs
+```
+
+This is request durability/concurrency qualification, not restore, live authority,
+installed desktop or committed cancellation-effect acceptance.
