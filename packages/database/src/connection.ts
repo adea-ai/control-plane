@@ -384,15 +384,25 @@ export async function evaluateWithinReadinessBudget<Result>(
  * when check() rejects or does not settle within the timeout budget, so an
  * unreachable database can neither hang the readiness endpoint nor silently
  * pass it. A losing probe attempt is left to the pool's own connect timeout.
+ *
+ * The optional `onWork` seam hands the raw check promise to the caller. The
+ * probe's own promise settles when the budget expires, while the check it
+ * started may still be pending, so a caller that owns the surface has to see
+ * the raw promise to know when the underlying work actually settled.
  */
 export async function databaseReadinessProbe(
   connection: PostgresConnection,
-  timeoutMs = DEFAULT_READINESS_PROBE_TIMEOUT_MS
+  timeoutMs = DEFAULT_READINESS_PROBE_TIMEOUT_MS,
+  onWork?: (work: Promise<unknown>) => void
 ): Promise<boolean> {
-  const outcome = await evaluateWithinReadinessBudget(async () => {
-    await connection.check()
-    return true
-  }, timeoutMs)
+  const outcome = await evaluateWithinReadinessBudget(
+    async () => {
+      await connection.check()
+      return true
+    },
+    timeoutMs,
+    onWork
+  )
   return outcome.completed ? outcome.value : false
 }
 

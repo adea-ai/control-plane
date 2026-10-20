@@ -1,6 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 import { hostedDependencyReadiness } from './dependency-readiness.ts'
 
+/** The per-call readiness budget of the single-flight regressions. */
+const READINESS_BUDGET_MS = 5
+/**
+ * The gap between two timed-out calls. It is longer than the budget, so every
+ * timer the evaluation armed has fired and every release microtask has run
+ * before the next call starts.
+ */
+const INTER_CALL_GAP_MS = 10
+const interCallGap = () => new Promise((resolve) => setTimeout(resolve, INTER_CALL_GAP_MS))
+
 function compositionSurface({ componentReadiness = true, check = async () => undefined } = {}) {
   let databaseProbes = 0
   return {
@@ -148,17 +158,29 @@ describe('Hosted dependency readiness', () => {
       connection: { check: async () => undefined },
     }
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      expect(await hostedDependencyReadiness(surface, { readinessTimeoutMs: 5 })).toBe(false)
+      expect(
+        await hostedDependencyReadiness(surface, { readinessTimeoutMs: READINESS_BUDGET_MS })
+      ).toBe(false)
+      await interCallGap()
     }
     // One manifest is pending; the later calls started no work.
     expect(manifests).toBe(1)
   })
 
   test('sequential calls after a timeout do not start another unresolved check', async () => {
-    // The manifest answers immediately and the check never settles, so the
-    // underlying work stays pending across the timeouts.
+    // The manifest answers immediately and the check never settles. The
+    // ownership used to be released when the probe's timeout wrapper settled,
+    // not when the raw check settled, so three calls separated by a gap each
+    // started another check while the first was still pending.
     let manifests = 0
-    let databaseProbes = 0
+    let checks = 0
+    let checkSettled = false
+    // A controlled deferred that is never settled: the raw check stays
+    // unresolved for the whole regression.
+    const pendingCheck = new Promise(() => {})
+    void pendingCheck.then(() => {
+      checkSettled = true
+    })
     const surface = {
       manifest: async () => {
         manifests += 1
@@ -166,16 +188,57 @@ describe('Hosted dependency readiness', () => {
       },
       connection: {
         check: () => {
-          databaseProbes += 1
-          return new Promise(() => {})
+          checks += 1
+          return pendingCheck
         },
       },
     }
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      expect(await hostedDependencyReadiness(surface, { readinessTimeoutMs: 5 })).toBe(false)
+      expect(
+        await hostedDependencyReadiness(surface, { readinessTimeoutMs: READINESS_BUDGET_MS })
+      ).toBe(false)
+      // The gap lets the probe's timeout wrapper settle and the release
+      // microtask run, so a released ownership would show here.
+      await interCallGap()
     }
     expect(manifests).toBe(1)
-    expect(databaseProbes).toBe(1)
+    // Exactly one raw check, and it is still unresolved.
+    expect(checks).toBe(1)
+    expect(checkSettled).toBe(false)
+  })
+
+  test('a settled raw check releases the single-flight ownership', async () => {
+    // The ownership is held until the raw check settles, so a surface whose
+    // check completed becomes usable again.
+    let checks = 0
+    let releaseCheck
+    const surface = {
+      manifest: async () => ({ components: [{ ready: true }] }),
+      connection: {
+        check: () => {
+          checks += 1
+          return new Promise((resolve) => {
+            releaseCheck = resolve
+          })
+        },
+      },
+    }
+    expect(
+      await hostedDependencyReadiness(surface, { readinessTimeoutMs: READINESS_BUDGET_MS })
+    ).toBe(false)
+    await interCallGap()
+    // The raw check is still pending, so the surface stays single-flight.
+    expect(
+      await hostedDependencyReadiness(surface, { readinessTimeoutMs: READINESS_BUDGET_MS })
+    ).toBe(false)
+    expect(checks).toBe(1)
+    // The raw check settles, so the ownership is released.
+    releaseCheck()
+    await interCallGap()
+    expect(
+      await hostedDependencyReadiness(surface, { readinessTimeoutMs: READINESS_BUDGET_MS })
+    ).toBe(false)
+    expect(checks).toBe(2)
   })
 
   test('a manifest that settles after the budget does not surface on its own', async () => {

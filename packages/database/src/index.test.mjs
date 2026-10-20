@@ -464,6 +464,47 @@ describe('databaseReadinessProbe', () => {
     ).toBe(false)
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(20)
   })
+
+  test('hands the raw check promise to the caller when the probe budget expires', async () => {
+    // The probe's own promise settles when the budget expires, while the raw
+    // check it started may still be pending, so the caller has to be able to
+    // see the raw promise.
+    let handed
+    const pending = new Promise(() => {})
+    expect(
+      await databaseReadinessProbe(
+        fakeConnection(() => pending),
+        25,
+        (work) => {
+          handed = work
+        }
+      )
+    ).toBe(false)
+    expect(handed).toBeDefined()
+    let handedSettled = false
+    void handed.then(() => {
+      handedSettled = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    // The raw check never settled, so the handed work never settled.
+    expect(handedSettled).toBe(false)
+  })
+
+  test('the handed work settles with the raw check', async () => {
+    let handed
+    expect(
+      await databaseReadinessProbe(
+        fakeConnection(async () => undefined),
+        25,
+        (work) => {
+          handed = work
+        }
+      )
+    ).toBe(true)
+    // The handed work is the raw check, and it settled with it.
+    await handed
+    expect(handed).toBeDefined()
+  })
 })
 
 test('withDomainTransaction applies an atomic serializable transaction boundary', async () => {
