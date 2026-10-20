@@ -187,13 +187,27 @@ export class SqlitePiDurableLeadReceiptStore implements PiDurableLeadReceiptStor
   constructor(readonly database: DatabaseSync) {
     database.exec(`CREATE TABLE IF NOT EXISTS pi_lead_receipts (
       dispatch_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, record TEXT NOT NULL
-    ); CREATE TABLE IF NOT EXISTS pi_lead_commands (key TEXT PRIMARY KEY, digest TEXT NOT NULL)`)
+    ); CREATE INDEX IF NOT EXISTS pi_lead_receipts_execution_idx
+      ON pi_lead_receipts (json_extract(record, '$.executionId'));
+      CREATE TABLE IF NOT EXISTS pi_lead_commands (key TEXT PRIMARY KEY, digest TEXT NOT NULL)`)
   }
   async get(dispatchId: string): Promise<PiDurableLeadReceipt | undefined> {
     const row = this.database
       .prepare('SELECT record FROM pi_lead_receipts WHERE dispatch_id = ?')
       .get(dispatchId)
     return row ? ReceiptSchema.parse(JSON.parse(String(row['record']))) : undefined
+  }
+  /** The inbox is bound to one parent execution. Resolve only that parent's retained
+   * product binding, including after a restart; never scan unrelated receipts. */
+  async findForChildDelivery(executionId: string): Promise<PiDurableLeadReceipt | undefined> {
+    const id = IdentifierSchemas.executionId.parse(executionId)
+    const rows = this.database
+      .prepare(
+        "SELECT record FROM pi_lead_receipts WHERE json_extract(record, '$.executionId') = ? LIMIT 2"
+      )
+      .all(id)
+    if (rows.length > 1) throw new Error('PI_CHILD_TIMELINE_PARENT_CONFLICT')
+    return rows.length ? ReceiptSchema.parse(JSON.parse(String(rows[0]!['record']))) : undefined
   }
   async insert(receipt: PiDurableLeadReceipt): Promise<boolean> {
     const value = ReceiptSchema.parse(receipt)

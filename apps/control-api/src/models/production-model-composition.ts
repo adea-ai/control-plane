@@ -120,7 +120,10 @@ export interface ProductionPiLeadCompositionOptions {
         >
       >
     readonly runtime: Required<
-      Pick<NodePiDurableLeadCompositionOptions, 'childProgress' | 'consumeParentInbox'>
+      Pick<
+        NodePiDurableLeadCompositionOptions,
+        'childProgress' | 'consumeParentInbox' | 'childTimelineDelivery'
+      >
     > &
       Pick<NodePiDurableLeadCompositionOptions, 'onParentInboxWake'>
   }
@@ -192,6 +195,8 @@ export async function createProductionPiLeadComposition(
       !children.delegation?.scopeAdmission?.authority ||
       typeof children.usageOutcomes !== 'function' ||
       typeof children.runtime?.childProgress?.scan !== 'function' ||
+      typeof children.runtime?.childTimelineDelivery?.notify !== 'function' ||
+      !children.runtime?.childTimelineDelivery?.principalId ||
       typeof children.runtime?.consumeParentInbox !== 'function' ||
       typeof children.tools?.service?.execute !== 'function' ||
       typeof children.tools?.interactions?.get !== 'function')
