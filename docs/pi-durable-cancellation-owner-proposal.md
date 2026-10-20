@@ -169,3 +169,47 @@ generation supersession, group/archived/v2 policy and qualified restore generati
 Paired-source and installed runtime acceptance remain required. No infrastructure,
 new authentication, UI, child policy or release is authorized here. CP #1025/#942
 and Adea #1173 remain open.
+
+## Approved bounded contract slice
+
+The adapter package exports `cancellation-owner.ts` as a source-only contract seam.
+It defines strict retained-intent, exact-target, revocable-permit, current-fence,
+barrier and unresolved-effect observation shapes. Request digests cover the full
+bound target, key and requested instant. Snapshot comparison rejects changed
+request/target, stale or future fence epochs, revoked/unknown permits, closed
+fences, untracked generations and expired authority. Barrier comparison checks
+exact target and process owner; monotonic barrier epochs and explicit drain
+receipt fields cannot establish actual drain by themselves.
+
+`UnavailablePiCancellationOwner` rejects every operation with
+`PI_CANCELLATION_AUTHORITY_UNAVAILABLE`, including intent retention, permit and
+current-fence reads, barrier reads and effect observation. It is not injected
+into the existing adapter or production composition. Existing live checks and
+cancellation behavior are unchanged. None of these parsers or pure snapshot
+helpers supplies a transaction, lease, current permission or native effect.
+
+## Pinned native capability evidence
+
+Inspected the installed `@earendil-works/pi-durable` **1.1.0** artifact, without
+changing dependencies or accessing live infrastructure. Paths below are relative
+to that installed package's `dist/` directory:
+
+| Source                                                   | Capability and limitation                                                                                                                                                                                                                                                       |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `harness/types.d.ts:58-77`                               | `ConversationAbortOptions` exposes `background` only. `abort(context, options)` has no expected-generation, authority-revision or compare/guard callback.                                                                                                                       |
+| `harness/harness.js:65-67`                               | Public conversation abort resumes the task scheduler then invokes `abortConversation`; it does not add an authority guard.                                                                                                                                                      |
+| `harness/scheduler.js:186-211`                           | `abortConversation` uses an internal `session.commitWith` callback to mark reached tasks and withdraw inputs, then waits for idle. The callback is hardcoded; no caller guard runs inside it.                                                                                   |
+| `session/session.js:250-270`                             | Checks `context.abortSignal` at transaction entry, then awaits callback and write preparation. Storage settlement deliberately receives `withoutAbortSignal(context)`. An abortable Context therefore does not establish a deadline or revocation comparison at storage commit. |
+| `session/session.d.ts:17-23`, `session/transaction.d.ts` | `commitWith` and `setTask` are documented internal APIs. Public `Tx` lacks `setTask`; reconstructing scheduler abort through internal APIs would require a separately reviewed compatibility change and preservation of scope/queue/idle semantics.                             |
+| `storage/sqlite/storage.js:103-123`                      | Commits native writes inside its SQLite transaction but has no product/CP/permit comparison. Generic storage decoration is a possible extension point, not a proven cancellation-specific hook or cross-store authority mechanism.                                              |
+
+Artifact SHA-256 checksums for reproducibility:
+
+- `harness/scheduler.js`: `9d473431d18a0bf11e37b4e491213adc82d66b3698e45bdfeba155ba9a13b609`
+- `session/session.js`: `cc999b5b03bb1c7aed1d5d48e170928a9daa0a6a82f47a538dfef7ed9e50b32a`
+- `harness/types.d.ts`: `df01cf73d080c3d280a065369025ab4d82a209832ba42754abd4c7ec9295bb9f`
+
+Conclusion: the current public abort API has no source-proven compare-and-cancel
+or commit-time authority hook. An outer check, Context cancellation, journal
+intent or parsed permit cannot be described as that hook. Native guarded abort,
+all-writer coordination and production acceptance remain gated.
