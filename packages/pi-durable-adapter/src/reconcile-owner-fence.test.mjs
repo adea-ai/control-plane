@@ -163,3 +163,92 @@ test('reconnect revocation after a safe observation cannot claim or resend retai
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
+test('a retained pre-run marker resumes without an external no-send guess', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-reconcile-pre-run-'))
+  const { options, request } = fixture(directory)
+  const first = new PiDurableRuntimeAdapter({
+    ...options,
+    engineFactory: async () => {
+      throw new Error('engine construction stopped before run')
+    },
+  })
+  let recovered
+  try {
+    const handle = await first.start(request)
+    await first.drain()
+    const retained = first.journal.get(handle.handleId)
+    expect(retained.state).toBe('unknown')
+    expect(retained.detail.engineRunStarted).toBe(false)
+    expect(retained.detail.activeInference).toBeUndefined()
+    await first.close()
+
+    let externalVerdicts = 0
+    let runs = 0
+    recovered = new PiDurableRuntimeAdapter({
+      ...options,
+      reconcileInference: async () => {
+        externalVerdicts++
+        return 'unresolved'
+      },
+      engineFactory: async (input) => {
+        const engine = await options.engineFactory(input)
+        return {
+          ...engine,
+          run: async (runRequest) => {
+            runs++
+            return engine.run(runRequest)
+          },
+        }
+      },
+    })
+    await recovered.reconcile(handle)
+    await recovered.drain()
+    expect((await recovered.status(handle)).state).toBe('completed')
+    expect({ externalVerdicts, runs }).toEqual({ externalVerdicts: 0, runs: 1 })
+  } finally {
+    await recovered?.close()
+    await first.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('legacy or generation-bearing pre-run shapes stay unknown without trusted external evidence', async () => {
+  for (const change of [
+    { inferenceTrackingVersion: undefined },
+    { resumeGenerationKey: 'pi-turn:retained:pi-generation:1' },
+  ]) {
+    const directory = mkdtempSync(join(tmpdir(), 'pi-reconcile-untrusted-pre-run-'))
+    const { options, request } = fixture(directory)
+    const first = new PiDurableRuntimeAdapter({
+      ...options,
+      engineFactory: async () => {
+        throw new Error('engine construction stopped before run')
+      },
+    })
+    let recovered
+    try {
+      const handle = await first.start(request)
+      await first.drain()
+      const row = first.journal.get(handle.handleId)
+      first.journal.update(handle.handleId, row.epoch, {
+        detail: { ...row.detail, ...change },
+      })
+      await first.close()
+      let observations = 0
+      recovered = new PiDurableRuntimeAdapter({
+        ...options,
+        reconcileInference: async () => {
+          observations++
+          return 'unresolved'
+        },
+      })
+      expect((await recovered.reconcile(handle)).state).toBe('unknown')
+      expect(observations).toBe(1)
+    } finally {
+      await recovered?.close()
+      await first.close().catch(() => {})
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }
+})

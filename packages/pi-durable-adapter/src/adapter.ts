@@ -721,9 +721,11 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         .map((field) => record.detail[field])
         .find((value): value is string => typeof value === 'string')
       const resumeKey = activeInference?.inferenceKey ?? retainedKey
-      const observe = () =>
-        this.#options.reconcileInference(authority, resumeKey ?? turnKey(record))
-      const preliminary = await observe()
+      const observe = (candidate: JournalRecord) =>
+        hasDurablePreRunNoSend(candidate)
+          ? Promise.resolve('safe_to_resume' as const)
+          : this.#options.reconcileInference(authority, resumeKey ?? turnKey(record))
+      const preliminary = await observe(record)
       await this.#authority(authority)
       this.#assertOpen()
       const admitted = this.journal.get(record.handleId)
@@ -744,7 +746,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       try {
         const claimed = this.journal.get(record.handleId)
         // A safe verdict authorizes a physical send, so it is confirmed under the claimed epoch.
-        const safe = preliminary === 'safe_to_resume' ? await observe() : preliminary
+        const safe = preliminary === 'safe_to_resume' ? await observe(claimed) : preliminary
         await this.#authority(authority)
         this.#assertOpen()
         const current = this.journal.get(record.handleId)
@@ -1573,6 +1575,26 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
 function isOwnerContention(error: unknown): boolean {
   return (
     error instanceof Error && ['STALE_STATE', 'PI_SESSION_OWNER_ACTIVE'].includes(error.message)
+  )
+}
+
+// The adapter persists this marker before engine construction and sets engineRunStarted=true
+// before calling engine.run. Only that exact retained pre-run shape proves that this attempt
+// could not have made a physical model send. Absence of a hold, timeout, or legacy marker does not.
+function hasDurablePreRunNoSend(record: JournalRecord): boolean {
+  const detail = record.detail
+  return (
+    (record.state === 'running' || record.state === 'unknown') &&
+    detail['inferenceTrackingVersion'] === 1 &&
+    detail['engineRunStarted'] === false &&
+    detail['inferencePending'] === true &&
+    detail['activeInference'] === undefined &&
+    detail['resumeGenerationKey'] === undefined &&
+    detail['safeResumeInferenceKey'] === undefined &&
+    detail['inferenceReceipts'] === undefined &&
+    detail['cancellationIntent'] === undefined &&
+    detail['nativeToolBlocked'] === undefined &&
+    detail['pendingApproval'] === undefined
   )
 }
 

@@ -46,7 +46,9 @@ the assigned CI/conflict owner.
 The approved #1025/#942 criteria include crash/recovery, upgrade, drain,
 rollback, backup/restore, reconnect grant and generation revalidation, exact
 input, and one attempt owner. Current Node Pi source proves retained unknown/no
-resend and SIGKILL adoption. An exact-key resume permit now lets a trusted
+resend and SIGKILL adoption. The retained v1 pre-run marker now safely resumes
+an engine that never entered `run` without guessing from an absent ledger hold.
+An exact-key resume permit lets a trusted
 no-send verdict reuse a retained ledger hold after reopen or failed engine
 creation; an ordinary retry still hits the dispatch replay fence. A test-only
 no-send log is not production reconciliation evidence. Its `safe_to_resume` callback needs an accountable

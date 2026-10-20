@@ -51,3 +51,53 @@ test('Node composition close fences new Pi tasks and drains an admitted run befo
     await rm(directory, { recursive: true, force: true })
   }
 }, 30_000)
+
+test('incompatible retained Pi journal version blocks recovery without starting an engine', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pi-composition-version-fence-'))
+  const setup = fixture(directory)
+  let composition
+  try {
+    composition = await createNodePiDurableRuntime({
+      ...setup.options,
+      engineFactory: async () => {
+        throw new Error('stop before engine run')
+      },
+    })
+    const handle = await composition.adapter.start(setup.request)
+    await composition.adapter.drain()
+    const retained = composition.adapter.journal.get(handle.handleId)
+    expect(retained.state).toBe('unknown')
+    composition.adapter.journal.database
+      .prepare('UPDATE pi_admissions SET body = ? WHERE handle_id = ?')
+      .run(
+        JSON.stringify({
+          ...retained,
+          admission: {
+            ...retained.admission,
+            version: { ...retained.admission.version, journal: 99 },
+          },
+        }),
+        handle.handleId
+      )
+    await composition.close()
+
+    let engineCreations = 0
+    composition = await createNodePiDurableRuntime({
+      ...setup.options,
+      engineFactory: async (input) => {
+        engineCreations++
+        return setup.options.engineFactory(input)
+      },
+    })
+    expect(composition.recoveryBlocked).toEqual([
+      { handleId: handle.handleId, code: 'PI_RECOVERY_AUTHORITY_BLOCKED' },
+    ])
+    expect(engineCreations).toBe(0)
+    const after = composition.adapter.journal.get(handle.handleId)
+    expect(after.state).toBe('unknown')
+    expect(after.admission.version.journal).toBe(99)
+  } finally {
+    await composition?.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

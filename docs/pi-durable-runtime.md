@@ -228,7 +228,11 @@ the retained pinned price through the existing ledger. Missing historical price
 or spending evidence leaves reconciliation required, rather than repricing.
 
 An uncertain admitted inference wakes as `unknown` and needs trusted no-resend
-reconciliation. `safe_to_resume` must mean that retained accounting/native evidence
+reconciliation. The adapter itself may resume without an external verdict only
+when its durable v1 pre-run marker proves the engine never entered `run`, no
+generation or receipt was retained, and a new process claim plus current
+authority succeeds. A missing legacy marker, timeout, absent ledger hold, or
+any generation identity never proves no-send. `safe_to_resume` must mean that retained accounting/native evidence
 permits replay without another uncertain paid effect. Cancellation remains
 `cancelling` until the same policy proves the outstanding send reconciled; then it
 can become `cancelled` without new inference. A revoked record blocks only itself
