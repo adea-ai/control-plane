@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -660,6 +661,7 @@ describe('persistent Pi engine', () => {
     const directory = await mkdtemp(join(tmpdir(), 'pi-request-valued-fetch-'))
     const originalFetch = globalThis.fetch
     const sent = []
+    const fingerprints = []
     globalThis.fetch = async (input) => {
       sent.push({
         method: input.method,
@@ -679,7 +681,13 @@ describe('persistent Pi engine', () => {
             await options.fetch(
               new Request('https://example.invalid/inference', {
                 method: 'POST',
-                headers: { 'x-pi-test': 'retained' },
+                headers: {
+                  'content-type': 'text/plain;charset=UTF-8',
+                  'x-pi-test': 'retained',
+                  'a-b': 'hyphen',
+                  a_b: 'underscore',
+                  ab: 'plain',
+                },
                 body: 'exact request body',
                 redirect: 'follow',
               })
@@ -711,8 +719,12 @@ describe('persistent Pi engine', () => {
         maxOutputTokens: 32,
         maximumInputTokens: faux.getModel().contextWindow,
         assertActive: async () => {},
-        preparePhysicalSend: async () => {},
-        armPhysicalSend: async () => {},
+        preparePhysicalSend: async (digest) => {
+          fingerprints.push(digest)
+        },
+        armPhysicalSend: async (digest) => {
+          fingerprints.push(digest)
+        },
       }),
       withModels: async (use) => {
         const models = createModels()
@@ -730,6 +742,23 @@ describe('persistent Pi engine', () => {
           redirect: 'error',
         },
       ])
+      const expected = `sha256:${createHash('sha256')
+        .update(
+          JSON.stringify([
+            'POST',
+            'https://example.invalid/inference',
+            [
+              ['a-b', 'hyphen'],
+              ['a_b', 'underscore'],
+              ['ab', 'plain'],
+              ['content-type', 'text/plain;charset=UTF-8'],
+              ['x-pi-test', 'retained'],
+            ],
+            createHash('sha256').update('exact request body').digest('hex'),
+          ])
+        )
+        .digest('hex')}`
+      expect(fingerprints).toEqual([expected, expected])
     } finally {
       globalThis.fetch = originalFetch
       await engine.close()

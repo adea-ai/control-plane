@@ -27,6 +27,7 @@ import {
 } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { z } from 'zod'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import {
   PiDurableDelegateChildOutcomeSchema,
   type PiDurableDelegateChildOutcome,
@@ -892,7 +893,7 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
 /** Fingerprint the actual SDK request without retaining its URL, headers, or body in the journal. */
 async function physicalRequestDigest(request: Request): Promise<string> {
   const body = Buffer.from(await request.clone().arrayBuffer())
-  const headers = [...request.headers.entries()].toSorted(([a], [b]) => a.localeCompare(b))
+  const headers = [...request.headers.entries()].toSorted(([a], [b]) => compareCodePointOrder(a, b))
   return `sha256:${createHash('sha256')
     .update(
       JSON.stringify([

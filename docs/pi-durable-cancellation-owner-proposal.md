@@ -276,3 +276,10 @@ bun test ./apps/control-api/src/pi-durable/postgres-cancellation-requests.integr
 
 This is request durability/concurrency qualification, not restore, live authority,
 installed desktop or committed cancellation-effect acceptance.
+
+The aggregate digest-writer gate also identified locale-dependent header ordering
+in the existing physical-request fingerprint. That writer now uses the shared
+code-point comparator. The real Request-valued POST regression includes hyphen,
+underscore and plain header names and checks the literal expected fingerprint at
+both prepared and armed stages. No retained fingerprint is rewritten, and no
+old prepared/armed record gains resend permission from this ordering repair.
