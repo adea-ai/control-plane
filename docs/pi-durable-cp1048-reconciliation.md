@@ -2,8 +2,9 @@
 
 This acceptance map compares complete draft #1048 at
 `e635101384587b6d9e66dd6d1dbfb0eec8666883` with main
-`f4f17194e04bcf8af65e8b5ff7aed7926b51ca88` and the tested #1204 source
-`4f71c840f802b13b4aa05ea5c39d5a3de4023e9f`. The old PR body still names
+`f4f17194e04bcf8af65e8b5ff7aed7926b51ca88` and #1204
+`d451879b55fba2508b186217494491cef3bc0f46`, whose production source is
+unchanged from the tested `4f71c840f802b13b4aa05ea5c39d5a3de4023e9f`. The old PR body still names
 `b145de3697e8ae41d3bc7935bd01c7eb534ac959`; that body is not a current
 acceptance receipt. Historical base `8d11aa7c850e755bdd5b1a223cc6e03e0e250e80`
 to old head contains 100 paths, 515 hunks, 19,363 added and 1,507 removed lines.
@@ -35,11 +36,12 @@ current tested #1204 head (which contains current main). The old branch history
 and source archives preserve all unique work. An isolated merge candidate is not
 a passing build, a published conflict resolution, or migration acceptance.
 
-## Twenty-one overlapping paths
+## Twenty-four overlapping paths
 
-Recomputed old 100-path inventory intersects the current Pi 59-path inventory in
-**21 paths**, replacing the earlier eleven-path snapshot. The old claim that later
-adapter slices did not change the intersection was stale. The disposition below
+The old 100-path inventory intersected the Pi 59-path snapshot at `4f71c840`
+in 21 paths. The qualified cleanup extraction adds three old fixture paths, so
+the current Pi 65-path snapshot intersects in **24 paths**, replacing the earlier
+eleven-path map. The old claim that later adapter slices did not change the intersection was stale. The disposition below
 is a source reconciliation instruction; pending entries do not assert successful
 integration or acceptance.
 
@@ -66,6 +68,11 @@ integration or acceptance.
 | `packages/pi-durable-adapter/src/resume-permit.ts`                    | Both use private object identity; preserve that invariant and no public minting export.                                                                                             |
 | `packages/pi-durable-adapter/src/usage-authority.test.mjs`            | Preserve forged/frozen/cloned permit refusal, exact-key reuse and unchanged ledger/replay fence assertions.                                                                         |
 | `packages/pi-durable-adapter/src/usage-authority.ts`                  | Retain identity validation; error specificity does not confer permission or justify widening no-send.                                                                               |
+
+The additional three overlaps are `tests/fixtures/profile-recovery-cleanup.mjs`,
+`tests/fixtures/runner-cleanup.mjs`, and
+`tests/fixtures/runner-cleanup-signal.child.mjs`. Their standalone portable
+qualification is described below; they are not native Pi recovery acceptance.
 
 ## Concrete authority conflict requiring source replacement
 

@@ -1,9 +1,9 @@
 # Complete #1048 published path ledger
 
 Inventory: `8d11aa7c850e755bdd5b1a223cc6e03e0e250e80..e635101384587b6d9e66dd6d1dbfb0eec8666883`.
-Current comparison: main `f4f17194e04bcf8af65e8b5ff7aed7926b51ca88`, Pi `4f71c840f802b13b4aa05ea5c39d5a3de4023e9f`.
+Current comparison: main `f4f17194e04bcf8af65e8b5ff7aed7926b51ca88`, Pi `d451879b55fba2508b186217494491cef3bc0f46`.
 
-All 100 published paths are listed. “Overlap” refers to the 21-path intersection with the Pi 59-path snapshot, not a claim of identical hunks. Pending entries retain substantive source/test work; they are not review follow-up or accepted supersession. This ledger does not discard historical source or authorize activating the old committed-cancellation policy.
+All 100 published paths are listed. “Overlap” refers to the 24-path intersection with the Pi 65-path snapshot, not a claim of identical hunks. Pending entries retain substantive source/test work; they are not review follow-up or accepted supersession. This ledger does not discard historical source or authorize activating the old committed-cancellation policy.
 
 | Change | Path                                                                            | Pi overlap | Disposition                                                                                                                 |
 | ------ | ------------------------------------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------- |
