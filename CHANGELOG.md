@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.105.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.1...workspace-v1.105.2) (2026-10-20)
+
+
+### Tests
+
+* **pi-restart:** prove lead run recovery across a real process restart ([#1200](https://github.com/adea-ai/control-plane/issues/1200)) ([20ff342](https://github.com/adea-ai/control-plane/commit/20ff342b707eea21486dcf4e0cb719a5b1d9c618))
+
 ## [1.105.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.0...workspace-v1.105.1) (2026-10-20)
 
 
