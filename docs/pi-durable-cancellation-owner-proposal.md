@@ -181,6 +181,12 @@ fences, untracked generations and expired authority. Barrier comparison checks
 exact target and process owner; monotonic barrier epochs and explicit drain
 receipt fields cannot establish actual drain by themselves.
 
+All timestamps in these owner contracts require UTC with exactly three fractional
+digits, including the nested runtime handle. This matches the precision retained
+by `Date.parse`; finer precision is rejected rather than rounded. Intent digest
+refinement hashes the parsed body directly, so continuable nested target errors
+remain ordinary `safeParse` failures instead of throwing from a recursive parse.
+
 `UnavailablePiCancellationOwner` rejects every operation with
 `PI_CANCELLATION_AUTHORITY_UNAVAILABLE`, including intent retention, permit and
 current-fence reads, barrier reads and effect observation. It is not injected

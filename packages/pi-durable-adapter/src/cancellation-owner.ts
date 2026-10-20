@@ -10,7 +10,8 @@ const Reference = z
   .refine((value) => value.trim() === value && value.trim().length > 0)
 const Digest = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 const Epoch = z.number().int().nonnegative().safe()
-const Instant = z.iso.datetime()
+// Date.parse preserves milliseconds only. Reject finer precision rather than silently truncating it.
+const Instant = z.iso.datetime({ precision: 3 })
 const Generation = z.strictObject({
   inferenceId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/),
   inferenceKey: Reference,
@@ -29,7 +30,7 @@ export const PiCancellationTargetSchema = z
     executionVersion: z.number().int().positive().safe(),
     attemptVersion: z.number().int().positive().safe(),
     admissionDigest: Digest,
-    handle: RuntimeExecutionHandleSchema,
+    handle: RuntimeExecutionHandleSchema.extend({ startedAt: Instant }),
     restoreGeneration: Reference,
     ownerEpoch: Epoch,
     turnKey: z.string().min(1).max(4096),
@@ -72,7 +73,9 @@ export const PiCancellationRetainedIntentSchema = RequestBody.extend({
   requestDigest: Digest,
 }).superRefine((intent, context) => {
   const { target, idempotencyKey, requestedAt } = intent
-  if (intent.requestDigest !== piCancellationRequestDigest({ target, idempotencyKey, requestedAt }))
+  // Nested continuable refinements may already have added issues. Hash this parsed
+  // body directly: reparsing it here could throw from the enclosing safeParse.
+  if (intent.requestDigest !== digest({ target, idempotencyKey, requestedAt }))
     context.addIssue({ code: 'custom', message: 'request digest mismatch' })
   if (Date.parse(requestedAt) >= Date.parse(target.authorityExpiresAt))
     context.addIssue({ code: 'custom', message: 'request expired' })

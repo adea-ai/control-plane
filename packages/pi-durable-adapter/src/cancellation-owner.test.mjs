@@ -1,4 +1,6 @@
 import { expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import {
   PiCancellationTargetSchema,
   PiCancellationRetainedIntentSchema,
@@ -17,6 +19,9 @@ const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
 const at = '2026-10-20T12:00:00.000Z'
 const end = '2026-10-20T12:01:00.000Z'
 const hash = `sha256:${'a'.repeat(64)}`
+// Raw test digest permits exercising malformed timestamps without calling the validated helper.
+const rawDigest = (body) =>
+  `sha256:${createHash('sha256').update(canonicalJsonStringify(body)).digest('hex')}`
 function fixture() {
   const target = {
     workspaceId: id('wsp'),
@@ -285,4 +290,114 @@ test('unavailable owner never retains, permits, drains or infers an effect', asy
     () => owner.readCurrentFence(intent),
   ])
     await expect(operation()).rejects.toThrow('PI_CANCELLATION_AUTHORITY_UNAVAILABLE')
+})
+
+for (const [name, change] of [
+  [
+    'handle attempt mismatch',
+    (target) => ({
+      ...target,
+      handle: { ...target.handle, attemptId: id('att').replace(/G$/, 'H') },
+    }),
+  ],
+  [
+    'generation key mismatch',
+    (target) => ({ ...target, generation: { ...target.generation, inferenceKey: 'wrong:key' } }),
+  ],
+]) {
+  test(`retained intent safeParse returns failure without throwing for nested ${name}`, () => {
+    const { intent } = fixture()
+    let result
+    expect(() => {
+      result = PiCancellationRetainedIntentSchema.safeParse({
+        ...intent,
+        target: change(intent.target),
+      })
+    }).not.toThrow()
+    expect(result?.success).toBe(false)
+  })
+}
+
+test('submillisecond future issuance and request instants cannot compare equal to an earlier now', () => {
+  const { intent, permit, current } = fixture()
+  const issuedAt = '2026-10-20T12:00:00.0009Z'
+  const now = '2026-10-20T12:00:00.0001Z'
+  expect(PiCancellationPermitSchema.safeParse({ ...permit, issuedAt }).success).toBe(false)
+  expect(() =>
+    assertPiCancellationPermitSnapshot(intent, { ...permit, issuedAt }, current, now)
+  ).toThrow()
+  const body = {
+    target: intent.target,
+    idempotencyKey: intent.idempotencyKey,
+    requestedAt: issuedAt,
+  }
+  expect(
+    PiCancellationRetainedIntentSchema.safeParse({
+      ...intent,
+      ...body,
+      requestDigest: rawDigest(body),
+    }).success
+  ).toBe(false)
+  expect(() => assertPiCancellationPermitSnapshot(intent, permit, current, now)).toThrow()
+})
+
+test('submillisecond permit expiry cannot silently exceed product authority expiry', () => {
+  const { intent, permit, current } = fixture()
+  const target = { ...intent.target, authorityExpiresAt: '2026-10-20T12:01:00.0001Z' }
+  const body = { target, idempotencyKey: intent.idempotencyKey, requestedAt: at }
+  const changedIntent = { ...intent, ...body, requestDigest: rawDigest(body) }
+  const targetDigest = rawDigest(target)
+  const changedPermit = {
+    ...permit,
+    requestDigest: changedIntent.requestDigest,
+    targetDigest,
+    expiresAt: '2026-10-20T12:01:00.0009Z',
+  }
+  expect(PiCancellationRetainedIntentSchema.safeParse(changedIntent).success).toBe(false)
+  expect(PiCancellationPermitSchema.safeParse(changedPermit).success).toBe(false)
+  expect(() =>
+    assertPiCancellationPermitSnapshot(
+      changedIntent,
+      changedPermit,
+      { ...current, target, requestDigest: changedIntent.requestDigest },
+      at
+    )
+  ).toThrow()
+})
+
+test('submillisecond drain before barrier request cannot silently compare equal', () => {
+  const { barrier } = fixture()
+  expect(
+    PiCancellationBarrierSchema.safeParse({
+      ...barrier,
+      state: 'drained',
+      requestedAt: '2026-10-20T12:00:00.0009Z',
+      drainedAt: '2026-10-20T12:00:00.0001Z',
+      drainReceiptDigest: hash,
+    }).success
+  ).toBe(false)
+})
+
+test('target, nested handle and outcome timestamps use the same millisecond precision', () => {
+  const { target, intent, permit } = fixture()
+  for (const instant of ['2026-10-20T12:00:00Z', '2026-10-20T12:00:00.0001Z']) {
+    expect(
+      PiCancellationTargetSchema.safeParse({ ...target, authorityExpiresAt: instant }).success
+    ).toBe(false)
+    expect(
+      PiCancellationTargetSchema.safeParse({
+        ...target,
+        handle: { ...target.handle, startedAt: instant },
+      }).success
+    ).toBe(false)
+    expect(
+      PiCancellationEffectObservationSchema.safeParse({
+        schemaVersion: 'pi-cancellation-effect-observation/v1',
+        requestDigest: intent.requestDigest,
+        targetDigest: permit.targetDigest,
+        observedAt: instant,
+        state: 'unknown',
+      }).success
+    ).toBe(false)
+  }
 })
