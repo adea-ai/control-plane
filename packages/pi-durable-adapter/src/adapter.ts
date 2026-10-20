@@ -1112,7 +1112,68 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               detail: { ...authorized.detail, safeResumeInferenceKey: undefined },
             })
           }
-          return allowance
+          const markPhysicalSend = async (stage: 'prepared' | 'armed', requestDigest: string) => {
+            if (!/^sha256:[a-f0-9]{64}$/.test(requestDigest))
+              fail('PI_PHYSICAL_REQUEST_DIGEST_INVALID', 'validation')
+            await assertCurrent()
+            await allowance.assertActive()
+            const latest = this.journal.get(record.handleId)
+            if (
+              latest.state !== 'running' ||
+              latest.epoch !== epoch ||
+              latest.detail['cancellationIntent'] !== undefined ||
+              readActiveInference(latest)?.inferenceKey !== generation.inferenceKey
+            )
+              fail('PI_PHYSICAL_SEND_OWNER_STALE', 'conflict')
+            const retained = latest.detail['physicalDispatches']
+            if (
+              retained !== undefined &&
+              (!retained || typeof retained !== 'object' || Array.isArray(retained))
+            )
+              fail('PI_PHYSICAL_SEND_MARKER_INVALID', 'conflict')
+            const dispatches = (retained ?? {}) as Record<string, unknown>
+            const prior = Object.hasOwn(dispatches, generation.inferenceKey)
+              ? dispatches[generation.inferenceKey]
+              : undefined
+            const identity = {
+              schemaVersion: 'pi-physical-dispatch/v1',
+              attemptId: record.attemptId,
+              inferenceKey: generation.inferenceKey,
+              generationDigest: digest(generation),
+              requestDigest,
+              providerDigest: authority.providerDigest,
+              ownerEpoch: epoch,
+            }
+            if (prior !== undefined) {
+              if (!prior || typeof prior !== 'object' || Array.isArray(prior))
+                fail('PI_PHYSICAL_SEND_MARKER_INVALID', 'conflict')
+              const previous = prior as Record<string, unknown>
+              if (
+                Object.entries(identity).some(([key, value]) => previous[key] !== value) ||
+                (previous['stage'] !== 'prepared' && previous['stage'] !== 'armed') ||
+                previous['stage'] === 'armed'
+              )
+                fail('PI_PHYSICAL_SEND_ALREADY_ARMED_OR_CHANGED', 'conflict')
+              if (stage === 'prepared') return
+            } else if (stage !== 'prepared') {
+              fail('PI_PHYSICAL_SEND_NOT_PREPARED', 'conflict')
+            }
+            this.journal.update(record.handleId, epoch, {
+              detail: {
+                ...latest.detail,
+                physicalDispatches: {
+                  ...dispatches,
+                  [generation.inferenceKey]: { ...identity, stage },
+                },
+              },
+            })
+          }
+          return {
+            ...allowance,
+            preparePhysicalSend: (requestDigest: string) =>
+              markPhysicalSend('prepared', requestDigest),
+            armPhysicalSend: (requestDigest: string) => markPhysicalSend('armed', requestDigest),
+          }
         },
         withModels: async (use) => {
           await assertCurrent()
@@ -1592,6 +1653,7 @@ function hasDurablePreRunNoSend(record: JournalRecord): boolean {
     detail['resumeGenerationKey'] === undefined &&
     detail['safeResumeInferenceKey'] === undefined &&
     detail['inferenceReceipts'] === undefined &&
+    detail['physicalDispatches'] === undefined &&
     detail['cancellationIntent'] === undefined &&
     detail['nativeToolBlocked'] === undefined &&
     detail['pendingApproval'] === undefined

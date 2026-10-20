@@ -483,6 +483,7 @@ describe('persistent Pi engine', () => {
     }
     let active = true
     let sendChecks = 0
+    const dispatchStages = []
     const faux = fauxProvider()
     const provider = {
       ...faux.provider,
@@ -526,6 +527,12 @@ describe('persistent Pi engine', () => {
           sendChecks++
           if (!active) throw new Error('REVOKED')
         },
+        preparePhysicalSend: async (requestDigest) => {
+          dispatchStages.push(['prepared', requestDigest])
+        },
+        armPhysicalSend: async (requestDigest) => {
+          dispatchStages.push(['armed', requestDigest])
+        },
       }),
       withModels: async (use) => {
         const models = createModels()
@@ -539,7 +546,10 @@ describe('persistent Pi engine', () => {
       ).rejects.toThrow('PI_SUBMISSION_UNANSWERED')
       expect(sent).toHaveLength(1)
       expect(sent[0].redirect).toBe('error')
-      expect(sendChecks).toBe(2)
+      expect(sendChecks).toBe(3)
+      expect(dispatchStages.map(([stage]) => stage)).toEqual(['prepared', 'armed'])
+      expect(dispatchStages[0][1]).toMatch(/^sha256:[a-f0-9]{64}$/)
+      expect(dispatchStages[0][1]).toBe(dispatchStages[1][1])
       // Simulate credential resolution revocation after streamSimple's preflight.
       const delayed = {
         ...provider,
@@ -573,6 +583,35 @@ describe('persistent Pi engine', () => {
         expect(sent).toHaveLength(1)
       } finally {
         await denied.close()
+      }
+      active = true
+      const armAmbiguous = createPiDurableEngine({
+        directory,
+        model: { provider: 'faux', modelId: 'faux-1' },
+        maxOutputTokens: 32,
+        assertAuthority: async () => {},
+        authorizeInference: async () => ({
+          maxOutputTokens: 32,
+          maximumInputTokens: faux.getModel().contextWindow,
+          assertActive: async () => {},
+          preparePhysicalSend: async () => {},
+          armPhysicalSend: async () => {
+            throw new Error('ARM_COMMIT_RESULT_UNKNOWN')
+          },
+        }),
+        withModels: async (use) => {
+          const models = createModels()
+          models.setProvider(provider)
+          return use(models)
+        },
+      })
+      try {
+        await expect(
+          armAmbiguous.run({ sessionId: 'three', requestId: 'turn:1', input: 'Question' })
+        ).rejects.toThrow('PI_SUBMISSION_UNANSWERED')
+        expect(sent).toHaveLength(1)
+      } finally {
+        await armAmbiguous.close()
       }
     } finally {
       globalThis.fetch = originalFetch

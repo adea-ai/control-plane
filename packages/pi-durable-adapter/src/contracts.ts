@@ -273,6 +273,8 @@ export interface PiDurableRuntimeOptions {
       maxOutputTokens: number
       maximumInputTokens: number
       assertActive: () => Promise<void>
+      preparePhysicalSend?: (requestDigest: string) => Promise<void>
+      armPhysicalSend?: (requestDigest: string) => Promise<void>
     }>
     withModels: <T>(use: (models: Models) => Promise<T>) => Promise<T>
     readonly retainInferences?: (inferences: PiEngineResult['inferences']) => Promise<void>

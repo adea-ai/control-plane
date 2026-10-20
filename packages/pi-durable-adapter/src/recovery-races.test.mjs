@@ -111,6 +111,60 @@ function fixture(directory, overrides = {}) {
   return { request, options }
 }
 
+test('physical send journal advances prepared to armed once and fences a cancelled owner', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-physical-dispatch-'))
+  const admitted = deferred()
+  const finish = deferred()
+  const setup = fixture(directory, {
+    engineFactory: async (engine) => ({
+      run: async () => {
+        const allowance = await engine.authorizeInference({
+          sessionId: 'session',
+          inferenceId: 'pi-generation:1',
+          provider: 'scripted',
+          modelId: 'race-model',
+        })
+        admitted.resolve(allowance)
+        await finish.promise
+        return result
+      },
+      close: async () => {},
+      cancel: async () => {},
+    }),
+  })
+  const adapter = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    const handle = await adapter.start(setup.request)
+    const allowance = await admitted.promise
+    const digest = `sha256:${'a'.repeat(64)}`
+    await expect(allowance.armPhysicalSend(digest)).rejects.toThrow('PI_PHYSICAL_SEND_NOT_PREPARED')
+    await allowance.preparePhysicalSend(digest)
+    const prepared = adapter.journal.get(handle.handleId)
+    const key = prepared.detail.activeInference.inferenceKey
+    expect(prepared.detail.physicalDispatches[key]).toMatchObject({
+      stage: 'prepared',
+      attemptId: setup.request.attemptId,
+      requestDigest: digest,
+      providerDigest: prepared.detail.physicalDispatches[key].providerDigest,
+      ownerEpoch: prepared.epoch,
+    })
+    await allowance.armPhysicalSend(digest)
+    expect(adapter.journal.get(handle.handleId).detail.physicalDispatches[key].stage).toBe('armed')
+    await expect(allowance.preparePhysicalSend(digest)).rejects.toThrow(
+      'PI_PHYSICAL_SEND_ALREADY_ARMED_OR_CHANGED'
+    )
+    await adapter.cancel(handle, { idempotencyKey: 'cancel:physical', requestedAt: at })
+    await expect(allowance.armPhysicalSend(digest)).rejects.toThrow()
+    expect(adapter.journal.get(handle.handleId).detail.physicalDispatches[key].stage).toBe('armed')
+    finish.resolve()
+    await adapter.drain()
+  } finally {
+    finish.resolve()
+    await adapter.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test.each(['running', 'unknown', 'cancelling'])(
   'reopened %s inference cannot become a fresh input or approval while reconciliation is unresolved',
   async (state) => {
