@@ -256,6 +256,7 @@ test('terminal CAS rollback retains neither the outcome nor the publication rece
         revision: before.revision + 1,
         updatedAt: outcome.observedAt,
         terminalResultRef: outcome.terminalResultRef,
+        terminalConclusion: 'Exact conclusion must roll back with its receipt.',
         terminalPublication: {
           status: 'pending',
           idempotencyKey: `delegation:${ids.delegationId}:terminal`,
@@ -286,6 +287,7 @@ test('terminal receipts reject stale CAS, changed outcomes and removal of the re
     expect(await f.repository.compareAndSet(pending.revision - 1, pending)).toBe(false)
     for (const patch of [
       { terminalResultRef: 'art_01JDBCDEF0123456789ABCDEFG' },
+      { terminalConclusion: 'Unattested historical conclusion.' },
       { updatedAt: '2026-08-25T18:04:00.000Z' },
       { childAttemptId: 'att_01JDBCDEF0123456789ABCDEFG' },
       { terminalPublication: undefined },
@@ -455,6 +457,77 @@ test('retention sweeps and a restart leave a pending receipt repairable and a pu
     await f.reopen()
     expect(await snapshotNamespaces(f.provider, watched)).toEqual(published)
     expect(await f.inbox.list()).toEqual([pending.event])
+  } finally {
+    await f.close()
+  }
+})
+
+test('bounded canonical child conclusion commits with its receipt and replays unchanged after reopen', async () => {
+  const f = await fixture()
+  const completed = { ...outcome, conclusion: 'The bounded child finished its assigned work.' }
+  try {
+    await expect(
+      f
+        .service({
+          async publish() {
+            throw new Error('publication interrupted')
+          },
+        })
+        .recordChildProgress(completed)
+    ).rejects.toThrow('publication interrupted')
+    const record = await f.repository.get(ids.delegationId)
+    const receipt = await f.repository.getTerminalReceipt(ids.delegationId)
+    expect(record.state).toBe('completed')
+    expect(record.terminalConclusion).toBe(completed.conclusion)
+    expect(receipt.status).toBe('pending')
+    expect(receipt.event.details.conclusion).toBe(completed.conclusion)
+    expect(receipt.event.details.childAttemptId).toBe(ids.childAttemptId)
+    expect(receipt.event.details.terminalResultRef).toBe(outcome.terminalResultRef)
+    expect(await missingPins(f.provider)).toEqual({})
+    await f.reopen()
+    expect(await f.repository.getTerminalReceipt(ids.delegationId)).toEqual(receipt)
+    await Promise.all([
+      f.repository.recoverTerminalPublication(ids.delegationId, f.inbox),
+      f.repository.recoverTerminalPublication(ids.delegationId, f.inbox),
+    ])
+    expect(await f.inbox.list()).toEqual([receipt.event])
+    await f.service(f.inbox).recordChildProgress(completed)
+    expect(await f.inbox.list()).toEqual([receipt.event])
+  } finally {
+    await f.close()
+  }
+})
+
+test('a retained canonical conclusion cannot be changed or removed before or after publication', async () => {
+  const f = await fixture()
+  const completed = { ...outcome, conclusion: 'Exact retained child conclusion.' }
+  try {
+    await expect(
+      f
+        .service({
+          async publish() {
+            throw new Error('publication interrupted')
+          },
+        })
+        .recordChildProgress(completed)
+    ).rejects.toThrow('publication interrupted')
+    for (const published of [false, true]) {
+      if (published) await f.repository.recoverTerminalPublication(ids.delegationId, f.inbox)
+      const before = await f.repository.get(ids.delegationId)
+      const receipt = await f.repository.getTerminalReceipt(ids.delegationId)
+      for (const terminalConclusion of [undefined, 'A changed conclusion.']) {
+        await expect(
+          f.repository.compareAndSet(before.revision, {
+            ...before,
+            revision: before.revision + 1,
+            terminalConclusion,
+          })
+        ).rejects.toThrow('DELEGATION_TERMINAL_RECEIPT_CONFLICT')
+        expect(await f.repository.get(ids.delegationId)).toEqual(before)
+        expect(await f.repository.getTerminalReceipt(ids.delegationId)).toEqual(receipt)
+      }
+      expect(await f.inbox.list()).toEqual(published ? [receipt.event] : [])
+    }
   } finally {
     await f.close()
   }
