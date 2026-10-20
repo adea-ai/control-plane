@@ -54,7 +54,7 @@
     },
     "apps/control-api": {
       "name": "@control-plane/control-api",
-      "version": "1.33.0",
+      "version": "1.34.1",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -79,7 +79,7 @@
         "@nestjs/core": "12.1.2",
         "@nestjs/platform-fastify": "12.1.2",
         "@nestjs/swagger": "12.0.2",
-        "@opentelemetry/api": "1.9.1",
+        "@opentelemetry/api": "1.10.0",
         "class-transformer": "0.5.1",
         "class-validator": "0.15.1",
         "drizzle-orm": "0.45.3",
@@ -98,7 +98,7 @@
     },
     "apps/hosted-control-plane": {
       "name": "@control-plane/hosted-control-plane",
-      "version": "1.21.0",
+      "version": "1.21.3",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -130,7 +130,7 @@
     },
     "apps/local-control-plane": {
       "name": "@control-plane/local-control-plane",
-      "version": "1.36.0",
+      "version": "1.36.2",
       "dependencies": {
         "@control-plane/acp-adapter": "workspace:*",
         "@control-plane/bootstrap": "workspace:*",
@@ -168,7 +168,7 @@
     },
     "apps/runtime-gateway": {
       "name": "@control-plane/runtime-gateway",
-      "version": "1.8.0",
+      "version": "1.9.0",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -190,7 +190,7 @@
     },
     "apps/runtime-worker": {
       "name": "@control-plane/runtime-worker",
-      "version": "1.9.1",
+      "version": "1.9.2",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -207,7 +207,7 @@
     },
     "apps/tool-gateway": {
       "name": "@control-plane/tool-gateway",
-      "version": "1.5.0",
+      "version": "1.5.1",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/tool-execution": "workspace:*",
@@ -218,7 +218,7 @@
     },
     "apps/workflow-worker": {
       "name": "@control-plane/workflow-worker",
-      "version": "1.18.0",
+      "version": "1.18.1",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -237,13 +237,13 @@
         "@control-plane/telemetry": "workspace:*",
         "@control-plane/usage-ledger": "workspace:*",
         "@control-plane/workflow-runtime": "workspace:*",
-        "@opentelemetry/api": "1.9.1",
+        "@opentelemetry/api": "1.10.0",
         "@restatedev/restate-sdk": "1.17.2",
       },
     },
     "packages/acp-adapter": {
       "name": "@control-plane/acp-adapter",
-      "version": "1.10.0",
+      "version": "1.11.1",
       "dependencies": {
         "@control-plane/deployment": "workspace:*",
         "@control-plane/domain": "workspace:*",
@@ -256,7 +256,7 @@
     },
     "packages/bootstrap": {
       "name": "@control-plane/bootstrap",
-      "version": "1.3.1",
+      "version": "1.3.2",
       "dependencies": {
         "@control-plane/config": "workspace:*",
         "@control-plane/telemetry": "workspace:*",
@@ -264,7 +264,7 @@
     },
     "packages/config": {
       "name": "@control-plane/config",
-      "version": "1.11.2",
+      "version": "1.12.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/telemetry": "workspace:*",
@@ -273,7 +273,7 @@
     },
     "packages/context": {
       "name": "@control-plane/context",
-      "version": "1.10.0",
+      "version": "1.11.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/domain": "workspace:*",
@@ -282,14 +282,14 @@
     },
     "packages/contracts": {
       "name": "@control-plane/contracts",
-      "version": "1.21.3",
+      "version": "1.21.4",
       "dependencies": {
         "zod": "4.6.5",
       },
     },
     "packages/control-sdk": {
       "name": "@control-plane/sdk",
-      "version": "1.19.0",
+      "version": "1.20.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:^",
         "@control-plane/runtime-sdk": "workspace:^",
@@ -298,7 +298,7 @@
     },
     "packages/cortana-context-adapter": {
       "name": "@control-plane/cortana-context-adapter",
-      "version": "1.4.2",
+      "version": "1.5.0",
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",
@@ -308,7 +308,7 @@
     },
     "packages/credential-vault": {
       "name": "@control-plane/credential-vault",
-      "version": "1.4.0",
+      "version": "1.4.1",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/policy": "workspace:*",
@@ -317,7 +317,7 @@
     },
     "packages/database": {
       "name": "@control-plane/database",
-      "version": "1.50.0",
+      "version": "1.52.1",
       "dependencies": {
         "@control-plane/config": "workspace:*",
         "@control-plane/context": "workspace:*",
@@ -345,11 +345,11 @@
     },
     "packages/deployment": {
       "name": "@control-plane/deployment",
-      "version": "1.10.6",
+      "version": "1.10.7",
     },
     "packages/domain": {
       "name": "@control-plane/domain",
-      "version": "1.31.0",
+      "version": "1.32.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.6.5",
@@ -357,7 +357,7 @@
     },
     "packages/events": {
       "name": "@control-plane/events",
-      "version": "1.10.1",
+      "version": "1.10.2",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/domain": "workspace:*",
@@ -367,7 +367,7 @@
     },
     "packages/execution-plan": {
       "name": "@control-plane/execution-plan",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",
@@ -378,7 +378,7 @@
     },
     "packages/langgraph-adapter": {
       "name": "@control-plane/langgraph-adapter",
-      "version": "1.11.0",
+      "version": "1.11.1",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/deployment": "workspace:*",
@@ -399,7 +399,7 @@
     },
     "packages/managed-pi-adapter": {
       "name": "@control-plane/managed-pi-adapter",
-      "version": "1.9.0",
+      "version": "1.10.0",
       "dependencies": {
         "@control-plane/deployment": "workspace:*",
         "@control-plane/domain": "workspace:*",
@@ -413,7 +413,7 @@
     },
     "packages/memory-writeback": {
       "name": "@control-plane/memory-writeback",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/domain": "workspace:*",
@@ -422,7 +422,7 @@
     },
     "packages/model-gateway": {
       "name": "@control-plane/model-gateway",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/credential-vault": "workspace:*",
@@ -438,7 +438,7 @@
     },
     "packages/object-store": {
       "name": "@control-plane/object-store",
-      "version": "1.6.1",
+      "version": "1.6.2",
       "dependencies": {
         "@aws-sdk/client-s3": "3.1147.0",
         "@control-plane/contracts": "workspace:*",
@@ -448,7 +448,7 @@
     },
     "packages/orchestration": {
       "name": "@control-plane/orchestration",
-      "version": "1.10.1",
+      "version": "1.10.3",
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",
@@ -461,7 +461,7 @@
     },
     "packages/pi-cloudflare-host": {
       "name": "@control-plane/pi-cloudflare-host",
-      "version": "0.6.1",
+      "version": "0.6.2",
       "dependencies": {
         "@control-plane/runtime-sdk": "workspace:*",
         "@earendil-works/chord": "1.1.0",
@@ -474,7 +474,7 @@
     },
     "packages/pi-durable-adapter": {
       "name": "@control-plane/pi-durable-adapter",
-      "version": "0.10.0",
+      "version": "0.10.4",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/domain": "workspace:*",
@@ -496,7 +496,7 @@
     },
     "packages/policy": {
       "name": "@control-plane/policy",
-      "version": "1.4.2",
+      "version": "1.4.3",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.6.5",
@@ -504,7 +504,7 @@
     },
     "packages/production-readiness": {
       "name": "@control-plane/production-readiness",
-      "version": "1.5.0",
+      "version": "1.5.1",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.6.5",
@@ -512,7 +512,7 @@
     },
     "packages/profile-adapters": {
       "name": "@control-plane/profile-adapters",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "dependencies": {
         "@control-plane/deployment": "workspace:*",
         "@control-plane/orchestration": "workspace:*",
@@ -527,7 +527,7 @@
     },
     "packages/profile-portability": {
       "name": "@control-plane/profile-portability",
-      "version": "1.7.0",
+      "version": "1.7.2",
       "bin": {
         "control-plane-portability": "./dist/cli.js",
       },
@@ -546,7 +546,7 @@
     },
     "packages/remote-control-relay": {
       "name": "@control-plane/remote-control-relay",
-      "version": "1.3.1",
+      "version": "1.3.2",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/deployment": "workspace:*",
@@ -561,14 +561,14 @@
     },
     "packages/restate-runtime": {
       "name": "@control-plane/restate-runtime",
-      "version": "1.2.3",
+      "version": "1.2.4",
       "dependencies": {
         "@control-plane/deployment": "workspace:*",
       },
     },
     "packages/runtime-gateway-protocol": {
       "name": "@control-plane/runtime-gateway-protocol",
-      "version": "1.8.0",
+      "version": "1.9.0",
       "dependencies": {
         "@control-plane/runtime-sdk": "workspace:*",
         "zod": "4.6.5",
@@ -576,7 +576,7 @@
     },
     "packages/runtime-sdk": {
       "name": "@control-plane/runtime-sdk",
-      "version": "1.16.0",
+      "version": "1.17.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.6.5",
@@ -584,7 +584,7 @@
     },
     "packages/sandbox": {
       "name": "@control-plane/sandbox",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.6.5",
@@ -592,14 +592,14 @@
     },
     "packages/secrets": {
       "name": "@control-plane/secrets",
-      "version": "1.4.0",
+      "version": "1.4.1",
       "dependencies": {
         "@control-plane/deployment": "workspace:*",
       },
     },
     "packages/sqlite-persistence": {
       "name": "@control-plane/sqlite-persistence",
-      "version": "1.41.0",
+      "version": "1.42.1",
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",
@@ -626,10 +626,10 @@
     },
     "packages/telemetry": {
       "name": "@control-plane/telemetry",
-      "version": "1.8.0",
+      "version": "1.8.1",
       "devDependencies": {
-        "@opentelemetry/api": "1.9.1",
-        "@opentelemetry/sdk-metrics": "2.12.0",
+        "@opentelemetry/api": "1.10.0",
+        "@opentelemetry/sdk-metrics": "3.0.0",
         "@sentry/node": "11.4.0",
       },
       "peerDependencies": {
@@ -643,7 +643,7 @@
     },
     "packages/testing": {
       "name": "@control-plane/testing",
-      "version": "1.2.2",
+      "version": "1.2.4",
       "dependencies": {
         "@control-plane/config": "workspace:*",
         "@control-plane/database": "workspace:*",
@@ -651,7 +651,7 @@
     },
     "packages/tool-execution": {
       "name": "@control-plane/tool-execution",
-      "version": "1.5.0",
+      "version": "1.5.2",
       "dependencies": {
         "@control-plane/config": "workspace:*",
         "@control-plane/contracts": "workspace:*",
@@ -663,7 +663,7 @@
     },
     "packages/tool-sdk": {
       "name": "@control-plane/tool-sdk",
-      "version": "1.4.2",
+      "version": "1.4.4",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.6.5",
@@ -671,7 +671,7 @@
     },
     "packages/usage-ledger": {
       "name": "@control-plane/usage-ledger",
-      "version": "1.5.0",
+      "version": "1.5.1",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.6.5",
@@ -679,7 +679,7 @@
     },
     "packages/workflow-runtime": {
       "name": "@control-plane/workflow-runtime",
-      "version": "1.9.0",
+      "version": "1.9.1",
       "dependencies": {
         "@control-plane/config": "workspace:*",
         "@control-plane/contracts": "workspace:*",
@@ -1049,13 +1049,13 @@
 
     "@nestjs/swagger": ["@nestjs/swagger@12.0.2", "", { "dependencies": { "@microsoft/tsdoc": "0.17.0", "@nestjs/mapped-types": "12.0.0", "@standard-schema/spec": "1.1.0", "es-toolkit": "1.52.0", "js-yaml": "5.4.2", "path-to-regexp": "8.4.2", "swagger-ui-dist": "5.33.0" }, "peerDependencies": { "@fastify/static": "^8.0.0 || ^9.0.0 || ^10.0.0", "@nestjs/common": "^12.0.0", "@nestjs/core": "^12.0.0", "class-transformer": "*", "class-validator": "*", "reflect-metadata": "^0.1.12 || ^0.2.0", "typescript": "^5.5.0 || ^6.0.0" }, "optionalPeers": ["@fastify/static", "class-transformer", "class-validator", "typescript"] }, "sha512-/IDj6o2k1wqZybhIkMaJp58YNrAos/4TwTf3zBn/j1flKpMb5Tyfbj9sP6rpLucQ7PzHHu7n4ucmeHWEisfn6A=="],
 
-    "@opentelemetry/api": ["@opentelemetry/api@1.9.1", "", {}, "sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q=="],
+    "@opentelemetry/api": ["@opentelemetry/api@1.10.0", "", {}, "sha512-lMkyes8iHrG+mk6WH7X70MdCLI2RS0FwNBY1PyQ8UemaijE2m5mv5A0Niy3HtbYTFrgkUEQjFMXmSAk2hQDuPQ=="],
 
-    "@opentelemetry/core": ["@opentelemetry/core@2.12.0", "", { "dependencies": { "@opentelemetry/semantic-conventions": "^1.29.0" }, "peerDependencies": { "@opentelemetry/api": ">=1.0.0 <1.10.0" } }, "sha512-1HsSAuvT4/my0QrXWsyXFdWjKaPeCHsismKZgEEIb8NK13LP6DrMRlsUbvD/0F9mDWK3xDom9AMv3IscxgOnOQ=="],
+    "@opentelemetry/core": ["@opentelemetry/core@3.0.0", "", { "dependencies": { "@opentelemetry/semantic-conventions": "^1.29.0" }, "peerDependencies": { "@opentelemetry/api": ">=1.10.0 <1.11.0" } }, "sha512-whOLlww0R/RLtCWGBXhK1fdvL9t2/TL0fqdjZvcaoUUuNilRPjXecqQdzyVwV68s6XEDA5oYbm7/bZT62GXF4A=="],
 
-    "@opentelemetry/resources": ["@opentelemetry/resources@2.12.0", "", { "dependencies": { "@opentelemetry/core": "2.12.0", "@opentelemetry/semantic-conventions": "^1.29.0" }, "peerDependencies": { "@opentelemetry/api": ">=1.3.0 <1.10.0" } }, "sha512-+rSRoOdln6NhXTVcBdHSlZxJDNzwxadeweK2ltZO3tVtfp6aklABc06xclDk6ovRR+EiGgIcSbh/6NgjFhnb3A=="],
+    "@opentelemetry/resources": ["@opentelemetry/resources@3.0.0", "", { "dependencies": { "@opentelemetry/core": "3.0.0", "@opentelemetry/semantic-conventions": "^1.29.0" }, "peerDependencies": { "@opentelemetry/api": ">=1.10.0 <1.11.0" } }, "sha512-4762KVmlDroRIt+4Ra8AnwcQqdXlkAR55jDrhzna8bzhJx1mUzvHW/Lh/OemFuY9+ouM4xaDc6CbUmoJmM6BFg=="],
 
-    "@opentelemetry/sdk-metrics": ["@opentelemetry/sdk-metrics@2.12.0", "", { "dependencies": { "@opentelemetry/core": "2.12.0", "@opentelemetry/resources": "2.12.0" }, "peerDependencies": { "@opentelemetry/api": ">=1.9.0 <1.10.0" } }, "sha512-mVMaEHwCUJuY3S4Esn+nT0yQA3qCEGh+SOPJsXygU0Gl453WcsDNjtEa8EfdewMwoLyr1tlofB4fXytVpiXuow=="],
+    "@opentelemetry/sdk-metrics": ["@opentelemetry/sdk-metrics@3.0.0", "", { "dependencies": { "@opentelemetry/core": "3.0.0", "@opentelemetry/resources": "3.0.0" }, "peerDependencies": { "@opentelemetry/api": ">=1.10.0 <1.11.0" } }, "sha512-YozyS2rIlizvUNLZwcWxH0x2FhX02/mcZwzM8hsl8yvQk+xeKmAc7vcSieWiO4oSwIB20B8eS/zwdopAd/J5zQ=="],
 
     "@opentelemetry/semantic-conventions": ["@opentelemetry/semantic-conventions@1.43.0", "", {}, "sha512-eSYWTm620tTk45EKSedaUL8MFYI8hW164hIXsgIHyxu3VobUB3fFCu5t0hQby6OoWRPsG1KkKUG2M5UadiLiVg=="],
 
