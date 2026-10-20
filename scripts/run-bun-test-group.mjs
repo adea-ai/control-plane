@@ -49,6 +49,7 @@ const repositoryGroups = {
     'tests/pi-production-management-forwarding.test.mjs',
     'tests/pi-production-runtime-startup.test.mjs',
     'tests/pi-production-factory.test.mjs',
+    'tests/profile-recovery-pi-lead-restart.test.mjs',
     'tests/pi-byo-model-authority.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
     'tests/acp-remote-shared-provider.test.mjs',
@@ -159,6 +160,7 @@ export const e2eMeasuredSeconds = new Map([
   ['tests/pi-production-management-authority.test.mjs', 1.1],
   ['tests/pi-production-management-forwarding.test.mjs', 1.8],
   ['tests/pi-production-runtime-startup.test.mjs', 0.0],
+  ['tests/profile-recovery-pi-lead-restart.test.mjs', 5.0],
   ['tests/service-lifecycle-e2e.test.mjs', 0.2],
 ])
 

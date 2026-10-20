@@ -32,6 +32,8 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly usage: PiDurableUsageAuthorityOptions
   readonly provider: NodePiDurableCompositionOptions['resolveProvider']
   readonly reconcileInference: NodePiDurableCompositionOptions['reconcileInference']
+  // Test seam: the restart proof injects the engine so it can hold a native dispatch open.
+  readonly engineFactory?: NodePiDurableCompositionOptions['engineFactory']
   readonly verifyApproval?: NodePiDurableCompositionOptions['verifyApproval']
   readonly parentInbox?: NodePiDurableCompositionOptions['parentInbox']
   readonly consumeParentInbox?: NodePiDurableCompositionOptions['consumeParentInbox']
@@ -127,6 +129,7 @@ export async function createNodePiDurableLeadComposition(
         : {}),
       ...usage,
       reconcileInference: options.reconcileInference,
+      ...(options.engineFactory ? { engineFactory: options.engineFactory } : {}),
       ...(options.verifyApproval ? { verifyApproval: options.verifyApproval } : {}),
       ...(options.parentInbox ? { parentInbox: options.parentInbox } : {}),
       ...(options.consumeParentInbox ? { consumeParentInbox: options.consumeParentInbox } : {}),
