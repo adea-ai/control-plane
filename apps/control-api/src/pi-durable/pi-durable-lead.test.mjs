@@ -737,7 +737,8 @@ describe('composed Pi Durable lead HTTP endpoints', () => {
           return result
         }
         const revoked = await inject('cancel', cancel)
-        expect(revoked.statusCode).toBe(403)
+        expect(revoked.statusCode).toBe(503)
+        expect(revoked.json().error.code).toBe('PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN')
         expect(calls).toEqual([])
         context.state.revoked = false
         const stopped = await inject('cancel', cancel)

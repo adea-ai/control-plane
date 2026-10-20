@@ -303,6 +303,20 @@ test('authority drift after the effect fails closed and returns no observation',
   expect(calls.status).toBe(1)
 })
 
+test('fenced cancellation drift after the effect reports an unknown outcome', async () => {
+  const { service, calls } = await harness({
+    fencedFor: (operation, n) =>
+      fenced(operation, {
+        admissionBinding: true,
+        fenceOverrides: n <= 2 ? {} : { authorityRevision: 8 },
+      }),
+  })
+  await expect(service.cancel(cancelRequest(), caller)).rejects.toThrow(
+    'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN'
+  )
+  expect(calls.cancel).toBe(1)
+})
+
 test('receipt generation change during the effect fails closed', async () => {
   const { service, calls } = await harness({
     fencedFor: withBinding,
@@ -310,7 +324,9 @@ test('receipt generation change during the effect fails closed', async () => {
       if (operation === 'cancel') await receipts.compareAndSet(2, { ...receiptBase, revision: 3 })
     },
   })
-  await expect(service.cancel(cancelRequest(), caller)).rejects.toThrow('PI_LEAD_DISPATCH_CONFLICT')
+  await expect(service.cancel(cancelRequest(), caller)).rejects.toThrow(
+    'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN'
+  )
   expect(calls.cancel).toBe(1)
 })
 

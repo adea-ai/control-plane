@@ -246,6 +246,7 @@ export type PiDurableLeadErrorCode =
   | 'PI_LEAD_PROVIDER_READINESS_REQUIRED'
   | 'PI_LEAD_MISSING'
   | 'PI_LEAD_AUTHORITY_CONFLICT'
+  | 'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN'
   | 'PI_LEAD_COMMAND_CONFLICT'
   | 'PI_LEAD_DISPATCH_CONFLICT'
   | 'PI_LEAD_DEADLINE_EXPIRED'
@@ -666,13 +667,19 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
         requestedAt: request.issuedAt,
       })
     )
-    verifyRuntimeHandle(receipt, status.handle)
+    try {
+      verifyRuntimeHandle(receipt, status.handle)
+      await this.options.authority.assertCurrent(admission, principal, 'cancel')
+    } catch {
+      // The adapter may already have retained the cancellation intent or aborted the engine.
+      // A failed post-effect check cannot establish whether that action completed.
+      fail('PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN')
+    }
     // Ordinary lead-stop ends here: it never cascades to child jobs.
     // Child cancellation is a separately explicit authorized operation
     // (delegationService.cancelChildren, invoked directly with its own
     // authorization), never a lead-stop side effect — so independent
     // child work survives a normal parent stop by construction.
-    await this.options.authority.assertCurrent(admission, principal, 'cancel')
     return PiDurableLeadCancelResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
@@ -828,8 +835,12 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
         requestedAt: request.issuedAt,
       })
     )
-    verifyRuntimeHandle(receipt, status.handle)
-    await this.#fencedGuard(request.workspaceId, receipt, fenced, principal, 'cancel')
+    try {
+      verifyRuntimeHandle(receipt, status.handle)
+      await this.#fencedGuard(request.workspaceId, receipt, fenced, principal, 'cancel')
+    } catch {
+      fail('PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN')
+    }
     return PiDurableLeadCancelResponseSchema.parse(
       success(request, { ...publicReceipt(receipt), state: status.state, status })
     )
