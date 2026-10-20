@@ -231,7 +231,8 @@ export interface PiDurableRuntimeOptions {
   /** Requires recorded spending authority and a trusted ledger hold; rechecked at the provider send boundary. */
   readonly authorizeInference: (
     authority: DurableExecutionAuthority,
-    key: string
+    key: string,
+    safeResume?: PiDurableInferenceResumePermit
   ) => Promise<{
     maxOutputTokens: number
     maximumInputTokens: number
@@ -278,4 +279,10 @@ export interface PiDurableRuntimeOptions {
     readonly governedDelegateChild?: PiDurableGovernedDelegateChildEnginePort
     readonly governedManagementCall?: PiDurableGovernedManagementCallEnginePort
   }) => Promise<DurablePiEngine>
+}
+
+/** Created by runtime recovery only after a trusted no-send verdict for this exact key. */
+export interface PiDurableInferenceResumePermit {
+  readonly schemaVersion: 'pi-inference-resume-permit/v1'
+  readonly inferenceKey: string
 }

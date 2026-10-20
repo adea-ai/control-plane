@@ -122,3 +122,44 @@ test('reconcile confirms a safe verdict under the claimed epoch of a dead owner'
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
+test('reconnect revocation after a safe observation cannot claim or resend retained work', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-reconcile-revoked-grant-'))
+  let reopened
+  try {
+    const { options, request } = fixture(directory)
+    const handle = await persistedUnknownRecord(options, request)
+    let active = true
+    let observations = 0
+    let sends = 0
+    reopened = new PiDurableRuntimeAdapter({
+      ...options,
+      assertAuthority: async () => {
+        if (!active) throw new Error('CURRENT_GRANT_REVOKED')
+      },
+      reconcileInference: async () => {
+        observations++
+        active = false
+        return 'safe_to_resume'
+      },
+      engineFactory: async () => ({
+        run: async () => {
+          sends++
+          throw new Error('unexpected resend')
+        },
+        close: async () => {},
+        cancel: async () => {},
+      }),
+    })
+    const before = reopened.journal.get(handle.handleId)
+    await expect(reopened.reconcile(handle)).rejects.toThrow('PI_AUTHORITY_REJECTED')
+    expect(observations).toBe(1)
+    expect(sends).toBe(0)
+    const after = reopened.journal.get(handle.handleId)
+    expect(after.epoch).toBe(before.epoch)
+    expect(after.state).toBe('unknown')
+  } finally {
+    await reopened?.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})

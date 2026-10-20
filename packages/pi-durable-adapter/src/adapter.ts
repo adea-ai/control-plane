@@ -40,6 +40,7 @@ import { NodeSessionLease } from './lease.js'
 import { DurableToolCallRequestSchema, type DurableToolCallRequest } from '@control-plane/tool-sdk'
 import { z } from 'zod'
 import { PiDurableEffectGate, type DurableEffectGateOutcome } from './effect-gate.js'
+import { issueInferenceResumePermit } from './resume-permit.js'
 import {
   PiDurableToolSourceSchema,
   verifyPiDurableManagementToolSource,
@@ -716,10 +717,12 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       // advance the epoch past its ownerEpoch and reject that owner's own commits.
       if (this.#hasLiveForeignOwner(this.journal.get(record.handleId))) return this.status(handle)
       const activeInference = readActiveInference(record)
+      const retainedKey = (['resumeGenerationKey', 'safeResumeInferenceKey'] as const)
+        .map((field) => record.detail[field])
+        .find((value): value is string => typeof value === 'string')
+      const resumeKey = activeInference?.inferenceKey ?? retainedKey
       const observe = () =>
-        activeInference
-          ? this.#options.reconcileInference(authority, activeInference.inferenceKey)
-          : this.#options.reconcileInference(authority, turnKey(record))
+        this.#options.reconcileInference(authority, resumeKey ?? turnKey(record))
       const preliminary = await observe()
       await this.#authority(authority)
       this.#assertOpen()
@@ -755,6 +758,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               inferenceTrackingVersion: 1,
               engineRunStarted: false,
               activeInference: undefined,
+              resumeGenerationKey: resumeKey,
+              safeResumeInferenceKey: resumeKey,
               inferencePending: false,
               observedAt: this.#now(),
               reasonCode: undefined,
@@ -770,6 +775,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             state: 'unknown',
             detail: {
               ...claimed.detail,
+              resumeGenerationKey: resumeKey,
+              safeResumeInferenceKey: undefined,
               observedAt: this.#now(),
               reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
             },
@@ -1064,9 +1071,14 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               inferencePending: true,
             },
           })
+          const safeResume =
+            current.detail['safeResumeInferenceKey'] === generation.inferenceKey
+              ? issueInferenceResumePermit(generation.inferenceKey)
+              : undefined
           const allowance = await this.#options.authorizeInference(
             authority,
-            generation.inferenceKey
+            generation.inferenceKey,
+            safeResume
           )
           if (typeof allowance.assertActive !== 'function')
             fail('PI_MODEL_SPENDING_AUTHORITY_REQUIRED', 'validation')
@@ -1085,6 +1097,19 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           )
             fail('PI_INFERENCE_ALLOWANCE_INVALID', 'validation')
           await assertCurrent()
+          if (safeResume) {
+            const authorized = this.journal.get(record.handleId)
+            if (
+              authorized.epoch !== epoch ||
+              authorized.state !== 'running' ||
+              authorized.detail['safeResumeInferenceKey'] !== generation.inferenceKey ||
+              readActiveInference(authorized)?.inferenceKey !== generation.inferenceKey
+            )
+              fail('PI_INFERENCE_GENERATION_CONFLICT', 'conflict')
+            this.journal.update(record.handleId, epoch, {
+              detail: { ...authorized.detail, safeResumeInferenceKey: undefined },
+            })
+          }
           return allowance
         },
         withModels: async (use) => {
@@ -1138,6 +1163,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             error: undefined,
             terminalUsage: undefined,
             activeInference: undefined,
+            resumeGenerationKey: undefined,
+            safeResumeInferenceKey: undefined,
             inferenceTrackingVersion: 1,
             engineRunStarted: false,
             ownerPid: process.pid,
@@ -1197,6 +1224,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               detail: {
                 ...this.journal.get(record.handleId).detail,
                 activeInference: undefined,
+                resumeGenerationKey: undefined,
+                safeResumeInferenceKey: undefined,
                 inferenceTrackingVersion: 1,
                 engineRunStarted: false,
                 inferencePending: false,
@@ -1245,6 +1274,10 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             state: 'unknown',
             detail: {
               ...this.journal.get(record.handleId).detail,
+              resumeGenerationKey:
+                this.journal.get(record.handleId).detail['resumeGenerationKey'] ??
+                this.journal.get(record.handleId).detail['safeResumeInferenceKey'],
+              safeResumeInferenceKey: undefined,
               observedAt: this.#now(),
               reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
             },
