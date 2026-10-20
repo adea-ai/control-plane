@@ -1,10 +1,14 @@
 import { drizzle } from 'drizzle-orm/postgres-js'
 import { PostgresPiCancellationRequests } from './postgres-cancellation-requests.ts'
 
-import { openCancellationTestClient } from './postgres-cancellation-test-database.fixture.mjs'
+import {
+  openCancellationTestClient,
+  verifyCancellationTestIdentity,
+} from './postgres-cancellation-test-database.fixture.mjs'
 
 const client = openCancellationTestClient()
 try {
+  await verifyCancellationTestIdentity(client)
   const intent = JSON.parse(await Bun.stdin.text())
   const repository = new PostgresPiCancellationRequests(drizzle(client))
   const record = await repository.get(intent)
