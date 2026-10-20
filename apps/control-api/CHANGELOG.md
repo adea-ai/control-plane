@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.0...control-api-v1.34.1) (2026-10-20)
+
+
+### Tests
+
+* **pi-restart:** prove lead run recovery across a real process restart ([#1200](https://github.com/adea-ai/control-plane/issues/1200)) ([20ff342](https://github.com/adea-ai/control-plane/commit/20ff342b707eea21486dcf4e0cb719a5b1d9c618))
+
 ## [1.34.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.33.3...control-api-v1.34.0) (2026-10-18)
 
 
