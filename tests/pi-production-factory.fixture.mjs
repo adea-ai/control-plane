@@ -91,12 +91,7 @@ function scriptedPhysicalFetch(state, responder) {
 }
 
 export async function createProductionFactoryFixture(options = {}) {
-  // An explicitly owned durable directory is opened as given and is never removed by close. Without
-  // it, the fixture creates a fresh temporary directory and close removes it, as before.
-  const ownedDirectory = options.durableDirectory
-  const directory = ownedDirectory
-    ? (await mkdir(ownedDirectory, { recursive: true }), ownedDirectory)
-    : await mkdtemp(join(tmpdir(), 'pi-real-production-factory-'))
+  const directory = await mkdtemp(join(tmpdir(), 'pi-real-production-factory-'))
   const at = new Date().toISOString()
   const publicationNow = options.publicationNow ?? (() => new Date().toISOString())
   const expiresAt = new Date(Date.parse(at) + 240_000).toISOString()
@@ -140,7 +135,7 @@ export async function createProductionFactoryFixture(options = {}) {
   let persistence, composition, models
   let fetchInstalled = false
   let closing
-  let keepDirectory = ownedDirectory !== undefined
+  let keepDirectory = false
   const close = () =>
     (closing ??= (async () => {
       try {

@@ -4,7 +4,7 @@
 // is released. No provider, credential, or live resource is contacted. The fence fixture's
 // constants are imported so both proofs use identical identities.
 import { createHash } from 'node:crypto'
-import { readFile, writeFile } from 'node:fs/promises'
+import { appendFile, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import { VersionedCatalog } from '@control-plane/domain'
@@ -250,8 +250,18 @@ async function openRestartCompositionWithPersistence(
       const engine = createPiDurableEngine({
         ...engineOptions,
         authorizeInference: async (request) => {
-          const allowance = await engineOptions.authorizeInference(request)
           const inferenceKey = `${requestId}:${request.inferenceId}`
+          let allowance
+          try {
+            allowance = await engineOptions.authorizeInference(request)
+          } catch (error) {
+            // Record the exact admission rejection before the engine folds it into a generic failure.
+            await appendFile(
+              join(directory, 'process-evidence.jsonl'),
+              `${JSON.stringify({ boundary: 'authority', phase: 'rejected', code: error?.code ?? null, inferenceKey })}\n`
+            )
+            throw error
+          }
           await onNativeDispatchBoundary(inferenceKey)
           if (seed && holdBeforeNativeDispatch) await new Promise(() => {})
           return allowance

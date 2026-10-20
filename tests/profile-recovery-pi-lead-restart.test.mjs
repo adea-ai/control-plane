@@ -340,6 +340,15 @@ test('a SIGKILL before HTTP dispatch fails closed after composition restart: no 
     expect(evidence.filter((entry) => entry.phase === 'before_dispatch')).toEqual([
       { boundary: 'native_fetch', phase: 'before_dispatch', inferenceKey: held.inferenceKey },
     ])
+    // The exact ledger rejection, recorded at the authority boundary before the engine's generic failure.
+    expect(evidence.filter((entry) => entry.boundary === 'authority')).toEqual([
+      {
+        boundary: 'authority',
+        phase: 'rejected',
+        code: 'MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED',
+        inferenceKey: held.inferenceKey,
+      },
+    ])
   } catch (error) {
     failed = true
     primaryFailure = error

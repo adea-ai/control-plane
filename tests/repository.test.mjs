@@ -304,6 +304,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/pi-production-management-forwarding.test.mjs',
     'tests/pi-production-runtime-startup.test.mjs',
     'tests/pi-production-factory.test.mjs',
+    'tests/profile-recovery-pi-lead-restart.test.mjs',
     'tests/pi-byo-model-authority.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
     'tests/acp-remote-shared-provider.test.mjs',
