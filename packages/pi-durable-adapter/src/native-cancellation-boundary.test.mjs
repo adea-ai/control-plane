@@ -181,6 +181,17 @@ test('receipt binding rejects changed request, native scope, owner and generatio
     ).toThrow('PI_NATIVE_CANCELLATION_RECEIPT_MISMATCH')
 })
 
+for (const patch of [
+  { requestedAt: 'malformed' },
+  { idempotencyKey: 'cancel:changed-with-old-digest' },
+])
+  test(`receipt binding rejects invalid retained intent ${JSON.stringify(patch)}`, () => {
+    const { intent, preparation, receipt } = fixture()
+    expect(() =>
+      assertPiNativeCancellationReceiptBinding({ ...intent, ...patch }, preparation, receipt)
+    ).toThrow()
+  })
+
 test('native receipt requires exclusive admission deadline and millisecond precision', () => {
   const { receipt, preparation } = fixture()
   for (const patch of [

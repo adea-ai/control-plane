@@ -1,6 +1,9 @@
 # Pi cancellation owner proposal
 
-Status: revised for root review. The earlier product-grant ordering proposal is
+Status: the current native commit/fence reference is in
+[Native commit/fence qualification and dormant boundary](#native-commitfence-qualification-and-dormant-boundary).
+The earlier drain-before-ACK protocol below is preserved as superseded history,
+not the approved ordering. The earlier product-grant ordering proposal is
 rejected: neither `cancelRequestedAt` nor a retained cancellation intent is an
 irrevocable permission to execute after authority is revoked. No coordination
 protocol in this document is implemented or activated.
@@ -62,7 +65,15 @@ execution and does not reserve attempt versions or Pi generation; it is not the
 missing authority owner. The generic `outbox_events` can carry retry evidence,
 not independent permission.
 
-## Viable shared-fence protocol for review
+## Superseded shared-fence drain protocol (historical)
+
+The protocol and crash/outcome table through the next source-work section retain
+the earlier design for custody. Their requirement to hold the native gate through
+drain and delay fence ACK/canonical revocation until drain is superseded. Current
+ordering is `F < A < R`, with approved `N < F < R < D`: N/F serialization ends at
+native commit/rollback; installation ACK A does not certify drain D. See the
+current native-boundary section below. This historical prose must not guide
+implementation or qualify native capability.
 
 The proposed owner is a CP-hosted cancellation coordinator backed by the existing
 CP PostgreSQL persistence boundary, with a durable monotonic fence per affected
@@ -134,7 +145,7 @@ review that concrete constraint; the alternative is a shared transactional
 execution/authority boundary. A signed snapshot, two reads, or a product grant
 that survives revocation is not an alternative that preserves current semantics.
 
-## Crash, retry and revocation outcomes
+## Superseded drain-protocol crash/retry outcomes (historical)
 
 | Failure or ordering                                                      | Required result                                                                                                                                   |
 | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
