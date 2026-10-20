@@ -101,8 +101,14 @@ jobs:
       rust-max-parallel: 1
       # The sync renderer rewrites both values from the e2e_shards config key;
       # the defaults keep repositories without that key on one unsharded job.
-      e2e-shard-list: '1'
-      e2e-total-shards: '1'
+      # The E2E lane is one sequential job, so its wall clock is the sum of
+      # every file: run 39346283807 measured 128.7s on a runner that was 1.55x
+      # slower than the main run, over the 120s ceiling. Two shards keep every
+      # file, every test and the same ceiling while the lane's wall clock
+      # becomes the slower shard. Both inputs are strings in the pinned
+      # Code Foundry workflow, so both values are quoted.
+      e2e-shard-list: '1,2'
+      e2e-total-shards: '2'
     secrets:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
       NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}

@@ -185,6 +185,11 @@ export const DEDICATED_INTEGRATION_QUALIFICATIONS = [
     workflow: '.github/workflows/postgres-pull-request.yml',
     command: 'bash scripts/run-hosted-graph-qualification.sh',
   },
+  {
+    file: 'packages/database/src/pool-teardown.integration.test.mjs',
+    workflow: '.github/workflows/postgres-pull-request.yml',
+    command: 'bun test --timeout 30000 ./packages/database/src/pool-teardown.integration.test.mjs',
+  },
 ]
 
 export const INTEGRATION_SHARD_IDS = INTEGRATION_SHARDS.map((entry) => entry.shard)

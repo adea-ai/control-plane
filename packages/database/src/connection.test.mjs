@@ -2,10 +2,15 @@ import { describe, expect, test } from 'bun:test'
 import {
   createPostgresConnection,
   createPostgresMigrationConnection,
+  createReadinessBudget,
   DatabaseConnectionError,
+  DatabasePoolTeardownError,
+  evaluateWithinReadinessBudget,
   maximumConnectionsPerProcess,
   maximumIdleTimeoutSeconds,
   resolvePostgresClientOptions,
+  runWithPoolTeardown,
+  teardownPostgresPool,
 } from './connection.ts'
 
 // Synthetic shared Railway PostgreSQL target: one endpoint and the repository
@@ -70,14 +75,17 @@ describe('resolvePostgresClientOptions', () => {
     expect(
       resolvePostgresClientOptions(applicationUrl.replace('verify-full', 'verify-ca')).ssl
     ).toBe('verify-full')
+    // A bare require is connected with the verified mode: postgres 3.4.9 maps
+    // the driver option `require` to an encrypted connection that does not
+    // verify the certificate, so the strict verification would be lost.
     expect(resolvePostgresClientOptions(applicationUrl.replace('verify-full', 'require')).ssl).toBe(
-      'require'
+      'verify-full'
     )
   })
 
   test('does not let sslmode=require suppress sslrootcert=system verification', () => {
     const requireUrl = applicationUrl.replace('verify-full', 'require')
-    expect(resolvePostgresClientOptions(requireUrl).ssl).toBe('require')
+    expect(resolvePostgresClientOptions(requireUrl).ssl).toBe('verify-full')
     expect(resolvePostgresClientOptions(`${requireUrl}&sslrootcert=system`).ssl).toBe('verify-full')
     expect(
       resolvePostgresClientOptions(
@@ -195,5 +203,237 @@ describe('createPostgresConnection', () => {
         ),
       'INVALID_POOL_BUDGET'
     )
+  })
+})
+
+describe('the shared readiness budget', () => {
+  test('does not invoke the work at all when the budget is already spent', async () => {
+    let invoked = 0
+    const outcome = await evaluateWithinReadinessBudget(async () => {
+      invoked += 1
+      return 'ready'
+    }, 0)
+    expect(outcome.completed).toBe(false)
+    expect(invoked).toBe(0)
+  })
+
+  test('does not accept a completion that arrives after the deadline', async () => {
+    const outcome = await evaluateWithinReadinessBudget(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40))
+      return 'ready'
+    }, 10)
+    expect(outcome.completed).toBe(false)
+  })
+
+  test('a step that throws synchronously fails closed', async () => {
+    const outcome = await evaluateWithinReadinessBudget(() => {
+      throw new Error('the manifest could not be read')
+    }, 1000)
+    expect(outcome.completed).toBe(false)
+  })
+
+  test('bounds the steps it evaluates and fails closed when it expires', async () => {
+    const startedAt = Date.now()
+    const outcome = await evaluateWithinReadinessBudget(() => new Promise(() => {}), 30)
+    expect(outcome.completed).toBe(false)
+    expect(Date.now() - startedAt).toBeLessThan(2000)
+  })
+
+  test('reports the value of a budget that completes', async () => {
+    const outcome = await evaluateWithinReadinessBudget(async () => 'ready', 1000)
+    expect(outcome).toEqual({ completed: true, value: 'ready' })
+  })
+
+  test('fails closed when a step rejects', async () => {
+    const outcome = await evaluateWithinReadinessBudget(async () => {
+      throw new Error('the manifest could not be read')
+    }, 1000)
+    expect(outcome.completed).toBe(false)
+  })
+
+  test('the budget reports the time that is left', async () => {
+    const budget = createReadinessBudget(1000)
+    expect(budget.remainingMs()).toBeGreaterThan(0)
+    expect(budget.remainingMs()).toBeLessThanOrEqual(1000)
+    expect(budget.expired()).toBe(false)
+  })
+
+  test('a step that settles after the budget does not surface on its own', async () => {
+    const unhandled = []
+    const onUnhandled = (reason) => unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const outcome = await evaluateWithinReadinessBudget(
+        () =>
+          new Promise((_resolve, reject) => {
+            setTimeout(() => reject(new Error('the step failed late')), 60)
+          }),
+        20
+      )
+      expect(outcome.completed).toBe(false)
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
+})
+
+describe('the pool teardown', () => {
+  test('a graceful close releases the pool', async () => {
+    let ended = false
+    const outcome = await teardownPostgresPool(
+      {
+        async end() {
+          ended = true
+        },
+      },
+      { timeoutSeconds: 1 }
+    )
+    expect(ended).toBe(true)
+    expect(outcome.released).toBe(true)
+  })
+
+  test('a teardown that does not settle is reported instead of hanging', async () => {
+    const startedAt = Date.now()
+    const outcome = await teardownPostgresPool(
+      { end: () => new Promise(() => {}) },
+      {
+        timeoutSeconds: 1,
+        boundSeconds: 1,
+      }
+    )
+    expect(outcome.released).toBe(false)
+    expect(outcome.reason).toBeDefined()
+    expect(Date.now() - startedAt).toBeLessThan(2000)
+  })
+
+  test('a failing teardown is reported and does not mask the original failure', async () => {
+    const outcome = await teardownPostgresPool(
+      {
+        async end() {
+          throw new Error('the pool could not be ended')
+        },
+      },
+      { timeoutSeconds: 1 }
+    )
+    expect(outcome.released).toBe(false)
+    expect(outcome.reason).toContain('the pool could not be ended')
+  })
+
+  test('the connection close releases the pool and never throws over the original failure', async () => {
+    const connection = createPostgresConnection({ role: 'application', url: applicationUrl })
+    const original = new Error('the original failure')
+    let thrown
+    try {
+      try {
+        throw original
+      } finally {
+        await connection.close()
+      }
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBe(original)
+  })
+
+  test('a failed release is surfaced instead of discarded', async () => {
+    // The pool teardown did not release the connections, and the close must
+    // say so rather than resolve as if it had.
+    const failing = {
+      async end() {
+        throw new Error('the pool could not be ended')
+      },
+    }
+    const outcome = await teardownPostgresPool(failing, { timeoutSeconds: 1 })
+    expect(outcome.released).toBe(false)
+    expect(outcome.reason).toContain('the pool could not be ended')
+    expect(() => {
+      throw new DatabasePoolTeardownError(outcome.reason)
+    }).toThrow(DatabasePoolTeardownError)
+  })
+
+  test('an operation failure is retained when the teardown also fails', async () => {
+    const original = new Error('the original failure')
+    const failing = {
+      async end() {
+        throw new Error('the pool could not be ended')
+      },
+    }
+    let thrown
+    try {
+      await runWithPoolTeardown(failing, async () => {
+        throw original
+      })
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(AggregateError)
+    // The operation's own failure is retained as the first failure.
+    expect(thrown.errors[0]).toBe(original)
+    expect(thrown.errors[1]).toBeInstanceOf(DatabasePoolTeardownError)
+  })
+
+  test('an operation that rejects with undefined is still a failure', async () => {
+    // The failure was inferred from the value being undefined, so a rejection
+    // with undefined read as a success.
+    let thrown
+    let settled = false
+    try {
+      await runWithPoolTeardown({ async end() {} }, async () => {
+        throw undefined
+      })
+      settled = true
+    } catch (error) {
+      thrown = error
+    }
+    expect(settled).toBe(false)
+    expect(thrown).toBeUndefined()
+  })
+
+  test('an operation failure alone is thrown unchanged', async () => {
+    const original = new Error('the original failure')
+    let thrown
+    try {
+      await runWithPoolTeardown({ async end() {} }, async () => {
+        throw original
+      })
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBe(original)
+  })
+})
+
+describe('the qualified Postgres TLS behaviour', () => {
+  test('a bare sslmode=require is connected with the verified mode', () => {
+    // postgres 3.4.9 maps the driver option `require` to rejectUnauthorized
+    // false, so the connection would be encrypted and the certificate would not
+    // be verified. The resolver therefore never hands the driver that option.
+    const requireUrl = applicationUrl.replace('verify-full', 'require')
+    expect(resolvePostgresClientOptions(requireUrl).ssl).toBe('verify-full')
+    expect(resolvePostgresClientOptions(applicationUrl).ssl).toBe('verify-full')
+    expect(
+      resolvePostgresClientOptions(applicationUrl.replace('verify-full', 'verify-ca')).ssl
+    ).toBe('verify-full')
+  })
+
+  test('the strict certificate and hostname verification is never downgraded', () => {
+    for (const url of [
+      applicationUrl,
+      applicationUrl.replace('verify-full', 'verify-ca'),
+      `${applicationUrl.replace('verify-full', 'require')}&sslrootcert=system`,
+      `${applicationUrl.replace('?sslmode=verify-full', '')}?sslrootcert=system`,
+    ]) {
+      expect(resolvePostgresClientOptions(url).ssl).toBe('verify-full')
+    }
+  })
+
+  test('the permitted local disposable-test behaviour is preserved', () => {
+    // The local disposable test target asks for no TLS, and that is the only
+    // shape that carries none.
+    const localUrl =
+      'postgresql://control_plane_app:local-application-only@127.0.0.1:54329/control_plane'
+    expect(resolvePostgresClientOptions(localUrl)).not.toHaveProperty('ssl')
   })
 })

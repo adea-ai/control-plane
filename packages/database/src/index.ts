@@ -2,8 +2,16 @@ export {
   assertPostgresUrl,
   createPostgresConnection,
   createPostgresMigrationConnection,
+  createReadinessBudget,
   DatabaseConnectionError,
   databaseReadinessProbe,
+  defaultReadinessBudgetMs,
+  evaluateWithinReadinessBudget,
+  poolEndTimeoutSeconds,
+  teardownPostgresPool,
+  type PoolTeardownOutcome,
+  type PostgresPoolEnd,
+  type ReadinessBudget,
 } from './connection.js'
 export { PostgresCommandAcceptanceRepository } from './command-inbox-repository.js'
 export {
