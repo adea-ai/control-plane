@@ -597,6 +597,11 @@ export async function createProductionPiLeadComposition(
       ...(installed.settleChildTerminalAccounting
         ? { settleChildTerminalAccounting: installed.settleChildTerminalAccounting }
         : {}),
+      /** Settles the completed lead now, as the recovery pass does. */
+      settleTerminalAccounting: () => installed.settleTerminalAccounting(),
+      get terminalSettlementBlocked() {
+        return installed.terminalSettlementBlocked
+      },
       get childTerminalSettlementBlocked() {
         return installed.childTerminalSettlementBlocked
       },
