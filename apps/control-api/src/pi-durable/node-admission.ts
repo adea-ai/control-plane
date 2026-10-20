@@ -1153,7 +1153,8 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       (marker.intent.authorityRevision !== facts.authorityRevision ||
         marker.intent.scopeRef !== facts.scopeRef ||
         hash([...marker.intent.allowedPrincipalIds].toSorted()) !==
-          hash([...facts.allowedPrincipalIds].toSorted()))
+          hash([...facts.allowedPrincipalIds].toSorted()) ||
+        marker.intent.canonicalActorPrincipalId !== facts.canonicalActorPrincipalId)
     )
       conflict()
     // Read only after the current marker/revision/scope/actor checks above. A binding that
@@ -1222,7 +1223,8 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       marker.intent.authorityRevision !== facts.authorityRevision ||
       marker.intent.scopeRef !== facts.scopeRef ||
       hash([...marker.intent.allowedPrincipalIds].toSorted()) !==
-        hash([...facts.allowedPrincipalIds].toSorted())
+        hash([...facts.allowedPrincipalIds].toSorted()) ||
+      marker.intent.canonicalActorPrincipalId !== facts.canonicalActorPrincipalId
     )
       conflict()
     if (

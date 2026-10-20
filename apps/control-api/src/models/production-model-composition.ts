@@ -486,6 +486,7 @@ export async function createProductionPiLeadComposition(
             childAuthority,
             governedDelegateChild,
             delegationService: childDelegation.service,
+            childDelegations: childDelegation.service,
             childSettlement: {
               delegations: options.children.delegation.records,
               usageOutcomes: options.children.usageOutcomes,

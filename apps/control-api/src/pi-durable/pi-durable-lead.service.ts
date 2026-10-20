@@ -1056,8 +1056,9 @@ function childViews(
   const views: PiDurableLeadChild[] = []
   for (const record of records) {
     if (record.parentExecutionId !== receipt.executionId) fail('PI_LEAD_AUTHORITY_CONFLICT')
-    if (record.parentAttemptId !== undefined && record.parentAttemptId !== receipt.attemptId)
-      continue
+    // The execution can have multiple attempts. A legacy record without an admitted parent
+    // attempt cannot be attributed to this dispatch, so it must not be disclosed here.
+    if (record.parentAttemptId !== receipt.attemptId) continue
     const outcomeState =
       record.state === 'completed' || record.state === 'failed' || record.state === 'cancelled'
         ? record.state
@@ -1090,7 +1091,7 @@ function childViews(
         : {}),
     })
   }
-  return views.sort(compareChildren)
+  return views.toSorted(compareChildren)
 }
 
 type ChildView = PiDurableLeadChild
