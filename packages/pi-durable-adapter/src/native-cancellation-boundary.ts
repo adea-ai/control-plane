@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import {
   PiCancellationTargetSchema,
+  PiCancellationRetainedIntentSchema,
   piCancellationTargetDigest,
   type PiCancellationPermit,
   type PiCancellationRetainedIntent,
@@ -135,10 +136,11 @@ export type PiNativeCancellationReceiptIdentity = z.infer<
 
 /** Snapshot equality only; does not verify authority, commit, expiry completeness or provenance. */
 export function assertPiNativeCancellationReceiptBinding(
-  intent: PiCancellationRetainedIntent,
+  intentInput: unknown,
   preparationInput: unknown,
   receiptInput: unknown
 ): void {
+  const intent = PiCancellationRetainedIntentSchema.parse(intentInput)
   const preparation = PiNativeCancellationPreparationSchema.parse(preparationInput)
   const receipt = PiNativeCancellationCommitReceiptSchema.parse(receiptInput)
   const candidate = preparation.candidate
