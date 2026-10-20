@@ -1,5 +1,19 @@
 # Profile recovery and rollback acceptance map (#1025 / M17.02.2)
 
+## Current Pi reconciliation supersession
+
+The tables below preserve the original profile-by-profile evidence, including legacy
+Restate/graph coverage. They are historical primitive proofs, not current supported
+Railway Pi acceptance. The current source decisions and exact remaining gates are in
+`pi-durable-cp1048-reconciliation.md`. No legacy profile is a fallback.
+
+Current Node Pi tests now prove active-task close/drain and same-version manifest
+validation/reopen; they supersede the old statement that no Pi task-drain proof exists.
+They do not qualify cross-version conversion, release pairs, downgrade, rollback or
+cross-store restore. Copied/restored prepared markers remain unknown until an independent
+restore-generation fence is qualified. The complete cancellation policy supersession
+map is in `pi-durable-committed-cancellation-authority.md`.
+
 This map states what repository tests prove about profile recovery, drain,
 rollback, backup/restore, reconnect revalidation, and fencing. It does not
 certify any live deployment. A "proven" result means a deterministic test in
@@ -81,11 +95,10 @@ passes, not Pi-owned task drain.
   to restart after terminal close, and draining accepted reconciliation before
   clearing its retained wake. Database/runtime/authority ports are fixtures;
   this does not prove PostgreSQL + Restate recovery or full transport drain.
-- `tests/pi-durable-child-host.test.mjs` exercises sibling cancellation and
-  runtime reopen with the existing test-only SQLite committed-cancellation owner.
-  Its binding comes from retained admission and CP execution/attempt records.
-  Existing sibling, usage and replay assertions remain. This proves the fixture
-  owner path; production cross-store cancellation authority remains gap 11.
+- `tests/pi-durable-child-host.test.mjs` preserves sibling cancellation, exact attempt,
+  usage, replay and reopen assertions using current ordinary cancellation. Its former
+  coordinator intent-ID/ACK assertion is superseded: retained target evidence grants
+  no irrevocable permission. Production atomic effect authorization remains gap11.
 
 ## Clause map
 
@@ -240,13 +253,12 @@ Owners are existing issues. Where no open issue names a gap, the row says so.
    that names it; root to assign an owner.
 10. **PostgreSQL restore in GitHub CI** has not run. The disposable local run passes
     (4 tests). Owner: #1025 PR integration lane.
-11. **Production committed-cancellation authority is unqualified.** The adapter
-    requires a server-owned committed intent/outbox port; without it, ordinary
-    and fenced cancellation refuse before mutation or abort, and inspected
-    capabilities omit cancellation. Optional injection and the test-only SQLite
-    coordinator prove ordering, idempotency, generation targeting and replay.
-    They do not supply a production owner coordinating current product authority,
-    CP execution/attempt versions and deadlines through a shared serializable
-    transaction or fencing lease. The default production wiring has no such
-    owner. Independent reads and final rechecks do not close that race. Owner:
-    #935, with the recovery acceptance boundary retained by #1025/#942.
+11. **Production atomic cancellation effect authority is unqualified.** Ordinary
+    cancellation preserves current actor/audience/scope/expiry checks and its existing
+    capability; a retained request is never permission. The rejected historical owner
+    injection and startup abort replay are removed. Source-only request/outbox persistence
+    and the unavailable revocable-permit contracts do not activate a coordinator. Final
+    asynchronous callback revocation/deadline races remain executed failing zero-effect
+    gates. Unknown after effect is not atomic rejection. A reviewed native commit-time
+    guard, all-writer protocol and independently qualified restore generation are still
+    required. The existing #935/#1025/#942 acceptance boundary remains open.

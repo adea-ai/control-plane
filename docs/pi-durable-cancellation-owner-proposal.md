@@ -154,8 +154,10 @@ that survives revocation is not an alternative that preserves current semantics.
 Root review must cover the shared-fence owner, affected-writer completeness,
 barrier availability behavior and the native commit guard for absolute expiry.
 Database path/generation dependencies go through root to the database owner.
-The old #1048 checkout remains outside custody; published source can be inspected
-without adopting its unpublished work.
+Root has transferred #1048 reconciliation ownership. Three old checkout heads
+were clean and already ancestors of its published head; custody archives and
+hashes are preserved. Integration uses an isolated checkout, leaving those old
+checkouts unchanged. See [the reconciliation map](pi-durable-cp1048-reconciliation.md).
 
 Source-only service tests can independently prove current pre-effect revocation
 and generation mismatch cause zero adapter calls, and a retry after unknown
@@ -273,6 +275,36 @@ Run with `PI_CANCELLATION_TEST_PG_SOCKET` pointing to an owned
 ```sh
 bun test ./apps/control-api/src/pi-durable/postgres-cancellation-requests.integration.test.mjs
 ```
+
+The normal integration lane also selects this suite through the Control API package
+command and its existing integration shard. With `RUN_DATABASE_INTEGRATION=true`,
+the harness uses the explicitly supplied existing local administration/migration
+roles, creates one randomly named owned database, runs migrations, and closes and
+drops that database after the suite. It creates no roles or credential/access
+grants. Remote hosts, unmatched clusters, unowned database names and ambient
+credentials outside that explicit lane fail closed. The restart reader receives
+the same owned database identity. A failed cleanup remains failed on repeat calls
+and retains all errors and the exact owned database name.
+
+Connection confinement rejects every URL query key except one validated private
+`host` path. In particular `database`, `user`, encoded identity keys, startup
+`options`/`role` and duplicate hosts are refused before creating a client. The
+harness constructs explicit driver host/port/database/username/password options;
+it never forwards URL query options into the PostgreSQL startup message. Before
+creating an owned database it verifies the administration connection's
+`current_database()` and `current_user`. Before migrations, and again in the
+fresh-process reader before repository access, it verifies the exact owned
+database and configured migration role. The private-socket mode similarly checks
+its fixed database and existing OS identity. A mismatch closes the connection
+and fails qualification without admitting migrations or repository operations.
+
+Both harness modes have exercised all nine cases on disposable PostgreSQL 18.6,
+42 assertions per mode. The normal-mode Mac proof used the same private peer
+transport and existing OS role while creating a separate owned database; this is
+not Docker TCP/role-topology qualification. Fourteen pure negative harness tests cover enablement, socket identity,
+remote/mismatched targets, restart-name refusal, URL startup overrides and server
+identity mismatch. These parser/guard negatives do not connect using rejected
+parameters. Actual PostgreSQL cases qualify the positive guarded path.
 
 This is request durability/concurrency qualification, not restore, live authority,
 installed desktop or committed cancellation-effect acceptance.

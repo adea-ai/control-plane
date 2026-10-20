@@ -35,6 +35,7 @@ export function terminalReceipt(record: DelegationRecord): DelegationTerminalRec
       ...(record.childAttemptId ? { childAttemptId: record.childAttemptId } : {}),
       ...(publication.resolution ? { resolution: publication.resolution } : {}),
       ...(record.terminalResultRef ? { terminalResultRef: record.terminalResultRef } : {}),
+      ...(record.terminalConclusion ? { conclusion: record.terminalConclusion } : {}),
       ...(record.failureCode ? { failureCode: record.failureCode } : {}),
       ...(publication.reason ? { reason: publication.reason } : {}),
     },

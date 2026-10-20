@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -49,56 +49,6 @@ export const principal = {
 export const secondAllowedPrincipal = { ...principal, principalId: 'svc_pi-admission' }
 export const outsiderPrincipal = { ...principal, principalId: 'svc_other' }
 
-function createTestCancellationAuthority() {
-  const intents = new Map()
-  const acknowledged = new Set()
-  let version = 0
-  return {
-    async commit(proposal) {
-      const existing = intents.get(proposal.handleId)
-      if (existing) {
-        if (
-          existing.idempotencyKey !== proposal.idempotencyKey ||
-          existing.requestDigest !== proposal.requestDigest
-        )
-          throw new Error('PI_CANCELLATION_INTENT_CONFLICT')
-        return structuredClone(existing)
-      }
-      const intent = {
-        schemaVersion: 'pi-committed-cancellation/v1',
-        intentId: randomUUID(),
-        committedAuthorityVersion: ++version,
-        committedAt: at,
-        ...structuredClone(proposal),
-      }
-      intents.set(proposal.handleId, intent)
-      return structuredClone(intent)
-    },
-    async pendingHandles() {
-      return [
-        ...new Set(
-          [...intents.values()]
-            .filter((intent) => !acknowledged.has(intent.intentId))
-            .map((intent) => intent.handleId)
-        ),
-      ]
-    },
-    async pendingForHandle(handleId) {
-      return [...intents.values()]
-        .filter((intent) => intent.handleId === handleId && !acknowledged.has(intent.intentId))
-        .map((intent) => structuredClone(intent))
-    },
-    async pending() {
-      return [...intents.values()]
-        .filter((intent) => !acknowledged.has(intent.intentId))
-        .map((intent) => structuredClone(intent))
-    },
-    async acknowledge(committedIntentId) {
-      acknowledged.add(committedIntentId)
-    },
-  }
-}
-
 export function deferred() {
   let resolve
   const promise = new Promise((yes) => {
@@ -118,13 +68,7 @@ export async function waitUntil(predicate, label, timeoutMs = 15000) {
 
 const chunk = (value) => `data: ${JSON.stringify(value)}\n\n`
 
-export function createLiveHarness(
-  directory,
-  { scoped = false, preparation = false, cancellationAuthority = true } = {}
-) {
-  const committedCancellationAuthority = cancellationAuthority
-    ? createTestCancellationAuthority()
-    : undefined
+export function createLiveHarness(directory, { scoped = false, preparation = false } = {}) {
   const state = {
     requests: [],
     streamsStarted: 0,
@@ -535,7 +479,6 @@ export function createLiveHarness(
       })
       composition = await createNodePiDurableLeadComposition({
         directory,
-        ...(committedCancellationAuthority ? { committedCancellationAuthority } : {}),
         admission: {
           product: {
             readCurrent: async (input) => {

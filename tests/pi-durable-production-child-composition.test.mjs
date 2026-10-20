@@ -24,7 +24,6 @@ import {
   ToolRegistry,
 } from '@control-plane/tool-execution'
 import { createProductionFactoryFixture } from './pi-production-factory.fixture.mjs'
-import { createMemoryCommittedCancellationAuthority } from '../apps/control-api/src/pi-durable/cancellation-authority.test-fixture.mjs'
 
 const id = (prefix, suffix = '01JABCDEF0123456789ABCDEFG') => `${prefix}_${suffix}`
 const childSuffix = '01JBBCDEF0123456789ABCDEFG'
@@ -274,6 +273,15 @@ function childrenFactory({ denyCurrentScopeRead = true, selfComposed = false } =
         modelAlias: 'reasoning.standard',
       },
       runtime: {
+        // Explicit test wake port required by the production child composition contract.
+        // Captured advisory delivery is not Adea authorization or canonical timeline acceptance.
+        childTimelineDelivery: {
+          principalId: 'svc_adea',
+          notify: async (input) => {
+            state.childTimelineNotifications ??= []
+            state.childTimelineNotifications.push(structuredClone(input))
+          },
+        },
         childProgress: { scan: async () => ({ reconciled: 0, pending: 0 }) },
         consumeParentInbox: async () => {},
         onParentInboxWake: async () => {
@@ -672,7 +680,6 @@ test('actual production composition uses the canonical Pi tool authority and sha
   let host
   host = await createProductionFactoryFixture({
     childrenFactory: childrenFactory(),
-    committedCancellationAuthority: createMemoryCommittedCancellationAuthority(),
     onScopeAuthorityDenial: () => authorityDenied.resolve(),
     physicalResponder: async ({ body }) => {
       expect(body.tools?.map((tool) => tool.name)).toEqual(['delegate_child'])

@@ -1,7 +1,5 @@
 import { beforeAll, afterAll, describe, expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { createRequire } from 'node:module'
-import { userInfo } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import { migrate } from 'drizzle-orm/postgres-js/migrator'
@@ -27,30 +25,23 @@ import {
 } from './postgres-cancellation-requests.ts'
 import { deterministicPiLeadIntentIds } from './node-admission.ts'
 
-// Reuse the database package's installed driver in this test harness; no production dependency changes.
-const postgres = createRequire(import.meta.resolve('@control-plane/database'))('postgres').default
-const socket = process.env.PI_CANCELLATION_TEST_PG_SOCKET
+import {
+  cancellationPostgresEnabled,
+  createCancellationTestDatabase,
+} from './postgres-cancellation-test-database.fixture.mjs'
+
+const enabled = cancellationPostgresEnabled()
 const at = '2026-10-20T12:00:00.000Z'
 const later = '2026-10-20T13:00:00.000Z'
 const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
 const workspaceId = id('wsp')
-const open = () =>
-  postgres({
-    host: socket,
-    database: 'postgres',
-    username: userInfo().username,
-    max: 8,
-    prepare: false,
-    onnotice: () => {},
-  })
-
-describe.skipIf(!socket)('Pi cancellation request retention on disposable PostgreSQL', () => {
-  let client, database, executions
+describe.skipIf(!enabled)('Pi cancellation request retention on disposable PostgreSQL', () => {
+  let client, database, executions, ownedDatabase
   beforeAll(async () => {
-    // This harness accepts only a caller-owned private test socket, never ambient database credentials.
-    if (!/^\/tmp\/pi-cancellation-pg\.[A-Za-z0-9]+\/socket$/.test(socket))
-      throw new Error('OWNED_TEST_SOCKET_REQUIRED')
-    client = open()
+    // Private peer socket for operator qualification, or the explicit disposable-local CI lane.
+    // The normal lane creates one owned database with existing roles; it never grants access.
+    ownedDatabase = await createCancellationTestDatabase()
+    client = ownedDatabase.client
     expect(
       Number((await client`show server_version_num`)[0].server_version_num)
     ).toBeGreaterThanOrEqual(180000)
@@ -66,7 +57,7 @@ describe.skipIf(!socket)('Pi cancellation request retention on disposable Postgr
     executions = new PostgresExecutionRepository(database)
   }, 30_000)
   afterAll(async () => {
-    await client?.end({ timeout: 5 })
+    await ownedDatabase?.close()
   })
 
   async function fixture() {
@@ -361,7 +352,7 @@ describe.skipIf(!socket)('Pi cancellation request retention on disposable Postgr
         ),
       ],
       {
-        env: { ...process.env, PI_CANCELLATION_TEST_PG_SOCKET: socket },
+        env: ownedDatabase.environment,
         stdin: 'pipe',
         stdout: 'pipe',
         stderr: 'pipe',

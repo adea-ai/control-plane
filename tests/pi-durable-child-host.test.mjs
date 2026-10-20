@@ -1,6 +1,3 @@
-import { createHash } from 'node:crypto'
-import { canonicalJsonStringify } from '@control-plane/contracts'
-import { createSqliteCommittedCancellationAuthority } from '../packages/pi-durable-adapter/src/cancellation-authority.test-fixture.mjs'
 import { createModels, createProvider } from '@earendil-works/pi-ai/models'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 import { ExecutionPlanCompiler } from '@control-plane/execution-plan'
@@ -751,15 +748,10 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
     },
   })
   let runtime
-  let cancellationAuthority
   let reopenedCanonical
   let failTerminalPublication = false
   try {
     await provider.migrate()
-    cancellationAuthority = createSqliteCommittedCancellationAuthority(
-      join(directory, 'cancellation-owner.sqlite'),
-      { now: () => at }
-    )
     const publications = new SqliteDelegationEventPublisher(provider, ids.parentExecutionId)
     const makeFeed = (inbox = publications) =>
       new ChildProgressLeadFeed({
@@ -879,7 +871,6 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
     const baseUrl = `${server.url}v1`
     const options = {
       directory: join(directory, 'runtime'),
-      committedCancellationAuthority: cancellationAuthority,
       now: () => at,
       resolveAdmission: async (request) => ({
         schemaVersion: 'pi-durable-admission/v1',
@@ -1017,8 +1008,8 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
     await host.admissions.retain(third)
     expect((await host.service.execute(third.request)).state).not.toBe('succeeded')
     expect(host.starts).toHaveLength(2)
-    // Seed the disposable owner from the exact retained runtime/CP binding.
-    // This fixture does not supply production product/CP transaction authority.
+    // Verify the exact retained runtime/CP target before ordinary cancellation.
+    // No test-only coordinator supplies permission or an enduring grant.
     const storedCancellation = runtime.adapter.journal.get(handles[0].handleId).admission
     const cancelledExecution = await storage.executions.getExecution(
       storedCancellation.request.executionId
@@ -1028,21 +1019,6 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
     expect(cancelledAttempt.executionId).toBe(cancelledExecution.executionId)
     expect(typeof cancelledExecution.deadlineAt).toBe('string')
     expect(cancelledAttempt.deadlineAt).toBe(cancelledExecution.deadlineAt)
-    cancellationAuthority.register({
-      handleId: handles[0].handleId,
-      executionId: cancelledExecution.executionId,
-      attemptId: cancelledAttempt.attemptId,
-      workspaceId: cancelledExecution.correlation.workspaceId,
-      admissionDigest: `sha256:${createHash('sha256')
-        .update(canonicalJsonStringify(storedCancellation))
-        .digest('hex')}`,
-      productRevision: storedCancellation.admission.authority.revision,
-      expiresAt: storedCancellation.admission.authority.expiresAt,
-      executionVersion: cancelledExecution.version,
-      attemptVersion: cancelledAttempt.version,
-      deadlineAt: cancelledExecution.deadlineAt,
-      authorityVersion: storedCancellation.admission.authority.revision,
-    })
     expect(
       (
         await runtime.adapter.cancel(handles[0], {
@@ -1051,11 +1027,12 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
         })
       ).state
     ).toBe('cancelling')
-    expect(
-      typeof runtime.adapter.journal.get(handles[0].handleId).detail.cancellationIntent
-        .authorityIntentId
-    ).toBe('string')
-    expect(await cancellationAuthority.pendingForHandle(handles[0].handleId)).toEqual([])
+    const retainedCancellation = runtime.adapter.journal.get(handles[0].handleId).detail
+      .cancellationIntent
+    // A current ordinary cancellation retains exact target evidence, never an irrevocable grant.
+    expect(retainedCancellation.authorityIntentId).toBeUndefined()
+    expect(retainedCancellation.attemptId).toBe(handles[0].attemptId)
+    expect(retainedCancellation.requestDigest).toMatch(/^sha256:[a-f0-9]{64}$/)
     release.forEach((item) => item.resolve())
     await runtime.adapter.drain()
     expect((await runtime.adapter.status(handles[1])).state).toBe('completed')
@@ -1181,12 +1158,8 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
       await server.stop(true)
       await reopenedCanonical?.close()
     } finally {
-      try {
-        cancellationAuthority?.close()
-      } finally {
-        provider.close()
-        await rm(directory, { recursive: true, force: true })
-      }
+      provider.close()
+      await rm(directory, { recursive: true, force: true })
     }
   }
 }, 30000)

@@ -207,6 +207,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
   assert.deepEqual(integration, [
     'apps/control-api/src/budget-admission.integration.test.mjs',
     'apps/control-api/src/marketplace-installation.integration.test.mjs',
+    'apps/control-api/src/pi-durable/postgres-cancellation-requests.integration.test.mjs',
     'apps/control-api/src/validation-replay.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-graph-cancellation.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-graph-legacy-fence.integration.test.mjs',
@@ -311,7 +312,6 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/pi-production-management-forwarding.test.mjs',
     'tests/pi-production-runtime-startup.test.mjs',
     'tests/pi-production-factory.test.mjs',
-    'tests/profile-recovery-pi-lead-restart.test.mjs',
     'tests/pi-byo-model-authority.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
     'tests/acp-remote-shared-provider.test.mjs',
@@ -365,9 +365,11 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-retention-class-registry.test.mjs',
     'tests/m11-retention-hold-operator.test.mjs',
     'tests/m11-retention-restore-reapply.test.mjs',
+    'tests/profile-recovery-cleanup.test.mjs',
     'tests/railway-production-plan.test.mjs',
     'tests/replacement-compatibility.test.mjs',
     'tests/repository.test.mjs',
+    'tests/runner-cleanup.test.mjs',
     'tests/workspace-tooling.test.mjs',
     'tests/restate-identity.test.mjs',
   ])
