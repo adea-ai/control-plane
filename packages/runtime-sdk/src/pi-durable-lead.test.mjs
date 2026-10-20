@@ -3,6 +3,7 @@ import { PublicContractManifest } from '@control-plane/contracts'
 import {
   PiDurableLeadPrepareRequestSchema,
   PiDurableLeadPrepareResponseSchema,
+  PiDurableLeadChildAllowanceSchema,
   PiDurableLeadDispatchRequestSchema,
   PiDurableLeadLookupRequestSchema,
   PiDurableLeadLookupResponseSchema,
@@ -87,6 +88,62 @@ test('preparation exposes ready disclosure without runtime identity or caller gr
         payload: { ...request.payload, ...extra },
       }).success
     ).toBe(false)
+  }
+})
+
+const childBinding = {
+  schemaVersion: 'pi-lead-child-allowance/v1',
+  executionPlanDigest: `sha256:${'e'.repeat(64)}`,
+  profile: {
+    profileId: id('prf'),
+    profileVersionId: id('pfv'),
+    version: 2,
+    revision: 3,
+  },
+}
+const stated = {
+  ...childBinding,
+  state: 'stated',
+  currency: 'USD',
+  maximumMicrounits: 400_000,
+  maximumTokens: 40_000,
+}
+const notStated = { ...childBinding, state: 'not_stated' }
+
+test('preparation may disclose a stated child allowance, none stated, or predate the disclosure', () => {
+  for (const childAllowance of [stated, notStated]) {
+    const withAllowance = { ...response, data: { ...response.data, childAllowance } }
+    expect(PiDurableLeadPrepareResponseSchema.parse(withAllowance)).toEqual(withAllowance)
+  }
+  // A control plane that predates the disclosure omits the field; that parses and is not "none".
+  const parsed = PiDurableLeadPrepareResponseSchema.parse(response)
+  expect(parsed.data.childAllowance).toBeUndefined()
+  expect('childAllowance' in parsed.data).toBe(false)
+})
+
+test('a child allowance disclosure is exact: no half statements, no extra authority', () => {
+  expect(PiDurableLeadChildAllowanceSchema.safeParse(stated).success).toBe(true)
+  const { maximumTokens: _t, ...noTokens } = stated
+  const { profile: _p, ...noProfile } = notStated
+  for (const invalid of [
+    noTokens,
+    noProfile,
+    { ...stated, maximumMicrounits: 0 },
+    { ...stated, maximumTokens: 1.5 },
+    { ...stated, currency: 'EUR' },
+    { ...notStated, maximumMicrounits: 1 },
+    { ...notStated, currency: 'USD' },
+    { ...stated, executionPlanDigest: 'sha256:short' },
+    { ...stated, profile: { ...childBinding.profile, version: 0 } },
+    {
+      ...stated,
+      profile: { ...childBinding.profile, contentDigest: childBinding.executionPlanDigest },
+    },
+    { ...stated, authorizationRef: 'spend:test' },
+    { ...stated, state: 'unknown' },
+    { ...childBinding },
+  ]) {
+    expect(PiDurableLeadChildAllowanceSchema.safeParse(invalid).success).toBe(false)
   }
 })
 
@@ -247,7 +304,7 @@ test('children read is a strict read-only contract of opaque references and boun
     revision: 2,
     outcome: { state: 'completed', resultRef: id('art'), publication: { status: 'pending' } },
   }
-  const response = {
+  const childrenResponse = {
     contractVersion: request.contractVersion,
     requestId: request.requestId,
     correlation: request.correlation,
@@ -263,7 +320,7 @@ test('children read is a strict read-only contract of opaque references and boun
       complete: true,
     },
   }
-  expect(PiDurableLeadChildrenResponseSchema.safeParse(response).success).toBe(true)
+  expect(PiDurableLeadChildrenResponseSchema.safeParse(childrenResponse).success).toBe(true)
   for (const invalid of [
     { ...child, objective: 'caller or private text' },
     { ...child, planDigest: `sha256:${'a'.repeat(64)}` },
@@ -274,16 +331,16 @@ test('children read is a strict read-only contract of opaque references and boun
   ])
     expect(
       PiDurableLeadChildrenResponseSchema.safeParse({
-        ...response,
-        data: { ...response.data, children: [invalid] },
+        ...childrenResponse,
+        data: { ...childrenResponse.data, children: [invalid] },
       }).success
     ).toBe(false)
   // A page holds at most 256 children; the total says how many exist, and a page is complete
   // exactly when it carries no next cursor.
   const page = (data) =>
     PiDurableLeadChildrenResponseSchema.safeParse({
-      ...response,
-      data: { ...response.data, ...data },
+      ...childrenResponse,
+      data: { ...childrenResponse.data, ...data },
     }).success
   const many = (count) => Array.from({ length: count }, () => child)
   expect(page({ children: many(256), totalChildren: 256, complete: true })).toBe(true)

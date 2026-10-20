@@ -1,5 +1,82 @@
 # Changelog
 
+## [1.105.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.2...workspace-v1.105.3) (2026-10-20)
+
+
+### Documentation
+
+* **pi-1173:** child outcome read is on main; single RuntimeSession invariant ([#1202](https://github.com/adea-ai/control-plane/issues/1202)) ([79a31dd](https://github.com/adea-ai/control-plane/commit/79a31ddd04b58c3a15dfb0022340c9ddf05cfb6b))
+
+## [1.105.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.1...workspace-v1.105.2) (2026-10-20)
+
+
+### Tests
+
+* **pi-restart:** prove lead run recovery across a real process restart ([#1200](https://github.com/adea-ai/control-plane/issues/1200)) ([20ff342](https://github.com/adea-ai/control-plane/commit/20ff342b707eea21486dcf4e0cb719a5b1d9c618))
+
+## [1.105.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.0...workspace-v1.105.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* cp-bounded-readiness-ssl-teardown-20261019 ([#1197](https://github.com/adea-ai/control-plane/issues/1197)) ([2e80a07](https://github.com/adea-ai/control-plane/commit/2e80a0717793848fbc3d2b51b7a6450875d09596))
+
+## [1.105.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.104.4...workspace-v1.105.0) (2026-10-19)
+
+
+### Features
+
+* **database:** verify Postgres TLS and bound the connection profile for Railway ([#1195](https://github.com/adea-ai/control-plane/issues/1195)) ([fdf41db](https://github.com/adea-ai/control-plane/commit/fdf41dba86462dcde9212d528e8a0195f9f9827d))
+
+## [1.104.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.104.3...workspace-v1.104.4) (2026-10-19)
+
+
+### Bug Fixes
+
+* **installer:** bound native manifest reads before installation ([#1193](https://github.com/adea-ai/control-plane/issues/1193)) ([94874ee](https://github.com/adea-ai/control-plane/commit/94874ee9bd5555d0508da1fd8d6ff4c141b8dd95))
+
+## [1.104.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.104.2...workspace-v1.104.3) (2026-10-19)
+
+
+### Bug Fixes
+
+* **orchestration:** retain interaction notifications across crashes ([#1190](https://github.com/adea-ai/control-plane/issues/1190)) ([3402ac8](https://github.com/adea-ai/control-plane/commit/3402ac8ff25e642de253a1dcce88413404d9ced6))
+
+
+### Tests
+
+* **database:** qualify fresh bootstrap and migration replay ([#1185](https://github.com/adea-ai/control-plane/issues/1185)) ([c892fa4](https://github.com/adea-ai/control-plane/commit/c892fa4fd057b9446e7dfb5e21928dd3de8393b1))
+* **pi:** prove durable input replay and workspace isolation ([#1189](https://github.com/adea-ai/control-plane/issues/1189)) ([a0644a7](https://github.com/adea-ai/control-plane/commit/a0644a7bf5a7e26ee939d4e316d614264d1dadb6))
+
+## [1.104.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.104.1...workspace-v1.104.2) (2026-10-19)
+
+
+### Bug Fixes
+
+* **acp-adapter:** reject native FIFOs without blocking ([#1188](https://github.com/adea-ai/control-plane/issues/1188)) ([b5d8641](https://github.com/adea-ai/control-plane/commit/b5d864175d787f771080b92c895f5f23259fa1a7))
+
+## [1.104.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.104.0...workspace-v1.104.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* testing-migration-failure-cleanup-task3 ([#1186](https://github.com/adea-ai/control-plane/issues/1186)) ([6fe2b68](https://github.com/adea-ai/control-plane/commit/6fe2b68f32fcb8f71e4d9712180879cdd512b54a))
+* **testing:** dispose database when automatic migration fails ([6fe2b68](https://github.com/adea-ai/control-plane/commit/6fe2b68f32fcb8f71e4d9712180879cdd512b54a))
+
+## [1.104.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.103.2...workspace-v1.104.0) (2026-10-18)
+
+
+### Features
+
+* **pi:** disclose the lead plan's child allowance on preparation ([#1211](https://github.com/adea-ai/control-plane/issues/1211)) ([#1136](https://github.com/adea-ai/control-plane/issues/1136)) ([efd457a](https://github.com/adea-ai/control-plane/commit/efd457a36911ee58674a1837964a1e2e6cd735e2))
+
+## [1.103.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.103.1...workspace-v1.103.2) (2026-10-18)
+
+
+### Bug Fixes
+
+* **portability:** preserve historical verification and replay equivalence ([#1182](https://github.com/adea-ai/control-plane/issues/1182)) ([16ca0b4](https://github.com/adea-ai/control-plane/commit/16ca0b43b6c785ba13ef788510b457b45f2c30ae))
+
 ## [1.103.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.103.0...workspace-v1.103.1) (2026-10-17)
 
 

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { pinnedCodexNativeBuild } from './pinned-codex-build.ts'
@@ -27,7 +28,12 @@ export async function verifyPinnedCodexNativeBinary(
   for (const [key, value] of Object.entries(pinnedCodexNativeBuild)) {
     if (manifest[key] !== value) throw new Error('CODEX_NATIVE_MANIFEST_MISMATCH')
   }
-  const file = await open(executable, 'r')
+  // FIFO opens can wait for a writer before stat() gets a chance to reject them.
+  // POSIX O_NONBLOCK leaves regular-file reads unchanged and protects against
+  // path replacement too; a pre-open path stat alone would leave that race open.
+  const flags =
+    process.platform === 'win32' ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NONBLOCK
+  const file = await open(executable, flags)
   try {
     const metadata = await file.stat()
     if (!metadata.isFile() || metadata.size === 0 || metadata.size > maximumNativeBytes)

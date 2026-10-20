@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.34.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.0...control-api-v1.34.1) (2026-10-20)
+
+
+### Tests
+
+* **pi-restart:** prove lead run recovery across a real process restart ([#1200](https://github.com/adea-ai/control-plane/issues/1200)) ([20ff342](https://github.com/adea-ai/control-plane/commit/20ff342b707eea21486dcf4e0cb719a5b1d9c618))
+
+## [1.34.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.33.3...control-api-v1.34.0) (2026-10-18)
+
+
+### Features
+
+* **pi:** disclose the lead plan's child allowance on preparation ([#1211](https://github.com/adea-ai/control-plane/issues/1211)) ([#1136](https://github.com/adea-ai/control-plane/issues/1136)) ([efd457a](https://github.com/adea-ai/control-plane/commit/efd457a36911ee58674a1837964a1e2e6cd735e2))
+
 ## [1.33.3](https://github.com/adea-ai/control-plane/compare/control-api-v1.33.2...control-api-v1.33.3) (2026-10-17)
 
 

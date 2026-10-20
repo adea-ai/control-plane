@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { chmod, copyFile, mkdir, open, readFile, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -9,6 +10,31 @@ import { verifyPinnedCodexNativeBinary } from '../packages/acp-adapter/src/nativ
 export { pinnedAcpBuild }
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
+const maximumNativeManifestBytes = 16384
+
+async function readNativeManifest(path) {
+  // Nonblocking open reaches the type check even for a FIFO without a writer.
+  // Validate and read the same descriptor; a pathname stat would leave a race.
+  const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK)
+  try {
+    const metadata = await file.stat()
+    if (!metadata.isFile() || metadata.size > maximumNativeManifestBytes)
+      throw new Error('ACP_NATIVE_MANIFEST_INVALID')
+    // One extra byte detects growth without allocating or reading unbounded input.
+    const buffer = Buffer.alloc(maximumNativeManifestBytes + 1)
+    let bytes = 0
+    while (bytes < buffer.length) {
+      const { bytesRead } = await file.read(buffer, bytes, buffer.length - bytes, bytes)
+      if (bytesRead === 0) break
+      bytes += bytesRead
+    }
+    if (bytes > maximumNativeManifestBytes || bytes !== metadata.size)
+      throw new Error('ACP_NATIVE_MANIFEST_INVALID')
+    return buffer.subarray(0, bytes).toString('utf8')
+  } finally {
+    await file.close()
+  }
+}
 
 export function validateInstallDestination(destination) {
   if (
@@ -53,7 +79,7 @@ export async function installPinnedAcp(destinationInput, nativeInstallation) {
   if (typeof nativeInstallation !== 'string' || !isAbsolute(nativeInstallation))
     throw new Error('ACP_PATCHED_NATIVE_INSTALLATION_REQUIRED')
   const nativeManifest = JSON.parse(
-    await readFile(join(nativeInstallation, 'installation.json'), 'utf8')
+    await readNativeManifest(join(nativeInstallation, 'installation.json'))
   )
   if (nativeManifest.executable !== 'bin/codex') throw new Error('ACP_NATIVE_PATH_MISMATCH')
   const nativeExecutable = join(nativeInstallation, 'bin/codex')

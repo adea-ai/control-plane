@@ -3,7 +3,9 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { createNodePiDurableLeadComposition } from './node-composition.ts'
+import { SqlitePiDurableLeadReceiptStore } from './pi-durable-lead.service.ts'
 
 // Lifecycle of the lead composition's periodic recovery, without a run. A failed initialization and a
 // closed composition must not reach the journal or the ledger, and no interval may fire after close.
@@ -60,6 +62,93 @@ function journalReadCounter() {
   }
   return counter
 }
+
+test('public recovery and process reopen replay a retained terminal inbox into the product wake', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pi-child-timeline-node-'))
+  const parentExecutionId = 'exe_01JABCDEF0123456789ABCDEFG'
+  const dispatchId = `dispatch_${'a'.repeat(32)}`
+  const intentId = 'f643a115-617d-4bae-8d52-cfe458c0b8ac'
+  const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
+  const events = []
+  const delivered = []
+  let refuseDelivery = false
+  const options = baseOptions(directory, {
+    periodicRecoveryIntervalMs: 60_000,
+    parentInbox: { list: async () => events },
+    childTimelineDelivery: {
+      principalId: 'svc_adea',
+      notify: async (input) => {
+        if (refuseDelivery) throw new Error('PRODUCT_OFFLINE')
+        delivered.push(input)
+      },
+    },
+  })
+  let composition
+  try {
+    composition = await createNodePiDurableLeadComposition(options)
+    const database = new DatabaseSync(join(directory, 'lead-admission.sqlite'))
+    try {
+      const receipts = new SqlitePiDurableLeadReceiptStore(database)
+      await receipts.insert({
+        schemaVersion: 'pi-lead-receipt/v1',
+        dispatchId,
+        intentId,
+        workspaceId,
+        admissionDigest: `sha256:${'1'.repeat(64)}`,
+        startDigest: `sha256:${'2'.repeat(64)}`,
+        deadlineAt: '2026-10-20T16:00:00.000Z',
+        executionId: parentExecutionId,
+        attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+        allowedPrincipalIds: ['svc_adea'],
+        revision: 2,
+        state: 'dispatched',
+        handle: {
+          handleId: 'hEC01JABCDEF0123456789ABCDEFGH',
+          attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+          externalSessionId: 'ses_01JABCDEF0123456789ABCDEFG',
+          startedAt: at,
+        },
+      })
+    } finally {
+      database.close()
+    }
+    events.push({
+      type: 'delegation.completed',
+      delegationId: 'dlg_01JABCDEF0123456789ABCDEFG',
+      parentExecutionId,
+      childExecutionId: `${parentExecutionId.slice(0, -1)}H`,
+      occurredAt: at,
+      details: { state: 'completed', childAttemptId: 'att_01JABCDEF0123456789ABCDEFG' },
+    })
+    refuseDelivery = true
+    await composition.recover()
+    expect(composition.childTimelineRecovery).toEqual({ delivered: 0, blocked: [dispatchId] })
+    expect(composition.childTimelineDeliveryBlocked).toBe(true)
+    refuseDelivery = false
+    await composition.recover()
+    expect(composition.childTimelineRecovery).toEqual({ delivered: 1, blocked: [] })
+    expect(composition.childTimelineDeliveryBlocked).toBe(false)
+    await composition.close()
+    composition = await createNodePiDurableLeadComposition(options)
+    expect(composition.childTimelineRecovery).toEqual({ delivered: 1, blocked: [] })
+    expect(delivered).toEqual([
+      { workspaceId, intentId, principalId: 'svc_adea' },
+      { workspaceId, intentId, principalId: 'svc_adea' },
+    ])
+    await composition.close()
+    composition = await createNodePiDurableLeadComposition({
+      ...options,
+      periodicRecoveryIntervalMs: fastInterval,
+    })
+    const initialWakes = delivered.length
+    for (let index = 0; index < 30 && delivered.length === initialWakes; index++)
+      await pause(fastInterval)
+    expect(delivered.length).toBeGreaterThan(initialWakes)
+  } finally {
+    await composition?.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+}, 30000)
 
 test('a failed initialization leaves no recovery pass running against the store it closed', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'pi-lead-init-failure-'))
@@ -119,6 +208,51 @@ test('a recovery interval that is not a positive integer is refused before any s
     ).rejects.toThrow('PI_LEAD_RECOVERY_INTERVAL_INVALID')
     expect(existsSync(join(directory, 'lead-admission.sqlite'))).toBe(false)
   } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+}, 30000)
+
+test('a configured child reader reaches retained receipt lookup without starting child work', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pi-lead-child-reader-'))
+  let childReads = 0
+  const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
+  const principalId = 'svc_pi-admission'
+  let composition
+  try {
+    composition = await createNodePiDurableLeadComposition(
+      baseOptions(directory, {
+        childDelegations: {
+          async listChildren() {
+            childReads++
+            return []
+          },
+        },
+      })
+    )
+    await expect(
+      composition.service.children(
+        {
+          caller: { servicePrincipalId: principalId },
+          contractVersion: { major: 1, minor: 0 },
+          requestId: 'req_01JABCDEF0123456789ABCDEFG',
+          workspaceId,
+          correlation: { traceId: 'trc_01JABCDEF0123456789ABCDEFG' },
+          operation: 'pi-durable.lead.children',
+          requestedAt: at,
+          parameters: { dispatchId: `dispatch_${'a'.repeat(32)}` },
+        },
+        {
+          kind: 'agent_hq_service',
+          principalId,
+          projectIds: [],
+          scopes: ['execution:read'],
+          workspaceIds: [workspaceId],
+        }
+      )
+    ).rejects.toThrow('PI_LEAD_MISSING')
+    expect(childReads).toBe(0)
+  } finally {
+    await composition?.close()
     await rm(directory, { recursive: true, force: true })
   }
 }, 30000)

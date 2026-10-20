@@ -18,7 +18,13 @@ The following commands describe the repository as it exists today. M9.7/M9.8/M10
 - `bun run test` builds once, then runs the current test groups.
 - `bun run test:unit` runs colocated unit tests and coverage enforcement.
 - `bun run test:integration` currently exercises PostgreSQL-backed integration boundaries and recovery fixtures. These PostgreSQL fixtures remain valid for server/cloud persistence testing but are not the M10 Local product database.
-- `bun run test:e2e` runs the existing cross-package acceptance scenarios.
+- `bun run test:e2e` runs the existing cross-package acceptance scenarios. In CI the lane runs as
+  two shards: the runner asks for `E2E_TOTAL_SHARDS` and `E2E_SHARD_INDEX`, and
+  `scripts/run-bun-test-group.mjs` splits the same files into balanced shards using the measured
+  per-file costs it records. Every file, test and assertion runs in exactly one shard, and each
+  shard is measured against the same lane ceiling, so the lane's wall clock is the slower shard
+  instead of the sum of all files. A local run without the shard variables keeps every file in one
+  process.
 - `bun run test:smoke` runs repository policy, infrastructure, requirements/architecture audit drift, and service-bootstrap checks.
 - `bun run requirements:check` validates the M11.1 machine ledger, reachable evidence paths, and generated report drift; `requirements:refresh` refreshes the M1–M10 GitHub issue inventory before review.
 - `bun run architecture:check` validates the M11.2 package, operation, profile, persistence, ownership, lifecycle, and generated-diagram audit; `architecture:refresh` refreshes package manifests and reviewed public operations.

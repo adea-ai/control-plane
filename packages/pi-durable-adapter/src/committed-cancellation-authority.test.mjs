@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import { PiDurableRuntimeAdapter } from './adapter.ts'
-import { createNodePiDurableRuntime } from './composition.ts'
+import { reconcilePiCancellationHistory } from './cancellation-history.ts'
 import { SqliteDurableJournal } from './journal.ts'
 import {
   createMemoryCommittedCancellationAuthority,
@@ -29,7 +29,6 @@ async function prepareCase(directory) {
   let runs = 0
   const setup = fixture(directory, {
     now: () => at,
-    committedCancellationAuthority: authority,
   })
   const engineFactory = setup.options.engineFactory
   setup.options.engineFactory = async (...args) => {
@@ -98,1338 +97,341 @@ async function withCase(run) {
   }
 }
 
-function deferred() {
-  let resolve
-  let reject
-  const promise = new Promise((yes, no) => {
-    resolve = yes
-    reject = no
-  })
-  return { promise, resolve, reject }
-}
-
-async function prepareLiveCase(directory) {
-  const authority = createSqliteCommittedCancellationAuthority(
-    join(directory, 'cancellation-owner.sqlite'),
-    { now: () => at }
-  )
-  const started = deferred()
-  const stopped = deferred()
-  let aborts = 0
-  let runs = 0
-  const setup = fixture(directory, {
-    now: () => at,
-    committedCancellationAuthority: authority,
-    engineFactory: async (engineOptions) => ({
-      run: async () => {
-        runs += 1
-        const allowance = await engineOptions.authorizeInference({
-          sessionId: 'ses_01JABCDEF0123456789ABCDEFG',
-          inferenceId: 'pi-generation:live',
-          provider: 'test',
-          modelId: 'mock',
-        })
-        await allowance.assertActive()
-        started.resolve()
-        return new Promise((_resolve, reject) => {
-          stopped.reject = reject
-        })
-      },
-      cancel: async () => {
-        aborts += 1
-        if (aborts === 2) stopped.reject(new Error('scripted cancellation'))
-      },
-      close: async () => {},
-    }),
-  })
-  const adapter = new PiDurableRuntimeAdapter(setup.options)
-  const handle = await adapter.start(setup.request)
-  await started.promise
-  const retained = adapter.journal.get(handle.handleId)
-  authority.register({
-    handleId: handle.handleId,
-    executionId: setup.request.executionId,
-    attemptId: setup.request.attemptId,
-    workspaceId: setup.request.attemptBudget.workspaceId,
-    admissionDigest: digest(retained.admission),
-    productRevision: retained.admission.admission.authority.revision,
-    expiresAt: retained.admission.admission.authority.expiresAt,
-    deadlineAt,
-  })
+function proposal(context, patch = {}) {
+  const row = context.adapter.journal.get(context.handle.handleId)
+  const turnKey = row.detail.turn?.requestId ?? `pi-turn:${row.attemptId}:initial`
   return {
-    adapter,
-    authority,
-    handle,
-    request: { idempotencyKey: 'cancel:live-delivery', requestedAt: at },
-    aborts: () => aborts,
-    runs: () => runs,
-    stop: () => stopped.reject(new Error('test cleanup')),
+    handleId: row.handleId,
+    executionId: context.setup.request.executionId,
+    attemptId: row.attemptId,
+    workspaceId: context.setup.request.attemptBudget.workspaceId,
+    idempotencyKey: context.request.idempotencyKey,
+    requestedAt: at,
+    requestDigest: digest(context.request),
+    admissionDigest: digest(row.admission),
+    targetKind: 'untracked_generation',
+    turnKey,
+    generation: null,
+    ...patch,
   }
 }
-
-function generation(attemptId, turnKey, inferenceId) {
+function generation(context, id = 'G1') {
+  const target = proposal(context)
   return {
     schemaVersion: 'pi-inference-generation/v1',
-    attemptId,
-    turnKey,
-    inferenceId,
-    inferenceKey: `${turnKey}:${inferenceId}`,
+    attemptId: target.attemptId,
+    turnKey: target.turnKey,
+    inferenceId: id,
+    inferenceKey: `${target.turnKey}:${id}`,
   }
 }
-
-test('memory cancellation owner replays an old key and commits a distinct new key for the same handle', async () => {
-  const authority = createMemoryCommittedCancellationAuthority({ now: () => at })
-  const firstProposal = {
-    handleId: 'pi-durable:memory-keyed-owner',
-    idempotencyKey: 'cancel:G1',
-    requestDigest: digest({ idempotencyKey: 'cancel:G1', requestedAt: at }),
-  }
-  const first = await authority.commit(firstProposal)
-  expect(await authority.commit(firstProposal)).toEqual(first)
-
-  const secondProposal = {
-    ...firstProposal,
-    idempotencyKey: 'cancel:G2',
-    requestDigest: digest({ idempotencyKey: 'cancel:G2', requestedAt: at }),
-  }
-  const second = await authority.commit(secondProposal)
-  expect(second.intentId).not.toBe(first.intentId)
-  expect(await authority.commit(firstProposal)).toEqual(first)
-  expect(await authority.pending()).toEqual([first, second])
-  expect(authority.intentForHandle(first.handleId, first.idempotencyKey)).toEqual(first)
-  expect(authority.intentForHandle(first.handleId, second.idempotencyKey)).toEqual(second)
-
-  await authority.acknowledge(first.intentId)
-  expect(await authority.pending()).toEqual([second])
-})
-
-test('product revocation committed first denies cancellation with no outbox, journal write, or abort', async () => {
-  await withCase(async ({ adapter, authority, handle, request, aborts }) => {
-    authority.updateProductFence(handle.handleId, { revision: 2, active: false })
-
-    await expect(adapter.cancel(handle, request)).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
-
-    const journal = adapter.journal.get(handle.handleId)
-    expect(journal.state).toBe('running')
-    expect(journal.detail.cancellationIntent).toBeUndefined()
-    expect(authority.intentForHandle(handle.handleId)).toBeUndefined()
-    expect(aborts()).toBe(0)
+function patchRow(context, detail, state) {
+  const row = context.adapter.journal.get(context.handle.handleId)
+  return context.adapter.journal.update(context.handle.handleId, row.epoch, {
+    ...(state ? { state } : {}),
+    detail: { ...row.detail, ...detail },
   })
-})
+}
+function history(context, intent) {
+  return reconcilePiCancellationHistory(context.adapter.journal, intent, at)
+}
+function unchangedExceptHistory(before, after) {
+  const { cancellationResolutions: _before, ...bd } = before.detail
+  const { cancellationResolutions: _after, ...ad } = after.detail
+  expect({ ...after, detail: ad }).toEqual({ ...before, detail: bd })
+}
 
-test('deadline update committed first denies cancellation without changing the journal', async () => {
-  await withCase(async ({ adapter, authority, handle, request, aborts }) => {
-    authority.updateControlPlane(handle.handleId, {
-      executionVersion: 2,
-      deadlineAt: '2026-10-07T23:59:00.000Z',
-    })
-
-    await expect(adapter.cancel(handle, request)).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
-
-    const journal = adapter.journal.get(handle.handleId)
-    expect(journal.state).toBe('running')
-    expect(journal.detail.cancellationIntent).toBeUndefined()
-    expect(authority.intentForHandle(handle.handleId)).toBeUndefined()
-    expect(aborts()).toBe(0)
-  })
-})
-
-test('revocation between final authorization and owner commit is rejected before effect', async () => {
-  await withCase(async ({ adapter, authority, handle, request, aborts }) => {
-    const gate = authority.parkNextCommit()
-    const cancellation = adapter.cancel(handle, request)
-    await gate.entered
-
-    authority.updateProductFence(handle.handleId, { revision: 2, active: false })
-    gate.release()
-
-    await expect(cancellation).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
-
-    const journal = adapter.journal.get(handle.handleId)
-    expect(journal.state).toBe('running')
-    expect(journal.detail.cancellationIntent).toBeUndefined()
-    expect(authority.intentForHandle(handle.handleId)).toBeUndefined()
-    expect(aborts()).toBe(0)
-  })
-})
-
-test('committed cancellation wins later revocation and duplicate request reuses one intent', async () => {
-  await withCase(async ({ adapter, authority, handle, request, aborts }) => {
-    const first = await adapter.cancel(handle, request)
-    const committed = authority.intentForHandle(handle.handleId)
-    expect(first.state).toBe('cancelling')
-    expect(committed.intentId).toBe(
-      adapter.journal.get(handle.handleId).detail.cancellationIntent.authorityIntentId
-    )
-
-    authority.updateProductFence(handle.handleId, { revision: 2, active: false })
-    const replay = await adapter.cancel(handle, request)
+// Replacements for old #1048 committed-grant assertions. The SQLite owner below models
+// request retention only; it is disconnected from ordinary cancellation and native effects.
+test('retention replays immutable old keys, conflicts on digest drift and keeps new keys distinct', async () => {
+  await withCase(async (c) => {
+    const store = createMemoryCommittedCancellationAuthority({ now: () => at })
+    const first = await store.commit(proposal(c))
+    expect(await store.commit(proposal(c))).toEqual(first)
     await expect(
-      adapter.cancel(handle, { idempotencyKey: 'cancel:changed-owner-key', requestedAt: at })
-    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
-    authority.updateControlPlane(handle.handleId, {
-      executionVersion: 2,
-      deadlineAt: '2026-10-07T23:59:00.000Z',
-    })
-
-    expect(replay.state).toBe('cancelling')
-    expect(authority.intentForHandle(handle.handleId).intentId).toBe(committed.intentId)
-    expect(adapter.journal.get(handle.handleId).detail.cancellationIntent.authorityIntentId).toBe(
-      committed.intentId
-    )
-    expect(aborts()).toBe(0)
+      store.commit({ ...proposal(c), requestDigest: `sha256:${'f'.repeat(64)}` })
+    ).rejects.toThrow('CONFLICT')
+    const request = { ...c.request, idempotencyKey: 'G2' }
+    const next = await store.commit(proposal(c, { ...request, requestDigest: digest(request) }))
+    expect(next.intentId).not.toBe(first.intentId)
+    await store.acknowledge(first.intentId)
+    expect(await store.pending()).toEqual([next])
+    expect(c.aborts()).toBe(0)
   })
 })
-
-test('unknown commit response recovers the same intent after adapter reopen without resending inference', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'pi-cancel-unknown-'))
-  let context
-  let reopenedRuntime
-  try {
-    context = await prepareCase(directory)
-    context.authority.loseNextCommitResponse()
-    await expect(context.adapter.cancel(context.handle, context.request)).rejects.toThrow(
-      'PI_CANCELLATION_COMMIT_OUTCOME_UNKNOWN'
-    )
-    expect(context.adapter.journal.get(context.handle.handleId).state).toBe('running')
-    expect(
-      context.adapter.journal.get(context.handle.handleId).detail.cancellationIntent
-    ).toBeUndefined()
-    await expect(context.authority.pending()).resolves.toHaveLength(1)
-    expect(context.aborts()).toBe(0)
-
-    await context.adapter.close()
-    reopenedRuntime = await createNodePiDurableRuntime(context.setup.options)
-    context.adapter = reopenedRuntime.adapter
-    const retained = context.adapter.journal.get(context.handle.handleId)
-    const committed = context.authority.intentForHandle(context.handle.handleId)
-    expect(retained.state).toBe('cancelling')
-    expect(retained.detail.cancellationIntent.authorityIntentId).toBe(committed.intentId)
-    await expect(context.authority.pending()).resolves.toHaveLength(0)
-    expect(context.adapter.journal.get(context.handle.handleId).state).toBe('cancelling')
-    expect(context.runs()).toBe(1)
-  } finally {
-    if (reopenedRuntime) await reopenedRuntime.close()
-    else await context?.adapter.close()
-    context?.authority.close()
-    rmSync(directory, { recursive: true, force: true })
-  }
-})
-
-test('same-process same-key retry delivers a committed cancellation after authority revocation and a lost response', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'pi-cancel-unknown-retry-'))
-  let context
-  try {
-    context = await prepareLiveCase(directory)
-    let authorizationAvailable = true
-    const cancelFenced = (input = context.request) =>
-      context.adapter.cancelFenced(context.handle, input, async () => {
-        if (!authorizationAvailable) throw new Error('PI_LEAD_AUTHORITY_CONFLICT')
-      })
-    context.authority.loseNextCommitResponse()
-    await expect(cancelFenced()).rejects.toThrow('PI_CANCELLATION_COMMIT_OUTCOME_UNKNOWN')
-
-    const committed = context.authority.intentForHandle(context.handle.handleId)
-    expect(context.adapter.journal.get(context.handle.handleId).state).toBe('running')
-    expect(
-      context.adapter.journal.get(context.handle.handleId).detail.cancellationIntent
-    ).toBeUndefined()
-    await expect(context.authority.pendingForHandle(context.handle.handleId)).resolves.toEqual([
-      committed,
-    ])
-    expect(context.aborts()).toBe(0)
-
-    context.authority.updateProductFence(context.handle.handleId, {
-      revision: 2,
-      active: false,
-    })
-    authorizationAvailable = false
-    await expect(
-      cancelFenced({ ...context.request, requestedAt: '2026-10-08T00:01:00.000Z' })
-    ).rejects.toThrow('PI_CANCELLATION_INTENT_CONFLICT')
-    await expect(
-      cancelFenced({ ...context.request, idempotencyKey: 'cancel:different-pending-key' })
-    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
-    expect(context.aborts()).toBe(0)
-    await expect(context.authority.pendingForHandle(context.handle.handleId)).resolves.toEqual([
-      committed,
-    ])
-
-    const replay = await cancelFenced()
-
-    expect(replay.state).toBe('cancelling')
-    expect(
-      context.adapter.journal.get(context.handle.handleId).detail.cancellationIntent
-    ).toMatchObject({
-      authorityIntentId: committed.intentId,
-      requestDigest: committed.requestDigest,
-      generation: committed.generation,
-      turnKey: committed.turnKey,
-    })
-    expect(context.aborts()).toBe(1)
-    expect(context.runs()).toBe(1)
-    await expect(context.authority.pendingForHandle(context.handle.handleId)).resolves.toEqual([])
-  } finally {
-    context?.stop()
-    await context?.adapter.drain()
-    await context?.adapter.close()
-    context?.authority.close()
-    rmSync(directory, { recursive: true, force: true })
-  }
-})
-
-test('failed outbox acknowledgement retries delivery in the same live engine without rerunning inference', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'pi-cancel-ack-retry-'))
-  let context
-  try {
-    context = await prepareLiveCase(directory)
-    context.authority.failNextAcknowledge()
-
-    await expect(context.adapter.cancel(context.handle, context.request)).rejects.toThrow(
-      'PI_CANCELLATION_ACK_UNAVAILABLE'
-    )
-    expect(context.adapter.journal.get(context.handle.handleId).state).toBe('cancelling')
-    expect(context.aborts()).toBe(1)
-    await expect(context.authority.pending()).resolves.toHaveLength(1)
-    expect(context.runs()).toBe(1)
-
-    expect((await context.adapter.cancel(context.handle, context.request)).state).toBe('cancelling')
-    expect(context.aborts()).toBe(2)
-    await expect(context.authority.pending()).resolves.toHaveLength(0)
-    await context.adapter.recoverCommittedCancellationIntents()
-    expect(context.aborts()).toBe(2)
-    expect(context.runs()).toBe(1)
-    await context.adapter.drain()
-  } finally {
-    context?.stop()
-    await context?.adapter.drain()
-    await context?.adapter.close()
-    context?.authority.close()
-    rmSync(directory, { recursive: true, force: true })
-  }
-})
-
-test('restart acknowledges a cancellation applied before an acknowledgement failure', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'pi-cancel-ack-restart-'))
-  let context
-  let reopenedRuntime
-  try {
-    context = await prepareCase(directory)
-    context.authority.failNextAcknowledge()
-    await expect(context.adapter.cancel(context.handle, context.request)).rejects.toThrow(
-      'PI_CANCELLATION_ACK_UNAVAILABLE'
-    )
-    expect(context.adapter.journal.get(context.handle.handleId).state).toBe('cancelling')
-    await expect(context.authority.pending()).resolves.toHaveLength(1)
-
-    await context.adapter.close()
-    reopenedRuntime = await createNodePiDurableRuntime(context.setup.options)
-    expect(reopenedRuntime.adapter.journal.get(context.handle.handleId).state).toBe('cancelling')
-    await expect(context.authority.pending()).resolves.toHaveLength(0)
-    expect(context.runs()).toBe(1)
-  } finally {
-    if (reopenedRuntime) await reopenedRuntime.close()
-    else await context?.adapter.close()
-    context?.authority.close()
-    rmSync(directory, { recursive: true, force: true })
-  }
-})
-
-test('historical cancellation resolution survives the next run start and replays only its original generation', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'pi-cancel-cross-turn-ack-'))
-  const authority = createSqliteCommittedCancellationAuthority(
-    join(directory, 'cancellation-owner.sqlite'),
-    { now: () => at }
-  )
-  const started = [deferred(), deferred(), deferred()]
-  const finish = [deferred(), deferred(), deferred()]
-  const secondProviderEntered = deferred()
-  const releaseSecondProvider = deferred()
-  let runs = 0
-  let providerCalls = 0
-  let aborts = 0
-  let adapter
-  let reopened
-  try {
-    const { options, request } = fixture(directory, {
-      now: () => at,
-      committedCancellationAuthority: authority,
-      engineFactory: async (engineOptions) => ({
-        run: async () => {
-          const turn = runs++
-          const inferenceId = `pi-generation:turn-${turn + 1}`
-          const allowance = await engineOptions.authorizeInference({
-            sessionId: 'ses_01JABCDEF0123456789ABCDEFG',
-            inferenceId,
-            provider: 'test',
-            modelId: 'mock',
-          })
-          await allowance.assertActive()
-          started[turn].resolve()
-          await finish[turn].promise
-          return {
-            text: `answer ${turn + 1}`,
-            submissionId: `submission:${turn + 1}`,
-            usage: { inputTokens: 3, outputTokens: 4, costUsd: '0.000007', durationMs: 2 },
-            inferences: [
-              {
-                inferenceId,
-                usage: {
-                  inputTokens: 3,
-                  outputTokens: 4,
-                  durationMs: 2,
-                  cachedInputTokens: 0,
-                  reasoningTokens: 0,
-                },
-              },
-            ],
-          }
-        },
-        close: async () => {},
-        cancel: async () => {
-          aborts += 1
-        },
-      }),
-    })
-    const resolveProvider = options.resolveProvider
-    options.resolveProvider = async (...args) => {
-      providerCalls += 1
-      if (providerCalls === 3) {
-        secondProviderEntered.resolve()
-        await releaseSecondProvider.promise
+for (const reason of [
+  'revoked actor',
+  'expired authority',
+  'stale execution version',
+  'stale attempt version',
+  'deadline changed',
+]) {
+  test(`${reason} denies ordinary and fenced retry with zero journal or abort effect`, async () => {
+    await withCase(async (c) => {
+      const before = c.adapter.journal.get(c.handle.handleId)
+      if (reason === 'revoked actor')
+        c.authority.updateProductFence(c.handle.handleId, { revision: 2, active: false })
+      if (reason === 'expired authority')
+        c.authority.updateProductFence(c.handle.handleId, { revision: 1, expiresAt: at })
+      if (reason === 'stale execution version')
+        c.authority.updateControlPlane(c.handle.handleId, { executionVersion: 2 })
+      if (reason === 'stale attempt version')
+        c.authority.updateControlPlane(c.handle.handleId, { attemptVersion: 2 })
+      if (reason === 'deadline changed')
+        c.authority.updateControlPlane(c.handle.handleId, { deadlineAt: at })
+      // Actual SQLite retention admission rejects each changed binding. It is not a production
+      // cross-store authorization proof; ordinary cancellation separately honors its current port.
+      await expect(c.authority.commit(proposal(c))).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+      c.setup.options.assertAuthority = async () => {
+        throw new Error(reason)
       }
-      return resolveProvider(...args)
-    }
-    adapter = new PiDurableRuntimeAdapter(options)
-    const handle = await adapter.start(request)
-    await started[0].promise
-    const admitted = adapter.journal.get(handle.handleId)
-    const stored = admitted.admission
-    authority.register({
-      handleId: handle.handleId,
-      executionId: request.executionId,
-      attemptId: request.attemptId,
-      workspaceId: request.attemptBudget.workspaceId,
-      admissionDigest: digest(stored),
-      productRevision: stored.admission.authority.revision,
-      expiresAt: stored.admission.authority.expiresAt,
-      deadlineAt,
-    })
-    const firstTurn = `pi-turn:${request.attemptId}:initial`
-    const firstRequest = { idempotencyKey: 'cancel:turn-one', requestedAt: at }
-
-    authority.loseNextCommitResponse()
-    await expect(adapter.cancel(handle, firstRequest)).rejects.toThrow(
-      'PI_CANCELLATION_COMMIT_OUTCOME_UNKNOWN'
-    )
-    const firstIntent = authority.intentForKey(handle.handleId, firstRequest.idempotencyKey)
-    expect(firstIntent.generation.turnKey).toBe(firstTurn)
-    expect(firstIntent.generation.inferenceId).toBe('pi-generation:turn-1')
-    finish[0].resolve()
-    await adapter.drain()
-    await adapter.awaitInput(handle, 'int_01JABCDEF0123456789ABCDEFG')
-    await adapter.submitInput(handle, {
-      interactionId: 'int_01JABCDEF0123456789ABCDEFG',
-      idempotencyKey: 'input:two',
-      text: 'second turn',
-    })
-    await secondProviderEntered.promise
-    const starting = adapter.journal.get(handle.handleId)
-    expect(starting.state).toBe('starting')
-    authority.failNextAcknowledge()
-    await expect(adapter.cancel(handle, firstRequest)).rejects.toThrow(
-      'PI_CANCELLATION_ACK_UNAVAILABLE'
-    )
-    const resolvedDuringStart = adapter.journal.get(handle.handleId)
-    const cancellationKey = `cancel:${firstRequest.idempotencyKey}`
-    expect(resolvedDuringStart.epoch).toBe(starting.epoch)
-    expect(resolvedDuringStart.detail.actions[`cancel:${firstRequest.idempotencyKey}`]).toBe(
-      firstIntent.requestDigest
-    )
-    expect(resolvedDuringStart.detail.cancellationResolutions[cancellationKey]).toMatchObject({
-      authorityIntentId: firstIntent.intentId,
-      generation: firstIntent.generation,
-      resolution: 'target_generation_superseded',
-    })
-    expect(aborts).toBe(0)
-
-    releaseSecondProvider.resolve()
-    await started[1].promise
-    const afterRunStart = adapter.journal.get(handle.handleId)
-    expect(afterRunStart.detail.cancellationResolutions[cancellationKey]).toEqual(
-      resolvedDuringStart.detail.cancellationResolutions[cancellationKey]
-    )
-    expect(afterRunStart.detail.activeInference.turnKey).toBe(
-      `pi-input:${request.attemptId}:input:two`
-    )
-    expect(authority.intentForKey(handle.handleId, firstRequest.idempotencyKey)).toEqual(
-      firstIntent
-    )
-    expect(aborts).toBe(0)
-
-    authority.failNextAcknowledge()
-    await expect(adapter.cancel(handle, firstRequest)).rejects.toThrow(
-      'PI_CANCELLATION_ACK_UNAVAILABLE'
-    )
-    const persisted = adapter.journal.get(handle.handleId).detail.cancellationResolutions[
-      cancellationKey
-    ]
-    expect(persisted.generation.turnKey).toBe(firstTurn)
-    expect(persisted.observedGeneration).toBeNull()
-
-    authority.failNextAcknowledge()
-    await expect(adapter.cancel(handle, firstRequest)).rejects.toThrow(
-      'PI_CANCELLATION_ACK_UNAVAILABLE'
-    )
-
-    finish[1].resolve()
-    await adapter.drain()
-    await adapter.awaitInput(handle, 'int_01JBCDEF0123456789ABCDEFGH')
-    await adapter.submitInput(handle, {
-      interactionId: 'int_01JBCDEF0123456789ABCDEFGH',
-      idempotencyKey: 'input:three',
-      text: 'third turn',
-    })
-    await started[2].promise
-    finish[2].resolve()
-    await adapter.drain()
-
-    const current = adapter.journal.get(handle.handleId)
-    expect(current.detail.turn.requestId).toBe(`pi-input:${request.attemptId}:input:three`)
-    expect(current.detail.cancellationResolutions[cancellationKey]).toEqual(persisted)
-
-    const otherAttemptId = 'att_01JBBCDEF0123456789ABCDEFG'
-    for (const field of ['generation', 'observedGeneration']) {
-      const invalid = structuredClone(persisted)
-      invalid[field] = { ...invalid[field], attemptId: otherAttemptId }
-      const record = adapter.journal.get(handle.handleId)
-      adapter.journal.update(handle.handleId, record.epoch, {
-        detail: {
-          ...record.detail,
-          cancellationResolutions: {
-            ...record.detail.cancellationResolutions,
-            [cancellationKey]: invalid,
-          },
-        },
-      })
-      await expect(adapter.cancel(handle, firstRequest)).rejects.toThrow(
-        'PI_CANCELLATION_RESOLUTION_INVALID'
-      )
-      const restored = adapter.journal.get(handle.handleId)
-      adapter.journal.update(handle.handleId, restored.epoch, {
-        detail: {
-          ...restored.detail,
-          cancellationResolutions: {
-            ...restored.detail.cancellationResolutions,
-            [cancellationKey]: persisted,
-          },
-        },
-      })
-    }
-
-    authority.failNextAcknowledge()
-    await expect(adapter.cancel(handle, firstRequest)).rejects.toThrow(
-      'PI_CANCELLATION_ACK_UNAVAILABLE'
-    )
-    await adapter.close()
-    adapter = undefined
-    reopened = new PiDurableRuntimeAdapter(options)
-    await expect(reopened.recoverCommittedCancellationIntents()).resolves.toEqual([])
-    await expect(authority.pending()).resolves.toHaveLength(0)
-    expect((await reopened.cancel(handle, firstRequest)).state).toBe('completed')
-    expect(runs).toBe(3)
-  } finally {
-    releaseSecondProvider.resolve()
-    for (const gate of finish) gate.resolve()
-    if (adapter) {
-      await adapter.drain()
-      await adapter.close()
-    }
-    await reopened?.close()
-    authority.close()
-    rmSync(directory, { recursive: true, force: true })
-  }
-})
-
-test('lost no-generation cancellation responses cannot cancel later turns after authority revocation', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'pi-cancel-no-generation-cross-turn-'))
-  const authority = createSqliteCommittedCancellationAuthority(
-    join(directory, 'cancellation-owner.sqlite'),
-    { now: () => at }
-  )
-  const entered = [deferred(), deferred(), deferred()]
-  const allowInference = [deferred(), deferred(), deferred()]
-  const inferenceStarted = [deferred(), deferred(), deferred()]
-  let runs = 0
-  let aborts = 0
-  let adapter
-  try {
-    const { options, request } = fixture(directory, {
-      now: () => at,
-      committedCancellationAuthority: authority,
-      engineFactory: async (engineOptions) => {
-        const turn = runs++
-        return {
-          run: async () => {
-            entered[turn].resolve()
-            await allowInference[turn].promise
-            const inferenceId = `pi-generation:turn-${turn + 1}`
-            const allowance = await engineOptions.authorizeInference({
-              sessionId: 'ses_01JABCDEF0123456789ABCDEFG',
-              inferenceId,
-              provider: 'test',
-              modelId: 'mock',
-            })
-            await allowance.assertActive()
-            inferenceStarted[turn].resolve()
-            return {
-              text: `turn ${turn + 1}`,
-              submissionId: `submission:${turn + 1}`,
-              usage: { inputTokens: 3, outputTokens: 4, costUsd: '0.000007', durationMs: 2 },
-              inferences: [
-                {
-                  inferenceId,
-                  usage: {
-                    inputTokens: 3,
-                    outputTokens: 4,
-                    durationMs: 2,
-                    cachedInputTokens: 0,
-                    reasoningTokens: 0,
-                  },
-                },
-              ],
-            }
-          },
-          close: async () => {},
-          cancel: async () => {
-            aborts += 1
-          },
-        }
-      },
-    })
-    adapter = new PiDurableRuntimeAdapter(options)
-    const handle = await adapter.start(request)
-    await entered[0].promise
-    const admitted = adapter.journal.get(handle.handleId)
-    const stored = admitted.admission
-    authority.register({
-      handleId: handle.handleId,
-      executionId: request.executionId,
-      attemptId: request.attemptId,
-      workspaceId: request.attemptBudget.workspaceId,
-      admissionDigest: digest(stored),
-      productRevision: stored.admission.authority.revision,
-      expiresAt: stored.admission.authority.expiresAt,
-      deadlineAt,
-    })
-
-    const untrackedRequest = { idempotencyKey: 'cancel:untracked-turn-one', requestedAt: at }
-    const firstTurn = `pi-turn:${request.attemptId}:initial`
-    authority.loseNextCommitResponse()
-    await expect(adapter.cancel(handle, untrackedRequest)).rejects.toThrow(
-      'PI_CANCELLATION_COMMIT_OUTCOME_UNKNOWN'
-    )
-    expect(
-      authority.intentForHandle(handle.handleId, untrackedRequest.idempotencyKey)
-    ).toMatchObject({
-      targetKind: 'untracked_generation',
-      generation: null,
-    })
-
-    allowInference[0].resolve()
-    await inferenceStarted[0].promise
-    await adapter.drain()
-    await adapter.awaitInput(handle, 'int_01JABCDEF0123456789ABCDEFG')
-    await adapter.submitInput(handle, {
-      interactionId: 'int_01JABCDEF0123456789ABCDEFG',
-      idempotencyKey: 'input:no-generation-turn-two',
-      text: 'second turn',
-    })
-    await entered[1].promise
-    const secondTurn = `pi-input:${request.attemptId}:input:no-generation-turn-two`
-
-    expect((await adapter.cancel(handle, untrackedRequest)).state).toBe('running')
-    let retained = adapter.journal.get(handle.handleId)
-    expect(retained.state).toBe('running')
-    expect(retained.detail.cancellationIntent).toBeUndefined()
-    expect(
-      retained.detail.cancellationResolutions[`cancel:${untrackedRequest.idempotencyKey}`]
-    ).toMatchObject({
-      targetKind: 'untracked_generation',
-      turnKey: firstTurn,
-      generation: null,
-      observedGeneration: null,
-    })
-    expect(aborts).toBe(0)
-    await expect(authority.pending()).resolves.toHaveLength(0)
-
-    allowInference[1].resolve()
-    await inferenceStarted[1].promise
-    await adapter.drain()
-    await adapter.awaitInput(handle, 'int_01JBBCDEF0123456789ABCDEFG')
-
-    const noGenerationRequest = { idempotencyKey: 'cancel:no-active-turn-two', requestedAt: at }
-    authority.loseNextCommitResponse()
-    await expect(adapter.cancel(handle, noGenerationRequest)).rejects.toThrow(
-      'PI_CANCELLATION_COMMIT_OUTCOME_UNKNOWN'
-    )
-    expect(
-      authority.intentForHandle(handle.handleId, noGenerationRequest.idempotencyKey)
-    ).toMatchObject({
-      targetKind: 'no_active_generation',
-      generation: null,
-    })
-
-    await adapter.submitInput(handle, {
-      interactionId: 'int_01JBBCDEF0123456789ABCDEFG',
-      idempotencyKey: 'input:no-generation-turn-three',
-      text: 'third turn',
-    })
-    await entered[2].promise
-    const thirdTurn = `pi-input:${request.attemptId}:input:no-generation-turn-three`
-    authority.updateProductFence(handle.handleId, { revision: 2, active: false })
-    const retry = await adapter.cancelFenced(handle, noGenerationRequest, async () => {
-      throw new Error('PI_LEAD_AUTHORITY_CONFLICT')
-    })
-    expect(retry.state).toBe('running')
-    retained = adapter.journal.get(handle.handleId)
-    expect(retained.state).toBe('running')
-    expect(retained.detail.cancellationIntent).toBeUndefined()
-    expect(
-      retained.detail.cancellationResolutions[`cancel:${noGenerationRequest.idempotencyKey}`]
-    ).toMatchObject({
-      targetKind: 'no_active_generation',
-      turnKey: secondTurn,
-      generation: null,
-      observedGeneration: null,
-    })
-    expect(aborts).toBe(0)
-    await expect(authority.pending()).resolves.toHaveLength(0)
-
-    const corrupt = adapter.journal.get(handle.handleId)
-    const key = `cancel:${noGenerationRequest.idempotencyKey}`
-    const invalid = {
-      ...corrupt.detail.cancellationResolutions[key],
-      turnKey: thirdTurn,
-    }
-    adapter.journal.update(handle.handleId, corrupt.epoch, {
-      detail: {
-        ...corrupt.detail,
-        cancellationResolutions: { ...corrupt.detail.cancellationResolutions, [key]: invalid },
-      },
-    })
-    await expect(adapter.cancel(handle, noGenerationRequest)).rejects.toThrow(
-      'PI_CANCELLATION_INTENT_CONFLICT'
-    )
-
-    allowInference[2].resolve()
-    await inferenceStarted[2].promise
-    await adapter.drain()
-    expect(adapter.journal.get(handle.handleId).state).toBe('completed')
-    expect(aborts).toBe(0)
-  } finally {
-    for (const gate of allowInference) gate.resolve()
-    if (adapter) {
-      await adapter.drain()
-      await adapter.close()
-    }
-    authority.close()
-    rmSync(directory, { recursive: true, force: true })
-  }
-})
-
-test('lost untracked cancellation cannot abort a tracked generation authorized later in the same turn', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'pi-cancel-untracked-same-turn-replay-'))
-  const authority = createSqliteCommittedCancellationAuthority(
-    join(directory, 'cancellation-owner.sqlite'),
-    { now: () => at }
-  )
-  const engineEntered = deferred()
-  const allowAuthorization = deferred()
-  const inferenceStarted = deferred()
-  const allowCompletion = deferred()
-  let aborts = 0
-  let adapter
-  try {
-    const { options, request } = fixture(directory, {
-      now: () => at,
-      committedCancellationAuthority: authority,
-      engineFactory: async (engineOptions) => ({
-        run: async () => {
-          engineEntered.resolve()
-          await allowAuthorization.promise
-          const inferenceId = 'pi-generation:same-turn-replay'
-          const allowance = await engineOptions.authorizeInference({
-            sessionId: 'ses_01JABCDEF0123456789ABCDEFG',
-            inferenceId,
-            provider: 'test',
-            modelId: 'mock',
-          })
-          await allowance.assertActive()
-          inferenceStarted.resolve()
-          await allowCompletion.promise
-          return {
-            text: 'same-turn result',
-            submissionId: 'submission:same-turn-replay',
-            usage: { inputTokens: 3, outputTokens: 4, costUsd: '0.000007', durationMs: 2 },
-            inferences: [
-              {
-                inferenceId,
-                usage: {
-                  inputTokens: 3,
-                  outputTokens: 4,
-                  durationMs: 2,
-                  cachedInputTokens: 0,
-                  reasoningTokens: 0,
-                },
-              },
-            ],
-          }
-        },
-        close: async () => {},
-        cancel: async () => {
-          aborts += 1
-        },
-      }),
-    })
-    adapter = new PiDurableRuntimeAdapter(options)
-    const handle = await adapter.start(request)
-    await engineEntered.promise
-    const admitted = adapter.journal.get(handle.handleId)
-    const stored = admitted.admission
-    authority.register({
-      handleId: handle.handleId,
-      executionId: request.executionId,
-      attemptId: request.attemptId,
-      workspaceId: request.attemptBudget.workspaceId,
-      admissionDigest: digest(stored),
-      productRevision: stored.admission.authority.revision,
-      expiresAt: stored.admission.authority.expiresAt,
-      deadlineAt,
-    })
-
-    const oldRequest = { idempotencyKey: 'cancel:untracked-same-turn', requestedAt: at }
-    authority.loseNextCommitResponse()
-    await expect(adapter.cancel(handle, oldRequest)).rejects.toThrow(
-      'PI_CANCELLATION_COMMIT_OUTCOME_UNKNOWN'
-    )
-    expect(authority.intentForHandle(handle.handleId, oldRequest.idempotencyKey)).toMatchObject({
-      targetKind: 'untracked_generation',
-      generation: null,
-    })
-
-    allowAuthorization.resolve()
-    await inferenceStarted.promise
-    const generationBeforeRetry = adapter.journal.get(handle.handleId).detail.activeInference
-    expect(generationBeforeRetry.inferenceId).toBe('pi-generation:same-turn-replay')
-
-    expect((await adapter.cancel(handle, oldRequest)).state).toBe('running')
-    const retained = adapter.journal.get(handle.handleId)
-    expect(retained.state).toBe('running')
-    expect(retained.detail.cancellationIntent).toBeUndefined()
-    expect(
-      retained.detail.cancellationResolutions[`cancel:${oldRequest.idempotencyKey}`]
-    ).toMatchObject({
-      targetKind: 'untracked_generation',
-      generation: null,
-      resolution: 'target_generation_superseded',
-      observedGeneration: generationBeforeRetry,
-    })
-    expect(aborts).toBe(0)
-    await expect(authority.pending()).resolves.toHaveLength(0)
-
-    allowCompletion.resolve()
-    await adapter.drain()
-    expect(adapter.journal.get(handle.handleId).state).toBe('completed')
-    expect(aborts).toBe(0)
-  } finally {
-    allowAuthorization.resolve()
-    allowCompletion.resolve()
-    if (adapter) {
-      await adapter.drain()
-      await adapter.close()
-    }
-    authority.close()
-    rmSync(directory, { recursive: true, force: true })
-  }
-})
-
-test('same-key retry reconciles G1 while a new key can commit cancellation for G2', async () => {
-  await withCase(async ({ adapter, authority, handle, request, aborts }) => {
-    const initial = adapter.journal.get(handle.handleId)
-    const turnKey = `pi-turn:${initial.attemptId}:initial`
-    const firstGeneration = generation(initial.attemptId, turnKey, 'pi-generation:first')
-    adapter.journal.update(handle.handleId, initial.epoch, {
-      detail: { ...initial.detail, activeInference: firstGeneration },
-    })
-    authority.loseNextCommitResponse()
-
-    await expect(adapter.cancel(handle, request)).rejects.toThrow(
-      'PI_CANCELLATION_COMMIT_OUTCOME_UNKNOWN'
-    )
-    const secondGeneration = generation(initial.attemptId, turnKey, 'pi-generation:second')
-    const afterUnknown = adapter.journal.get(handle.handleId)
-    adapter.journal.update(handle.handleId, afterUnknown.epoch, {
-      detail: { ...afterUnknown.detail, activeInference: secondGeneration },
-    })
-
-    expect((await adapter.cancel(handle, request)).state).toBe('running')
-    const retained = adapter.journal.get(handle.handleId)
-    expect(retained.state).toBe('running')
-    expect(retained.detail.activeInference).toEqual(secondGeneration)
-    expect(retained.detail.cancellationIntent).toBeUndefined()
-    expect(retained.detail.cancellationResolutions).toMatchObject({
-      [`cancel:${request.idempotencyKey}`]: {
-        authorityIntentId: authority.intentForHandle(handle.handleId).intentId,
-        resolution: 'target_generation_superseded',
-        generation: firstGeneration,
-      },
-    })
-    expect(aborts()).toBe(0)
-    await expect(authority.pending()).resolves.toHaveLength(0)
-
-    const firstIntent = authority.intentForKey(handle.handleId, request.idempotencyKey)
-    const g2Request = { idempotencyKey: 'cancel:committed:G2', requestedAt: at }
-    expect((await adapter.cancel(handle, g2Request)).state).toBe('cancelling')
-    const secondIntent = authority.intentForKey(handle.handleId, g2Request.idempotencyKey)
-    expect(secondIntent.intentId).not.toBe(firstIntent.intentId)
-    expect(secondIntent.generation).toEqual(secondGeneration)
-    const afterG2Cancel = adapter.journal.get(handle.handleId)
-    expect(afterG2Cancel.detail.cancellationIntent.authorityIntentId).toBe(secondIntent.intentId)
-    expect(afterG2Cancel.detail.cancellationIntent.generation).toEqual(secondGeneration)
-
-    // Replaying the immutable G1 key still returns its original owner intent and leaves G2 intact.
-    expect((await adapter.cancel(handle, request)).state).toBe('cancelling')
-    expect(authority.intentForKey(handle.handleId, request.idempotencyKey)).toEqual(firstIntent)
-    expect(adapter.journal.get(handle.handleId).detail.cancellationIntent.authorityIntentId).toBe(
-      secondIntent.intentId
-    )
-    expect(aborts()).toBe(0)
-    await expect(authority.pending()).resolves.toHaveLength(0)
-  })
-})
-
-test('startup acknowledges pending G1 after G2 cancellation without replacing G2 state', async () => {
-  await withCase(async ({ adapter, authority, handle, request, aborts }) => {
-    const initial = adapter.journal.get(handle.handleId)
-    const turnKey = `pi-turn:${initial.attemptId}:initial`
-    const firstGeneration = generation(initial.attemptId, turnKey, 'pi-generation:first')
-    adapter.journal.update(handle.handleId, initial.epoch, {
-      detail: { ...initial.detail, activeInference: firstGeneration },
-    })
-    authority.loseNextCommitResponse()
-    await expect(adapter.cancel(handle, request)).rejects.toThrow(
-      'PI_CANCELLATION_COMMIT_OUTCOME_UNKNOWN'
-    )
-
-    const secondGeneration = generation(initial.attemptId, turnKey, 'pi-generation:second')
-    const afterUnknown = adapter.journal.get(handle.handleId)
-    adapter.journal.update(handle.handleId, afterUnknown.epoch, {
-      detail: { ...afterUnknown.detail, activeInference: secondGeneration },
-    })
-    const secondRequest = { idempotencyKey: 'cancel:committed:G2', requestedAt: at }
-    expect((await adapter.cancel(handle, secondRequest)).state).toBe('cancelling')
-    const secondIntent = authority.intentForKey(handle.handleId, secondRequest.idempotencyKey)
-
-    await expect(adapter.recoverCommittedCancellationIntents()).resolves.toEqual([])
-
-    const retained = adapter.journal.get(handle.handleId)
-    expect(retained.state).toBe('cancelling')
-    expect(retained.detail.activeInference).toEqual(secondGeneration)
-    expect(retained.detail.cancellationIntent.authorityIntentId).toBe(secondIntent.intentId)
-    expect(retained.detail.cancellationIntent.generation).toEqual(secondGeneration)
-    expect(retained.detail.cancellationResolutions).toMatchObject({
-      [`cancel:${request.idempotencyKey}`]: {
-        resolution: 'target_generation_superseded',
-        generation: firstGeneration,
-      },
-    })
-    expect(aborts()).toBe(0)
-    await expect(authority.pendingHandles()).resolves.toEqual([])
-  })
-})
-
-test('startup honors a persisted G1 resolution after ACK failed and G2 was cancelled', async () => {
-  await withCase(async ({ adapter, authority, handle, request, aborts }) => {
-    const initial = adapter.journal.get(handle.handleId)
-    const turnKey = `pi-turn:${initial.attemptId}:initial`
-    const firstGeneration = generation(initial.attemptId, turnKey, 'pi-generation:first')
-    adapter.journal.update(handle.handleId, initial.epoch, {
-      detail: { ...initial.detail, activeInference: firstGeneration },
-    })
-    authority.loseNextCommitResponse()
-    await expect(adapter.cancel(handle, request)).rejects.toThrow(
-      'PI_CANCELLATION_COMMIT_OUTCOME_UNKNOWN'
-    )
-    const secondGeneration = generation(initial.attemptId, turnKey, 'pi-generation:second')
-    const afterUnknown = adapter.journal.get(handle.handleId)
-    adapter.journal.update(handle.handleId, afterUnknown.epoch, {
-      detail: { ...afterUnknown.detail, activeInference: secondGeneration },
-    })
-
-    authority.failNextAcknowledge()
-    await expect(adapter.cancel(handle, request)).rejects.toThrow('PI_CANCELLATION_ACK_UNAVAILABLE')
-    const persistedResolution = adapter.journal.get(handle.handleId).detail.cancellationResolutions[
-      `cancel:${request.idempotencyKey}`
-    ]
-    expect(persistedResolution.generation).toEqual(firstGeneration)
-
-    const secondRequest = { idempotencyKey: 'cancel:committed:G2', requestedAt: at }
-    expect((await adapter.cancel(handle, secondRequest)).state).toBe('cancelling')
-    const secondIntent = authority.intentForKey(handle.handleId, secondRequest.idempotencyKey)
-
-    await expect(adapter.recoverCommittedCancellationIntents()).resolves.toEqual([])
-
-    const retained = adapter.journal.get(handle.handleId)
-    expect(retained.state).toBe('cancelling')
-    expect(retained.detail.activeInference).toEqual(secondGeneration)
-    expect(retained.detail.cancellationIntent.authorityIntentId).toBe(secondIntent.intentId)
-    expect(retained.detail.cancellationIntent.generation).toEqual(secondGeneration)
-    expect(retained.detail.cancellationResolutions[`cancel:${request.idempotencyKey}`]).toEqual(
-      persistedResolution
-    )
-    expect(aborts()).toBe(0)
-    await expect(authority.pendingHandles()).resolves.toEqual([])
-  })
-})
-
-test('current-intent application reclassifies same-epoch G2 metadata atomically', async () => {
-  await withCase(async ({ adapter, authority, handle, request, aborts, directory }) => {
-    const initial = adapter.journal.get(handle.handleId)
-    const turnKey = `pi-turn:${initial.attemptId}:initial`
-    const firstGeneration = generation(initial.attemptId, turnKey, 'pi-generation:first')
-    adapter.journal.update(handle.handleId, initial.epoch, {
-      detail: { ...initial.detail, activeInference: firstGeneration },
-    })
-    authority.loseNextCommitResponse()
-    await expect(adapter.cancel(handle, request)).rejects.toThrow(
-      'PI_CANCELLATION_COMMIT_OUTCOME_UNKNOWN'
-    )
-
-    const secondGeneration = generation(initial.attemptId, turnKey, 'pi-generation:second')
-    const competingJournal = new SqliteDurableJournal(join(directory, 'authority.sqlite'))
-    let injected = false
-    const originalTransition = adapter.journal.transitionCurrent.bind(adapter.journal)
-    adapter.journal.transitionCurrent = (...args) => {
-      if (!injected) {
-        injected = true
-        const current = competingJournal.get(handle.handleId)
-        expect(current.state).toBe('running')
-        competingJournal.updateCurrentMetadata(handle.handleId, (fresh) => {
-          expect(fresh.epoch).toBe(current.epoch)
-          return {
-            value: undefined,
-            detail: { activeInference: secondGeneration, g2OwnerMarker: 'live-G2' },
-          }
+      await expect(c.adapter.cancel(c.handle, c.request)).rejects.toThrow()
+      await expect(
+        c.adapter.cancelFenced(c.handle, c.request, async () => {
+          throw new Error(reason)
         })
-      }
-      return originalTransition(...args)
-    }
-    try {
-      expect((await adapter.cancel(handle, request)).state).toBe('running')
-      expect(injected).toBe(true)
-      const retained = adapter.journal.get(handle.handleId)
-      expect(retained.state).toBe('running')
-      expect(retained.detail.activeInference).toEqual(secondGeneration)
-      expect(retained.detail.g2OwnerMarker).toBe('live-G2')
-      expect(retained.detail.cancellationIntent).toBeUndefined()
-      expect(
-        retained.detail.cancellationResolutions[`cancel:${request.idempotencyKey}`]
-      ).toMatchObject({
-        generation: firstGeneration,
-        resolution: 'target_generation_superseded',
-      })
-      expect(aborts()).toBe(0)
-      await expect(authority.pendingHandles()).resolves.toEqual([])
-    } finally {
-      competingJournal.close()
-    }
+      ).rejects.toThrow(reason)
+      expect(c.adapter.journal.get(c.handle.handleId)).toEqual(before)
+      expect(c.aborts()).toBe(0)
+      expect(await c.authority.pending()).toEqual([])
+    })
+  })
+}
+test('revocation while the fenced authority read is pending causes zero effect', async () => {
+  await withCase(async (c) => {
+    let enter, release
+    const entered = new Promise((r) => {
+      enter = r
+    })
+    const gate = new Promise((r) => {
+      release = r
+    })
+    let revoked = false
+    const before = c.adapter.journal.get(c.handle.handleId)
+    const cancel = c.adapter.cancelFenced(c.handle, c.request, async () => {
+      enter()
+      await gate
+      if (revoked) throw new Error('revoked while pending')
+    })
+    await entered
+    revoked = true
+    release()
+    await expect(cancel).rejects.toThrow('revoked while pending')
+    expect(c.adapter.journal.get(c.handle.handleId)).toEqual(before)
+    expect(c.aborts()).toBe(0)
   })
 })
-
-test('one corrupt outbox handle does not block another handle recovery', async () => {
-  await withCase(async ({ adapter, authority, setup, request, handle, aborts }) => {
-    const secondRequest = structuredClone(setup.request)
-    secondRequest.executionId = 'exe_01JBBCDEF0123456789ABCDEFG'
-    secondRequest.attemptId = 'att_01JBBCDEF0123456789ABCDEFG'
-    secondRequest.idempotencyKey = 'message:two'
-    secondRequest.attemptBudget.executionId = secondRequest.executionId
-    secondRequest.attemptBudget.attemptId = secondRequest.attemptId
-    secondRequest.attemptBudget.reservationKey = `runtime-attempt:${secondRequest.attemptId}`
-    const secondHandle = await adapter.start(secondRequest)
-    await adapter.drain()
-    const secondCompleted = adapter.journal.get(secondHandle.handleId)
-    const secondStored = secondCompleted.admission
-    adapter.journal.update(secondHandle.handleId, secondCompleted.epoch, {
-      state: 'running',
-      detail: {
-        ...secondCompleted.detail,
-        result: undefined,
-        error: undefined,
-        engineRunStarted: true,
-        activeInference: undefined,
-        inferencePending: true,
-      },
-    })
-    authority.register({
-      handleId: secondHandle.handleId,
-      executionId: secondRequest.executionId,
-      attemptId: secondRequest.attemptId,
-      workspaceId: secondRequest.attemptBudget.workspaceId,
-      admissionDigest: digest(secondStored),
-      productRevision: secondStored.admission.authority.revision,
-      expiresAt: secondStored.admission.authority.expiresAt,
-      deadlineAt,
-    })
-
-    authority.loseNextCommitResponse()
-    await expect(adapter.cancel(handle, request)).rejects.toThrow(
-      'PI_CANCELLATION_COMMIT_OUTCOME_UNKNOWN'
-    )
-    const secondCancel = { idempotencyKey: 'cancel:handle-two', requestedAt: at }
-    authority.failNextAcknowledge()
-    await expect(adapter.cancel(secondHandle, secondCancel)).rejects.toThrow(
-      'PI_CANCELLATION_ACK_UNAVAILABLE'
-    )
-    authority.corruptPendingBody(handle.handleId, request.idempotencyKey)
-
-    await expect(adapter.recoverCommittedCancellationIntents()).resolves.toEqual([handle.handleId])
-
-    expect(adapter.journal.get(secondHandle.handleId).state).toBe('cancelling')
-    expect(adapter.journal.get(secondHandle.handleId).detail.cancellationIntent.requestDigest).toBe(
-      digest(secondCancel)
-    )
-    await expect(authority.pendingHandles()).resolves.toEqual([handle.handleId])
-    await expect(authority.pendingForHandle(secondHandle.handleId)).resolves.toEqual([])
-    await expect(authority.pendingForHandle(handle.handleId)).rejects.toThrow()
-    expect(aborts()).toBe(0)
-
-    const reopenedRuntime = await createNodePiDurableRuntime(setup.options)
-    try {
-      expect(reopenedRuntime.recoveryBlocked).toContainEqual({
-        handleId: handle.handleId,
-        code: 'PI_CANCELLATION_RECOVERY_UNAVAILABLE',
-      })
-      expect(reopenedRuntime.adapter.journal.get(handle.handleId).state).toBe('running')
-    } finally {
-      await reopenedRuntime.close()
+test('retained same key after revocation remains evidence and cannot bypass current ordinary or fenced authorization', async () => {
+  await withCase(async (c) => {
+    const intent = await c.authority.commit(proposal(c))
+    c.authority.updateProductFence(c.handle.handleId, { revision: 2, active: false })
+    expect(await c.authority.commit(proposal(c))).toEqual(intent)
+    c.setup.options.assertAuthority = async () => {
+      throw new Error('revoked')
     }
-  })
-})
-
-test('startup outbox recovery safely resolves an old generation while a newer one is active', async () => {
-  await withCase(async ({ adapter, authority, handle, request, aborts }) => {
-    const initial = adapter.journal.get(handle.handleId)
-    const turnKey = `pi-turn:${initial.attemptId}:initial`
-    const firstGeneration = generation(initial.attemptId, turnKey, 'pi-generation:first')
-    adapter.journal.update(handle.handleId, initial.epoch, {
-      detail: { ...initial.detail, activeInference: firstGeneration },
-    })
-    authority.loseNextCommitResponse()
-    await expect(adapter.cancel(handle, request)).rejects.toThrow(
-      'PI_CANCELLATION_COMMIT_OUTCOME_UNKNOWN'
-    )
-    const secondGeneration = generation(initial.attemptId, turnKey, 'pi-generation:second')
-    const afterUnknown = adapter.journal.get(handle.handleId)
-    adapter.journal.update(handle.handleId, afterUnknown.epoch, {
-      detail: { ...afterUnknown.detail, activeInference: secondGeneration },
-    })
-
-    await adapter.recoverCommittedCancellationIntents()
-
-    const retained = adapter.journal.get(handle.handleId)
-    expect(retained.state).toBe('running')
-    expect(retained.detail.activeInference).toEqual(secondGeneration)
-    expect(retained.detail.cancellationIntent).toBeUndefined()
-    expect(retained.detail.cancellationResolutions).toMatchObject({
-      [`cancel:${request.idempotencyKey}`]: {
-        authorityIntentId: authority.intentForHandle(handle.handleId).intentId,
-        resolution: 'target_generation_superseded',
-        generation: firstGeneration,
-      },
-    })
-    expect(aborts()).toBe(0)
-    await expect(authority.pending()).resolves.toHaveLength(0)
-  })
-})
-
-test('superseded cancellation merge preserves a same-epoch G2 completion from another journal connection', async () => {
-  await withCase(async ({ adapter, authority, handle, request, directory, completedResult }) => {
-    const initial = adapter.journal.get(handle.handleId)
-    const turnKey = `pi-turn:${initial.attemptId}:initial`
-    const firstGeneration = generation(initial.attemptId, turnKey, 'pi-generation:first')
-    adapter.journal.update(handle.handleId, initial.epoch, {
-      detail: { ...initial.detail, activeInference: firstGeneration },
-    })
-    authority.loseNextCommitResponse()
-    await expect(adapter.cancel(handle, request)).rejects.toThrow(
-      'PI_CANCELLATION_COMMIT_OUTCOME_UNKNOWN'
-    )
-
-    const secondGeneration = generation(initial.attemptId, turnKey, 'pi-generation:second')
-    const afterUnknown = adapter.journal.get(handle.handleId)
-    adapter.journal.update(handle.handleId, afterUnknown.epoch, {
-      detail: {
-        ...afterUnknown.detail,
-        activeInference: secondGeneration,
-        inferencePending: true,
-      },
-    })
-    const stale = adapter.journal.get(handle.handleId)
-    const competingJournal = new SqliteDurableJournal(join(directory, 'authority.sqlite'))
-    let injected = false
-    const interleave = () => {
-      if (injected) return
-      injected = true
-      const current = competingJournal.get(handle.handleId)
-      expect(current.epoch).toBe(stale.epoch)
-      const completedRecordResult = structuredClone(completedResult)
-      completedRecordResult.output = { text: 'G2 completed concurrently' }
-      competingJournal.update(handle.handleId, current.epoch, {
-        state: 'completed',
-        detail: {
-          ...current.detail,
-          activeInference: undefined,
-          inferencePending: false,
-          result: completedRecordResult,
-          inferenceReceipts: {
-            ...current.detail.inferenceReceipts,
-            [secondGeneration.inferenceKey]: { state: 'settled', usage: { inputTokens: 5 } },
-          },
-        },
-      })
-    }
-    const originalTransition = adapter.journal.transitionCurrent.bind(adapter.journal)
-    adapter.journal.transitionCurrent = (...args) => {
-      interleave()
-      return originalTransition(...args)
-    }
-    try {
-      expect((await adapter.cancel(handle, request)).state).toBe('completed')
-      expect(injected).toBe(true)
-      const retained = adapter.journal.get(handle.handleId)
-      expect(retained.epoch).toBe(stale.epoch)
-      expect(retained.state).toBe('completed')
-      expect(retained.detail.result.output).toEqual({ text: 'G2 completed concurrently' })
-      expect(retained.detail.inferenceReceipts[secondGeneration.inferenceKey]).toEqual({
-        state: 'settled',
-        usage: { inputTokens: 5 },
-      })
-      expect(retained.detail.activeInference).toBeUndefined()
-      expect(retained.detail.inferencePending).toBe(false)
-      expect(retained.detail.cancellationResolutions).toMatchObject({
-        [`cancel:${request.idempotencyKey}`]: {
-          generation: firstGeneration,
-          resolution: 'target_generation_superseded',
-        },
-      })
-      await expect(authority.pending()).resolves.toHaveLength(0)
-    } finally {
-      competingJournal.close()
-    }
-  })
-})
-
-test('legacy cancellation action without a committed intent ID cannot replay as authorized', async () => {
-  await withCase(async ({ adapter, authority, handle, aborts }) => {
-    const request = { idempotencyKey: 'cancel:legacy', requestedAt: at }
-    const requestDigest = digest(request)
-    const record = adapter.journal.get(handle.handleId)
-    adapter.journal.update(handle.handleId, record.epoch, {
-      state: 'cancelling',
-      detail: {
-        ...record.detail,
-        actions: { [`cancel:${request.idempotencyKey}`]: requestDigest },
-        cancellationIntent: {
-          schemaVersion: 'pi-cancellation-intent/v1',
-          attemptId: record.attemptId,
-          turnKey: `pi-turn:${record.attemptId}:initial`,
-          requestedAt: at,
-          requestDigest,
-          targetKind: 'untracked_generation',
-          generation: null,
-        },
-      },
-    })
-    let authorizeCalls = 0
-
+    const before = c.adapter.journal.get(c.handle.handleId)
+    await expect(c.adapter.cancel(c.handle, c.request)).rejects.toThrow()
     await expect(
-      adapter.cancelFenced(handle, request, async () => {
-        authorizeCalls += 1
+      c.adapter.cancelFenced(c.handle, c.request, async () => {
+        throw new Error('revoked')
       })
-    ).rejects.toThrow('PI_CANCELLATION_AUTHORITY_UNAVAILABLE')
-
-    expect(authorizeCalls).toBe(0)
-    expect(authority.intentForHandle(handle.handleId)).toBeUndefined()
-    expect(adapter.journal.get(handle.handleId).state).toBe('cancelling')
-    expect(aborts()).toBe(0)
+    ).rejects.toThrow('revoked')
+    expect(history(c, intent)).toBe('unresolved')
+    expect(c.adapter.journal.get(c.handle.handleId)).toEqual(before)
+    expect(c.aborts()).toBe(0)
+    expect(await c.authority.pending()).toEqual([intent])
+  })
+})
+test('lost retention response survives reopen without automatic cancellation or inference resend', async () => {
+  await withCase(async (c) => {
+    const p = proposal(c)
+    c.authority.loseNextCommitResponse()
+    await expect(c.authority.commit(p)).rejects.toThrow('OUTCOME_UNKNOWN')
+    const intent = c.authority.intentForKey(c.handle.handleId, p.idempotencyKey)
+    const before = c.adapter.journal.get(c.handle.handleId)
+    await c.adapter.close()
+    c.adapter = new PiDurableRuntimeAdapter(c.setup.options)
+    try {
+      expect(await c.authority.commit(p)).toEqual(intent)
+      expect(history(c, intent)).toBe('unresolved')
+      expect(c.adapter.journal.get(c.handle.handleId)).toEqual(before)
+      expect(c.aborts()).toBe(0)
+      expect(c.runs()).toBe(1)
+      expect(await c.authority.pending()).toEqual([intent])
+    } finally {
+      await c.adapter.close()
+    }
+  })
+})
+test('ACK failure and repeated bookkeeping never repeat an abort or claim a current target succeeded', async () => {
+  await withCase(async (c) => {
+    const intent = await c.authority.commit(proposal(c))
+    c.authority.failNextAcknowledge()
+    await expect(c.authority.acknowledge(intent.intentId)).rejects.toThrow()
+    const before = c.adapter.journal.get(c.handle.handleId)
+    expect(history(c, intent)).toBe('unresolved')
+    expect(history(c, intent)).toBe('unresolved')
+    expect(c.adapter.journal.get(c.handle.handleId)).toEqual(before)
+    expect(c.aborts()).toBe(0)
+    expect(c.runs()).toBe(1)
+    expect(await c.authority.pending()).toEqual([intent])
+  })
+})
+for (const kind of ['active_generation', 'no_active_generation', 'untracked_generation']) {
+  test(`old ${kind} target cannot adopt a newer turn or generation and history survives replay`, async () => {
+    await withCase(async (c) => {
+      const g1 = generation(c),
+        g2 = generation(c, 'G2')
+      const intent = await c.authority.commit(
+        proposal(c, { targetKind: kind, generation: kind === 'active_generation' ? g1 : null })
+      )
+      const currentIntent = { marker: 'G2 cancellation is not replaced' }
+      patchRow(c, {
+        activeInference: g2,
+        cancellationIntent: currentIntent,
+        inferencePending: true,
+      })
+      const before = c.adapter.journal.get(c.handle.handleId)
+      expect(history(c, intent)).toBe('superseded')
+      const first = c.adapter.journal.get(c.handle.handleId)
+      unchangedExceptHistory(before, first)
+      const retained = first.detail.cancellationResolutions[`cancel:${intent.idempotencyKey}`]
+      expect(retained.generation).toEqual(intent.generation)
+      expect(retained.observedGeneration).toEqual(g2)
+      expect(history(c, intent)).toBe('superseded')
+      expect(c.adapter.journal.get(c.handle.handleId)).toEqual(first)
+      expect(c.aborts()).toBe(0)
+      expect(await c.authority.pending()).toEqual([intent])
+    })
+  })
+}
+for (const mutation of ['attempt', 'turn', 'handle', 'digest', 'generation']) {
+  test(`corrupt retained ${mutation} is rejected without journal mutation`, async () => {
+    await withCase(async (c) => {
+      const g1 = generation(c)
+      const intent = await c.authority.commit(
+        proposal(c, { targetKind: 'active_generation', generation: g1 })
+      )
+      const corrupt = structuredClone(intent)
+      if (mutation === 'attempt') corrupt.attemptId = 'att_01JABCDEF0123456789ABCDEFH'
+      if (mutation === 'turn') corrupt.generation.turnKey = 'corrupt'
+      if (mutation === 'handle') corrupt.handleId = 'missing-handle'
+      if (mutation === 'digest') corrupt.requestDigest = `sha256:${'f'.repeat(64)}`
+      if (mutation === 'generation') corrupt.generation.inferenceKey = 'wrong-key'
+      const before = c.adapter.journal.get(c.handle.handleId)
+      expect(() => history(c, corrupt)).toThrow()
+      expect(c.adapter.journal.get(c.handle.handleId)).toEqual(before)
+      expect(c.aborts()).toBe(0)
+    })
+  })
+}
+for (const terminal of [false, true]) {
+  test(`same-epoch concurrent G2 ${terminal ? 'completion' : 'metadata'} is preserved by transactional historical classification`, async () => {
+    await withCase(async (c) => {
+      const g1 = generation(c),
+        g2 = generation(c, 'G2')
+      const intent = await c.authority.commit(
+        proposal(c, { targetKind: 'active_generation', generation: g1 })
+      )
+      patchRow(c, { activeInference: g1 })
+      const other = new SqliteDurableJournal(join(c.directory, 'authority.sqlite'))
+      const transition = c.adapter.journal.transitionCurrent.bind(c.adapter.journal)
+      let interleaved
+      c.adapter.journal.transitionCurrent = (...args) => {
+        other.updateCurrentMetadata(c.handle.handleId, () => ({
+          value: undefined,
+          detail: {
+            activeInference: g2,
+            cancellationIntent: { marker: 'G2' },
+            g2OwnerMarker: 'live-G2',
+            ...(terminal
+              ? { result: c.completedResult, terminalUsage: { marker: 'settled-G2' } }
+              : {}),
+          },
+        }))
+        if (terminal) {
+          const row = other.get(c.handle.handleId)
+          other.update(c.handle.handleId, row.epoch, { state: 'completed' })
+        }
+        interleaved = other.get(c.handle.handleId)
+        return transition(...args)
+      }
+      try {
+        expect(history(c, intent)).toBe('superseded')
+        unchangedExceptHistory(interleaved, c.adapter.journal.get(c.handle.handleId))
+        expect(c.aborts()).toBe(0)
+      } finally {
+        other.close()
+      }
+    })
+  })
+}
+test('history resolution persists through reopen and ACK failure without replacing G2 or aborting', async () => {
+  await withCase(async (c) => {
+    const intent = await c.authority.commit(proposal(c))
+    patchRow(c, {
+      turn: { requestId: 'later-turn' },
+      activeInference: undefined,
+      cancellationIntent: { marker: 'G2' },
+    })
+    expect(history(c, intent)).toBe('superseded')
+    c.authority.failNextAcknowledge()
+    await expect(c.authority.acknowledge(intent.intentId)).rejects.toThrow()
+    const before = c.adapter.journal.get(c.handle.handleId)
+    const second = new SqliteDurableJournal(join(c.directory, 'authority.sqlite'))
+    try {
+      expect(reconcilePiCancellationHistory(second, intent, at)).toBe('superseded')
+      expect(second.get(c.handle.handleId)).toEqual(before)
+      await c.authority.acknowledge(intent.intentId)
+      await c.authority.acknowledge(intent.intentId)
+      expect(await c.authority.pending()).toEqual([])
+      expect(c.aborts()).toBe(0)
+    } finally {
+      second.close()
+    }
+  })
+})
+test('corrupt history cannot overwrite an immutable saved resolution or block a distinct valid request', async () => {
+  await withCase(async (c) => {
+    const intent = await c.authority.commit(proposal(c))
+    patchRow(c, { turn: { requestId: 'later-turn' } })
+    expect(history(c, intent)).toBe('superseded')
+    const before = c.adapter.journal.get(c.handle.handleId)
+    expect(() =>
+      history(c, { ...intent, intentId: '00000000-0000-4000-8000-000000000001' })
+    ).toThrow('HISTORY_CONFLICT')
+    expect(c.adapter.journal.get(c.handle.handleId)).toEqual(before)
+    const request = { ...c.request, idempotencyKey: 'new-key' }
+    const valid = await c.authority.commit(
+      proposal(c, { ...request, requestDigest: digest(request) })
+    )
+    expect(history(c, valid)).toBe('unresolved')
+    expect(c.aborts()).toBe(0)
   })
 })
 
-test('fenced cancel without a committed authority capability refuses before callback or effect', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'pi-cancel-unavailable-'))
-  let adapter
-  let aborts = 0
-  try {
-    const setup = fixture(directory, {
-      engineFactory: async () => ({
-        run: async () => ({
-          text: 'answer',
-          submissionId: 'answer',
-          usage: { inputTokens: 3, outputTokens: 4, costUsd: '0.000007', durationMs: 2 },
-          inferences: [
-            {
-              inferenceId: 'pi-generation:1',
-              usage: {
-                inputTokens: 3,
-                outputTokens: 4,
-                durationMs: 2,
-                cachedInputTokens: 0,
-                reasoningTokens: 0,
-              },
-            },
-          ],
-        }),
-        cancel: async () => {
-          aborts += 1
-        },
-        close: async () => {},
-      }),
-    })
-    adapter = new PiDurableRuntimeAdapter(setup.options)
-    const handle = await adapter.start(setup.request)
-    await adapter.drain()
-    let authorizeCalls = 0
-    const before = adapter.journal.get(handle.handleId)
-    const fenced = new PiDurableRuntimeAdapter({
-      ...setup.options,
-      committedCancellationAuthority: undefined,
-    })
-    try {
-      await expect(
-        fenced.cancel(handle, { idempotencyKey: 'cancel:ordinary-unavailable', requestedAt: at })
-      ).rejects.toThrow('PI_CANCELLATION_AUTHORITY_UNAVAILABLE')
-      await expect(
-        fenced.cancelFenced(
-          handle,
-          { idempotencyKey: 'cancel:unavailable', requestedAt: at },
-          async () => {
-            authorizeCalls += 1
-          }
-        )
-      ).rejects.toThrow('PI_CANCELLATION_AUTHORITY_UNAVAILABLE')
-      expect(authorizeCalls).toBe(0)
-      expect(aborts).toBe(0)
-      expect(fenced.journal.get(handle.handleId).state).toBe(before.state)
-      expect(fenced.journal.get(handle.handleId).detail.cancellationIntent).toBeUndefined()
-      expect(
-        (await fenced.inspect()).capabilities.some(({ name }) => name === 'execution.cancel')
-      ).toBe(false)
-    } finally {
-      await fenced.close()
+test('a malformed handle history cannot block independent valid handle progress in the same journal', async () => {
+  await withCase(async (c) => {
+    const original = c.adapter.journal.get(c.handle.handleId)
+    const attemptId = 'att_01JABCDEF0123456789ABCDEFH'
+    const handleId = `${c.handle.handleId}:independent`
+    const admission = structuredClone(original.admission)
+    admission.request.attemptId = attemptId
+    admission.request.attemptBudget.attemptId = attemptId
+    admission.handle.attemptId = attemptId
+    admission.handle.handleId = handleId
+    c.adapter.journal.admit({ handleId, attemptId, startKey: 'independent', admission, at })
+    const valid = {
+      ...(await c.authority.commit(proposal(c))),
+      handleId,
+      attemptId,
+      admissionDigest: digest(admission),
+      turnKey: `pi-turn:${attemptId}:initial`,
     }
-  } finally {
-    await adapter?.close()
-    rmSync(directory, { recursive: true, force: true })
-  }
+    const before = c.adapter.journal.get(handleId)
+    expect(() => history(c, { ...valid, handleId: c.handle.handleId })).toThrow()
+    expect(history(c, valid)).toBe('unresolved')
+    expect(c.adapter.journal.get(handleId)).toEqual(before)
+    expect(c.aborts()).toBe(0)
+  })
 })

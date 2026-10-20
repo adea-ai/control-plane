@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.19.1...sdk-v1.20.0) (2026-10-18)
+
+
+### Features
+
+* **pi:** disclose the lead plan's child allowance on preparation ([#1211](https://github.com/adea-ai/control-plane/issues/1211)) ([#1136](https://github.com/adea-ai/control-plane/issues/1136)) ([efd457a](https://github.com/adea-ai/control-plane/commit/efd457a36911ee58674a1837964a1e2e6cd735e2))
+
 ## [1.19.1](https://github.com/adea-ai/control-plane/compare/sdk-v1.19.0...sdk-v1.19.1) (2026-10-17)
 
 

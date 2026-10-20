@@ -36,6 +36,7 @@ test('incomplete child authority or runtime denies before directory or SQLite cr
     tools: { service: { execute: fn }, interactions: { get: fn } },
     runtime: {
       childProgress: { scan: fn },
+      childTimelineDelivery: { principalId: 'svc_adea', notify: fn },
       consumeParentInbox: fn,
     },
   }
@@ -48,7 +49,10 @@ test('incomplete child authority or runtime denies before directory or SQLite cr
   malformed.push({ ...complete, forgetCanonicalModels: undefined })
   malformed.push({ ...complete, createGovernedDelegateChild: undefined })
   malformed.push({ ...complete, usageOutcomes: undefined })
-  for (const [group, key] of [['childProgress', 'scan']]) {
+  for (const [group, key] of [
+    ['childProgress', 'scan'],
+    ['childTimelineDelivery', 'notify'],
+  ]) {
     malformed.push({
       ...complete,
       runtime: { ...complete.runtime, [group]: { ...complete.runtime[group], [key]: undefined } },

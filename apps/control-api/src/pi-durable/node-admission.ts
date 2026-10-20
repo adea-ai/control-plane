@@ -997,9 +997,17 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       )
       if (product === undefined) VerifiedPiLeadIntentEvidenceSchema.parse(undefined)
       if (product === undefined) throw new Error('unreachable')
-      // An ordinary admission cannot be re-derived under a fence (the prompt is withheld), so it
-      // fails closed. Fenced observation and cancel go through assertFencedBinding instead.
-      if (product.kind === 'fenced') throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
+      if (product.kind === 'fenced') {
+        this.#assertFencedCurrent(
+          admission,
+          product.variant,
+          product.facts,
+          checked.principalId,
+          operation,
+          marker
+        )
+        return
+      }
       const evidence = product.evidence
       if (hash({ evidence, planPin: marker.planPin }) !== marker.evidenceDigest) conflict()
       const current = project(
@@ -1363,16 +1371,39 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
       throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
     if (!facts.allowedPrincipalIds.includes(principal.principalId)) denied()
     const marker = this.store.marker(input.intentId)
-    if (marker?.state !== 'ready') throw new PiDurableLeadError('PI_LEAD_MISSING')
-    this.#assertFencePins(marker, facts)
-    if (decision === 'cancel-as-actor' && marker.actorPrincipalId !== principal.principalId)
-      denied()
+    if (marker) this.#assertFencePins(marker, facts)
+    if (decision === 'cancel-as-actor') {
+      if (!marker) denied()
+      // Original actor = the CP principal that originally admitted the retained intent;
+      // the fence's canonical actor must be the retained one (actor continuity).
+      if (marker.actorPrincipalId !== principal.principalId) denied()
+      if (
+        marker.intent.authorityRevision !== facts.authorityRevision ||
+        marker.intent.scopeRef !== facts.scopeRef ||
+        hash([...marker.intent.allowedPrincipalIds].toSorted()) !==
+          hash([...facts.allowedPrincipalIds].toSorted()) ||
+        (marker.intent.canonicalActorPrincipalId ?? null) !== facts.canonicalActorPrincipalId
+      )
+        conflict()
+    } else if (
+      marker &&
+      (marker.intent.authorityRevision !== facts.authorityRevision ||
+        marker.intent.scopeRef !== facts.scopeRef ||
+        hash([...marker.intent.allowedPrincipalIds].toSorted()) !==
+          hash([...facts.allowedPrincipalIds].toSorted()) ||
+        marker.intent.canonicalActorPrincipalId !== facts.canonicalActorPrincipalId)
+    )
+      conflict()
+    // Read only after the current marker/revision/scope/actor checks above. A binding that
+    // disagrees with the retained marker is a conflict; a missing binding stays absent (legacy).
+    const binding = marker ? this.store.admissionBinding(marker.intentId) : undefined
+    if (marker && binding && !admissionBindingMatchesMarker(binding, marker)) conflict()
     return Object.freeze({
       schemaVersion: 'pi-lead-fenced/v1',
       kind: 'fenced',
       operation: operation as 'status' | 'progress' | 'cancel',
       fenceVariant: variant,
-      retainedMatch: true,
+      retainedMatch: marker !== undefined,
       fence: Object.freeze({
         intentId: facts.intentId,
         workspaceId: facts.workspaceId,
@@ -1384,9 +1415,61 @@ export class NodePiDurableLeadAdmission implements PiDurableLeadAuthority {
         scopeRef: facts.scopeRef,
         allowedPrincipalIds: [...facts.allowedPrincipalIds],
       }),
+      // Execution/plan bindings come from the marker. Admission facts come only from the
+      // retained binding (absent for legacy records, which the service then fails closed on).
+      retained: marker
+        ? Object.freeze({
+            intentId: marker.intentId,
+            workspaceId: marker.workspaceId,
+            executionId: marker.intent.executionId,
+            attemptId: marker.intent.attemptId,
+            allowedPrincipalIds: Object.freeze([...marker.intent.allowedPrincipalIds]),
+            executionPlanId: marker.planPin.executionPlanId,
+            executionPlanDigest: marker.planPin.contentDigest,
+            ...(binding
+              ? {
+                  admissionDigest: binding.admissionDigest,
+                  startDigest: binding.startDigest,
+                  deadlineAt: binding.deadlineAt,
+                }
+              : {}),
+          })
+        : undefined,
     })
   }
-
+  /** Fenced counterpart of `assertCurrent`: retained revision/scope must match the facts. */
+  #assertFencedCurrent(
+    admission: PiDurableLeadAdmission,
+    variant: LeadFenceVariant,
+    facts: LeadIntentFenceFacts,
+    principalId: string,
+    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel',
+    marker: LeadIntentMarker
+  ): void {
+    const decision = fencedOperationPolicy(variant)[operation as LeadOperation]
+    if (decision === 'refuse') throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
+    if (variant !== 'v2' || facts.schemaVersion !== 'pi-lead-intent-fence/v2')
+      throw new PiDurableLeadError('PI_LEAD_UNAVAILABLE')
+    if (!facts.allowedPrincipalIds.includes(principalId)) denied()
+    if (decision === 'cancel-as-actor') {
+      if (marker.actorPrincipalId !== principalId) denied()
+      if ((marker.intent.canonicalActorPrincipalId ?? null) !== facts.canonicalActorPrincipalId)
+        denied()
+    }
+    if (
+      marker.intent.authorityRevision !== facts.authorityRevision ||
+      marker.intent.scopeRef !== facts.scopeRef ||
+      hash([...marker.intent.allowedPrincipalIds].toSorted()) !==
+        hash([...facts.allowedPrincipalIds].toSorted()) ||
+      marker.intent.canonicalActorPrincipalId !== facts.canonicalActorPrincipalId
+    )
+      conflict()
+    if (
+      admission.admittedAttempt.executionId !== marker.intent.executionId ||
+      admission.admittedAttempt.attemptId !== marker.intent.attemptId
+    )
+      conflict()
+  }
   /**
    * Retained pins must equal the fence. A legacy marker without a canonical actor is an
    * insufficient pin, so it fails the canonical actor comparison and is refused.

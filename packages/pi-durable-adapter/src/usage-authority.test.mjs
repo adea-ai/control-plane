@@ -26,37 +26,33 @@ test('durable dispatch reserves full input and fences a duplicate across SQLite 
   })
 })
 
-test('trusted no-send reconciliation reuses only the exact retained inference hold', async () => {
+test('only a trusted exact-key no-send permit can reuse a held dispatch', async () => {
   await withUsageAuthorityContext(async ({ bridge, authority, workspaceId, reopen }) => {
     const key = 'pi-turn:one:pi-generation:2'
     await bridge.authorizeInference(authority, key)
-    const { bridge: reopened, ledger: reopenedLedger } = await reopen()
+    const { bridge: recovered, ledger } = await reopen()
+    const before = await ledger.entries(workspaceId, ids.executionId)
     await expect(
-      reopened.authorizeInference(
-        authority,
-        key,
-        issueInferenceResumePermit('pi-turn:one:pi-generation:3')
-      )
-    ).rejects.toThrow('PI_INFERENCE_RESUME_PERMIT_MISMATCH')
-    // A literal with the right shape is not a permit: only the adapter's recovery issues one, and
-    // a forged one would skip the ledger's physical-dispatch replay fence.
+      recovered.authorizeInference(authority, key, issueInferenceResumePermit('different-key'))
+    ).rejects.toThrow('PI_INFERENCE_RESUME_PERMIT_INVALID')
     for (const forged of [
       { schemaVersion: 'pi-inference-resume-permit/v1', inferenceKey: key },
       Object.freeze({ schemaVersion: 'pi-inference-resume-permit/v1', inferenceKey: key }),
       structuredClone(issueInferenceResumePermit(key)),
-    ]) {
-      await expect(reopened.authorizeInference(authority, key, forged)).rejects.toThrow(
+    ])
+      await expect(recovered.authorizeInference(authority, key, forged)).rejects.toThrow(
         'PI_INFERENCE_RESUME_PERMIT_INVALID'
       )
-    }
-    await expect(
-      reopened.authorizeInference(authority, key, issueInferenceResumePermit(key))
-    ).resolves.toMatchObject({ maxOutputTokens: 32, maximumInputTokens: 64 })
     expect(
-      (await reopenedLedger.entries(workspaceId, ids.executionId)).filter(
-        (entry) => entry.kind === 'model_reservation'
-      )
-    ).toHaveLength(1)
+      await recovered.authorizeInference(authority, key, issueInferenceResumePermit(key))
+    ).toMatchObject({
+      maxOutputTokens: 32,
+      maximumInputTokens: 64,
+    })
+    expect(await ledger.entries(workspaceId, ids.executionId)).toEqual(before)
+    await expect(recovered.authorizeInference(authority, key)).rejects.toThrow(
+      'MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED'
+    )
   })
 })
 

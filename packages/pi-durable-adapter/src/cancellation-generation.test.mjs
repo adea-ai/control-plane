@@ -113,8 +113,9 @@ test('cancellation pins the exact attempt and authorized inference until that ph
       targetKind: 'active_generation',
       generation: beforeCancel.detail.activeInference,
     })
-    expect(typeof authorityIntentId).toBe('string')
-    expect(authorityIntentId).toMatch(/^[0-9a-f-]{36}$/)
+    // Ordinary cancellation retains its existing authority checks; it never manufactures a
+    // committed coordinator grant from a journal intent.
+    expect(authorityIntentId).toBeUndefined()
     expect(intent.requestDigest).toMatch(/^sha256:[a-f0-9]{64}$/)
     expect(cancellations).toBe(1)
     await adapter.drain()

@@ -35,24 +35,40 @@ export function databaseSessionCredentials(
   if (application.role !== 'application' || !isPostgresUrl(application.url))
     throw databaseConfigurationError('application', ['DATABASE_URL'], [])
   const applicationUrl = new URL(application.url)
-  const pooled = isNeonPooledUrl(applicationUrl)
   if (unpooledUrl === undefined) {
-    if (pooled) throw databaseConfigurationError('application', [], ['DATABASE_URL_UNPOOLED'])
+    // A pooled route cannot carry session notifications; the operator supplies
+    // the explicit direct endpoint instead of having one inferred here.
+    if (isPooledRoute(applicationUrl))
+      throw databaseConfigurationError('application', [], ['DATABASE_URL_UNPOOLED'])
     return application
   }
   if (!isPostgresUrl(unpooledUrl))
     throw databaseConfigurationError('application', ['DATABASE_URL_UNPOOLED'], [])
-  const directUrl = new URL(unpooledUrl)
-  if (
-    isNeonPooledUrl(directUrl) ||
-    directUrl.username !== applicationUrl.username ||
-    directUrl.pathname !== applicationUrl.pathname ||
-    (applicationUrl.hostname.endsWith('.neon.tech') &&
-      (directUrl.hostname !== applicationUrl.hostname.replace('-pooler.', '.') ||
-        directUrl.port !== applicationUrl.port))
-  )
+  if (!isValidSessionEndpoint(applicationUrl, new URL(unpooledUrl)))
     throw databaseConfigurationError('application', ['DATABASE_URL_UNPOOLED'], [])
   return { role: 'application', url: unpooledUrl }
+}
+
+/**
+ * A session endpoint must keep the application principal and logical database,
+ * never be a pooled route itself, and preserve the application endpoint's
+ * effective TLS verification strength (see `effectiveTlsRank`). When the application endpoint is pooled, its direct
+ * route is the same endpoint with the shared pooler label removed, so the
+ * session connection cannot be redirected to another server.
+ */
+function isValidSessionEndpoint(applicationUrl: URL, sessionUrl: URL): boolean {
+  if (isPooledRoute(sessionUrl)) return false
+  if (sessionUrl.username !== applicationUrl.username) return false
+  if (sessionUrl.pathname !== applicationUrl.pathname) return false
+  const sessionTls = effectiveTlsRank(sessionUrl)
+  const applicationTls = effectiveTlsRank(applicationUrl)
+  if (sessionTls === undefined || applicationTls === undefined || sessionTls < applicationTls)
+    return false
+  if (!isPooledRoute(applicationUrl)) return true
+  return (
+    sessionUrl.hostname === directRouteHostname(applicationUrl.hostname) &&
+    sessionUrl.port === applicationUrl.port
+  )
 }
 
 export function loadDatabaseSessionCredentials(
@@ -64,10 +80,84 @@ export function loadDatabaseSessionCredentials(
   )
 }
 
-function isNeonPooledUrl(url: URL): boolean {
+const pooledRouteLabelSuffix = '-pooler'
+
+/**
+ * A pooled route follows the shared `<endpoint>-pooler` label convention used by
+ * transaction poolers. The check is provider-neutral and never trusts a
+ * provider hostname suffix such as `.neon.tech`, so a generic pooler is treated
+ * the same way as a hosted one.
+ */
+function isPooledRoute(url: URL): boolean {
+  return isPooledEndpointLabel(url.hostname.split('.')[0])
+}
+
+function isPooledEndpointLabel(endpoint: string | undefined): endpoint is string {
   return (
-    url.hostname.endsWith('.neon.tech') && url.hostname.split('.')[0]?.endsWith('-pooler') === true
+    endpoint !== undefined &&
+    endpoint.endsWith(pooledRouteLabelSuffix) &&
+    endpoint.length > pooledRouteLabelSuffix.length
   )
+}
+
+/** The direct route of a pooled endpoint: the same endpoint without its pooler label. */
+function directRouteHostname(hostname: string): string {
+  const [endpoint, ...rest] = hostname.split('.')
+  if (!isPooledEndpointLabel(endpoint)) return hostname
+  return [endpoint.slice(0, -pooledRouteLabelSuffix.length), ...rest].join('.')
+}
+
+/** What a PostgreSQL URL's TLS parameters resolve to: no TLS requested, encrypted, or verified. */
+export type PostgresTlsMode = 'unset' | 'require' | 'verify-full'
+
+const postgresTlsRanks: Readonly<Record<PostgresTlsMode, number>> = {
+  unset: 0,
+  require: 1,
+  'verify-full': 2,
+}
+
+/**
+ * The effective TLS mode of a PostgreSQL URL, or `undefined` when its TLS
+ * parameters are invalid. This is the single definition shared by the
+ * connection resolver in `@control-plane/database` and the session-endpoint
+ * comparison here, so the endpoint a process connects with and the endpoint it
+ * is compared against can never be read differently.
+ *
+ * - `sslrootcert=system` escalates any valid mode, including an unset one, to
+ *   `verify-full`: the driver verifies the certificate and hostname against
+ *   the system trust store.
+ * - `verify-ca` resolves to `verify-full`; the driver cannot express it
+ *   distinctly, so it keeps certificate and hostname verification.
+ * - A repeated or unknown `sslmode`, and the unverified `disable`, `allow` and
+ *   `prefer` modes (with or without the system root), are invalid.
+ */
+export function effectivePostgresTlsMode(url: URL): PostgresTlsMode | undefined {
+  const systemTrustRoot = url.searchParams.getAll('sslrootcert').includes('system')
+  const modes = url.searchParams.getAll('sslmode')
+  if (modes.length > 1) return undefined
+  const [mode] = modes
+  const resolved = resolveSslMode(mode)
+  if (resolved === undefined) return undefined
+  return systemTrustRoot ? 'verify-full' : resolved
+}
+
+function resolveSslMode(mode: string | undefined): PostgresTlsMode | undefined {
+  switch (mode) {
+    case undefined:
+      return 'unset'
+    case 'require':
+      return 'require'
+    case 'verify-ca':
+    case 'verify-full':
+      return 'verify-full'
+    default:
+      return undefined
+  }
+}
+
+function effectiveTlsRank(url: URL): number | undefined {
+  const mode = effectivePostgresTlsMode(url)
+  return mode === undefined ? undefined : postgresTlsRanks[mode]
 }
 
 function isPostgresUrl(value: string): boolean {

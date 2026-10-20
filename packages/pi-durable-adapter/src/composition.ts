@@ -10,6 +10,11 @@ import type {
   PiDurableGovernedDelegateChildCompiler,
 } from './contracts.js'
 import { PiDurableEffectGate, SqliteDurableEffectGateStore } from './effect-gate.js'
+import {
+  createPiDurableLocalUpgradeManifest,
+  verifyPiDurableLocalUpgradeManifest,
+  type PiDurableLocalUpgradeManifest,
+} from './upgrade-manifest.js'
 
 /** Codes reported for a retained record that recovery did not resume in this start. A declared
  * denial is also persisted by the adapter, under the recovery claim that observed it. */
@@ -17,7 +22,7 @@ export type RecoveryBlockCode =
   | 'PI_RECOVERY_AUTHORITY_BLOCKED'
   | 'PI_RECOVERY_UNAVAILABLE'
   | 'PI_RECOVERY_UNCLASSIFIED'
-  | 'PI_CANCELLATION_RECOVERY_UNAVAILABLE'
+  | 'PI_RECOVERY_INCOMPATIBLE'
 
 export interface NodePiDurableCompositionOptions extends Omit<
   PiDurableRuntimeOptions,
@@ -25,6 +30,8 @@ export interface NodePiDurableCompositionOptions extends Omit<
 > {
   /** Trusted host initialization, completed before any retained recovery is scheduled. */
   readonly onAdapterReady?: (adapter: PiDurableRuntimeAdapter) => void | Promise<void>
+  /** Optional byte-identical local handoff check, never a restore or resend authorization. */
+  readonly sameVersionManifest?: PiDurableLocalUpgradeManifest
   readonly governedDelegateChild?: PiDurableGovernedDelegateChildCompiler
   /** Bind this port to the canonical parent in the host, never to model/request input. */
   readonly parentInbox?: { list(): Promise<readonly DelegationEvent[]> }
@@ -43,8 +50,15 @@ export interface NodePiDurableCompositionOptions extends Omit<
 export async function createNodePiDurableRuntime(options: NodePiDurableCompositionOptions) {
   if (options.governedDelegateChild && !options.tools)
     throw new Error('PI_GOVERNED_TOOL_GATE_REQUIRED')
+  if (options.sameVersionManifest)
+    await verifyPiDurableLocalUpgradeManifest(options.directory, options.sameVersionManifest)
   let effects: PiDurableEffectGate | undefined
-  const { governedDelegateChild, onAdapterReady, ...runtimeOptions } = options
+  const {
+    governedDelegateChild,
+    onAdapterReady,
+    sameVersionManifest: _manifest,
+    ...runtimeOptions
+  } = options
   const adapter = new PiDurableRuntimeAdapter({
     ...runtimeOptions,
     ...(governedDelegateChild
@@ -65,13 +79,6 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
 
   async function recover(): Promise<void> {
     const blocked: Array<{ handleId: string; code: RecoveryBlockCode }> = []
-    const cancellationBlocked = await adapter.recoverCommittedCancellationIntents()
-    blocked.push(
-      ...cancellationBlocked.map((handleId) => ({
-        handleId,
-        code: 'PI_CANCELLATION_RECOVERY_UNAVAILABLE' as const,
-      }))
-    )
     if (options.parentInbox && options.consumeParentInbox) {
       await options.consumeParentInbox(await options.parentInbox.list())
       try {
@@ -81,7 +88,6 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
       }
     }
     for (const record of adapter.journal.list()) {
-      if (cancellationBlocked.includes(record.handleId)) continue
       const handle = (record.admission as { handle: Parameters<typeof adapter.reconcile>[0] })
         .handle
       if (['starting', 'running', 'unknown', 'cancelling'].includes(record.state)) {
@@ -90,7 +96,9 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
         } catch (error) {
           // The adapter persisted any declared denial under the claim it held; this start only
           // reports. Unavailable and unclassified failures fence this start and persist nothing.
-          if (isRecoveryAuthorityDenial(error))
+          if (error instanceof Error && error.message === 'PI_JOURNAL_VERSION_UNSUPPORTED')
+            blocked.push({ handleId: record.handleId, code: 'PI_RECOVERY_INCOMPATIBLE' })
+          else if (isRecoveryAuthorityDenial(error))
             blocked.push({ handleId: record.handleId, code: 'PI_RECOVERY_AUTHORITY_BLOCKED' })
           else if (isRecoveryUnavailable(error))
             blocked.push({ handleId: record.handleId, code: 'PI_RECOVERY_UNAVAILABLE' })
@@ -122,6 +130,10 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
         return recoveryBlocked
       },
       close: () => adapter.close(),
+      closeForSameVersionUpgrade: async () => {
+        await adapter.close()
+        return createPiDurableLocalUpgradeManifest(options.directory)
+      },
       profile: 'node-sqlite' as const,
     }
   } catch (error) {

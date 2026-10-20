@@ -82,7 +82,10 @@ test('expiry after the authorize callback returns blocks the journal claim and c
   })
 }, 60000)
 
-test('fenced cancellation without a committed authority capability refuses before fence revalidation or journal mutation', async () => {
+// The former missing-port policy is superseded. These executed zero-effect requirements
+// remain failing qualification gates until a reviewed native/all-writer effect fence exists.
+// An OUTCOME_UNKNOWN response after effect is not an atomic authorization guarantee.
+test('qualified cancellation must reject revocation after its final asynchronous authorization with zero effect', async () => {
   await withLiveHarness(
     async (harness) => {
       const { dispatchId } = await harness.admitInFlightRun()
@@ -95,11 +98,11 @@ test('fenced cancellation without a committed authority capability refuses befor
       }, 'final')
 
       await expectRefused(
-        cancelOf(harness, dispatchId, 'unavailable:no-committed-fence-authority'),
-        'PI_CANCELLATION_AUTHORITY_UNAVAILABLE'
+        cancelOf(harness, dispatchId, 'qualification:final-fence-revocation'),
+        'PI_LEAD_AUTHORITY_CONFLICT'
       )
       const journal = harness.composition.adapter.journal.get(handle.handleId)
-      expect(finalAuthorizationEntered).toBe(false)
+      expect(finalAuthorizationEntered).toBe(true)
       expect({
         state: journal.state,
         hasCancellationIntent: journal.detail.cancellationIntent !== undefined,
@@ -110,7 +113,7 @@ test('fenced cancellation without a committed authority capability refuses befor
   )
 }, 60000)
 
-test('fenced cancellation without a committed authority capability refuses before deadline revalidation or journal mutation', async () => {
+test('qualified cancellation must reject deadline change after its final asynchronous authorization with zero effect', async () => {
   await withLiveHarness(
     async (harness) => {
       const { dispatchId } = await harness.admitInFlightRun()
@@ -123,11 +126,11 @@ test('fenced cancellation without a committed authority capability refuses befor
       }, 'final')
 
       await expectRefused(
-        cancelOf(harness, dispatchId, 'unavailable:no-committed-deadline-authority'),
-        'PI_CANCELLATION_AUTHORITY_UNAVAILABLE'
+        cancelOf(harness, dispatchId, 'qualification:final-deadline-change'),
+        'PI_LEAD_AUTHORITY_CONFLICT'
       )
       const journal = harness.composition.adapter.journal.get(handle.handleId)
-      expect(finalAuthorizationEntered).toBe(false)
+      expect(finalAuthorizationEntered).toBe(true)
       expect({
         state: journal.state,
         hasCancellationIntent: journal.detail.cancellationIntent !== undefined,

@@ -110,6 +110,36 @@ export interface PiDurableLeadFencedResult {
     readonly scopeRef: string
     readonly allowedPrincipalIds: readonly string[]
   }
+  /** Retained marker execution/plan bindings; absent unless `retainedMatch`. */
+  readonly retained?:
+    | {
+        readonly intentId: string
+        readonly workspaceId: string
+        readonly executionId: string
+        readonly attemptId: string
+        readonly allowedPrincipalIds: readonly string[]
+        readonly executionPlanId: string
+        readonly executionPlanDigest: string
+        /**
+         * Receipt-bound admission facts, from the retained admission binding.
+         * Absent for legacy records.
+         */
+        readonly admissionDigest?: string
+        readonly startDigest?: string
+        readonly deadlineAt?: string
+      }
+    | undefined
+}
+
+const FENCED_ADMISSION_BINDINGS = ['admissionDigest', 'startDigest', 'deadlineAt'] as const
+
+/**
+ * Metadata-only diagnostic for receipt facts absent from the retained marker binding.
+ * Missing fields grant nothing. The effect path separately requires the retained journal and
+ * current canonical assertFencedBinding port; it never recreates an admission from this metadata.
+ */
+export function fencedReceiptGaps(fenced: PiDurableLeadFencedResult): readonly string[] {
+  return FENCED_ADMISSION_BINDINGS.filter((field) => fenced.retained?.[field] === undefined)
 }
 
 /** Immutable admission a retained run started from, read from the adapter journal. */
@@ -199,13 +229,27 @@ export class SqlitePiDurableLeadReceiptStore implements PiDurableLeadReceiptStor
   constructor(readonly database: DatabaseSync) {
     database.exec(`CREATE TABLE IF NOT EXISTS pi_lead_receipts (
       dispatch_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, record TEXT NOT NULL
-    ); CREATE TABLE IF NOT EXISTS pi_lead_commands (key TEXT PRIMARY KEY, digest TEXT NOT NULL)`)
+    ); CREATE INDEX IF NOT EXISTS pi_lead_receipts_execution_idx
+      ON pi_lead_receipts (json_extract(record, '$.executionId'));
+      CREATE TABLE IF NOT EXISTS pi_lead_commands (key TEXT PRIMARY KEY, digest TEXT NOT NULL)`)
   }
   async get(dispatchId: string): Promise<PiDurableLeadReceipt | undefined> {
     const row = this.database
       .prepare('SELECT record FROM pi_lead_receipts WHERE dispatch_id = ?')
       .get(dispatchId)
     return row ? ReceiptSchema.parse(JSON.parse(String(row['record']))) : undefined
+  }
+  /** The inbox is bound to one parent execution. Resolve only that parent's retained
+   * product binding, including after a restart; never scan unrelated receipts. */
+  async findForChildDelivery(executionId: string): Promise<PiDurableLeadReceipt | undefined> {
+    const id = IdentifierSchemas.executionId.parse(executionId)
+    const rows = this.database
+      .prepare(
+        "SELECT record FROM pi_lead_receipts WHERE json_extract(record, '$.executionId') = ? LIMIT 2"
+      )
+      .all(id)
+    if (rows.length > 1) throw new Error('PI_CHILD_TIMELINE_PARENT_CONFLICT')
+    return rows.length ? ReceiptSchema.parse(JSON.parse(String(rows[0]!['record']))) : undefined
   }
   async insert(receipt: PiDurableLeadReceipt): Promise<boolean> {
     const value = ReceiptSchema.parse(receipt)
@@ -336,6 +380,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
           attemptId: admission.admittedAttempt.attemptId,
           selectionRef: prepared.funding.selectionRef,
           selectionRevision: prepared.funding.selectionRevision,
+          childAllowance: childAllowanceDisclosure(admission),
           ...prepared,
         })
       )
@@ -690,8 +735,8 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     // (delegationService.cancelChildren, invoked directly with its own
     // authorization), never a lead-stop side effect — so independent
     // child work survives a normal parent stop by construction.
-    verifyRuntimeHandle(receipt, status.handle)
     try {
+      verifyRuntimeHandle(receipt, status.handle)
       await this.#assertCurrent(lookup, principal, 'cancel')
     } catch {
       // Both adapter paths return after the cancellation intent and abort-delivery boundary. A
@@ -1026,6 +1071,33 @@ function observedTarget(
   if (typeof sessionId !== 'string' || typeof taskId !== 'string') return {}
   return { observedTarget: { sessionId, taskId } }
 }
+/** What the admitted, integrity-verified lead plan holds back for children, read from the plan the
+ *  attempt runs under and never from a caller claim. The profile pin is the one the plan was compiled
+ *  from; a plan that states no allowance holds nothing back (balance the lead releases is then the
+ *  only child funding), which is a statement and not an absent disclosure. */
+function childAllowanceDisclosure(admission: PiDurableLeadAdmission) {
+  const plan = assertExecutionPlanIntegrity(admission.startRequest.executionPlan)
+  const allowance = plan.constraints.limits.childExecutions.budgetAllowance
+  const binding = {
+    schemaVersion: 'pi-lead-child-allowance/v1' as const,
+    executionPlanDigest: plan.contentDigest,
+    profile: {
+      profileId: plan.profile.profileId,
+      profileVersionId: plan.profile.profileVersionId,
+      version: plan.profile.version,
+      revision: plan.profile.revision,
+    },
+  }
+  return allowance === undefined
+    ? { ...binding, state: 'not_stated' as const }
+    : {
+        ...binding,
+        state: 'stated' as const,
+        currency: plan.constraints.limits.budget.currency,
+        maximumMicrounits: allowance.maximumMicrounits,
+        maximumTokens: allowance.maximumTokens,
+      }
+}
 /**
  * Public child views come from retained delegation records only. A record that is not this
  * lead's own is a repository contract violation and fails the read; a record of another attempt
@@ -1038,8 +1110,9 @@ function childViews(
   const views: PiDurableLeadChild[] = []
   for (const record of records) {
     if (record.parentExecutionId !== receipt.executionId) fail('PI_LEAD_AUTHORITY_CONFLICT')
-    if (record.parentAttemptId !== undefined && record.parentAttemptId !== receipt.attemptId)
-      continue
+    // The execution can have multiple attempts. A legacy record without an admitted parent
+    // attempt cannot be attributed to this dispatch, so it must not be disclosed here.
+    if (record.parentAttemptId !== receipt.attemptId) continue
     const outcomeState =
       record.state === 'completed' || record.state === 'failed' || record.state === 'cancelled'
         ? record.state
@@ -1072,7 +1145,7 @@ function childViews(
         : {}),
     })
   }
-  return views.sort(compareChildren)
+  return views.toSorted(compareChildren)
 }
 
 type ChildView = PiDurableLeadChild

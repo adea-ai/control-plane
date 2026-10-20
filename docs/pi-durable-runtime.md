@@ -123,8 +123,9 @@ current product audience and canonical attempt even after runtime completion.
 With funding preparation configured, `prepare` accepts the canonical intent and
 returns `pi-lead-preparation/v1`: an opaque `prep_<32hex>` reference, execution,
 attempt and selection references, the authenticated payer display and expiry.
-It does not start the runtime, construct Models or lease credentials. Explicit
-dispatch supplies that reference and rechecks the entire immutable funding view.
+It does not start the runtime, construct Models or lease credentials.
+
+Explicit dispatch supplies that reference and rechecks the entire immutable funding view.
 Expiry is bounded by five minutes, the funding record and admission deadline.
 A changed payer cannot refresh the same accepted attempt; cancellation or unused
 expiry cleanup and a fresh canonical attempt are required. Startup and periodic
@@ -136,6 +137,24 @@ timer. Accepted public and periodic recovery passes finish before terminal
 settlement and runtime stores close. A public recovery failure remains visible
 to its caller and does not skip teardown. Shutdown does not infer cancellation
 authority or cancel admitted inference.
+
+`prepare` also carries an optional `childAllowance` (`pi-lead-child-allowance/v1`): what the accepted
+lead plan holds back for child executions, read from the integrity-verified plan the attempt runs
+under, bound to its `executionPlanDigest` and to the pinned profile version it was compiled from
+(`profileId`, `profileVersionId`, `version`, `revision`). `state: 'stated'` carries the plan's
+`maximumMicrounits` (USD) and `maximumTokens`; `state: 'not_stated'` means the plan holds nothing
+back, so only balance the lead releases can fund children (see the child allowance section of the
+usage ledger). It is disclosure only: no funding, admission or spending capability, and it is
+replayed unchanged with a retained preparation. The plan composes the pinned profile version's
+constraints with any request constraints (the smaller allowance wins); the production execution path
+supplies the profile only, so there the statement is the pinned profile version's. The disclosure
+does not say which layer stated it. A control plane that predates this field omits it, and an
+omitted field is not `not_stated`: a consumer must show it as not disclosed.
+
+Rollout: the preparation schema is strict, so a consumer built on an `@adea-ai/runtime-sdk` older
+than the release that adds this field rejects a preparation that carries it. Consumers upgrade the
+SDK first (the new schema still accepts a preparation without the field), then the control plane
+emits it.
 
 `lookup` reads the actual retained receipt by intent after a lost dispatch reply.
 It may attach the exact existing journal handle to that receipt after current
@@ -180,6 +199,13 @@ published. Production integration requires a compatible authorized signer; this
 work creates no grants or credentials. Candidate tests use synthetic policy and
 provider transport.
 
+The child publication operation can expose a bounded plain-text conclusion only from
+the canonical Pi adapter's exact terminal `{ text }` result. It is retained with the
+child attempt and terminal event, then checked against the current parent binding,
+original actor and publication grant on each read. Other result JSON and oversized
+text are withheld. An artifact ID is only a reference; it does not grant a read of
+artifact bytes or expose substantial output in Adea's timeline.
+
 ## Provider, spend and recovery gates
 
 R2 owns immutable `model-selection/v1` connection/account/auth/location/funding
@@ -208,7 +234,11 @@ the retained pinned price through the existing ledger. Missing historical price
 or spending evidence leaves reconciliation required, rather than repricing.
 
 An uncertain admitted inference wakes as `unknown` and needs trusted no-resend
-reconciliation. `safe_to_resume` must mean that retained accounting/native evidence
+reconciliation. The adapter itself may resume without an external verdict only
+when its durable v1 pre-run marker proves the engine never entered `run`, no
+generation or receipt was retained, and a new process claim plus current
+authority succeeds. A missing legacy marker, timeout, absent ledger hold, or
+any generation identity never proves no-send. `safe_to_resume` must mean that retained accounting/native evidence
 permits replay without another uncertain paid effect. Cancellation remains
 `cancelling` until the same policy proves the outstanding send reconciled; then it
 can become `cancelled` without new inference. A revoked record blocks only itself

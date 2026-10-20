@@ -816,6 +816,7 @@ describe('composed Pi Durable lead HTTP endpoints', () => {
       record('C', { state: 'running', pendingCancellationAt: at }),
       record('D', { state: 'failed', failureCode: 'CHILD_FAILED' }),
       record('E', { parentAttemptId: 'att_01JABCDEF0123456789ABCDEFZ' }),
+      record('F', { parentAttemptId: undefined }),
     ]
     const read = (context, receipt) =>
       context.inject(
@@ -945,7 +946,9 @@ describe('composed Pi Durable lead HTTP endpoints', () => {
           const ids = [...first.children, ...second.children].map((child) => child.delegationId)
           expect(new Set(ids).size).toBe(257)
           expect(ids).toEqual([...ids].toSorted())
-          expect(ids.every((id) => id.startsWith('dlg_01JABCDEF012345678'))).toBe(true)
+          expect(
+            ids.every((delegationId) => delegationId.startsWith('dlg_01JABCDEF012345678'))
+          ).toBe(true)
           // Smaller pages walk the same set in the same order.
           const walked = []
           let after

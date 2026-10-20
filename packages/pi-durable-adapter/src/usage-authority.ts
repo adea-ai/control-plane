@@ -184,9 +184,6 @@ export function createPiDurableUsageAuthority(options: PiDurableUsageAuthorityOp
       maximumInputTokens: number
       assertActive: () => Promise<void>
     }> {
-      if (safeResume && safeResume.inferenceKey !== key)
-        throw new Error('PI_INFERENCE_RESUME_PERMIT_MISMATCH')
-      // A permit skips the ledger's dispatch replay fence, so only one the adapter issued counts.
       if (safeResume && !isIssuedInferenceResumePermit(safeResume, key))
         throw new Error('PI_INFERENCE_RESUME_PERMIT_INVALID')
       const binding = scope(authority, key)

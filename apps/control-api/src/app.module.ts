@@ -135,6 +135,11 @@ import {
 } from './project-states/project-state-initialization.service.js'
 import { ContextPackageResolutionController } from './queries/context-package-resolution.controller.js'
 import { PiLeadPublicationController } from './pi-durable/publication-current.controller.js'
+import { PiChildPublicationController } from './pi-durable/child-publication-current.controller.js'
+import {
+  PI_CHILD_PUBLICATION_SERVICE,
+  PiChildPublicationService,
+} from './pi-durable/child-publication-current.service.js'
 import {
   PI_LEAD_PUBLICATION_SERVICE,
   PiLeadPublicationService,
@@ -153,6 +158,7 @@ import {
 
 export interface AppModuleOptions extends ApiRuntimeBindings {
   readonly piLeadPublicationService?: PiLeadPublicationService
+  readonly piChildPublicationService?: PiChildPublicationService
   readonly piDurableCurrentToolAuthority?: PiDurableCurrentToolAuthority
   readonly piDurableLeadService?: PiDurableLeadService
   readonly modelConnectionService?: ModelConnectionService
@@ -198,6 +204,7 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
     controllers: [
       PiDurableLeadController,
       PiLeadPublicationController,
+      PiChildPublicationController,
       PiDurableManagementCurrentController,
       ModelConnectionsController,
       AuthenticationController,
@@ -222,6 +229,10 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       SystemController,
     ],
     providers: [
+      {
+        provide: PI_CHILD_PUBLICATION_SERVICE,
+        useValue: options.piChildPublicationService ?? new PiChildPublicationService(),
+      },
       {
         provide: PI_LEAD_PUBLICATION_SERVICE,
         useValue: options.piLeadPublicationService ?? new PiLeadPublicationService(),

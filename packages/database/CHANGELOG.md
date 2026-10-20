@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.52.1](https://github.com/adea-ai/control-plane/compare/database-v1.52.0...database-v1.52.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* cp-bounded-readiness-ssl-teardown-20261019 ([#1197](https://github.com/adea-ai/control-plane/issues/1197)) ([2e80a07](https://github.com/adea-ai/control-plane/commit/2e80a0717793848fbc3d2b51b7a6450875d09596))
+
+## [1.52.0](https://github.com/adea-ai/control-plane/compare/database-v1.51.1...database-v1.52.0) (2026-10-19)
+
+
+### Features
+
+* **database:** verify Postgres TLS and bound the connection profile for Railway ([#1195](https://github.com/adea-ai/control-plane/issues/1195)) ([fdf41db](https://github.com/adea-ai/control-plane/commit/fdf41dba86462dcde9212d528e8a0195f9f9827d))
+
+## [1.51.1](https://github.com/adea-ai/control-plane/compare/database-v1.51.0...database-v1.51.1) (2026-10-19)
+
+
+### Tests
+
+* **database:** qualify fresh bootstrap and migration replay ([#1185](https://github.com/adea-ai/control-plane/issues/1185)) ([c892fa4](https://github.com/adea-ai/control-plane/commit/c892fa4fd057b9446e7dfb5e21928dd3de8393b1))
+
 ## [1.51.0](https://github.com/adea-ai/control-plane/compare/database-v1.50.2...database-v1.51.0) (2026-10-17)
 
 

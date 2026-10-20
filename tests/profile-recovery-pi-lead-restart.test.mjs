@@ -280,7 +280,12 @@ test('a SIGKILLed Pi lead run is adopted by a restarted composition with no rese
   if (failed) throw primaryFailure
 }, 120_000)
 
-test('a SIGKILL before HTTP dispatch resumes the same retained inference after composition restart', async () => {
+// A kill before the native HTTP dispatch does not resume the run. The usage ledger admits a model
+// dispatch once and refuses any later admission for the same request, even when the first never
+// reached the provider (usage-ledger durable.test.mjs pins this). Resuming it would change spend
+// semantics, which is a decision for the owner. So recovery fails closed: the decision is safe, no
+// request is sent, nothing is resent, and the record is held for reconciliation.
+test('a SIGKILL before HTTP dispatch fails closed after composition restart: no resend, no second admission', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'pi-lead-restart-safe-'))
   let initial
   let recovery
@@ -307,21 +312,23 @@ test('a SIGKILL before HTTP dispatch resumes the same retained inference after c
     expect(record.handleId).toBe(held.handleId)
     expect(record.attemptId).toBe(held.attemptId)
     expect(record.executionId).toBe(held.executionId)
-    expect(record.state).toBe('completed')
-    expect(record.inferencePending).toBe(false)
-    expect(record.inferenceKeys).toContain(held.inferenceKey)
-    expect(report.recoveryBlocked).toEqual([])
-    expect(report.requests).toBe(1)
-    expect(report.streams).toBe(1)
-    expect(report.resolvePlanCalls).toBe(0)
-    expect(report.authorizedInferenceKeys).toEqual([held.inferenceKey])
+    // The reconciliation verdict is safe: no native dispatch crossed the boundary.
     expect(report.reconcileEvidence).toEqual({
       key: held.inferenceKey,
       beforeDispatch: true,
       alreadyForwarded: false,
       decision: 'safe_to_resume',
     })
-    expect(report.requestsAfterDuplicate).toBe(1)
+    // The dispatch was already admitted once, so the ledger refuses a second admission. Fail closed.
+    expect(record.state).toBe('unknown')
+    expect(record.inferencePending).toBe(true)
+    expect(report.recoveryBlocked).toEqual([])
+    expect(report.requests).toBe(0)
+    expect(report.streams).toBe(0)
+    expect(report.authorizedInferenceKeys).toEqual([])
+    expect(report.resolvePlanCalls).toBe(0)
+
+    expect(report.requestsAfterDuplicate).toBe(0)
     expect(report.journalAfterDuplicate).toBe(1)
     expect(report.duplicate).toEqual({ ok: true, dispatchId: held.dispatchId })
 
@@ -329,11 +336,18 @@ test('a SIGKILL before HTTP dispatch resumes the same retained inference after c
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line))
-    const firstBoundary = evidence.find((entry) => entry.phase === 'before_dispatch')
-    const forwarded = evidence.filter((entry) => entry.phase === 'forwarded')
-    expect(firstBoundary.inferenceKey).toBe(held.inferenceKey)
-    expect(forwarded).toEqual([
-      { boundary: 'native_fetch', phase: 'forwarded', inferenceKey: held.inferenceKey },
+    expect(evidence.filter((entry) => entry.phase === 'forwarded')).toEqual([])
+    expect(evidence.filter((entry) => entry.phase === 'before_dispatch')).toEqual([
+      { boundary: 'native_fetch', phase: 'before_dispatch', inferenceKey: held.inferenceKey },
+    ])
+    // The exact ledger rejection, recorded at the authority boundary before the engine's generic failure.
+    expect(evidence.filter((entry) => entry.boundary === 'authority')).toEqual([
+      {
+        boundary: 'authority',
+        phase: 'rejected',
+        code: 'MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED',
+        inferenceKey: held.inferenceKey,
+      },
     ])
   } catch (error) {
     failed = true
@@ -353,13 +367,9 @@ test('a SIGKILL before HTTP dispatch resumes the same retained inference after c
   }
   if (cleanupFailure !== undefined) {
     if (failed)
-      throw new AggregateError(
-        [primaryFailure, cleanupFailure],
-        'safe Pi lead restart proof failed',
-        {
-          cause: primaryFailure,
-        }
-      )
+      throw new AggregateError([primaryFailure, cleanupFailure], 'Pi lead safe restart failed', {
+        cause: primaryFailure,
+      })
     throw cleanupFailure
   }
   if (failed) throw primaryFailure

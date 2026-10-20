@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.4](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.10.3...pi-durable-adapter-v0.10.4) (2026-10-19)
+
+
+### Tests
+
+* **pi:** prove durable input replay and workspace isolation ([#1189](https://github.com/adea-ai/control-plane/issues/1189)) ([a0644a7](https://github.com/adea-ai/control-plane/commit/a0644a7bf5a7e26ee939d4e316d614264d1dadb6))
+
 ## [0.10.3](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.10.2...pi-durable-adapter-v0.10.3) (2026-10-17)
 
 

@@ -49,6 +49,7 @@ import {
   type PiLeadPublicationPorts,
 } from '../pi-durable/publication-current.service.js'
 import { createSqlitePiLeadPublicationReader } from '../pi-durable/sqlite-publication-reader.js'
+import { PiChildPublicationService } from '../pi-durable/child-publication-current.service.js'
 
 export interface ProductionPiLeadCompositionOptions {
   readonly directory: string
@@ -60,9 +61,6 @@ export interface ProductionPiLeadCompositionOptions {
   readonly admission: Omit<
     NodePiDurableLeadCompositionOptions['admission'],
     'product' | 'assertProviderReady'
-  >
-  readonly committedCancellationAuthority?: NonNullable<
-    NodePiDurableLeadCompositionOptions['committedCancellationAuthority']
   >
   readonly ledger: NodePiDurableLeadCompositionOptions['usage']['ledger']
   readonly reconcileInference: NodePiDurableLeadCompositionOptions['reconcileInference']
@@ -122,7 +120,10 @@ export interface ProductionPiLeadCompositionOptions {
         >
       >
     readonly runtime: Required<
-      Pick<NodePiDurableLeadCompositionOptions, 'childProgress' | 'consumeParentInbox'>
+      Pick<
+        NodePiDurableLeadCompositionOptions,
+        'childProgress' | 'consumeParentInbox' | 'childTimelineDelivery'
+      >
     > &
       Pick<NodePiDurableLeadCompositionOptions, 'onParentInboxWake'>
   }
@@ -194,6 +195,8 @@ export async function createProductionPiLeadComposition(
       !children.delegation?.scopeAdmission?.authority ||
       typeof children.usageOutcomes !== 'function' ||
       typeof children.runtime?.childProgress?.scan !== 'function' ||
+      typeof children.runtime?.childTimelineDelivery?.notify !== 'function' ||
+      !children.runtime?.childTimelineDelivery?.principalId ||
       typeof children.runtime?.consumeParentInbox !== 'function' ||
       typeof children.tools?.service?.execute !== 'function' ||
       typeof children.tools?.interactions?.get !== 'function')
@@ -489,6 +492,7 @@ export async function createProductionPiLeadComposition(
             childAuthority,
             governedDelegateChild,
             delegationService: childDelegation.service,
+            childDelegations: childDelegation.service,
             childSettlement: {
               delegations: options.children.delegation.records,
               usageOutcomes: options.children.usageOutcomes,
@@ -502,9 +506,6 @@ export async function createProductionPiLeadComposition(
         : {}),
       onAdapterReady: runtimeBinding.onAdapterReady,
       directory: options.directory,
-      ...(options.committedCancellationAuthority
-        ? { committedCancellationAuthority: options.committedCancellationAuthority }
-        : {}),
       admission: {
         ...options.admission,
         product,
@@ -579,6 +580,20 @@ export async function createProductionPiLeadComposition(
       assertCurrent: options.publicationAuthority,
       ...(options.publicationNow ? { now: options.publicationNow } : {}),
     })
+    const childPublicationService =
+      options.children && childDelegation
+        ? new PiChildPublicationService({
+            readRetained: createSqlitePiLeadPublicationReader({
+              database: intentDatabase,
+              adapter: installed.adapter,
+              includeStatus: false,
+            }),
+            listChildren: (executionId) => childDelegation.service.listChildren(executionId),
+            listParentEvents: async () => options.children!.delegation.events.list(),
+            assertCurrent: options.publicationAuthority,
+            ...(options.publicationNow ? { now: options.publicationNow } : {}),
+          })
+        : undefined
     let closing: Promise<void> | undefined
     return {
       piDurableLeadService: installed.service,
@@ -590,6 +605,7 @@ export async function createProductionPiLeadComposition(
       /** Server-derived child binding for a retained attempt; never a credential or spend grant. */
       ...(childHost ? { childModelBinding: childHost.bindingFor } : {}),
       publicationService,
+      ...(childPublicationService ? { childPublicationService } : {}),
       ...(piDurableCurrentToolAuthority ? { piDurableCurrentToolAuthority } : {}),
       modelConnectionService: new ConfiguredModelConnectionService(
         metadata.selections,
@@ -603,6 +619,11 @@ export async function createProductionPiLeadComposition(
       ...(installed.settleChildTerminalAccounting
         ? { settleChildTerminalAccounting: installed.settleChildTerminalAccounting }
         : {}),
+      /** Settles the completed lead now, as the recovery pass does. */
+      settleTerminalAccounting: () => installed.settleTerminalAccounting(),
+      get terminalSettlementBlocked() {
+        return installed.terminalSettlementBlocked
+      },
       get childTerminalSettlementBlocked() {
         return installed.childTerminalSettlementBlocked
       },

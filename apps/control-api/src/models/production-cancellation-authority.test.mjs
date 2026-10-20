@@ -56,7 +56,7 @@ function options(directory, committedCancellationAuthority) {
   }
 }
 
-test('production composition forwards the exact cancellation authority object to the adapter', async () => {
+test('production composition never activates an old cancellation outbox object during construction', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-production-cancellation-authority-'))
   let observedThis
   const authority = {
@@ -73,7 +73,7 @@ test('production composition forwards the exact cancellation authority object to
   let composition
   try {
     composition = await createProductionPiLeadComposition(options(directory, authority))
-    expect(observedThis).toBe(authority)
+    expect(observedThis).toBeUndefined()
     const inspection = await composition.adapter.inspect()
     expect(inspection.capabilities.some(({ name }) => name === 'execution.cancel')).toBe(true)
   } finally {
@@ -82,13 +82,13 @@ test('production composition forwards the exact cancellation authority object to
   }
 })
 
-test('production composition keeps cancellation unavailable when the authority is omitted', async () => {
+test('production composition preserves ordinary cancellation without an irreversible owner grant', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-production-cancellation-unavailable-'))
   let composition
   try {
     composition = await createProductionPiLeadComposition(options(directory))
     const inspection = await composition.adapter.inspect()
-    expect(inspection.capabilities.some(({ name }) => name === 'execution.cancel')).toBe(false)
+    expect(inspection.capabilities.some(({ name }) => name === 'execution.cancel')).toBe(true)
   } finally {
     await composition?.close()
     rmSync(directory, { recursive: true, force: true })

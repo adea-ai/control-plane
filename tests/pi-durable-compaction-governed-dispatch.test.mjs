@@ -24,6 +24,7 @@ import {
   settleLeadTerminal,
 } from './pi-durable-compaction-governed-dispatch.fixture.mjs'
 import {
+  closeChildSettlementWorker,
   openDurableChildStores,
   readDurableChildState,
   runChildSettlementProcess,
@@ -852,11 +853,15 @@ async function forkDispatchedHost() {
 }
 
 afterAll(async () => {
-  const scenario = await sharedScenario?.catch(() => undefined)
-  if (!scenario) return
-  await scenario.host.close()
-  for (const checkpoint of Object.values(scenario.checkpoints))
-    await rm((await checkpoint).directory, { recursive: true, force: true })
+  try {
+    const scenario = await sharedScenario?.catch(() => undefined)
+    if (!scenario) return
+    await scenario.host.close()
+    for (const checkpoint of Object.values(scenario.checkpoints))
+      await rm((await checkpoint).directory, { recursive: true, force: true })
+  } finally {
+    await closeChildSettlementWorker()
+  }
 })
 
 const rowsOf = async (host, dispatch) => ({
@@ -1065,6 +1070,11 @@ test('the production composition settles the admitted child through its own sett
       unpriced: 0,
     })
     await host.reopenComposition()
+    expect(hooks.evidence.timelineWakes).toContainEqual({
+      workspaceId: host.workspaceId,
+      intentId: hooks.intentId,
+      principalId: 'svc_factory-proof',
+    })
     expect(await host.composition.settleChildTerminalAccounting()).toEqual({
       settled: 1,
       pending: 0,

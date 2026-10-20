@@ -182,11 +182,17 @@ describe('durable parent and child delegation', () => {
       state: 'completed',
       observedAt: '2026-08-25T18:03:00.000Z',
       terminalResultRef: 'art_01JBBCDEF0123456789ABCDEFG',
+      conclusion: 'The bounded question is resolved.',
     }
     const completed = await fixture.service.recordChildProgress(completedInput)
     const replay = await fixture.service.recordChildProgress(completedInput)
 
     expect(replay.record).toEqual(completed.record)
+    expect(completed.record.terminalConclusion).toBe('The bounded question is resolved.')
+    expect(fixture.events.at(-1).details.conclusion).toBe('The bounded question is resolved.')
+    await expect(
+      fixture.service.recordChildProgress({ ...completedInput, conclusion: 'Different answer.' })
+    ).rejects.toMatchObject({ code: 'DELEGATION_STATE_CONFLICT' })
     expect((await fixture.lifecycle.getExecution(ids.childExecutionId)).state).toBe('completed')
     expect(fixture.events.slice(-2).map(({ type }) => type)).toEqual([
       'delegation.progress',

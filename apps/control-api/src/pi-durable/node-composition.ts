@@ -21,6 +21,7 @@ import type { PiDurableChildProgressScanner } from './child-progress-scanner.js'
 import { SqlitePiLeadRunningLifecycle } from './lead-running-lifecycle.js'
 import { SqlitePiLeadTerminalSettlement } from './lead-terminal-settlement.js'
 import { PiChildTerminalSettlement, type ChildSettlementStep } from './child-terminal-settlement.js'
+import { createPiChildTimelineDelivery } from './child-timeline-delivery.js'
 import type { ChildUsageOutcomesFor } from './child-usage-outcomes.js'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import type { DelegationService } from '@control-plane/orchestration'
@@ -34,7 +35,6 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly reconcileInference: NodePiDurableCompositionOptions['reconcileInference']
   readonly engineFactory?: NodePiDurableCompositionOptions['engineFactory']
   /** Server-owned transaction/lease coordinator. Omit until product and CP owners share its CAS. */
-  readonly committedCancellationAuthority?: NodePiDurableCompositionOptions['committedCancellationAuthority']
   readonly verifyApproval?: NodePiDurableCompositionOptions['verifyApproval']
   readonly parentInbox?: NodePiDurableCompositionOptions['parentInbox']
   readonly consumeParentInbox?: NodePiDurableCompositionOptions['consumeParentInbox']
@@ -45,6 +45,8 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly governedManagementCall?: NodePiDurableCompositionOptions['governedManagementCall']
   /** The same canonical service used by child admission/progress. */
   readonly delegationService?: Pick<DelegationService, 'cancelChildren'>
+  /** Retained read-only child observations from that same canonical service. */
+  readonly childDelegations?: Pick<DelegationService, 'listChildren'>
   /** A child must independently reload its canonical lineage, selection and authority. */
   readonly childAuthority?: Pick<
     NodePiDurableCompositionOptions,
@@ -53,6 +55,11 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly preparationAuthority?: PiLeadPreparationAuthority
   /** Server-bound canonical child scanner. No child identity is accepted from an HTTP payload. */
   readonly childProgress?: Pick<PiDurableChildProgressScanner, 'scan'>
+  /** Existing service identity and transport; the retained J1 inbox drives replay. */
+  readonly childTimelineDelivery?: {
+    readonly principalId: string
+    readonly notify: Parameters<typeof createPiChildTimelineDelivery>[0]['notify']
+  }
   /**
    * Terminal accounting for completed children: the canonical delegation records, the child cost-state
    * store and the clock. It runs beside the lead settlement on every recovery pass and shares its ledger.
@@ -79,6 +86,7 @@ export async function createNodePiDurableLeadComposition(
     (!options.childAuthority ||
       !options.childProgress ||
       !options.parentInbox ||
+      !options.childTimelineDelivery ||
       !options.consumeParentInbox ||
       !options.delegationService)
   )
@@ -110,9 +118,6 @@ export async function createNodePiDurableLeadComposition(
     runtime = await createNodePiDurableRuntime({
       ...(options.onAdapterReady ? { onAdapterReady: options.onAdapterReady } : {}),
       directory: options.directory,
-      ...(options.committedCancellationAuthority
-        ? { committedCancellationAuthority: options.committedCancellationAuthority }
-        : {}),
       ...(options.admission.now ? { now: options.admission.now } : {}),
       ...createPiLeadRuntimeAuthorityRouter(
         {
@@ -138,6 +143,7 @@ export async function createNodePiDurableLeadComposition(
         : {}),
       ...usage,
       reconcileInference: options.reconcileInference,
+      ...(options.engineFactory ? { engineFactory: options.engineFactory } : {}),
       ...(options.verifyApproval ? { verifyApproval: options.verifyApproval } : {}),
       ...(options.parentInbox ? { parentInbox: options.parentInbox } : {}),
       ...(options.consumeParentInbox ? { consumeParentInbox: options.consumeParentInbox } : {}),
@@ -180,6 +186,15 @@ export async function createNodePiDurableLeadComposition(
     await preparations?.recoverExpired()
     let unclaimedPreparationRecovery = await recoverUnclaimedPreparations()
     let childProgressRecovery = await options.childProgress?.scan(runtime.adapter)
+    const childTimelineDelivery =
+      options.childTimelineDelivery && options.parentInbox
+        ? createPiChildTimelineDelivery({
+            database,
+            parentInbox: options.parentInbox,
+            ...options.childTimelineDelivery,
+          })
+        : undefined
+    let childTimelineRecovery = await childTimelineDelivery?.reconcile()
     let preparationRecovery: Promise<void> | undefined
     let preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
     const service = new DurablePiDurableLeadService({
@@ -194,6 +209,7 @@ export async function createNodePiDurableLeadComposition(
       },
       ...(preparations ? { preparations } : {}),
       ...(options.delegationService ? { delegationService: options.delegationService } : {}),
+      ...(options.childDelegations ? { childDelegations: options.childDelegations } : {}),
       ...(options.admission.now ? { now: options.admission.now } : {}),
     })
     // Created last: after every awaited step and the service, nothing can throw before the return, so a
@@ -204,6 +220,7 @@ export async function createNodePiDurableLeadComposition(
         await preparations?.recoverExpired()
         unclaimedPreparationRecovery = await recoverUnclaimedPreparations()
         childProgressRecovery = await options.childProgress?.scan(runtime!.adapter)
+        childTimelineRecovery = await childTimelineDelivery?.reconcile()
       })()
         .then(() => {
           preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
@@ -240,6 +257,7 @@ export async function createNodePiDurableLeadComposition(
           unclaimedPreparationRecovery = await recoverUnclaimedPreparations()
           preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
           childProgressRecovery = await options.childProgress?.scan(initializedRuntime.adapter)
+          childTimelineRecovery = await childTimelineDelivery?.reconcile()
           await terminalSettlement.settle()
           await childTerminalSettlement?.settle()
         })()
@@ -255,6 +273,12 @@ export async function createNodePiDurableLeadComposition(
       },
       get childProgressRecovery() {
         return childProgressRecovery
+      },
+      get childTimelineRecovery() {
+        return childTimelineRecovery
+      },
+      get childTimelineDeliveryBlocked() {
+        return (childTimelineRecovery?.blocked.length ?? 0) > 0
       },
       get unclaimedPreparationRecovery() {
         return unclaimedPreparationRecovery

@@ -96,10 +96,8 @@ const CancellationTargetFields = {
   generation: PiDurableCancellationGenerationSchema.nullable(),
 }
 
-/** Server-created proposal. Its identifiers come from the retained adapter journal, never a
- * request receipt. The owner reloads canonical product and control-plane authority by these IDs
- * and compares the current versions in the same transaction that commits the outbox intent.
- */
+/** Historical #1048 retained-request format, used only for effect-free history qualification.
+ * These identifiers and persisted fields never grant current permission to cancel. */
 export const PiDurableCancellationProposalSchema = z
   .strictObject({
     handleId: z.string().min(1).max(256),
@@ -147,14 +145,9 @@ export type PiDurableCommittedCancellationIntent = z.output<
   typeof PiDurableCommittedCancellationIntentSchema
 >
 
-/** Trusted, server-owned capability. `commit` must perform the current product fence, execution,
- * attempt, deadline, scope and idempotency checks in one serializable owner transaction, then write
- * an immutable cancellation outbox record. The adapter never accepts this port from a request,
- * receipt, or caller-supplied authorization boolean. Replays of one key/digest return one intent;
- * a changed digest conflicts. `pendingHandles`/`pendingForHandle`/`acknowledge` make
- * commit-before-journal crash recovery
- * possible without silently dropping an intent whose commit response was lost. `acknowledge` must
- * be idempotent because its response can be lost after the owner records the acknowledgement.
+/** Historical source/test retention interface. Deliberately absent from runtime/composition
+ * options: neither commit nor acknowledgement authorizes a native cancellation effect. Current
+ * production coordinator contracts are separately defined in cancellation-owner.ts and unavailable.
  */
 export interface PiDurableCommittedCancellationAuthority {
   readonly commit: (
@@ -315,10 +308,6 @@ export interface PiDurableRuntimeOptions {
     authority: DurableExecutionAuthority,
     purpose?: PiDurableAuthorityPurpose
   ) => Promise<void>
-  /** Missing in current production composition: cancellation then fails closed before any
-   * journal mutation or engine abort. This port must be wired only by a server-owned coordinator.
-   */
-  readonly committedCancellationAuthority?: PiDurableCommittedCancellationAuthority
   /** Revalidates retained state for observation without allocating a new budget or attempt. */
   readonly assertReadAuthority?: (authority: DurableExecutionAuthority) => Promise<void>
   /** Revalidates retained recovery authority without allocating a new budget or attempt. */
@@ -376,6 +365,8 @@ export interface PiDurableRuntimeOptions {
       maxOutputTokens: number
       maximumInputTokens: number
       assertActive: () => Promise<void>
+      preparePhysicalSend?: (requestDigest: string) => Promise<void>
+      armPhysicalSend?: (requestDigest: string) => Promise<void>
     }>
     withModels: <T>(use: (models: Models) => Promise<T>) => Promise<T>
     readonly retainInferences?: (inferences: PiEngineResult['inferences']) => Promise<void>
@@ -384,7 +375,7 @@ export interface PiDurableRuntimeOptions {
   }) => Promise<DurablePiEngine>
 }
 
-/** Created only by runtime recovery after its trusted no-send reconciliation for this exact key. */
+/** Created by runtime recovery only after a trusted no-send verdict for this exact key. */
 export interface PiDurableInferenceResumePermit {
   readonly schemaVersion: 'pi-inference-resume-permit/v1'
   readonly inferenceKey: string
