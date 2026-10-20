@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.3](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.21.2...hosted-control-plane-v1.21.3) (2026-10-20)
+
+
+### Bug Fixes
+
+* cp-bounded-readiness-ssl-teardown-20261019 ([#1197](https://github.com/adea-ai/control-plane/issues/1197)) ([2e80a07](https://github.com/adea-ai/control-plane/commit/2e80a0717793848fbc3d2b51b7a6450875d09596))
+
 ## [1.21.2](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.21.1...hosted-control-plane-v1.21.2) (2026-10-17)
 
 
