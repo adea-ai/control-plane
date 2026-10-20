@@ -60,6 +60,28 @@ test('the production lead composition exposes both terminal settlement functions
     })
     expect(composition.terminalSettlementBlocked).toBe(false)
 
+    // A failing settlement pass blocks the store, observed through the returned getter. The journal
+    // read is forced to fail for one pass and then restored, so the blocked state is not hardcoded.
+    const journal = composition.adapter.journal
+    const listRecords = journal.list
+    journal.list = () => {
+      throw new Error('forced journal failure')
+    }
+    try {
+      await expect(composition.settleTerminalAccounting()).rejects.toThrow(
+        'forced journal failure'
+      )
+      expect(composition.terminalSettlementBlocked).toBe(true)
+    } finally {
+      journal.list = listRecords
+    }
+    expect(await composition.settleTerminalAccounting()).toEqual({
+      settled: 0,
+      pending: 0,
+      unbound: 0,
+    })
+    expect(composition.terminalSettlementBlocked).toBe(false)
+
     // Without child configuration the child pair is not exposed: unchanged from main.
     expect('settleChildTerminalAccounting' in composition).toBe(false)
     expect(composition.childTerminalSettlementBlocked).toBe(false)
