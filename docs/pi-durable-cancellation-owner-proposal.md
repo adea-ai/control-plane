@@ -315,3 +315,75 @@ code-point comparator. The real Request-valued POST regression includes hyphen,
 underscore and plain header names and checks the literal expected fingerprint at
 both prepared and armed stages. No retained fingerprint is rewritten, and no
 old prepared/armed record gains resend permission from this ordering repair.
+
+## Native commit/fence qualification and dormant boundary
+
+The native-boundary interfaces in `native-cancellation-boundary.ts` are exported
+source contracts only. The default port rejects preparation, commit, fence
+installation, receipt retrieval and drain as unavailable. It is not injected into
+the adapter, engine or composition. No SDK, authority writer or production
+capability has changed. Existing final-callback revocation and deadline
+zero-effect gates remain unsatisfied and unchanged.
+
+Andrew accepted unavailable/not-confirmed revocation when a runtime safety fence
+cannot be confirmed, and post-revocation drain of cancellation actually committed
+before revocation. The required ordering remains `F < A < R`; `N < F < R < D` is
+permitted. N and F share the native transaction serialization boundary, released
+at commit/rollback rather than drain D. Installation ACK A is neither drain
+evidence nor proof of canonical R. Handshake budget B does not bound the complete
+canonical operation or its response.
+
+The dormant preparation carries candidate scope/task/input revisions and exact
+product/generation/process bindings. It is not a frozen in-memory cut: a future
+qualified N must reread and compare persisted facts within its transaction.
+Retained intent and preparation cannot be parsed as commit evidence. Receipt
+comparisons bind the exact request, native target, process, owner and restore
+generation but do not attest provenance or authority. Native admission uses the
+earliest relevant existing authority expiry; timestamp shapes preserve
+milliseconds. A historical receipt may be observed after expiry without becoming
+a newly executable permit. Lost-response publication/drain must resolve the exact
+persisted generation and must never issue an abort against a successor.
+
+Independent disposable Node SQLite probes using the installed Pi 1.1.0 public
+interfaces established these narrow facts:
+
+- The unmodified public `abort()` has no storage commit for empty scope. A
+  rejected tagged abort batch still resumes the scheduler; a paused task ran,
+  while its abort handler did not run.
+- A host-owned `SqliteDatabase` can reject every native transaction and prevent
+  pending-task admission. This also rejects cancellation itself, so it does not
+  establish selective guarded abort.
+- A separate public `Conversation.commit` using public `Tx` scans and a host
+  document can retain a conservative empty-root no-effect receipt without
+  resuming scheduling. An uncached final database guard rejected owner/fence
+  drift and rolled back receipt creation. This is not `Conversation.abort()` or
+  recursive scope/native-effect qualification.
+- An ambient cancellation token propagated to four native transactions: abort
+  marking, reservation, completion and terminalization. It cannot by itself
+  identify exactly the cancellation transaction. No Context/Storage proxy was
+  wired and no private SDK internals were used.
+
+Three isolated reference contract tests intentionally remain red against the
+pinned API: guarded empty-abort receipt, no cancellation-induced scheduling on
+rejection, and selective ambient operation identity. They are retained with the
+executable probes in Library design revision 5, not represented as passing
+repository qualification. Normal source tests cover only dormant contracts and
+unavailability.
+
+The reference additive API needs an explicit guarded operation, exact persisted
+scope selection/revalidation, zero-write receipt path, and selective scheduler
+admission/publication. Its N must atomically validate current local restriction
+union, process claim, restore generation and trusted earliest deadline, then
+commit native abort/input mutations with the immutable receipt. F must use the
+same write domain, with restrictions owned by each canonical mutation. No
+asynchronous authority check after the final guard and no wait for D may sit in
+that transaction boundary. Public facade composition is not declared impossible;
+these partial probes do not establish the whole operation.
+
+All invalidating product/CP writers, pending admission/creation, replacement,
+rebind and reopen registration still require complete per-mutation scope closure
+before discovery through canonical commit outcome. Shared Adea database writer
+paths await root-mediated ownership reconciliation; W8 owns restore-proof
+qualification. Native primitive, all-writer coverage, independent restore
+generation and installed product acceptance remain pending. No live activation
+or dependency installation follows from this source slice.
