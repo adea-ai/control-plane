@@ -1,34 +1,43 @@
 # Pi #1173: child outcome read and single RuntimeSession
 
-Status: design note, source-verified on `origin/main` at `6af44842`. No production code changes.
+Status: design note, source-verified against CP `main` at `6af44842`. No production code changes. #1173 stays open, and nothing here implies live authorization.
 
-## 1. Child outcome read: already on main
+## 1. Child outcome read: existing contract, existing Adea consumer
 
-The child status and outcome read that the #1173 journey README lists as "not proved" already exists:
+CP's authorized child read already exists. It is not a new operation.
 
-- Operation: `POST /v3/pi-durable/lead-dispatches/children`, `execution:read` scope
+- CP operation: `POST /v3/pi-durable/lead-dispatches/children`, `execution:read` scope
   (`apps/control-api/src/pi-durable/pi-durable-lead.controller.ts`).
 - Contract: `PiDurableLeadChildrenRequestSchema` and `PiDurableLeadChildrenResponseSchema`
-  (`packages/runtime-sdk/src/pi-durable-lead.ts`), with the client operation in
-  `packages/control-sdk/src/operations.ts`.
+  (`packages/runtime-sdk/src/pi-durable-lead.ts`), with the client operation
+  `getPiDurableLeadChildren` in `packages/control-sdk/src/operations.ts`.
 - Origin: `f96ff8fb feat(pi-durable): authorized read of lead child status, input state and outcomes (#1160)`.
-  This commit is an ancestor of the Adea journey pin `69e6e746` (CP release 1.104.0).
+  It is an ancestor of the Adea journey pin `69e6e746` (CP release 1.104.0).
+- Contract test: `packages/runtime-sdk/src/pi-durable-lead.test.mjs`, "children read is a strict
+  read-only contract of opaque references and bounded outcomes".
 
-What the read returns, per child: `state` (`requested` through `manual_intervention`), `awaitingInput`,
-`stopRequested`, `revision`, and an `outcome` with `state` (`completed`, `failed`, `cancelled`), an
-opaque `resultRef`, a bounded `failureCode`, and `publication` (`pending` or `published`, with a
-`resolution`). Pages are ordered by acceptance time then delegation ID, with `totalChildren`,
-`complete` and `next`. The contract test is `packages/runtime-sdk/src/pi-durable-lead.test.mjs`,
-"children read is a strict read-only contract of opaque references and bounded outcomes".
+The read returns, per child: `state` (`requested` through `manual_intervention`), `awaitingInput`,
+`stopRequested`, `revision`, and an optional `outcome`. The outcome has `state` (`completed`,
+`failed` or `cancelled`), an opaque `resultRef`, a bounded `failureCode`, and `publication`. Pages are
+ordered by acceptance time then delegation ID, with `totalChildren`, `complete` and `next`.
 
-Consequence: the journey README's "no child status, child outcome" claim is stale for the pinned CP
-revision. Adding a second read here would duplicate #1160, so this note proposes none.
+**`outcome.publication.status` is the retained CP delegation publication state** (`pending` or
+`published`, with an optional `resolution`) for the child's result. It records what CP retains. It is not
+an Adea timeline receipt, and nothing in Adea should treat it as proof that a timeline entry was published.
 
-What remains is consumption on the Adea side: whether Adea reads, shows and publishes the child
-outcome through this operation. That is Adea product and journey work, not CP.
+### What Adea already has, and what it does not
 
-Out of scope and unchanged: child cancel, and any approval grant. `awaitingInput` is observation,
-never a grant.
+- **Existing consumer:** Adea's product route `lead-turn-children` (`apps/web/src/server/lead-turn-children.ts`,
+  `lead-turn-routes.ts`) reads the operation through the SDK. Its tests live in
+  `apps/web/test/lead-turn-children.test.ts`, and Adea #1513 documents this consumer in the journey README.
+- **Missing proof:** the journey run does not exercise the read end to end. Its child result was checked
+  from CP's own records. There is no journey-level proof of child-state rendering, of the timeline
+  publication path, or of a UI view that draws child outcomes.
+
+So the remaining work for this item is Adea journey, UI and timeline proof. It is not a CP contract gap,
+and it is not a new CP operation.
+
+Out of scope and unchanged: child cancel, and any approval grant. `awaitingInput` is observation, never a grant.
 
 ## 2. Single RuntimeSession across Dev and Chat
 
@@ -39,25 +48,25 @@ Invariants CP already enforces:
 - `observedTarget` (`sessionId`, `taskId`) is server-owned, from the handle and the admitted plan.
 - `requestedTarget` is a caller claim and is optional. `generation` is deliberately absent from the observed target.
 - Retrieval is by receipt: `lookup` and `status` return the existing receipt. A second surface can
-  therefore observe the same session without creating one.
+  observe the same session without creating one.
 
-Not enforced, and not admitted anywhere in CP: a handoff target that moves an active lead to a
-different surface, and a single-RuntimeSession invariant spanning two surfaces. The journey harness
-admits no handoff target, so this path has no exercise today.
+Not enforced, and not admitted anywhere in CP: a handoff target that moves an active lead to a different
+surface, and a single-RuntimeSession invariant spanning two surfaces. The journey harness admits no handoff
+target, so this path is not exercised today.
 
-Proposed invariant (decision-free, ordinary design): one dispatch receipt maps to exactly one
-`runtimeSessionId`. Dev and Chat attach by `lookup` and `status` on that receipt and never create a
-second session for the same intent.
+Decided here, as ordinary design: one dispatch receipt maps to exactly one `runtimeSessionId`. Dev and Chat
+attach by `lookup` and `status` on that receipt and never create a second session for the same intent.
 
-## 3. Decisions
+## 3. Decisions (current direction)
 
-| Decision | Who decides | Options | Recommendation | Affected |
-| --- | --- | --- | --- | --- |
-| Resume or hold after a pre-dispatch kill | Andrew (spend semantics) | (a) hold `unknown`, fail closed; (b) re-admit a dispatch reservation that never reached the provider | (a) now | `packages/usage-ledger/src/durable.ts`, `tests/profile-recovery-pi-lead-restart.test.mjs` |
-| Production revocation fence in CP | Andrew (access control) | (a) implement a lock-held fence through acceptance; (b) leave it unproved and disclose | Decide with Andrew; no implementation here | `apps/control-api/src/models/production-source-lead-product.ts` (injected port, no CP implementation found) |
-| Child cancel or approval operations | Product | (a) keep read-only; (b) add operations | (a) until Adea needs them | `packages/runtime-sdk/src/pi-durable-lead.ts` |
-| Handoff target admission | Product | (a) none; (b) explicit handoff in prepare | (a) until a spec exists | prepare and dispatch contracts |
-| Dev and Chat attach to one receipt | Ordinary design, decided here | fixed as section 2 | attach by lookup and status | Adea product |
+| Item | Status | Basis |
+| --- | --- | --- |
+| Pre-dispatch kill | Decided: keep `unknown`, no resend | Andrew, 04:28 UTC. Re-admitting a dispatch reservation would change spend semantics, so it is not done. Pinned by `tests/profile-recovery-pi-lead-restart.test.mjs` and `packages/usage-ledger/src/durable.test.mjs`. |
+| Production revocation fence | Existing contract. Source-only fail-closed implementation and tests are allowed. No grant expansion, no activation, no wiring. | Andrew, 04:29 UTC. The contract is at `production-source-lead-product.ts:81-84`, `publication-current.service.ts:23` and `source-publication-current.ts:22-24`, pinned by `production-source-lead-product.test.mjs:221` and `:239`. Production has no implementation yet. |
+| Child read contract | Done on main (#1160). No new operation. Adea consumer exists (#1513 documents it). | Section 1. |
+| Child cancel and approval | Excluded. Needs a new policy decision before any design. | Andrew, 04:28 UTC, excluded from scope. |
+| Handoff target admission | Genuinely new policy. Not admitted. Needs a product decision before any design. | Section 2. |
+| Dev and Chat attach to one receipt | Decided here | Section 2. |
 
-Ordinary decisions resolved here: section 1 needs no new operation, and section 2 needs no new
-contract.
+Genuinely new policy stays a decision. Existing-contract work, including the source-only fence, is not
+blocked on a generic access-control approval.
