@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.2](https://github.com/adea-ai/control-plane/compare/telemetry-v1.8.1...telemetry-v1.8.2) (2026-10-20)
+
+
+### Maintenance
+
+* **deps:** update dependency @opentelemetry/sdk-metrics to v3 ([#1206](https://github.com/adea-ai/control-plane/issues/1206)) ([6ca4635](https://github.com/adea-ai/control-plane/commit/6ca46356510243d7a3752299dcd6ff076bb7bbd8))
+
 ## [1.8.1](https://github.com/adea-ai/control-plane/compare/telemetry-v1.8.0...telemetry-v1.8.1) (2026-10-17)
 
 
