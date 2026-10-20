@@ -68,9 +68,7 @@ test('the production lead composition exposes both terminal settlement functions
       throw new Error('forced journal failure')
     }
     try {
-      await expect(composition.settleTerminalAccounting()).rejects.toThrow(
-        'forced journal failure'
-      )
+      await expect(composition.settleTerminalAccounting()).rejects.toThrow('forced journal failure')
       expect(composition.terminalSettlementBlocked).toBe(true)
     } finally {
       journal.list = listRecords
