@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.105.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.2...workspace-v1.105.3) (2026-10-20)
+
+
+### Documentation
+
+* **pi-1173:** child outcome read is on main; single RuntimeSession invariant ([#1202](https://github.com/adea-ai/control-plane/issues/1202)) ([79a31dd](https://github.com/adea-ai/control-plane/commit/79a31ddd04b58c3a15dfb0022340c9ddf05cfb6b))
+
 ## [1.105.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.1...workspace-v1.105.2) (2026-10-20)
 
 
