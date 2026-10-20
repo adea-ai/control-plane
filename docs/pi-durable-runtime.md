@@ -193,6 +193,13 @@ published. Production integration requires a compatible authorized signer; this
 work creates no grants or credentials. Candidate tests use synthetic policy and
 provider transport.
 
+The child publication operation can expose a bounded plain-text conclusion only from
+the canonical Pi adapter's exact terminal `{ text }` result. It is retained with the
+child attempt and terminal event, then checked against the current parent binding,
+original actor and publication grant on each read. Other result JSON and oversized
+text are withheld. An artifact ID is only a reference; it does not grant a read of
+artifact bytes or expose substantial output in Adea's timeline.
+
 ## Provider, spend and recovery gates
 
 R2 owns immutable `model-selection/v1` connection/account/auth/location/funding

@@ -61,6 +61,7 @@ export class PiChildPublicationService {
       role: first.record.role,
       state: first.record.state,
       ...(first.record.terminalResultRef ? { resultRef: first.record.terminalResultRef } : {}),
+      ...(first.record.terminalConclusion ? { conclusion: first.record.terminalConclusion } : {}),
       ...(first.record.failureCode ? { failureCode: first.record.failureCode } : {}),
       occurredAt: first.event.occurredAt,
       authorityRevision: authority.authorityRevision,
@@ -128,6 +129,7 @@ export class PiChildPublicationService {
           event.details.state !== record.state ||
           event.details.childAttemptId !== record.childAttemptId ||
           event.details.terminalResultRef !== record.terminalResultRef ||
+          event.details.conclusion !== record.terminalConclusion ||
           event.details.failureCode !== record.failureCode ||
           event.details.reason !== terminalPublication.reason ||
           event.details.resolution !== terminalPublication.resolution ||

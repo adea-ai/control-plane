@@ -46,6 +46,7 @@ const record = {
   acceptedAt: instant,
   updatedAt: instant,
   terminalResultRef: `art_${suffix}`,
+  terminalConclusion: 'The bounded question is resolved.',
   terminalPublication: { status: 'published', idempotencyKey: `delegation:dlg_${suffix}:terminal` },
 }
 const event = {
@@ -58,6 +59,7 @@ const event = {
     state: 'completed',
     childAttemptId: record.childAttemptId,
     terminalResultRef: record.terminalResultRef,
+    conclusion: record.terminalConclusion,
   },
 }
 const { projectId: _, ...read } = PublicContractFixtures.request
@@ -102,13 +104,14 @@ function make() {
   })
   return { state, service }
 }
-test('retained terminal event and current CP grant yield exact metadata, never content', async () => {
+test('retained terminal event and current CP grant yield only the attested conclusion', async () => {
   const { service, state } = make()
   const output = (await service.current(request, principal)).data.publication
   expect(output).toMatchObject({
     delegationId: record.delegationId,
     state: 'completed',
     resultRef: record.terminalResultRef,
+    conclusion: record.terminalConclusion,
     attemptId: binding.attemptId,
   })
   expect(output).not.toHaveProperty('content')
@@ -122,6 +125,7 @@ test('missing/out-of-order/contradictory inbox, stale attempt and revoked grant 
     'wrong-attempt',
     'wrong-event',
     'wrong-result',
+    'wrong-conclusion',
     'revoked',
   ]) {
     const { service, state } = make()
@@ -131,6 +135,7 @@ test('missing/out-of-order/contradictory inbox, stale attempt and revoked grant 
     if (fault === 'wrong-event') state.events[0].details.childAttemptId = binding.attemptId
     if (fault === 'wrong-result')
       state.events[0].details.terminalResultRef = `art_01JBBCDEF0123456789ABCDEFG`
+    if (fault === 'wrong-conclusion') state.events[0].details.conclusion = 'Forged answer.'
     if (fault === 'revoked') state.denied = true
     await expect(service.current(request, principal)).rejects.toThrow()
   }
@@ -140,9 +145,11 @@ test('failed and cancelled child metadata survives lead outcome, with exact even
     const { service, state } = make()
     state.record.state = terminal
     delete state.record.terminalResultRef
+    delete state.record.terminalConclusion
     state.events[0].type = `delegation.${terminal}`
     state.events[0].details.state = terminal
     delete state.events[0].details.terminalResultRef
+    delete state.events[0].details.conclusion
     if (terminal === 'failed') {
       state.record.failureCode = 'RUNTIME_ERROR'
       state.events[0].details.failureCode = 'RUNTIME_ERROR'

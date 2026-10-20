@@ -25,6 +25,7 @@ test('child publication SDK sends only exact identifiers and rejects caller cont
     role: 'researcher',
     state: 'completed',
     resultRef: `art_${suffix}`,
+    conclusion: 'The bounded question is resolved.',
     occurredAt: '2026-10-08T00:00:01.000Z',
     authorityRevision: 1,
     expiresAt: '2026-10-08T00:00:20.000Z',

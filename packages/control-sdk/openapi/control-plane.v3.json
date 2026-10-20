@@ -14707,6 +14707,7 @@
                             },
                             "childAttemptId": {},
                             "childExecutionId": {},
+                            "conclusion": { "maxLength": 1024, "minLength": 1, "type": "string" },
                             "delegationId": {},
                             "dispatchId": {
                               "pattern": "^dispatch_[a-f0-9]{32}$",
