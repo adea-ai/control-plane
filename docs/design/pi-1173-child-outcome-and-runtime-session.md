@@ -61,10 +61,10 @@ attach by `lookup` and `status` on that receipt and never create a second sessio
 
 | Item | Status | Basis |
 | --- | --- | --- |
-| Pre-dispatch kill | Decided: keep `unknown`, no resend | Andrew, 04:28 UTC. Re-admitting a dispatch reservation would change spend semantics, so it is not done. Pinned by `tests/profile-recovery-pi-lead-restart.test.mjs` and `packages/usage-ledger/src/durable.test.mjs`. |
-| Production revocation fence | Existing contract. Source-only fail-closed implementation and tests are allowed. No grant expansion, no activation, no wiring. | Andrew, 04:29 UTC. The contract is at `production-source-lead-product.ts:81-84`, `publication-current.service.ts:23` and `source-publication-current.ts:22-24`, pinned by `production-source-lead-product.test.mjs:221` and `:239`. Production has no implementation yet. |
+| Pre-dispatch kill | Decided: keep `unknown`, no resend | Coordinator relay of 2026-10-20 04:28 UTC, within existing approved scope; not a direct user approval. Re-admitting a dispatch reservation would change spend semantics, so it is not done. Pinned by `tests/profile-recovery-pi-lead-restart.test.mjs` and `packages/usage-ledger/src/durable.test.mjs`. |
+| Production revocation fence | Existing contract. Source-only fail-closed implementation and tests are allowed. No grant expansion, no activation, no wiring. | Coordinator relay of 2026-10-20 04:29 UTC, within existing approved scope; not a direct user approval. The contract is at `production-source-lead-product.ts:81-84`, `publication-current.service.ts:23` and `source-publication-current.ts:22-24`, pinned by `production-source-lead-product.test.mjs:221` and `:239`. Production has no implementation yet. |
 | Child read contract | Done on main (#1160). No new operation. Adea consumer exists (#1513 documents it). | Section 1. |
-| Child cancel and approval | Excluded. Needs a new policy decision before any design. | Andrew, 04:28 UTC, excluded from scope. |
+| Child cancel and approval | Excluded. Needs a new policy decision before any design. | Coordinator relay of 2026-10-20 04:28 UTC, within existing approved scope; not a direct user approval. Excluded from scope. |
 | Handoff target admission | Genuinely new policy. Not admitted. Needs a product decision before any design. | Section 2. |
 | Dev and Chat attach to one receipt | Decided here | Section 2. |
 
