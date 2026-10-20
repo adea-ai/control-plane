@@ -722,9 +722,11 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         .find((value): value is string => typeof value === 'string')
       const resumeKey = activeInference?.inferenceKey ?? retainedKey
       const observe = (candidate: JournalRecord) =>
-        hasDurablePreRunNoSend(candidate)
-          ? Promise.resolve('safe_to_resume' as const)
-          : this.#options.reconcileInference(authority, resumeKey ?? turnKey(record))
+        hasUnqualifiedPhysicalDispatch(candidate)
+          ? Promise.resolve('unresolved' as const)
+          : hasDurablePreRunNoSend(candidate)
+            ? Promise.resolve('safe_to_resume' as const)
+            : this.#options.reconcileInference(authority, resumeKey ?? turnKey(record))
       const preliminary = await observe(record)
       await this.#authority(authority)
       this.#assertOpen()
@@ -1658,6 +1660,17 @@ function hasDurablePreRunNoSend(record: JournalRecord): boolean {
     detail['nativeToolBlocked'] === undefined &&
     detail['pendingApproval'] === undefined
   )
+}
+
+/** A copied journal cannot independently prove that a prepared generation is current. */
+function hasUnqualifiedPhysicalDispatch(record: JournalRecord): boolean {
+  const retained = record.detail['physicalDispatches']
+  if (retained === undefined) return false
+  if (!retained || typeof retained !== 'object' || Array.isArray(retained)) return true
+  const active = readActiveInference(record)
+  if (!active) return true
+  const dispatches = retained as Record<string, unknown>
+  return Object.hasOwn(dispatches, active.inferenceKey)
 }
 
 function turnKey(record: Pick<JournalRecord, 'attemptId' | 'detail'>): string {

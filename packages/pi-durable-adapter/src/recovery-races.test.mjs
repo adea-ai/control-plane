@@ -165,6 +165,51 @@ test('physical send journal advances prepared to armed once and fences a cancell
   }
 })
 
+test.each(['prepared', 'armed'])(
+  'the %s physical send marker remains unresolved without restore-generation proof',
+  async (stage) => {
+    const directory = mkdtempSync(join(tmpdir(), 'pi-armed-recovery-'))
+    let runs = 0
+    let noSendGuesses = 0
+    const setup = fixture(directory, {
+      reconcileInference: async () => {
+        noSendGuesses++
+        return 'safe_to_resume'
+      },
+      engineFactory: async (engine) => ({
+        run: async () => {
+          runs++
+          const allowance = await engine.authorizeInference({
+            sessionId: 'session',
+            inferenceId: 'pi-generation:1',
+            provider: 'scripted',
+            modelId: 'race-model',
+          })
+          const digest = `sha256:${'b'.repeat(64)}`
+          await allowance.preparePhysicalSend(digest)
+          if (stage === 'armed') await allowance.armPhysicalSend(digest)
+          throw new Error('PROVIDER_OUTCOME_UNKNOWN')
+        },
+        close: async () => {},
+        cancel: async () => {},
+      }),
+    })
+    const adapter = new PiDurableRuntimeAdapter(setup.options)
+    try {
+      const handle = await adapter.start(setup.request)
+      await adapter.drain()
+      expect((await adapter.status(handle)).state).toBe('unknown')
+      expect((await adapter.reconcile(handle)).state).toBe('unknown')
+      await adapter.drain()
+      expect(runs).toBe(1)
+      expect(noSendGuesses).toBe(0)
+    } finally {
+      await adapter.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }
+)
+
 test.each(['running', 'unknown', 'cancelling'])(
   'reopened %s inference cannot become a fresh input or approval while reconciliation is unresolved',
   async (state) => {
