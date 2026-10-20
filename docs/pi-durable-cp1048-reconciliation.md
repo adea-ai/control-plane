@@ -21,8 +21,9 @@ separate custody receipt before anyone changes or disposes of that checkout.
 
 ## Eleven overlapping paths
 
-The intersection of the old 100-file patch with the current Pi draft's 35 changed
-paths is eleven. “Open” means the old behavior has not been proved superseded;
+The intersection of the old 100-file patch with the Pi draft's 35 changed
+paths at this reconciliation snapshot is eleven. Later adapter-only source slices
+do not change those eleven decisions. “Open” means the old behavior has not been proved superseded;
 it must be integrated on the current branch only after its authority contract is
 qualified. Non-Pi workflow and generated architecture coordination belongs to
 the assigned CI/conflict owner.
@@ -51,12 +52,26 @@ an engine that never entered `run` without guessing from an absent ledger hold.
 An exact-key resume permit lets a trusted
 no-send verdict reuse a retained ledger hold after reopen or failed engine
 creation; an ordinary retry still hits the dispatch replay fence. A test-only
-no-send log is not production reconciliation evidence. Its `safe_to_resume` callback needs an accountable
-server-owned evidence source before live use. Reconnect source rechecks current
+no-send log is not production reconciliation evidence. The source now records
+`prepared` then `armed` before the physical provider fetch, bound to the exact
+inference generation, attempt, request fingerprint, provider binding, and owner
+epoch. An ambiguous arm result prevents fetch; an armed marker cannot be reset
+to prepared. Both retained stages remain unresolved after reopen because a
+copied journal alone cannot prove the current restore generation, even if a
+callback guesses safe. A qualified server-owned restore-generation/no-send
+authority is still needed before resuming a prepared generation. The final
+spending await is followed by a journal owner and authority recheck immediately
+before fetch. That check and the provider fetch are separate operations, so
+cross-process revocation in their physical gap is not an atomic authorization
+claim. Reconnect source rechecks current
 authority after awaited observations; the live gateway handshake remains open.
-The Node composition close now has an active-task drain proof. No supported Pi
-upgrade executor or compatible-version handoff entry point exists, so an
-upgrade/rollback test cannot be made valid by renaming a close/reopen test.
+The Node composition close has an active-task drain proof and now offers an
+opt-in local handoff manifest after fenced close. It fingerprints the authority
+SQLite main/WAL/SHM files and native Pi session files, validates exact retained
+version and bytes before reopen, and rejects drift. This is local store integrity
+only. It does not prove installed build compatibility, cross-version conversion,
+one-owner live upgrade, downgrade, rollback, or a copied Railway restore. No
+supported release-pair upgrade/rollback executor is qualified.
 
 Current ordinary and fenced cancellation can reach the adapter without a
 committed cross-store owner. #1048's optional outbox port and test-only SQLite
