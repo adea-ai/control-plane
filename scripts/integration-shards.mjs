@@ -173,6 +173,7 @@ export const INTEGRATION_SHARDS = [
         files: [
           'src/hosted-graph-cancellation.integration.test.mjs',
           'src/hosted-http.integration.test.mjs',
+          'src/hosted-model-forwarding.integration.test.mjs',
           'src/reconciliation-metrics.integration.test.mjs',
           'src/reconciliation-projection.integration.test.mjs',
           'src/hosted-graph-legacy-fence.integration.test.mjs',
