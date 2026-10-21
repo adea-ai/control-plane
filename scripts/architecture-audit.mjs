@@ -1,7 +1,7 @@
 import { JSONC } from 'bun'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, relative, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -1107,6 +1107,7 @@ async function validateEvidence(errors, row, root) {
     errors.push(`${row.id}: evidence is required`)
     return
   }
+  const realRoot = await canonicalRepositoryRoot(root)
   for (const evidence of row.evidence) {
     if (!evidence.kind || !evidence.path) {
       errors.push(`${row.id}: evidence kind and path are required`)
@@ -1115,27 +1116,69 @@ async function validateEvidence(errors, row, root) {
     // Evidence must be a repository-relative file inside the audited checkout:
     // an absolute or escaping path could cite anything on the host, and a
     // directory is not a citable artifact.
-    if (isAbsolute(evidence.path)) {
-      errors.push(`${row.id}: evidence path must be repository-relative: ${evidence.path}`)
-      continue
-    }
-    const resolved = resolve(root, evidence.path)
-    const inside = relative(root, resolved)
-    if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
-      errors.push(`${row.id}: evidence path escapes the repository: ${evidence.path}`)
-      continue
-    }
-    let stats
-    try {
-      stats = await stat(resolved)
-    } catch {
-      errors.push(`${row.id}: evidence path does not exist: ${evidence.path}`)
-      continue
-    }
-    if (!stats.isFile()) {
-      errors.push(`${row.id}: evidence path is not a file: ${evidence.path}`)
+    const reason = await evidencePathError(root, evidence.path, realRoot)
+    if (reason !== undefined) {
+      errors.push(`${row.id}: ${reason}: ${evidence.path}`)
     }
   }
+}
+
+/**
+ * The canonical real path of the audited checkout.
+ *
+ * The root is compared in canonical form so a checkout that is itself reached
+ * through a symlinked path does not make every in-tree path look like an
+ * escape.
+ */
+async function canonicalRepositoryRoot(root) {
+  try {
+    return await realpath(root)
+  } catch {
+    return resolve(root)
+  }
+}
+
+/**
+ * Checks one evidence path against the audited checkout.
+ *
+ * Returns undefined when the path is a citable file inside the repository, and
+ * otherwise the reason it is not.
+ *
+ * The repository root and the evidence target are compared as canonical real
+ * paths, not as resolved paths. A lexical containment check cannot see that a
+ * symlink inside the repository points outside it, and following that symlink
+ * would let a path in the tree cite a file anywhere on the host. The target is
+ * therefore canonicalised first, and only a canonical target inside the
+ * canonical root is accepted.
+ */
+export async function evidencePathError(root, path, realRoot) {
+  if (isAbsolute(path)) return 'evidence path must be repository-relative'
+  const resolved = resolve(root, path)
+  const inside = relative(root, resolved)
+  if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
+    return 'evidence path escapes the repository'
+  }
+  const canonicalRoot = realRoot ?? (await canonicalRepositoryRoot(root))
+  let realTarget
+  try {
+    realTarget = await realpath(resolved)
+  } catch (error) {
+    const code = error?.code
+    return code === 'ENOENT' || code === 'ENOTDIR'
+      ? 'evidence path does not exist'
+      : 'evidence path could not be resolved'
+  }
+  const realInside = relative(canonicalRoot, realTarget)
+  if (realInside === '' || realInside.startsWith('..') || isAbsolute(realInside)) {
+    return 'evidence path escapes the repository'
+  }
+  let stats
+  try {
+    stats = await stat(realTarget)
+  } catch {
+    return 'evidence path does not exist'
+  }
+  return stats.isFile() ? undefined : 'evidence path is not a file'
 }
 
 function validateGap(errors, row) {

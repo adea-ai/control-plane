@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { readFile } from 'node:fs/promises'
-import { fileURLToPath, URL } from 'node:url'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, relative } from 'node:path'
+import { fileURLToPath, pathToFileURL, URL } from 'node:url'
 import {
   bindsCapabilityOption,
   discoverArchitecture,
@@ -8,6 +10,7 @@ import {
   discoverControllerRoutes,
   discoverPublicOperations,
   discoverVersioningDefaults,
+  evidencePathError,
   renderArchitectureReport,
   validateArchitectureAudit,
 } from './architecture-audit.mjs'
@@ -46,6 +49,30 @@ const unboundRoutes = [
   'POST /v1/system/authenticated',
   'GET /v1/system/echo',
 ]
+
+/**
+ * A synthetic repository root that contains one symlink pointing at a
+ * synthetic target outside that root, one ordinary in-tree file, one symlink
+ * that stays inside the root, and one symlink that cannot be resolved.
+ *
+ * The external target is created here and holds no real content, so the check
+ * never reads a sensitive file: it only resolves paths and asks whether they
+ * land inside the root.
+ */
+async function createEvidenceSymlinkFixture() {
+  const directory = await mkdtemp(join(tmpdir(), 'control-plane-evidence-symlink-'))
+  const root = join(directory, 'repository')
+  const outside = join(directory, 'outside')
+  await mkdir(root, { recursive: true })
+  await mkdir(outside, { recursive: true })
+  await writeFile(join(outside, 'external-target.md'), 'synthetic external target\n')
+  await writeFile(join(root, 'ordinary.md'), 'ordinary in-tree evidence\n')
+  const link = join(root, 'external-target.md')
+  await symlink(join(outside, 'external-target.md'), link)
+  await symlink(join(root, 'ordinary.md'), join(root, 'in-tree-link.md'))
+  await symlink(join(root, 'loop.md'), join(root, 'loop.md'))
+  return { directory, root, link }
+}
 
 const disabledCapabilityOptions = [
   'admissionControlService',
@@ -237,6 +264,57 @@ describe('M11.2 architecture audit tooling regressions', () => {
         errors.some((error) => error.includes(expected)),
         `${path} -> ${errors.join(' | ')}`
       ).toBe(true)
+    }
+  })
+
+  test('rejects an in-tree evidence symlink that points outside the repository', async () => {
+    const fixture = await createEvidenceSymlinkFixture()
+    try {
+      // The symlink is lexically inside the repository, so a containment check
+      // on resolved paths alone would accept it and let an in-tree path cite a
+      // file anywhere on the host.
+      expect(relative(fixture.root, fixture.link)).not.toStartWith('..')
+      expect(await evidencePathError(fixture.root, 'external-target.md')).toBe(
+        'evidence path escapes the repository'
+      )
+
+      // The same escape is rejected end to end, through the audit validator.
+      const discovered = await discoverArchitecture(repositoryRoot)
+      const changed = clone(audit)
+      changed.operations[0].evidence = [{ kind: 'test', path: 'external-target.md' }]
+      const { errors } = await validateArchitectureAudit(changed, {
+        repositoryRoot: pathToFileURL(fixture.root),
+        discovered,
+      })
+      expect(
+        errors.some((error) => error.includes('evidence path escapes the repository')),
+        errors.join(' | ')
+      ).toBe(true)
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true })
+    }
+  })
+
+  test('keeps accepting ordinary in-tree evidence', async () => {
+    const fixture = await createEvidenceSymlinkFixture()
+    try {
+      // A regular in-tree file is citable.
+      expect(await evidencePathError(fixture.root, 'ordinary.md')).toBeUndefined()
+      // A symlink that stays inside the repository is still citable.
+      expect(await evidencePathError(fixture.root, 'in-tree-link.md')).toBeUndefined()
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true })
+    }
+  })
+
+  test('rejects an evidence path that cannot be resolved', async () => {
+    const fixture = await createEvidenceSymlinkFixture()
+    try {
+      expect(await evidencePathError(fixture.root, 'loop.md')).toBe(
+        'evidence path could not be resolved'
+      )
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true })
     }
   })
 
