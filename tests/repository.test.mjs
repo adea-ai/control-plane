@@ -213,6 +213,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'apps/hosted-control-plane/src/hosted-graph-legacy-fence.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-graph.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-http.integration.test.mjs',
+    'apps/hosted-control-plane/src/hosted-model-forwarding.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-metrics.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-projection.integration.test.mjs',
     'apps/runtime-gateway/src/runtime-node-credential-binding.integration.test.mjs',
@@ -385,6 +386,45 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     inventory.every(({ primaryLane }) =>
       ['unit', 'integration', 'e2e', 'smoke'].includes(primaryLane)
     )
+  )
+})
+
+test('the hosted model-forwarding test is in the integration inventory and scheduled exactly once', async () => {
+  const integration = await discoverTestFiles('integration')
+  const hosted = 'apps/hosted-control-plane/src/hosted-model-forwarding.integration.test.mjs'
+
+  // The file is discovered as an integration test, so the exact expected
+  // inventory above must name it: a file that is discovered but absent from
+  // the expected list is a stale inventory, not a passing test.
+  assert.ok(integration.includes(hosted))
+
+  // The inventory is exact, so the file appears once and only once.
+  assert.equal(integration.filter((path) => path === hosted).length, 1)
+
+  // The file is scheduled through exactly one local shard owner. The
+  // discovery test above already requires a package command or a shard owner
+  // for every discovered file; this states the shard owner for this file
+  // specifically, so the local sharded lane cannot silently drop it.
+  const scheduled = INTEGRATION_SHARDS.flatMap(({ groups }) =>
+    groups.filter(
+      ({ package: packageName, files }) =>
+        packageName === 'apps/hosted-control-plane' &&
+        files.includes('src/hosted-model-forwarding.integration.test.mjs')
+    )
+  )
+  assert.equal(scheduled.length, 1)
+
+  // The file's package command selects it, so the package integration lane and
+  // the local sharded lane are distinct registrations of one file.
+  const manifest = await readJson('apps/hosted-control-plane/package.json')
+  const command = manifest.scripts['test:integration']
+  assert.equal(typeof command, 'string')
+  const patterns = command.split(/\s+/).filter((token) => token.endsWith('.test.mjs'))
+  assert.ok(
+    patterns.some((pattern) =>
+      new Glob(pattern).match('src/hosted-model-forwarding.integration.test.mjs')
+    ),
+    'the hosted model-forwarding test is not selected by its package integration command'
   )
 })
 
