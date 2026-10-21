@@ -18,15 +18,15 @@ the questions a blinded comparison answers.
 
 ## Scope of the comparison
 
-| Item          | Value                                                                                                                                                                                           |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Task          | One representative cold repository audit request, run against the pinned baseline skill library and the candidate skill library                                                                 |
-| Baseline      | commit `27f17bd55e0266439b5b3089163195c9e7a669be` (`.agents/skills/**` as committed)                                                                                                            |
-| Candidate     | the exact head under review (`.agents/skills/**` as proposed)                                                                                                                                   |
-| Blinding      | the two library variants are presented as `Library A` and `Library B` in a randomized order fixed by the packet below; the reviewer is not told which is which                                  |
-| Reviewer      | at least two independent reviewers, neither of whom authored the candidate                                                                                                                      |
-| Rubric        | [`docs/evaluation-dimensions.md`](../../evaluation-dimensions.md) plus the twelve calibration dimensions in [`docs/evals/calibration-scoring-sheet.json`](../../calibration-scoring-sheet.json) |
-| Scoring sheet | [`blinded-comparison-sheet.json`](./blinded-comparison-sheet.json)                                                                                                                              |
+| Item          | Value                                                                                                                                                                                        |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Task          | One representative cold repository audit request, run against the pinned baseline skill library and the candidate skill library                                                              |
+| Baseline      | commit `27f17bd55e0266439b5b3089163195c9e7a669be` (`.agents/skills/**` as committed)                                                                                                         |
+| Candidate     | the exact head under review (`.agents/skills/**` as proposed)                                                                                                                                |
+| Blinding      | the two library variants are presented as `Library A` and `Library B` in a randomized order fixed by the packet below; the reviewer is not told which is which                               |
+| Reviewer      | at least two independent reviewers, neither of whom authored the candidate                                                                                                                   |
+| Rubric        | [`docs/evaluation-dimensions.md`](../../evaluation-dimensions.md) plus the twelve calibration dimensions in [`docs/evals/calibration-scoring-sheet.json`](../calibration-scoring-sheet.json) |
+| Scoring sheet | [`blinded-comparison-sheet.json`](./blinded-comparison-sheet.json)                                                                                                                           |
 
 ## What the reviewer receives
 
@@ -43,17 +43,28 @@ the questions a blinded comparison answers.
 The packet fixes the blinding order so a second reviewer can reproduce it:
 
 ```sh
-# Library A and Library B are assigned by the parity of the pinned baseline
-# commit's short SHA. Reviewers must not be told which side is which.
-echo $((0x$(git rev-parse --short=8 27f17bd55e0266439b5b3089163195c9e7a669be) % 2))
+# Library A and Library B are assigned by the parity of the last hexadecimal
+# digit of the pinned baseline commit's full 40-character id. The full id
+# resolves identically in every clone, unlike a short abbreviation, whose
+# length depends on the local object database. Reviewers must not be told
+# which side is which.
+echo $((0x$(git rev-parse 27f17bd55e0266439b5b3089163195c9e7a669be | cut -c40) % 2))
 ```
 
 - `0` → `A` = baseline, `B` = candidate
 - `1` → `A` = candidate, `B` = baseline
 
+For the pinned commit the last digit is `e`, so the parity is `0` and
+`A` = baseline. The command requires the commit to be present in the
+reviewer's checkout; the recorded value above is the fallback when it is not.
+
 The reviewer scores `A` and `B` independently and only then learns the
 assignment. Scores are not swapped by the reviewer, and the packet records the
 assignment only after both reviewers have submitted their sheets.
+
+The assignment is derivable from a published commit id, so the blinding is
+against self-deception rather than against a motivated reviewer. It is not
+secret, and it does not claim to be.
 
 ## What the reviewer records
 

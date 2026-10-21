@@ -41,7 +41,9 @@ async function withSkillFixture(options, run) {
   const metadata = [
     version === null ? '' : `  version: "${version}"`,
     owner === null ? '' : `  owner: "${owner}"`,
-    options.provenance === null ? '' : '  provenance:\n    origin: repository-owned',
+    options.provenance === null
+      ? ''
+      : '  provenance:\n    origin: repository-owned\n    integration_version: "1.0.0"',
     options.deprecated === true ? '  deprecated: true' : '',
     options.supersededBy === undefined ? '' : `  superseded_by: "${options.supersededBy}"`,
   ].filter(Boolean)
@@ -96,6 +98,20 @@ ${evidenceContract}
       await mkdir(dirname(target), { recursive: true })
       await writeFile(target, content)
     }
+    // The published schema is part of the contract the validator enforces, so
+    // a fixture carries the real one.
+    const schema = await readFile(
+      join(repositoryRoot, 'docs/skills/skill-library.schema.json'),
+      'utf8'
+    )
+    await mkdir(join(root, 'docs', 'skills'), { recursive: true })
+    await writeFile(join(root, 'docs', 'skills', 'skill-library.schema.json'), schema)
+    if (options.ledger !== undefined) {
+      await writeFile(join(root, 'docs', 'skills', 'provenance.md'), options.ledger)
+    }
+    if (options.inventory !== undefined) {
+      await writeFile(join(root, 'docs', 'skills', 'skill-library.json'), options.inventory)
+    }
     await run(root)
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -104,6 +120,24 @@ ${evidenceContract}
 
 function registryNontrigger(options) {
   return options.registryNontrigger ?? 'unrelated work that the fixture does not cover'
+}
+
+/** A provenance ledger row for the fixture skill. */
+function fixtureLedger({
+  origin = 'repository-owned',
+  upstreamSource = '—',
+  upstreamVersion = '—',
+  integrationVersion = '1.0.0',
+  owner = 'Control Plane maintainers',
+} = {}) {
+  return `# Skill provenance ledger
+
+## Ledger
+
+| Skill | Origin | Upstream source | Upstream version | Local integration version | Accountable owner |
+| --- | --- | --- | --- | --- | --- |
+| example-skill | ${origin} | ${upstreamSource} | ${upstreamVersion} | ${integrationVersion} | ${owner} |
+`
 }
 
 /**
@@ -488,6 +522,59 @@ describe('M11.11 skill routing, boundary, and lifecycle contracts', () => {
       const { errors } = await discoverSkillLibrary({ repositoryRoot: root })
       expect(errors.map((error) => error.message).join('\n')).toContain(
         'metadata.superseded_by is only allowed on a deprecated skill'
+      )
+    })
+  })
+
+  test('rejects a provenance ledger that disagrees with the skill frontmatter', async () => {
+    await withSkillFixture({ ledger: fixtureLedger({ owner: 'Someone Else' }) }, async (root) => {
+      await expect(validateSkillLibrary({ repositoryRoot: root })).rejects.toThrow(
+        /provenance ledger drifted/i
+      )
+    })
+    await withSkillFixture(
+      { ledger: fixtureLedger({ origin: 'vendored-upstream' }) },
+      async (root) => {
+        await expect(validateSkillLibrary({ repositoryRoot: root })).rejects.toThrow(
+          /provenance ledger drifted/i
+        )
+      }
+    )
+  })
+
+  test('accepts a provenance ledger that agrees with the skill frontmatter', async () => {
+    await withSkillFixture({ ledger: fixtureLedger() }, async (root) => {
+      await validateSkillLibrary({ repositoryRoot: root, refresh: true })
+      const skills = await validateSkillLibrary({ repositoryRoot: root })
+      expect(skills.map((skill) => skill.name)).toEqual(['example-skill'])
+    })
+  })
+
+  test('rejects a manifest that does not satisfy the published schema', async () => {
+    const inventory = JSON.stringify({
+      schemaVersion: 1,
+      skills: [
+        {
+          name: 'example-skill',
+          description: 'A fixture skill. Use when testing library validation behavior.',
+          version: '1.0.0',
+          owner: 'Control Plane maintainers',
+          // `trigger` is required by the published schema.
+          nontrigger: 'unrelated work that the fixture does not cover',
+          boundaries: {},
+          stopConditions: 'Stop and report when the fixture cannot be validated.',
+          cleanup: 'remove the fixture after the test',
+          deprecated: false,
+          provenance: { origin: 'repository-owned', integrationVersion: '1.0.0' },
+          files: ['SKILL.md'],
+          skillMdBytes: 1,
+          skillMdDigest: `sha256:${'a'.repeat(64)}`,
+        },
+      ],
+    })
+    await withSkillFixture({ ledger: fixtureLedger(), inventory }, async (root) => {
+      await expect(validateSkillLibrary({ repositoryRoot: root })).rejects.toThrow(
+        /does not satisfy/i
       )
     })
   })

@@ -6,9 +6,9 @@ metadata:
   owner: "vendored — Vercel upstream (pinned)"
   provenance:
     origin: vendored-upstream
-    source: "Vercel turborepo agent skill, vendored at the pinned upstream version"
+    source: "Vercel Turborepo agent skill (upstream docs: apps/docs/content/docs/ in the Turborepo repository, https://turborepo.dev/docs)"
     upstream_version: "2.10.11-canary.4"
-    integration_version: "1.1.0"
+    integration_version: "1.1.1"
 ---
 
 # Turborepo Skill

@@ -3,9 +3,42 @@
 Copy this template to `.agents/skills/<skill-name>/SKILL.md` when adding a
 retained skill, then follow
 [`maintenance-cadence.md`](./maintenance-cadence.md) for versioning, registry
-registration, and validation. Every placeholder below is checked by
-`scripts/validate-skills.mjs`; the lane fails until each one is replaced with
-a skill-specific value.
+registration, and validation.
+
+## What the validator checks
+
+`scripts/validate-skills.mjs` checks the **shape** of the contract, not the
+meaning of its text:
+
+- the frontmatter name matches the directory, and the description follows the
+  routing convention with a trigger and a non-trigger of at least 20
+  characters;
+- the trigger and non-trigger clauses are unique across the library and do not
+  overlap another skill's clause;
+- `metadata.version` is a semantic version and `metadata.owner` is present and
+  matches the registry row;
+- the evidence contract contains every labelled field, including
+  `**Stop conditions:**` and `**Cleanup:**`;
+- the boundary contract contains all five labels, each value at least 30
+  characters and unique per label across the library;
+- the provenance block is present, and the upstream source, upstream version,
+  and integration version agree with the provenance ledger;
+- the deprecation lifecycle is consistent: a deprecated skill names a retained
+  replacement;
+- local Markdown links resolve inside the repository, and the generated
+  inventory matches the on-disk skills.
+
+## What the validator does not check
+
+It does not read the prose. A copied placeholder in an evidence-contract or
+boundary-contract body is **not** detected: a boundary placeholder is long
+enough to satisfy the length rule, and a single new skill's placeholder is not
+a duplicate of another skill's value. Only the routing clause, the labelled
+fields, and the structural rules above fail the lane. Reviewers must check that
+the boundary and stop-condition text is specific to the skill.
+
+Every placeholder below is therefore a prompt for the author, not a token the
+validator rejects.
 
 ## Routing contract
 
@@ -88,6 +121,11 @@ the evidence-contract link. The trigger and non-trigger cells must match the
 bun scripts/validate-skills.mjs --refresh
 bun test tests/agent-skill-library.test.mjs tests/skill-library.test.mjs
 ```
+
+The refresh also validates the manifest against
+[`skill-library.schema.json`](./skill-library.schema.json) and checks this
+library's [`provenance.md`](./provenance.md) ledger against the skill
+frontmatter, so a new skill needs a ledger row that agrees with it.
 
 Commit the refreshed [`skill-library.json`](./skill-library.json) alongside the
 skill, and record the change in [`CHANGELOG.md`](./CHANGELOG.md).

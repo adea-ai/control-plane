@@ -170,9 +170,9 @@
       "deprecated": false,
       "provenance": {
         "origin": "vendored-upstream",
-        "source": "Vercel turborepo agent skill, vendored at the pinned upstream version",
+        "source": "Vercel Turborepo agent skill (upstream docs: apps/docs/content/docs/ in the Turborepo repository, https://turborepo.dev/docs)",
         "upstreamVersion": "2.10.11-canary.4",
-        "integrationVersion": "1.1.0"
+        "integrationVersion": "1.1.1"
       },
       "files": [
         "SKILL.md",
@@ -202,8 +202,8 @@
         "references/filtering/patterns.md",
         "references/watch/RULE.md"
       ],
-      "skillMdBytes": 31089,
-      "skillMdDigest": "sha256:6fb3064ee75069a9eceaef32a40095ae42547c9d4e29e77104a1db76e3e9e60b"
+      "skillMdBytes": 31145,
+      "skillMdDigest": "sha256:15002e60558da76e40cf6569ba8485aa0064aecdb548b9938b3a741633a77288"
     },
     {
       "name": "typescript-advanced-types",

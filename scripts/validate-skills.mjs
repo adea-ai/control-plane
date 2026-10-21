@@ -1,4 +1,5 @@
 import { lstat, readdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
@@ -8,6 +9,8 @@ const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const skillsDirectory = '.agents/skills'
 const inventoryFile = 'docs/skills/skill-library.json'
 const INVENTORY_SCHEMA_VERSION = 1
+const inventorySchemaFile = 'docs/skills/skill-library.schema.json'
+const provenanceLedgerFile = 'docs/skills/provenance.md'
 const REGISTRY_FILE = 'README.md'
 const TEXT_FILE = /\.(?:md|ya?ml|json|m?js|ts|txt|sh|toml)$/iu
 const RESOURCE_DIRECTORY = /(?:^|\/)references\//u
@@ -128,6 +131,177 @@ function escapeRegExp(value) {
 function extractEvidenceField(skillMd, label) {
   const match = new RegExp(`^- ${escapeRegExp(label)}\\s*(.*)$`, 'mu').exec(skillMd)
   return match?.[1]?.trim()
+}
+
+/**
+ * Minimal JSON Schema validator covering the keywords the manifest schema
+ * uses. It exists so `docs/skills/skill-library.schema.json` is an enforced
+ * contract rather than documentation: a manifest that satisfies the validator
+ * but not the schema fails the lane, and the two cannot drift apart silently.
+ */
+function resolveSchemaReference(reference, root) {
+  if (!reference.startsWith('#/')) {
+    throw new Error(`unsupported schema reference: ${reference}`)
+  }
+  let node = root
+  for (const segment of reference.slice(2).split('/')) {
+    node = node?.[segment.replace(/~1/gu, '/').replace(/~0/gu, '~')]
+    if (node === undefined) throw new Error(`unresolvable schema reference: ${reference}`)
+  }
+  return node
+}
+
+function schemaTypeOf(value) {
+  if (value === null) return 'null'
+  if (Array.isArray(value)) return 'array'
+  if (Number.isInteger(value)) return 'integer'
+  return typeof value
+}
+
+function matchesSchemaType(value, type) {
+  const actual = schemaTypeOf(value)
+  if (type === 'number') return actual === 'number' || actual === 'integer'
+  if (type === 'integer') return actual === 'integer'
+  return actual === type
+}
+
+function schemaErrorsFor(schema, instance, root, path, errors) {
+  if (schema === undefined || schema === true) return
+  if (schema === false) {
+    errors.push(`${path}: no value is allowed here`)
+    return
+  }
+  if (typeof schema !== 'object' || schema === null) return
+  if (typeof schema.$ref === 'string') {
+    schemaErrorsFor(resolveSchemaReference(schema.$ref, root), instance, root, path, errors)
+    return
+  }
+  if (schema.type !== undefined) {
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type]
+    if (!types.some((type) => matchesSchemaType(instance, type))) {
+      errors.push(`${path}: expected ${types.join(' or ')} but found ${schemaTypeOf(instance)}`)
+      return
+    }
+  }
+  if (schema.const !== undefined && JSON.stringify(instance) !== JSON.stringify(schema.const)) {
+    errors.push(`${path}: must equal ${JSON.stringify(schema.const)}`)
+  }
+  if (Array.isArray(schema.enum)) {
+    const allowed = schema.enum.some(
+      (option) => JSON.stringify(option) === JSON.stringify(instance)
+    )
+    if (!allowed) errors.push(`${path}: must be one of ${schema.enum.join(', ')}`)
+  }
+  if (typeof instance === 'string') {
+    if (schema.minLength !== undefined && instance.length < schema.minLength) {
+      errors.push(`${path}: is shorter than ${schema.minLength} characters`)
+    }
+    if (schema.maxLength !== undefined && instance.length > schema.maxLength) {
+      errors.push(`${path}: is longer than ${schema.maxLength} characters`)
+    }
+    if (typeof schema.pattern === 'string' && !new RegExp(schema.pattern, 'u').test(instance)) {
+      errors.push(`${path}: does not match the required pattern`)
+    }
+  }
+  if (typeof instance === 'number') {
+    if (schema.minimum !== undefined && instance < schema.minimum) {
+      errors.push(`${path}: is below the minimum ${schema.minimum}`)
+    }
+    if (schema.maximum !== undefined && instance > schema.maximum) {
+      errors.push(`${path}: is above the maximum ${schema.maximum}`)
+    }
+  }
+  if (Array.isArray(instance)) {
+    if (schema.minItems !== undefined && instance.length < schema.minItems) {
+      errors.push(`${path}: has fewer than ${schema.minItems} items`)
+    }
+    if (schema.maxItems !== undefined && instance.length > schema.maxItems) {
+      errors.push(`${path}: has more than ${schema.maxItems} items`)
+    }
+    if (schema.items !== undefined) {
+      instance.forEach((item, index) => {
+        schemaErrorsFor(schema.items, item, root, `${path}[${index}]`, errors)
+      })
+    }
+  }
+  if (instance !== null && typeof instance === 'object' && !Array.isArray(instance)) {
+    for (const key of schema.required ?? []) {
+      if (!Object.prototype.hasOwnProperty.call(instance, key)) {
+        errors.push(`${path}: is missing the required property '${key}'`)
+      }
+    }
+    const properties = schema.properties ?? {}
+    for (const [key, value] of Object.entries(instance)) {
+      const child = properties[key]
+      if (child !== undefined) {
+        schemaErrorsFor(child, value, root, `${path}.${key}`, errors)
+      } else if (schema.additionalProperties === false) {
+        errors.push(`${path}: has the unexpected property '${key}'`)
+      } else if (typeof schema.additionalProperties === 'object') {
+        schemaErrorsFor(schema.additionalProperties, value, root, `${path}.${key}`, errors)
+      }
+    }
+  }
+  for (const sub of schema.allOf ?? []) schemaErrorsFor(sub, instance, root, path, errors)
+  if (Array.isArray(schema.anyOf)) {
+    const matched = schema.anyOf.some((sub) => {
+      const local = []
+      schemaErrorsFor(sub, instance, root, path, local)
+      return local.length === 0
+    })
+    if (!matched) errors.push(`${path}: does not match any allowed variant`)
+  }
+  if (Array.isArray(schema.oneOf)) {
+    const matched = schema.oneOf.filter((sub) => {
+      const local = []
+      schemaErrorsFor(sub, instance, root, path, local)
+      return local.length === 0
+    }).length
+    if (matched !== 1) {
+      errors.push(`${path}: must match exactly one allowed variant but matched ${matched}`)
+    }
+  }
+  if (schema.not !== undefined) {
+    const local = []
+    schemaErrorsFor(schema.not, instance, root, path, local)
+    if (local.length === 0) errors.push(`${path}: must not match the forbidden variant`)
+  }
+  if (schema.if !== undefined) {
+    const local = []
+    schemaErrorsFor(schema.if, instance, root, path, local)
+    const branch = local.length === 0 ? schema.then : schema.else
+    if (branch !== undefined) schemaErrorsFor(branch, instance, root, path, errors)
+  }
+}
+
+/**
+ * Parse the provenance ledger table. The ledger is a human-readable view of
+ * the same facts the frontmatter carries, so the two are compared rather than
+ * trusted independently.
+ */
+function parseProvenanceLedger(markdown) {
+  const rows = new Map()
+  let inLedger = false
+  for (const line of markdown.split(/\r?\n/u)) {
+    if (/^##\s+/u.test(line)) {
+      inLedger = /ledger/iu.test(line)
+      continue
+    }
+    if (!inLedger || !/^\s*\|/u.test(line)) continue
+    const cells = line
+      .split('|')
+      .slice(1, -1)
+      .map((cell) => cell.trim())
+    if (cells.length !== 6 || cells[0] === 'Skill' || /^-+$/u.test(cells[0] ?? '')) continue
+    rows.set(cells[0], {
+      origin: cells[1],
+      upstreamSource: cells[2],
+      upstreamVersion: cells[3],
+      integrationVersion: cells[4],
+      owner: cells[5],
+    })
+  }
+  return rows
 }
 
 function stripCode(markdown) {
@@ -932,9 +1106,112 @@ export async function validateSkillLibrary(options = {}) {
     throw new Error(`Skill library validation found ${errors.length} problem(s).`)
   }
   const inventoryPath = join(root, inventoryFile)
-  const manifest = { schemaVersion: INVENTORY_SCHEMA_VERSION, skills }
+  // The manifest is validated in the form it is written in, so an absent
+  // optional field is absent rather than an undefined value.
+  const manifest = JSON.parse(JSON.stringify({ schemaVersion: INVENTORY_SCHEMA_VERSION, skills }))
+
+  // The published schema is an enforced contract: the manifest is validated
+  // against it, so a manifest that satisfies the validator but not the schema
+  // fails the lane.
+  const schemaPath = join(root, inventorySchemaFile)
+  let schema = null
+  try {
+    schema = JSON.parse(await readFile(schemaPath, 'utf8'))
+  } catch (error) {
+    throw new Error(`${inventorySchemaFile} could not be read: ${error.message}`)
+  }
+  const schemaErrors = []
+  schemaErrorsFor(schema, manifest, schema, 'skill-library', schemaErrors)
+  if (schemaErrors.length > 0) {
+    for (const error of schemaErrors) console.error(`skill-library: ${error}`)
+    throw new Error(
+      `Skill library manifest does not satisfy ${inventorySchemaFile} (${schemaErrors.length} problem(s)).`
+    )
+  }
+
+  // The provenance ledger mirrors the frontmatter facts, so the two are
+  // compared instead of being trusted independently.
+  const ledgerPath = join(root, provenanceLedgerFile)
+  let ledger = null
+  try {
+    ledger = parseProvenanceLedger(await readFile(ledgerPath, 'utf8'))
+  } catch (error) {
+    throw new Error(`${provenanceLedgerFile} could not be read: ${error.message}`)
+  }
+  const ledgerErrors = []
+  for (const skill of skills) {
+    const row = ledger.get(skill.name)
+    if (!row) {
+      ledgerErrors.push(`${skill.name}: ${provenanceLedgerFile} has no ledger row`)
+      continue
+    }
+    const provenance = skill.provenance ?? {}
+    if (row.origin !== provenance.origin) {
+      ledgerErrors.push(
+        `${skill.name}: ledger origin '${row.origin}' does not match metadata.provenance.origin '${provenance.origin}'`
+      )
+    }
+    if (row.owner !== skill.owner) {
+      ledgerErrors.push(
+        `${skill.name}: ledger owner '${row.owner}' does not match metadata.owner '${skill.owner}'`
+      )
+    }
+    if (provenance.origin === 'vendored-upstream') {
+      if (row.upstreamSource !== provenance.source) {
+        ledgerErrors.push(
+          `${skill.name}: ledger upstream source does not match metadata.provenance.source`
+        )
+      }
+      if (row.upstreamVersion !== provenance.upstreamVersion) {
+        ledgerErrors.push(
+          `${skill.name}: ledger upstream version '${row.upstreamVersion}' does not match metadata.provenance.upstream_version '${provenance.upstreamVersion}'`
+        )
+      }
+    } else {
+      if (row.upstreamSource !== '—') {
+        ledgerErrors.push(
+          `${skill.name}: ledger records an upstream source for repository-owned content`
+        )
+      }
+      if (row.upstreamVersion !== '—') {
+        ledgerErrors.push(
+          `${skill.name}: ledger records an upstream version for repository-owned content`
+        )
+      }
+    }
+    if (row.integrationVersion !== provenance.integrationVersion) {
+      ledgerErrors.push(
+        `${skill.name}: ledger integration version '${row.integrationVersion}' does not match metadata.provenance.integration_version '${provenance.integrationVersion}'`
+      )
+    }
+  }
+  for (const name of ledger.keys()) {
+    if (!skills.some((skill) => skill.name === name)) {
+      ledgerErrors.push(`${name}: ${provenanceLedgerFile} has a ledger row with no matching skill`)
+    }
+  }
+  if (ledgerErrors.length > 0) {
+    for (const error of ledgerErrors) console.error(`${provenanceLedgerFile}: ${error}`)
+    throw new Error(
+      `Skill provenance ledger drifted from the skills (${ledgerErrors.length} problem(s)).`
+    )
+  }
+
   if (options.refresh) {
     await writeFile(inventoryPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    // Normalize the inventory with the repository formatter so the refreshed
+    // artifact satisfies `bun run format:check`. The formatter is a
+    // convenience here, not a contract, so its absence is not an error.
+    const formatter = join(root, 'node_modules', '.bin', 'oxfmt')
+    if (existsSync(formatter)) {
+      const result = Bun.spawnSync({
+        cmd: [process.execPath, formatter, '--write', inventoryPath],
+        cwd: root,
+      })
+      if (result.exitCode !== 0) {
+        console.error('The repository formatter could not normalize the inventory')
+      }
+    }
   }
   let stored
   try {
@@ -945,6 +1222,14 @@ export async function validateSkillLibrary(options = {}) {
   if (stored?.schemaVersion !== INVENTORY_SCHEMA_VERSION) {
     throw new Error(
       `${inventoryFile} declares schemaVersion '${stored?.schemaVersion}'; expected '${INVENTORY_SCHEMA_VERSION}'.`
+    )
+  }
+  const storedSchemaErrors = []
+  schemaErrorsFor(schema, stored, schema, 'skill-library', storedSchemaErrors)
+  if (storedSchemaErrors.length > 0) {
+    for (const error of storedSchemaErrors) console.error(`skill-library: ${error}`)
+    throw new Error(
+      `${inventoryFile} does not satisfy ${inventorySchemaFile} (${storedSchemaErrors.length} problem(s)).`
     )
   }
   if (JSON.stringify(stored.skills) !== JSON.stringify(skills)) {

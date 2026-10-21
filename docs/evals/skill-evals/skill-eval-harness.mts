@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { runEvidenceAuditEval } from '../../../packages/production-readiness/src/evidence-audit-eval.ts'
@@ -80,9 +81,10 @@ function sha256(content: string) {
 
 function frontmatterField(text: string, pattern: RegExp): string | null {
   const match = FRONTMATTER.exec(text)
-  if (!match) return null
-  const found = pattern.exec(match[1])
-  return found ? found[1].trim() : null
+  const body = match?.[1]
+  if (body === undefined) return null
+  const value = pattern.exec(body)?.[1]
+  return value === undefined ? null : value.trim()
 }
 
 /** The routing surface an agent reads to select one skill. */
@@ -99,14 +101,29 @@ export function skillOwner(text: string): string | null {
   return frontmatterField(text, OWNER)
 }
 
-function git(root: string, args: string[]): string {
-  const result = Bun.spawnSync({ cmd: ['git', ...args], cwd: root })
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `git ${args.join(' ')} failed in ${root}: ${new TextDecoder().decode(result.stderr).trim()}`
-    )
+function runCommand(
+  command: string,
+  args: string[],
+  cwd: string
+): { status: number; stdout: string; stderr: string } {
+  try {
+    return { status: 0, stdout: execFileSync(command, args, { cwd, encoding: 'utf8' }), stderr: '' }
+  } catch (error) {
+    const failure = error as { status?: number; stdout?: string; stderr?: string }
+    return {
+      status: failure.status ?? 1,
+      stdout: failure.stdout ?? '',
+      stderr: failure.stderr ?? '',
+    }
   }
-  return new TextDecoder().decode(result.stdout)
+}
+
+function git(root: string, args: string[]): string {
+  const result = runCommand('git', args, root)
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(' ')} failed in ${root}: ${result.stderr.trim()}`)
+  }
+  return result.stdout
 }
 
 /** Snapshot the candidate library from the working tree. */
@@ -165,7 +182,7 @@ export function snapshotBaselineLibrary(root: string, commit: string): LibrarySn
       paths
         .filter((path) => path.split('/').length > 3)
         .map((path) => path.split('/')[2])
-        .filter(Boolean)
+        .filter((name): name is string => name !== undefined)
     ),
   ].sort()
   const skills: SkillSnapshot[] = directories.map((name) => {
@@ -378,6 +395,8 @@ export function buildEvidence(options: {
       ),
     }
   }
+  const skillsCovered = [...new Set(suite.scenarios.map((scenario) => scenario.skill))].toSorted()
+  const retainedSkills = candidate.skills.map((skill) => skill.name).toSorted()
   return {
     schemaVersion: 1,
     suite: suite.suite,
@@ -391,8 +410,21 @@ export function buildEvidence(options: {
       executorReference: suite.harness.executorReference,
       ownership: 'owned by CP #191 (F2W5); consumed read-only',
     },
+    coverage: {
+      retainedSkills: retainedSkills.length,
+      coveredSkills: skillsCovered.length,
+      skillsCovered,
+      skillsNotCovered: retainedSkills.filter((name) => !skillsCovered.includes(name)),
+      note: 'Every retained skill is exercised by at least one scenario. Coverage means the skill contract is exercised by the modeled cold executor, not that the skill content is correct, complete, or actionable.',
+    },
+    measurementLimits: [
+      'The baseline-versus-candidate difference is decided by whether the skill text carries the contract markers the scenario requires. The library-level contract is therefore a small number of independent facts (the evidence contract, the boundary contract, and the stop conditions), and the scenarios differ in their evidence fixtures rather than in the skill-side input.',
+      'The suite measures contract presence and honest reporting through a modeled cold executor over the CP #191 harness. It is not a model, not a human, and not a live routing measurement.',
+    ],
     baseline: {
       commit: baseline.commit,
+      reproduction:
+        'The baseline arm is reproduced only when the pinned commit is present in the checkout. A depth-1 clone does not contain it, so a lane that checks out at depth 1 reproduces the candidate arm only and skips the baseline comparison.',
       skillCount: baseline.skillCount,
       routingBytes: baseline.routingBytes,
       entrypointBytes: baseline.entrypointBytes,

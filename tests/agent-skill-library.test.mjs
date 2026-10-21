@@ -494,3 +494,68 @@ test('the canary gate still persists every output when the batch is clean', asyn
     await rm(directory, { recursive: true, force: true })
   }
 }, 60000)
+
+test('the cold-task suite exercises every retained skill', async () => {
+  const suite = await loadSuite(root)
+  const { skills } = await discoverSkillLibrary()
+  const covered = new Set(suite.scenarios.map((scenario) => scenario.skill))
+  for (const skill of skills) {
+    expect(covered.has(skill.name), `${skill.name} has no scenario`).toBe(true)
+  }
+  const evidence = JSON.parse(await read('docs/evals/skill-evals/skill-eval-evidence.v1.json'))
+  expect(evidence.coverage.retainedSkills).toBe(skills.length)
+  expect(evidence.coverage.coveredSkills).toBe(skills.length)
+  expect(evidence.coverage.skillsNotCovered).toEqual([])
+  expect(evidence.coverage.skillsCovered.toSorted()).toEqual([...covered].toSorted())
+})
+
+test('the committed evidence discloses its measurement limits and the baseline reproduction limit', async () => {
+  const evidence = JSON.parse(await read('docs/evals/skill-evals/skill-eval-evidence.v1.json'))
+  expect(Array.isArray(evidence.measurementLimits)).toBe(true)
+  expect(evidence.measurementLimits.length).toBeGreaterThan(0)
+  expect(evidence.measurementLimits.join('\n')).toMatch(/not a model, not a human/i)
+  expect(evidence.baseline.reproduction).toMatch(/depth-1 clone/i)
+  expect(evidence.humanGate.status).toBe('awaiting-blinded-human-scoring')
+})
+
+test('the blinded packet resolves its rubric link and fixes the blinding basis', async () => {
+  const packet = await read('docs/evals/skill-evals/blinded-comparison-packet.md')
+  expect(packet).toContain('](../calibration-scoring-sheet.json)')
+  expect(packet).not.toContain('](../../calibration-scoring-sheet.json)')
+  // The rubric target must exist relative to the packet.
+  const rubric = resolve(root, 'docs/evals/calibration-scoring-sheet.json')
+  expect(existsSync(rubric)).toBe(true)
+  const dimensions = JSON.parse(await readFile(rubric, 'utf8')).rubricDimensions
+  const sheet = JSON.parse(await read('docs/evals/skill-evals/blinded-comparison-sheet.json'))
+  expect(sheet.rubricDimensions).toEqual(dimensions)
+  // The blinding order comes from a fixed position of the full commit id.
+  expect(packet).not.toContain('--short=8')
+  expect(packet).toMatch(/cut -c40/)
+})
+
+test('the new-skill template does not claim the validator reads the contract prose', async () => {
+  const template = await read('docs/skills/skill-library.template.md')
+  expect(template).toMatch(/does not read the prose/i)
+  expect(template).toMatch(/not a token the\s+validator rejects/i)
+  expect(template).not.toMatch(/Every placeholder below is checked by/)
+})
+
+test('the maintenance cadence conditions the evidence refresh on any byte change', async () => {
+  const cadence = await read('docs/skills/maintenance-cadence.md')
+  expect(cadence).toMatch(/any byte change to a `SKILL\.md` requires the\s+refresh/i)
+  expect(cadence).toContain('skill-library.schema.json')
+  expect(cadence).toContain('provenance.md')
+  expect(cadence).toContain('bun check -p docs/evals/skill-evals/tsconfig.json')
+})
+
+test('the evaluation lane carries its own type-check boundary', async () => {
+  const tsconfig = JSON.parse(await read('docs/evals/skill-evals/tsconfig.json'))
+  expect(tsconfig.compilerOptions.noEmit).toBe(true)
+  expect(tsconfig.compilerOptions.allowImportingTsExtensions).toBe(true)
+  expect(tsconfig.compilerOptions.strict).toBe(true)
+  expect(tsconfig.compilerOptions.noUnusedLocals).toBe(true)
+  expect(tsconfig.compilerOptions.noUnusedParameters).toBe(true)
+  expect(tsconfig.include.toSorted()).toEqual(['./run-skill-evals.mts', './skill-eval-harness.mts'])
+  const readme = await read('docs/evals/skill-evals/README.md')
+  expect(readme).toContain('bun check -p docs/evals/skill-evals/tsconfig.json')
+})

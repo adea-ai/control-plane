@@ -6,6 +6,66 @@ changed, validation performed, and any evidence or compatibility limits.
 
 ## Unreleased — 2026-10-21
 
+- Addressed the independent read-only advisory (F2W8) against this branch. The
+  manifest schema is now enforced against the actual manifest, the provenance
+  ledger is checked against the skill frontmatter, the cold-task suite covers
+  every retained skill, and the documentation no longer overstates what is
+  checked:
+  - **Schema enforcement.** `scripts/validate-skills.mjs` validates the
+    manifest against `docs/skills/skill-library.schema.json` on every run, and
+    the schema now expresses the conditional rules it previously only
+    described: the routing-convention pattern on `description`, the
+    vendored-upstream requirements for `source` and `upstreamVersion`, the
+    repository-owned exclusion of `source`, and the deprecation requirement for
+    `supersededBy`. A manifest that satisfies the validator but not the schema
+    fails the lane.
+  - **Provenance ledger anti-drift.** The ledger's origin, upstream source,
+    upstream version, integration version, and owner are compared with each
+    skill's frontmatter, and a drift fails the lane. A wrong upstream pin, owner,
+    or integration revision in the ledger can no longer pass silently.
+  - **Coverage.** The cold-task suite grows from ten scenarios to fourteen.
+    SK-11 to SK-14 exercise `code-simplification`, `test-driven-development`,
+    `turborepo`, and `typescript-advanced-types`, so every retained skill is
+    now covered. The committed evidence artifact records the coverage in a
+    `coverage` block and the measurement-strength limit in a
+    `measurementLimits` block: the baseline-versus-candidate difference is
+    decided by a small number of contract-presence facts, so the scenario
+    count is not a count of independent evidence and is not a quality
+    measurement of the retained skills.
+  - **CI baseline reproduction.** The artifact's `baseline.reproduction` field
+    and the documentation state that the baseline arm is reproduced only when
+    the pinned commit is present in the checkout; the standard validation
+    workflow checks out at depth 1 and therefore reproduces the candidate arm
+    only.
+  - **Documentation corrections.** The blinded packet's rubric link resolved to
+    a path that does not exist and now points at
+    `docs/evals/calibration-scoring-sheet.json`; the blinding assignment is
+    derived from a fixed position of the full commit id instead of a short
+    abbreviation whose length depends on the clone; the new-skill template now
+    states exactly which properties the validator checks and that it does not
+    read the prose of the evidence or boundary contracts; the maintenance
+    cadence states that any byte change to a skill entrypoint requires an
+    evidence-artifact refresh, because the artifact pins each entrypoint's
+    digest; and the vendored `turborepo` adaptation — the replaced upstream
+    routing description — is recorded in `docs/skills/provenance.md` with the
+    upstream source the vendored file itself cites.
+  - **Inventory refresh.** `validate-skills.mjs --refresh` now normalizes the
+    inventory with the repository formatter, so a refreshed inventory satisfies
+    `bun run format:check` as written.
+  - **Type-check boundary for the evaluation lane.** `docs/evals/` and
+    `scripts/` are not workspace packages, so the repository's per-package
+    checks do not reach the new TypeScript. The evaluation lane now carries
+    `docs/evals/skill-evals/tsconfig.json` and the command
+    `bun check -p docs/evals/skill-evals/tsconfig.json`. The first run of
+    that check reported five type errors that no earlier lane could see
+    (unchecked indexed access in the frontmatter and skill-name extraction,
+    and an untyped `Bun` global); the harness and runner now use Node's typed
+    `execFileSync` and explicit undefined guards, and the check is clean. The
+    committed evidence artifact is byte-identical before and after that change.
+  - `turborepo` local integration revision 1.1.0 → 1.1.1: the upstream source
+    became identifiable from the vendored file's own source documentation and
+    the local adaptation was recorded. The pinned upstream version
+    2.10.11-canary.4 is unchanged.
 - Skill-eval runner persistence reporting (root review of draft PR #1216,
   follow-up to `683fe954`): the runner's failure handler reported "no output
   file was created or overwritten" for every error, but the output batch is

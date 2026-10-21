@@ -17,11 +17,12 @@ procedures are documented."
   tests must pass. Checks include frontmatter name/description/version, the
   routing convention, the directory match, the registry drift check, unique
   and non-overlapping routing clauses, the evidence and boundary contracts, the
-  provenance record, the deprecation lifecycle, no machine-specific absolute
-  paths, inventory sync, and every inline `bun run <script>` reference in
-  bundled Markdown must name a script in the repository's `package.json`. This
-  checks declared command names; it does not execute the referenced commands or
-  prove their described results.
+  provenance record, the deprecation lifecycle, the manifest against the
+  published schema, the provenance ledger against the skill frontmatter, no
+  machine-specific absolute paths, inventory sync, and every inline
+  `bun run <script>` reference in bundled Markdown must name a script in the
+  repository's `package.json`. This checks declared command names; it does not
+  execute the referenced commands or prove their described results.
 
 ## The per-skill contract
 
@@ -46,14 +47,14 @@ provenance record is [`provenance.md`](./provenance.md).
 
 ## Review cadence
 
-| Trigger                                                          | Review scope                                                                                                   |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Any change to `.agents/skills/**`                                | validate references/contracts + refresh inventory; update the Skill changelog                                  |
-| Change to `AGENTS.md`, `.github/CONTRIBUTING.md`, `.agents/*.md` | check skill routes and safety guidance against the canonical instruction owner; link to it rather than copying |
-| Change to Code Foundry config/runtime/workflows                  | check documented commands, runner gates, and skill validation against `.github/code-foundry.yml` and workflows |
-| Each M-milestone closeout                                        | full inventory re-baseline (purpose, triggers, overlaps, gaps, available evidence)                             |
-| Ad hoc: a skill's guidance contradicts repo reality              | immediate fix or deprecation, per the update process                                                           |
-| Change to `docs/evals/skill-evals/**`                            | re-run the cold-task suite and refresh the committed evidence artifact                                         |
+| Trigger                                                          | Review scope                                                                                                                                                     |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Any change to `.agents/skills/**`                                | validate references/contracts + refresh inventory; refresh the cold-task evidence artifact for any byte change to a skill entrypoint; update the Skill changelog |
+| Change to `AGENTS.md`, `.github/CONTRIBUTING.md`, `.agents/*.md` | check skill routes and safety guidance against the canonical instruction owner; link to it rather than copying                                                   |
+| Change to Code Foundry config/runtime/workflows                  | check documented commands, runner gates, and skill validation against `.github/code-foundry.yml` and workflows                                                   |
+| Each M-milestone closeout                                        | full inventory re-baseline (purpose, triggers, overlaps, gaps, available evidence)                                                                               |
+| Ad hoc: a skill's guidance contradicts repo reality              | immediate fix or deprecation, per the update process                                                                                                             |
+| Change to `docs/evals/skill-evals/**`                            | re-run the cold-task suite and refresh the committed evidence artifact                                                                                           |
 
 ## Versioning and deprecation
 
@@ -114,10 +115,22 @@ provenance record is [`provenance.md`](./provenance.md).
    Foundry version/source in the changelog when relevant; do not pin a second
    copy of a version owned by configuration.
 5. Run `bun scripts/validate-skills.mjs --refresh`; commit the refreshed
-   inventory only when the task's commit authorization allows it.
+   inventory only when the task's commit authorization allows it. The refresh
+   validates the manifest against
+   [`skill-library.schema.json`](./skill-library.schema.json) and checks
+   [`provenance.md`](./provenance.md) against the skill frontmatter, so the
+   schema and the ledger cannot drift from the skills unnoticed.
 6. Run `bun docs/evals/skill-evals/run-skill-evals.mts` when a routing,
    evidence, or boundary change can alter a cold-task outcome, and refresh the
-   committed evidence artifact with `--write-evidence`.
+   committed evidence artifact with `--write-evidence`. The artifact pins each
+   skill entrypoint's digest, so **any byte change to a `SKILL.md` requires the
+   refresh**, not only a change that alters a cold-task outcome. A wording
+   edit that leaves the verdicts unchanged still changes the pinned digest,
+   and the comparison in the test lane fails on that difference. The evaluation
+   lane also has its own type-check boundary:
+   `bun check -p docs/evals/skill-evals/tsconfig.json`.
 7. Open a pull request; the smoke lane fails on inventory drift, missing
    versions/contracts, routing duplicates or overlaps, boundary gaps,
-   provenance errors, machine-specific paths, or broken local Markdown links.
+   provenance errors, a manifest that does not satisfy the published schema, a
+   provenance ledger that disagrees with the skills, machine-specific paths, or
+   broken local Markdown links.

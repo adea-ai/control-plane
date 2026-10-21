@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -153,20 +154,25 @@ async function formatRepositoryArtifact(root: string, content: string): Promise<
   const staging = join(tmpdir(), `skill-eval-evidence-${process.pid}.json`)
   try {
     await writeFile(staging, content)
-    const formatter = Bun.spawnSync({
-      cmd: ['node_modules/.bin/oxfmt', '--write', '-c', join(root, '.oxfmtrc.json'), staging],
-      cwd: root,
-    })
-    if (formatter.exitCode !== 0) {
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          join(root, 'node_modules', '.bin', 'oxfmt'),
+          '--write',
+          '-c',
+          join(root, '.oxfmtrc.json'),
+          staging,
+        ],
+        { cwd: root, encoding: 'utf8' }
+      )
+    } catch {
       console.error(
-        'skill-evals: the repository formatter could not normalize the evidence artifact'
+        'skill-evals: the repository formatter is unavailable; run `bunx oxfmt --write`'
       )
       return content
     }
     return await readFile(staging, 'utf8')
-  } catch {
-    console.error('skill-evals: the repository formatter is unavailable; run `bunx oxfmt --write`')
-    return content
   } finally {
     await rm(staging, { force: true })
   }

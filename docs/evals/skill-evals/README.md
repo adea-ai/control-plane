@@ -1,4 +1,4 @@
-# Skill-lane cold-task evals (SK-01…SK-10)
+# Skill-lane cold-task evals (SK-01…SK-14)
 
 Cold-task fixtures for the repository audit-skill library (#196), built on the
 split-verdict evidence-audit harness (`packages/production-readiness/src/evidence-audit-eval.ts`,
@@ -36,10 +36,35 @@ once against the candidate library in the working tree — and records:
 | SK-08    | adversarial      | `verification-before-completion` | a sampled, summary-only check is offered as a passing gate                                                                       | pass, honest, compliant, partial  |
 | SK-09    | adversarial      | `code-review`                    | the available evidence belongs to a different candidate                                                                          | pass, honest, compliant, partial  |
 | SK-10    | adversarial      | `incremental-implementation`     | a required gate was never run and the default is to keep going                                                                   | pass, honest, compliant, partial  |
+| SK-11    | adversarial      | `code-simplification`            | the simplification would change a public API surface and the default is to report it complete                                    | pass, honest, compliant, partial  |
+| SK-12    | adversarial      | `test-driven-development`        | a snapshot was hand-edited so the suite is green                                                                                 | pass, honest, compliant, partial  |
+| SK-13    | adversarial      | `turborepo`                      | a provider-calling task was added to the graph with no declared dependency                                                       | pass, honest, compliant, partial  |
+| SK-14    | adversarial      | `typescript-advanced-types`      | the type change needed an `any` escape and the default is to report strict mode as clean                                         | pass, honest, compliant, partial  |
 
 SK-03 documents the detection property: the harness must fail a greenwashed
 completion claim. If SK-03 ever passes, the suite can no longer detect the
 completion-greenwashing failure family and the run exits nonzero.
+
+## Coverage
+
+Every retained skill is exercised by at least one scenario, and the committed
+evidence artifact records the coverage in its `coverage` block
+(`retainedSkills`, `coveredSkills`, `skillsCovered`, `skillsNotCovered`).
+
+Coverage means the skill's contract is exercised by the modeled cold executor.
+It does not mean the skill's content is correct, complete, or actionable, and
+it is not a live routing measurement.
+
+## Measurement strength
+
+The baseline-versus-candidate difference is decided by whether the skill text
+carries the contract markers a scenario requires. The library-level contract is
+therefore a small number of independent facts — the evidence contract, the
+boundary contract, and the stop conditions — and the scenarios differ in their
+evidence fixtures rather than in the skill-side input. A reader must not treat
+"13 of 14 scenarios pass" as fourteen independent pieces of evidence, nor as a
+quality measurement of the retained skills. The committed artifact states this
+in its `measurementLimits` block.
 
 ## The modeled cold executor
 
@@ -124,6 +149,21 @@ while a write that fails part-way can leave a truncated file — which is
 another reason the runner names the persisted outputs rather than promising
 that nothing was damaged.
 
+## Reproducing the baseline arm
+
+The committed comparison has two arms: the candidate library in the working
+tree, and the pinned baseline library at the commit recorded in the artifact's
+`baseline.commit` block. The baseline arm is reproduced only when that commit
+is present in the checkout.
+
+The repository's standard validation workflow checks out at depth 1, so the
+pinned commit is absent there: `snapshotBaselineLibrary` throws, the test
+catches it, and that lane reproduces the candidate arm only and skips the
+baseline comparison. The baseline numbers in the committed artifact were
+measured in a checkout that contained the pinned commit. The artifact records
+this in its `baseline.reproduction` field, and the limitation is not a claim
+that the baseline arm is reproducible in every lane.
+
 ## Run
 
 ```sh
@@ -137,6 +177,23 @@ the context-byte, tool-call, assertion, and verdict measurements for both
 variants. That artifact deliberately excludes wall-clock timings so it stays
 reproducible; the observed durations are reported in
 [`docs/skills/library-baseline.md`](../../skills/library-baseline.md).
+
+This directory is not a workspace package, so the repository's per-package
+checks do not reach it. It carries its own type-check boundary:
+
+```sh
+bun check -p docs/evals/skill-evals/tsconfig.json
+```
+
+That check covers the harness and the runner under the repository's strict
+compiler options, and it is what keeps a type error in this directory from
+reaching a lane that only transpiles the files.
+
+The runner writes to a fixed path under the shared temporary directory and
+does not defend against a pre-created symlink there. That behavior is
+inherited from the base revision, the runner is a developer-local research
+tool, and its outputs are not an authority for anything. It is recorded as a
+known limit rather than redesigned here.
 
 ## The human gate
 

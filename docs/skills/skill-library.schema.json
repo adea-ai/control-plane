@@ -52,6 +52,7 @@
           "type": "string",
           "minLength": 10,
           "maxLength": 400,
+          "pattern": "^Use when .+?\\. Not for .+?\\.",
           "description": "Agent-visible routing surface. Must follow 'Use when <trigger>. Not for <non-trigger>.'"
         },
         "version": {
@@ -127,7 +128,13 @@
               "$ref": "#/$defs/semanticVersion",
               "description": "Local integration revision of a vendored skill."
             }
-          }
+          },
+          "if": {
+            "properties": { "origin": { "const": "vendored-upstream" } },
+            "required": ["origin"]
+          },
+          "then": { "required": ["source", "upstreamVersion"] },
+          "else": { "not": { "required": ["source"] } }
         },
         "files": {
           "type": "array",
@@ -145,7 +152,12 @@
           "pattern": "^sha256:[a-f0-9]{64}$",
           "description": "SHA-256 digest of the skill entrypoint bytes."
         }
-      }
+      },
+      "if": {
+        "properties": { "deprecated": { "const": true } },
+        "required": ["deprecated"]
+      },
+      "then": { "required": ["supersededBy"] }
     }
   }
 }
