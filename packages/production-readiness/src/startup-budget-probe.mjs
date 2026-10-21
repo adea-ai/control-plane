@@ -285,6 +285,53 @@ export function readListenerPids(port) {
     .filter((pid) => Number.isSafeInteger(pid) && pid > 0)
 }
 
+/**
+ * Wraps a spawned process in the OWNED child handle the probe contracts for.
+ *
+ * This is the production handle: the repository entry point and the tests
+ * both use it, so the lifecycle the tests exercise cannot drift from the
+ * lifecycle the probe ships. The handle reports the asynchronous spawn
+ * error, knows whether the child has exited, and stops the child with a
+ * bounded, awaited teardown that verifies the ACTUAL termination.
+ */
+export function createOwnedChildHandle(proc, { graceMs = CLEANUP_GRACE_MS } = {}) {
+  let spawnError
+  proc.on('error', (error) => {
+    spawnError = error
+  })
+  let exited = false
+  proc.once('exit', () => {
+    exited = true
+  })
+  return {
+    pid: proc.pid,
+    spawnError: () => spawnError,
+    hasExited: () => exited || proc.exitCode !== null || proc.signalCode !== null,
+    stop: async () => {
+      // A spawn that never produced a process has nothing to terminate.
+      if (spawnError !== undefined || proc.pid === undefined)
+        return { ok: true, reason: 'the application never started' }
+      if (exited || proc.exitCode !== null || proc.signalCode !== null)
+        return { ok: true, reason: 'the owned child had already exited' }
+      try {
+        proc.kill('SIGTERM')
+      } catch {
+        // The child is already gone: the exit is awaited below.
+      }
+      if (await waitForExit(proc, graceMs))
+        return { ok: true, reason: 'the owned child exited after SIGTERM' }
+      try {
+        proc.kill('SIGKILL')
+      } catch {
+        // The child is already gone: the exit is awaited below.
+      }
+      if (await waitForExit(proc, graceMs))
+        return { ok: true, reason: 'the owned child exited after SIGKILL' }
+      return { ok: false, reason: 'the owned child did not exit after SIGKILL' }
+    },
+  }
+}
+
 /** Waits for a process to actually exit, bounded. */
 export function waitForExit(proc, timeoutMs) {
   if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true)

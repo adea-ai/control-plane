@@ -30,12 +30,11 @@ import process from 'node:process'
 //   appName defaults to local-control-plane; port defaults to 3917.
 
 import {
-  CLEANUP_GRACE_MS,
+  createOwnedChildHandle,
   psParent,
   psRss,
   readListenerPids,
   runStartupBudgetProbe,
-  waitForExit,
 } from '../packages/production-readiness/src/startup-budget-probe.mjs'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -69,33 +68,9 @@ if (import.meta.main) {
       },
       stdio: ['ignore', 'inherit', 'inherit'],
     })
-    let spawnError
-    proc.on('error', (error) => {
-      spawnError = error
-    })
-    let exited = false
-    proc.once('exit', () => {
-      exited = true
-    })
-    return {
-      pid: proc.pid,
-      spawnError: () => spawnError,
-      hasExited: () => exited || proc.exitCode !== null || proc.signalCode !== null,
-      stop: async () => {
-        // A spawn that never produced a process has nothing to terminate.
-        if (spawnError !== undefined || proc.pid === undefined)
-          return { ok: true, reason: 'the application never started' }
-        if (exited || proc.exitCode !== null || proc.signalCode !== null)
-          return { ok: true, reason: 'the owned child had already exited' }
-        proc.kill('SIGTERM')
-        if (await waitForExit(proc, CLEANUP_GRACE_MS))
-          return { ok: true, reason: 'the owned child exited after SIGTERM' }
-        proc.kill('SIGKILL')
-        if (await waitForExit(proc, CLEANUP_GRACE_MS))
-          return { ok: true, reason: 'the owned child exited after SIGKILL' }
-        return { ok: false, reason: 'the owned child did not exit after SIGKILL' }
-      },
-    }
+    // The PRODUCTION owned-child handle: the same contract the package's
+    // tests exercise, so the entry point and the tests cannot diverge.
+    return createOwnedChildHandle(proc)
   }
 
   const outcome = await runStartupBudgetProbe({

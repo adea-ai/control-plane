@@ -64,6 +64,16 @@ unrelated listener. The suite asserts that the owned child is actually
 terminated on every failing path, and that the unrelated listener keeps
 running and keeps serving, so no unrelated process can be killed.
 
+The tests use the **production** owned-child handle
+(`createOwnedChildHandle`), the same one the repository entry point ships, so
+a test-only reimplementation cannot mask a divergence between the tested and
+the shipped lifecycle. Every real child the tests spawn is torn down with a
+**bounded, awaited** teardown that is registered as soon as the child exists:
+a timeout, a failed assertion or a failed fetch inside a test body can no
+longer leak a test-owned process, and a teardown failure is reported next to
+the primary failure rather than replacing it. Two focused regressions assert
+that a failing test body still terminates the child it owns.
+
 ### 2.2 The build ceiling is now measurable, as claimed
 
 The corrected claim recorded in

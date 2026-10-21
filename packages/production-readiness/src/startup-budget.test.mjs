@@ -11,9 +11,11 @@ import { spawn, spawnSync } from 'node:child_process'
 import {
   assessRssSamples,
   classifyListener,
+  createOwnedChildHandle,
   parseRssSample,
   runStartupBudgetProbe,
   stopOwnedChild,
+  waitForExit,
 } from './startup-budget-probe.mjs'
 
 /**
@@ -50,61 +52,84 @@ function fakeChild(pid = 4242) {
   }
 }
 
-function waitExit(proc, timeoutMs) {
-  if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true)
-  return new Promise((resolve) => {
-    const onExit = () => {
-      clearTimeout(timer)
-      resolve(true)
-    }
-    const timer = setTimeout(() => {
-      proc.off('exit', onExit)
-      resolve(false)
-    }, timeoutMs)
-    proc.once('exit', onExit)
-  })
+/**
+ * Spawns a REAL subprocess and wraps it in the PRODUCTION owned-child
+ * handle. The tests therefore exercise the same ownership contract the
+ * repository entry point ships, instead of a test-only reimplementation
+ * that could mask a divergence.
+ */
+function spawnOwned(command, args) {
+  const proc = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+  return { proc, handle: createOwnedChildHandle(proc) }
 }
 
 /**
- * A REAL subprocess handle with the same contract as the probe's CLI: the
- * spawn error is reported asynchronously, exactly as node reports it.
+ * Runs `run` against a REAL child and always tears the child down.
+ *
+ * The teardown is registered as soon as the child exists and is bounded and
+ * awaited, so a timeout, a failed assertion or a thrown error inside `run`
+ * can never leak the test-owned process. A teardown failure is reported; it
+ * never replaces the primary failure.
  */
-function spawnHandle(command, args) {
-  const proc = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
-  let spawnError
-  proc.on('error', (error) => {
-    spawnError = error
-  })
-  let exited = false
-  proc.once('exit', () => {
-    exited = true
-  })
-  return {
-    proc,
-    pid: proc.pid,
-    spawnError: () => spawnError,
-    hasExited: () => exited || proc.exitCode !== null || proc.signalCode !== null,
-    stop: async () => {
-      // A spawn that never produced a process has nothing to terminate.
-      if (spawnError !== undefined || proc.pid === undefined)
-        return { ok: true, reason: 'the child never started' }
-      if (exited || proc.exitCode !== null || proc.signalCode !== null)
-        return { ok: true, reason: 'the child had already exited' }
-      try {
-        proc.kill('SIGTERM')
-      } catch {
-        // The child is already gone: the exit is awaited below.
-      }
-      if (await waitExit(proc, 3_000)) return { ok: true, reason: 'exited after SIGTERM' }
-      try {
-        proc.kill('SIGKILL')
-      } catch {
-        // The child is already gone: the exit is awaited below.
-      }
-      if (await waitExit(proc, 3_000)) return { ok: true, reason: 'exited after SIGKILL' }
-      return { ok: false, reason: 'the child did not exit after SIGKILL' }
-    },
+async function withOwnedChild(command, args, run) {
+  const { proc, handle } = spawnOwned(command, args)
+  let primary
+  let result
+  try {
+    result = await run({ proc, handle })
+  } catch (error) {
+    primary = error
   }
+  const teardown = await handle.stop()
+  if (primary !== undefined) {
+    if (teardown.ok === false) primary.cleanupFailure = teardown.reason
+    throw primary
+  }
+  if (teardown.ok === false)
+    throw new Error(`the test-owned child did not terminate: ${teardown.reason}`)
+  return result
+}
+
+/**
+ * Runs `run` against a REAL listener child, and always tears the child down.
+ *
+ * The listener is spawned once and torn down in a `finally`, so the
+ * test-owned server cannot outlive the test — not on a timeout, not on a
+ * failed assertion and not on a failed fetch.
+ */
+async function withRealListener(run) {
+  const { proc, handle } = spawnOwned(process.execPath, [
+    '-e',
+    "const server = Bun.serve({ port: 0, fetch: () => new Response('ok') }); console.log(server.port)",
+  ])
+  let primary
+  let result
+  try {
+    const port = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('the listener did not report a port')), 5_000)
+      proc.stdout.once('data', (chunk) => {
+        clearTimeout(timer)
+        resolve(Number(chunk.toString().trim()))
+      })
+      proc.once('error', (error) => {
+        clearTimeout(timer)
+        reject(error)
+      })
+    })
+    assert.equal(Number.isSafeInteger(port) && port > 0, true)
+    result = await run({ proc, handle, port })
+  } catch (error) {
+    primary = error
+  }
+  // The bounded, awaited teardown of the TEST-OWNED server, on every path.
+  const teardown = await handle.stop()
+  if (primary !== undefined) {
+    if (teardown.ok === false) primary.cleanupFailure = teardown.reason
+    throw primary
+  }
+  if (teardown.ok === false)
+    throw new Error(`the test-owned listener did not terminate: ${teardown.reason}`)
+  return result
 }
 
 const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -353,7 +378,7 @@ test('a cleanup that throws is reported as a cleanup failure', async () => {
 })
 
 test('a real spawn failure is reported and nothing is left running', async () => {
-  const handle = spawnHandle('/nonexistent/adea-startup-budget-entrypoint', [])
+  const { proc, handle } = spawnOwned('/nonexistent/adea-startup-budget-entrypoint', [])
   const outcome = await runStartupBudgetProbe({
     spawnChild: () => handle,
     probeReady: async () => ({ ok: false }),
@@ -369,12 +394,12 @@ test('a real spawn failure is reported and nothing is left running', async () =>
   assert.equal(outcome.cleanup.ok, true)
   // The spawn never produced a process, so nothing was left running.
   assert.equal(handle.pid, undefined)
-  assert.equal(handle.proc.exitCode, null)
-  assert.equal(handle.proc.signalCode, null)
+  assert.equal(proc.exitCode, null)
+  assert.equal(proc.signalCode, null)
 })
 
 test('a real child that never becomes ready fails closed and is cleaned up', async () => {
-  const handle = spawnHandle(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
+  const { handle } = spawnOwned(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
   const outcome = await runStartupBudgetProbe({
     spawnChild: () => handle,
     probeReady: async () => ({ ok: false }),
@@ -393,7 +418,7 @@ test('a real child that never becomes ready fails closed and is cleaned up', asy
 })
 
 test('a real child that exits early fails fast and is cleaned up', async () => {
-  const handle = spawnHandle(process.execPath, ['-e', 'process.exit(0)'])
+  const { handle } = spawnOwned(process.execPath, ['-e', 'process.exit(0)'])
   const outcome = await runStartupBudgetProbe({
     spawnChild: () => handle,
     probeReady: async () => ({ ok: false }),
@@ -411,7 +436,7 @@ test('a real child that exits early fails fast and is cleaned up', async () => {
 })
 
 test('a thrown dependency fails closed and still cleans the child up', async () => {
-  const handle = spawnHandle(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
+  const { handle } = spawnOwned(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
   const outcome = await runStartupBudgetProbe({
     spawnChild: () => handle,
     probeReady: async () => ({ ok: true }),
@@ -431,83 +456,91 @@ test('a thrown dependency fails closed and still cleans the child up', async () 
 })
 
 test('the real ps command refuses a dead process', async () => {
-  const handle = spawnHandle(process.execPath, ['-e', 'process.exit(0)'])
-  await waitExit(handle.proc, 5_000)
-  const sample = parseRssSample(spawnSync('ps', ['-o', 'rss=', '-p', String(handle.pid)]))
-  assert.equal(sample.ok, false)
+  await withOwnedChild(process.execPath, ['-e', 'process.exit(0)'], async ({ proc, handle }) => {
+    assert.equal(await waitForExit(proc, 5_000), true)
+    const sample = parseRssSample(spawnSync('ps', ['-o', 'rss=', '-p', String(handle.pid)]))
+    assert.equal(sample.ok, false)
+  })
 })
 
 test('a real unrelated listener is refused and is never signalled', async () => {
-  const listener = spawn(process.execPath, [
-    '-e',
-    "const server = Bun.serve({ port: 0, fetch: () => new Response('ok') }); console.log(server.port)",
-  ])
-  const port = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('the listener did not report a port')), 5_000)
-    listener.stdout.once('data', (chunk) => {
-      clearTimeout(timer)
-      resolve(Number(chunk.toString().trim()))
+  await withRealListener(async ({ handle, port }) => {
+    const child = fakeChild()
+    const outcome = await runStartupBudgetProbe({
+      spawnChild: () => child.handle,
+      probeReady: async () => ({ ok: true }),
+      listenerPids: () => [handle.pid],
+      parentOf: () => undefined,
+      sampleRss: () => ({ status: 0, stdout: '1024' }),
+      sleep: realSleep,
+      now: () => Date.now(),
+      readyTimeoutMs: 2_000,
     })
-  })
-  assert.equal(Number.isSafeInteger(port) && port > 0, true)
+    assert.equal(outcome.ok, false)
+    assert.match(outcome.reason, /already in use/u)
 
-  const child = fakeChild()
-  const outcome = await runStartupBudgetProbe({
-    spawnChild: () => child.handle,
-    probeReady: async () => ({ ok: true }),
-    listenerPids: () => [listener.pid],
-    parentOf: () => undefined,
-    sampleRss: () => ({ status: 0, stdout: '1024' }),
-    sleep: realSleep,
-    now: () => Date.now(),
-    readyTimeoutMs: 2_000,
+    // The unrelated listener is still alive and still serving: the probe never
+    // signalled a process it does not own.
+    assert.equal(handle.hasExited(), false)
+    const response = await fetch(`http://127.0.0.1:${port}/`)
+    assert.equal(await response.text(), 'ok')
   })
-  assert.equal(outcome.ok, false)
-  assert.match(outcome.reason, /already in use/u)
-
-  // The unrelated listener is still alive and still serving: the probe never
-  // signalled a process it does not own.
-  assert.equal(listener.exitCode, null)
-  assert.equal(listener.signalCode, null)
-  const response = await fetch(`http://127.0.0.1:${port}/`)
-  assert.equal(await response.text(), 'ok')
-  listener.kill('SIGKILL')
-  await waitExit(listener, 5_000)
 })
 
 test('a real unrelated listener is refused after the launch and never signalled', async () => {
-  const listener = spawn(process.execPath, [
-    '-e',
-    "const server = Bun.serve({ port: 0, fetch: () => new Response('ok') }); console.log(server.port)",
-  ])
-  const port = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('the listener did not report a port')), 5_000)
-    listener.stdout.once('data', (chunk) => {
-      clearTimeout(timer)
-      resolve(Number(chunk.toString().trim()))
-    })
+  await withRealListener(async ({ handle, port }) => {
+    // The probe owns this child, but the teardown is registered here as well
+    // so a failure inside the probe cannot leak it.
+    const { handle: child } = spawnOwned(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
+    let outcome
+    try {
+      outcome = await runStartupBudgetProbe({
+        spawnChild: () => child,
+        probeReady: async () => ({ ok: true }),
+        listenerPids: listenersAfterLaunch([handle.pid]),
+        parentOf: () => undefined,
+        sampleRss: () => ({ status: 0, stdout: '1024' }),
+        sleep: realSleep,
+        now: () => Date.now(),
+        readyTimeoutMs: 2_000,
+      })
+    } finally {
+      await child.stop()
+    }
+    assert.equal(outcome.ok, false)
+    assert.match(outcome.reason, /not the launched child/u)
+    // The OWNED child was cleaned up; the unrelated listener was not signalled.
+    assert.equal(child.hasExited(), true)
+    assert.equal(handle.hasExited(), false)
+    const response = await fetch(`http://127.0.0.1:${port}/`)
+    assert.equal(await response.text(), 'ok')
   })
-  assert.equal(Number.isSafeInteger(port) && port > 0, true)
+})
 
-  const handle = spawnHandle(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
-  const outcome = await runStartupBudgetProbe({
-    spawnChild: () => handle,
-    probeReady: async () => ({ ok: true }),
-    listenerPids: listenersAfterLaunch([listener.pid]),
-    parentOf: () => undefined,
-    sampleRss: () => ({ status: 0, stdout: '1024' }),
-    sleep: realSleep,
-    now: () => Date.now(),
-    readyTimeoutMs: 2_000,
-  })
-  assert.equal(outcome.ok, false)
-  assert.match(outcome.reason, /not the launched child/u)
-  // The OWNED child was cleaned up; the unrelated listener was not signalled.
-  assert.equal(handle.hasExited(), true)
-  assert.equal(listener.exitCode, null)
-  assert.equal(listener.signalCode, null)
-  const response = await fetch(`http://127.0.0.1:${port}/`)
-  assert.equal(await response.text(), 'ok')
-  listener.kill('SIGKILL')
-  await waitExit(listener, 5_000)
+test('a failing body still tears the test-owned listener down', async () => {
+  let observed
+  await assert.rejects(
+    withRealListener(async ({ handle }) => {
+      observed = handle
+      throw new Error('the body failed')
+    }),
+    /the body failed/u
+  )
+  assert.notEqual(observed, undefined)
+  // The listener was terminated even though the body threw: the test-owned
+  // server cannot outlive a failed test.
+  assert.equal(observed.hasExited(), true)
+})
+
+test('a failing body still tears the test-owned child down', async () => {
+  let observed
+  await assert.rejects(
+    withOwnedChild(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], async ({ handle }) => {
+      observed = handle
+      throw new Error('the body failed')
+    }),
+    /the body failed/u
+  )
+  assert.notEqual(observed, undefined)
+  assert.equal(observed.hasExited(), true)
 })
