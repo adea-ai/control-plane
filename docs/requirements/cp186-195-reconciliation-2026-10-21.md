@@ -45,7 +45,7 @@ closed when any of them drifts from the ledger.
 | Requirement rows with a recorded profile target              |                            2 |
 | M1–M10 issue audits                                          |                          103 |
 | Deployment profiles                                          | 4 (all `partially_verified`) |
-| Worker lanes recorded                                        | 7 (0 integrated; 6 received) |
+| Worker lanes recorded                                        | 7 (0 integrated; 7 received) |
 | External acceptance gates recorded                           |                            5 |
 
 The crosswalk joins what exists; it does not invent links. Every unlinked
@@ -143,10 +143,18 @@ worker result is promoted into a requirement or issue classification.
 | W6     | cp196-skill-library               | received | `eb84f92e73a665f676a9a7ff22041b73e0844076` | #196       | blinded comparison packet, skill-eval harness, audit skill             |
 | W7     | cp612-project-state-digest-compat | received | `eb7d3ba7f42af0550f14dab8a30fc6a710ebcafc` | #612       | project-state digest compatibility record and reopen-race checks       |
 
-Every lane has published a commit, and each recorded head is that lane's current
-published commit. W2 records the branch head this refresh was taken from, which
-carries the canonical crosswalk, the figure inventory and this record. A lane
-that publishes a further commit needs one more refresh.
+Every lane has published a commit. The recorded worker heads identify received
+evidence snapshots, not continuing claims of current remote state. W2 records the branch head this
+refresh was taken from, which carries the canonical crosswalk, the figure
+inventory and this record. A lane that publishes a further commit needs one
+more refresh.
+
+W7's published head was observed on 2026-10-21 at
+`1bdae6df04ef0714c48dc89381ee3c61188a0965`. Its cited evidence retains the
+original `eb7d3ba7f42af0550f14dab8a30fc6a710ebcafc` commit. Earlier recorded
+checks and timestamps remain historical; they do not certify the newer head,
+which requires its own validation. No worker result is integrated or promoted
+by this publication metadata correction.
 
 `bun run requirements:refresh` re-reads the live issue identities and is the
 step that folds an arrived contribution into the crosswalk.

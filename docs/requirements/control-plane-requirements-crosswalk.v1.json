@@ -9822,7 +9822,7 @@
           "commit": "eb7d3ba7f42af0550f14dab8a30fc6a710ebcafc"
         }
       ],
-      "nextAction": "Refresh the recorded head when the project-state digest lane publishes a further commit."
+      "nextAction": "Published head observed on 2026-10-21: 1bdae6df04ef0714c48dc89381ee3c61188a0965. The cited evidence retains its original eb7d3ba7f42af0550f14dab8a30fc6a710ebcafc commit; earlier checks do not certify the newer head. Refresh this publication snapshot after a further publication and validate the newer head separately."
     }
   ],
   "externalGates": [
@@ -9863,7 +9863,7 @@
       "severity": "medium",
       "owner": "requirements-ledger",
       "issue": 195,
-      "disposition": "All seven contributing lanes have published a commit, and each is recorded as received with its exact head and with its evidence paths proven against the tree of that head. No contribution is merged into this tree, so no worker result is integrated into the crosswalk and no worker result is reported as evidence. The recorded heads are the lanes’ current published commits and are refreshed again whenever a lane publishes a further commit.",
+      "disposition": "All seven contributing lanes have published a commit, and each is recorded as received with its exact head and with its evidence paths proven against the tree of that head. No contribution is merged into this tree, so no worker result is integrated into the crosswalk and no worker result is reported as evidence. The recorded worker heads identify received evidence snapshots, not continuing claims of current remote state. W7 separately notes publication of the newer head 1bdae6df04ef0714c48dc89381ee3c61188a0965 observed on 2026-10-21; its received evidence remains bound to eb7d3ba7f42af0550f14dab8a30fc6a710ebcafc. Historical checks are not promoted to checks of the newer head.",
       "nextAction": "Re-run bun run requirements:refresh after a lane publishes a further commit to re-record the live issue identities and the exact head per stable worker ID, then re-run the crosswalk so an integrated contribution appears against the requirement and issue rows it covers."
     },
     {
