@@ -93,6 +93,9 @@ export function createManagedCloudWorkflowWorkerComposition(
           ...(configuration.runtime.pinnedHarnessId === undefined
             ? {}
             : { pinnedHarnessId: configuration.runtime.pinnedHarnessId }),
+          ...(configuration.runtime.harnessByModel === undefined
+            ? {}
+            : { harnessByModel: configuration.runtime.harnessByModel }),
         })
       : undefined
   const commands = new PostgresRuntimeCommandRepository(connection.database)

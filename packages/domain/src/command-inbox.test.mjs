@@ -75,6 +75,30 @@ describe('CommandInbox execution acceptance', () => {
     expect(Date.parse(accepted.command.retentionExpiresAt) - Date.parse(now)).toBe(30 * 86_400_000)
   })
 
+  test('records the accepted model in the execution read model', async () => {
+    const { service } = setup()
+    const accepted = await service.acceptExecution(commandInput({ modelId: 'deepseek-flash' }))
+    expect(accepted.execution.modelId).toBe('deepseek-flash')
+  })
+
+  test('the accepted model never enters the execution plan digest', async () => {
+    const { service } = setup()
+    const withModel = await service.acceptExecution(commandInput({ modelId: 'deepseek-flash' }))
+    const withoutModel = await service.acceptExecution(
+      commandInput({ commandId: 'cmd_01JABCDEF0123456789ABCDEFG', modelId: undefined })
+    )
+    expect(withModel.execution.executionPlan.contentDigest).toBe(
+      withoutModel.execution.executionPlan.contentDigest
+    )
+    expect(withModel.execution.executionPlan.contentDigest).toBe(`sha256:${'b'.repeat(64)}`)
+  })
+
+  test('an acceptance without a model keeps the execution exactly as it was', async () => {
+    const { service } = setup()
+    const accepted = await service.acceptExecution(commandInput())
+    expect(accepted.execution.modelId).toBeUndefined()
+  })
+
   test('rejects an already expired new request without persisting an execution', async () => {
     const { service, repository } = setup({ now: '2026-09-24T10:00:00.000Z' })
     await expect(service.acceptExecution(commandInput())).rejects.toMatchObject({

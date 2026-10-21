@@ -36,6 +36,14 @@ export interface ManagedCloudRuntimeConfiguration {
    * keeps its unpinned behavior.
    */
   readonly pinnedHarnessId?: string
+  /**
+   * Optional per-model harness map (M12/#678): the deployment maps a model id
+   * to the harness id that must serve it. When the map is present it is a
+   * policy, not a fallback: an execution whose model is absent from the map,
+   * or which has no model at all, is denied instead of being routed to
+   * another harness. Absent leaves routing exactly as it is today.
+   */
+  readonly harnessByModel?: Readonly<Record<string, string>>
 }
 
 export interface ManagedCloudCatalogApprovalConfiguration {
@@ -194,7 +202,48 @@ function loadWorkflowRuntimeConfiguration(
       component: 'runtime',
     })
   }
-  return { mode, ...(pinnedHarnessId === undefined ? {} : { pinnedHarnessId }) }
+  const harnessByModel = loadHarnessByModel(environment['CONTROL_PLANE_HARNESS_BY_MODEL'])
+  return {
+    mode,
+    ...(pinnedHarnessId === undefined ? {} : { pinnedHarnessId }),
+    ...(harnessByModel === undefined ? {} : { harnessByModel }),
+  }
+}
+
+/**
+ * The per-model harness map (M12/#678). It is parsed strictly: the value must
+ * be a JSON object whose keys are model ids and whose values are harness ids.
+ * A malformed map is a configuration error, never a silently empty map: an
+ * absent variable leaves routing unchanged, while a present map is a policy
+ * that denies anything it does not name.
+ */
+function loadHarnessByModel(
+  value: string | undefined
+): Readonly<Record<string, string>> | undefined {
+  if (value === undefined) return undefined
+  const invalid = (): never => {
+    throw new ConfigurationError({
+      code: 'INVALID_MANAGED_CLOUD_CONFIGURATION',
+      invalid: ['CONTROL_PLANE_HARNESS_BY_MODEL'],
+      missing: [],
+      component: 'runtime',
+    })
+  }
+  if (value.length === 0 || value.length > 65_536) return invalid()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    return invalid()
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return invalid()
+  const map: Record<string, string> = {}
+  for (const [modelId, harnessId] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!/^[a-z0-9][a-z0-9._/-]{0,127}$/i.test(modelId)) return invalid()
+    if (typeof harnessId !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(harnessId)) return invalid()
+    map[modelId] = harnessId
+  }
+  return map
 }
 
 function loadServiceAuthenticationConfiguration(

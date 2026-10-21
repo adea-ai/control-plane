@@ -34,7 +34,13 @@ const OUTPUT_KEYS = [
 export type DecisionOutputKey = (typeof OUTPUT_KEYS)[number]
 
 /** Policy defaults are the last precedence layer and may pin any output. */
-export type DecisionLayerPolicyDefaults = DecisionPins
+export type DecisionLayerPolicyDefaults = DecisionPins & {
+  /**
+   * The deployment's per-model harness map (M12/#678). Absent leaves every
+   * resolution exactly as it is today.
+   */
+  readonly harnessByModel?: Readonly<Record<string, string>>
+}
 
 type ResolutionOutputs = DecisionLayerResolution['resolution']
 type ResolutionValue<Key extends DecisionOutputKey> = ResolutionOutputs[Key]
@@ -144,13 +150,57 @@ export function resolveRuntimeHarness(
   return { harnessId, source: 'policy-default' }
 }
 
+/**
+ * The harness id a model is mapped to (M12/#678).
+ *
+ * A configured map is a policy, not a fallback. With no map the caller's pin
+ * is used unchanged. With a map the execution must carry a model, the map
+ * must name that model, and a pin that names another harness is a conflict
+ * rather than a silent substitution.
+ *
+ * @throws {DecisionResolutionDeniedError} when the map cannot be satisfied.
+ */
+export function resolveMappedHarness(input: {
+  readonly harnessByModel?: Readonly<Record<string, string>>
+  readonly modelId?: string
+  readonly pinnedHarnessId?: string
+}): { readonly harnessId: string | undefined; readonly mapped: boolean } {
+  const map = input.harnessByModel
+  if (map === undefined) {
+    return { harnessId: input.pinnedHarnessId, mapped: false }
+  }
+  if (input.modelId === undefined) {
+    throw new DecisionResolutionDeniedError('HARNESS_MAP_MODEL_ABSENT')
+  }
+  const mapped = map[input.modelId]
+  if (mapped === undefined) {
+    throw new DecisionResolutionDeniedError('HARNESS_MAP_MODEL_UNMAPPED')
+  }
+  if (input.pinnedHarnessId !== undefined && input.pinnedHarnessId !== mapped) {
+    throw new DecisionResolutionDeniedError('HARNESS_MAP_CONFLICTS_WITH_PIN')
+  }
+  return { harnessId: mapped, mapped: true }
+}
+
 function resolveHarness(
   request: DecisionResolutionRequest,
-  policyDefaults: DecisionPins,
-  runtime: AvailableRuntime
+  policyDefaults: DecisionLayerPolicyDefaults,
+  runtime: AvailableRuntime,
+  model: ResolutionValue<'model'>
 ): { value: ResolutionValue<'harness'>; source: ResolutionSource } {
   const { source, pin } = pickPin('harness', request, policyDefaults)
-  const resolved = resolveRuntimeHarness(runtime, pin?.harnessId)
+  // A configured per-model map (M12/#678) decides the harness for the
+  // resolved model. The explicit pin stays independent: it may agree with the
+  // map, and a disagreement is denied instead of silently substituting either
+  // side.
+  const mapped = resolveMappedHarness({
+    ...(policyDefaults.harnessByModel === undefined
+      ? {}
+      : { harnessByModel: policyDefaults.harnessByModel }),
+    ...('modelId' in model ? { modelId: model.modelId } : {}),
+    ...(pin?.harnessId === undefined ? {} : { pinnedHarnessId: pin.harnessId }),
+  })
+  const resolved = resolveRuntimeHarness(runtime, mapped.harnessId)
   return {
     value: { harnessId: resolved.harnessId },
     source: pin === undefined ? resolved.source : source,
@@ -258,8 +308,10 @@ export function resolveDecisionLayer(
 
   const capabilities = resolveCapabilities(parsed, policyDefaults)
   const runtimeSelection = resolveRuntime(parsed, policyDefaults)
-  const harness = resolveHarness(parsed, policyDefaults, runtimeSelection.runtime)
+  // The model is resolved before the harness: a configured per-model map
+  // (M12/#678) needs the resolved model to name the harness.
   const model = resolveModel(parsed, policyDefaults)
+  const harness = resolveHarness(parsed, policyDefaults, runtimeSelection.runtime, model.value)
   const sandbox = resolveSandbox(parsed, policyDefaults, capabilities.value.capabilityNames)
   const contextPackage = resolveContextPackage(parsed, policyDefaults)
   const delegation = pickPin('delegation', parsed, policyDefaults)

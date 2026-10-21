@@ -102,6 +102,53 @@ describe('managed cloud configuration', () => {
     ).toThrow()
   })
 
+  test('parses the optional per-model harness map and rejects malformed ones', () => {
+    const remote = { ...cloud, CONTROL_PLANE_CLOUD_RUNTIME: 'remote' }
+    const withMap = loadManagedCloudConfiguration(
+      {
+        ...remote,
+        CONTROL_PLANE_HARNESS_BY_MODEL: '{"deepseek-flash":"deepseek","glm-4":"zcode"}',
+      },
+      'workflow-worker'
+    )
+    expect(withMap.runtime).toEqual({
+      mode: 'remote',
+      harnessByModel: { 'deepseek-flash': 'deepseek', 'glm-4': 'zcode' },
+    })
+
+    // An absent map leaves today's behavior exactly.
+    expect(loadManagedCloudConfiguration(remote, 'workflow-worker').runtime).toEqual({
+      mode: 'remote',
+    })
+
+    // An empty map is a configured map, not an absent one.
+    expect(
+      loadManagedCloudConfiguration(
+        { ...remote, CONTROL_PLANE_HARNESS_BY_MODEL: '{}' },
+        'workflow-worker'
+      ).runtime
+    ).toEqual({ mode: 'remote', harnessByModel: {} })
+
+    for (const invalid of [
+      '{"deepseek flash":"deepseek"}',
+      '{"": "deepseek"}',
+      '{"model":"DeepSeek"}',
+      '{"model":""}',
+      '{"model":42}',
+      '[]',
+      '"deepseek"',
+      'not json',
+      '',
+    ]) {
+      expect(() =>
+        loadManagedCloudConfiguration(
+          { ...remote, CONTROL_PLANE_HARNESS_BY_MODEL: invalid },
+          'workflow-worker'
+        )
+      ).toThrow()
+    }
+  })
+
   test('publishes a per-service dependency manifest', () => {
     expect(managedCloudEnvironmentManifest()['control-api']).toContain('RESTATE_INGRESS_URL')
     expect(managedCloudEnvironmentManifest()['workflow-worker']).toContain(

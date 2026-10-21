@@ -382,6 +382,7 @@ function cloneOptional<Value>(value: Value | undefined): Value | undefined {
 export {
   DecisionResolutionDeniedError,
   resolveDecisionLayer,
+  resolveMappedHarness,
   resolveRuntimeHarness,
   selectRuntimesExposingHarness,
 } from './decision-resolution.js'

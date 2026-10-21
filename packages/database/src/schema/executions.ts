@@ -84,6 +84,11 @@ export const executions = pgTable(
     executionPlanId: identifier('execution_plan_id').notNull(),
     executionPlanDigest: varchar('execution_plan_digest', { length: 71 }).notNull(),
     executionPlanSchemaVersion: integer('execution_plan_schema_version').notNull(),
+    /**
+     * The model accepted for the execution (M12/#678). Nullable so historical
+     * executions replay exactly as they did before the field existed.
+     */
+    modelId: varchar('model_id', { length: 128 }),
     marketplacePluginReferences: jsonb('marketplace_plugin_references').$type<
       readonly MarketplacePluginReference[]
     >(),
