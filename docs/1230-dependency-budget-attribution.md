@@ -101,6 +101,44 @@ published head and this head.
 | `packages/telemetry`          | 49                             |
 | `packages/object-store`       | 29                             |
 
+## 2b. The attribution ships in the checker
+
+The walk is not only a test: `scripts/check-budgets.mjs` exports
+`attributeExternalPackages(lockfileText)` and `summarizeAttribution(lockfileText)`,
+and the `deps` report now carries the attribution next to the verdict:
+
+```
+BUDGET EXCEEDED: {"ok":false,"ceiling":285,"measured":591,"scope":"lockfile tree",
+  "attribution":{"reachableIdentities":591,"declaredRootCount":40,
+    "largestContributors":{"oxfmt":264,"oxlint":264,"vite-plus":264,
+      "@earendil-works/pi-durable":125,"@earendil-works/pi-ai":95,
+      "@nestjs/platform-fastify":84,"@langchain/langgraph-checkpoint-postgres":62,
+      "miniflare":62,"@nestjs/swagger":59,"@langchain/langgraph":56},
+    "aliasedIdentities":2,
+    "aliases":{"vite@1.3.0":"@voidzero-dev/vite-plus-core@1.3.0",
+      "typescript6@6.0.3":"typescript@6.0.3"},
+    "unresolvedRoots":[]}}
+```
+
+The attribution is **additive**: the measured count, the ceiling and the verdict
+are computed exactly as before, and a lockfile that cannot be read is reported
+as an absent attribution rather than an empty one.
+
+**The counted identities can be aliases.** `vite@1.3.0` is the repository's
+alias for `@voidzero-dev/vite-plus-core@1.3.0`, and `typescript6@6.0.3` for
+`typescript@6.0.3`; the checker records the resolution of every counted
+identity, so a measured identity can always be traced to the package that is
+actually installed. Each alias is one identity, so the count is unaffected.
+
+**The installed graph is covered by the measurement.** Where the packages are
+installed, every installed external package is covered by the counted closure
+once the alias resolution is applied — a test walks the installed store and
+asserts that coverage. The installed store in this checkout is _older_ than the
+lockfile's pins for six packages (`@opentelemetry/api@1.9.1` against the
+pinned `1.10.0`, and the `@opentelemetry/*` `2.12.0` against the pinned
+`3.0.0`), so the installed graph is not version-identical to the lockfile
+here; that is a stale install, not a measurement difference.
+
 ## 3. The composition of the 591
 
 | Category                                      | Pairs   | What it is                                                                                                                                                                                                               |
@@ -179,17 +217,17 @@ reporting the breach: `BUDGET EXCEEDED … 591 against 285`, exit 1.
 
 ## 8. What this slice changed
 
-| Path                                                                 | Change                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/check-budgets.mjs`                                          | **unchanged** — no parser defect is proven (§2), so the counter is not touched                                                                                                                                                                                                                                                                                                                                                   |
-| `packages/production-readiness/src/dependency-budget-scope.test.mjs` | five regression tests pin the §2 invariants over the **real** listing: no listing entry is dropped, every counted identity is named by the lockfile and only the workspace packages are excluded, and every counted identity is a plain package identity; the measured closure is exactly the lockfile graph reachable from the declared roots; and the closure without the Vite+ toolchain is still above the unchanged ceiling |
-| `docs/1230-dependency-budget-attribution.md`                         | this document                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Path                                                                 | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/check-budgets.mjs`                                          | the counting rule is **unchanged** — no parser defect is proven (§2), so the counter is not touched. The checker gains the attribution: `attributeExternalPackages` / `summarizeAttribution` walk the lockfile graph from the declared roots, record the resolution of every counted identity, and the `deps` report carries the attribution next to the unchanged verdict                                                                                                                                                                |
+| `packages/production-readiness/src/dependency-budget-scope.test.mjs` | six regression tests pin the §2 invariants over the **real** listing: no listing entry is dropped, every counted identity is named by the lockfile and only the workspace packages are excluded, and every counted identity is a plain package identity; the measured closure is exactly the lockfile graph reachable from the declared roots; the closure without the Vite+ toolchain is still above the unchanged ceiling; and every installed external package is covered by the measured closure once the alias resolution is applied |
+| `docs/1230-dependency-budget-attribution.md`                         | this document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 ## 9. Receipts
 
 - Real measurement, seam unset: `BUDGET EXCEEDED: {"ok":false,"ceiling":285,"measured":591,"scope":"lockfile tree"}`, exit 1.
 - Installed graph: 374 distinct external identities on this host (1031 store entries walked).
-- Focused regression: `bun test src/dependency-budget-scope.test.mjs` (packages/production-readiness) — 16 pass / 0 fail, of which 5 are new.
-- Reproduced attribution: the lockfile walk reaches exactly the 591 counted identities (591 = 591, no difference in either direction, no unresolved root).
+- Focused regression: `bun test src/dependency-budget-scope.test.mjs` (packages/production-readiness) — 17 pass / 0 fail, of which 6 are new.
+- Reproduced attribution: the lockfile walk reaches exactly the 591 counted identities (591 = 591, no difference in either direction, no unresolved root), and the gate's own report carries it.
 - The ceiling is unchanged: `budgets.json` → `dependencies.externalPackageCeiling = 285`.
 - No release and no deployment were performed or requested.

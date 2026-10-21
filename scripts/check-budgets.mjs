@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { readdir, readFile } from 'node:fs/promises'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import { JSONC } from 'bun'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const budgetFile = resolveBudgetFile()
@@ -110,6 +111,111 @@ export function countExternalPackages(lsOutput) {
   return externalPackagePairs(lsOutput).size
 }
 
+/**
+ * The attribution of the measured closure: the external identities the
+ * lockfile's graph reaches from the declared roots, and how much each root
+ * contributes.
+ *
+ * The attribution answers "which dependency brings this package in", so a
+ * breach can be routed to the slice that owns the manifest instead of being
+ * an unattributed count. It never changes the measurement: the counted
+ * identities come from the listing, and this only explains them.
+ *
+ * @param {string} lockfileText the contents of `bun.lock`
+ * @returns {{ identities: Set<string>, perRoot: Record<string, number>, unresolvedRoots: string[] }}
+ */
+export function attributeExternalPackages(lockfileText) {
+  const lock = JSONC.parse(lockfileText)
+  const entries = new Map()
+  for (const [key, value] of Object.entries(lock.packages ?? {})) {
+    entries.set(key, {
+      spec: Array.isArray(value) ? value[0] : value,
+      meta: Array.isArray(value) ? (value[2] ?? {}) : {},
+    })
+  }
+  const byBaseName = new Map()
+  for (const key of entries.keys()) {
+    const base = normalizePackageName(key)
+    if (!byBaseName.has(base)) byBaseName.set(base, [])
+    byBaseName.get(base).push(key)
+  }
+  const declaredRoots = []
+  for (const workspace of Object.values(lock.workspaces ?? {})) {
+    for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+      for (const name of Object.keys(workspace[section] ?? {})) declaredRoots.push(name)
+    }
+  }
+  const closureOf = (rootNames) => {
+    const identities = new Set()
+    const resolutions = new Map()
+    const visited = new Set()
+    const queue = []
+    const unresolved = []
+    for (const root of new Set(rootNames)) {
+      const keys = byBaseName.get(root)
+      if (!keys?.length) {
+        unresolved.push(root)
+        continue
+      }
+      queue.push(...keys)
+    }
+    while (queue.length > 0) {
+      const key = queue.pop()
+      if (visited.has(key)) continue
+      visited.add(key)
+      const { spec, meta } = entries.get(key)
+      const at = spec.lastIndexOf('@')
+      const identity = `${normalizePackageName(key)}@${spec.slice(at + 1)}`
+      if (!identity.startsWith('@control-plane/')) {
+        identities.add(identity)
+        // An alias entry names the package it resolves to, so the measured
+        // identity can be traced to the package that is actually installed.
+        resolutions.set(identity, spec)
+      }
+      for (const section of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+        for (const name of Object.keys(meta[section] ?? {})) {
+          for (const child of byBaseName.get(name) ?? []) queue.push(child)
+        }
+      }
+    }
+    return { identities, resolutions, unresolved }
+  }
+  const perRoot = {}
+  for (const root of new Set(declaredRoots)) {
+    const { identities } = closureOf([root])
+    if (identities.size > 0) perRoot[root] = identities.size
+  }
+  const { identities, resolutions, unresolved } = closureOf(declaredRoots)
+  return { identities, perRoot, resolutions, unresolvedRoots: unresolved }
+}
+
+/**
+ * The attribution of a measured closure, reduced to what a report carries:
+ * the reachable identities and the roots that contribute the most. A
+ * lockfile that cannot be read is reported as an absent attribution, never as
+ * an empty one.
+ */
+export function summarizeAttribution(lockfileText) {
+  try {
+    const { identities, perRoot, resolutions, unresolvedRoots } =
+      attributeExternalPackages(lockfileText)
+    const roots = Object.entries(perRoot).toSorted((left, right) => right[1] - left[1])
+    const aliases = Object.fromEntries(
+      [...resolutions].filter(([identity, resolved]) => resolved !== identity)
+    )
+    return {
+      reachableIdentities: identities.size,
+      declaredRootCount: Object.keys(perRoot).length,
+      largestContributors: Object.fromEntries(roots.slice(0, 10)),
+      aliasedIdentities: Object.keys(aliases).length,
+      aliases,
+      unresolvedRoots,
+    }
+  } catch (error) {
+    return { unavailable: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 export function checkDependencyBudget(budgets, externalCount) {
   const ceiling = budgets.dependencies.externalPackageCeiling
   return {
@@ -172,9 +278,20 @@ if (import.meta.main) {
     if (listing !== undefined) {
       const pairs = [...externalPackagePairs(listing)].toSorted()
       const check = checkDependencyBudget(budgets, pairs.length)
+      // The attribution explains the measured count: which declared root pulls
+      // in how much of the closure. It is read from the lockfile and never
+      // changes the measurement or the verdict.
+      let attribution
+      try {
+        attribution = summarizeAttribution(
+          await readFile(new URL('../bun.lock', import.meta.url), 'utf8')
+        )
+      } catch (error) {
+        attribution = { unavailable: error instanceof Error ? error.message : String(error) }
+      }
       if (listingFile !== undefined && listingFile !== '')
-        report({ ...check, pairs, scope: 'listing file' })
-      else report({ ...check, scope: 'lockfile tree' })
+        report({ ...check, pairs, scope: 'listing file', attribution })
+      else report({ ...check, scope: 'lockfile tree', attribution })
     }
   } else {
     console.error(usage)
