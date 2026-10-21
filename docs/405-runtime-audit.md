@@ -199,7 +199,29 @@ regardless of the configuration. Second, the headroom is now **0.2 MB** — the
 next meaningful code growth in this graph breaches the budget again, which
 belongs to the follow-up in §6.
 
-**The dependency breach is composition, and most of it is product surface.**
+**The dependency breach is composition, and none of it is this slice.**
+The admitted runtime-audit slice contributed **zero** external packages: it
+added no dependency, and it removed four declarations that no source in
+those packages imports (`fastify` and `@nestjs/common` from
+local-control-plane, `@restatedev/restate-sdk` from workflow-worker). The
+measured closure is identical before and after the slice (591 at
+`23fa6880`, at `487883cd` and at the current head), and the slice sources
+import runtime builtins only - pinned by
+`packages/production-readiness/src/audit-slice-closure.test.mjs`, together
+with a guard that the committed ceilings are unchanged.
+
+**There is no measurement or inventory defect behind the number.** The
+checker counts the unique external `package@version` pairs of the resolved
+graph (`bun pm ls --all` over the lockfile), which is exactly what the
+committed budget documents it measures; the workspace packages are excluded
+by name. Walking the installed tree with peer dependencies included shows the
+graph is reachable from the workspace roots plus the repository toolchain,
+and the small residue that looks unreachable is the toolchain bundled
+internals (the oxlint/oxfmt runtime, `yuku-*`, `lightningcss`, `postcss`),
+not an orphan package. So the 591 is the real external surface of the product
+and the toolchain, and the committed ceiling of 285 does not describe it.
+
+**The composition of the closure, measured.**
 The measured closure is the whole installed tree. Its composition, from the
 lockfile and the installed tree, is: the Pi SDK family
 (`@earendil-works/pi-durable` 102 and `@earendil-works/pi-ai` 96 packages),
@@ -256,6 +278,21 @@ The probe's own numbers are the budget-relevant ones: **8.1 s to ready and a
 peak-RSS headroom now **22.1 MB** where the M13 audit recorded ≈176 MB
 against the same 256 MB ceiling. The growth is a finding for the memory
 posture, not a ceiling change: the ceiling is not raised here.
+
+**Repeatability at the current head.** Three consecutive warm runs of the
+probe at `7d881216` measured **2.6 s / 235.8 MB**, **1.6 s / 216.2 MB** and
+**1.8 s / 217.3 MB** (ready seconds / peak RSS): the startup figure varies by
+about a second and the peak RSS by about 20 MB, which is the spread the
+single budget measurement has to absorb. The first run after a build is the
+cold figure (14.2 s at `487883cd`) and is the one the ceiling is written
+against.
+
+**Repeat runs.** The same probe re-run against the same profile state
+measured **3.3 s** to ready and a **223.4 MB** peak RSS, and the repeated
+local request sample measured **p50 0.50 ms, p95 1.27 ms, p99 2.27 ms, max
+5.47 ms** at **52.3 MB** idle RSS. The first (cold) run is the budget-relevant
+figure; the repeats show the steady-state cost once the profile's first-run
+setup is done. The evidence bundle keeps both runs.
 
 ### 3.5 Before/after evidence for the startup/RSS probe repair
 
@@ -326,6 +363,7 @@ Exact commands and results for this candidate:
 | `bun scripts/check-budgets.mjs dist`                             | `OK` — **11.8 MB** against the 12 MB ceiling after the build-composition fix (was 20.3 MB)                                                                                                                                                                                           |
 | `bun scripts/check-budgets.mjs lane --group build --seconds 254` | `OK` — ceiling 300, baseline 254 (the build lane is measurable now)                                                                                                                                                                                                                  |
 | `bun run test` (all lanes)                                       | 222.91 s **at `23fa6880`**; the current candidate has no completed aggregate lane run (host load) — see §3.0                                                                                                                                                                         |
+| `bun test src/audit-slice-closure.test.mjs`                      | 3 pass / 0 fail - the slice imports no external package, does not reach for the package external dependencies, and the committed ceilings (285 / 12 MB / 45 s / 256 MB / 300 s) are unchanged                                                                                        |
 | `bun test src/startup-budget.test.mjs`                           | 32 pass / 0 fail at `487883cd` (27 at `23fa6880`, plus the five listener-ownership regressions)                                                                                                                                                                                      |
 | `bun run format:check`                                           | clean (1940 files)                                                                                                                                                                                                                                                                   |
 | `bun run lint`                                                   | exit 0 — oxlint 0 errors, workspace boundaries 0 violations (1231 files / 45 packages), canonical-ordering and digest-writer checks pass                                                                                                                                             |
