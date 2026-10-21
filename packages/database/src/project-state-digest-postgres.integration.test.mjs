@@ -5,6 +5,8 @@ import {
   InMemoryStatePromotionProposalRepository,
   ProjectStateService,
   RecordingProjectStateEventPublisher,
+  projectStateMutationDigestV2,
+  projectStateMutationMatchesDigest,
 } from '@control-plane/domain'
 import { and, eq, sql } from 'drizzle-orm'
 import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
@@ -84,7 +86,7 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       const scope = { projectId: 'prj_01JABCDEF0123456789ABCDEAA' }
       const service = serviceFor(new PostgresProjectStateRepository(isolated.application))
       await service.initialize({ workspaceId, projectId: scope.projectId, at: now })
-      const input = mutation('stm_01JBBCDEF0123456789ABCDEFG', scope.projectId, 0)
+      const input = mutation('stm_01JABCDEF0123456789ABCDEAA', scope.projectId, 0)
       const written = await service.applyMutation(input, { digestVersion: 2 })
       expect(written.applied).toBe(true)
 
@@ -101,7 +103,7 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       const scope = { projectId: 'prj_01JABCDEF0123456789ABCDEAB' }
       const service = serviceFor(new PostgresProjectStateRepository(isolated.application))
       await service.initialize({ workspaceId, projectId: scope.projectId, at: now })
-      const input = mutation('stm_01JCBCDEF0123456789ABCDEFG', scope.projectId, 0)
+      const input = mutation('stm_01JABCDEF0123456789ABCDEAB', scope.projectId, 0)
       await service.applyMutation(input, { digestVersion: 2 })
 
       const replay = await service.applyMutation(input)
@@ -115,9 +117,9 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       const scope = { projectId: 'prj_01JABCDEF0123456789ABCDEAC' }
       const service = serviceFor(new PostgresProjectStateRepository(isolated.application))
       await service.initialize({ workspaceId, projectId: scope.projectId, at: now })
-      const input = mutation('stm_01JDCDEF0123456789ABCDEFG', scope.projectId, 0)
+      const input = mutation('stm_01JABCDEF0123456789ABCDEAC', scope.projectId, 0)
       await service.applyMutation(input, { digestVersion: 2 })
-      const altered = mutation('stm_01JDCDEF0123456789ABCDEFG', scope.projectId, 0, 'ship M3')
+      const altered = mutation('stm_01JABCDEF0123456789ABCDEAC', scope.projectId, 0, 'ship M3')
 
       await expect(service.applyMutation(altered)).rejects.toMatchObject({
         code: 'MUTATION_ID_REUSED',
@@ -130,7 +132,7 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       const scope = { projectId: 'prj_01JABCDEF0123456789ABCDEAD' }
       const service = serviceFor(new PostgresProjectStateRepository(isolated.application))
       await service.initialize({ workspaceId, projectId: scope.projectId, at: now })
-      const input = mutation('stm_01JECDEF0123456789ABCDEFG', scope.projectId, 0)
+      const input = mutation('stm_01JABCDEF0123456789ABCDEAD', scope.projectId, 0)
       await service.applyMutation(input)
       await isolated.application.execute(sql`
         update project_state_mutations
@@ -146,27 +148,12 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       expect(await updateEvents(scope.projectId)).toHaveLength(1)
     })
 
-    test('concurrent writers of one mutation id produce one revision and one event', async () => {
-      const scope = { projectId: 'prj_01JABCDEF0123456789ABCDEAE' }
-      const service = serviceFor(new PostgresProjectStateRepository(isolated.application))
-      await service.initialize({ workspaceId, projectId: scope.projectId, at: now })
-      const input = mutation('stm_01JFCDEF0123456789ABCDEFG', scope.projectId, 0)
-      const attempts = await Promise.all([
-        service.applyMutation(input, { digestVersion: 2 }),
-        service.applyMutation(input, { digestVersion: 2 }),
-      ])
-      expect(attempts.map((attempt) => attempt.applied).toSorted()).toEqual([false, true])
-      expect(attempts.map((attempt) => attempt.state.revision)).toEqual([1, 1])
-      expect(await repository.getHistory(workspaceId, scope.projectId)).toHaveLength(2)
-      expect(await updateEvents(scope.projectId)).toHaveLength(1)
-    })
-
     test('the published event carries the version only when the writer recorded one', async () => {
       const versioned = { projectId: 'prj_01JABCDEF0123456789ABCDEAF' }
       const versionedService = serviceFor(new PostgresProjectStateRepository(isolated.application))
       await versionedService.initialize({ workspaceId, projectId: versioned.projectId, at: now })
       await versionedService.applyMutation(
-        mutation('stm_01JGBCDEF0123456789ABCDEFG', versioned.projectId, 0),
+        mutation('stm_01JABCDEF0123456789ABCDEAF', versioned.projectId, 0),
         { digestVersion: 2 }
       )
       expect((await updateEvents(versioned.projectId))[0]).toMatchObject({ inputDigestVersion: 2 })
@@ -175,9 +162,111 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       const untaggedService = serviceFor(new PostgresProjectStateRepository(isolated.application))
       await untaggedService.initialize({ workspaceId, projectId: untagged.projectId, at: now })
       await untaggedService.applyMutation(
-        mutation('stm_01JHCDEF0123456789ABCDEFG', untagged.projectId, 0)
+        mutation('stm_01JABCDEF0123456789ABCDEAG', untagged.projectId, 0)
       )
       expect((await updateEvents(untagged.projectId))[0]).not.toHaveProperty('inputDigestVersion')
+    })
+
+    test('a reader from before the version metadata still verifies a versioned row', async () => {
+      const scope = { projectId: 'prj_01JABCDEF0123456789ABCDEAH' }
+      const service = serviceFor(new PostgresProjectStateRepository(isolated.application))
+      await service.initialize({ workspaceId, projectId: scope.projectId, at: now })
+      const input = mutation('stm_01JABCDEF0123456789ABCDEAH', scope.projectId, 0)
+      await service.applyMutation(input, { digestVersion: 2 })
+
+      // A reader from before the version metadata existed reads only the digest column.
+      const [row] = await isolated.application.execute(sql`
+        select input_digest
+        from project_state_mutations
+        where workspace_id = ${workspaceId}
+          and project_id = ${scope.projectId}
+          and mutation_id = ${input.mutationId}
+      `)
+      expect(row.input_digest).toBe(projectStateMutationDigestV2(input))
+      // And the untagged reader accepts that digest, so a binary rollback keeps replaying.
+      expect(projectStateMutationMatchesDigest(input, row.input_digest)).toBe(true)
+      expect(projectStateMutationMatchesDigest(input, row.input_digest, 2)).toBe(true)
+    })
+
+    test('a compare-and-set loser resolves the winner record exactly like an ordinary replay', async () => {
+      const scope = { projectId: 'prj_01JABCDEF0123456789ABCDEEA' }
+      const service = serviceFor(new PostgresProjectStateRepository(isolated.application))
+      await service.initialize({ workspaceId, projectId: scope.projectId, at: now })
+      const input = mutation('stm_01JABCDEF0123456789ABCDEEA', scope.projectId, 0)
+
+      // The first attempt loses the revision race to a writer that used the same mutation
+      // id, so the service has to resolve the winner's record instead of writing one.
+      const racy = new PostgresProjectStateRepository(isolated.application)
+      const originalCompareAndSet = racy.compareAndSet.bind(racy)
+      let lost = false
+      racy.compareAndSet = async (expectedRevision, state, record) => {
+        if (!lost) {
+          lost = true
+          await originalCompareAndSet(expectedRevision, state, record)
+          return false
+        }
+        return originalCompareAndSet(expectedRevision, state, record)
+      }
+      const losingService = serviceFor(racy)
+
+      const loser = await losingService.applyMutation(input, { digestVersion: 2 })
+      expect(loser.applied).toBe(false)
+      expect(loser.state.revision).toBe(1)
+
+      // The ordinary replay of the same record agrees with the loser.
+      const replay = await service.applyMutation(input)
+      expect(replay.applied).toBe(false)
+      expect(replay.state.revision).toBe(1)
+
+      expect(await repository.getHistory(workspaceId, scope.projectId)).toHaveLength(2)
+      expect(await updateEvents(scope.projectId)).toHaveLength(1)
+      const mutations = await isolated.application
+        .select()
+        .from(projectStateMutations)
+        .where(
+          and(
+            eq(projectStateMutations.workspaceId, workspaceId),
+            eq(projectStateMutations.projectId, scope.projectId),
+            eq(projectStateMutations.mutationId, input.mutationId)
+          )
+        )
+      expect(mutations).toHaveLength(1)
+      expect(mutations[0].inputDigestVersion).toBe(2)
+    })
+
+    test('concurrent writers of one mutation id leave one revision, one mutation and one event', async () => {
+      const scope = { projectId: 'prj_01JABCDEF0123456789ABCDEEB' }
+      const service = serviceFor(new PostgresProjectStateRepository(isolated.application))
+      await service.initialize({ workspaceId, projectId: scope.projectId, at: now })
+      const input = mutation('stm_01JABCDEF0123456789ABCDEEB', scope.projectId, 0)
+      const results = await Promise.allSettled([
+        service.applyMutation(input, { digestVersion: 2 }),
+        service.applyMutation(input, { digestVersion: 2 }),
+      ])
+
+      // Exactly one writer commits. The loser either replays idempotently or is refused by
+      // the pre-existing stale-revision conflict path; neither outcome duplicates anything.
+      const fulfilled = results.filter((result) => result.status === 'fulfilled')
+      expect(fulfilled.filter((result) => result.value.applied)).toHaveLength(1)
+      for (const result of fulfilled) expect(result.value.state.revision).toBe(1)
+      for (const result of results.filter((entry) => entry.status === 'rejected')) {
+        expect(result.reason).toMatchObject({ code: 'STALE_REVISION' })
+      }
+
+      expect(await repository.getHistory(workspaceId, scope.projectId)).toHaveLength(2)
+      expect(await updateEvents(scope.projectId)).toHaveLength(1)
+      const mutations = await isolated.application
+        .select()
+        .from(projectStateMutations)
+        .where(
+          and(
+            eq(projectStateMutations.workspaceId, workspaceId),
+            eq(projectStateMutations.projectId, scope.projectId),
+            eq(projectStateMutations.mutationId, input.mutationId)
+          )
+        )
+      expect(mutations).toHaveLength(1)
+      expect(mutations[0].resultingRevision).toBe(1)
     })
 
     async function updateEvents(projectId) {

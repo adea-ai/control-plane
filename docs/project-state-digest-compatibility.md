@@ -99,10 +99,15 @@ version when the writer recorded one, and is byte-identical to the previous payl
 
 - Rolling back the _binary_ is safe. The version column is nullable, and the older reader ignores
   the column and the extra JSON field, treating a versioned record as untagged. Its digest is the
-  code-point form, which the untagged compatibility path accepts.
-- Rolling back the _migration_ is safe in the same way: dropping the column removes the version
-  metadata from versioned rows, and those rows revert to the untagged interpretation, which still
-  verifies against the code-point digest they carry.
+  code-point form, which the untagged compatibility path accepts. The PostgreSQL integration suite
+  proves this by reading a versioned row with only the digest column and verifying it with the
+  untagged reader.
+- Rolling back the _migration alone_, with this release still deployed, is **not** safe: this
+  release's projection selects `input_digest_version`, so the column has to exist. The migration has
+  to be rolled back together with the binary.
+- Rolling back the _binary and the migration together_ is safe, for the same reason as the binary
+  rollback: the rows lose the version metadata, revert to the untagged interpretation, and still
+  verify against the code-point digest they carry.
 - A rollback never needs to rewrite a retained row, and never needs to recompute a digest.
 
 ## Retained-data limits
@@ -115,6 +120,21 @@ version when the writer recorded one, and is byte-identical to the previous payl
   Once no untagged rows remain, the legacy form can be dropped from the reader; the versioned
   records do not need it.
 
+## Historical limitations that this change does not remove
+
+These are pre-existing behaviours of the mutation path. They are recorded because the compatibility
+window is where they are observed; this change does not alter any of them.
+
+- The legacy canonicalization is locale-dependent, so an untagged record written by a legacy writer
+  is only verifiable where the reader's collation reproduces the writer's. The frozen fixtures pin
+  one profile; a reader outside it may not reproduce the legacy digest.
+- A concurrent duplicate of the same mutation can be refused with `STALE_REVISION` instead of
+  resolving as an idempotent replay, depending on the interleaving: the loser can observe the
+  winner's revision before the winner's mutation record is visible to it. The write is still never
+  duplicated — exactly one revision, one mutation record, and one event exist afterwards — and the
+  deterministic compare-and-set loser path resolves the winner's record as an idempotent replay.
+  Both outcomes are asserted by the PostgreSQL integration suite.
+
 ## Out of scope
 
 This change does not backfill or rewrite history, does not deploy a migration, does not activate
@@ -125,11 +145,14 @@ anything in production, and does not change the default writer's output.
 - **Migration sequencing.** `packages/database/drizzle/0075_*` and the shared `_journal.json` are
   owned by the migration writer that also owns `0074`. The additive column statement has to be
   sequenced with that work before the PostgreSQL schema can carry the version outside a disposable
-  database.
+  database. The statement is a single nullable column and moves no data.
 - **A dirty journal owner.** A separate detached worktree modifies the shared migration journal.
   It has to be reconciled before any journal edit.
-- **Live PostgreSQL evidence.** The integration suite in
-  `packages/database/src/project-state-digest-postgres.integration.test.mjs` is written against the
-  repository's disposable-database harness and is skipped unless `RUN_DATABASE_INTEGRATION=true`.
-  Whether it has been executed against a disposable PostgreSQL is recorded in the delivery report,
-  not here.
+- **The deployed schema.** Until the migration is sequenced and applied by its owner, the version
+  lives only in the disposable database the integration suite creates. No production or deployed
+  database carries the column, and no activation has happened.
+
+The integration suite in `packages/database/src/project-state-digest-postgres.integration.test.mjs`
+runs against the repository's disposable-database harness and is skipped unless
+`RUN_DATABASE_INTEGRATION=true`. It has been executed against a disposable PostgreSQL; the exact
+run is recorded in the delivery report.
