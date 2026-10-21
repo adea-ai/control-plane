@@ -13,6 +13,14 @@ reachable, and no finding claims a demonstrated deployed credential leak, a depl
 unauthenticated approval path, or a cross-UID read. The unresolved gates in §8 are
 unchanged.
 
+Revision 3 (2026-10-21): every finding was traced from its entrypoint through the
+authority and effect path to the point where a control is applied, and every probe
+was re-read as a synthetic demonstration rather than as deployed behaviour. Five
+findings were restated with their traced path, F-09 was split so the provider
+observation and the adapter-owned directory are reported separately, CP190-F29 was
+added for the adapter-owned directory, and five static reachability probes
+(CP190-P21 to CP190-P25) were added. The finding count is now 29 and the probe count 25. No severity changed in this round and no gate was released.
+
 | Field                   | Value                                                                                                                                                             |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Issue                   | [#190 — M19.06 Complete the security, trust-boundary, and adversarial audit](https://github.com/adea-ai/control-plane/issues/190)                                 |
@@ -129,43 +137,42 @@ reader may use the finding:
 | `defense-in-depth` | A hardening gap. The described attack is not demonstrated as reachable; a stated control prevents it in the current configuration |
 | `evidence-gap`     | The control is a contract with no composed implementation, so there is nothing to attack and nothing to accept                    |
 
-After the calibration review the distribution is **0 critical, 2 high (F-03, F-13),
-22 medium, 2 low (F-04, F-09), 2 low-medium (F-23, F-27)**. No finding claims a
-demonstrated deployed credential leak, a deployed unauthenticated approval path, or
-a cross-UID read.
+After the two calibration rounds the distribution is **0 critical, 2 high (F-03,
+F-13), 22 medium, 2 low (F-04, F-09), 3 low-medium (F-23, F-27, F-29)** across 29
+findings. No finding claims a demonstrated deployed credential leak, a deployed
+unauthenticated approval path, or a cross-UID read.
 
-| ID   | Severity   | Reachability       | Finding                                                                                                                                      | Release impact                                                                                                                             | Probe          |
-| ---- | ---------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
-| F-01 | Medium     | `configured-only`  | The relay host processor applies no authentication of its own to metadata-only commands                                                      | does not block the release; no relay ingress is configured and no concrete relay client ships                                              | P01, P02       |
-| F-02 | Medium     | `configured-only`  | The relay effect and its idempotency receipt are two separate writes with no atomic binding, and only in-memory receipt repositories ship    | bounds the remote-control idempotency claim; `create_execution` is idempotent through the CommandInbox                                     | P03, P04       |
-| F-03 | High       | `deployed-now`     | The direct-local runtime path never consults a `LocalProjectGrant`, and the production discovery state is a hard-coded constant              | blocks the Local filesystem/project acceptance claim: the discovery projection reports a grant state no authority issued                   | P08, P09, P10  |
-| F-13 | High       | `evidence-gap`     | The sandbox provider contract is composed into no application and no live provider exists                                                    | there is no sandbox boundary in any shipped profile                                                                                        | P18            |
-| F-04 | Low        | `library-contract` | The credential-vault egress screen does not descend into `Error`, `Map`, `Set` or byte containers, so a **returned** carrier is not screened | no deployed credential leakage is claimed or demonstrated; thrown errors are already sanitized and the composed profiles do not lease      | P05            |
-| F-05 | Medium     | `deployed-now`     | The Local private API derives workspace and project scope from the request body                                                              | leaves the Local cross-workspace fail-closed claim unproven; the Local profile binds loopback and uses an owner-only token                 | P07            |
-| F-06 | Medium     | `deployed-now`     | Redaction is key-name based and misses compound credential key names                                                                         | secrets reach logs and events under such keys                                                                                              | P06            |
-| F-07 | Medium     | `configured-only`  | Runtime Gateway runtime commands are not bounded to 24 hours                                                                                 | remote commands outlive their authority; the gateway is used only for non-co-located nodes                                                 | P11            |
-| F-08 | Medium     | `deployed-now`     | A Local filesystem checkpoint copies the private-file secrets directory in cleartext                                                         | operator backups carry plaintext secrets                                                                                                   | P12            |
-| F-09 | Low        | `defense-in-depth` | SQLite WAL/SHM sidecars keep the pre-restriction file mode                                                                                   | no cross-UID read is demonstrated; the parent directory is 0700 before any file exists                                                     | P13            |
-| F-10 | Medium     | `deployed-now`     | Portable import scans with an empty sensitive-value list; portable secret references are not workspace scoped                                | exports can carry another workspace's secret locator                                                                                       | P14, P15       |
-| F-11 | Medium     | `configured-only`  | Sandbox credential bindings are injected after the ambient-credential denial runs                                                            | a raw secret reaches the sandbox environment; the sandbox is composed into no application                                                  | P16            |
-| F-12 | Medium     | `configured-only`  | The sandbox metadata-service deny list is incomplete                                                                                         | non-default metadata endpoints stay reachable; the sandbox is composed into no application                                                 | P17            |
-| F-14 | Medium     | `deployed-now`     | The only public control-plane service has no HTTP rate limit and no inbound deadline                                                         | an authenticated principal can saturate the pool; unauthenticated callers are rejected first                                               | P19            |
-| F-15 | Medium     | `configured-only`  | The Restate ingress submission carries no request credential                                                                                 | workflow submission trusts placement only; the Cloud profile relies on private networking and the self-hosted profile binds all interfaces | P20            |
-| F-16 | Medium     | `configured-only`  | The repository ships a RuntimeNode credential issuer                                                                                         | the issuer private key lives on Control Plane infrastructure; the CLI is operator-run                                                      | source reading |
-| F-17 | Medium     | `evidence-gap`     | The synthetic RuntimeNode authority merges credential classes and drops the binding fence                                                    | gateway auth tests do not exercise production separation; the authority is test-only                                                       | source reading |
-| F-18 | Medium     | `deployed-now`     | The pi-durable tool path does not cross-check the accepted plan's tool grants                                                                | a call can present a grant the plan does not grant                                                                                         | source reading |
-| F-19 | Medium     | `evidence-gap`     | No policy decision point is composed into any application                                                                                    | the authorized-executor path cannot be demonstrated; the deny path is proven                                                               | source reading |
-| F-20 | Medium     | `deployed-now`     | Provider contributions and ProjectState items carry free-form content with no secret filter or untrusted-data marking                        | retrieved content can carry a credential or an instruction                                                                                 | source reading |
-| F-21 | Medium     | `deployed-now`     | The environment and private-file secret providers ignore the `SecretUse` context                                                             | a resolved secret is not bound to a workspace or purpose                                                                                   | source reading |
-| F-22 | Medium     | `configured-only`  | The Hosted server profile composes no credential vault; the host-secure provider has no resolver                                             | the self-hosted server profile has no dynamic credential lifecycle                                                                         | source reading |
-| F-23 | Low-Medium | `defense-in-depth` | The spawn-policy check is not pinned to the executed path                                                                                    | a symlink swap race could launch an unlisted executable; it requires local write access to the executable path                             | source reading |
-| F-24 | Medium     | `configured-only`  | The exported direct-local ACP factory applies no spawn policy by default                                                                     | an embedder can start any absolute executable at any absolute cwd; the production factory does set a policy                                | source reading |
-| F-25 | Medium     | `configured-only`  | Marketplace registry egress accepts any HTTPS URL with no metadata-range denial                                                              | a misconfigured registry URL can reach a metadata endpoint; the base URL is operator-controlled                                            | source reading |
-| F-26 | Medium     | `configured-only`  | The Restate interaction handler resolves by name without a responding-principal check                                                        | an approval delivered over the workflow ingress is not re-authorized on that path                                                          | source reading |
-| F-28 | Medium     | `configured-only`  | Staging and production share one R2 bucket credential slot, separated by prefix only                                                         | the asserted environment credential separation is a convention                                                                             | source reading |
-| F-27 | Low-Medium | `deployed-now`     | Tool rate-limit events are only deleted for the tuple being checked                                                                          | unbounded row growth for abandoned tuples                                                                                                  | source reading |
-
-### 3.1 Final-candidate re-check against every available head
+| ID   | Severity   | Reachability       | Finding                                                                                                                         | Release impact                                                                                                                             | Probe              |
+| ---- | ---------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
+| F-01 | Medium     | `configured-only`  | The relay host processor applies no authentication of its own to metadata-only commands                                         | does not block the release; the Control Plane ships no relay client, no adapter and no metadata effect at all                              | P01, P02, P21      |
+| F-02 | Medium     | `configured-only`  | The relay receipt layer adds no idempotency beyond the command identifier, and only in-memory receipt repositories ship         | bounds the remote-control idempotency claim; `create_execution` is idempotent through the CommandInbox                                     | P03, P04, P22      |
+| F-03 | High       | `deployed-now`     | The direct-local runtime path never consults a `LocalProjectGrant`, and the production discovery state is a hard-coded constant | blocks the Local filesystem/project acceptance claim: the working directory is bounded by operator configuration, not by a grant           | P08, P09, P10, P24 |
+| F-13 | High       | `evidence-gap`     | The sandbox provider contract is composed into no application and no live provider exists                                       | there is no sandbox boundary in any shipped profile                                                                                        | P18                |
+| F-04 | Low        | `library-contract` | The credential-vault returned-value screen does not descend into `Error`, `Map`, `Set` or byte containers                       | no deployed credential leakage is claimed; the one composed leased path normalizes the result before the screen sees it                    | P05, P23           |
+| F-05 | Medium     | `deployed-now`     | The Local private API derives workspace and project scope from the request body                                                 | leaves the Local cross-workspace fail-closed claim unproven; the Local profile binds loopback and uses an owner-only token                 | P07                |
+| F-06 | Medium     | `deployed-now`     | Redaction is key-name based and misses compound credential key names                                                            | secrets reach logs and events under such keys                                                                                              | P06                |
+| F-07 | Medium     | `configured-only`  | Runtime Gateway runtime commands are not bounded to 24 hours                                                                    | remote commands outlive their authority; the gateway is used only for non-co-located nodes                                                 | P11                |
+| F-08 | Medium     | `deployed-now`     | A Local filesystem checkpoint copies the private-file secrets directory in cleartext                                            | operator backups carry plaintext secrets                                                                                                   | P12                |
+| F-09 | Low        | `defense-in-depth` | SQLite WAL/SHM sidecars keep the pre-restriction file mode inside an owner-only parent directory                                | no cross-UID read is claimed and there is no supported traversal path in the provider                                                      | P13, P25           |
+| F-10 | Medium     | `deployed-now`     | Portable import scans with an empty sensitive-value list; portable secret references are not workspace scoped                   | exports can carry another workspace's secret locator                                                                                       | P14, P15           |
+| F-11 | Medium     | `configured-only`  | Sandbox credential bindings are injected after the ambient-credential denial runs                                               | a raw secret reaches the sandbox environment; the sandbox is composed into no application                                                  | P16                |
+| F-12 | Medium     | `configured-only`  | The sandbox metadata-service deny list is incomplete                                                                            | non-default metadata endpoints stay reachable; the sandbox is composed into no application                                                 | P17                |
+| F-14 | Medium     | `deployed-now`     | The only public control-plane service has no HTTP rate limit and no inbound deadline                                            | an authenticated principal can saturate the pool; unauthenticated callers are rejected first                                               | P19                |
+| F-15 | Medium     | `configured-only`  | The Restate ingress submission carries no request credential                                                                    | workflow submission trusts placement only; the Cloud profile relies on private networking and the self-hosted profile binds all interfaces | P20                |
+| F-16 | Medium     | `configured-only`  | The repository ships a RuntimeNode credential issuer                                                                            | the issuer private key lives on Control Plane infrastructure; the CLI is operator-run                                                      | source reading     |
+| F-17 | Medium     | `evidence-gap`     | The synthetic RuntimeNode authority merges credential classes and drops the binding fence                                       | gateway auth tests do not exercise production separation; the authority is test-only                                                       | source reading     |
+| F-18 | Medium     | `deployed-now`     | The pi-durable tool path does not cross-check the accepted plan's tool grants                                                   | a call can present a grant the plan does not grant                                                                                         | source reading     |
+| F-19 | Medium     | `evidence-gap`     | No policy decision point is composed into any application                                                                       | the authorized-executor path cannot be demonstrated; the deny path is proven                                                               | source reading     |
+| F-20 | Medium     | `deployed-now`     | Provider contributions and ProjectState items carry free-form content with no secret filter or untrusted-data marking           | retrieved content can carry a credential or an instruction                                                                                 | source reading     |
+| F-21 | Medium     | `deployed-now`     | The environment and private-file secret providers ignore the `SecretUse` context                                                | a resolved secret is not bound to a workspace or purpose                                                                                   | source reading     |
+| F-22 | Medium     | `configured-only`  | The Hosted server profile composes no credential vault; the host-secure provider has no resolver                                | the self-hosted server profile has no dynamic credential lifecycle                                                                         | source reading     |
+| F-23 | Low-Medium | `defense-in-depth` | The spawn-policy check is not pinned to the executed path                                                                       | a symlink swap race could launch an unlisted executable; it requires local write access to the executable path                             | source reading     |
+| F-24 | Medium     | `configured-only`  | The exported direct-local ACP factory applies no spawn policy by default                                                        | an embedder can start any absolute executable at any absolute cwd; the production factory does set a policy                                | source reading     |
+| F-25 | Medium     | `configured-only`  | Marketplace registry egress accepts any HTTPS URL with no metadata-range denial                                                 | a misconfigured registry URL can reach a metadata endpoint; the base URL is operator-controlled                                            | source reading     |
+| F-26 | Medium     | `configured-only`  | The Restate interaction handler resolves by name without a responding-principal check                                           | an approval delivered over the workflow ingress is not re-authorized on that path                                                          | source reading     |
+| F-28 | Medium     | `configured-only`  | Staging and production share one R2 bucket credential slot, separated by prefix only                                            | the asserted environment credential separation is a convention                                                                             | source reading     |
+| F-27 | Low-Medium | `deployed-now`     | Tool rate-limit events are only deleted for the tuple being checked                                                             | unbounded row growth for abandoned tuples                                                                                                  | source reading     |
+| F-29 | Low-Medium | `defense-in-depth` | The pi-durable adapter creates its own data directory without an owner-only mode                                                | the guarantee is inherited from an ancestor the composition happens to create owner-only, not enforced by the component that owns the data | P25                | ### 3.1 Final-candidate re-check against every available head |
 
 Every branch in the fleet's shared origin was compared against the audited head for
 the files each finding depends on. The comparison covered
@@ -230,119 +237,161 @@ control next to the non-owner-only sidecar mode. `CP190-P02`, `CP190-P03` and
 `CP190-P04` now carry their reachability bounds and no longer imply a deployed
 unauthenticated approval path or a universal duplicate-effect path.
 
-### 3.3 Detail for the findings whose severity or reachability changed
+### 3.3 Round two — reachability traced to the authority and effect path
+
+Every finding was traced from its public entrypoint through the authority check and
+the effect, to the point where a control is actually applied. Five findings were
+restated with that traced path, F-09 was split so that two different SQLite
+directories are no longer described as one observation, CP190-F29 was added for the
+adapter-owned directory, and five static reachability probes were added.
+
+| Finding     | What the trace changed                                                                                                                                                                                                                                                                                                                        | Decisive source                                                                                                                                                                                                                                                                                                                   |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F-01        | The earlier wording implied a live approve, deny or cancel effect inside the Control Plane. The trace shows the opposite: the Control Plane ships **no metadata effect implementation at all** — the effect is an injected callback — and no application constructs the relay host adapter or the metadata processor.                         | `packages/remote-control-relay/src/relay.ts:376-379`; `packages/remote-control-relay/src/adapter.ts:154-173`; `packages/remote-control-relay/src/relay.ts:45`; `apps/local-control-plane/src/composition.ts:152,249-250,508-512`; `apps/hosted-control-plane/src/composition.ts:164,220-223,371-375`                              |
+| F-02        | The idempotency is not uniform across payload types. `create_execution` is idempotent in the CommandInbox because the acceptance request extends the context schema that carries `idempotencyKey`; `submit_input` carries **no** idempotency key at all; the metadata effect is an injected callback with no shipped implementation.          | `packages/contracts/src/control-api.ts:45,668`; `packages/remote-control-relay/src/execution.ts:38-52,209-223,260-268`; `apps/control-api/src/executions/execution-acceptance.service.ts:51,58`; `packages/domain/src/command-inbox.ts:53-58,684-705`                                                                             |
+| F-03        | The direct-local bound is **operator configuration, not a grant**. The managed-Pi child runs in a per-attempt directory under the data directory and the composed spawn policy names only `allowedExecutables`, so the working-directory dimension is unconstrained; the ACP child instead runs in an operator-configured absolute directory. | `packages/managed-pi-adapter/src/index.ts:322`; `packages/managed-pi-adapter/src/process-client.ts:288-298`; `apps/local-control-plane/src/managed-pi-runtime.ts:66`; `apps/local-control-plane/src/index.ts:300`; `packages/deployment/src/process-runtime.ts:10`; `apps/local-control-plane/src/installed-acp-runtime.ts:88-95` |
+| F-04        | A positive control the earlier revision missed: the one composed leased path **normalizes** the callback result and rejects a non-plain carrier before the vault screen can miss it. The gap is therefore confined to the two callers that return a raw result, and neither is composed.                                                      | `packages/model-gateway/src/selection-service.ts:269,341-380`; `packages/credential-vault/src/tool-broker.ts:91-99`; `packages/tool-execution/src/mcp-adapter.ts:257-277`; `apps/control-api/src/cloud-composition.ts:100-104`                                                                                                    |
+| F-09 / F-29 | One observation was two directories. The provider creates and restricts its parent to `0700` **before** any file exists, so it has no traversal path. The pi-durable adapter creates its own directory with no mode and never restricts the database file, so its protection is inherited from an ancestor.                                   | `packages/sqlite-persistence/src/provider.ts:209-210,211,216,221`; `packages/pi-durable-adapter/src/journal.ts:31`; `packages/pi-durable-adapter/src/lease.ts:20`; `apps/control-api/src/pi-durable/node-composition.ts:89`; `apps/control-api/src/models/production-model-composition.ts:230`                                    |
+
+### 3.4 Detail for the findings whose severity, reachability or wording changed
 
 **F-01 — The relay host processor applies no authentication of its own (Medium,
 `configured-only`).**
-`RelayMetadataCommandSchema`
+The metadata command schema
 (`packages/remote-control-relay/src/protocol.ts:68-81`) is a `.strict()` object with
 exactly `schemaVersion, workspaceId, hostId, commandId, operation, issuedAt,
 expiresAt, targetId` — no signature, MAC, nonce, sequence or key field — and
 `RelayMetadataCommandProcessor.process`
 (`packages/remote-control-relay/src/relay.ts:379-424`) validates only the schema, the
 `hostId`/`workspaceId` equality and the time bounds before calling the injected
-`accept`. The obligation is real but **delegated and documented**:
+`accept` (`:376-379`). The obligation is documented and delegated:
 `docs/remote-control-relay.md` states that metadata-only operations use a separate
 strict, authenticated command schema and that "authentication of that metadata
-transport remains the responsibility of the concrete relay client". The reachability
-bound is decisive: `RemoteControlHostAdapter` is opt-in in both compositions
+transport remains the responsibility of the concrete relay client". The traced
+reachability is what bounds this finding: the only consumer of a metadata command is
+`RemoteControlHostAdapter.#pollOnce`
+(`packages/remote-control-relay/src/adapter.ts:154-173`), the adapter itself is an
+injected option of both compositions
 (`apps/local-control-plane/src/composition.ts:249-250,508-512`,
-`apps/hosted-control-plane/src/composition.ts:220-223,371-375`), the manifest reports
-`'disabled'` when it is absent (`:152`, `:164`), and the only
-`OutboundOpaqueRelayClient` implementation in the repository is the test fake
-`FakeOpaqueRelay` (`packages/remote-control-relay/src/relay.ts:45`). **No concrete
-configured attacker-controlled ingress exists, so no deployed unauthenticated approval
-path is claimed.** What remains is that the host processor offers no defence in
-depth: it applies no provenance check of its own and relies entirely on the injected
-client having authenticated the transport.
+`apps/hosted-control-plane/src/composition.ts:220-223,371-375`) reported as
+`'disabled'` when absent (`:152`, `:164`), **no application constructs
+`RelayMetadataCommandProcessor` or `RemoteControlHostAdapter`**, and the only
+`OutboundOpaqueRelayClient` implementation is the test fake `FakeOpaqueRelay`
+(`packages/remote-control-relay/src/relay.ts:45`). Because the effect is an injected
+callback, **the Control Plane ships no approve, deny or cancel effect at all** —
+those are schema operation names, not shipped behaviour. An integrator must supply
+the relay client, the effect and the adapter. **No deployed attacker-controlled
+ingress exists, so no deployed unauthenticated approval path is claimed.** What
+remains is that the processor adds no provenance check of its own.
 
-**F-02 — The effect and its receipt are two separate writes (Medium,
-`configured-only`).**
-The effect is applied and only then is the receipt written, in all three processors
-(`packages/remote-control-relay/src/relay.ts:296-303`,
-`packages/remote-control-relay/src/relay.ts:417-437`,
-`packages/remote-control-relay/src/execution.ts:187-197`). **That order is correct
-and must not be "fixed"**: a receipt written first would record an effect that never
-happened, so receipt-before-effect is unsafe. The defect is that the two writes are
-not atomic, so a failure in the narrow window between them leaves an applied effect
-with no receipt. Two corrections bound the earlier claim: `create_execution` goes
-through `ExecutionAcceptanceService` and the CommandInbox idempotency key
-(`apps/control-api/src/executions/execution-acceptance.service.ts:51,58`,
-`packages/domain/src/command-inbox.ts:53-58,684-705`), so the generic ordering does
-not establish a duplicate live effect for that payload type; and the metadata effect
-callback is injected (`packages/remote-control-relay/src/adapter.ts:37,79`), so
-`approve`, `deny`, `cancel`, `resume` and `status` inherit the idempotency of the
-injected callback rather than the processor's. The only receipt repositories in the
-package are in-memory (`packages/remote-control-relay/src/relay.ts:227,343`,
-`packages/remote-control-relay/src/execution.ts:135`), and
+**F-02 — The relay receipt layer adds no idempotency beyond the command identifier
+(Medium, `configured-only`).**
+The receipt is keyed by `commandId` and compared byte for byte
+(`packages/remote-control-relay/src/relay.ts:400-409`), and the only receipt
+repositories in the package are in-memory
+(`packages/remote-control-relay/src/relay.ts:227,343`,
+`packages/remote-control-relay/src/execution.ts:135`), while
 `docs/remote-control-relay.md` already records the durable repository as a
-composition requirement and the in-memory repository as a test/default seam.
+composition requirement. The effect-before-receipt order is correct and must not be
+inverted: a receipt written first would record an effect that never happened. What
+the trace adds is that the durable guarantee is **not uniform across payload
+types**. `create_execution` parses `ExecutionAcceptanceRequestSchema`
+(`packages/remote-control-relay/src/execution.ts:209-223,260-268`), which extends
+`CommandContextSchema` and therefore carries the caller's `idempotencyKey`
+(`packages/contracts/src/control-api.ts:45,668`); the acceptance service then admits
+it through the CommandInbox
+(`apps/control-api/src/executions/execution-acceptance.service.ts:51,58`,
+`packages/domain/src/command-inbox.ts:53-58,684-705`), so a redelivery is deduped
+there. `submit_input` carries **no** idempotency key
+(`packages/remote-control-relay/src/execution.ts:38-52`), so its dedupe must come
+from the interaction domain. The metadata operations have no shipped effect at all.
+So the finding is precisely: the relay's own receipt layer adds no idempotency
+beyond the command identifier, the two writes are not atomic, and the durable
+guarantee for the metadata and input paths is inherited from a callback and a domain
+this package does not own.
+
+**F-03 — The direct-local path never consults a grant (High, `deployed-now`).**
+The grant exists only as an opaque reference plus a tri-state
+(`packages/runtime-gateway-protocol/src/protocol.ts:562-567`,
+`packages/acp-adapter/src/acp-gateway-types.ts:18`), and the grant checks live only in
+the _gateway_ drivers
+(`packages/managed-pi-adapter/src/managed-pi-gateway-driver.ts:108-120`,
+`packages/acp-adapter/src/acp-gateway-driver.ts:127-139`). The direct driver is
+`ManagedPiDriver` (`packages/managed-pi-adapter/src/index.ts:322`): it parses the
+plan, enforces the runtime version range and the capability evaluation, and forwards
+to the client, with no grant reference and no path check anywhere in it. The traced
+path shows what actually bounds the child: the managed-Pi process runs with its
+working directory set to a per-attempt directory under the data directory
+(`apps/local-control-plane/src/managed-pi-runtime.ts:66`;
+`packages/managed-pi-adapter/src/process-client.ts:288-298`), created `0700` with the
+system prompt written `0600`, and the composed spawn policy names only
+`allowedExecutables` (`apps/local-control-plane/src/index.ts:300`) — and
+`NodeProcessSpawnPolicy` documents that "absent constraints leave the corresponding
+dimension unconstrained" (`packages/deployment/src/process-runtime.ts:10`), so the
+working-directory dimension is unconstrained by policy. The ACP path differs: the
+child runs in the operator-configured absolute `CONTROL_PLANE_CODEX_ACP_CWD` and the
+policy mirrors that directory
+(`apps/local-control-plane/src/installed-acp-runtime.ts:88-95`), with absolute-path
+validation as the only constraint. The only production writer of the grant state is a
+hard-coded constant (`apps/runtime-gateway/src/runtime-inventory-ingestion.ts:387`)
+consumed at `apps/workflow-worker/src/runtime-attempt-router.ts:179-184`. The
+accurate statement is therefore that **the direct-local working directory is bounded
+by operator configuration, not by a grant**, that the grant carries no path
+semantics so `STA-L42-10` has nothing to attach to, and that the Control Plane
+mediates no filesystem operation on the harness's behalf — the ambient-access denial
+that `STA-L17-01` also requires remains a desktop-host obligation outside this
+repository.
 
 **F-04 — The returned-value screen misses non-plain carriers (Low,
 `library-contract`).**
 `packages/credential-vault/src/vault.ts:456-467` screens the value a leased callback
 **returns** with `containsSecret`, and `containsSecret` (`:550-557`) walks own
 enumerable string-keyed properties only, so a returned `Error`, `Map`, `Set` or byte
-container that carries the secret is not detected. The boundary is narrower than the
-earlier revision implied in three ways. First, **ordinary thrown errors are already
-sanitized**: the `catch` at `:462-466` converts any non-`CredentialVaultError` throw
-into `PROVIDER_OPERATION_FAILED`. Second, the composed profiles do not reach the
-screen at all: the Control API vault composes no policy decision point
-(`apps/control-api/src/cloud-composition.ts:100-104`), so leases deny before a secret
-is resolved (`packages/credential-vault/src/vault.ts:326-332`), and the Local
-composition has the same shape. Third, the demonstrated case is a **library
-callback-result contract gap**: it requires a profile that leases and an executor that
-returns a carrier rather than throwing. **No deployed credential leakage is claimed
-or demonstrated.**
+container carrying the secret is not detected. Ordinary thrown errors are already
+sanitized: the `catch` at `:462-466` converts any non-`CredentialVaultError` throw
+into `PROVIDER_OPERATION_FAILED`. The trace adds the control the earlier revision
+missed: the one composed leased path is the model-selection service, which returns
+`safeCredentialResult(await operation(secret))`
+(`packages/model-gateway/src/selection-service.ts:269`), and `safeCredentialResult`
+(`:341-380`) rejects any object whose prototype is not `Object.prototype` or `null`,
+rejects symbol keys, rejects sparse arrays and rejects cycles — so an `Error`, a
+`Map`, a `Set` or a typed array cannot survive that path. The two callers that
+return the raw result are the credential broker
+(`packages/credential-vault/src/tool-broker.ts:91-99`) and the MCP adapter
+(`packages/tool-execution/src/mcp-adapter.ts:257-277`, which reduces thrown transport
+errors to a bounded code but returns the invoke output raw); **neither is composed
+into any application**, and no application composes a `VaultToolCredentialBroker`. The
+composed profiles also do not lease: the Control API vault composes no policy
+decision point (`apps/control-api/src/cloud-composition.ts:100-104`), so leases deny
+before a secret is resolved (`packages/credential-vault/src/vault.ts:326-332`).
+**No deployed credential leakage is claimed or demonstrated.**
 
-**F-05 — The Local private API derives scope from the request body (Medium,
-`deployed-now`).**
-`apps/control-api/src/auth/private-api-authentication.ts:86-94` copies `workspaceId`
-and `projectId` out of the request body into the returned principal, while the
-hosted authenticator compares the envelope against the signed claims
-(`apps/control-api/src/auth/service-authentication.ts:310-313`). The finding is
-authorization completeness, not a demonstrated cross-tenant read: the Local profile
-binds loopback by default (`apps/local-control-plane/src/index.ts:82-88`), the bearer
-token is a `0600` file inside a `0700` directory
-(`apps/control-api/src/auth/private-api-authentication.ts:14-43`) and the caller must
-be `svc_agent-hq`.
-
-**F-09 — SQLite sidecar modes (Low, `defense-in-depth`).**
+**F-09 — SQLite sidecar modes in the provider (Low, `defense-in-depth`).**
 `packages/sqlite-persistence/src/provider.ts:209-210` creates the parent directory
 and `chmod`s it to `0700` **before** the database is opened at `:211` and before the
 WAL pragma at `:216`; `:221` then restricts the main file to `0600`. The sidecars
 therefore keep the pre-restriction mode, but **another UID cannot traverse the
-`0700` parent**, so the sidecar mode alone does not establish that it can read. No
-supported path defeats that parent traversal control. The residual is defence in
-depth: the sidecar files are not owner-only, so a later relaxation of the directory
-mode, a copy of a sidecar on its own, or a backup that captures a sidecar would
-expose recent writes that the `0600` main file would have protected.
+`0700` parent, and no supported path defeats that control**, so the sidecar mode
+alone does not establish a cross-UID read. The residual is defence in depth: the
+sidecar files are not owner-only, so a later relaxation of the directory mode, a copy
+of a sidecar on its own, or a backup that captures a sidecar would expose recent
+writes that the `0600` main file would have protected. The adapter-owned directory is
+a different observation and is reported separately as F-29.
 
-**F-03 — `LocalProjectGrant` is not enforced on the direct-local path (High,
-`deployed-now`).**
-The grant exists only as an opaque reference plus a tri-state
-(`packages/runtime-gateway-protocol/src/protocol.ts:562-567`,
-`packages/acp-adapter/src/acp-gateway-types.ts:18`). The grant checks live in the
-_gateway_ drivers (`packages/managed-pi-adapter/src/managed-pi-gateway-driver.ts:108-120`,
-`packages/acp-adapter/src/acp-gateway-driver.ts:127-139`); the direct-local drivers
-never consult a grant — the managed-Pi driver is
-`packages/managed-pi-adapter/src/index.ts:322` and the ACP driver is
-`packages/acp-adapter/src/index.ts:69`, and neither module nor
-`packages/acp-adapter/src/acp-driver-execution.ts` contains a grant reference. The
-only production writer of the grant state is a hard-coded constant,
-`localProjectGrant: { required: false, state: 'not_required' }`
-(`apps/runtime-gateway/src/runtime-inventory-ingestion.ts:387`), consumed by
-`apps/workflow-worker/src/runtime-attempt-router.ts:179-184`. Because the grant
-carries no path, the canonical path containment that `STA-L42-10` requires has no
-implementation to attach to: no `realpath` and no containment check exist in either
-adapter package, and the only such code in the repository is the private-file secret
-provider (`packages/secrets/src/index.ts:137-161`), which uses the correct order
-(resolve, then compare, then `O_NOFOLLOW` with a device/inode re-check). The
-reachability statement is bounded on purpose: the Control Plane mediates no
-filesystem operation on the harness's behalf in the direct-local path, so the residual
-Control Plane risk is a dispatch-authority and acceptance gap, and the ambient-access
-denial that `STA-L17-01` also requires is a desktop-host obligation outside this
-repository.
+**F-29 — The pi-durable adapter creates its own directory without an owner-only mode
+(Low-Medium, `defense-in-depth`).**
+`packages/pi-durable-adapter/src/journal.ts:31` and
+`packages/pi-durable-adapter/src/lease.ts:20` create their directories with
+`mkdirSync(..., { recursive: true })` and **no mode**, so the directory takes the
+process umask default, and the database file is never `chmod`ed.
+`apps/control-api/src/pi-durable/node-composition.ts:89` does the same for the
+admission database. In the composed managed-cloud path an ancestor happens to be
+created owner-only (`apps/control-api/src/models/production-model-composition.ts:230`),
+which blocks traversal today — so the guarantee is **inherited from an unrelated
+composition rather than enforced by the component that owns the data**. Any other
+wiring would place a `0644` database in a `0755` directory, which is a supported
+traversal path; no such wiring ships, so this is defence in depth rather than a
+demonstrated cross-UID read.
 
 **F-13 — There is no sandbox boundary in any shipped profile (High, `evidence-gap`).**
 `@control-plane/sandbox` is a root dev dependency only; no application or runtime
@@ -356,42 +405,52 @@ implementation to assess, and the live E2B gate stays unproven.
 
 ## 4. Reproducible regression packet
 
-Each entry names the confirmed behaviour, the failing condition, the synthetic
-reproduction and the regression test the owner must add inside the package they own.
+Each entry names the owner, the existing file in that owner's package where the
+regression belongs, the failing condition expressed with credential-free synthetic
+inputs, and the assertion the owner must add. The **proposed file** column names
+where the owner would add the test; it is a proposal, not a custody claim — no
+existing test file is edited by this lane, and the owner must confirm custody of
+its own package before editing.
+
 The `CP190-Pnn` identifiers are the probes in
 `scripts/security-trust-boundary-probes.mjs`; running that script today prints
-`20 open, 0 resolved, 0 harness failures`.
+`25 open, 0 resolved, 0 harness failures`. Fifteen probes execute a synthetic
+runtime path and ten read composed source; none performs a live call, reads a
+credential or contacts a deployed profile. Every probe result is a **synthetic
+demonstration** of a code-level property; none of them is a deployed observation,
+and the report claims no deployed behaviour anywhere.
 
-| ID             | Failing condition (synthetic)                                                                                                                   | Regression test the owner must add                                                                                                                                                                                                      |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| F-01 / P01-P02 | Submit a `RelayMetadataCommand` with only the eight schema fields and `operation: 'approve'` for a known `targetId`                             | The processor must not be able to accept a metadata command its caller has not authenticated, and a composition must refuse to start a relay adapter whose client does not assert authentication                                        |
-| F-02 / P03-P04 | Re-submit the same logical effect under a new `commandId`; or make the receipt store's write fail                                               | Bind the effect and its receipt atomically, or bind the receipt to a stable effect key the injected callback also uses. Do **not** move the receipt before the effect                                                                   |
-| F-03 / P08-P10 | Read the discovery projection and the direct drivers                                                                                            | The direct-local driver must require a current grant and contain every path against a canonical grant root after symlink resolution                                                                                                     |
-| F-04 / P05     | Lease a credential and **return** `new Error(secret)` from the leased operation; separately, throw the same error                               | The returned-value screen must traverse `Error` message/stack/cause, `Map`, `Set`, `Buffer` and typed arrays, or reject a non-plain result with `SECRET_EGRESS_BLOCKED`. A thrown error must keep surfacing `PROVIDER_OPERATION_FAILED` |
-| F-05 / P07     | Call the Local API with a valid token and a foreign `workspaceId`                                                                               | The Local principal must be bound to an authorized workspace/project set and compared against the request; a foreign scope must be rejected                                                                                             |
-| F-06 / P06     | `redactTelemetryValue({ sessionToken: canary })`                                                                                                | `sessionToken`, `passphrase`, `bearerToken`, `connectionString` and `apiSecret` must be redacted, or the production value-based canary guard must run at every sink                                                                     |
-| F-07 / P11     | Enqueue a runtime command with a one-year lifetime                                                                                              | The runtime family must apply the same 24-hour bound and reject with `EXPIRY_TOO_LONG`                                                                                                                                                  |
-| F-08 / P12     | Checkpoint a data directory that contains `secrets/provider-key`                                                                                | The checkpoint must exclude or seal the secrets directory; the cleartext must not appear in the copy                                                                                                                                    |
-| F-09 / P13     | Open a provider in a 0755 directory and inspect the sidecar modes                                                                               | The `-wal` and `-shm` sidecars must be mode 0600, so the file mode does not depend on the parent directory mode                                                                                                                         |
-| F-10 / P14-P15 | Import a manifest whose record value carries a secret under a non-prohibited key; export a manifest with a foreign workspace's secret reference | The import path must scan with the export's sensitive values, and secret references must carry a workspace scope                                                                                                                        |
-| F-11 / P16     | Execute a sandbox command with `credentialBindings: [{ leaseId, environmentName: 'AWS_SESSION' }]`                                              | The ambient credential denial must apply to the effective environment including credential bindings                                                                                                                                     |
-| F-12 / P17     | Execute a sandbox command that targets `169.254.170.2`                                                                                          | The metadata denial must cover the link-local range and the known provider endpoints                                                                                                                                                    |
-| F-13 / P18     | Compose a hosted profile                                                                                                                        | A hosted composition must resolve a sandbox provider, and a composition without one must fail closed; the live E2B template, network, resource and cleanup evidence must be attached                                                    |
-| F-14 / P19     | Send concurrent authenticated requests to the public API                                                                                        | A per-principal quota and an inbound deadline must exist; an over-quota request must get a bounded `429` without reaching the database                                                                                                  |
-| F-15 / P20     | Submit a workflow without the Restate request identity                                                                                          | The ingress submission must be authenticated, and the self-hosted ingress must bind to the private interface                                                                                                                            |
-| F-16           | Inspect the production Control Plane image                                                                                                      | The image must not contain an issuer private key path; issuance must live on a separate operator surface                                                                                                                                |
-| F-17           | Present a device-signed credential with an issuer key id                                                                                        | The synthetic authority must sign with a distinct issuer key and enforce the node, workspace and generation fence                                                                                                                       |
-| F-18           | Submit a tool call whose grant names a tool absent from the accepted plan                                                                       | The pi-durable path must cross-check `plan.constraints.tools.grants`                                                                                                                                                                    |
-| F-19           | Compose a profile that leases a connector credential                                                                                            | A composed profile must resolve a decision point, and the permit matrix must be recorded                                                                                                                                                |
-| F-20           | Admit a provider contribution whose content carries a canary                                                                                    | Provider and ProjectState content must be filtered and marked as untrusted data                                                                                                                                                         |
-| F-21           | Resolve the same reference under two different `use` contexts                                                                                   | Every provider must accept and enforce the `SecretUse` context                                                                                                                                                                          |
-| F-22           | Compose the hosted server profile; resolve a packaged Local handle                                                                              | The hosted server profile must resolve a credential lifecycle; packaged Local must resolve an opaque OS-secure handle                                                                                                                   |
-| F-23           | Swap the allowlisted executable for a symlink after the check                                                                                   | The spawn must execute the resolved canonical path with a device/inode re-check                                                                                                                                                         |
-| F-24           | Create the exported ACP factory without a spawn policy                                                                                          | The factory must require an explicit spawn policy and fail closed without it                                                                                                                                                            |
-| F-25           | Point the marketplace registry base URL at a metadata address                                                                                   | The registry fetch must deny the link-local and metadata ranges                                                                                                                                                                         |
-| F-26           | Deliver an interaction response from a principal outside `allowedPrincipalIds`                                                                  | The workflow ingress must re-check the responding principal before resolving                                                                                                                                                            |
-| F-27           | Stop calling a principal/tool/operation tuple and wait out the window                                                                           | The retention sweep must remove expired `tool_rate_limit_events` rows for abandoned tuples                                                                                                                                              |
-| F-28           | Use the staging credential against a production object key                                                                                      | Staging and production must hold distinct bucket-scoped R2 credentials; cross-environment reads must be denied                                                                                                                          |
+| ID                  | Owner                            | Proposed regression file                                                                      | Failing condition (credential-free synthetic)                                                                                                   | Assertion the owner must add                                                                                                                                                                                                                                                            |
+| ------------------- | -------------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F-01 / P01-P02, P21 | W1                               | `packages/remote-control-relay/src/index.test.mjs`                                            | Submit a `RelayMetadataCommand` with only the eight schema fields and `operation: 'approve'` for a known `targetId`                             | The processor must not accept a metadata command its caller has not authenticated; a composition must refuse to start a relay adapter whose client declares no authentication                                                                                                           |
+| F-02 / P03-P04, P22 | W1                               | `packages/remote-control-relay/src/index.test.mjs`                                            | Re-submit the same logical effect under a new `commandId`; or make the receipt store's write fail                                               | The effect and its receipt must be indivisible; a receipt-write failure must leave the effect unapplied; a receipt written before the effect is **not** an acceptable repair                                                                                                            |
+| F-03 / P08-P10, P24 | W1                               | `packages/managed-pi-adapter/src/index.test.mjs`, `packages/acp-adapter/src/gateway.test.mjs` | Drive a direct-local dispatch with no grant, a revoked grant, and a symlinked path that escapes the grant root                                  | The direct-local driver must require a current grant and derive the working directory from it; a revoked or absent grant and an escaping symlink are rejected                                                                                                                           |
+| F-04 / P05, P23     | W1 — **custody pending, see §7** | `packages/credential-vault/src/index.test.mjs`                                                | Lease a credential and **return** `new Error(secret)`; separately, throw the same error                                                         | The returned-value screen must traverse `Error` message, stack and cause, `Map`, `Set`, `Buffer` and typed arrays, or reject a non-plain result; a thrown error must keep surfacing `PROVIDER_OPERATION_FAILED`; the model-selection normalizer must keep rejecting a non-plain carrier |
+| F-05 / P07          | W1                               | `apps/control-api/src/application.test.mjs`                                                   | Call the Local API with a valid token and a foreign `workspaceId`                                                                               | The Local principal must be bound to an authorized workspace and project set and compared against the request                                                                                                                                                                           |
+| F-06 / P06          | W1                               | `packages/telemetry/src/index.test.mjs`                                                       | `redactTelemetryValue({ sessionToken: canary })`                                                                                                | `sessionToken`, `passphrase`, `bearerToken`, `connectionString` and `apiSecret` must be redacted, or the production value-based canary guard must run at every sink                                                                                                                     |
+| F-07 / P11          | W1                               | `apps/runtime-gateway/src/context-command-delivery.test.mjs`                                  | Enqueue a runtime command with a one-year lifetime                                                                                              | The runtime family must apply the same 24-hour bound and reject with `EXPIRY_TOO_LONG`                                                                                                                                                                                                  |
+| F-08 / P12          | W1                               | `packages/deployment/src/checkpoint.test.mjs`                                                 | Checkpoint a data directory that contains `secrets/provider-key`                                                                                | The checkpoint must exclude or seal the secrets directory; the cleartext must not appear in the copy                                                                                                                                                                                    |
+| F-09 / P13, P25     | W1                               | `packages/sqlite-persistence/src/index.test.mjs`                                              | Open a provider in a 0755 directory and inspect the sidecar modes                                                                               | The `-wal` and `-shm` sidecars must be mode 0600, so the file mode does not depend on the parent directory mode                                                                                                                                                                         |
+| F-10 / P14-P15      | W1                               | `packages/profile-portability/src/credentials.test.mjs`                                       | Import a manifest whose record value carries a secret under a non-prohibited key; export a manifest with a foreign workspace's secret reference | The import path must scan with the export's sensitive values, and secret references must carry a workspace scope                                                                                                                                                                        |
+| F-11 / P16          | W1                               | `packages/sandbox/src/index.test.mjs`                                                         | Execute a sandbox command with `credentialBindings: [{ leaseId, environmentName: 'AWS_SESSION' }]`                                              | The ambient credential denial must apply to the effective environment including credential bindings                                                                                                                                                                                     |
+| F-12 / P17          | W1                               | `packages/sandbox/src/index.test.mjs`                                                         | Execute a sandbox command that targets `169.254.170.2`                                                                                          | The metadata denial must cover the link-local range and the known provider endpoints                                                                                                                                                                                                    |
+| F-13 / P18          | W1 + operations                  | `packages/sandbox/src/index.test.mjs`                                                         | Compose a hosted profile                                                                                                                        | A hosted composition must resolve a sandbox provider, and a composition without one must fail closed; the live E2B template, network, resource and cleanup evidence must be attached                                                                                                    |
+| F-14 / P19          | W1                               | `apps/control-api/src/application.test.mjs`                                                   | Send concurrent authenticated requests to the public API                                                                                        | A per-principal quota and an inbound deadline must exist; an over-quota request must get a bounded `429` without reaching the database                                                                                                                                                  |
+| F-15 / P20          | W1 + deployment                  | `apps/control-api/src/application.test.mjs`                                                   | Submit a workflow without the Restate request identity                                                                                          | The ingress submission must be authenticated, and the self-hosted ingress must bind to the private interface                                                                                                                                                                            |
+| F-16                | W1                               | `scripts/runtime-node-identity-admin.test.mjs`                                                | Inspect the production Control Plane image                                                                                                      | The image must not contain an issuer private key path; issuance must live on a separate operator surface                                                                                                                                                                                |
+| F-17                | W1                               | `apps/runtime-gateway/src/authentication.test.mjs`                                            | Present a device-signed credential with an issuer key id                                                                                        | The synthetic authority must sign with a distinct issuer key and enforce the node, workspace and generation fence                                                                                                                                                                       |
+| F-18                | W1                               | `apps/control-api/src/pi-durable/current-tool-authority.test.mjs`                             | Submit a tool call whose grant names a tool absent from the accepted plan                                                                       | The pi-durable path must cross-check `plan.constraints.tools.grants`                                                                                                                                                                                                                    |
+| F-19                | W1 + Cedar policy owner          | `packages/policy/src/index.test.mjs`                                                          | Compose a profile that leases a connector credential                                                                                            | A composed profile must resolve a decision point, and the permit matrix must be recorded                                                                                                                                                                                                |
+| F-20                | W1                               | `packages/context/src/provider.test.mjs`                                                      | Admit a provider contribution whose content carries a canary                                                                                    | Provider and ProjectState content must be filtered and marked as untrusted data                                                                                                                                                                                                         |
+| F-21                | W1                               | `packages/secrets/src/index.test.mjs`                                                         | Resolve the same reference under two different `use` contexts                                                                                   | Every provider must accept and enforce the `SecretUse` context                                                                                                                                                                                                                          |
+| F-22                | W1 + desktop owner               | `apps/hosted-control-plane/src/index.test.mjs`                                                | Compose the hosted server profile; resolve a packaged Local handle                                                                              | The hosted server profile must resolve a credential lifecycle; packaged Local must resolve an opaque OS-secure handle                                                                                                                                                                   |
+| F-23                | W1                               | `packages/deployment/src/process-runtime.test.mjs`                                            | Swap the allowlisted executable for a symlink after the check                                                                                   | The spawn must execute the resolved canonical path with a device and inode re-check                                                                                                                                                                                                     |
+| F-24                | W1                               | `apps/local-control-plane/src/acp-runtime.test.mjs`                                           | Create the exported ACP factory without a spawn policy                                                                                          | The factory must require an explicit spawn policy and fail closed without it                                                                                                                                                                                                            |
+| F-25                | W1                               | `apps/control-api/src/marketplace/registry.test.mjs`                                          | Point the marketplace registry base URL at a metadata address                                                                                   | The registry fetch must deny the link-local and metadata ranges                                                                                                                                                                                                                         |
+| F-26                | W1                               | `packages/workflow-runtime/src/restate-endpoint.test.mjs`                                     | Deliver an interaction response from a principal outside `allowedPrincipalIds`                                                                  | The workflow ingress must re-check the responding principal before resolving                                                                                                                                                                                                            |
+| F-27                | W1                               | `packages/database/src/tool-rate-limiter.test.mjs`                                            | Stop calling a principal, tool or operation tuple and wait out the window                                                                       | The retention sweep must remove expired `tool_rate_limit_events` rows for abandoned tuples                                                                                                                                                                                              |
+| F-28                | W1 + operations                  | `tests/railway-production-plan.test.mjs`                                                      | Use the staging credential against a production object key                                                                                      | Staging and production must hold distinct bucket-scoped R2 credentials; cross-environment reads must be denied                                                                                                                                                                          |
+| F-29 / P25          | W1                               | `packages/pi-durable-adapter/src/journal.test.mjs`                                            | Construct the adapter with a fresh directory under a 0755 parent                                                                                | The created directory must be 0700 and the database file 0600; the adapter must not inherit the guarantee from an ancestor                                                                                                                                                              |
 
 ## 5. What the audit confirmed as sound
 
@@ -438,6 +497,25 @@ These are recorded so the next reviewer does not re-derive them.
   correct and must not be inverted: a receipt written before the effect would record
   an effect that never happened. The defect in F-02 is that the two writes are not
   atomic, not their order.
+- **Relay idempotency for `create_execution`.** The acceptance request extends the
+  context schema that carries `idempotencyKey`
+  (`packages/contracts/src/control-api.ts:45,668`), so the caller's key reaches the
+  CommandInbox (`packages/domain/src/command-inbox.ts:53-58,684-705`) and a
+  redelivery is deduped there.
+- **The composed leased path.** The model-selection service normalizes the leased
+  callback result and rejects a non-plain carrier before the vault screen can miss
+  it (`packages/model-gateway/src/selection-service.ts:269,341-380`), and thrown
+  errors are already sanitized to `PROVIDER_OPERATION_FAILED`
+  (`packages/credential-vault/src/vault.ts:462-466`).
+- **Local SQLite file permissions.** The provider creates and restricts its parent
+  directory to `0700` before the database and its sidecars exist
+  (`packages/sqlite-persistence/src/provider.ts:209-210`), so there is no supported
+  traversal path to the sidecars.
+- **The direct-local managed-Pi working directory.** The child runs in a per-attempt
+  directory created `0700` under the data directory with the system prompt written
+  `0600` (`packages/managed-pi-adapter/src/process-client.ts:288-298`), and the
+  harness is launched with `--no-tools --no-extensions --no-skills
+  --no-context-files --no-approve`.
 
 ## 6. Targeted evidence questions
 
@@ -445,16 +523,17 @@ Each question is the specific external fact this lane could not establish from t
 repository, with the owner who holds it. They are the fastest route to closing the
 calibrated findings; none of them requires a credential.
 
-| ID    | Finding | Question                                                                                                                                                                                                                   | Why it decides the finding                                                                                                                                                            | Owner                                                                  |
-| ----- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Q-F04 | F-04    | Which profile, if any, is expected to lease a connector credential in the release candidate, and what result shapes can a tool executor return from a leased callback?                                                     | The returned-value screen only matters once a profile composes a policy decision point. The answer sets whether this is a release blocker or a library hardening item                 | W1 (profile compositions) with the credential-vault owner              |
-| Q-F09 | F-09    | Does any supported deployment capture the SQLite `-wal` or `-shm` sidecar independently of the database file, and can the data directory mode be relaxed by configuration?                                                 | The parent is `0700` before creation, so the sidecar mode is defence in depth. It becomes material only if a backup or a configuration change separates a sidecar from its parent     | W1 (`packages/sqlite-persistence`) with the operations owner           |
-| Q-F01 | F-01    | Which concrete relay client will be configured for a release profile, and how does that client authenticate the transport and the store it reads from?                                                                     | The documented delegation is only as strong as the concrete client. Until one is named, the host processor's missing check is a defence-in-depth gap and not a deployed path          | W1 with the Agent HQ product relay owner                               |
-| Q-F02 | F-02    | Does the injected metadata `accept` callback provide its own idempotency for approve, deny, cancel and resume, and is the command-result repository bound to the durable persistence provider in the intended composition? | `create_execution` is already idempotent through the CommandInbox. The receipt path matters for the metadata operations, whose effect idempotency is the injected callback's property | W1 (`packages/remote-control-relay`)                                   |
-| Q-F03 | F-03    | Where is the `LocalProjectGrant` issued and validated on the product side, and which Control Plane component is intended to consume it for a direct-local dispatch?                                                        | The Control Plane has no grant authority of its own. The answer decides whether the fix is a grant check in the direct drivers or a different composition boundary                    | W1 with the Agent HQ desktop owner                                     |
-| Q-F05 | F-05    | Which component is authoritative for the Local workspace and project authorization set that the private API should compare a request against?                                                                              | The hosted path compares signed claims. The Local path needs the equivalent authoritative set before the body-derived scope can be replaced                                           | W1 (`apps/control-api` authentication) with the Agent HQ product owner |
-| Q-F13 | F-13    | Which profile is expected to compose a `SandboxProvider`, and what E2B template, network, resource and cleanup policy is the intended baseline?                                                                            | Without a composed provider there is no sandbox boundary to accept, and the live E2B gate cannot be closed                                                                            | W1 (profile composition) with the operations owner                     |
-| Q-F20 | F-20    | Is the value-based `SecretCanaryGuard` intended to run at every content sink, and what is the authoritative protected-value set?                                                                                           | The production guard exists but has no call site, and the key-name redaction misses compound credential names. The answer decides filter placement and ownership                      | W1 (`packages/telemetry`, `packages/events`, `packages/context`)       |
+| ID    | Finding | Question                                                                                                                                                                                                                   | Why it decides the finding                                                                                                                                                                            | Owner                                                                                |
+| ----- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Q-F04 | F-04    | Which profile, if any, is expected to lease a connector credential in the release candidate, and what result shapes can a tool executor return from a leased callback?                                                     | The returned-value screen only matters once a profile composes a policy decision point. The answer sets whether this is a release blocker or a library hardening item                                 | W1 (profile compositions) with the credential-vault owner                            |
+| Q-F09 | F-09    | Does any supported deployment capture the SQLite `-wal` or `-shm` sidecar independently of the database file, and can the data directory mode be relaxed by configuration?                                                 | The parent is `0700` before creation, so the sidecar mode is defence in depth. It becomes material only if a backup or a configuration change separates a sidecar from its parent                     | W1 (`packages/sqlite-persistence`) with the operations owner                         |
+| Q-F01 | F-01    | Which concrete relay client will be configured for a release profile, and how does that client authenticate the transport and the store it reads from?                                                                     | The documented delegation is only as strong as the concrete client. Until one is named, the host processor's missing check is a defence-in-depth gap and not a deployed path                          | W1 with the Agent HQ product relay owner                                             |
+| Q-F02 | F-02    | Does the injected metadata `accept` callback provide its own idempotency for approve, deny, cancel and resume, and is the command-result repository bound to the durable persistence provider in the intended composition? | `create_execution` is already idempotent through the CommandInbox. The receipt path matters for the metadata operations, whose effect idempotency is the injected callback's property                 | W1 (`packages/remote-control-relay`)                                                 |
+| Q-F03 | F-03    | Where is the `LocalProjectGrant` issued and validated on the product side, and which Control Plane component is intended to consume it for a direct-local dispatch?                                                        | The Control Plane has no grant authority of its own. The answer decides whether the fix is a grant check in the direct drivers or a different composition boundary                                    | W1 with the Agent HQ desktop owner                                                   |
+| Q-F05 | F-05    | Which component is authoritative for the Local workspace and project authorization set that the private API should compare a request against?                                                                              | The hosted path compares signed claims. The Local path needs the equivalent authoritative set before the body-derived scope can be replaced                                                           | W1 (`apps/control-api` authentication) with the Agent HQ product owner               |
+| Q-F13 | F-13    | Which profile is expected to compose a `SandboxProvider`, and what E2B template, network, resource and cleanup policy is the intended baseline?                                                                            | Without a composed provider there is no sandbox boundary to accept, and the live E2B gate cannot be closed                                                                                            | W1 (profile composition) with the operations owner                                   |
+| Q-F20 | F-20    | Is the value-based `SecretCanaryGuard` intended to run at every content sink, and what is the authoritative protected-value set?                                                                                           | The production guard exists but has no call site, and the key-name redaction misses compound credential names. The answer decides filter placement and ownership                                      | W1 (`packages/telemetry`, `packages/events`, `packages/context`)                     |
+| Q-F29 | F-29    | Which composition owns the pi-durable data directory, and is it ever created outside an owner-only ancestor?                                                                                                               | The adapter inherits the guarantee today. If a profile can point the adapter at a directory that is not inside an owner-only ancestor, the adapter-owned directory becomes a supported traversal path | W1 (`packages/pi-durable-adapter` and the `apps/control-api` pi-durable composition) |
 
 ## 7. F-04 implementation ownership — exact-path custody result
 
@@ -517,13 +596,13 @@ No source path is taken by this lane. Each finding is routed to the owner that a
 holds the affected package, and the routing table is in the JSON artifact
 (`findings[].routedTo`).
 
-| Owner                                       | Findings                                                                                                                                       |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| W1 — runtime and profile composition        | F-01, F-02, F-03, F-05, F-07, F-08, F-09, F-10, F-11, F-12, F-13, F-15, F-16, F-17, F-18, F-19, F-20, F-21, F-22, F-23, F-24, F-25, F-26, F-28 |
-| W2 — policy, contracts, decision resolution | F-19 (Cedar matrix and the per-profile authorization matrix)                                                                                   |
-| W4 — coverage and runner paths              | F-27 (retention sweep coverage), plus the probe-to-regression-test conversion for the packages it owns                                         |
-| Agent HQ / product owner                    | F-01 (the product relay's own transport authentication) and the `NONE-AHQ` controls in §8.2                                                    |
-| Operations                                  | F-13 (E2B template, network, resource and cleanup thresholds), F-14 (deployed limit values), F-28 (per-environment R2 credentials)             |
+| Owner                                       | Findings                                                                                                                                             |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| W1 — runtime and profile composition        | F-01, F-02, F-03, F-05, F-07, F-08, F-09, F-10, F-11, F-12, F-13, F-15, F-16, F-17, F-18, F-19, F-20, F-21, F-22, F-23, F-24, F-25, F-26, F-28, F-29 |
+| W2 — policy, contracts, decision resolution | F-19 (Cedar matrix and the per-profile authorization matrix)                                                                                         |
+| W4 — coverage and runner paths              | F-27 (retention sweep coverage), plus the probe-to-regression-test conversion for the packages it owns                                               |
+| Agent HQ / product owner                    | F-01 (the product relay's own transport authentication) and the `NONE-AHQ` controls in §8.2                                                          |
+| Operations                                  | F-13 (E2B template, network, resource and cleanup thresholds), F-14 (deployed limit values), F-28 (per-environment R2 credentials)                   |
 
 ### 9.1 Next actions
 

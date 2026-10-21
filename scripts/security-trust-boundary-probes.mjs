@@ -732,6 +732,176 @@ probe(
 )
 
 // ---------------------------------------------------------------------------
+// Reachability probes. These are static: they read composed source and prove
+// where a control is or is not wired, without executing a product path.
+// ---------------------------------------------------------------------------
+
+probe(
+  'CP190-P21',
+  'No composition builds the relay host adapter or the metadata processor, and no metadata effect implementation ships',
+  ['STA-L46-09', 'STA-L52-01'],
+  async () => {
+    const roots = ['apps']
+    const hits = []
+    for (const root of roots) {
+      const entries = await readdir(new URL(`../${root}/`, import.meta.url), {
+        withFileTypes: true,
+      })
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        const source = await readSource(`${root}/${entry.name}/src/`).catch(() => undefined)
+        void source
+        const files = await readdir(new URL(`../${root}/${entry.name}/src/`, import.meta.url), {
+          withFileTypes: true,
+        }).catch(() => [])
+        for (const file of files) {
+          if (!file.isFile() || !file.name.endsWith('.ts')) continue
+          const text = await readSource(`${root}/${entry.name}/src/${file.name}`).catch(() => '')
+          for (const marker of [
+            'new RelayMetadataCommandProcessor',
+            'new RemoteControlHostAdapter',
+          ]) {
+            if (text.includes(marker))
+              hits.push(`${root}/${entry.name}/src/${file.name}: ${marker}`)
+          }
+        }
+      }
+    }
+    const relay = await readSource('packages/remote-control-relay/src/relay.ts')
+    const adapter = await readSource('packages/remote-control-relay/src/adapter.ts')
+    const onlyFake = relay.includes('export class FakeOpaqueRelay')
+    const injectedEffect = adapter.includes(
+      'readonly metadataCommands?: RelayMetadataCommandProcessor<unknown>'
+    )
+    const injectedAccept = relay.includes(
+      'readonly accept: (command: RelayMetadataCommand) => Promise<Result>'
+    )
+    return {
+      reproduced: hits.length === 0 && onlyFake && injectedEffect && injectedAccept,
+      detail: `application constructions of the relay adapter or metadata processor = ${hits.length}; the only relay client implementation is the test fake = ${onlyFake}; the metadata processor is injected = ${injectedEffect}; the metadata effect callback is injected = ${injectedAccept}. No shipped approve, deny or cancel effect exists, so no deployed unauthenticated approval path is claimed.`,
+    }
+  }
+)
+
+probe(
+  'CP190-P22',
+  'The relay create_execution request carries the caller idempotency key and submit_input carries none',
+  ['STA-L16-01', 'STA-L68-03'],
+  async () => {
+    const contracts = await readSource('packages/contracts/src/control-api.ts')
+    const contextSchema = contracts.slice(
+      contracts.indexOf('CommandContextSchema'),
+      contracts.indexOf('CommandContextSchema') + 900
+    )
+    const carriesKey = /idempotencyKey/.test(contextSchema)
+    const acceptance = contracts.slice(
+      contracts.indexOf('ExecutionAcceptanceRequestSchema'),
+      contracts.indexOf('ExecutionAcceptanceRequestSchema') + 200
+    )
+    const extendsContext = /CommandContextSchema\.extend/.test(acceptance)
+    const execution = await readSource('packages/remote-control-relay/src/execution.ts')
+    const submit = execution.slice(
+      execution.indexOf('RelaySubmitInputRequestSchema'),
+      execution.indexOf('RelaySubmitInputRequestSchema') + 600
+    )
+    const submitHasKey = /idempotencyKey/.test(submit)
+    const inbox = await readSource('packages/domain/src/command-inbox.ts')
+    const inboxKey = /idempotencyKey/.test(inbox)
+    return {
+      reproduced: carriesKey && extendsContext && submitHasKey === false && inboxKey,
+      detail: `the acceptance request extends the context schema that carries idempotencyKey = ${carriesKey && extendsContext}; the relay submit_input schema carries an idempotency key = ${submitHasKey}; the CommandInbox binds an idempotency key = ${inboxKey}. create_execution is therefore idempotent in the CommandInbox, and the relay receipt adds no idempotency beyond the command id.`,
+    }
+  }
+)
+
+probe(
+  'CP190-P23',
+  'The composed model-selection path normalizes the leased callback result and rejects a non-plain carrier',
+  ['STA-L40-17', 'STA-L40-18'],
+  async () => {
+    const service = await readSource('packages/model-gateway/src/selection-service.ts')
+    const normalizer = service.slice(
+      service.indexOf('function safeCredentialResult'),
+      service.indexOf('function safeCredentialResult') + 2200
+    )
+    const rejectsPrototype =
+      normalizer.includes('Object.getPrototypeOf(input) !== Object.prototype') &&
+      normalizer.includes('Object.getPrototypeOf(input) !== null')
+    const rejectsSymbols = normalizer.includes('Object.getOwnPropertySymbols(input).length')
+    const usedOnTheLeasedPath = service.includes(
+      'return safeCredentialResult(await operation(secret))'
+    )
+    const vault = await readSource('packages/credential-vault/src/vault.ts')
+    const screen = vault.slice(vault.indexOf('export function containsSecret'))
+    const ownEnumerableOnly = screen.includes('Object.entries(value).some(')
+    const broker = await readSource('packages/credential-vault/src/tool-broker.ts')
+    const rawResult = broker.includes('return this.#vault.use(')
+    return {
+      reproduced:
+        rejectsPrototype && rejectsSymbols && usedOnTheLeasedPath && ownEnumerableOnly && rawResult,
+      detail: `the model-selection leased path normalizes the result = ${usedOnTheLeasedPath}; the normalizer rejects a non-plain prototype = ${rejectsPrototype}; it rejects symbol keys = ${rejectsSymbols}. The vault screen itself is an own-enumerable-key traversal = ${ownEnumerableOnly}, and the credential broker returns the raw callback result = ${rawResult}. The composed path is protected; only the uncomposed raw-result callers can carry a non-plain container.`,
+    }
+  }
+)
+
+probe(
+  'CP190-P24',
+  'The managed-Pi direct driver checks no grant and its spawn policy leaves the working directory unconstrained',
+  ['STA-L17-01', 'STA-L42-09', 'STA-L42-10'],
+  async () => {
+    const driver = await readSource('packages/managed-pi-adapter/src/index.ts')
+    const driverStart = driver.slice(
+      driver.indexOf('export class ManagedPiDriver'),
+      driver.indexOf('export class ManagedPiDriver') + 6000
+    )
+    const checksGrant = /grantState|LocalProjectGrant|localProjectGrant/.test(driverStart)
+    const local = await readSource('apps/local-control-plane/src/index.ts')
+    const policy = local.slice(
+      local.indexOf('spawnPolicy: { allowedExecutables: [executablePath] }') - 200,
+      local.indexOf('spawnPolicy: { allowedExecutables: [executablePath] }') + 200
+    )
+    const workingDirectories = /allowedWorkingDirectories/.test(policy)
+    const runtime = await readSource('packages/deployment/src/process-runtime.ts')
+    const optional = runtime.includes(
+      'Absent constraints leave the corresponding dimension unconstrained'
+    )
+    const acp = await readSource('apps/local-control-plane/src/installed-acp-runtime.ts')
+    const acpCwd =
+      acp.includes('cwd: options.cwd') && acp.includes('allowedWorkingDirectories: [options.cwd]')
+    return {
+      reproduced: checksGrant === false && workingDirectories === false && optional && acpCwd,
+      detail: `the managed-Pi direct driver consults a grant = ${checksGrant}; its spawn policy names an allowed working directory = ${workingDirectories}; the policy documents absent dimensions as unconstrained = ${optional}; the ACP runtime runs the child in the operator-configured cwd and mirrors it into the allowlist = ${acpCwd}. The direct-local working directory is bounded by operator configuration, not by a grant.`,
+    }
+  }
+)
+
+probe(
+  'CP190-P25',
+  'The SQLite provider creates an owner-only parent, while the pi-durable adapter creates its own directory without one',
+  ['STA-L76-01', 'STA-L23-03'],
+  async () => {
+    const provider = await readSource('packages/sqlite-persistence/src/provider.ts')
+    const parentMode = provider.indexOf('await chmod(dirname(this.#path), 0o700)')
+    const opened = provider.indexOf('new DatabaseSync(this.#path)')
+    const wal = provider.indexOf('journal_mode = WAL')
+    const providerOwnerOnly = parentMode >= 0 && parentMode < opened && parentMode < wal
+    const journal = await readSource('packages/pi-durable-adapter/src/journal.ts')
+    const journalDir = journal.slice(
+      journal.indexOf('constructor(path: string)'),
+      journal.indexOf('constructor(path: string)') + 400
+    )
+    const journalMode = /mkdirSync\(dirname\(path\), \{ recursive: true \}\)/.test(journalDir)
+    const journalFileMode = /chmod\(/.test(journalDir)
+    const lease = await readSource('packages/pi-durable-adapter/src/lease.ts')
+    const leaseMode = /mkdirSync\(directory, \{ recursive: true \}\)/.test(lease)
+    return {
+      reproduced: providerOwnerOnly && journalMode && journalFileMode === false && leaseMode,
+      detail: `the provider creates and restricts its parent to 0700 before the database and WAL exist = ${providerOwnerOnly}; the pi-durable journal creates its own directory without a mode = ${journalMode}; it never restricts the database file = ${journalFileMode}; the session lease creates its directory without a mode = ${leaseMode}. The provider path has no traversal path; the adapter-owned directory is the conditional one, because its protection is inherited from an ancestor the composition happens to create owner-only.`,
+    }
+  }
+)
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 
