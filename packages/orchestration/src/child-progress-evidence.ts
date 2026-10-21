@@ -1484,15 +1484,28 @@ export interface ChildProgressReferenceReader {
   >
 }
 
-/** A reference is well formed when it names exactly one bounded identifier. */
-function isWellFormedReference(reference: unknown): reference is ChildProgressEvidenceReference {
-  if (typeof reference !== 'object' || reference === null) return false
+/**
+ * The canonical reference of one evidence reference.
+ *
+ * The identifier has to satisfy the repository's own reference constraints, so a
+ * reference that is oversized or malformed never becomes a live read. The canonical
+ * reference is rebuilt from the kind and the identifier alone: a reference that
+ * carries extra payload never reaches the reader with it.
+ */
+function canonicalReference(reference: unknown): ChildProgressEvidenceReference | undefined {
+  if (typeof reference !== 'object' || reference === null) return undefined
   const candidate = reference as { kind?: unknown; artifactId?: unknown; interactionId?: unknown }
-  if (candidate.kind === 'terminal_result')
-    return typeof candidate.artifactId === 'string' && candidate.artifactId.length > 0
-  if (candidate.kind === 'interaction')
-    return typeof candidate.interactionId === 'string' && candidate.interactionId.length > 0
-  return false
+  if (candidate.kind === 'terminal_result') {
+    const artifactId = ReferenceSchema.safeParse(candidate.artifactId)
+    if (!artifactId.success) return undefined
+    return { kind: 'terminal_result', artifactId: artifactId.data }
+  }
+  if (candidate.kind === 'interaction') {
+    const interactionId = ReferenceSchema.safeParse(candidate.interactionId)
+    if (!interactionId.success) return undefined
+    return { kind: 'interaction', interactionId: interactionId.data }
+  }
+  return undefined
 }
 
 /** The verdict of a reference, always through the published schema. */
@@ -1516,14 +1529,15 @@ export class ChildProgressReferenceAuthorization implements ChildProgressReferen
   async authorize(
     reference: ChildProgressEvidenceReference
   ): Promise<ChildProgressReferenceVerdict> {
-    // A reference that names nothing cannot be authorized, and asking the reader
-    // would turn a malformed request into a live read.
-    if (!isWellFormedReference(reference)) {
+    // A reference that names nothing within the repository's own constraints cannot be
+    // authorized, and asking the reader would turn a malformed request into a live read.
+    const canonical = canonicalReference(reference)
+    if (canonical === undefined) {
       return referenceVerdict({ status: 'forbidden', reason: 'not_authorized' })
     }
     let answer: Awaited<ReturnType<ChildProgressReferenceReader['readCurrent']>>
     try {
-      answer = await this.reader.readCurrent(reference)
+      answer = await this.reader.readCurrent(canonical)
     } catch {
       // A failed read is not an authorization. The reference cannot be resolved.
       return referenceVerdict({ status: 'unavailable', reason: 'missing' })

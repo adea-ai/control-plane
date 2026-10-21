@@ -132,3 +132,66 @@ test('carries a verdict only, never the referenced payload', async () => {
   expect(answer).not.toHaveProperty('artifactId')
   expect(answer).not.toHaveProperty('payload')
 })
+
+test('refuses an oversized reference without a live read', async () => {
+  const source = reader({ status: 'authorized' })
+  const authority = new ChildProgressReferenceAuthorization(source)
+
+  // The repository's own reference constraints bound an identifier to 256 characters.
+  const oversized = { kind: 'terminal_result', artifactId: 'a'.repeat(257) }
+  expect(await authority.authorize(oversized)).toEqual({
+    status: 'forbidden',
+    reason: 'not_authorized',
+  })
+  expect(source.reads).toHaveLength(0)
+
+  // The boundary is exactly the constraint: 256 characters is still accepted.
+  const bounded = { kind: 'terminal_result', artifactId: 'a'.repeat(256) }
+  expect(await authority.authorize(bounded)).toEqual({ status: 'authorized' })
+  expect(source.reads).toHaveLength(1)
+})
+
+test('refuses a malformed reference without a live read', async () => {
+  const source = reader({ status: 'authorized' })
+  const authority = new ChildProgressReferenceAuthorization(source)
+
+  for (const reference of [
+    { kind: 'terminal_result', artifactId: 'has a space' },
+    { kind: 'terminal_result', artifactId: '/leading-slash' },
+    { kind: 'terminal_result', artifactId: '' },
+    { kind: 'terminal_result', artifactId: 42 },
+    { kind: 'interaction', interactionId: 'has a space' },
+    { kind: 'interaction', interactionId: '' },
+    { kind: 'unknown', artifactId: 'art_child_result_01' },
+    { artifactId: 'art_child_result_01' },
+  ]) {
+    expect(await authority.authorize(reference)).toEqual({
+      status: 'forbidden',
+      reason: 'not_authorized',
+    })
+  }
+  // Not one of them became a live read.
+  expect(source.reads).toHaveLength(0)
+})
+
+test('the reader never receives the extra fields a reference carries', async () => {
+  const source = reader({ status: 'authorized' })
+  const authority = new ChildProgressReferenceAuthorization(source)
+
+  const answer = await authority.authorize({
+    kind: 'terminal_result',
+    artifactId: 'art_child_result_01',
+    payload: 'the private artifact content',
+  })
+
+  expect(answer).toEqual({ status: 'authorized' })
+  expect(source.reads).toHaveLength(1)
+  // The reader is handed a freshly constructed reference: the kind and the identifier
+  // alone, and never the extra payload.
+  expect(source.reads[0]).toEqual({
+    kind: 'terminal_result',
+    artifactId: 'art_child_result_01',
+  })
+  expect(Object.keys(source.reads[0]).toSorted()).toEqual(['artifactId', 'kind'])
+  expect(source.reads[0]).not.toHaveProperty('payload')
+})
