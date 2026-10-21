@@ -89,7 +89,10 @@ import type { MetricAdapter, OperationsMeasurementLifecycle } from '@control-pla
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.js'
 import { LocalRuntimeInteractions } from './runtime-interactions.js'
 import { LocalControlApiComposition } from './local-api-composition.js'
-import { createLocalRuntimeMeasurements } from './runtime-measurements.js'
+import {
+  createLocalRuntimeMeasurements,
+  type LocalRuntimeMeasurementsOptions,
+} from './runtime-measurements.js'
 import { LocalAdmissionControlService } from './operator-admission-control-service.js'
 import { admissionControlledBeforeEnqueue } from './operator-admission-controls.js'
 import {
@@ -352,15 +355,25 @@ export class LocalControlPlaneComposition {
   /**
    * Whether the operations measurement exists. It needs BOTH a workspace scope and a metric
    * adapter, so this is the construction seam: without an adapter no measurement exists and no
-   * sample can run. It reads the lifecycle that was actually built, so it cannot drift from the
-   * construction. Exposed so the wiring is externally verifiable.
+   * sample can run. It reads the inputs the measurement is built from, so it cannot drift from
+   * the construction, and it stays true while the current attempt's lifecycle is drained.
+   * Exposed so the wiring is externally verifiable.
    */
   get operationsMeasurementConfigured(): boolean {
-    return this.#operationsMeasurements !== undefined
+    return this.#operationsMeasurementsInputs !== undefined
   }
-  /** The operations measurement lifecycle, when a metric adapter and a scope are configured. */
-  readonly #operationsMeasurements: OperationsMeasurementLifecycle | undefined
-  /** Whether the operations measurement is running; it is started once and drained once. */
+  /**
+   * The inputs of the operations measurement, when a metric adapter and a scope are configured.
+   *
+   * The inputs are kept rather than the lifecycle, because a lifecycle is single-use: its
+   * start() is refused once it has been closed. A start attempt after a failed startup therefore
+   * builds a fresh lifecycle from these inputs, instead of reporting a measurement that can never
+   * sample.
+   */
+  readonly #operationsMeasurementsInputs: LocalRuntimeMeasurementsOptions | undefined
+  /** The operations measurement of the current start attempt, when one is running. */
+  #operationsMeasurements: OperationsMeasurementLifecycle | undefined
+  /** Whether the current attempt's operations measurement is running. */
   #operationsMeasurementsStarted = false
   #endpoint: RestateEndpointHandle | undefined
   #started = false
@@ -469,13 +482,15 @@ export class LocalControlPlaneComposition {
         ? undefined
         : createConsistencyMetricEmitter(options.metricAdapter, 'local-control-plane')
     // The operations measurement observes this composition's own store read-only and records the
-    // workspace-scoped points through the same adapter. It is constructed only when both a scope
-    // and an adapter are configured, and it is started once with the composition and drained once
-    // with it: an operations measurement is never a side effect of a missing adapter.
-    this.#operationsMeasurements =
+    // workspace-scoped points through the same adapter. It exists only when both a scope and an
+    // adapter are configured, and it is started with the composition and drained with it: an
+    // operations measurement is never a side effect of a missing adapter. The inputs are kept so
+    // that a later start attempt can build a fresh lifecycle, because a drained one refuses to
+    // start.
+    this.#operationsMeasurementsInputs =
       options.operationsMeasurements === undefined || options.metricAdapter === undefined
         ? undefined
-        : createLocalRuntimeMeasurements({
+        : {
             adapter: options.metricAdapter,
             databasePath,
             intervalMs: options.operationsMeasurements.intervalMs,
@@ -497,7 +512,14 @@ export class LocalControlPlaneComposition {
             ...(options.operationsMeasurements.closeTimeoutMs === undefined
               ? {}
               : { closeTimeoutMs: options.operationsMeasurements.closeTimeoutMs }),
-          })
+          }
+    // The lifecycle is built here, so an invalid measurement configuration is refused when the
+    // composition is built and not when it is started. A later start attempt builds a fresh one
+    // from these inputs, because a drained lifecycle refuses to start.
+    this.#operationsMeasurements =
+      this.#operationsMeasurementsInputs === undefined
+        ? undefined
+        : createLocalRuntimeMeasurements(this.#operationsMeasurementsInputs)
     // The embedded mode routes acceptance, interactions, cancellations, and
     // reconciliation remediation through one queue-backed dispatcher; restate
     // mode keeps the ingress client as the default inside the API composition.
@@ -780,9 +802,13 @@ export class LocalControlPlaneComposition {
     await this.persistence.migrate()
     try {
       // The operations measurement observes the migrated store, so it starts first and a later
-      // failure has it to drain. It is started exactly once: a start after a drain is refused by the
-      // lifecycle itself, so a partially started composition never measures twice.
-      if (!this.#operationsMeasurementsStarted && this.#operationsMeasurements !== undefined) {
+      // failure has it to drain. It is started with the composition and drained with it. A start
+      // attempt after a failed startup builds a fresh lifecycle, because the drained one refuses
+      // to start: reusing it would report a running measurement that can never sample.
+      if (this.#operationsMeasurementsInputs !== undefined) {
+        this.#operationsMeasurements ??= createLocalRuntimeMeasurements(
+          this.#operationsMeasurementsInputs
+        )
         this.#operationsMeasurements.start()
         this.#operationsMeasurementsStarted = true
       }
@@ -825,7 +851,12 @@ export class LocalControlPlaneComposition {
   async #drainOperationsMeasurements(): Promise<void> {
     if (!this.#operationsMeasurementsStarted) return
     this.#operationsMeasurementsStarted = false
-    await this.#operationsMeasurements?.close().catch(() => undefined)
+    const lifecycle = this.#operationsMeasurements
+    // The drained lifecycle is single-use: its start() is refused in the closed state, so it is
+    // dropped. A later start attempt builds a fresh one from the inputs instead of reporting a
+    // measurement that can never sample.
+    this.#operationsMeasurements = undefined
+    await lifecycle?.close().catch(() => undefined)
   }
 
   /**
