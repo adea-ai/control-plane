@@ -519,6 +519,13 @@
       "when": 1792205060000,
       "tag": "0073_scope_version_pairing",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1792562613772,
+      "tag": "0074_dear_talisman",
+      "breakpoints": true
     }
   ]
 }

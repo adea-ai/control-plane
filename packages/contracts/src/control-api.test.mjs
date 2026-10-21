@@ -314,6 +314,28 @@ describe('Agent HQ Control API contracts', () => {
     }
   })
 
+  test('accepts an optional accepted model on an execution acceptance request', () => {
+    const base = ControlApiFixtures.executionAcceptance.request
+    expect(
+      ExecutionAcceptanceRequestSchema.safeParse({
+        ...base,
+        payload: { ...base.payload, modelId: 'deepseek-flash' },
+      }).success
+    ).toBe(true)
+    expect(
+      ExecutionAcceptanceRequestSchema.safeParse({
+        ...base,
+        payload: { ...base.payload, modelId: 'DeepSeek Flash' },
+      }).success
+    ).toBe(false)
+    expect(
+      ExecutionAcceptanceRequestSchema.safeParse({
+        ...base,
+        payload: { ...base.payload, modelId: '' },
+      }).success
+    ).toBe(false)
+  })
+
   test('accepts execution commands with durable replay and lifecycle responses', () => {
     expect(
       ExecutionAcceptanceRequestSchema.parse(ControlApiFixtures.executionAcceptance.request)

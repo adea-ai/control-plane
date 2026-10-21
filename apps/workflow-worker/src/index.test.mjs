@@ -31,6 +31,50 @@ class RecordingMetricAdapter {
   }
 }
 
+describe('the managed cloud worker composition', () => {
+  test('the real composition wires the deployment per-model harness map into the router', async () => {
+    const configuration = loadManagedCloudConfiguration(
+      {
+        ...managedCloudEnvironment(),
+        CONTROL_PLANE_CLOUD_RUNTIME: 'remote',
+        CONTROL_PLANE_HARNESS_BY_MODEL: '{"deepseek-flash":"pi"}',
+      },
+      'workflow-worker'
+    )
+    const composition = createManagedCloudWorkflowWorkerComposition(
+      configuration,
+      undefined,
+      undefined,
+      () => ({ database: {}, check: async () => undefined, close: async () => undefined })
+    )
+    const plan = createExecutionPlanTestFixture()
+    // The map reached the real router: with a map configured an execution
+    // without a model is denied before any discovery happens, which is the
+    // fail-closed map policy and not a helper-only behaviour.
+    await expect(
+      composition.runtimeRouter.resolve({
+        execution: {
+          executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+          state: 'queued',
+          version: 2,
+          correlation: plan.correlation,
+          executionPlan: {
+            executionPlanId: plan.executionPlanId,
+            contentDigest: plan.contentDigest,
+            schemaVersion: plan.schemaVersion,
+          },
+          attemptCount: 0,
+          acceptedAt: '2026-08-28T11:59:59.000Z',
+          queuedAt: '2026-08-28T12:00:00.000Z',
+          createdAt: '2026-08-28T11:59:59.000Z',
+          updatedAt: '2026-08-28T12:00:00.000Z',
+        },
+        executionPlan: plan,
+      })
+    ).rejects.toMatchObject({ code: 'HARNESS_MAP_MODEL_ABSENT' })
+  })
+})
+
 describe('workflow worker telemetry', () => {
   test('wires explicit remote execution and discovery without a certification runtime', () => {
     const configuration = loadManagedCloudConfiguration(

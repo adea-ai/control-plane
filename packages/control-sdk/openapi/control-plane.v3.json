@@ -5934,6 +5934,12 @@
                         "maxItems": 128,
                         "type": "array"
                       },
+                      "modelId": {
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "pattern": "^[a-z0-9][a-z0-9._/-]*$",
+                        "type": "string"
+                      },
                       "parentExecutionId": {
                         "pattern": "^exe_[0-9A-HJKMNP-TV-Z]{26}$",
                         "type": "string"
