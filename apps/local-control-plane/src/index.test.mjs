@@ -999,6 +999,23 @@ async function untilRecorded(adapter, budgetMs = 20_000) {
   return false
 }
 
+/**
+ * Waits until the adapter has recorded more than `count` points, or the budget runs out.
+ *
+ * The wait is for the next cadence tick rather than for a fixed pause. A pass reads
+ * the store in a worker thread, and how long it takes is the host's business: a
+ * fixed pause would fail on a loaded host while the measurement was working
+ * correctly, and the budget still bounds the cadence.
+ */
+async function untilGrown(adapter, count, budgetMs = 20_000) {
+  const end = Date.now() + budgetMs
+  while (Date.now() < end) {
+    if (adapter.all().length > count) return true
+    await new Promise((done) => setTimeout(done, 25))
+  }
+  return false
+}
+
 describe('Local operations measurement wiring', () => {
   test('the measurement starts with the composition and records bounded, scoped points', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-operations-measurement-'))
@@ -1166,8 +1183,7 @@ describe('Local operations measurement wiring', () => {
       expect(await untilRecorded(recorded)).toBe(true)
       // The cadence really was emitting, so a still-running timer would show after the stop.
       const beforeClose = recorded.all().length
-      await new Promise((done) => setTimeout(done, 1500))
-      expect(recorded.all().length).toBeGreaterThan(beforeClose)
+      expect(await untilGrown(recorded, beforeClose)).toBe(true)
       await composition.close()
       const afterClose = recorded.all().length
       // A second close changes nothing and emits nothing.
