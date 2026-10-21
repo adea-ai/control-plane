@@ -185,6 +185,15 @@ describe('managed cloud configuration', () => {
     }
   })
 
+  test('an uppercase ASCII model id is a configured key', () => {
+    const remote = { ...cloud, CONTROL_PLANE_CLOUD_RUNTIME: 'remote' }
+    const loaded = loadManagedCloudConfiguration(
+      { ...remote, CONTROL_PLANE_HARNESS_BY_MODEL: '{"DeepSeek-V3":"deepseek"}' },
+      'workflow-worker'
+    )
+    expect(loaded.runtime.harnessByModel?.['DeepSeek-V3']).toBe('deepseek')
+  })
+
   test('a model id that names an inherited property is an ordinary configured key', () => {
     const remote = { ...cloud, CONTROL_PLANE_CLOUD_RUNTIME: 'remote' }
     const loaded = loadManagedCloudConfiguration(

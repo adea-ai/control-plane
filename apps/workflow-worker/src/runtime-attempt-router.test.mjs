@@ -536,6 +536,23 @@ describe('per-model harness mapping (M12/#678)', () => {
     expect(selected.routingDecision.reasonCodes).toEqual(['RUNTIME_SELECTED', 'HARNESS_MAPPED'])
   })
 
+  test('the map lookup preserves the case of the accepted model', async () => {
+    // A map keyed with the exact model id serves the execution.
+    const selected = await routerFor([piRuntime()], {
+      harnessByModel: { 'DeepSeek-V3': 'pi' },
+    }).resolve({ execution: execution(plan(), 'DeepSeek-V3'), executionPlan: plan() })
+    expect(selected.runtimeConnectionId).toBe('rtc_01JABCDEF0123456789ABCDEFB')
+
+    // A map keyed with another case does not silently substitute the harness:
+    // the model is unmapped and the attempt is denied.
+    await expect(
+      routerFor([piRuntime()], { harnessByModel: { 'deepseek-v3': 'pi' } }).resolve({
+        execution: execution(plan(), 'DeepSeek-V3'),
+        executionPlan: plan(),
+      })
+    ).rejects.toMatchObject({ code: 'HARNESS_MAP_MODEL_UNMAPPED' })
+  })
+
   test('a model the map does not name is denied', async () => {
     await expect(
       routerFor([piRuntime()], { harnessByModel: { 'deepseek-flash': 'pi' } }).resolve({
@@ -572,6 +589,19 @@ describe('per-model harness mapping (M12/#678)', () => {
         })
       ).rejects.toMatchObject({ code: 'HARNESS_MAP_MODEL_UNMAPPED' })
     }
+  })
+
+  test('an existing pin that agrees with the map keeps the deployment working', async () => {
+    const selected = await routerFor([piRuntime()], {
+      pinnedHarnessId: 'pi',
+      harnessByModel: { 'deepseek-flash': 'pi' },
+    }).resolve({ execution: execution(plan(), 'deepseek-flash'), executionPlan: plan() })
+    expect(selected.runtimeConnectionId).toBe('rtc_01JABCDEF0123456789ABCDEFB')
+    expect(selected.routingDecision.reasonCodes).toEqual([
+      'RUNTIME_SELECTED',
+      'HARNESS_PINNED',
+      'HARNESS_MAPPED',
+    ])
   })
 
   test('an explicit pin that contradicts the map is denied', async () => {

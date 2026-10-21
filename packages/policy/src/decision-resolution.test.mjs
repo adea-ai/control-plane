@@ -536,6 +536,18 @@ describe('per-model harness mapping (M12/#678)', () => {
     expect(resolution.resolution.model).toEqual({ modelId: 'deepseek-flash' })
   })
 
+  test('the map lookup preserves the case of the accepted model', () => {
+    const resolution = resolveDecisionLayer(mappedRequest({ model: { modelId: 'DeepSeek-V3' } }), {
+      harnessByModel: { 'DeepSeek-V3': 'claude-code' },
+    })
+    expect(resolution.resolution.harness.harnessId).toBe('claude-code')
+    expectDenied('HARNESS_MAP_MODEL_UNMAPPED', () =>
+      resolveDecisionLayer(mappedRequest({ model: { modelId: 'DeepSeek-V3' } }), {
+        harnessByModel: { 'deepseek-v3': 'claude-code' },
+      })
+    )
+  })
+
   test('a model the map does not name is denied', () => {
     expectDenied('HARNESS_MAP_MODEL_UNMAPPED', () =>
       resolveDecisionLayer(mappedRequest({ model: { modelId: 'glm-4' } }), {
@@ -568,6 +580,18 @@ describe('per-model harness mapping (M12/#678)', () => {
         })
       )
     }
+  })
+
+  test('an existing pin that agrees with the map keeps the deployment working', () => {
+    const resolution = resolveDecisionLayer(
+      mappedRequest({
+        model: { modelId: 'deepseek-flash' },
+        harness: { harnessId: 'claude-code' },
+      }),
+      { harnessByModel: { 'deepseek-flash': 'claude-code' } }
+    )
+    expect(resolution.resolution.harness.harnessId).toBe('claude-code')
+    expect(resolution.trace.harness.source).toBe('explicit-pin')
   })
 
   test('an explicit harness that contradicts the map is denied', () => {

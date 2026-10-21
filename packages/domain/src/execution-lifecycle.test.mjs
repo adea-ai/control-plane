@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   ExecutionLifecycleError,
   ExecutionLifecycleService,
+  ExecutionSchema,
   InMemoryExecutionRepository,
 } from './index.ts'
 
@@ -40,6 +41,26 @@ const routingDecision = {
 const acceptedAt = '2026-08-23T10:00:00.000Z'
 const digest = `sha256:${'a'.repeat(64)}`
 
+/** A complete execution read model, as the execution repository stores it. */
+function readModelInput(overrides = {}) {
+  return {
+    ...executionInput(),
+    state: 'accepted',
+    version: 1,
+    attemptCount: 0,
+    createdAt: acceptedAt,
+    updatedAt: acceptedAt,
+    ...overrides,
+  }
+}
+
+function acceptedModelCases() {
+  return {
+    accepts: ['deepseek-flash', 'DeepSeek-V3', 'GPT-4o', 'GLM-4'],
+    refuses: ['', ' ', 'deepseek flash', '-deepseek', '.deepseek'],
+  }
+}
+
 function setup() {
   const repository = new InMemoryExecutionRepository()
   return { repository, service: new ExecutionLifecycleService(repository) }
@@ -66,6 +87,25 @@ function executionInput(executionId = ids.executionId) {
 }
 
 describe('Execution lifecycle', () => {
+  describe('the accepted model on the execution read model', () => {
+    test('carries the accepted model id, including an uppercase ASCII one', () => {
+      for (const modelId of acceptedModelCases().accepts) {
+        expect(ExecutionSchema.parse(readModelInput({ modelId })).modelId).toBe(modelId)
+      }
+    })
+
+    test('refuses a malformed model id instead of carrying it', () => {
+      for (const modelId of acceptedModelCases().refuses) {
+        expect(() => ExecutionSchema.parse(readModelInput({ modelId }))).toThrow()
+      }
+    })
+
+    test('an execution without a model keeps the read model exactly as it was', () => {
+      const parsed = ExecutionSchema.parse(readModelInput())
+      expect(parsed.modelId).toBeUndefined()
+    })
+  })
+
   test('keeps one immutable product intent and plan across multiple concrete attempts', async () => {
     const { repository, service } = setup()
     const execution = await service.createExecution(executionInput())
