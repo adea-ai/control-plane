@@ -8,6 +8,16 @@ This page records **which admission-budget invariant is proved by which exact
 deterministic test, and with what result**. It is the evidence the issue asked
 for; it is not an acceptance claim.
 
+The issue names two acceptance items, and both are covered here:
+
+- _transactionally reserve child/descendant budgets with depth, concurrency and
+  authority limits_ — §1 lists the five bounded limits, §2.1 and §2.4 give the
+  per-store proofs, and §2.5 gives the transactional production reservation and
+  the worker-side allowance;
+- _prove concurrent admission, retry and compaction behaviour with deterministic
+  race tests_ — §2.1 (SQLite, including the paused-commit races), §2.2 (native
+  compaction) and §2.4 (PostgreSQL) give the three named states.
+
 ## 1. The limits, and the states they must hold in
 
 A child admission is refused unless the canonical parent is running, the
@@ -108,6 +118,23 @@ repository propagates unchanged.
 Without `RUN_DATABASE_INTEGRATION=true` this suite is **skipped**, not passed:
 `0 passed, 5 skipped, 0 failed`. A green run of the offline suites never
 qualifies this gate.
+
+### 2.5 The production reservation and the worker-side allowance
+
+The issue's first acceptance item — _transactionally reserve child/descendant
+budgets with depth, concurrency and authority limits_ — is carried by two
+further proofs, both measured on this branch:
+
+| Proof                                                                                                   | Command                                                                                      | Result                                 | What it proves                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/control-api/src/pi-durable/production-child-bridge.ts`                                            | `bun test src/pi-durable/production-child-bridge.test.mjs` in `apps/control-api`             | **38 passed, 0 failed, 57 assertions** | the production bridge **reserves, derives the binding, then funds that reservation, in that order**, and **records the estimate and the reservation as cost state before the binding and the funding**; cost state that cannot be recorded derives no binding and funds nothing; a refused reservation derives no binding and funds nothing; a binding that cannot be derived funds nothing; a refused funding record fails the reservation step, so nothing starts; and the composition authority is re-read for the exact child execution and attempt |
+| `tests/pi-durable-production-child-bridge-recovery.test.mjs`                                            | `bun test tests/pi-durable-production-child-bridge-recovery.test.mjs`                        | **13 passed, 0 failed, 19 assertions** | the production builder **recovers a lost session mapping without start, reservation or funding**, records progress and replays terminal publication exactly once, and refuses a revoked receipt read authority on recovery and starts nothing                                                                                                                                                                                                                                                                                                           |
+| `apps/workflow-worker/src/child-runtime-budget-admission.integration.test.mjs` (PostgreSQL, disposable) | `bun test src/child-runtime-budget-admission.integration.test.mjs` in `apps/workflow-worker` | **4 passed, 0 failed, 30 assertions**  | the worker-side allowance against the real store: an omitted allowance can fund from a settled lead reservation while its attempt is still running; after the lead reservation settles while its attempt remains running, funding and spend stay bounded for siblings; the child admission binds the parent plan statement the allocator funded under; and once the lead is cancelled the allocator refuses before any funding is considered                                                                                                            |
+
+Together with §2.1–§2.4, both acceptance items of #1018 are covered on this
+branch: the five bounded limits and the three named states on the durable
+stores, and the transactional production reservation with the worker-side
+allowance. The native and hosted-deployment gates in §4 stay open.
 
 ## 3. What was missing, and what this pass adds
 
