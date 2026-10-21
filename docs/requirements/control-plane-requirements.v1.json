@@ -9668,8 +9668,8 @@
         "severity": "medium",
         "owner": "requirements-ledger",
         "issue": 195,
-        "disposition": "The six contributing lanes are recorded as pending. No contribution has arrived with an exact head, so the crosswalk integrates none of them and reports no worker result as evidence.",
-        "nextAction": "Run bun run requirements:refresh after each lane publishes a head, record the exact commit and evidence paths per stable worker ID, and re-run the crosswalk so the integrated evidence appears against the requirement and issue rows it covers."
+        "disposition": "Three contributing lanes have published a commit and are recorded as received with their exact head and the evidence paths proven against the tree of that head. The architecture, adversarial-evaluation and skill-library lanes still have uncommitted changes, so their recorded heads are provisional. The #558 and trust-boundary lanes have not published a head. No worker contribution is integrated into the current tree and no worker result is reported as evidence.",
+        "nextAction": "Re-run bun run requirements:refresh after each lane publishes its final commit, re-record the exact head and evidence paths per stable worker ID, and re-run the crosswalk so the integrated evidence appears against the requirement and issue rows it covers."
       },
       {
         "id": "GATE-CURRENT-CANDIDATE",
@@ -9938,22 +9938,48 @@
     {
       "id": "W2",
       "lane": "cp186-195-requirements",
-      "status": "pending",
-      "head": null,
+      "status": "received",
+      "head": "b2de58916ba5315f4cf5ad40aa8399161abc263a",
       "branch": "f2w2/cp186-195-requirements",
       "issueRefs": [186, 195],
-      "evidence": [],
-      "nextAction": "Record the exact head that carries this reconciliation so the crosswalk names the commit it was produced from."
+      "evidence": [
+        {
+          "path": "docs/requirements/control-plane-requirements-crosswalk.v1.json",
+          "commit": "b2de58916ba5315f4cf5ad40aa8399161abc263a"
+        },
+        {
+          "path": "docs/requirements/canonical-figure-inventory.v1.json",
+          "commit": "b2de58916ba5315f4cf5ad40aa8399161abc263a"
+        },
+        {
+          "path": "docs/requirements/cp186-195-reconciliation-2026-10-21.md",
+          "commit": "b2de58916ba5315f4cf5ad40aa8399161abc263a"
+        }
+      ],
+      "nextAction": "Re-run bun run requirements:refresh after this branch lands so the recorded head names the published commit."
     },
     {
       "id": "W3",
       "lane": "cp187-architecture-audit",
-      "status": "pending",
-      "head": null,
+      "status": "received",
+      "head": "51ae5991e38cb25efe452d72ce0863e87cbfef2e",
       "branch": "f2w3/cp187-architecture-audit",
       "issueRefs": [187],
-      "evidence": [],
-      "nextAction": "Record the exact head and the architecture-audit evidence paths when the lane publishes them."
+      "evidence": [
+        {
+          "path": "docs/evidence/m11-architecture-reachability-trace-2026-10-21.md",
+          "commit": "51ae5991e38cb25efe452d72ce0863e87cbfef2e"
+        },
+        {
+          "path": "scripts/architecture-audit.mjs",
+          "commit": "51ae5991e38cb25efe452d72ce0863e87cbfef2e"
+        },
+        {
+          "path": "scripts/m11-architecture-audit-regression.test.mjs",
+          "commit": "51ae5991e38cb25efe452d72ce0863e87cbfef2e"
+        }
+      ],
+      "nextAction": "Refresh the recorded head when the architecture lane publishes its final commit; the lane still has uncommitted changes."
     },
     {
       "id": "W4",
@@ -9963,27 +9989,53 @@
       "branch": "f2w4/cp190-trust-boundary",
       "issueRefs": [190],
       "evidence": [],
-      "nextAction": "Record the exact head and the trust-boundary evidence paths when the lane publishes them."
+      "nextAction": "Record the exact head and the trust-boundary evidence paths when the lane commits its security/trust-boundary audit."
     },
     {
       "id": "W5",
       "lane": "cp191-adversarial-eval",
-      "status": "pending",
-      "head": null,
+      "status": "received",
+      "head": "36bb1a7ab21e77e2b948a0623062b9b97bf0849f",
       "branch": "f2w5/cp191-adversarial-eval",
       "issueRefs": [191],
-      "evidence": [],
-      "nextAction": "Record the exact head and the adversarial-evaluation evidence paths when the lane publishes them."
+      "evidence": [
+        {
+          "path": "docs/evidence/cp191-adversarial-baseline-scorecard.json",
+          "commit": "36bb1a7ab21e77e2b948a0623062b9b97bf0849f"
+        },
+        {
+          "path": "docs/adversarial-corpus-v1.md",
+          "commit": "36bb1a7ab21e77e2b948a0623062b9b97bf0849f"
+        },
+        {
+          "path": "docs/evals/recalibration/run-recalibration.mts",
+          "commit": "36bb1a7ab21e77e2b948a0623062b9b97bf0849f"
+        }
+      ],
+      "nextAction": "Refresh the recorded head when the adversarial-evaluation lane publishes its final commit; the lane still has uncommitted changes."
     },
     {
       "id": "W6",
       "lane": "cp196-skill-library",
-      "status": "pending",
-      "head": null,
+      "status": "received",
+      "head": "ffa4c990d751e26cb63b824cd313915eb5a1dcd9",
       "branch": "f2w6/cp196-skill-library",
       "issueRefs": [196],
-      "evidence": [],
-      "nextAction": "Record the exact head and the skill-library evidence paths when the lane publishes them."
+      "evidence": [
+        {
+          "path": "docs/evals/skill-evals/blinded-comparison-packet.md",
+          "commit": "ffa4c990d751e26cb63b824cd313915eb5a1dcd9"
+        },
+        {
+          "path": "docs/evals/skill-evals/README.md",
+          "commit": "ffa4c990d751e26cb63b824cd313915eb5a1dcd9"
+        },
+        {
+          "path": ".agents/skills/control-plane-audit/SKILL.md",
+          "commit": "ffa4c990d751e26cb63b824cd313915eb5a1dcd9"
+        }
+      ],
+      "nextAction": "Refresh the recorded head when the skill-library lane publishes its final commit; the lane still has uncommitted changes."
     }
   ]
 }

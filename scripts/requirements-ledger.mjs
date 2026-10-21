@@ -1172,7 +1172,9 @@ function validateCandidateProof(ledger, root) {
 }
 
 // Worker contributions are integrated by stable ID and exact head. A contribution
-// that has not arrived stays pending instead of being reported as evidence.
+// that has not arrived stays pending instead of being reported as evidence. The
+// evidence of a received contribution is proven against the tree of its own head,
+// because the lane's files are not in this branch until it is merged.
 function validateWorkerEvidence(ledger, root) {
   const errors = []
   const workers = ledger.workerEvidence ?? []
@@ -1210,10 +1212,22 @@ function validateWorkerEvidence(ledger, root) {
         errors.push(`${worker.id}: worker evidence must identify a path`)
         continue
       }
-      try {
-        accessSync(resolve(root, entry.path))
-      } catch {
-        errors.push(`${worker.id}: worker evidence path does not exist: ${entry.path}`)
+      const atHead = spawnSync('git', ['cat-file', '-e', `${worker.head}:${entry.path}`], {
+        cwd: root,
+        encoding: 'utf8',
+      })
+      if (atHead.status !== 0)
+        errors.push(
+          `${worker.id}: worker evidence path is absent at head ${worker.head}: ${entry.path}`
+        )
+      if (worker.status === 'integrated') {
+        try {
+          accessSync(resolve(root, entry.path))
+        } catch {
+          errors.push(
+            `${worker.id}: integrated worker evidence is absent from this tree: ${entry.path}`
+          )
+        }
       }
     }
   }

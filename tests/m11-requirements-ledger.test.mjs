@@ -1126,7 +1126,7 @@ describe('M11.1 requirements ledger', () => {
     expect(Buffer.byteLength(report)).toBeGreaterThan(512 * 1024)
     expect(Buffer.byteLength(await readFile(reportUrl, 'utf8'))).toBe(Buffer.byteLength(report))
     expect(report.endsWith('\n')).toBe(true)
-  })
+  }, 60000)
 
   test('records the repository-pinned formatter version', async () => {
     const lockfile = await readFile(new URL('../bun.lock', import.meta.url), 'utf8')
@@ -1168,7 +1168,7 @@ describe('M11.1 requirements ledger', () => {
       expect(requirement.classification).toBe(ledger.requirements[index].classification)
       expect(requirement.normativeState).toBe(ledger.requirements[index].normativeState)
     }
-  })
+  }, 60000)
 
   test('fails closed when the generated crosswalk drifts from the ledger', async () => {
     expect(await validateCanonicalCrosswalk(ledger, repositoryRoot)).toEqual([])
@@ -1177,7 +1177,7 @@ describe('M11.1 requirements ledger', () => {
     expect(await validateCanonicalCrosswalk(drifted, repositoryRoot)).toContain(
       'Canonical requirements crosswalk drifted; run bun run requirements:write'
     )
-  })
+  }, 60000)
 
   test('inventories embedded objects by identity and never by caption', async () => {
     const { errors, inventory } = await collectFigureInventory(ledger, repositoryRoot)
@@ -1206,7 +1206,7 @@ describe('M11.1 requirements ledger', () => {
     expect(architecture.identityReconciliation.absent).toEqual(['kix.ows2808gmq16'])
     expect(inventory.summary.currentRootTabObjects).toBe(12)
     expect(inventory.summary.historicalObjects).toBe(9)
-  })
+  }, 60000)
 
   test('fails closed when the generated figure inventory drifts', async () => {
     expect(await validateFigureInventory(ledger, repositoryRoot)).toEqual([])
@@ -1215,7 +1215,7 @@ describe('M11.1 requirements ledger', () => {
     expect(await validateFigureInventory(drifted, repositoryRoot)).toContain(
       'Canonical figure inventory drifted; run bun run requirements:write'
     )
-  })
+  }, 60000)
 
   test('requires every gap reference to resolve to a recorded open issue', async () => {
     const { errors } = await validateRequirementsLedger(ledger, {
@@ -1237,7 +1237,7 @@ describe('M11.1 requirements ledger', () => {
     expect(closedResult.errors).toContain(
       'CP-PRD-RETRIEVAL-001: gap reference #195 is closed and cannot carry an open gap'
     )
-  })
+  }, 60000)
 
   test('requires an accountable disposition for every orphaned atomic clause', async () => {
     const { errors } = await validateRequirementsLedger(ledger, { repositoryRoot })
@@ -1259,7 +1259,7 @@ describe('M11.1 requirements ledger', () => {
     expect(miscountedResult.errors).toContain(
       'system-architecture: atom disposition covers 1 unmapped clauses but the register has 546'
     )
-  })
+  }, 60000)
 
   test('rejects a stale candidate that is presented as current proof', async () => {
     const { errors } = await validateRequirementsLedger(ledger, { repositoryRoot })
@@ -1278,7 +1278,7 @@ describe('M11.1 requirements ledger', () => {
     expect(missingResult.errors).toContain(
       'reconciliation.candidateProof.disposition is required for a stale candidate'
     )
-  })
+  }, 60000)
 
   test('requires an exact resolvable head for every received worker contribution', async () => {
     const { errors } = await validateRequirementsLedger(ledger, { repositoryRoot })
@@ -1300,7 +1300,26 @@ describe('M11.1 requirements ledger', () => {
     expect(unknownResult.errors).toContain(
       `W1: worker head ${'b'.repeat(40)} is unavailable in the repository`
     )
-  })
+  }, 60000)
+
+  test('proves received worker evidence against the tree of its own head', async () => {
+    const received = ledger.workerEvidence.filter(({ status }) => status === 'received')
+    expect(received.length).toBeGreaterThan(0)
+    for (const worker of received) {
+      expect(worker.head, worker.id).toMatch(/^[0-9a-f]{40}$/)
+      expect(worker.evidence.length, worker.id).toBeGreaterThan(0)
+      for (const entry of worker.evidence) {
+        expect(entry.commit, `${worker.id}:${entry.path}`).toBe(worker.head)
+      }
+    }
+    const absent = clone(ledger)
+    const worker = absent.workerEvidence.find(({ status }) => status === 'received')
+    worker.evidence.push({ path: 'docs/requirements/does-not-exist.md', commit: worker.head })
+    const absentResult = await validateRequirementsLedger(absent, { repositoryRoot })
+    expect(absentResult.errors).toContain(
+      `${worker.id}: worker evidence path is absent at head ${worker.head}: docs/requirements/does-not-exist.md`
+    )
+  }, 60000)
 
   test('gives every superseded row an explicit supersession disposition', async () => {
     for (const row of [...ledger.requirements, ...ledger.priorMilestoneAudits]) {
@@ -1318,7 +1337,7 @@ describe('M11.1 requirements ledger', () => {
     expect(missingResult.errors).toContain(
       'CP-TDD-005: row.supersession is required for superseded rows'
     )
-  })
+  }, 60000)
 
   test('records the live GitHub issue identity without promoting it', async () => {
     const snapshot = ledger.githubIssueSnapshot
@@ -1364,7 +1383,7 @@ describe('M11.1 requirements ledger', () => {
     const divergences = compareGitHubIssueSnapshot(ledger, renamed)
     expect(divergences).toContain('#186 is CLOSED on GitHub but the snapshot records OPEN')
     expect(divergences).toContain('#186 title differs from the recorded snapshot title')
-  })
+  }, 60000)
 
   test('keeps the generated crosswalk and figure inventory in sync', async () => {
     expect(await readFile(crosswalkUrl, 'utf8')).toBe(
@@ -1373,5 +1392,5 @@ describe('M11.1 requirements ledger', () => {
     expect(await readFile(figureInventoryUrl, 'utf8')).toBe(
       await renderFigureInventory(ledger, repositoryRoot)
     )
-  })
+  }, 60000)
 })

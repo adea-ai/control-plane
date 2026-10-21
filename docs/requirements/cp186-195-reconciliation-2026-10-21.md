@@ -126,21 +126,25 @@ the captured bytes; it is not refreshed by this inventory.
 
 ## Worker integration
 
-The six contributing lanes are recorded by stable ID with an exact head. No lane
-has published a head yet, so nothing is integrated and no worker result is
-reported as evidence.
+The six contributing lanes are recorded by stable ID with an exact head. A
+received contribution names a commit that exists in the repository, and each of
+its evidence paths is proven against the tree of that commit, because a lane's
+files are not in this branch until it is merged. No contribution is integrated
+into the current tree, so no worker result is reported as evidence.
 
-| Worker | Lane                     | Status  | Issues     |
-| ------ | ------------------------ | ------- | ---------- |
-| W1     | cp558-resolution         | pending | #558       |
-| W2     | cp186-195-requirements   | pending | #186, #195 |
-| W3     | cp187-architecture-audit | pending | #187       |
-| W4     | cp190-trust-boundary     | pending | #190       |
-| W5     | cp191-adversarial-eval   | pending | #191       |
-| W6     | cp196-skill-library      | pending | #196       |
+| Worker | Lane                     | Status   | Exact head                                 | Issues     | Evidence                                                         |
+| ------ | ------------------------ | -------- | ------------------------------------------ | ---------- | ---------------------------------------------------------------- |
+| W1     | cp558-resolution         | pending  | —                                          | #558       | —                                                                |
+| W2     | cp186-195-requirements   | received | `b2de58916ba5315f4cf5ad40aa8399161abc263a` | #186, #195 | canonical crosswalk, figure inventory, this record               |
+| W3     | cp187-architecture-audit | received | `51ae5991e38cb25efe452d72ce0863e87cbfef2e` | #187       | architecture reachability trace, audit script, regression checks |
+| W4     | cp190-trust-boundary     | pending  | —                                          | #190       | —                                                                |
+| W5     | cp191-adversarial-eval   | received | `36bb1a7ab21e77e2b948a0623062b9b97bf0849f` | #191       | adversarial baseline scorecard, corpus, recalibration harness    |
+| W6     | cp196-skill-library      | received | `ffa4c990d751e26cb63b824cd313915eb5a1dcd9` | #196       | blinded comparison packet, skill-eval harness, audit skill       |
 
-A received contribution must name a full commit that exists in the repository
-and evidence paths that exist in the tree; a pending lane may not carry a head.
+The architecture, adversarial-evaluation and skill-library lanes still had
+uncommitted changes when this record was written, so their recorded heads are
+provisional. The #558 and trust-boundary lanes had not published a head.
+
 `bun run requirements:refresh` re-reads the live issue identities and is the
 step that folds an arrived contribution into the crosswalk.
 
@@ -171,7 +175,7 @@ against the version pinned in `bun.lock`.
 | GATE-SOURCE-IMAGE-ACCESS | blocked | high     | documentation-governance | With read-only Drive/Docs access, re-read every parent tab including nested tabs at the current revision and record the native inline-object identity, byte length and SHA-256 of each image. |
 | GATE-HUMAN-RATIFICATION  | blocked | high     | documentation-governance | The source owner reviews the 1529 changed clauses and the current figure inventory and ratifies or corrects each disposition.                                                                 |
 | GATE-INDEPENDENT-SAMPLE  | blocked | high     | independent-reviewer     | An independent reviewer reproduces the crosswalk, the drift controls and a representative sample on the exact recorded head.                                                                  |
-| GATE-WORKER-EVIDENCE     | pending | medium   | requirements-ledger      | Refresh the ledger after each lane publishes a head and integrate the contribution by stable worker ID.                                                                                       |
+| GATE-WORKER-EVIDENCE     | pending | medium   | requirements-ledger      | Refresh the ledger after each lane publishes its final head; the received lanes still have uncommitted changes.                                                                               |
 | GATE-CURRENT-CANDIDATE   | blocked | high     | validation-architecture  | Freeze a current candidate on the reconciled head, record it in `candidate`, and run the required deterministic lanes.                                                                        |
 
 Human semantic ratification, an independent representative sample and current
