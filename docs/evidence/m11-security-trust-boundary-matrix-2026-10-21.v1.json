@@ -21,7 +21,21 @@
     "readOnly": true,
     "credentialsRead": 0,
     "productionTrafficSent": 0,
-    "deployedProfileEvidenceUsed": false
+    "deployedProfileEvidenceUsed": false,
+    "finalCandidateRecheck": {
+      "method": "every branch in the fleet's shared origin was compared against the audited head for the files each finding depends on",
+      "branchesCompared": 45,
+      "ownerFixesAvailable": 0,
+      "filesDifferingOnUnmergedBranches": [
+        "packages/remote-control-relay/src/relay.ts",
+        "packages/deployment/src/checkpoint.ts",
+        "packages/profile-portability/src/migration.ts",
+        "packages/sqlite-persistence/src/provider.ts",
+        "apps/workflow-worker/src/runtime-attempt-router.ts"
+      ],
+      "findingImpact": "none; every difference is cosmetic or belongs to an unrelated change, so all 28 findings stand on the audited head and on every currently available unmerged branch",
+      "ownerFixVerification": "pending; no owner fix for any finding exists on an available head yet"
+    }
   },
   "domains": [
     {

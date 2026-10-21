@@ -143,7 +143,45 @@ Severity is the reviewer's assessment against the release, not a CVSS score.
 | F-28 | Medium       | Staging and production share one R2 bucket credential slot, separated by prefix only                                  | the asserted environment credential separation is a convention       | source reading |
 | F-27 | Low-Medium   | Tool rate-limit events are only deleted for the tuple being checked                                                   | unbounded row growth for abandoned tuples                            | source reading |
 
-### 3.1 The four highest-severity findings in detail
+### 3.1 Final-candidate re-check against every available head
+
+Every branch in the fleet's shared origin was compared against the audited head for
+the files each finding depends on. The comparison covered
+`packages/remote-control-relay/src`, `packages/credential-vault/src`,
+`packages/sandbox/src`, `packages/deployment/src/checkpoint.ts`,
+`packages/profile-portability/src`, `packages/secrets/src`,
+`apps/control-api/src/auth`, `apps/runtime-gateway/src`,
+`apps/workflow-worker/src/runtime-attempt-router.ts`,
+`apps/workflow-worker/src/managed-pi-remote-command.ts`, `packages/execution-plan/src`,
+`packages/telemetry/src`, `packages/events/src`,
+`packages/sqlite-persistence/src/provider.ts`, `packages/context/src`,
+`packages/domain/src/project-state.ts`, `packages/memory-writeback/src`,
+`apps/control-api/src/pi-durable/current-tool-authority.ts`,
+`apps/control-api/src/executions/execution-acceptance.service.ts`,
+`apps/control-api/src/application.ts`, `apps/control-api/src/marketplace/registry.ts`,
+`packages/workflow-runtime/src/restate-endpoint.ts`,
+`scripts/runtime-node-identity-admin.mjs`, `apps/local-control-plane/src/acp-runtime.ts`,
+`packages/acp-adapter/src`, `packages/managed-pi-adapter/src`,
+`packages/deployment/src/process-runtime.ts` and
+`apps/hosted-control-plane/src/composition.ts`.
+
+Result: **no owner fix for any of the 28 findings exists on any currently available
+head.** Four files differ on unmerged branches, and in every case the difference is
+cosmetic or belongs to an unrelated change:
+
+| File                                                 | Branch                                                 | Difference                                                     | Effect on a finding                                                    |
+| ---------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `packages/remote-control-relay/src/relay.ts`         | `origin/test/m612-tool-replay-qualification`           | the same `#612` byte-format fix under different variable names | none; the effect still runs before the receipt, so F-01 and F-02 stand |
+| `packages/deployment/src/checkpoint.ts`              | `origin/test/m612-tool-replay-qualification`           | the same `#612` digest-format wording                          | none; the secrets directory is still copied, so F-08 stands            |
+| `packages/profile-portability/src/migration.ts`      | `origin/test/m612-tool-replay-qualification`           | record-equivalence comparison refactor                         | none; F-10 stands                                                      |
+| `packages/sqlite-persistence/src/provider.ts`        | `origin/test/m612-tool-replay-qualification`           | scope-trigger statements moved                                 | none; F-09 stands                                                      |
+| `apps/workflow-worker/src/runtime-attempt-router.ts` | `origin/w1/cp1048-restore-generation-authority-repair` | the per-model harness map from #678                            | none; the grant-state check is unchanged, so F-03 stands               |
+
+The verification step required by the issue — "verify owner fixes on their new exact
+heads after they are available" — therefore has nothing to verify yet. It stays open
+until an owner lands a fix and records its exact head.
+
+### 3.2 The four highest-severity findings in detail
 
 **F-01 — Product relay metadata-only commands are unauthenticated (Critical).**
 `RelayMetadataCommandSchema` (`packages/remote-control-relay/src/protocol.ts:68-81`)
