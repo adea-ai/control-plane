@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL, URL } from 'node:url'
 import {
   bindsCapabilityOption,
@@ -72,6 +72,57 @@ async function createEvidenceSymlinkFixture() {
   await symlink(join(root, 'ordinary.md'), join(root, 'in-tree-link.md'))
   await symlink(join(root, 'loop.md'), join(root, 'loop.md'))
   return { directory, root, link }
+}
+
+/**
+ * Two synthetic checkout roots whose matching files have the same relative
+ * path, the same byte length and the same modification time, but different
+ * contents: the first root binds a capability, the second does not.
+ *
+ * The two roots therefore have to be parsed separately. A parse cache keyed by
+ * the relative path would hand the second root the first root's answer.
+ */
+async function createTwoRootBindingFixture() {
+  const directory = await mkdtemp(join(tmpdir(), 'control-plane-two-root-binding-'))
+  const rootA = join(directory, 'checkout-a')
+  const rootB = join(directory, 'checkout-b')
+  const binds = 'const options = { executionAcceptanceService: composition.x }\n'
+  const undefinedPrefix = 'const options = { executionAcceptanceService: undefined'
+  const undefinedSuffix = ' }\n'
+  // Pad the non-binding form so both files are exactly the same length.
+  const doesNotBind = `${undefinedPrefix}${' '.repeat(
+    binds.length - undefinedPrefix.length - undefinedSuffix.length
+  )}${undefinedSuffix}`
+  // The two files must be indistinguishable by size and timestamp.
+  expect(Buffer.byteLength(binds)).toBe(Buffer.byteLength(doesNotBind))
+  const timestamp = new Date('2026-10-21T00:00:00.000Z')
+  const sources = [
+    'apps/control-api/src/app.module.ts',
+    'apps/control-api/src/index.ts',
+    'apps/control-api/src/cloud-composition.ts',
+    'apps/hosted-control-plane/src/index.ts',
+    'apps/hosted-control-plane/src/composition.ts',
+    'apps/local-control-plane/src/index.ts',
+    'apps/local-control-plane/src/composition.ts',
+  ]
+  for (const [root, content] of [
+    [rootA, binds],
+    [rootB, doesNotBind],
+  ]) {
+    for (const source of sources) {
+      const target = join(root, source)
+      await mkdir(dirname(target), { recursive: true })
+      // The module that declares the defaults is identical in both roots.
+      await writeFile(
+        target,
+        source === 'apps/control-api/src/app.module.ts'
+          ? 'useValue: options.executionAcceptanceService ?? new UnavailableExecutionAcceptanceService()\n'
+          : content
+      )
+      await utimes(target, timestamp, timestamp)
+    }
+  }
+  return { directory, rootA, rootB }
 }
 
 const disabledCapabilityOptions = [
@@ -313,6 +364,23 @@ describe('M11.2 architecture audit tooling regressions', () => {
       expect(await evidencePathError(fixture.root, 'loop.md')).toBe(
         'evidence path could not be resolved'
       )
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true })
+    }
+  })
+
+  test('parses two checkout roots separately when their files share a path, size and time', async () => {
+    const fixture = await createTwoRootBindingFixture()
+    try {
+      const first = await discoverCapabilityBindings(fixture.rootA)
+      const second = await discoverCapabilityBindings(fixture.rootB)
+      // The first root binds the capability, the second does not. The matching
+      // files have the same relative path, the same byte length and the same
+      // modification time, so a parse cache keyed by the relative path would
+      // report the second root with the first root's answer.
+      expect(first.profiles.cloud.bound).toContain('executionAcceptanceService')
+      expect(second.profiles.cloud.bound).not.toContain('executionAcceptanceService')
+      expect(second.profiles.cloud.unbound).toContain('executionAcceptanceService')
     } finally {
       await rm(fixture.directory, { recursive: true, force: true })
     }

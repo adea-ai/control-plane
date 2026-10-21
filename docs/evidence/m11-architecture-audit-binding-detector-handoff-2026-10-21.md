@@ -12,14 +12,15 @@ root's review of the resulting head.
 | Branch                    | `f2w3/cp187-architecture-audit`                                                                                                                                     |
 | First root-reviewed head  | `51ae5991e38cb25efe452d72ce0863e87cbfef2e`                                                                                                                          |
 | Second root-reviewed head | `ccd2d1798efe45804cfd112118af91508086851b` (binding-parser repair)                                                                                                  |
+| Third root-reviewed head  | `fc169f506ec98432883af6cd26bcc8a0101570f3` (evidence-path repair)                                                                                                   |
 | Files in this bundle      | `scripts/architecture-audit.mjs`, `scripts/m11-architecture-audit-regression.test.mjs`, this packet                                                                 |
 | Toolchain                 | Bun 1.4.3, Node 24.21.0, `darwin-arm64`                                                                                                                             |
 | Prior evidence packet     | `docs/evidence/m11-architecture-reachability-trace-2026-10-21.md` — **unchanged**, and still specific to the base commit `27f17bd55e0266439b5b3089163195c9e7a669be` |
 
-Two root findings are addressed in this bundle. Neither changes a measured value: the architecture
-audit's complete output is byte-identical to the first reviewed head. Nothing in the prior
-evidence packet is restated, upgraded or withdrawn; no integrated-candidate coverage and no CI
-coverage is claimed here.
+Three root findings are addressed in this bundle. None of them changes a measured value: the
+architecture audit's complete output is byte-identical to the first reviewed head, and the measured
+per-profile capability matrix is unchanged. Nothing in the prior evidence packet is restated,
+upgraded or withdrawn; no integrated-candidate coverage and no CI coverage is claimed here.
 
 ---
 
@@ -136,21 +137,125 @@ fixture is removed in a `finally` block and nothing is written into the checkout
 
 ---
 
-## 3. Regression coverage
+## 3. Finding 3 — the parse cache was keyed by the relative path
 
-`scripts/m11-architecture-audit-regression.test.mjs` grows from 16 to 25 tests across this bundle.
+Root reported that `parsedBindingSites` cached by relative path, modification time and size while
+parsing `resolve(root, path)`, so sequential audits of two checkout roots with the same relative
+path, the same size and the same modification time, but different binding contents, could reuse the
+wrong checkout's parse.
 
-| Test                                                                        | Covers                                                                                                                                                                                             |
-| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `does not read a commented binding as a capability binding`                 | finding 1: the exact commented example, a block comment, a trailing comment inside a real options literal, and a comment next to a real binding                                                    |
-| `does not read a type-only declaration as a capability binding`             | finding 1: a `type` alias, an `interface`, an optional `interface` member, an exported `interface`, a class property signature, and a type declaration next to a real binding                      |
-| `does not read an explicit undefined binding as a capability binding`       | finding 1: `undefined`, `void 0`, a shorthand whose variable is declared `undefined`, a conditional whose branches are both `undefined`, and the `undefined ?? fallback` case that must still bind |
-| `keeps reading real runtime object and shorthand bindings`                  | the positive cases: object key with a real value, shorthand, shorthand over a declared value, a conditional spread guard, a quoted key                                                             |
-| `does not let a comment conceal a missing default in a real profile source` | end to end: a commented binding appended to the real `apps/control-api/src/index.ts` is still not read as a cloud binding                                                                          |
-| `pins the number of capability bindings each profile supplies`              | the measured counts (20 / 13 / 16 / 16) and the disjointness of each profile's bound and unbound sets                                                                                              |
-| `rejects an in-tree evidence symlink that points outside the repository`    | finding 2: the escaping symlink is rejected directly and end to end through the audit validator                                                                                                    |
-| `keeps accepting ordinary in-tree evidence`                                 | finding 2: a regular in-tree file and an in-tree symlink that stays inside the root remain citable                                                                                                 |
-| `rejects an evidence path that cannot be resolved`                          | finding 2: a symlink loop is rejected as unresolvable, not mistaken for a missing file                                                                                                             |
+The defect reproduced against `fc169f506`: with two synthetic roots whose matching files have the
+same relative path, the same byte length and the same timestamp, the second root reported the
+first root's answer — the second root claimed a capability was bound that its own sources do not
+bind.
+
+### 3.1 The correction
+
+The cache entry is now keyed by the **canonical target path** and validated by the **content
+hash**, so the entry identity is the file the parse came from:
+
+| Aspect                        | Before                                | After                                                   |
+| ----------------------------- | ------------------------------------- | ------------------------------------------------------- |
+| Cache key                     | the relative path                     | the canonical absolute target path                      |
+| Change identity               | modification time and size            | the SHA-256 of the file contents                        |
+| Two roots, same relative path | one shared entry                      | one entry per root                                      |
+| File edited in place          | detected only if time or size changed | always detected                                         |
+| Parse reuse                   | across any root                       | only for the same canonical file with the same contents |
+
+The entry is validated against the content hash rather than a timestamp, so the reuse rule is
+exact: an entry is reused only when the bytes it was parsed from are the bytes on disk now. The
+parse is still the expensive step and is still reused, so the cost does not regress.
+
+### 3.2 The regression is hermetic and deterministic
+
+`createTwoRootBindingFixture` builds two synthetic checkout roots. In each root every profile
+binding source path is written with one of two contents that are **exactly the same byte length**:
+one binds `executionAcceptanceService` with a real value, the other binds it to `undefined` and so
+does not bind it. The fixture asserts the two lengths are equal, and it sets the same fixed
+modification time on every file with `utimes`, so the two roots are indistinguishable by relative
+path, size and timestamp. The test then audits the first root and the second root in one process
+and requires the two answers to differ. Against the pre-fix cache the second assertion fails.
+
+---
+
+## 4. Shorthand-binding scope: inspection result and the conservative rule
+
+Root asked whether the actual admitted profile sources exercise shorthand-binding shadowing or
+lexical scopes, and said not to build a broad typechecker or dataflow analyzer.
+
+### 4.1 What the admitted sources contain
+
+The six admitted profile composition sources were parsed and every shorthand property whose name
+is one of the 21 unavailable-default capability options was enumerated:
+
+| Source                                         | Shorthand capability bindings | Capability names declared more than once |
+| ---------------------------------------------- | ----------------------------- | ---------------------------------------- |
+| `apps/control-api/src/index.ts`                | 15                            | none                                     |
+| `apps/control-api/src/cloud-composition.ts`    | 3                             | none                                     |
+| `apps/local-control-plane/src/index.ts`        | 2                             | none                                     |
+| `apps/hosted-control-plane/src/index.ts`       | 0                             | none                                     |
+| `apps/hosted-control-plane/src/composition.ts` | 0                             | none                                     |
+| `apps/local-control-plane/src/composition.ts`  | 0                             | none                                     |
+
+20 shorthand capability bindings in total. For each one the declaration that actually binds the
+name at that site was resolved by walking the lexical scopes, and compared with the
+first-declaration-in-file-order lookup the detector uses:
+
+| Check                                                        | Result |
+| ------------------------------------------------------------ | ------ |
+| shorthand capability bindings examined                       | 20     |
+| with no declaring scope found                                | 0      |
+| where the first declaration differs from the declaring scope | 0      |
+
+**No admitted profile source exercises shorthand-binding shadowing or a lexical-scope
+divergence.** Every capability name is declared at most once in the file that uses it, and that
+declaration encloses the shorthand site, so the conservative lookup is exact for the admitted
+sources.
+
+### 4.2 The conservative rule and its limits
+
+The detector resolves a shorthand property's value by looking up the **first declaration of that
+name anywhere in the file** and asking whether its initializer is `undefined`. Scope is not
+resolved, and the lookup deliberately stays that simple:
+
+- **It is exact when** the name is declared at most once in the file and that declaration is
+  visible at the shorthand site. That is the case for all 20 admitted shorthand bindings.
+- **It can be wrong when** a name is declared more than once (shadowing), because the lookup
+  takes the first declaration in file order rather than the one in scope. It can also be wrong
+  when the only declaration of the name sits in a scope that does not enclose the shorthand site.
+- **Both error directions are possible.** A first declaration of `undefined` that the shorthand
+  does not actually reference makes the detector report a binding that is not there, which
+  conceals a missing default. A first declaration with a real value that the shorthand does not
+  reference makes the detector report a capability as unbound that the profile does bind, which
+  would assert absence that is not true.
+- **No scope-resolving analyzer was added.** Resolving the binding correctly needs the real
+  declaration of each name at each site, which is type- and flow-sensitive, and the audit needs a
+  conservative, reproducible answer rather than an inferred one. A scope-only lookup would
+  resolve the admitted sources exactly, but it would not be a bound on the remaining ambiguity,
+  and it would add machinery for a case the admitted sources do not contain.
+- **What to do if it changes.** The binding matrix is pinned by a regression test
+  (`pins the number of capability bindings each profile supplies`), so a composition that starts
+  declaring a capability name twice, or moving a shorthand out of its declaration's scope, fails
+  that test and forces the measurement to be reviewed rather than silently reinterpreted.
+
+---
+
+## 5. Regression coverage
+
+`scripts/m11-architecture-audit-regression.test.mjs` grows from 16 to 26 tests across this bundle.
+
+| Test                                                                                | Covers                                                                                                                                                                                             |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `does not read a commented binding as a capability binding`                         | finding 1: the exact commented example, a block comment, a trailing comment inside a real options literal, and a comment next to a real binding                                                    |
+| `does not read a type-only declaration as a capability binding`                     | finding 1: a `type` alias, an `interface`, an optional `interface` member, an exported `interface`, a class property signature, and a type declaration next to a real binding                      |
+| `does not read an explicit undefined binding as a capability binding`               | finding 1: `undefined`, `void 0`, a shorthand whose variable is declared `undefined`, a conditional whose branches are both `undefined`, and the `undefined ?? fallback` case that must still bind |
+| `keeps reading real runtime object and shorthand bindings`                          | the positive cases: object key with a real value, shorthand, shorthand over a declared value, a conditional spread guard, a quoted key                                                             |
+| `does not let a comment conceal a missing default in a real profile source`         | end to end: a commented binding appended to the real `apps/control-api/src/index.ts` is still not read as a cloud binding                                                                          |
+| `pins the number of capability bindings each profile supplies`                      | the measured counts (20 / 13 / 16 / 16) and the disjointness of each profile's bound and unbound sets                                                                                              |
+| `rejects an in-tree evidence symlink that points outside the repository`            | finding 2: the escaping symlink is rejected directly and end to end through the audit validator                                                                                                    |
+| `keeps accepting ordinary in-tree evidence`                                         | finding 2: a regular in-tree file and an in-tree symlink that stays inside the root remain citable                                                                                                 |
+| `rejects an evidence path that cannot be resolved`                                  | finding 2: a symlink loop is rejected as unresolvable, not mistaken for a missing file                                                                                                             |
+| `parses two checkout roots separately when their files share a path, size and time` | finding 3: two roots with the same relative path, byte length and modification time, but different binding contents, are parsed separately                                                         |
 
 The four evidence cases root did not report — a lexical escape, an absolute path, a directory and
 a missing file — remain covered by `rejects evidence that escapes the repository or is not a
@@ -158,72 +263,52 @@ file`, with the same expected reasons.
 
 ---
 
-## 4. Cost of the corrections
+## 6. Cost of the corrections
 
-| Measurement                                                                         | First reviewed head | After the bundle |
-| ----------------------------------------------------------------------------------- | ------------------- | ---------------- |
-| `bun run architecture:check` wall clock                                             | ~1 s                | 4.0 s            |
-| `discoverCapabilityBindings`, first call in a process                               | —                   | 2.4 s            |
-| `discoverCapabilityBindings`, subsequent calls                                      | —                   | ~30 ms           |
-| `discoverArchitecture`, first call / subsequent                                     | —                   | 1.2 s / ~0.2 s   |
-| `bun test tests/m11-architecture-audit.test.mjs` (W1's file)                        | 4.10 s              | 7.3 s            |
-| `cd scripts && bun test --timeout 30000 m11-architecture-audit-regression.test.mjs` | 8.1 s               | 11.9 s           |
+| Measurement                                                                         | First reviewed head | After the bundle       |
+| ----------------------------------------------------------------------------------- | ------------------- | ---------------------- |
+| `bun run architecture:check` wall clock                                             | ~1 s                | 4.0 s                  |
+| `discoverArchitecture`, first call in a process                                     | —                   | 1.2 s cold, 0.1 s warm |
+| `discoverCapabilityBindings`, first call / subsequent                               | —                   | 0.15 s warm / 2–3 ms   |
+| `bun test tests/m11-architecture-audit.test.mjs` (W1's file)                        | 4.10 s              | 2.1 s warm             |
+| `cd scripts && bun test --timeout 30000 m11-architecture-audit-regression.test.mjs` | 8.1 s               | 1.2 s warm             |
 
 The added cost is the TypeScript parse of the six profile composition sources, paid once per
-process. The parse is memoised per file identity (size and modification time), the same memo
-pattern `scripts/orch-toolchain.mjs` already uses, so repeated discovery in one process does not
-re-parse the tree and an edited file is always re-read. The evidence-path correction adds one
-`realpath` and one `stat` per evidence path.
+process. The parse is reused across calls in a process; since finding 3 the reuse is keyed by the
+canonical target and validated by the content hash, so it stays exact.
 
 The smoke lane has a reviewed CI ceiling of 90 s against a 68 s baseline (`budgets.json`,
-`lanes.smoke`). The added cost is paid once per process and is inside the reviewed headroom; the
-lane budget owner should re-measure it on the CI runner.
+`lanes.smoke`). The lane budget owner should re-measure the added parse cost on the CI runner.
 
 ---
 
-## 5. Gates run on the bundle head
+## 7. Checks run on the bundle head
 
-| Gate                           | Command                                                                                                          | Result                                                                                      |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Canonical architecture audit   | `bun run architecture:check`                                                                                     | PASS (exit 0); output byte-identical to `51ae5991e` and to `ccd2d1798`                      |
-| W1's existing audit coverage   | `bun test tests/m11-architecture-audit.test.mjs`                                                                 | 7 pass / 0 fail, 193 expects                                                                |
-| F2W3 dedicated regression file | `cd scripts && bun test --timeout 30000 m11-architecture-audit-regression.test.mjs`                              | 25 pass / 0 fail, 184 expects                                                               |
-| Repository smoke lane          | `bun scripts/run-bun-test-group.mjs smoke --timeout 30000`                                                       | recorded in section 5.1                                                                     |
-| Full lint lane                 | `bun run lint`                                                                                                   | PASS — 47/47 tasks, 0 boundary violations, digest-writer and canonical-ordering checks pass |
-| Formatting                     | `bun x oxfmt --check scripts/architecture-audit.mjs scripts/m11-architecture-audit-regression.test.mjs`          | all matched files use the correct format                                                    |
-| Lint                           | `bun x oxlint --deny-warnings scripts/architecture-audit.mjs scripts/m11-architecture-audit-regression.test.mjs` | clean                                                                                       |
-| Workspace boundaries           | `bun run check:boundaries`                                                                                       | 1229 files in 45 packages, 0 boundary violations                                            |
-| Digest writers                 | `bun run check:digest-writers`                                                                                   | 39 flows matched exact reviewed exceptions                                                  |
-| Canonical ordering             | `bun run check:canonical-ordering`                                                                               | pass                                                                                        |
-| Migration drift                | `bun run db:check`                                                                                               | `Everything's fine`                                                                         |
-| Contract compatibility         | `bun run compatibility:check`                                                                                    | pass                                                                                        |
-| Published OpenAPI              | `bun --cwd=packages/control-sdk run openapi:check`                                                               | pass                                                                                        |
-| Infrastructure types           | `bun run infra:typecheck`                                                                                        | no type errors in 208 files                                                                 |
+This task's scope is a bounded correctness repair, so the checks are the focused pinned ones for
+the changed tooling. What was run, and what was deliberately not run, are recorded exactly.
 
-### 5.1 Smoke lane result
+| Check                           | Command                                                                                                          | Result                                                                                        |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| F2W3 dedicated regression file  | `cd scripts && bun test --timeout 30000 m11-architecture-audit-regression.test.mjs`                              | 26 pass / 0 fail, 188 expects                                                                 |
+| W1's existing audit coverage    | `bun test tests/m11-architecture-audit.test.mjs`                                                                 | 7 pass / 0 fail, 193 expects                                                                  |
+| Canonical architecture audit    | `bun run architecture:check`                                                                                     | PASS (exit 0); output byte-identical to `51ae5991e`, `ccd2d1798` and `fc169f506`              |
+| Formatting of the changed files | `bun x oxfmt --check scripts/architecture-audit.mjs scripts/m11-architecture-audit-regression.test.mjs`          | all matched files use the correct format                                                      |
+| Lint of the changed files       | `bun x oxlint --deny-warnings scripts/architecture-audit.mjs scripts/m11-architecture-audit-regression.test.mjs` | clean                                                                                         |
+| Measured capability matrix      | `discoverCapabilityBindings` on the checkout                                                                     | unchanged: cloud 20, hosted-server 13, hosted-simple 16, local 16, with the same unbound sets |
 
-Recorded verbatim from the run on the bundle head:
+**Not run in this task, by instruction:** no full build, no coverage run, no full smoke lane, no
+full lint lane. The last full smoke-lane result on this branch is the one recorded for the
+`fc169f506` bundle head — 629 pass / 5 skip / 0 fail across 634 tests in 44 files, exit 0 — and the
+lane budget owner should re-measure after this repair lands.
 
-```
-629 pass
-5 skip
-0 fail
-5756 expect() calls
-Ran 634 tests across 44 files. [356.86s]
-lane smoke: 357s (budget check is CI-only; SKIP_LANE_BUDGET=1 also skips)
-```
-
-Exit code 0. The pass, skip and fail counts are identical to every earlier run on this branch;
-the lane wall clock varies between runs and its budget check runs only on the CI runner.
-
-**Skipped, and why:** `bun run requirements:check` needs an authenticated GitHub CLI to read the
-issue set and cannot run in this environment; it is F2W2's gate and no requirement file is touched
-here. `packages/database/src/integration.test.mjs` needs a live PostgreSQL instance and was not
-executed. No live profile, provider, deployment or production action was taken.
+**Also not run, and why:** `bun run requirements:check` needs an authenticated GitHub CLI to read
+the issue set and cannot run in this environment; it is F2W2's gate and no requirement file is
+touched here. `packages/database/src/integration.test.mjs` needs a live PostgreSQL instance and
+was not executed. No live profile, provider, deployment or production action was taken.
 
 ---
 
-## 6. Proposed CI lane and owner handoff — proposed only, not applied
+## 8. Proposed CI lane and owner handoff — proposed only, not applied
 
 Root asked for the exact proposed lane and owner handoff to be documented rather than runner
 ownership to be changed silently. **No runner file, lane list or CI registration was edited.**
@@ -257,38 +342,38 @@ Owner: the test-runner / Code Foundry lane owner (W1/W7 custody, per the Fleet 2
 
 ---
 
-## 7. Scope and preservation
+## 9. Scope and preservation
 
 - The corrections change **only** `scripts/architecture-audit.mjs` and
   `scripts/m11-architecture-audit-regression.test.mjs`, plus this packet.
 - W1's `docs/architecture/control-plane-architecture.v1.json` and its generated report, and
   `tests/m11-architecture-audit.test.mjs`, are untouched and still validate byte-identically.
 - `scripts/run-bun-test-group.mjs`, `tests/repository.test.mjs` and every CI lane registration are
-  untouched; section 6 proposes the handoff only.
+  untouched; section 8 proposes the handoff only.
 - The prior evidence packet
   `docs/evidence/m11-architecture-reachability-trace-2026-10-21.md` is untouched and stays
   specific to the base commit it measured. No finding in it is re-stated, upgraded or withdrawn
   here, and the cloud binding matrix is unchanged from what that packet records.
 - No runtime source, composition, migration, requirement file or owned-by-another-worker path was
   changed. No credentials, access, provider, deployment or production change was made.
-- Auto-merge stays off. No issue is closed and no issue-closing language is used. The existing
-  draft pull request was not edited, pushed or republished; publication and the mechanical draft
-  update stay with the original controller.
+- Auto-merge stays off. No issue is closed and no issue-closing language is used, and no claim is
+  made that CP #187 is complete. The existing draft pull request was not edited, pushed or
+  republished; publication and the mechanical draft update stay with the original controller.
 
 ---
 
-## 8. Outstanding gates — explicitly not claimed
+## 10. Outstanding gates — explicitly not claimed
 
-1. **Root's review of the resulting patch.** This packet is a handoff for that review; it is not
-   an approval and it does not close anything.
+1. **Root's full-scope review of the resulting patch.** This packet is a handoff for that review;
+   it is not an approval, and it does not close anything.
 2. **Live profile gates.** No profile was deployed and no provider was called. Every profile row
    in the canonical audit stays `partially_verified`.
 3. **Integrated-candidate readback.** The prior packet's readback compared the canonical audit's
    recorded candidate `6c922d487c3c2e70a047c11c55a1cb4ddbabad26` with the base commit
    `27f17bd55e0266439b5b3089163195c9e7a669be`. No frozen integrated candidate that includes other
    workers' changes exists in this checkout, and none is claimed.
-4. **CI lane registration** for the regression file (section 6).
-5. **CI runner lane-budget re-measurement** of the added parse cost (section 4), on the CI runner.
+4. **CI lane registration** for the regression file (section 8).
+5. **CI runner lane-budget re-measurement** of the added parse cost (section 6), on the CI runner.
 6. **#186 reconciled snapshot.** `bun run requirements:check` cannot run without an authenticated
    GitHub CLI; the snapshot was not consumed and no requirement file was touched.
 7. **PostgreSQL integration path.** Not executed; no live database was used.

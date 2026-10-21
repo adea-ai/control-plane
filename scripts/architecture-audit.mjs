@@ -388,37 +388,44 @@ export async function discoverCapabilityBindings(root) {
   return { defaults: uniqueDefaults, profiles }
 }
 
-/** Parsed binding sites per source file, memoised on the file's identity. */
+/**
+ * Parsed binding sites per source file.
+ *
+ * The entry is keyed by the canonical target path and validated by the
+ * content hash, so two checkout roots never share an entry and an edited file
+ * is always re-parsed.
+ *
+ * Keying by the relative path and comparing size and modification time is not
+ * enough: two checkout roots can hold the same relative path with the same
+ * size and timestamp and different contents, and the second root would then
+ * reuse the first root's parse.
+ */
 const parsedSourceCache = new Map()
 
 async function parsedBindingSites(root, path) {
   const target = resolve(root, path)
-  let stats
-  try {
-    stats = await stat(target)
-  } catch {
-    stats = undefined
-  }
-  const cached = parsedSourceCache.get(path)
-  if (
-    cached !== undefined &&
-    stats !== undefined &&
-    cached.mtimeMs === stats.mtimeMs &&
-    cached.size === stats.size
-  ) {
-    return cached.sites
-  }
   let text = ''
   try {
     text = await readFile(target, 'utf8')
   } catch {
     text = ''
   }
+  const identity = createHash('sha256').update(text).digest('hex')
+  const key = await canonicalTargetPath(target)
+  const cached = parsedSourceCache.get(key)
+  if (cached !== undefined && cached.identity === identity) return cached.sites
   const sites = allBindingSites(parseModule(text))
-  if (stats !== undefined) {
-    parsedSourceCache.set(path, { mtimeMs: stats.mtimeMs, size: stats.size, sites })
-  }
+  parsedSourceCache.set(key, { identity, sites })
   return sites
+}
+
+/** The canonical path of a source file, used as the cache key. */
+async function canonicalTargetPath(target) {
+  try {
+    return await realpath(target)
+  } catch {
+    return target
+  }
 }
 
 /**
