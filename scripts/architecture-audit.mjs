@@ -10,6 +10,7 @@ import {
   canonicalJsonStringify,
   compareCodePointOrder,
 } from '../packages/contracts/src/canonical-json.ts'
+import { discoverTestInventory } from './run-bun-test-group.mjs'
 
 function formatMarkdown(text) {
   const result = spawnSync(
@@ -1033,6 +1034,42 @@ async function walk(directory) {
   ).flat()
 }
 
+/**
+ * Directories that never hold repository sources. The boundary checker uses
+ * the same set, so a generated or installed tree is skipped the same way in
+ * both places.
+ */
+const ignoredDirectories = new Set([
+  'node_modules',
+  'dist',
+  'build',
+  'coverage',
+  '.git',
+  '.vite',
+  '.cache',
+])
+
+/**
+ * Every file under a directory, skipping the generated and installed trees.
+ *
+ * `walk` is kept as it is because the canonical audit reads a bounded source
+ * directory with it; this variant is for repository-wide scans, where the
+ * installed tree would otherwise dominate the walk.
+ */
+async function walkSourceFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true })
+  return (
+    await Promise.all(
+      entries.map((entry) => {
+        const path = resolve(directory, entry.name)
+        if (entry.isDirectory())
+          return ignoredDirectories.has(entry.name) ? [] : walkSourceFiles(path)
+        return [path]
+      })
+    )
+  ).flat()
+}
+
 async function digestFiles(root, paths) {
   const digest = createHash('sha256')
   for (const path of [...paths].toSorted()) {
@@ -1255,6 +1292,85 @@ function escapeCell(value) {
   return String(value).replaceAll('|', '\\|').replaceAll('\n', ' ')
 }
 
+/**
+ * The audit's own test files are the ones that import the audited module.
+ *
+ * The dedicated regression file must import this module directly, so it cannot
+ * live under `apps/`, `packages/` or `tests/`; the repository's lane inventory
+ * walks those three roots only, so a file under `scripts/` is in no lane at
+ * all. Discovering the audited test files by what they import keeps the
+ * question canonical: the answer is a property of the tree, not of a list
+ * written next to the tool.
+ */
+const architectureAuditImport =
+  /(?:from|import|require)\s*\(?\s*['"][^'"]*architecture-audit\.mjs['"]/
+
+async function discoverArchitectureTestFiles(root) {
+  const candidates = (await walkSourceFiles(root)).filter((path) => path.endsWith('.test.mjs'))
+  const owned = []
+  for (const path of candidates) {
+    if (!architectureAuditImport.test(await readFile(path, 'utf8'))) continue
+    owned.push(relative(root, path))
+  }
+  return owned.toSorted()
+}
+
+/**
+ * Canonical CI lane coverage for the architecture audit's own test files.
+ *
+ * The lane inventory is read from the shared runner's own discovery rather
+ * than re-implemented here, so this reports the lanes the repository actually
+ * runs. The inventory is read defensively: it fails closed on lane drift, and
+ * that drift is reported as a finding instead of taking the audit down.
+ */
+export async function discoverArchitectureCiCoverage(
+  rootUrl = new URL('..', import.meta.url),
+  options = {}
+) {
+  const root = fileURLToPath(rootUrl)
+  const testFiles = await discoverArchitectureTestFiles(root)
+  let inventory = options.inventory ?? null
+  let inventoryError = options.inventoryError ?? null
+  if (inventory === null && inventoryError === null) {
+    try {
+      inventory = await discoverTestInventory()
+    } catch (error) {
+      inventoryError = error instanceof Error ? error.message : String(error)
+    }
+  }
+  const laneByPath = new Map((inventory ?? []).map(({ path, primaryLane }) => [path, primaryLane]))
+  return {
+    lanes: [...new Set((inventory ?? []).map(({ primaryLane }) => primaryLane))].toSorted(),
+    testFiles: testFiles.map((path) => ({ path, primaryLane: laneByPath.get(path) ?? null })),
+    uncovered:
+      inventory === null ? [] : testFiles.filter((path) => !laneByPath.has(path)).toSorted(),
+    inventoryError,
+  }
+}
+
+/**
+ * Findings for the architecture audit's own CI coverage.
+ *
+ * A test file that no canonical lane runs does not gate a pull request, so
+ * the checks it carries are not part of the repository's gate. That is an open
+ * gate for the lane owner rather than a defect in the audited architecture,
+ * so it is reported as a warning and never as an error: the canonical audit
+ * record and its generated report stay byte-identical either way.
+ */
+export function validateArchitectureCiCoverage(coverage) {
+  const errors = []
+  const warnings = []
+  if (coverage.inventoryError) {
+    warnings.push(`canonical CI lane inventory could not be read: ${coverage.inventoryError}`)
+  }
+  for (const path of coverage.uncovered) {
+    warnings.push(
+      `architecture audit test file ${path} is not run by any canonical CI lane (${coverage.lanes.join(', ')})`
+    )
+  }
+  return { errors, warnings }
+}
+
 async function main() {
   let audit = JSON.parse(await readFile(auditPath, 'utf8'))
   if (process.argv.includes('--refresh')) {
@@ -1291,6 +1407,12 @@ async function main() {
     repositoryRoot: new URL('..', import.meta.url),
     discovered,
   })
+  // The audit's own checks are only as good as the CI coverage they have, so
+  // the canonical lane coverage is discovered here and reported. It is a
+  // warning: the canonical audit record and its generated report are not
+  // changed by it, and a lane-registration gap belongs to the lane owner.
+  const ciCoverage = await discoverArchitectureCiCoverage(new URL('..', import.meta.url))
+  warnings.push(...validateArchitectureCiCoverage(ciCoverage).warnings)
   for (const warning of warnings) console.warn(`Architecture audit warning: ${warning}`)
   if (errors.length > 0) throw new Error(`Architecture audit is invalid:\n- ${errors.join('\n- ')}`)
   const report = await renderArchitectureReport(audit)

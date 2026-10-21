@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL, URL } from 'node:url'
 import {
   bindsCapabilityOption,
   discoverArchitecture,
+  discoverArchitectureCiCoverage,
   discoverCapabilityBindings,
   discoverControllerRoutes,
   discoverPublicOperations,
@@ -13,6 +14,7 @@ import {
   evidencePathError,
   renderArchitectureReport,
   validateArchitectureAudit,
+  validateArchitectureCiCoverage,
 } from './architecture-audit.mjs'
 
 /**
@@ -756,5 +758,88 @@ describe('M11.2 architecture audit tooling regressions', () => {
     expect(errors.some((entry) => entry.includes('PostgreSQL migration registry drifted'))).toBe(
       true
     )
+  })
+
+  test('discovers the architecture audit test files by what they import', async () => {
+    const coverage = await discoverArchitectureCiCoverage(repositoryRoot)
+    const paths = coverage.testFiles.map((file) => file.path)
+    expect(paths).toContain('tests/m11-architecture-audit.test.mjs')
+    expect(paths).toContain('scripts/m11-architecture-audit-regression.test.mjs')
+    // A file that only names the audited test file is not a test of the
+    // audited module, so it is not one of the audited module's test files.
+    expect(paths).not.toContain('tests/repository.test.mjs')
+  })
+
+  test('records the canonical CI lane that runs a covered audit test file', async () => {
+    const coverage = await discoverArchitectureCiCoverage(repositoryRoot)
+    const covered = coverage.testFiles.find(
+      (file) => file.path === 'tests/m11-architecture-audit.test.mjs'
+    )
+    expect(covered?.primaryLane).toBe('smoke')
+    expect(coverage.lanes).toContain('smoke')
+  })
+
+  test('pins the audit regression file that no canonical CI lane runs', async () => {
+    const coverage = await discoverArchitectureCiCoverage(repositoryRoot)
+    // The dedicated regression file must import the audited module directly,
+    // so it cannot live under a lane root and no lane discovers it. When the
+    // lane owner registers it, this pin fails and the registration is
+    // reviewed rather than silently reinterpreted.
+    expect(coverage.uncovered).toEqual(['scripts/m11-architecture-audit-regression.test.mjs'])
+  })
+
+  test('reports an uncovered audit test file as a warning and never as an error', async () => {
+    const coverage = await discoverArchitectureCiCoverage(repositoryRoot)
+    const { errors, warnings } = validateArchitectureCiCoverage(coverage)
+    expect(errors).toEqual([])
+    expect(
+      warnings.some((warning) =>
+        warning.includes('scripts/m11-architecture-audit-regression.test.mjs')
+      )
+    ).toBe(true)
+  })
+
+  test('reports lane inventory drift instead of failing the coverage discovery', async () => {
+    const coverage = await discoverArchitectureCiCoverage(repositoryRoot, {
+      inventoryError: 'Test lane inventory drift: unowned [tests/missing.test.mjs], missing []',
+    })
+    const { errors, warnings } = validateArchitectureCiCoverage(coverage)
+    expect(errors).toEqual([])
+    expect(warnings.some((warning) => warning.includes('Test lane inventory drift'))).toBe(true)
+  })
+
+  test('discovers the audit test files of a synthetic checkout by import', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-architecture-ci-'))
+    const root = join(directory, 'repository')
+    await mkdir(join(root, 'scripts'), { recursive: true })
+    await mkdir(join(root, 'tests'), { recursive: true })
+    await writeFile(
+      join(root, 'scripts', 'audit-regression.test.mjs'),
+      "import { discoverArchitecture } from './architecture-audit.mjs'\n"
+    )
+    await writeFile(
+      join(root, 'tests', 'mentions-the-audit.test.mjs'),
+      "const listed = 'tests/m11-architecture-audit.test.mjs'\n"
+    )
+    await writeFile(join(root, 'tests', 'unrelated.test.mjs'), 'export const value = 1\n')
+    try {
+      const coverage = await discoverArchitectureCiCoverage(pathToFileURL(`${root}/`), {
+        inventory: [{ path: 'tests/mentions-the-audit.test.mjs', primaryLane: 'smoke' }],
+      })
+      expect(coverage.testFiles.map((file) => file.path)).toEqual([
+        'scripts/audit-regression.test.mjs',
+      ])
+      expect(coverage.uncovered).toEqual(['scripts/audit-regression.test.mjs'])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('the canonical CI discovery leaves the canonical audit and report unchanged', async () => {
+    const auditBefore = await readFile(auditUrl, 'utf8')
+    const reportBefore = await readFile(reportUrl, 'utf8')
+    await discoverArchitectureCiCoverage(repositoryRoot)
+    expect(await readFile(auditUrl, 'utf8')).toBe(auditBefore)
+    expect(await readFile(reportUrl, 'utf8')).toBe(reportBefore)
   })
 })

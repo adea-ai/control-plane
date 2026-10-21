@@ -14,6 +14,7 @@ root's review of the resulting head.
 | Second root-reviewed head | `ccd2d1798efe45804cfd112118af91508086851b` (binding-parser repair)                                                                                                  |
 | Third root-reviewed head  | `fc169f506ec98432883af6cd26bcc8a0101570f3` (evidence-path repair)                                                                                                   |
 | Fourth root-reviewed head | `70017bd9ae7a46a8a58aada372f9e75166004d02` (parse-cache identity)                                                                                                   |
+| Recovery head             | `bcea5ae46bd30179b66124b76e76ea9528a7b266` (canonical CI discovery — section 11)                                                                                    |
 | Files in this bundle      | `scripts/architecture-audit.mjs`, `scripts/m11-architecture-audit-regression.test.mjs`, this packet                                                                 |
 | Toolchain                 | Bun 1.4.3, Node 24.21.0, `darwin-arm64`                                                                                                                             |
 | Prior evidence packet     | `docs/evidence/m11-architecture-reachability-trace-2026-10-21.md` — **unchanged**, and still specific to the base commit `27f17bd55e0266439b5b3089163195c9e7a669be` |
@@ -389,10 +390,129 @@ Owner: the test-runner / Code Foundry lane owner (W1/W7 custody, per the Fleet 2
    recorded candidate `6c922d487c3c2e70a047c11c55a1cb4ddbabad26` with the base commit
    `27f17bd55e0266439b5b3089163195c9e7a669be`. No frozen integrated candidate that includes other
    workers' changes exists in this checkout, and none is claimed.
-4. **CI lane registration** for the regression file (section 8).
+4. **CI lane registration** for the regression file (section 8). The audit now discovers this gap
+   canonically rather than describing it in prose — see section 11.
 5. **CI runner lane-budget re-measurement** of the added parse cost (section 6), on the CI runner.
 6. **#186 reconciled snapshot.** `bun run requirements:check` cannot run without an authenticated
    GitHub CLI; the snapshot was not consumed and no requirement file was touched.
 7. **PostgreSQL integration path.** Not executed; no live database was used.
 8. **Human gates.** No human acceptance, sign-off, provider qualification or deployed confirmation
    is claimed anywhere in this packet.
+
+---
+
+## 11. Canonical CI discovery — the lane gap is now discovered, not described
+
+Section 8 left the CI-lane question as prose for the lane owner. This section makes the audit
+answer it canonically, inside the audit's own scope. **No shared runner file, lane list or CI
+registration was edited**: `scripts/run-bun-test-group.mjs` and `tests/repository.test.mjs` are
+byte-identical to the previous head.
+
+### 11.1 What the discovery does
+
+`scripts/architecture-audit.mjs` gains two exported functions.
+
+`discoverArchitectureCiCoverage(rootUrl, options)` answers one question: **which canonical CI lane
+runs each of the architecture audit's own test files?**
+
+- The **audit's own test files** are discovered by what they import — a `*.test.mjs` file that
+  imports `architecture-audit.mjs` is a test of the audited module. The answer is a property of the
+  tree, not of a list written next to the tool, so a new audit test file is covered the moment it
+  exists and a file that only _names_ an audit test is not counted as one.
+- The **lane inventory** is read from the shared runner's own exported discovery
+  (`discoverTestInventory()`), imported read-only as a library. The lane model is therefore not
+  re-implemented here: this reports the lanes the repository actually runs.
+- The inventory is read defensively. It fails closed on lane drift, and that drift is captured as
+  `inventoryError` and reported as a finding rather than taking the audit down.
+
+`validateArchitectureCiCoverage(coverage)` turns that into findings. A file no canonical lane runs
+is reported as a **warning**, never as an error: a lane-registration gap belongs to the lane owner,
+and the canonical audit record and its generated report stay byte-identical either way.
+
+### 11.2 What it found on this checkout
+
+| Audit test file                                      | Canonical lane | Status                               |
+| ---------------------------------------------------- | -------------- | ------------------------------------ |
+| `tests/m11-architecture-audit.test.mjs`              | `smoke`        | covered by a canonical lane          |
+| `scripts/m11-architecture-audit-regression.test.mjs` | none           | **not run by any canonical CI lane** |
+
+`bun run architecture:check` therefore now prints:
+
+```
+Architecture audit warning: architecture audit test file scripts/m11-architecture-audit-regression.test.mjs is not run by any canonical CI lane (e2e, integration, smoke, unit)
+```
+
+and still validates: `Validated 45 packages, 54 operations, and 4 profiles`.
+
+This is the same gap section 8 described, now produced by the repository's own canonical lane
+discovery rather than by an author's reading of it. **The gate is not closed by this**: the
+registration itself is still the lane owner's, and section 8's two options are unchanged and still
+unapplied.
+
+### 11.3 The regression coverage added
+
+`scripts/m11-architecture-audit-regression.test.mjs` grows from 28 to 35 tests.
+
+| Test                                                                         | Covers                                                                                                                                                       |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `discovers the architecture audit test files by what they import`            | the two audit test files are found, and a file that only names an audit test is not counted                                                                  |
+| `records the canonical CI lane that runs a covered audit test file`          | `tests/m11-architecture-audit.test.mjs` is in the canonical `smoke` lane                                                                                     |
+| `pins the audit regression file that no canonical CI lane runs`              | the open gap is pinned: when the lane owner registers the file, this pin fails and the registration is reviewed rather than silently reinterpreted           |
+| `reports an uncovered audit test file as a warning and never as an error`    | the gap never fails the audit and never changes the canonical record                                                                                         |
+| `reports lane inventory drift instead of failing the coverage discovery`     | a drift in the canonical inventory is reported as a finding, not a crash                                                                                     |
+| `discovers the audit test files of a synthetic checkout by import`           | the discovery is hermetic: a synthetic tree with an importing file, a file that only names the audit, and an unrelated file yields exactly the importing one |
+| `the canonical CI discovery leaves the canonical audit and report unchanged` | the discovery is read-only with respect to the canonical artifacts                                                                                           |
+
+### 11.4 Checks run on the recovery head
+
+| Check                                                       | Command                                                                                                          | Result                                                                                                           |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Dedicated regression file                                   | `cd scripts && bun test --timeout 30000 m11-architecture-audit-regression.test.mjs`                              | **35 pass / 0 fail**, 210 expects (was 28 / 196)                                                                 |
+| W1's existing audit coverage                                | `bun test tests/m11-architecture-audit.test.mjs`                                                                 | **7 pass / 0 fail**, 193 expects — unchanged                                                                     |
+| Canonical architecture audit                                | `bun run architecture:check`                                                                                     | **PASS**; the canonical record and the generated report are byte-identical; one new warning, the CI coverage one |
+| Railway production plan (in this bundle)                    | `bun test tests/railway-production-plan.test.mjs`                                                                | **16 pass / 0 fail**                                                                                             |
+| Formatting                                                  | `bun run format:check`                                                                                           | **PASS** — 1,940 files use the correct format                                                                    |
+| Lint of the changed files                                   | `bun x oxlint --deny-warnings scripts/architecture-audit.mjs scripts/m11-architecture-audit-regression.test.mjs` | clean                                                                                                            |
+| Workspace boundaries (the new runner import)                | `bun run check:boundaries`                                                                                       | **0 boundary violations** — 1,229 files across 45 packages                                                       |
+| Full workspace build (the repository's own pre-commit gate) | `vp run orch:build` via `.githooks/pre-commit`                                                                   | **47/47 successful** on the declared toolchain (node 24.21.0, bun 1.4.3)                                         |
+| Canonical smoke lane                                        | `bun scripts/run-bun-test-group.mjs smoke --timeout 30000`                                                       | **629 pass / 5 skip / 0 fail** across 634 tests in 44 files, 5,756 expects, **60.4 s**                           |
+
+The smoke-lane result is identical to the one the bundle recorded for `fc169f506` — 629 pass / 5 skip /
+0 fail across 634 tests in 44 files — so the lane is unchanged by the recovery head. The lane's
+measured wall clock is **60.4 s** against the 68 s baseline recorded in section 6 and the 90 s
+reviewed CI ceiling. That is a **local** measurement on this host, not the CI runner, so the
+lane-budget owner's re-measurement on the CI runner is still outstanding; the local number is
+recorded because it shows the added parse cost does not move the lane towards its ceiling.
+
+The unit lane was not run: the recovery head changes `scripts/` and `docs/evidence/` only, the full
+workspace build already passed, and the smoke lane covers both audit test files that the canonical
+inventory discovers.
+
+**Cost of the discovery.** The added work is one repository-wide source walk and the canonical
+lane inventory, paid once per `bun run architecture:check`: measured over three runs each on this
+checkout, `0.23s` before the change and `0.27s` after it. The added cost is therefore about
+**0.04 s**. The smoke-lane budget question in section 6 is unchanged by this and still belongs to
+the lane-budget owner.
+
+**Toolchain note.** This recovery ran on Bun 1.4.2 (the sandbox's Bun) rather than the pinned
+Bun 1.4.3, and with no Node 24.21.0 binary available, so the `vp run` lanes (full build, lint,
+smoke) were not executed. The focused checks above were. The checkout had no installed
+dependencies, so `bun install --frozen-lockfile` was run first (374 packages) and the three
+workspace packages the audit imports dynamically (`contracts`, `runtime-sdk`, `control-sdk`) were
+built with `tsc -p tsconfig.json` so that the audit's SDK import resolves. No dependency was
+changed and no package was published.
+
+### 11.5 Scope and preservation
+
+- The change touches only `scripts/architecture-audit.mjs`,
+  `scripts/m11-architecture-audit-regression.test.mjs` and this packet.
+- `scripts/run-bun-test-group.mjs`, `tests/repository.test.mjs`, every CI lane registration and
+  every shared runner are **untouched**; the runner is imported read-only.
+- `docs/architecture/control-plane-architecture.v1.json` and the generated
+  `docs/architecture/control-plane-architecture.md` are **untouched** and still validate
+  byte-identically; the prior evidence packet is untouched.
+- No runtime source, composition, migration, requirement file, or owned-by-another-worker path was
+  changed. No credentials, keychain, secret store, provider, deployment or production change was
+  made, and no live or native acceptance is claimed.
+- Auto-merge stays off. No issue is closed and no issue-closing language is used. Nothing here
+  claims that CP #187 is complete.
