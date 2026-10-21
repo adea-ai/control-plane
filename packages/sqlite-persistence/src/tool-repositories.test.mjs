@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -39,10 +40,29 @@ const ids = {
 }
 
 const requestedAt = '2026-08-25T09:00:00.000Z'
+// The historical Swedish receipt for this lane is pinned as an exact
+// canonical payload. Tests hash these fixed bytes; they never derive receipt
+// hashes from the serializer.
 const historicalSwedishToolReceipt = {
+  inputBytes: '{"z":"zee","å":"a-ring","ä":"a-diaeresis"}',
+  requestBytes:
+    '{"attemptId":"att_01JABCDEF0123456789ABCDEFG","executionId":"exe_01JABCDEF0123456789ABCDEFG","idempotencyKey":"tool-effect-0001","input":{"z":"zee","å":"a-ring","ä":"a-diaeresis"},"operation":"write","policySnapshotRef":"policy://workspace/v7","principalRef":"service:runtime-worker","profileId":"prf_01JABCDEF0123456789ABCDEFG","toolCallId":"tlc_01JABCDEF0123456789ABCDEFG","toolDefinitionId":"tld_01JABCDEF0123456789ABCDEFG","toolVersionId":"tlv_01JABCDEF0123456789ABCDEFG","workspaceId":"wsp_01JABCDEF0123456789ABCDEFG"}',
   requestDigest: 'sha256:1e6549b772d8214f37fd72b131a86a979e3147f2d21b63ea28b4825eaeaf6770',
   inputDigest: 'sha256:13df5d9701ee0f10b54eda343f77b053bf317cf5a8628c41638ae5216993f312',
 }
+
+function digestReceiptBytes(bytes) {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`
+}
+
+test('pinned historical SQLite tool receipt hashes match their independent canonical bytes', () => {
+  expect(digestReceiptBytes(historicalSwedishToolReceipt.inputBytes)).toBe(
+    historicalSwedishToolReceipt.inputDigest
+  )
+  expect(digestReceiptBytes(historicalSwedishToolReceipt.requestBytes)).toBe(
+    historicalSwedishToolReceipt.requestDigest
+  )
+})
 
 function definition(workspaceId = ids.workspace, toolDefinitionId = ids.definition) {
   return {
