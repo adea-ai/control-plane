@@ -483,6 +483,48 @@ export type PersistedOutput = {
 }
 
 /**
+ * A canary value was found in a serialized output.
+ *
+ * The gate runs before any destination write, so this rejection creates no
+ * output file and overwrites no prior artifact. The message names the affected
+ * outputs only: a canary value is never emitted.
+ */
+export class SkillEvalCanaryGateError extends Error {
+  readonly outputs: string[]
+
+  constructor(outputs: string[]) {
+    super(
+      `skill-eval canary gate refused to persist ${outputs.length} output(s) containing a canary value: ${outputs.join(', ')}`
+    )
+    this.name = 'SkillEvalCanaryGateError'
+    this.outputs = outputs
+  }
+}
+
+/**
+ * A destination write failed after the canary gate had already passed.
+ *
+ * The batch is written sequentially, so earlier outputs may already be on
+ * disk. `persisted` names the outputs that were written before the failure
+ * and `failed` names the one that did not, so the caller can report a partial
+ * state truthfully instead of claiming that nothing was written.
+ */
+export class SkillEvalPersistenceError extends Error {
+  readonly persisted: string[]
+  readonly failed: string
+
+  constructor(persisted: string[], failed: string, cause: unknown) {
+    super(
+      `skill-eval persistence failed while writing '${failed}' after ${persisted.length} output(s) had already been persisted. The output state may be partial.`,
+      { cause }
+    )
+    this.name = 'SkillEvalPersistenceError'
+    this.persisted = persisted
+    this.failed = failed
+  }
+}
+
+/**
  * Fail-closed canary gate.
  *
  * Every output that could be persisted is scanned before the first byte is
@@ -495,22 +537,31 @@ export function assertOutputsCanaryFree(outputs: PersistedOutput[], canaries: st
     .filter((output) => canaries.some((canary) => output.content.includes(canary)))
     .map((output) => output.name)
   if (affected.length === 0) return
-  throw new Error(
-    `skill-eval canary gate refused to persist ${affected.length} output(s) containing a canary value: ${affected.join(', ')}`
-  )
+  throw new SkillEvalCanaryGateError(affected)
 }
 
 /**
- * Scan, then write. Nothing is created and nothing is overwritten when the
- * gate rejects the batch.
+ * Scan, then write.
+ *
+ * A canary rejection is raised before the first destination write, so it
+ * creates no output and overwrites no prior artifact. A write failure is
+ * different: the batch is sequential, so the outputs written before the
+ * failure stay on disk. That is reported as a
+ * {@link SkillEvalPersistenceError} that lists exactly what was persisted.
  */
 export async function persistOutputs(
   outputs: PersistedOutput[],
   canaries: string[]
 ): Promise<void> {
   assertOutputsCanaryFree(outputs, canaries)
+  const persisted: string[] = []
   for (const output of outputs) {
-    await mkdir(dirname(output.path), { recursive: true })
-    await writeFile(output.path, output.content)
+    try {
+      await mkdir(dirname(output.path), { recursive: true })
+      await writeFile(output.path, output.content)
+    } catch (cause) {
+      throw new SkillEvalPersistenceError(persisted, output.name, cause)
+    }
+    persisted.push(output.name)
   }
 }

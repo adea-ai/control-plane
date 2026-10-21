@@ -97,6 +97,33 @@ synthetic sentinel is pushed into a serialized output and the run is required
 to create no output file and to leave a pre-existing artifact untouched. The
 sentinel is a test literal, not a secret and not a credential.
 
+## Persistence failure semantics
+
+The canary gate is not the only way a run can fail, and the two failure modes
+carry different guarantees, so the runner reports them differently.
+
+- **A canary rejection** is raised before the first destination write. No
+  output file is created and no prior artifact is overwritten, and the runner
+  says exactly that.
+- **A write failure** is different. The batch is written sequentially, so a
+  failure on a later output happens after the earlier ones are already on
+  disk. The runner then reports a partial state: it names the output that
+  failed and the outputs that had already been persisted, and it does not
+  claim that nothing was written.
+- **Any other failure** escapes before the batch is written, because every
+  destination write is wrapped, and the runner says that nothing was created
+  or overwritten.
+
+The batch is deliberately not made atomic across outputs. A cross-output
+transaction is not available on a POSIX filesystem without replacing a whole
+directory, and a rollback would need to restore prior bytes and could itself
+fail; a partially written batch is therefore reported truthfully instead of
+being hidden behind an all-or-nothing claim. Within one output the write is a
+single `writeFile` call, so an output that cannot be opened is left untouched,
+while a write that fails part-way can leave a truncated file — which is
+another reason the runner names the persisted outputs rather than promising
+that nothing was damaged.
+
 ## Run
 
 ```sh

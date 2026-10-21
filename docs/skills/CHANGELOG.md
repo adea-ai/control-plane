@@ -6,6 +6,19 @@ changed, validation performed, and any evidence or compatibility limits.
 
 ## Unreleased — 2026-10-21
 
+- Skill-eval runner persistence reporting (root review of draft PR #1216,
+  follow-up to `683fe954`): the runner's failure handler reported "no output
+  file was created or overwritten" for every error, but the output batch is
+  written sequentially, so a failure on a later output happens after the
+  earlier ones are already on disk. The runner now distinguishes the failure
+  modes and reports each truthfully: a canary rejection still states that
+  nothing was created or overwritten, because the gate precedes every
+  destination write; a write failure reports the partial state and names the
+  outputs that had already been persisted, and never claims that nothing was
+  written; any other failure escapes before the batch is written and says so.
+  A deterministic regression injects a second-output I/O failure and asserts
+  the partial persistence and the truthful report. The canary gate, its
+  rejection semantics, and the committed evidence artifact are unchanged.
 - Skill-eval runner repair (root review of draft PR #1216): the runner
   serialized and wrote its outputs before scanning them for canary values, so
   a canary could reach a persisted artifact, and `--write-evidence` could

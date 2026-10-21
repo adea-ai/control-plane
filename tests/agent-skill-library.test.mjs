@@ -9,14 +9,20 @@ import {
   buildEvidence,
   createColdExecutor,
   loadSuite,
+  persistOutputs,
   routingBytes,
   runScenario,
+  SkillEvalCanaryGateError,
+  SkillEvalPersistenceError,
   skillOwner,
   skillVersion,
   snapshotBaselineLibrary,
   snapshotCandidateLibrary,
 } from '../docs/evals/skill-evals/skill-eval-harness.mts'
-import { runSkillEvalSuite } from '../docs/evals/skill-evals/run-skill-evals.mts'
+import {
+  describeSkillEvalFailure,
+  runSkillEvalSuite,
+} from '../docs/evals/skill-evals/run-skill-evals.mts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const skillRoot = resolve(root, '.agents/skills')
@@ -344,6 +350,66 @@ test('skill text is treated as untrusted data, not as instructions', async () =>
   expect(report.status).toBe('partial')
 })
 
+test('a second-output write failure is reported as a truthful partial persistence', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'control-plane-skill-eval-partial-'))
+  const outDir = join(directory, 'out')
+  try {
+    await mkdir(outDir, { recursive: true })
+    // A regular file where the second output's directory belongs makes that
+    // output's write fail deterministically, after the first output has
+    // already been written.
+    await writeFile(join(outDir, 'blocked'), 'not a directory\n')
+    const firstPath = join(outDir, 'first.json')
+    const outputs = [
+      { path: firstPath, content: '{"first":true}\n', name: 'first output' },
+      {
+        path: join(outDir, 'blocked', 'second.json'),
+        content: '{"second":true}\n',
+        name: 'second output',
+      },
+    ]
+
+    let failure = null
+    try {
+      await persistOutputs(outputs, [])
+    } catch (error) {
+      failure = error
+    }
+
+    expect(failure).toBeInstanceOf(SkillEvalPersistenceError)
+    expect(failure.persisted).toEqual(['first output'])
+    expect(failure.failed).toBe('second output')
+    // The first output really was written. The batch is sequential, not
+    // atomic, so the report must say so rather than claim otherwise.
+    expect(existsSync(firstPath)).toBe(true)
+    expect(existsSync(join(outDir, 'blocked', 'second.json'))).toBe(false)
+
+    const report = describeSkillEvalFailure(failure).join('\n')
+    expect(report).toContain('first output')
+    expect(report).toMatch(/partial/i)
+    // The false claim must not be made for a partial persistence.
+    expect(report).not.toContain('no output file was created or overwritten')
+    expect(report).not.toContain('no output was written')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('a canary rejection still reports that nothing was written', () => {
+  const report = describeSkillEvalFailure(new SkillEvalCanaryGateError(['sealed evidence receipt']))
+  const text = report.join('\n')
+  expect(text).toContain('canary gate')
+  expect(text).toContain('no output file was created or overwritten')
+  expect(text).not.toMatch(/may be partial/i)
+})
+
+test('an unexpected failure before the batch is written reports that nothing was written', () => {
+  const report = describeSkillEvalFailure(new Error('the baseline tree is unavailable')).join('\n')
+  expect(report).toContain('the baseline tree is unavailable')
+  expect(report).toContain('no output file was created or overwritten')
+  expect(report).not.toMatch(/may be partial/i)
+})
+
 test('the canary gate refuses the whole output batch before anything is written', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'control-plane-skill-eval-canary-'))
   const outDir = join(directory, 'out')
@@ -364,6 +430,7 @@ test('the canary gate refuses the whole output batch before anything is written'
     }
 
     let message = ''
+    let failure = null
     let rejected = false
     try {
       await runSkillEvalSuite({
@@ -375,6 +442,7 @@ test('the canary gate refuses the whole output batch before anything is written'
       })
     } catch (error) {
       rejected = true
+      failure = error
       message = error instanceof Error ? error.message : String(error)
     }
 
@@ -382,6 +450,11 @@ test('the canary gate refuses the whole output batch before anything is written'
     expect(message).toMatch(/canary gate/)
     // The failure never emits the canary value.
     expect(message).not.toContain(sentinel)
+    // A canary rejection precedes every destination write, so the report may
+    // state that nothing was created or overwritten.
+    const report = describeSkillEvalFailure(failure).join('\n')
+    expect(report).toContain('no output file was created or overwritten')
+    expect(report).not.toContain(sentinel)
     // No output file is created...
     expect(await readdir(outDir)).toEqual([])
     // ...and the existing artifact is not overwritten.

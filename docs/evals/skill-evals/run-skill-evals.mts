@@ -8,6 +8,8 @@ import {
   loadSuite,
   persistOutputs,
   runScenario,
+  SkillEvalCanaryGateError,
+  SkillEvalPersistenceError,
   snapshotBaselineLibrary,
   snapshotCandidateLibrary,
   suiteCanaries,
@@ -34,6 +36,11 @@ import {
  * anything written. A rejected batch creates no file and overwrites no
  * existing artifact, and the failure message names the affected outputs
  * without emitting a canary value.
+ *
+ * The batch itself is not atomic across outputs: it is written sequentially,
+ * so a write failure on a later output can leave the earlier outputs on disk.
+ * That case is reported as a partial state, with the persisted outputs named,
+ * and it never claims that nothing was written.
  */
 
 export type SkillEvalRun = {
@@ -165,6 +172,39 @@ async function formatRepositoryArtifact(root: string, content: string): Promise<
   }
 }
 
+/**
+ * Describe a failed run truthfully.
+ *
+ * The three cases carry different guarantees, so they are reported
+ * differently:
+ *
+ * - A canary rejection is raised before the first destination write, so no
+ *   output file was created and no prior artifact was overwritten.
+ * - An unexpected error escapes before the batch is written, with the same
+ *   guarantee. Every destination write is wrapped, so a write failure always
+ *   surfaces as a {@link SkillEvalPersistenceError} instead.
+ * - A persistence failure is different: the batch is written sequentially, so
+ *   the outputs written before the failure are on disk. The report says
+ *   exactly which ones, and it does not claim that nothing was written.
+ */
+export function describeSkillEvalFailure(error: unknown): string[] {
+  if (error instanceof SkillEvalCanaryGateError) {
+    return [error.message, 'skill-evals: no output file was created or overwritten']
+  }
+  if (error instanceof SkillEvalPersistenceError) {
+    const persisted = error.persisted.length > 0 ? `: ${error.persisted.join(', ')}` : ''
+    return [
+      error.message,
+      `skill-evals: ${error.persisted.length} output(s) were persisted before the failure${persisted}`,
+      'skill-evals: the output state may be partial; the persisted outputs are on disk and must be inspected before use',
+    ]
+  }
+  return [
+    error instanceof Error ? error.message : String(error),
+    'skill-evals: the run failed before the output batch was written; no output file was created or overwritten',
+  ]
+}
+
 if (import.meta.main) {
   const root = fileURLToPath(new URL('../../..', import.meta.url))
   const OUT = '/tmp/skill-evals'
@@ -185,10 +225,8 @@ if (import.meta.main) {
       formatArtifact: (content) => formatRepositoryArtifact(root, content),
     })
   } catch (error) {
-    // Fail closed: nothing was written, nothing was overwritten, and the
-    // message never contains a canary value.
-    console.error(error instanceof Error ? error.message : String(error))
-    console.error('skill-evals: no output file was created or overwritten')
+    // Fail closed, and report only what is true about the output state.
+    for (const line of describeSkillEvalFailure(error)) console.error(line)
     process.exit(1)
   }
 
