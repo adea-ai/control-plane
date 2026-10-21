@@ -52,6 +52,18 @@ async function readSource(relativePath) {
   return readFile(new URL(`../${relativePath}`, import.meta.url), 'utf8')
 }
 
+/**
+ * Reads a source file that a probe depends on. A missing or empty file is a
+ * harness failure, never a finding: a probe must never report "this module has
+ * no grant check" because the module it named does not exist.
+ */
+async function readSourceStrict(relativePath) {
+  const source = await readSource(relativePath).catch(() => undefined)
+  if (source === undefined) throw new Error(`probe source file is missing: ${relativePath}`)
+  if (source.trim().length === 0) throw new Error(`probe source file is empty: ${relativePath}`)
+  return source
+}
+
 async function readJson(relativePath) {
   return JSON.parse(await readSource(relativePath))
 }
@@ -76,7 +88,7 @@ function metadataCommand(overrides = {}) {
 
 probe(
   'CP190-P01',
-  'Relay metadata-only commands carry no authentication material',
+  'The relay metadata command schema carries no authentication material of its own',
   ['STA-L46-09', 'STA-L66-01', 'STA-L68-02'],
   async () => {
     const parsed = RelayMetadataCommandSchema.safeParse(metadataCommand())
@@ -87,16 +99,20 @@ probe(
     const authenticators = fields.filter((field) =>
       /signature|mac|hmac|token|credential|key|nonce|sequence|proof/i.test(field)
     )
+    const documented = await readSource('docs/remote-control-relay.md')
+    const delegated = documented.includes(
+      'Authentication of that metadata transport remains the responsibility of the concrete relay client'
+    )
     return {
       reproduced: authenticators.length === 0,
-      detail: `metadata command fields = ${fields.join(', ')}; authentication fields present = ${authenticators.length}`,
+      detail: `metadata command fields = ${fields.join(', ')}; authentication fields present = ${authenticators.length}; the obligation is documented as delegated to the concrete relay client = ${delegated}`,
     }
   }
 )
 
 probe(
   'CP190-P02',
-  'A fabricated relay metadata command is accepted and its effect fires',
+  'The relay host processor applies no authentication of its own to a metadata command',
   ['STA-L46-09', 'STA-L66-01'],
   async () => {
     const effects = []
@@ -110,16 +126,23 @@ probe(
       new InMemoryRelayMetadataCommandResultRepository()
     )
     const result = await processor.process(metadataCommand(), new Date('2026-10-21T00:30:00.000Z'))
+    const local = await readSource('apps/local-control-plane/src/composition.ts')
+    const hosted = await readSource('apps/hosted-control-plane/src/composition.ts')
+    const optIn =
+      local.includes('readonly remoteControl?: RemoteControlHostAdapter<unknown>') &&
+      hosted.includes('readonly remoteControl?: RemoteControlHostAdapter<unknown>')
+    const relay = await readSource('packages/remote-control-relay/src/relay.ts')
+    const onlyFakeClient = relay.includes('export class FakeOpaqueRelay')
     return {
       reproduced: result.outcome === 'accepted' && effects.length === 1,
-      detail: `outcome=${result.outcome}, applied effects=${effects.join(',') || 'none'}`,
+      detail: `outcome=${result.outcome}, applied effects=${effects.join(',') || 'none'}; the processor adds no provenance check of its own. Reachability: the relay adapter is opt-in in both compositions = ${optIn}; the only relay client in the repository is the test fake = ${onlyFakeClient}. No deployed attacker-controlled ingress is claimed.`,
     }
   }
 )
 
 probe(
   'CP190-P03',
-  'The same logical relay effect repeats under a fresh command id',
+  'The relay processor offers no idempotency across command identifiers',
   ['STA-L16-01', 'STA-L68-03', 'STA-L78-01'],
   async () => {
     const effects = []
@@ -135,16 +158,20 @@ probe(
     const now = new Date('2026-10-21T00:30:00.000Z')
     await processor.process(metadataCommand({ commandId: 'cmd_synthetic_a' }), now)
     await processor.process(metadataCommand({ commandId: 'cmd_synthetic_b' }), now)
+    const adapter = await readSource('packages/remote-control-relay/src/adapter.ts')
+    const injected = adapter.includes(
+      'readonly metadataCommands?: RelayMetadataCommandProcessor<unknown>'
+    )
     return {
       reproduced: effects.length === 2,
-      detail: `effects applied for one target = ${effects.length}`,
+      detail: `effects applied for one target under two command ids = ${effects.length}; the effect callback is injected, so its own idempotency is the callback's property = ${injected}. This is not a duplicate-effect claim: create_execution is idempotent through the CommandInbox.`,
     }
   }
 )
 
 probe(
   'CP190-P04',
-  'The relay effect is applied before its durable idempotency receipt is written',
+  'The relay effect and its idempotency receipt are two separate writes with no atomic binding',
   ['STA-L16-01', 'STA-L68-03', 'STA-L78-01'],
   async () => {
     const keyPair = await generateHostEncryptionKeyPair(
@@ -171,7 +198,7 @@ probe(
       {
         get: async () => undefined,
         put: async () => {
-          // The durable receipt is lost, as in a crash between the effect and the receipt.
+          // The receipt write fails, as in a crash between the effect and the receipt.
           receiptPersisted = false
           throw new Error('synthetic_receipt_write_failure')
         },
@@ -187,9 +214,20 @@ probe(
     } catch (error) {
       thrown = error
     }
+    const relay = await readSource('packages/remote-control-relay/src/relay.ts')
+    const execution = await readSource('packages/remote-control-relay/src/execution.ts')
+    const onlyInMemory =
+      relay.includes('export class InMemoryRelayCommandResultRepository') &&
+      relay.includes('export class InMemoryRelayMetadataCommandResultRepository') &&
+      execution.includes('InMemoryRelayCommandResultRepository')
+    const documented = await readSource('docs/remote-control-relay.md')
+    const delegation = documented.includes(
+      'the in-memory repository is a test/default seam, not restart durability'
+    )
     return {
-      reproduced: effects === 1 && receiptPersisted === false && thrown !== undefined,
-      detail: `effects=${effects}, receipt persisted=${receiptPersisted}, threw=${thrown !== undefined} (a redelivery applies the effect again)`,
+      reproduced:
+        effects === 1 && receiptPersisted === false && thrown !== undefined && onlyInMemory,
+      detail: `effects=${effects}, receipt persisted=${receiptPersisted}, threw=${thrown !== undefined}; the two writes are not atomic. The effect-before-receipt order is deliberate and safe: a receipt written first would record an effect that never happened. Only in-memory receipt repositories ship = ${onlyInMemory}; the durable repository is documented as a composition requirement = ${delegation}. create_execution is idempotent through the CommandInbox, so no duplicate live effect is claimed for it.`,
     }
   }
 )
@@ -200,26 +238,27 @@ probe(
 
 probe(
   'CP190-P05',
-  'The credential-vault egress guard does not see a secret inside an Error carrier',
+  'The credential-vault egress screen misses a returned carrier but a thrown error is sanitized',
   ['STA-L40-17', 'STA-L40-18', 'STA-L76-03'],
   async () => {
     const now = '2026-10-21T00:00:00.000Z'
+    const allowDecisionPoint = {
+      requests: [],
+      async authorize(request) {
+        this.requests.push(request)
+        return {
+          effect: 'allow',
+          decisionId: `sha256:${'b'.repeat(64)}`,
+          reasonCode: 'CEDAR_PERMIT',
+          policySnapshot: request.policySnapshot,
+          evaluatedAt: request.context.requestedAt,
+        }
+      },
+    }
     const vault = new CredentialVault({
       provider: new InMemorySecretProvider(),
       now: () => now,
-      decisionPoint: {
-        requests: [],
-        async authorize(request) {
-          this.requests.push(request)
-          return {
-            effect: 'allow',
-            decisionId: `sha256:${'b'.repeat(64)}`,
-            reasonCode: 'CEDAR_PERMIT',
-            policySnapshot: request.policySnapshot,
-            evaluatedAt: request.context.requestedAt,
-          }
-        },
-      },
+      decisionPoint: allowDecisionPoint,
     })
     await vault.create({
       credentialId: 'crd_01JABCDEF0123456789ABCDEFG',
@@ -229,14 +268,19 @@ probe(
       secret: CANARY,
       createdAt: now,
     })
-    const lease = await vault.lease({
+    const scope = {
+      workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
+      operation: 'synthetic.call',
+      resourceRef: 'tool:synthetic',
+    }
+    const first = await vault.lease({
       credentialLeaseId: 'crl_01JABCDEF0123456789ABCDEFG',
       credentialId: 'crd_01JABCDEF0123456789ABCDEFG',
       requestId: 'req_01JABCDEF0123456789ABCDEFG',
-      workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
+      workspaceId: scope.workspaceId,
       principalRef: 'service:tool-gateway',
-      operation: 'synthetic.call',
-      resourceRef: 'tool:synthetic',
+      operation: scope.operation,
+      resourceRef: scope.resourceRef,
       requestedAt: now,
       expiresAt: '2026-10-21T00:05:00.000Z',
       policySnapshot: {
@@ -245,26 +289,51 @@ probe(
         digest: `sha256:${'a'.repeat(64)}`,
       },
     })
-    let escaped
+    // Half one: a callback that RETURNS an Error carrier. The screen walks own
+    // enumerable string keys, so the carrier is not inspected.
+    let returned
     let blocked = false
     try {
-      escaped = await vault.use(
-        lease.capabilityRef,
-        {
-          workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
-          operation: 'synthetic.call',
-          resourceRef: 'tool:synthetic',
-        },
-        async (secret) => new Error(secret)
-      )
+      returned = await vault.use(first.capabilityRef, scope, async (secret) => new Error(secret))
     } catch (error) {
       blocked = error instanceof Error && /SECRET_EGRESS_BLOCKED/.test(error.message)
     }
     const carrierMissed = containsSecret(new Error(CANARY), CANARY) === false
-    const leaked = escaped instanceof Error && escaped.message.includes(CANARY)
+    const carried = returned instanceof Error && returned.message.includes(CANARY)
+    // Half two: a callback that THROWS. The vault converts the throw into a
+    // bounded code, so the secret never leaves through the error path.
+    const second = await vault.lease({
+      credentialLeaseId: 'crl_01JABCDEF0123456789ABCDEF2',
+      credentialId: 'crd_01JABCDEF0123456789ABCDEFG',
+      requestId: 'req_01JABCDEF0123456789ABCDEF2',
+      workspaceId: scope.workspaceId,
+      principalRef: 'service:tool-gateway',
+      operation: scope.operation,
+      resourceRef: scope.resourceRef,
+      requestedAt: now,
+      expiresAt: '2026-10-21T00:05:00.000Z',
+      policySnapshot: {
+        policyId: 'workspace-standard',
+        version: 1,
+        digest: `sha256:${'a'.repeat(64)}`,
+      },
+    })
+    let thrownCode
+    try {
+      await vault.use(second.capabilityRef, scope, async (secret) => {
+        throw new Error(secret)
+      })
+    } catch (error) {
+      thrownCode = error instanceof Error ? error.message : String(error)
+    }
+    const thrownSanitized = thrownCode === 'PROVIDER_OPERATION_FAILED'
+    const composition = await readSource('apps/control-api/src/cloud-composition.ts')
+    const deniesWithoutDecisionPoint = composition.includes(
+      'no policy decision point is composed, so leases deny'
+    )
     return {
-      reproduced: carrierMissed && leaked && blocked === false,
-      detail: `containsSecret(new Error(canary))=false: ${carrierMissed}; egress blocked: ${blocked}; secret carried out of the lease: ${leaked}`,
+      reproduced: carrierMissed && carried && blocked === false && thrownSanitized,
+      detail: `returned Error carrier not screened = ${carrierMissed && carried && blocked === false}; thrown error sanitized to PROVIDER_OPERATION_FAILED = ${thrownSanitized}; the Control API composition composes no decision point so leases deny = ${deniesWithoutDecisionPoint}. This is a bounded library callback-result contract gap: no deployed credential leakage is claimed or demonstrated.`,
     }
   }
 )
@@ -329,14 +398,17 @@ probe(
   'The direct-local ACP and managed-Pi drivers never consult a project grant',
   ['STA-L17-01', 'STA-L42-09', 'STA-L69-02'],
   async () => {
+    // The managed-Pi direct driver lives in the package entry module; an
+    // earlier revision of this probe named a module that does not exist and
+    // therefore reported a missing grant check for a missing file.
     const direct = [
+      'packages/acp-adapter/src/index.ts',
       'packages/acp-adapter/src/acp-driver-execution.ts',
-      'packages/acp-adapter/src/process-transport.ts',
-      'packages/managed-pi-adapter/src/managed-pi-driver.ts',
+      'packages/managed-pi-adapter/src/index.ts',
     ]
     const findings = []
     for (const path of direct) {
-      const source = await readSource(path).catch(() => '')
+      const source = await readSourceStrict(path)
       const mentionsGrant = /grantState|LocalProjectGrant|localProjectGrant/.test(source)
       findings.push(`${path}: grantChecked=${mentionsGrant}`)
     }
@@ -353,13 +425,14 @@ probe(
   ['STA-L42-10', 'STA-L69-01'],
   async () => {
     const sources = [
+      'packages/acp-adapter/src/index.ts',
       'packages/acp-adapter/src/acp-driver-execution.ts',
-      'packages/managed-pi-adapter/src/managed-pi-driver.ts',
+      'packages/managed-pi-adapter/src/index.ts',
       'packages/managed-pi-adapter/src/process-client.ts',
     ]
     const findings = []
     for (const path of sources) {
-      const source = await readSource(path).catch(() => '')
+      const source = await readSourceStrict(path)
       findings.push(`${path}: hasRealpath=${source.includes('realpath')}`)
     }
     return {
@@ -423,16 +496,23 @@ probe(
 
 probe(
   'CP190-P13',
-  'SQLite WAL sidecars are created before the database file is restricted to owner-only',
+  'SQLite WAL sidecars keep the pre-restriction file mode, inside an owner-only parent directory',
   ['STA-L76-01', 'STA-L23-03'],
   async () => {
     const source = await readSource('packages/sqlite-persistence/src/provider.ts')
+    const parentMode = source.indexOf('await chmod(dirname(this.#path), 0o700)')
+    const opened = source.indexOf('new DatabaseSync(this.#path)')
     const walIndex = source.indexOf('journal_mode = WAL')
     const chmodIndex = source.indexOf('chmod(this.#path, 0o600)', walIndex)
     const sidecarChmod = /chmod\([^)]*-wal/.test(source)
+    // The parent directory is restricted before any file exists, so another UID
+    // cannot traverse into it. The sidecar mode is a defense-in-depth gap, not
+    // a demonstrated cross-UID read.
+    const parentRestrictedFirst = parentMode >= 0 && parentMode < opened && parentMode < walIndex
     return {
-      reproduced: walIndex >= 0 && chmodIndex > walIndex && !sidecarChmod,
-      detail: `journal_mode=WAL at ${walIndex}, the following chmod(db) at ${chmodIndex}, sidecar chmod present = ${sidecarChmod}`,
+      reproduced:
+        parentRestrictedFirst && walIndex > opened && chmodIndex > walIndex && !sidecarChmod,
+      detail: `parent chmod 0700 at ${parentMode} precedes the database at ${opened} and the WAL pragma at ${walIndex}; the main file is restricted to 0600 at ${chmodIndex}; a sidecar chmod exists = ${sidecarChmod}. Another UID cannot traverse the 0700 parent, so this is defense in depth and no cross-UID read is claimed.`,
     }
   }
 )
