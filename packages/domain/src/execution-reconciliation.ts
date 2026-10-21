@@ -14,6 +14,10 @@ import {
   type CommandInboxStatus,
 } from './command-inbox.js'
 import type { RuntimeCommandRecord } from './runtime-command.js'
+import {
+  createTerminalStateDisagreementIncident,
+  type ExecutionIncident,
+} from './execution-incident.js'
 
 const TimestampSchema = z.iso.datetime()
 
@@ -273,7 +277,11 @@ export class ExecutionReconciliationService {
   readonly #clock: () => number
   readonly #inFlight = new Map<
     string,
-    Promise<{ checkpoint: ReconciliationCheckpoint; created: boolean }>
+    Promise<{
+      checkpoint: ReconciliationCheckpoint
+      created: boolean
+      incident?: ExecutionIncident
+    }>
   >()
   readonly #windowStarts: number[] = []
 
@@ -305,6 +313,22 @@ export class ExecutionReconciliationService {
 
   async reconcile(executionId: string): Promise<ReconciliationCheckpoint> {
     return (await this.#reconcile(IdentifierSchemas.executionId.parse(executionId))).checkpoint
+  }
+
+  /**
+   * The same reconciliation, plus the first-class incident record when the
+   * observation was a terminal-state disagreement. The checkpoint stays the durable
+   * record; the incident is a value the host may persist in its own store.
+   */
+  async reconcileWithIncident(executionId: string): Promise<{
+    readonly checkpoint: ReconciliationCheckpoint
+    readonly incident?: ExecutionIncident
+  }> {
+    const result = await this.#reconcile(IdentifierSchemas.executionId.parse(executionId))
+    return {
+      checkpoint: result.checkpoint,
+      ...(result.incident === undefined ? {} : { incident: result.incident }),
+    }
   }
 
   async runBatch(input: { readonly limit: number }): Promise<{
@@ -370,6 +394,7 @@ export class ExecutionReconciliationService {
   async #reconcile(executionId: string): Promise<{
     checkpoint: ReconciliationCheckpoint
     created: boolean
+    incident?: ExecutionIncident
   }> {
     const active = this.#inFlight.get(executionId)
     if (active) return active
@@ -386,17 +411,35 @@ export class ExecutionReconciliationService {
   async #perform(executionId: string): Promise<{
     checkpoint: ReconciliationCheckpoint
     created: boolean
+    incident?: ExecutionIncident
   }> {
     const observation = ReconciliationObservationSchema.parse(await this.#source.load(executionId))
     if (observation.executionId !== executionId) throw new Error('RECONCILIATION_SCOPE_MISMATCH')
     const decision = decide(observation, this.#staleAfterMs)
+    // A terminal-state disagreement is an incident with its own identity, severity
+    // and owner, not only a manual-intervention metric.
+    const incident =
+      decision.reason === 'runtime_terminal_unrecorded'
+        ? createTerminalStateDisagreementIncident({
+            executionId: observation.executionId,
+            ...(observation.attempt ? { attemptId: observation.attempt.attemptId } : {}),
+            detectedAt: observation.checkedAt,
+            evidence: decision.diagnostics,
+          })
+        : undefined
     const observationHash = hashObservation(observation, decision)
     const existing = await this.#repository.getByObservationHash(observationHash)
     if (existing) {
-      if (existing.state !== 'reconciling') return { checkpoint: existing, created: false }
+      if (existing.state !== 'reconciling')
+        return {
+          checkpoint: existing,
+          created: false,
+          ...(incident === undefined ? {} : { incident }),
+        }
       return {
         checkpoint: await this.#complete(existing, decision, observation),
         created: false,
+        ...(incident === undefined ? {} : { incident }),
       }
     }
 
@@ -423,12 +466,17 @@ export class ExecutionReconciliationService {
     if (!(await this.#repository.insert(initial))) {
       const concurrent = await this.#repository.getByObservationHash(observationHash)
       if (!concurrent) throw new Error('RECONCILIATION_CHECKPOINT_RACE')
-      return { checkpoint: concurrent, created: false }
+      return {
+        checkpoint: concurrent,
+        created: false,
+        ...(incident === undefined ? {} : { incident }),
+      }
     }
 
     return {
       checkpoint: await this.#complete(initial, decision, observation),
       created: true,
+      ...(incident === undefined ? {} : { incident }),
     }
   }
 

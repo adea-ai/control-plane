@@ -60,6 +60,33 @@ describe('retention class registry (#194)', () => {
     }
   })
 
+  test('every class the policy gives a finite duration either has a path or is a stated remaining gap', () => {
+    // A finite duration means the owner decided the class is physically deleted
+    // after that window, so it needs a deletion path. The classes below are the
+    // ones where that path still does not exist. Each names the hold owner the
+    // decided policy itself records, so the remaining #194 retention scope is
+    // explicit and cannot drift silently: adding a path for one of them, or
+    // giving a new class a finite duration, fails this assertion until the list
+    // is updated.
+    const remaining = {
+      'native-terminal-snapshots': 'runtime-owner',
+      'workflow-references': 'platform-operator',
+      usage: 'billing-owner',
+      'logs-traces': 'platform-operator',
+      artifacts: 'release-owner',
+      backups: 'platform-operator',
+    }
+    const withoutPath = decidedRetentionPolicy.classes
+      .filter((entry) => entry.retainMs !== null)
+      .filter((entry) => retentionClasses[entry.id] === undefined)
+      .map((entry) => entry.id)
+      .toSorted()
+    expect(withoutPath).toEqual(Object.keys(remaining).toSorted())
+    for (const [id, owner] of Object.entries(remaining)) {
+      expect(retentionClassPolicy(decidedRetentionPolicy, id).holdOwner).toBe(owner)
+    }
+  })
+
   test('the registry covers the classes the CLI accepts', async () => {
     const { readFile } = await import('node:fs/promises')
     const { fileURLToPath } = await import('node:url')
