@@ -83,6 +83,55 @@ test('pins the required Node and Bun toolchain', async () => {
   assert.equal(testTsconfig.compilerOptions.emitDecoratorMetadata, true)
 })
 
+test('the declared toolchain agrees with the files continuous integration installs from', async () => {
+  const manifest = await readJson('package.json')
+  const mise = await readFile(new URL('../.mise.toml', import.meta.url), 'utf8')
+  const bunVersion = (await readFile(new URL('../.bun-version', import.meta.url), 'utf8')).trim()
+  const nodeVersion = (await readFile(new URL('../.node-version', import.meta.url), 'utf8')).trim()
+
+  // One toolchain, named by every surface that carries it: the mise tool, the file the
+  // continuous integration installs the runtime from, and the engine a consumer resolves
+  // against. The node engine is one exact version rather than a range, because the range
+  // a consumer resolves against is not the version the lanes run.
+  const miseTool = (tool) => new RegExp(`^${tool} = "([^"]+)"$`, 'm').exec(mise)?.[1]
+  assert.equal(miseTool('node'), nodeVersion)
+  assert.equal(miseTool('bun'), bunVersion)
+  assert.equal(nodeVersion, manifest.engines.node)
+  assert.equal(bunVersion, manifest.packageManager.replace(/^bun@/, ''))
+  assert.match(manifest.engines.node, /^\d+\.\d+\.\d+$/)
+
+  // The declared bun engine admits the pinned runtime, so the floor a consumer resolves
+  // against does not exclude the version the repository runs.
+  const range = /^>=(\d+)(?:\.(\d+))?(?:\.(\d+))?\s+<(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(
+    manifest.engines.bun
+  )
+  assert.ok(range, 'the bun engine must be one bounded range')
+  const lower = [Number(range[1]), Number(range[2] ?? 0), Number(range[3] ?? 0)]
+  const upper = [Number(range[4]), Number(range[5] ?? 0), Number(range[6] ?? 0)]
+  const compare = (left, right) =>
+    left.findIndex((part, index) => part !== right[index]) === -1 ? 0 : left[0] - right[0]
+  const pinned = bunVersion.split('.').map(Number)
+  assert.ok(
+    compare(pinned, lower) >= 0 && compare(pinned, upper) < 0,
+    `engines.bun ${manifest.engines.bun} must admit the pinned bun ${bunVersion}`
+  )
+
+  // The versions pinned here are the versions the lanes install, so the contract is the
+  // one continuous integration enforces rather than a declaration nothing reads.
+  const installing = { bun: [], node: [] }
+  for (const file of readdirSync(new URL('../.github/workflows/', import.meta.url))) {
+    if (!file.endsWith('.yml')) continue
+    const workflow = await readFile(
+      new URL(`../.github/workflows/${file}`, import.meta.url),
+      'utf8'
+    )
+    if (/node-version-file:\s*\.node-version/.test(workflow)) installing.node.push(file)
+    if (/bun-version-file:\s*\.bun-version/.test(workflow)) installing.bun.push(file)
+  }
+  assert.ok(installing.node.length > 0, 'a workflow must install node from .node-version')
+  assert.ok(installing.bun.length > 0, 'a workflow must install bun from .bun-version')
+})
+
 test('defines root quality and build commands', async () => {
   const manifest = await readJson('package.json')
 
