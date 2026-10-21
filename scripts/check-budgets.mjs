@@ -67,10 +67,13 @@ export function checkDistBudget(budgets, totalBytes) {
  * The package name of a tree entry, without the install path it is nested
  * under.
  *
- * `bun pm ls --all` prints a scoped package that lives under a nested
- * install path as `vite-plus/oxlint/@oxlint/binding-darwin-arm64@1.88.0`;
- * the package is `@oxlint/binding-darwin-arm64` and that is what the closure
- * counts.
+ * `bun pm ls --all` prints a tree entry under its parent, so an entry is
+ * normally already a plain package name (`@oxlint/binding-darwin-arm64`).
+ * An install path can still reach the counter — the lockfile nests a
+ * conflicting version under its parent, and the nested path is
+ * `vite-plus/oxlint/@oxlint/binding-darwin-arm64` — so the trailing scope is
+ * kept and the path is dropped: the package is
+ * `@oxlint/binding-darwin-arm64` and that is what the closure counts.
  */
 export function normalizePackageName(raw) {
   const segments = String(raw).trim().split('/')
@@ -83,10 +86,12 @@ export function normalizePackageName(raw) {
  * The number of distinct external `package@version` pairs in a
  * `bun pm ls --all` listing.
  *
- * The listing prints an install path for every nested dependency, so the
- * name is normalized before it is counted: the same package installed under
- * two paths is one package, and a nested scoped package is counted rather
- * than dropped.
+ * The listing is the **lockfile's** dependency tree (`bun pm ls` lists the
+ * tree "according to the current lockfile"), so it also carries the optional
+ * platform-specific binaries of every supported platform, not only the ones
+ * installed on the host that runs the measurement. The name is normalized
+ * before it is counted: the same package installed under two paths is one
+ * package, and a nested scoped package is counted rather than dropped.
  */
 export function externalPackagePairs(lsOutput) {
   const external = new Set()
@@ -136,10 +141,12 @@ if (import.meta.main) {
     report(checkDistBudget(budgets, await totalDistBytes()))
   } else if (command === 'deps') {
     // The listing seam: when ADEA_DEPS_LISTING_FILE names a file, that
-    // listing is measured instead of the installed tree, and the counted
-    // package identities are reported with it. It exists so the measurement
-    // can be exercised on explicit fixtures; the measured scope of the
-    // repository is the installed tree.
+    // listing is measured instead of the lockfile's dependency tree, and the
+    // counted package identities are reported with it. It exists so the
+    // measurement can be exercised on explicit fixtures; the seam changes
+    // the measurement's input, not its scope: the repository's measured
+    // scope is the lockfile's dependency tree, which carries the optional
+    // platform-specific binaries of every supported platform.
     const listingFile = process.env.ADEA_DEPS_LISTING_FILE
     let listing
     if (listingFile !== undefined && listingFile !== '') {
@@ -167,7 +174,7 @@ if (import.meta.main) {
       const check = checkDependencyBudget(budgets, pairs.length)
       if (listingFile !== undefined && listingFile !== '')
         report({ ...check, pairs, scope: 'listing file' })
-      else report(check)
+      else report({ ...check, scope: 'lockfile tree' })
     }
   } else {
     console.error(usage)

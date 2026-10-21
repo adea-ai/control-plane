@@ -160,13 +160,18 @@ because the branch is not published.
 
 `bun scripts/check-budgets.mjs deps` enumerates the unique external
 `package@version` closure with `bun pm ls --all` and compares it with the
-285 ceiling.
+285 ceiling. `bun pm ls` lists the dependency tree **according to the current
+lockfile**, so what it enumerates is the lockfile's closure, across every
+supported platform — not only the packages installed on the host that runs
+the measurement.
 
-| Measure                          | Value                                                     | Source                    |
-| -------------------------------- | --------------------------------------------------------- | ------------------------- |
-| external `package@version` pairs | **591** against the 285 ceiling                           | **[measured]** — see §3.3 |
-| unique package names             | 578, of which **58** are present at more than one version | **[measured]**            |
-| raw `bun pm ls --all` lines      | 644                                                       | **[measured]**            |
+| Measure                                          | Value                                                                          | Source                    |
+| ------------------------------------------------ | ------------------------------------------------------------------------------ | ------------------------- |
+| external `package@version` pairs                 | **591** against the 285 ceiling                                                | **[measured]** — see §3.3 |
+| unique package names                             | **533**, of which **58** are present at more than one version (533 + 58 = 591) | **[measured]**            |
+| `bun pm ls --all` lines                          | **644** — the header, 45 workspace links and 598 external entries              | **[measured]**            |
+| external entries installed on the measuring host | **374** of the 591                                                             | **[measured]**            |
+| external entries that are lockfile-only          | **219** of the 591 — the optional platform binaries of the other platforms     | **[measured]**            |
 
 ### 3.3 The committed regression budgets, and the remediation that closes one
 
@@ -210,16 +215,45 @@ import runtime builtins only - pinned by
 `packages/production-readiness/src/audit-slice-closure.test.mjs`, together
 with a guard that the committed ceilings are unchanged.
 
-**There is no measurement or inventory defect behind the number.** The
-checker counts the unique external `package@version` pairs of the resolved
-graph (`bun pm ls --all` over the lockfile), which is exactly what the
-committed budget documents it measures; the workspace packages are excluded
-by name. Walking the installed tree with peer dependencies included shows the
-graph is reachable from the workspace roots plus the repository toolchain,
-and the small residue that looks unreachable is the toolchain bundled
-internals (the oxlint/oxfmt runtime, `yuku-*`, `lightningcss`, `postcss`),
-not an orphan package. So the 591 is the real external surface of the product
-and the toolchain, and the committed ceiling of 285 does not describe it.
+**The counting rule is not the defect; the ceiling no longer describes the
+graph.** The checker counts the unique external `package@version` pairs of the
+resolved graph (`bun pm ls --all` over the lockfile), which is exactly what
+the committed budget documents it measures, and the workspace packages are
+excluded by name. Two independent reproductions pin that:
+
+- **The listing is the lockfile, reproduced exactly.** `bun pm ls --all`
+  prints 643 package entries, and rebuilding that list from `bun.lock`
+  offline yields the same 643 entries and the same **591** external
+  identities — zero differences in either direction.
+- **The baseline is reproduced by the same method.** The same reconstruction
+  run against the lockfile at `c37de22` yields exactly **274** external
+  pairs, the number `budgets.json` records for that commit. The measurement
+  method did not change between the baseline and this head; the graph did.
+
+**The gap is real graph growth, and it is attributed.** Between `c37de22` and
+this head the closure goes from 274 to 591 pairs: **429 added, 112 removed,
+net +317**. 202 of the 429 added pairs are optional platform-specific
+binaries (the `@oxlint`/`@oxfmt`/`@oxc-parser`/`@rolldown`/`@yuku-core`
+bindings, `@esbuild/*`, `@typescript/typescript-*`, `@img/sharp-*`,
+`lightningcss-*`, `@voidzero-dev/vite-plus-*`, `@cloudflare/workerd-*`,
+`@restatedev/restate-server-*`, `@oxlint-tsgolint/*`). The remainder are
+genuine package families pulled in by roots that arrived since the baseline:
+`@aws-sdk` (22) with `@smithy` (4), `@sentry` (7), `@vitest` (9), `@types`
+(6), `@nestjs` (4), `@opentelemetry` (4), `@langchain` (4),
+`@earendil-works` (4), `@google` (2) and the rest. The 285 ceiling was set
+against the 274 baseline and does not describe this graph. The ceiling stays
+at **285**, nothing is hidden from the measurement, and the breach is
+reported.
+
+**What the number is, and what it is not.** The measurement is the
+**lockfile's** closure, so it is not "the installed tree": of the 591 counted
+pairs, **374** are installed on the host that runs the measurement (the bun
+isolated store `node_modules/.bun`), and **219** are not — they are the
+optional platform binaries of the platforms this host is not, plus the
+toolchain's bundled internals. A measurement of the installed surface alone
+would read 374; the committed budget documents the lockfile measurement, so
+591 is the correct answer to the question the budget asks. The claim that the
+591 is "the whole installed tree" was wrong; the number was not.
 
 **The composition of the closure, measured.** The attribution below is
 computed from the **installed** dependency graph at this head: the transitive
@@ -252,35 +286,50 @@ local-control-plane, `semver` through `createRequire`, the Restate server
 package through `require.resolve`). The reduction is therefore blocked by
 ownership, not by effort, and it is not attempted from here.
 
-**The measurement's identities, corrected.** The checker counted the right
-_number_ but the wrong _identities_: its pattern matched a nested scoped
-install (`vite-plus/oxlint/@oxlint/binding-darwin-arm64@1.88.0`) as the
-package `vite-plus/oxlint` at the version
-`olint/binding-darwin-arm64@1.88.0`. The count is unchanged at **591** under
-the corrected pattern, which is the provenance statement that matters: the
-number is not a parsing artifact. The pattern now normalizes the install
-path, so the counted pairs are the real package identities, and
-`packages/production-readiness/src/dependency-budget-scope.test.mjs` pins
-the counted identities and the scope: small explicit listing fixtures
-exercise the checker's own `normalizePackageName` and
-`countExternalPackages` for nested scoped and unscoped installs, for the
+**The measurement's identities, corrected.** The checker's pattern was
+hardened so an install path can never be counted as a package name, and the
+hardening is exercised by
+`packages/production-readiness/src/dependency-budget-scope.test.mjs`: small
+explicit listing fixtures drive the checker's identity rule through its
+documented listing seam for nested scoped and unscoped installs, for the
 same package reached through two install paths, for distinct versions, for
 the workspace links and for the lines that are not packages, and the real
 listing is measured to confirm that every counted identity is a plain
 package identity. A wrong identity fails that regression even though the
 total count stays 591.
 
-The measured closure is the whole installed tree, and the table above is
-its composition, measured on the installed graph at this head. The
-transaction-based enumeration of that graph is deliberately not repeated
-here: the installed-graph numbers above are the ones the audit stands on,
-and an earlier lockfile-based enumeration of the same roots disagreed with
-them, so only the installed-graph measurement is quoted. The
-bounded remediation removed what a package declares but never uses:
+Two things about that hardening are worth recording, because the earlier
+framing of it was not accurate. First, the string this audit previously
+quoted as a listing line —
+`vite-plus/oxlint/@oxlint/binding-darwin-arm64@1.88.0` — is a
+**`bun.lock` key**, not a line `bun pm ls --all` prints: bun renders the tree
+with the package name under its parent, and the listing at this head contains
+**no** nested install path at all. Second, run against the real listing, the
+pattern before the hardening and the pattern after it produce **identical**
+identity sets — 591 pairs each, with zero differences in either direction.
+So the hardening is a no-op on the measurement's actual input: it makes the
+counter correct for an install-path-shaped listing, and it is the reason the
+count can be stated as a count of package identities rather than of install
+paths. The number was never a parsing artifact. Two counted identities are
+named by their **alias** rather than by the package they resolve to
+(`typescript6@6.0.3` is `npm:typescript@6.0.3`, and `vite@1.3.0` is
+`npm:@voidzero-dev/vite-plus-core@1.3.0`); each is one package, so the count
+is unaffected.
+
+**The scope the measurement now pins.** The measured closure is the
+**lockfile's** dependency tree, not the installed tree: 374 of its 591 pairs
+are installed on the measuring host and 219 are the optional platform
+binaries of the other platforms (§3.2). The table above is a per-root walk
+of the installed graph — a separate measurement from the checker's — and the
+earlier note that a lockfile-based enumeration of the same roots _disagreed_
+with the installed-graph numbers is now explained rather than left open: the
+disagreement is the 219 optional platform binaries, which the lockfile
+carries for every platform and the installed tree does not. The bounded
+remediation removed what a package declares but never uses:
 `fastify` and `@nestjs/common` (local-control-plane) and
 `@restatedev/restate-sdk` (workflow-worker) — declarations that no source in
 those packages imports. **The measured closure stays 591**: those packages are
-still in the installed tree because other workspace packages need them, so
+still in the lockfile because other workspace packages need them, so
 the cleanup is a composition fix, not a closure reduction, and it is reported
 as exactly that. `class-transformer` was removed and then **restored**:
 `@nestjs/common`'s `ValidationPipe`, which `apps/control-api` applies, needs
@@ -403,20 +452,22 @@ changes** are proposed or made.
 
 Exact commands and results for this candidate:
 
-| Command                                                          | Result                                                                                                                                                                                                                                                                               |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `bun scripts/check-startup-budget.mjs` (at `487883cd`)           | `OK` 14.2 s ready (ceiling 45), `OK` 227.0 MB peak RSS (ceiling 256); the owned child exited after `SIGTERM`. At `23fa6880`: 8.1 s / 233.9 MB                                                                                                                                        |
-| `bun scripts/m17-runtime-baseline.mjs` (at `487883cd`)           | exit 0; candidate `487883cd`, dirty `false`; queue round trip p50 2.49 ms / p95 41.06 ms; RSS after the probes 81.6 MB. At `23fa6880`: p50 5.03 ms / p95 21.80 ms, RSS 99.7 MB                                                                                                       |
-| `bun scripts/check-budgets.mjs deps`                             | `BUDGET EXCEEDED` — measured 591, ceiling 285 (unchanged by the composition cleanup; the residual is the product runtime surface)                                                                                                                                                    |
-| `bun scripts/check-budgets.mjs dist`                             | `OK` — **11.8 MB** against the 12 MB ceiling after the build-composition fix (was 20.3 MB)                                                                                                                                                                                           |
-| `bun scripts/check-budgets.mjs lane --group build --seconds 254` | `OK` — ceiling 300, baseline 254 (the build lane is measurable now)                                                                                                                                                                                                                  |
-| `bun run test` (all lanes)                                       | 222.91 s **at `23fa6880`**; the current candidate has no completed aggregate lane run (host load) — see §3.0                                                                                                                                                                         |
-| `bun test src/audit-slice-closure.test.mjs`                      | 3 pass / 0 fail - the slice imports no external package, does not reach for the package external dependencies, and the committed ceilings (285 / 12 MB / 45 s / 256 MB / 300 s) are unchanged                                                                                        |
-| `bun test src/startup-budget.test.mjs`                           | 32 pass / 0 fail at `487883cd` (27 at `23fa6880`, plus the five listener-ownership regressions)                                                                                                                                                                                      |
-| `bun run format:check`                                           | clean (1940 files)                                                                                                                                                                                                                                                                   |
-| `bun run lint`                                                   | exit 0 — oxlint 0 errors, workspace boundaries 0 violations (1231 files / 45 packages), canonical-ordering and digest-writer checks pass                                                                                                                                             |
-| `bun run type-check`                                             | every stage passes (type errors none in 7 + 34 files, drizzle `Everything's fine`, compatibility, architecture); **fails only at `requirements:check`** — "Unable to query GitHub issues through authenticated GitHub CLI (exit 4)", an environment limit of this host, not a defect |
-| pre-commit hook                                                  | 45/45 tasks, 47/47 successful                                                                                                                                                                                                                                                        |
+| Command                                                          | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bun scripts/check-startup-budget.mjs` (at `487883cd`)           | `OK` 14.2 s ready (ceiling 45), `OK` 227.0 MB peak RSS (ceiling 256); the owned child exited after `SIGTERM`. At `23fa6880`: 8.1 s / 233.9 MB                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `bun scripts/m17-runtime-baseline.mjs` (at `487883cd`)           | exit 0; candidate `487883cd`, dirty `false`; queue round trip p50 2.49 ms / p95 41.06 ms; RSS after the probes 81.6 MB. At `23fa6880`: p50 5.03 ms / p95 21.80 ms, RSS 99.7 MB                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `bun scripts/check-budgets.mjs deps`                             | `BUDGET EXCEEDED: {"ok":false,"ceiling":285,"measured":591,"scope":"lockfile tree"}` — exit 1, with `ADEA_DEPS_LISTING_FILE` **unset**, so the checker enumerated the lockfile's dependency tree itself. 591 = 533 names + 58 dual-version names; 374 of the pairs are installed on this host and 219 are the other platforms' optional binaries (§3.2, §3.3)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `bun scripts/check-budgets.mjs dist`                             | `OK` — **11.8 MB** against the 12 MB ceiling after the build-composition fix (was 20.3 MB)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `bun scripts/check-budgets.mjs lane --group build --seconds 254` | `OK` — ceiling 300, baseline 254 (the build lane is measurable now)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `bun run test` (all lanes)                                       | 222.91 s **at `23fa6880`**; the current candidate has no completed aggregate lane run (host load) — see §3.0                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `bun test src/audit-slice-closure.test.mjs`                      | 4 pass / 0 fail - the slice imports no external package, does not reach for the package external dependencies, the slice's file inventory is complete (every source of this package declares what it imports), and the committed ceilings (285 / 12 MB / 45 s / 256 MB / 300 s) are unchanged                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `bun test src/dependency-budget-scope.test.mjs`                  | 8 pass / 0 fail - the checker's count on the real listing (seam unset) equals the distinct external pairs computed independently in the test, the listing seam measures the same scope over the same listing, the identity fixtures hold, and the ceiling is still 285                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| this continuation pass, at `2a2e3bfbd` plus this working tree    | the dependency-budget result **reproduced and attributed** (§3.2, §3.3): `bun scripts/check-budgets.mjs deps` with `ADEA_DEPS_LISTING_FILE` **unset** → `BUDGET EXCEEDED` 591 / 285 (exit 1); the lockfile reconstruction reproduces the listing exactly (643 entries → 591 pairs, zero differences either way) and reproduces the 274-pair baseline at `c37de22`. Focused tests: `bun test src/dependency-budget-scope.test.mjs src/audit-slice-closure.test.mjs src/budget-regression.test.mjs` → 15 pass / 0 fail; `bun test tests/repository.test.mjs` → 31 pass / 0 fail; `bun test src/startup-budget.test.mjs` → 33 pass / 0 fail. Changed-file checks: `oxfmt --check` clean, `oxlint --deny-warnings` clean, workspace boundaries 0 violations (1234 files / 45 packages), canonical-ordering and digest-writer checks pass. **No aggregate lane, no full build and no manifest or lockfile edit** |
+| `bun test src/startup-budget.test.mjs`                           | 33 pass / 0 fail at `7d8812162` and at the current head (32 at `487883cd`, 27 at `23fa6880`, plus the five listener-ownership regressions)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `bun run format:check`                                           | clean (1940 files)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `bun run lint`                                                   | exit 0 — oxlint 0 errors, workspace boundaries 0 violations (1231 files / 45 packages), canonical-ordering and digest-writer checks pass                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `bun run type-check`                                             | every stage passes (type errors none in 7 + 34 files, drizzle `Everything's fine`, compatibility, architecture); **fails only at `requirements:check`** — "Unable to query GitHub issues through authenticated GitHub CLI (exit 4)", an environment limit of this host, not a defect                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| pre-commit hook                                                  | 45/45 tasks, 47/47 successful                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 ## 6. Release follow-up
 
@@ -431,5 +482,20 @@ Exact commands and results for this candidate:
 - Re-evaluate the RSS ceiling whenever the marketplace artifact budgets
   change (#194's rule); the memory posture is deliberately over-provisioned
   since the September OOM incident.
+- The **dependency ceiling is routed here as an open item**, because §3.3
+  routes the residual to this section and the section did not carry it. The
+  measured closure is the lockfile's: 591 external `package@version` pairs
+  against the unchanged 285 ceiling, of which 219 are optional platform
+  binaries the lockfile carries for platforms this host is not. The ceiling
+  was set against the 274-pair baseline at `c37de22` and does not describe
+  this graph; bringing it back inside 285 means removing the Pi SDK, the
+  Nest/Fastify generation, the AWS and LangChain SDKs or the repository
+  toolchain, each owned by another slice. That is a product and architecture
+  decision, so it is reported here rather than absorbed into a moved ceiling.
+  The measurement itself is reproducible (`bun scripts/check-budgets.mjs
+  deps`, with `ADEA_DEPS_LISTING_FILE` unset) and is now pinned by
+  `packages/production-readiness/src/dependency-budget-scope.test.mjs`; the
+  ceiling is **not** enforced by a CI lane today, which is a separate gap
+  from the closure itself.
 - Confirm turbo remote-cache hit rates from the run-summary API; the M13 audit
   could only infer them.
