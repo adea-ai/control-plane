@@ -136,6 +136,57 @@ branch: the five bounded limits and the three named states on the durable
 stores, and the transactional production reservation with the worker-side
 allowance. The native and hosted-deployment gates in §4 stay open.
 
+### 2.6 Where the transaction is
+
+The issue's first acceptance item asks for the reservation to be
+**transactional**, so the page records the two transactions that carry it.
+
+**On the admission side**, the child's budget is opened **inside the
+delegation allocation transaction**, together with the limit checks and the
+child execution, attempt and delegation rows. In
+`packages/database/src/delegation-repository.ts` the total limit is refused at
+line 176, the parallel limit at line 188 and the depth limit at line 211, and
+the budget is opened at lines 250-251 through
+`PostgresDurableUsageStore.withTransaction(transaction, …)` before the
+delegation row is written at line 266 — one transaction, so a refused limit
+leaves no execution, attempt, budget or delegation row. The SQLite store has
+the same shape (`packages/sqlite-persistence/src/delegation-repository.ts`:
+lines 372, 384, 407 and the budget open at line 433).
+
+**On the production reserve side**, `DurableChildRuntimeBudgetAdmission.#reserve`
+(`apps/workflow-worker/src/child-runtime-budget-admission.ts:58`) runs its
+whole body inside one durable-usage transaction
+(`this.#store.transaction(workspaceId, …)`, line 111). Inside that single
+transaction it re-reads the facts its reservation depends on and denies —
+without writing — if any of them does not hold:
+
+1. the stored parent plan is missing, or its workspace or digest does not match
+   the child's parent binding (lines 91-97);
+2. the child budget, the opening effect or the parent budget cannot be read
+   (line 126);
+3. the child budget is not open, is not in the plan's currency, exceeds the
+   plan's ceilings, or is not parented by the recorded parent execution
+   (line 140);
+4. the parent's funding reservation for this child does not exist exactly
+   once, is not open, or does not match the funded amount exactly (line 152);
+5. the opening credit entry does not exist exactly once, or does not match the
+   opening expectation (line 162);
+6. the opening effect's fingerprint does not match the recomputed
+   `openingFingerprint` (line 100), or its result does not match the opening
+   summary (line 187).
+
+Only then, still inside the same transaction, is the attempt envelope
+reserved (`reserveAttemptEnvelope`, line 189). The reservation and every fact
+that justifies it therefore commit together, and a mismatch commits nothing.
+
+`apps/workflow-worker/src/child-runtime-budget-admission.integration.test.mjs`
+drives this path against the real store: an omitted allowance can fund from a
+settled lead reservation while its attempt is still running; after the lead
+reservation settles while its attempt remains running, funding and spend stay
+bounded for siblings; the child admission binds the parent plan statement the
+allocator funded under; and once the lead is cancelled the allocator refuses
+before any funding is considered.
+
 ## 3. What was missing, and what this pass adds
 
 The SQLite and native-compaction surfaces already proved the retry and
