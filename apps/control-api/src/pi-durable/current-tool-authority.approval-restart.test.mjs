@@ -285,6 +285,140 @@ test('changed input, action, audience, principal, or workspace cannot reuse the 
   })
 })
 
+test('changed configuration cannot reuse the retained approval after reopen', async () => {
+  await withRealStores(async (path) => {
+    const f = await fixture()
+    await seedDatabase(path, f)
+    const seeded = await openStores(path, f)
+    await seedApprovedWork(f, seeded, { callId: toolCallId, approvalId: interactionId })
+    seeded.provider.close()
+
+    const base = requestFor(f, toolCallId, interactionId)
+    const reopenedControl = await openStores(path, f)
+    try {
+      // Control: the unchanged request passes in this same session, so each rejection
+      // below is caused by its configuration change and by nothing else.
+      await expect(
+        authorityFor(f, reopenedControl, working).assertCurrent(base, 'effect')
+      ).resolves.toBeUndefined()
+    } finally {
+      reopenedControl.provider.close()
+    }
+
+    // The configuration the work was decided under: the tool policy snapshot, the
+    // tool definition and version, and the scope the grant names. A retained
+    // approval authorizes the work it was approved for, not work decided under a
+    // different configuration.
+    const changed = {
+      'policy snapshot': { ...base, policySnapshotRef: 'policy://fixture/other-policy' },
+      'tool definition': { ...base, toolDefinitionId: 'tld_01JABCDEF0123456789ABCDEFH' },
+      'tool version': { ...base, toolVersionId: 'tlv_01JABCDEF0123456789ABCDEFH' },
+      'grant tool version': {
+        ...base,
+        grant: { ...base.grant, toolVersionId: 'tlv_01JABCDEF0123456789ABCDEFH' },
+      },
+      'grant scope': { ...base, grant: { ...base.grant, profileId: 'prf_other' } },
+      'grant workspace': {
+        ...base,
+        grant: { ...base.grant, workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' },
+      },
+    }
+    const reopened = await openStores(path, f)
+    try {
+      for (const [name, request] of Object.entries(changed)) {
+        await expect(
+          authorityFor(f, reopened, working).assertCurrent(request, 'effect'),
+          name
+        ).rejects.toMatchObject(rejected)
+      }
+    } finally {
+      reopened.provider.close()
+    }
+  })
+})
+
+test('a changed model selection cannot reuse the retained approval after reopen', async () => {
+  await withRealStores(async (path) => {
+    const f = await fixture()
+    await seedDatabase(path, f)
+    const seeded = await openStores(path, f)
+    await seedApprovedWork(f, seeded, { callId: toolCallId, approvalId: interactionId })
+    seeded.provider.close()
+
+    const base = requestFor(f, toolCallId, interactionId)
+    const reopenedControl = await openStores(path, f)
+    try {
+      await expect(
+        authorityFor(f, reopenedControl, working).assertCurrent(base, 'effect')
+      ).resolves.toBeUndefined()
+    } finally {
+      reopenedControl.provider.close()
+    }
+
+    // The current model selection moved on after the approval. The work was
+    // accepted under the earlier selection, so the current configuration no
+    // longer authorizes it.
+    f.setCurrent({ ...f.intent, selectionRevision: 2 })
+
+    const reopened = await openStores(path, f)
+    try {
+      await expect(
+        authorityFor(f, reopened, working).assertCurrent(base, 'effect')
+      ).rejects.toMatchObject(rejected)
+    } finally {
+      reopened.provider.close()
+    }
+  })
+})
+
+test('a retained successful outcome cannot be published after its approval is revoked', async () => {
+  await withRealStores(async (path) => {
+    const f = await fixture()
+    await seedDatabase(path, f)
+    const seeded = await openStores(path, f)
+    await seedApprovedWork(f, seeded, { callId: toolCallId, approvalId: interactionId })
+    // The call already passed its effect; its outcome is retained for replay.
+    const executing = await seeded.calls.get(toolCallId)
+    expect(
+      await seeded.calls.compareAndSet(executing.revision, {
+        ...executing,
+        status: 'succeeded',
+        revision: executing.revision + 1,
+        history: [...executing.history, { status: 'succeeded', at: working }],
+      })
+    ).toBe(true)
+    // The approval is revoked after the effect happened.
+    const approved = await seeded.interactions.get(interactionId)
+    const { response: _response, ...unanswered } = approved
+    expect(
+      await seeded.interactions.compareAndSet(approved.version, {
+        ...unanswered,
+        state: 'cancelled',
+        version: approved.version + 1,
+        resolvedAt: working,
+      })
+    ).toBe(true)
+    seeded.provider.close()
+
+    const reopened = await openStores(path, f)
+    try {
+      const request = requestFor(f, toolCallId, interactionId)
+      // Neither a second effect nor the replay of the retained outcome may run
+      // under a revoked approval.
+      await expect(
+        authorityFor(f, reopened, working).assertCurrent(request, 'effect')
+      ).rejects.toMatchObject(rejected)
+      await expect(
+        authorityFor(f, reopened, working).assertCurrent(request, 'publication')
+      ).rejects.toMatchObject(rejected)
+      // The denial rewrote nothing: the retained evidence is still there.
+      expect((await reopened.calls.get(toolCallId)).status).toBe('succeeded')
+    } finally {
+      reopened.provider.close()
+    }
+  })
+})
+
 test('an expired or revoked approval cannot authorize unchanged work after reopen', async () => {
   await withRealStores(async (path) => {
     const f = await fixture()
