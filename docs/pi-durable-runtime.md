@@ -64,6 +64,11 @@ process teardown open forever. When the bound is reached the close continues,
 still close. The bound is the composition's `drainTimeoutMs` option and
 defaults to 30 seconds.
 
+`drainIncomplete` is on the host-facing production composition surface, beside
+the terminal settlement getters, so the host can read it after the close to
+know the drain was not clean. It is a teardown outcome, not a request refusal:
+the close itself always completes.
+
 The retained parent inbox is scanned under the same 4096 bound the child
 progress scanner enforces; a larger inbox is refused rather than replayed. One
 malformed retained row is rejected on its own, exactly as the inbox publisher

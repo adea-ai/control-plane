@@ -627,6 +627,13 @@ export async function createProductionPiLeadComposition(
       get childTerminalSettlementBlocked() {
         return installed.childTerminalSettlementBlocked
       },
+      /**
+       * True when a close gave up waiting for an accepted recovery. The teardown still completed;
+       * the host reads this after close to know the drain was not clean.
+       */
+      get drainIncomplete() {
+        return installed.drainIncomplete
+      },
       collectTerminalModels: collectModels,
       close: () => {
         closing ??= (async () => {
