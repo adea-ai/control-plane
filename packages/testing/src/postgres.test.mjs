@@ -47,18 +47,13 @@ if (!built.success) throw new AggregateError(built.logs, 'Fixture test bundle fa
 // of the pinned Bun 1.4.3: it aborts the whole coverage run with "panic: range
 // end index 1884 out of range for slice of length 1024" before any summary is
 // printed. The file holds the bundle's bytes exactly as the build produced them,
-// so the fixture under test is unchanged, and the directory is removed when the
-// run ends and when the fixture cannot be loaded at all.
-
-/** The directory that holds the fixture file, created empty and owned by the test. */
-async function createFixtureDirectory() {
-  const directory = await mkdtemp(join(tmpdir(), 'control-plane-postgres-fixture-'))
-  // The bundle is generated output, so it is written into a dist/ directory: the
-  // repository's coverage configuration already ignores generated output, and the
-  // coverage report keeps the rows it had before.
-  await mkdir(join(directory, 'dist'))
-  return directory
-}
+// so the fixture under test is unchanged.
+//
+// Every step after the directory is allocated can fail, and no failure may leave
+// the directory behind: the allocation and the directory creation are one guarded
+// step, the write is guarded as well as the import, and the removal is registered
+// before the fixture is loaded. A removal that fails is reported next to the
+// failure that caused it instead of replacing it.
 
 /** The path of the fixture file inside an owned directory. */
 function fixtureFilePath(directory) {
@@ -70,27 +65,97 @@ async function removeFixtureDirectory(directory) {
   await rm(directory, { recursive: true, force: true })
 }
 
-/** Writes the fixture and loads it, leaving nothing behind when the load fails. */
-async function loadFixtureModule(directory, source) {
-  await writeFile(fixtureFilePath(directory), source)
+/**
+ * The error a failure is reported as.
+ *
+ * The failure that caused the cleanup is kept, and a cleanup that failed too is
+ * reported beside it rather than in place of it.
+ */
+function fixtureFailure(error, cleanupError) {
+  if (!cleanupError) return error
+  return new AggregateError(
+    [error, cleanupError],
+    'the fixture failed and its cleanup failed too',
+    {
+      cause: error,
+    }
+  )
+}
+
+/**
+ * Runs a step that owns a directory, and removes that directory when the step fails.
+ */
+async function owningDirectory(directory, step, remove = removeFixtureDirectory) {
   try {
-    return await import(pathToFileURL(fixtureFilePath(directory)).href)
+    return await step()
   } catch (error) {
-    await removeFixtureDirectory(directory)
+    try {
+      await remove(directory)
+    } catch (cleanupError) {
+      throw fixtureFailure(error, cleanupError)
+    }
     throw error
   }
+}
+
+/**
+ * The directory that holds the fixture file.
+ *
+ * The allocation and the directory creation are one guarded step: a directory that
+ * was allocated and then not filled is removed instead of being left behind.
+ */
+async function createFixtureDirectory({
+  allocate = mkdtemp,
+  mkdir: makeDirectory = mkdir,
+  remove = removeFixtureDirectory,
+} = {}) {
+  const directory = await allocate(join(tmpdir(), 'control-plane-postgres-fixture-'))
+  return owningDirectory(
+    directory,
+    async () => {
+      // The bundle is generated output, so it is written into a dist/ directory: the
+      // repository's coverage configuration already ignores generated output, and the
+      // coverage report keeps the rows it had before.
+      await makeDirectory(join(directory, 'dist'))
+      return directory
+    },
+    remove
+  )
+}
+
+/**
+ * Writes the fixture and loads it.
+ *
+ * The write is inside the guard too: a file that cannot be written leaves the owned
+ * directory behind unless the directory is removed here.
+ */
+async function loadFixtureModule(
+  directory,
+  source,
+  { writeFile: write = writeFile, remove = removeFixtureDirectory } = {}
+) {
+  return owningDirectory(
+    directory,
+    async () => {
+      await write(fixtureFilePath(directory), source)
+      return import(pathToFileURL(fixtureFilePath(directory)).href)
+    },
+    remove
+  )
 }
 
 const fixtureSource = await built.outputs[0].text()
 const fixtureDirectory = await createFixtureDirectory()
 const fixtureFile = fixtureFilePath(fixtureDirectory)
+// The removal is registered before the fixture is loaded, so a failure while the
+// fixture is written or imported still has a registered cleanup.
+afterAll(async () => {
+  await removeFixtureDirectory(fixtureDirectory)
+})
 const { configure, createIsolatedPostgres, withIsolatedPostgres } = await loadFixtureModule(
   fixtureDirectory,
   fixtureSource
 )
-afterAll(async () => {
-  await removeFixtureDirectory(fixtureDirectory)
-})
 
 function fixture({ migrationError, cleanupError, creationError } = {}) {
   const calls = []
@@ -199,9 +264,82 @@ test('removes the temporary fixture directory it owns', async () => {
   expect(existsSync(directory)).toBe(false)
 })
 
-test('removes the temporary fixture directory when the fixture cannot be loaded', async () => {
-  const directory = await createFixtureDirectory()
+test('removes the owned directory when the fixture directory cannot be created', async () => {
+  const allocated = []
+  const failure = new Error('the fixture directory could not be created')
+  const error = await createFixtureDirectory({
+    allocate: async (prefix) => {
+      const directory = await mkdtemp(prefix)
+      allocated.push(directory)
+      return directory
+    },
+    mkdir: async () => {
+      throw failure
+    },
+  }).catch((thrown) => thrown)
 
-  await expect(loadFixtureModule(directory, 'export const broken = (')).rejects.toThrow()
+  expect(error).toBe(failure)
+  expect(allocated).toHaveLength(1)
+  expect(existsSync(allocated[0])).toBe(false)
+})
+
+test('removes the owned directory when the fixture file cannot be written', async () => {
+  const directory = await createFixtureDirectory()
+  const failure = new Error('the fixture file could not be written')
+  const error = await loadFixtureModule(directory, 'export const probe = 1\n', {
+    writeFile: async () => {
+      throw failure
+    },
+  }).catch((thrown) => thrown)
+
+  expect(error).toBe(failure)
   expect(existsSync(directory)).toBe(false)
+})
+
+test('removes the owned directory when the fixture cannot be imported', async () => {
+  const directory = await createFixtureDirectory()
+  const error = await loadFixtureModule(directory, 'export const broken = (').catch(
+    (thrown) => thrown
+  )
+
+  expect(error).toBeInstanceOf(Error)
+  expect(existsSync(directory)).toBe(false)
+})
+
+test('keeps the original failure when the cleanup fails too', async () => {
+  const directory = await createFixtureDirectory()
+  const failure = new Error('the fixture file could not be written')
+  const cleanupFailure = new Error('the owned directory could not be removed')
+  const error = await loadFixtureModule(directory, 'export const probe = 1\n', {
+    writeFile: async () => {
+      throw failure
+    },
+    remove: async () => {
+      throw cleanupFailure
+    },
+  }).catch((thrown) => thrown)
+
+  expect(error).toBeInstanceOf(AggregateError)
+  expect(error.errors[0]).toBe(failure)
+  expect(error.errors[1]).toBe(cleanupFailure)
+  expect(error.cause).toBe(failure)
+  // The injected cleanup could not remove the directory, so the test removes it.
+  await removeFixtureDirectory(directory)
+  expect(existsSync(directory)).toBe(false)
+})
+
+test('leaves directories it does not own untouched', async () => {
+  const neighbour = await createFixtureDirectory()
+  const directory = await createFixtureDirectory()
+  const failure = new Error('the fixture file could not be written')
+
+  await loadFixtureModule(directory, 'export const probe = 1\n', {
+    writeFile: async () => {
+      throw failure
+    },
+  }).catch(() => {})
+
+  expect(existsSync(neighbour)).toBe(true)
+  expect(existsSync(directory)).toBe(false)
+  await removeFixtureDirectory(neighbour)
 })
