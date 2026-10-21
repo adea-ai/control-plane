@@ -1283,22 +1283,23 @@ describe('M11.1 requirements ledger', () => {
   test('requires an exact resolvable head for every received worker contribution', async () => {
     const { errors } = await validateRequirementsLedger(ledger, { repositoryRoot })
     expect(errors).toEqual([])
+    const pendingId = ledger.workerEvidence.find(({ status }) => status === 'pending').id
     const pendingWithHead = clone(ledger)
-    pendingWithHead.workerEvidence[0].head = 'a'.repeat(40)
+    pendingWithHead.workerEvidence.find(({ id }) => id === pendingId).head = 'a'.repeat(40)
     const pendingResult = await validateRequirementsLedger(pendingWithHead, { repositoryRoot })
-    expect(pendingResult.errors).toContain('W1: a pending worker must not record a head')
+    expect(pendingResult.errors).toContain(`${pendingId}: a pending worker must not record a head`)
     const missingHead = clone(ledger)
-    missingHead.workerEvidence[0].status = 'received'
+    missingHead.workerEvidence.find(({ id }) => id === pendingId).status = 'received'
     const missingResult = await validateRequirementsLedger(missingHead, { repositoryRoot })
     expect(missingResult.errors).toContain(
-      'W1: a received worker must record an exact full Git head'
+      `${pendingId}: a received worker must record an exact full Git head`
     )
     const unknownHead = clone(ledger)
-    unknownHead.workerEvidence[0].status = 'received'
-    unknownHead.workerEvidence[0].head = 'b'.repeat(40)
+    unknownHead.workerEvidence.find(({ id }) => id === pendingId).status = 'received'
+    unknownHead.workerEvidence.find(({ id }) => id === pendingId).head = 'b'.repeat(40)
     const unknownResult = await validateRequirementsLedger(unknownHead, { repositoryRoot })
     expect(unknownResult.errors).toContain(
-      `W1: worker head ${'b'.repeat(40)} is unavailable in the repository`
+      `${pendingId}: worker head ${'b'.repeat(40)} is unavailable in the repository`
     )
   }, 60000)
 

@@ -9668,7 +9668,7 @@
         "severity": "medium",
         "owner": "requirements-ledger",
         "issue": 195,
-        "disposition": "Three contributing lanes have published a commit and are recorded as received with their exact head and the evidence paths proven against the tree of that head. The architecture, adversarial-evaluation and skill-library lanes still have uncommitted changes, so their recorded heads are provisional. The #558 and trust-boundary lanes have not published a head. No worker contribution is integrated into the current tree and no worker result is reported as evidence.",
+        "disposition": "Four contributing lanes have published a commit and are recorded as received with their exact head and the evidence paths proven against the tree of that head. The architecture, adversarial-evaluation and skill-library lanes still have uncommitted changes, so their recorded heads are provisional. The trust-boundary and project-state digest lanes have not published a head. No worker contribution is integrated into the current tree and no worker result is reported as evidence.",
         "nextAction": "Re-run bun run requirements:refresh after each lane publishes its final commit, re-record the exact head and evidence paths per stable worker ID, and re-run the crosswalk so the integrated evidence appears against the requirement and issue rows it covers."
       },
       {
@@ -9928,12 +9928,21 @@
     {
       "id": "W1",
       "lane": "cp558-resolution",
-      "status": "pending",
-      "head": null,
+      "status": "received",
+      "head": "2621732382c6d05ed4bff450433110140e061dab",
       "branch": "f2w1/cp558-resolution",
       "issueRefs": [558],
-      "evidence": [],
-      "nextAction": "Record the exact head and the evidence paths of the #558 resolution when the lane publishes them; the requirement crosswalk consumes them by stable worker ID."
+      "evidence": [
+        {
+          "path": "docs/architecture/decision-558-context-consumer-conformance.md",
+          "commit": "2621732382c6d05ed4bff450433110140e061dab"
+        },
+        {
+          "path": "apps/control-api/src/decision-context-consumer-conformance.test.mjs",
+          "commit": "2621732382c6d05ed4bff450433110140e061dab"
+        }
+      ],
+      "nextAction": "Refresh the recorded head when the #558 resolution lane publishes its final commit; the recorded context-consumer conformance head is provisional."
     },
     {
       "id": "W2",
@@ -9995,21 +10004,21 @@
       "id": "W5",
       "lane": "cp191-adversarial-eval",
       "status": "received",
-      "head": "36bb1a7ab21e77e2b948a0623062b9b97bf0849f",
+      "head": "303bee7a2c141bd3b8ca2496c674b6a1d2dfc89f",
       "branch": "f2w5/cp191-adversarial-eval",
       "issueRefs": [191],
       "evidence": [
         {
+          "path": "docs/evidence/cp191-adversarial-eval-program-2026-10-21.md",
+          "commit": "303bee7a2c141bd3b8ca2496c674b6a1d2dfc89f"
+        },
+        {
           "path": "docs/evidence/cp191-adversarial-baseline-scorecard.json",
-          "commit": "36bb1a7ab21e77e2b948a0623062b9b97bf0849f"
+          "commit": "303bee7a2c141bd3b8ca2496c674b6a1d2dfc89f"
         },
         {
           "path": "docs/adversarial-corpus-v1.md",
-          "commit": "36bb1a7ab21e77e2b948a0623062b9b97bf0849f"
-        },
-        {
-          "path": "docs/evals/recalibration/run-recalibration.mts",
-          "commit": "36bb1a7ab21e77e2b948a0623062b9b97bf0849f"
+          "commit": "303bee7a2c141bd3b8ca2496c674b6a1d2dfc89f"
         }
       ],
       "nextAction": "Refresh the recorded head when the adversarial-evaluation lane publishes its final commit; the lane still has uncommitted changes."
@@ -10036,6 +10045,16 @@
         }
       ],
       "nextAction": "Refresh the recorded head when the skill-library lane publishes its final commit; the lane still has uncommitted changes."
+    },
+    {
+      "id": "W7",
+      "lane": "cp612-project-state-digest-compat",
+      "status": "pending",
+      "head": null,
+      "branch": "f2w7/cp612-project-state-digest-compat",
+      "issueRefs": [612],
+      "evidence": [],
+      "nextAction": "Record the exact head and the evidence paths of the #612 project-state digest compatibility work when the lane publishes them."
     }
   ]
 }

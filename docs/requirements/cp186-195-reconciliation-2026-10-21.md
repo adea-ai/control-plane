@@ -132,18 +132,20 @@ its evidence paths is proven against the tree of that commit, because a lane's
 files are not in this branch until it is merged. No contribution is integrated
 into the current tree, so no worker result is reported as evidence.
 
-| Worker | Lane                     | Status   | Exact head                                 | Issues     | Evidence                                                         |
-| ------ | ------------------------ | -------- | ------------------------------------------ | ---------- | ---------------------------------------------------------------- |
-| W1     | cp558-resolution         | pending  | —                                          | #558       | —                                                                |
-| W2     | cp186-195-requirements   | received | `b2de58916ba5315f4cf5ad40aa8399161abc263a` | #186, #195 | canonical crosswalk, figure inventory, this record               |
-| W3     | cp187-architecture-audit | received | `51ae5991e38cb25efe452d72ce0863e87cbfef2e` | #187       | architecture reachability trace, audit script, regression checks |
-| W4     | cp190-trust-boundary     | pending  | —                                          | #190       | —                                                                |
-| W5     | cp191-adversarial-eval   | received | `36bb1a7ab21e77e2b948a0623062b9b97bf0849f` | #191       | adversarial baseline scorecard, corpus, recalibration harness    |
-| W6     | cp196-skill-library      | received | `ffa4c990d751e26cb63b824cd313915eb5a1dcd9` | #196       | blinded comparison packet, skill-eval harness, audit skill       |
+| Worker | Lane                              | Status   | Exact head                                 | Issues     | Evidence                                                          |
+| ------ | --------------------------------- | -------- | ------------------------------------------ | ---------- | ----------------------------------------------------------------- |
+| W1     | cp558-resolution                  | received | `2621732382c6d05ed4bff450433110140e061dab` | #558       | #558 context-consumer conformance record and conformance tests    |
+| W2     | cp186-195-requirements            | received | `b2de58916ba5315f4cf5ad40aa8399161abc263a` | #186, #195 | canonical crosswalk, figure inventory, this record                |
+| W3     | cp187-architecture-audit          | received | `51ae5991e38cb25efe452d72ce0863e87cbfef2e` | #187       | architecture reachability trace, audit script, regression checks  |
+| W4     | cp190-trust-boundary              | pending  | —                                          | #190       | —                                                                 |
+| W5     | cp191-adversarial-eval            | received | `303bee7a2c141bd3b8ca2496c674b6a1d2dfc89f` | #191       | adversarial evaluation program record, baseline scorecard, corpus |
+| W6     | cp196-skill-library               | received | `ffa4c990d751e26cb63b824cd313915eb5a1dcd9` | #196       | blinded comparison packet, skill-eval harness, audit skill        |
+| W7     | cp612-project-state-digest-compat | pending  | —                                          | #612       | —                                                                 |
 
 The architecture, adversarial-evaluation and skill-library lanes still had
 uncommitted changes when this record was written, so their recorded heads are
-provisional. The #558 and trust-boundary lanes had not published a head.
+provisional. The trust-boundary and project-state digest lanes had not published
+a head.
 
 `bun run requirements:refresh` re-reads the live issue identities and is the
 step that folds an arrived contribution into the crosswalk.
