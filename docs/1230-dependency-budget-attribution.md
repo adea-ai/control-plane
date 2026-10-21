@@ -114,6 +114,10 @@ BUDGET EXCEEDED: {"ok":false,"ceiling":285,"measured":591,"scope":"lockfile tree
       "@earendil-works/pi-durable":125,"@earendil-works/pi-ai":95,
       "@nestjs/platform-fastify":84,"@langchain/langgraph-checkpoint-postgres":62,
       "miniflare":62,"@nestjs/swagger":59,"@langchain/langgraph":56},
+    "largestOffenders":{"miniflare":46,"@sentry/node":36,"drizzle-kit":9,
+      "@nestjs/swagger":7,"@restatedev/restate-server":5,
+      "@langchain/langgraph":4,"@nestjs/platform-fastify":4,
+      "@opentelemetry/sdk-metrics":4,"railway":3,"@aws-sdk/client-s3":3},
     "aliasedIdentities":2,
     "aliases":{"vite@1.3.0":"@voidzero-dev/vite-plus-core@1.3.0",
       "typescript6@6.0.3":"typescript@6.0.3"},
@@ -138,6 +142,49 @@ lockfile's pins for six packages (`@opentelemetry/api@1.9.1` against the
 pinned `1.10.0`, and the `@opentelemetry/*` `2.12.0` against the pinned
 `3.0.0`), so the installed graph is not version-identical to the lockfile
 here; that is a stale install, not a measurement difference.
+
+## 2c. The exact offenders
+
+The **contribution** of a root and what an owner could actually **shed** are
+different numbers. A dependency that several roots share cannot be removed by
+dropping one declaration: the identity stays in the resolved tree because
+another root still needs it. The checker therefore also reports the _exclusive_
+share of every declared root — the identities only that root brings in.
+
+| Declared root                                                                                                                         | Exclusive identities (removable by that owner alone) |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `miniflare`                                                                                                                           | 46                                                   |
+| `@sentry/node`                                                                                                                        | 36                                                   |
+| `drizzle-kit`                                                                                                                         | 9                                                    |
+| `@nestjs/swagger`                                                                                                                     | 7                                                    |
+| `@restatedev/restate-server`                                                                                                          | 5                                                    |
+| `@langchain/langgraph`                                                                                                                | 4                                                    |
+| `@nestjs/platform-fastify`                                                                                                            | 4                                                    |
+| `@opentelemetry/sdk-metrics`                                                                                                          | 4                                                    |
+| `railway`                                                                                                                             | 3                                                    |
+| `@aws-sdk/client-s3`                                                                                                                  | 3                                                    |
+| `@fastify/helmet`                                                                                                                     | 2                                                    |
+| `@earendil-works/pi-durable`                                                                                                          | 2                                                    |
+| `@restatedev/restate-sdk`                                                                                                             | 2                                                    |
+| `acorn`, `code-foundry`, `typescript6`, `drizzle-orm`, `@hpke/core`, `@hpke/dhkem-x25519`, `@langchain/langgraph-checkpoint-postgres` | 1 each                                               |
+
+Twenty declared roots have an exclusive share, and the shares sum to **134**
+identities of the 591.
+
+**This changes what a removal can achieve.** The Vite+ toolchain contributes
+115 identities to the closure but only **6** of them exclusively: its
+`oxfmt`/`oxlint` copies and their platform binaries are shared with other roots
+(such as `oxc-parser`), so dropping the toolchain declarations would shed far
+less than the contribution table suggests. Removing **every** root with an
+exclusive share sheds at most **134** identities against an overage of **306**.
+
+**The 285 ceiling is therefore not reachable by removing declarations.** The
+remaining 457 identities are shared by several roots — the AWS SDK, the Pi SDK,
+the Nest/Fastify stack, the OpenTelemetry family — and shedding them means
+changing what the _product_ imports, which is a product and architecture
+decision for their owners, not a packaging repair. A test pins this: it fails
+loudly if the exclusive shares ever cover the overage, so the analysis is
+revisited when a reduction lands.
 
 ## 3. The composition of the 591
 
@@ -217,17 +264,17 @@ reporting the breach: `BUDGET EXCEEDED … 591 against 285`, exit 1.
 
 ## 8. What this slice changed
 
-| Path                                                                 | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/check-budgets.mjs`                                          | the counting rule is **unchanged** — no parser defect is proven (§2), so the counter is not touched. The checker gains the attribution: `attributeExternalPackages` / `summarizeAttribution` walk the lockfile graph from the declared roots, record the resolution of every counted identity, and the `deps` report carries the attribution next to the unchanged verdict                                                                                                                                                                |
-| `packages/production-readiness/src/dependency-budget-scope.test.mjs` | six regression tests pin the §2 invariants over the **real** listing: no listing entry is dropped, every counted identity is named by the lockfile and only the workspace packages are excluded, and every counted identity is a plain package identity; the measured closure is exactly the lockfile graph reachable from the declared roots; the closure without the Vite+ toolchain is still above the unchanged ceiling; and every installed external package is covered by the measured closure once the alias resolution is applied |
-| `docs/1230-dependency-budget-attribution.md`                         | this document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Path                                                                 | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/check-budgets.mjs`                                          | the counting rule is **unchanged** — no parser defect is proven (§2), so the counter is not touched. The checker gains the attribution: `attributeExternalPackages` / `summarizeAttribution` walk the lockfile graph from the declared roots, record the resolution of every counted identity and the **exclusive** share of every root, and the `deps` report carries the attribution next to the unchanged verdict                                                                                                                                                                                                                              |
+| `packages/production-readiness/src/dependency-budget-scope.test.mjs` | seven regression tests pin the §2 invariants over the **real** listing: no listing entry is dropped, every counted identity is named by the lockfile and only the workspace packages are excluded, and every counted identity is a plain package identity; the measured closure is exactly the lockfile graph reachable from the declared roots; the closure without the Vite+ toolchain is still above the unchanged ceiling; and every installed external package is covered by the measured closure once the alias resolution is applied; and the exact offenders are attributed per root, with their removal shown not to close the gap alone |
+| `docs/1230-dependency-budget-attribution.md`                         | this document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 ## 9. Receipts
 
 - Real measurement, seam unset: `BUDGET EXCEEDED: {"ok":false,"ceiling":285,"measured":591,"scope":"lockfile tree"}`, exit 1.
 - Installed graph: 374 distinct external identities on this host (1031 store entries walked).
-- Focused regression: `bun test src/dependency-budget-scope.test.mjs` (packages/production-readiness) — 17 pass / 0 fail, of which 6 are new.
+- Focused regression: `bun test src/dependency-budget-scope.test.mjs` (packages/production-readiness) — 18 pass / 0 fail, of which 7 are new.
 - Reproduced attribution: the lockfile walk reaches exactly the 591 counted identities (591 = 591, no difference in either direction, no unresolved root), and the gate's own report carries it.
 - The ceiling is unchanged: `budgets.json` → `dependencies.externalPackageCeiling = 285`.
 - No release and no deployment were performed or requested.

@@ -181,12 +181,29 @@ export function attributeExternalPackages(lockfileText) {
     return { identities, resolutions, unresolved }
   }
   const perRoot = {}
+  const closures = new Map()
   for (const root of new Set(declaredRoots)) {
-    const { identities } = closureOf([root])
-    if (identities.size > 0) perRoot[root] = identities.size
+    const { identities: rootIdentities } = closureOf([root])
+    closures.set(root, rootIdentities)
+    if (rootIdentities.size > 0) perRoot[root] = rootIdentities.size
+  }
+  // The exact offenders: the identities only one declared root brings in. A
+  // dependency that several roots share cannot be shed by dropping one of them,
+  // so the exclusive part is what an owner could actually remove.
+  const owners = new Map()
+  for (const [root, rootIdentities] of closures) {
+    for (const identity of rootIdentities) {
+      if (!owners.has(identity)) owners.set(identity, [])
+      owners.get(identity).push(root)
+    }
+  }
+  const exclusivePerRoot = {}
+  for (const [root, rootIdentities] of closures) {
+    const exclusive = [...rootIdentities].filter((identity) => owners.get(identity).length === 1)
+    if (exclusive.length > 0) exclusivePerRoot[root] = exclusive.length
   }
   const { identities, resolutions, unresolved } = closureOf(declaredRoots)
-  return { identities, perRoot, resolutions, unresolvedRoots: unresolved }
+  return { identities, perRoot, exclusivePerRoot, resolutions, unresolvedRoots: unresolved }
 }
 
 /**
@@ -197,9 +214,10 @@ export function attributeExternalPackages(lockfileText) {
  */
 export function summarizeAttribution(lockfileText) {
   try {
-    const { identities, perRoot, resolutions, unresolvedRoots } =
+    const { identities, perRoot, exclusivePerRoot, resolutions, unresolvedRoots } =
       attributeExternalPackages(lockfileText)
     const roots = Object.entries(perRoot).toSorted((left, right) => right[1] - left[1])
+    const offenders = Object.entries(exclusivePerRoot).toSorted((left, right) => right[1] - left[1])
     const aliases = Object.fromEntries(
       [...resolutions].filter(([identity, resolved]) => resolved !== identity)
     )
@@ -207,6 +225,9 @@ export function summarizeAttribution(lockfileText) {
       reachableIdentities: identities.size,
       declaredRootCount: Object.keys(perRoot).length,
       largestContributors: Object.fromEntries(roots.slice(0, 10)),
+      // The exact offenders: what each declared root brings in alone, so an
+      // owner can see what dropping that dependency would actually shed.
+      largestOffenders: Object.fromEntries(offenders.slice(0, 10)),
       aliasedIdentities: Object.keys(aliases).length,
       aliases,
       unresolvedRoots,

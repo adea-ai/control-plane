@@ -488,3 +488,31 @@ test('every installed external package is covered by the measured closure', asyn
     .filter((name) => !countedNames.has(name))
   assert.deepEqual(uncovered, [], 'an installed external package is not covered by the measurement')
 })
+
+test('the exact offenders are attributed per root, and their removal cannot close the gap alone', async () => {
+  // The actionable attribution: what each declared root brings in **alone**. A
+  // dependency several roots share cannot be shed by dropping one of them, so
+  // the exclusive share is what an owner could actually remove. The exclusive
+  // shares partition the measured closure, and while the breach stands they
+  // are smaller than the overage: the gap cannot be closed by removing
+  // declarations alone and needs a product decision.
+  const { attributeExternalPackages, externalPackagePairs } = await loadChecker()
+  const counted = new Set(externalPackagePairs(realListing()))
+  const { identities, exclusivePerRoot } = attributeExternalPackages(
+    readFileSync(join(repositoryRoot, 'bun.lock'), 'utf8')
+  )
+  assert.deepEqual(
+    [...identities].filter((identity) => !counted.has(identity)),
+    [],
+    'an attributed identity is not counted'
+  )
+  const exclusive = Object.values(exclusivePerRoot)
+  const total = exclusive.reduce((sum, count) => sum + count, 0)
+  assert.ok(total > 0, 'no root has an exclusive share')
+  assert.ok(total <= identities.size, 'the exclusive shares exceed the closure')
+  const overage = counted.size - budgets.dependencies.externalPackageCeiling
+  assert.ok(
+    total < overage,
+    `the exclusive shares (${total}) now cover the overage (${overage}); the residual analysis must be revisited`
+  )
+})
