@@ -31,7 +31,11 @@ The reader always follows the record, never the writer that is replaying it.
    the writer used.
 2. **Versioned record (`inputDigestVersion = 2`).** Verify the digest against the code-point form
    only. A legacy digest stored under a versioned record is refused, because the record says the
-   digest is a code-point digest.
+   digest is a code-point digest. The version and the bytes it stands for come from one table:
+   the writer derives the digest from the version it records, and the reader verifies against the
+   version the record carries, so a record can never claim a canonicalization its bytes were not
+   produced with. A version this release has no canonicalization for has no digest at all: the
+   writer refuses to record it and the reader fails closed.
 3. **Untagged record (no version).** The record predates explicit versioning. Verify against the
    code-point form first, and then against the legacy locale-dependent form. This is the
    compatibility window; it is exactly the dual-accept behaviour that shipped with #659.
@@ -76,14 +80,17 @@ versioned record exists.
 The default writer is unchanged. It writes the code-point digest and records no version, so the
 stored bytes of an existing deployment do not change and no retained record is rewritten.
 
-The versioned writer is explicitly opt-in:
+The versioned writer is explicitly opt-in, on every write path that can persist a mutation record:
 
 ```ts
 await service.applyMutation(input, { digestVersion: 2 })
+await service.mergePromotion(input, { digestVersion: 2 })
 ```
 
-Only that path records `inputDigestVersion`. The published `project_state.updated` event carries the
+Only those paths record `inputDigestVersion`. The published `project_state.updated` event carries the
 version when the writer recorded one, and is byte-identical to the previous payload when it did not.
+The digest a versioned writer stores is derived from the version it records, so the tag and the
+bytes cannot disagree.
 
 ## Storage
 

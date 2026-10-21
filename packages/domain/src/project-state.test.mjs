@@ -8,6 +8,7 @@ import {
   ProjectStateOperationSchema,
   ProjectStateService,
   RecordingProjectStateEventPublisher,
+  projectStateMutationDigestForVersion,
   projectStateMutationDigestV2,
   projectStateMutationLegacyDigest,
   projectStateMutationMatchesDigest,
@@ -230,6 +231,83 @@ describe('project state mutation digest versioning', () => {
     await expect(service.applyMutation(input)).rejects.toMatchObject({
       code: 'MUTATION_DIGEST_VERSION_UNSUPPORTED',
     })
+  })
+
+  test('the recorded version selects the canonicalization the digest was produced with', async () => {
+    const { service, repository } = setupWithRepository()
+    await service.initialize({ workspaceId, projectId, at: now })
+    const input = mutation('stm_01JABCDEF0123456789ABCDEFG', 0, [
+      appendItem('psi_01JABCDEF0123456789ABCDEFG', 'goal', 'ship M2'),
+    ])
+    await service.applyMutation(input, { digestVersion: 2 })
+    const stored = await repository.getMutation(workspaceId, projectId, input.mutationId)
+
+    // The bytes the record carries are the digest of the canonicalization the record names,
+    // so the version tag can never disagree with the digest it stands for.
+    expect(stored.inputDigest).toBe(projectStateMutationDigestForVersion(2, input))
+    expect(stored.inputDigest).toBe(projectStateMutationDigestV2(input))
+
+    // A version this release has no canonicalization for has no digest at all: the writer
+    // cannot record it and the reader cannot verify against it.
+    expect(projectStateMutationDigestForVersion(3, input)).toBeUndefined()
+    expect(projectStateMutationMatchesDigest(input, stored.inputDigest, 3)).toBe(false)
+  })
+
+  test('the promotion path can write a versioned record', async () => {
+    const { service, repository } = setupWithRepository()
+    await service.initialize({ workspaceId, projectId, at: now })
+    const operation = appendItem('psi_01JBBCDEF0123456789ABCDEFG', 'finding', 'tests pass', {
+      sourceKind: 'execution',
+      sourceExecutionId: executionId,
+      sourcePrincipalRef: 'principal://control-plane/runtime-worker',
+      artifactRefs: [],
+      capturedAt: now,
+    })
+    const approved = await approveProposal(service, operation)
+
+    await service.mergePromotion(
+      {
+        proposalId: approved.proposalId,
+        mutationId: 'stm_01JBBCDEF0123456789ABCDEFG',
+        mergedAt: later,
+      },
+      { digestVersion: 2 }
+    )
+
+    // The merged record names the canonicalization it was written with.
+    const stored = await repository.getMutation(
+      workspaceId,
+      projectId,
+      'stm_01JBBCDEF0123456789ABCDEFG'
+    )
+    expect(stored.inputDigestVersion).toBe(2)
+  })
+
+  test('the promotion path keeps the untagged record when the writer does not opt in', async () => {
+    const { service, repository } = setupWithRepository()
+    await service.initialize({ workspaceId, projectId, at: now })
+    const operation = appendItem('psi_01JBBCDEF0123456789ABCDEFG', 'finding', 'tests pass', {
+      sourceKind: 'execution',
+      sourceExecutionId: executionId,
+      sourcePrincipalRef: 'principal://control-plane/runtime-worker',
+      artifactRefs: [],
+      capturedAt: now,
+    })
+    const approved = await approveProposal(service, operation)
+
+    await service.mergePromotion({
+      proposalId: approved.proposalId,
+      mutationId: 'stm_01JBBCDEF0123456789ABCDEFG',
+      mergedAt: later,
+    })
+
+    const stored = await repository.getMutation(
+      workspaceId,
+      projectId,
+      'stm_01JBBCDEF0123456789ABCDEFG'
+    )
+    expect(stored.inputDigestVersion).toBeUndefined()
+    expect(Object.hasOwn(stored, 'inputDigestVersion')).toBe(false)
   })
 })
 
@@ -616,4 +694,26 @@ function proposal(proposalId) {
     createdAt: now,
     expiresAt: '2026-09-01T00:00:00.000Z',
   }
+}
+
+/**
+ * A reviewed promotion proposal for one execution-derived operation, so a test can drive the
+ * merge path the way the reviewed flow does.
+ */
+async function approveProposal(service, operation) {
+  const candidate = await service.createPromotionProposal({
+    proposalId: 'spp_01JABCDEF0123456789ABCDEFG',
+    workspaceId,
+    projectId,
+    baseRevision: 0,
+    sourceExecutionId: executionId,
+    operations: [operation],
+    createdAt: now,
+    expiresAt: '2026-09-01T00:00:00.000Z',
+  })
+  return service.approvePromotion({
+    proposalId: candidate.proposalId,
+    reviewingPrincipalRef: 'principal://agent-hq/user/42',
+    reviewedAt: later,
+  })
 }

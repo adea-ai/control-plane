@@ -13,6 +13,19 @@ const PrincipalRefSchema = z.string().min(1).max(256)
  */
 const PROJECT_STATE_MUTATION_DIGEST_VERSION = 2
 
+/**
+ * The canonicalization each recorded digest version names. This is the single place that
+ * binds a version to the bytes it stands for: the writer derives the digest from the version
+ * it records, and the reader verifies against the version the record carries. A version that
+ * has no entry here is one this release cannot produce or verify, so the writer refuses to
+ * record it and the reader fails closed.
+ */
+const PROJECT_STATE_MUTATION_DIGEST_FORMS: Readonly<
+  Record<number, (mutation: ProjectStateMutationInput) => string>
+> = Object.freeze({
+  [PROJECT_STATE_MUTATION_DIGEST_VERSION]: (mutation) => digestV2(mutation),
+})
+
 const ItemKeySchema = z
   .string()
   .min(1)
@@ -209,7 +222,8 @@ export type AppliedStateMutation = z.output<typeof AppliedStateMutationSchema>
 
 /**
  * The writer options of the mutation path. The default writer keeps the untagged record it
- * has always written; the versioned writer is explicitly opt-in.
+ * has always written; the versioned writer is explicitly opt-in. Both write paths that can
+ * persist a mutation record accept them: `applyMutation` and `mergePromotion`.
  */
 export interface ProjectStateMutationWriterOptions {
   /**
@@ -627,7 +641,15 @@ export class ProjectStateService {
     // The writer path decides what a record carries, never what a reader accepts. The default
     // writer keeps the untagged record it has always written; the opt-in versioned writer
     // records the canonicalization it used so the reader does not have to guess it.
-    const inputDigest = digestV2(mutation)
+    const inputDigest =
+      writer.digestVersion === undefined
+        ? digestV2(mutation)
+        : digestForVersion(writer.digestVersion, mutation)
+    if (inputDigest === undefined) {
+      // The writer cannot produce the canonicalization the requested version names, so it
+      // refuses to record a version it could not stand behind.
+      throw new ProjectStateError('MUTATION_DIGEST_VERSION_UNSUPPORTED')
+    }
     const applied = await this.repository.getMutation(
       mutation.workspaceId,
       mutation.projectId,
@@ -798,7 +820,10 @@ export class ProjectStateService {
     })
   }
 
-  async mergePromotion(input: unknown): Promise<StatePromotionProposal> {
+  async mergePromotion(
+    input: unknown,
+    options?: ProjectStateMutationWriterOptions
+  ): Promise<StatePromotionProposal> {
     const parsed = z
       .object({
         proposalId: IdentifierSchemas.statePromotionProposalId,
@@ -821,7 +846,8 @@ export class ProjectStateService {
         operations: proposal.operations,
         at: parsed.mergedAt,
       },
-      true
+      true,
+      options
     )
     return this.#replaceProposal(proposal, {
       state: 'merged',
@@ -1035,6 +1061,28 @@ export function projectStateMutationDigestV2(input: unknown): string {
 }
 
 /**
+ * The digest of a mutation input under the canonicalization a digest version names.
+ *
+ * `undefined` means this release has no canonicalization for that version: the writer must
+ * not record it and the reader must not verify against it. The version and the bytes it
+ * stands for are therefore always derived from the same table.
+ */
+export function projectStateMutationDigestForVersion(
+  version: number,
+  input: unknown
+): string | undefined {
+  return digestForVersion(version, MutationInputSchema.parse(input))
+}
+
+function digestForVersion(
+  version: number,
+  mutation: ProjectStateMutationInput
+): string | undefined {
+  const form = PROJECT_STATE_MUTATION_DIGEST_FORMS[version]
+  return form ? form(mutation) : undefined
+}
+
+/**
  * Reader-first verification of a persisted mutation digest.
  *
  * The record's own digest version selects the canonicalization: a versioned record is
@@ -1057,7 +1105,8 @@ function matchesMutationDigest(
 ): boolean {
   if (version !== undefined && version !== PROJECT_STATE_MUTATION_DIGEST_VERSION) return false
   if (version === PROJECT_STATE_MUTATION_DIGEST_VERSION) {
-    return expectedDigest === digestV2(mutation)
+    const canonicalDigest = digestForVersion(version, mutation)
+    return canonicalDigest !== undefined && expectedDigest === canonicalDigest
   }
   // Untagged record: the code-point form is what every writer has stored since the cutover,
   // and the legacy locale-dependent form is what records written before it carry.
