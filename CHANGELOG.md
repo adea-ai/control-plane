@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.105.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.4...workspace-v1.105.5) (2026-10-21)
+
+
+### Bug Fixes
+
+* **ci:** qualify the production task cache from the real output inventory ([#1208](https://github.com/adea-ai/control-plane/issues/1208)) ([6d16a49](https://github.com/adea-ai/control-plane/commit/6d16a495186d2a4d84d422c936a02b4abdc93928))
+
 ## [1.105.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.3...workspace-v1.105.4) (2026-10-20)
 
 
