@@ -1102,6 +1102,67 @@ describe('Local operations measurement wiring', () => {
     }
   }, 60_000)
 
+  test('an invalid operations measurement configuration is refused when the composition is built', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-operations-invalid-'))
+    const recorded = recordingAdapter()
+    try {
+      // The measurement's own configuration is validated when the composition is built, so an
+      // invalid scope or cadence cannot reach a start attempt.
+      expect(
+        () =>
+          new LocalControlPlaneComposition({
+            dataDirectory: directory,
+            metricAdapter: recorded.adapter,
+            operationsMeasurements: { workspaceId: 'not-a-workspace-id', intervalMs: 1000 },
+          })
+      ).toThrow()
+      expect(
+        () =>
+          new LocalControlPlaneComposition({
+            dataDirectory: directory,
+            metricAdapter: recorded.adapter,
+            operationsMeasurements: { workspaceId: OPERATIONS_WORKSPACE_ID, intervalMs: 999 },
+          })
+      ).toThrow('OPERATIONS_MEASUREMENT_INTERVAL_INVALID')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('a retry after a failed startup measures again instead of reporting a dead measurement', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-operations-retry-'))
+    const recorded = recordingAdapter()
+    let attempts = 0
+    const composition = new LocalControlPlaneComposition({
+      dataDirectory: directory,
+      metricAdapter: recorded.adapter,
+      operationsMeasurements: { workspaceId: OPERATIONS_WORKSPACE_ID, intervalMs: 1000 },
+      // The first endpoint attempt fails and the second one succeeds, so the retry is
+      // deterministic and needs no timing to arrange.
+      endpointFactory: {
+        create: async () => {
+          attempts += 1
+          if (attempts === 1) throw new Error('LOCAL_TEST_ENDPOINT_UNAVAILABLE')
+          return { run: async () => undefined, shutdown: async () => undefined }
+        },
+      },
+    })
+    try {
+      await expect(composition.start()).rejects.toThrow('LOCAL_TEST_ENDPOINT_UNAVAILABLE')
+      // The failed startup drained the measurement, so the points it recorded are all it will
+      // ever record: the drained lifecycle refuses to start.
+      const afterFailure = recorded.all().length
+      // The retry is permitted, and it has to measure. Reusing the drained lifecycle would
+      // report a configured measurement that can never sample, so the retry builds a fresh one.
+      await composition.start()
+      expect(composition.operationsMeasurementConfigured).toBe(true)
+      expect(await untilGrown(recorded, afterFailure)).toBe(true)
+    } finally {
+      await composition.close().catch(() => undefined)
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 60_000)
+
   test('a rejected earlier close still drains the measurement', async () => {
     for (const [name, options] of [
       [
