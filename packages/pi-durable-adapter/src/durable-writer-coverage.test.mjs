@@ -5,6 +5,12 @@
 // This file enumerates the writers of the durable state from the source and
 // records, per writer, what authority it actually holds.
 //
+// The enumeration is repo-wide. It is derived from three source shapes, so a
+// store that starts writing durable state is classified rather than missed: a
+// direct durable write or an exported durable store/owner seam in this
+// package, a direct durable write to a `pi_`/`cp_pi_` table anywhere in the
+// workspace, and a write through an injected durable-journal seam.
+//
 // It proves three things.
 //
 //   1. Tamper consistency. A digest binds the fields it covers, so a body that
@@ -23,13 +29,14 @@
 // For them the restore-generation property is an open acceptance gap, and this
 // file says so instead of narrowing the writer universe to obtain a pass.
 //
-// These are pure contracts plus a disposable SQLite journal. No fixture
-// supplies production authority, no live resource is touched and no effect is
-// performed.
+// These are pure contracts plus a disposable SQLite journal. The enumeration
+// reads source text only: it opens no database, starts no process and touches
+// no live resource. No fixture supplies production authority, no live resource
+// is touched and no effect is performed.
 import { expect, test } from 'bun:test'
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -59,11 +66,106 @@ import {
   verifyPiDurableLocalUpgradeManifest,
 } from './upgrade-manifest.ts'
 
-const here = dirname(fileURLToPath(import.meta.url))
+const workspaceRoot = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/+$/, '')
+const adapterSource = 'packages/pi-durable-adapter/src'
 const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
 const at = '2026-10-20T12:00:00.000Z'
 const end = '2026-10-20T12:01:00.000Z'
 const hash = `sha256:${'a'.repeat(64)}`
+
+// The durable Pi state is written from more than this module. Three
+// derivations build the writer universe from the source, so a store that
+// starts writing durable state is classified rather than missed:
+//
+//   1. a direct durable write (SQL or a file write) or an exported durable
+//      store/owner seam inside this package;
+//   2. a direct durable write to a `pi_`/`cp_pi_` table anywhere in the
+//      workspace, because the lead stores and the Cloudflare host keep their
+//      own durable Pi state;
+//   3. a write through an injected durable-journal seam, because a module that
+//      mutates the journal it was handed writes durable state without any SQL
+//      of its own.
+//
+// The derivation reads source text only. It opens no database, starts no
+// process and touches no live resource.
+const durableTableWrite = /(?:INSERT(?: OR IGNORE)? INTO|UPDATE|DELETE FROM)\s+(?:cp_)?pi_[a-z_]+/
+const durableJournalMutation =
+  /\.(?:admit|claim|claimProcess|transition|transitionCurrent|update|updateCurrentMetadata|updateUnderProcessClaim|releaseRecoveryClaim|releaseRecoveryDenial|releaseProcess|sessionCreate|sessionUpdate)\(/
+const durableStoreSeam =
+  /export interface Durable[A-Za-z]*Store|export interface Pi[A-Za-z]*(?:Owner|Boundary)Port/
+const durableFileWrite = /writeFileSync|fsyncSync|INSERT INTO|INSERT OR IGNORE|UPDATE pi_/
+// Test files and test fixtures are named by convention; they are excluded
+// from the production writer universe and asserted separately.
+const testSupportName = /\.(?:test|fixture)\.(?:ts|mjs)$|-fixture\.(?:ts|mjs)$/
+
+function sourceFiles(root) {
+  const found = []
+  const pending = [root]
+  while (pending.length > 0) {
+    const directory = pending.pop()
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) {
+        pending.push(path)
+        continue
+      }
+      if (!/\.(?:ts|mjs)$/.test(entry.name)) continue
+      if (testSupportName.test(entry.name)) continue
+      found.push(path)
+    }
+  }
+  return found
+}
+
+function workspaceSourceFiles() {
+  const found = []
+  for (const kind of ['packages', 'apps']) {
+    for (const entry of readdirSync(join(workspaceRoot, kind), { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const source = join(workspaceRoot, kind, entry.name, 'src')
+      if (!existsSync(source)) continue
+      for (const path of sourceFiles(source)) found.push(path.slice(workspaceRoot.length + 1))
+    }
+  }
+  return found.toSorted()
+}
+
+// What each named module actually holds. The classification is the authority
+// a writer really has, never a claim that it holds everything.
+const generationHolders = new Set([
+  `${adapterSource}/cancellation-owner.ts`,
+  `${adapterSource}/native-cancellation-boundary.ts`,
+])
+const ownEpochOrIdentity = new Set([
+  `${adapterSource}/effect-gate.ts`,
+  `${adapterSource}/journal.ts`,
+  `${adapterSource}/lease.ts`,
+  'packages/pi-cloudflare-host/src/owner.ts',
+])
+const ownRecordOnly = new Set([
+  `${adapterSource}/adapter.ts`,
+  `${adapterSource}/cancellation-history.ts`,
+  'apps/control-api/src/models/production-lead-product.ts',
+  'apps/control-api/src/models/production-role-selection.ts',
+  'apps/control-api/src/models/production-source-lead-product.ts',
+  'apps/control-api/src/pi-durable/lead-fence-live-harness.mjs',
+  'apps/control-api/src/pi-durable/lead-preparation.ts',
+  'apps/control-api/src/pi-durable/lead-running-lifecycle.ts',
+  'apps/control-api/src/pi-durable/management-governed-call.ts',
+  'apps/control-api/src/pi-durable/node-admission.ts',
+  'apps/control-api/src/pi-durable/pi-durable-lead.service.ts',
+  'packages/pi-cloudflare-host/src/sessions.ts',
+])
+const readersOrInProcessIdentities = new Set([
+  `${adapterSource}/resume-permit.ts`,
+  `${adapterSource}/upgrade-manifest.ts`,
+])
+const classified = new Set([
+  ...generationHolders,
+  ...ownEpochOrIdentity,
+  ...ownRecordOnly,
+  ...readersOrInProcessIdentities,
+])
 
 function fixture() {
   const target = PiCancellationTargetSchema.parse({
@@ -496,6 +598,21 @@ test('the writers with no generation authority are named, and the gap stays open
   //     own record, not a restore generation;
   //   - the session lease owns a process identity on the host, not a
   //     generation;
+  //   - the Cloudflare host owner owns an owner epoch over its own durable
+  //     object storage, which is the storage a restore would replace;
+  //   - the adapter writes the journal's own records and its prepared/armed
+  //     receipts; those receipts are monotonic within one record and are not
+  //     a restore generation;
+  //   - the cancellation history classifier writes history metadata through
+  //     the journal it was handed, so it writes durable state without any SQL
+  //     of its own;
+  //   - the lead admission, preparation, running-lifecycle, management-call
+  //     and lead-receipt stores bind a digest, a revision or a record
+  //     condition over their own rows;
+  //   - the production selection stores bind their own selection rows;
+  //   - the Cloudflare session store holds a session body;
+  //   - the shared live fence harness writes durable Pi state only while it
+  //     drives the production composition inside a test;
   //   - the upgrade manifest reads the store and produces a digest of it, and
   //     grants no restore authority by its own contract;
   //   - the resume permit is an in-process identity and is not exported from
@@ -506,13 +623,15 @@ test('the writers with no generation authority are named, and the gap stays open
   // full-writer restore-generation acceptance therefore stays open, and the
   // previous qualification's claim of complete coverage was wrong.
   const writersWithoutGenerationAuthority = [
-    'effect-gate.ts',
-    'journal.ts',
-    'lease.ts',
-    'upgrade-manifest.ts',
-    'resume-permit.ts',
-  ]
-  expect(writersWithoutGenerationAuthority).toHaveLength(5)
+    ...ownEpochOrIdentity,
+    ...ownRecordOnly,
+    ...readersOrInProcessIdentities,
+  ].toSorted()
+  expect(writersWithoutGenerationAuthority).toHaveLength(18)
+  expect(writersWithoutGenerationAuthority).not.toContain(`${adapterSource}/cancellation-owner.ts`)
+  expect(writersWithoutGenerationAuthority).not.toContain(
+    `${adapterSource}/native-cancellation-boundary.ts`
+  )
 })
 
 test('every module that writes the durable state is accounted for', () => {
@@ -520,65 +639,75 @@ test('every module that writes the durable state is accounted for', () => {
   // writing the durable state without being classified here fails this file.
   // The classification is not a pass/fail of coverage: it records which
   // writer carries a restore generation and which does not.
-  const source = readdirSync(here)
-    .filter((entry) => entry.endsWith('.ts'))
-    .map((entry) => [entry, readFileSync(join(here, entry), 'utf8')])
+  const universe = workspaceSourceFiles()
+  const texts = new Map(
+    universe.map((path) => [path, readFileSync(join(workspaceRoot, path), 'utf8')])
+  )
 
-  // A module writes the durable state when it performs a durable write itself
-  // or exposes a store/owner seam that another caller writes through.
-  const writesDurably = (text) =>
-    /writeFileSync|fsyncSync|INSERT INTO|INSERT OR IGNORE|UPDATE pi_/.test(text)
-  const exposesASeam = (text) =>
-    /export interface Durable[A-Za-z]*Store|export interface Pi[A-Za-z]*(?:Owner|Boundary)Port/.test(
-      text
-    )
+  // A module writes the durable state when it performs a durable write itself,
+  // exposes a store/owner seam that another caller writes through, or mutates
+  // the durable journal it was handed.
+  const packageLocal = universe.filter(
+    (path) =>
+      path.startsWith(`${adapterSource}/`) &&
+      (durableFileWrite.test(texts.get(path)) || durableStoreSeam.test(texts.get(path)))
+  )
+  const durableTableWriters = universe.filter((path) => durableTableWrite.test(texts.get(path)))
+  const journalSeamWriters = universe.filter(
+    (path) =>
+      texts.get(path).includes('SqliteDurableJournal') &&
+      durableJournalMutation.test(texts.get(path))
+  )
 
-  const writers = source
-    .filter(([, text]) => writesDurably(text) || exposesASeam(text))
-    .map(([entry]) => entry)
-    .toSorted()
+  const writers = [
+    ...new Set([...packageLocal, ...durableTableWriters, ...journalSeamWriters]),
+  ].toSorted()
 
   // Every one of these is classified below. The classification is what each
   // writer actually holds, not a claim that it holds everything.
-  const carriesARestoreGeneration = new Set([
-    'cancellation-owner.ts',
-    'native-cancellation-boundary.ts',
-  ])
-  const carriesItsOwnEpochOrIdentity = new Set(['effect-gate.ts', 'journal.ts', 'lease.ts'])
-  const isAReaderOrInProcessIdentity = new Set([
-    'cancellation-history.ts',
-    'resume-permit.ts',
-    'upgrade-manifest.ts',
+  expect(writers).toEqual([
+    'apps/control-api/src/models/production-lead-product.ts',
+    'apps/control-api/src/models/production-role-selection.ts',
+    'apps/control-api/src/models/production-source-lead-product.ts',
+    'apps/control-api/src/pi-durable/lead-fence-live-harness.mjs',
+    'apps/control-api/src/pi-durable/lead-preparation.ts',
+    'apps/control-api/src/pi-durable/lead-running-lifecycle.ts',
+    'apps/control-api/src/pi-durable/management-governed-call.ts',
+    'apps/control-api/src/pi-durable/node-admission.ts',
+    'apps/control-api/src/pi-durable/pi-durable-lead.service.ts',
+    'packages/pi-cloudflare-host/src/owner.ts',
+    'packages/pi-cloudflare-host/src/sessions.ts',
+    'packages/pi-durable-adapter/src/adapter.ts',
+    'packages/pi-durable-adapter/src/cancellation-history.ts',
+    'packages/pi-durable-adapter/src/cancellation-owner.ts',
+    'packages/pi-durable-adapter/src/effect-gate.ts',
+    'packages/pi-durable-adapter/src/journal.ts',
+    'packages/pi-durable-adapter/src/lease.ts',
+    'packages/pi-durable-adapter/src/native-cancellation-boundary.ts',
   ])
 
-  const classified = new Set([
-    ...carriesARestoreGeneration,
-    ...carriesItsOwnEpochOrIdentity,
-    ...isAReaderOrInProcessIdentity,
-  ])
-  for (const writer of writers) {
-    expect(classified.has(writer)).toBe(true)
-  }
+  for (const writer of writers) expect(classified.has(writer)).toBe(true)
 
   // The writers that carry a restore generation are the two whose target binds
-  // it. Every other writer is accounted for under one of the other two
+  // it. Every other writer is accounted for under one of the other
   // classifications, and none of them is claimed to refuse a rolled-back
   // generation.
-  expect(carriesARestoreGeneration.size).toBe(2)
-  // The five modules that write the durable state or expose a store/owner
-  // seam: the two cancellation modules, the effect gate, the journal and the
-  // session lease.
-  expect(writers).toEqual([
-    'cancellation-owner.ts',
-    'effect-gate.ts',
-    'journal.ts',
-    'lease.ts',
-    'native-cancellation-boundary.ts',
+  expect(generationHolders.size).toBe(2)
+  expect(writers.filter((writer) => generationHolders.has(writer)).toSorted()).toEqual([
+    `${adapterSource}/cancellation-owner.ts`,
+    `${adapterSource}/native-cancellation-boundary.ts`,
+  ])
+
+  // The derivation is not vacuous: it reaches durable stores outside this
+  // package, and it finds the seam writers that write no SQL of their own.
+  expect(writers.some((writer) => !writer.startsWith(`${adapterSource}/`))).toBe(true)
+  expect(journalSeamWriters).toEqual([
+    `${adapterSource}/adapter.ts`,
+    `${adapterSource}/cancellation-history.ts`,
   ])
 
   // The upgrade manifest is a reader: it must not appear as a durable writer,
   // because its own contract grants no restore authority.
-  expect(writesDurably(source.find(([entry]) => entry === 'upgrade-manifest.ts')?.[1] ?? '')).toBe(
-    false
-  )
+  expect(durableTableWriters).not.toContain(`${adapterSource}/upgrade-manifest.ts`)
+  expect(writers).not.toContain(`${adapterSource}/upgrade-manifest.ts`)
 })

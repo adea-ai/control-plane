@@ -6,6 +6,14 @@
 modules that write the durable Pi state from the source, records per writer what
 authority it actually holds, and proves the properties each one genuinely has.
 
+The enumeration is repo-wide, not package-local. It is derived from three
+source shapes, so a store that starts writing durable state is classified rather
+than missed: a direct durable write or an exported durable store/owner seam
+inside the adapter package, a direct durable write to a `pi_`/`cp_pi_` table
+anywhere in the workspace, and a write through an injected durable-journal
+seam. The derivation reads source text only: it opens no database, starts no
+process and touches no live resource.
+
 It is **not** a proof of complete writer coverage. The native cancellation
 boundary states its own limit in the source:
 
@@ -72,20 +80,38 @@ acceptance gap.
 ## The writers that carry no restore generation
 
 These write or hold durable state but have **no** independent generation
-authority, so the restore-generation property is **not** proven for them:
+authority, so the restore-generation property is **not** proven for them. The
+list covers the whole workspace: the adapter package, the Cloudflare Pi host
+and the control API lead stores.
 
-| Writer                | Why it has no generation authority                                                                                                                                                                                    |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `effect-gate.ts`      | Its revision is local to the gate's own record, not a restore generation.                                                                                                                                             |
-| `journal.ts`          | Its epoch is the journal's own epoch over its own record, not a restore generation.                                                                                                                                   |
-| `lease.ts`            | Its ownership is a host process identity, not a generation.                                                                                                                                                           |
-| `upgrade-manifest.ts` | It **reads** the store and produces a digest of it. Its own contract says "grants no execution or restore authority". It is not a writer. It detects a rolled-back store by byte identity, which is not a generation. |
-| `resume-permit.ts`    | It is an in-process `WeakSet` identity and is deliberately **not** re-exported from the package entry point, so a consumer can pass a permit on but not mint one.                                                     |
+| Writer                                                          | Why it has no generation authority                                                                                                                                                                                    |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/pi-durable-adapter/src/effect-gate.ts`                | Its revision is local to the gate's own record, not a restore generation.                                                                                                                                             |
+| `packages/pi-durable-adapter/src/journal.ts`                    | Its epoch is the journal's own epoch over its own record, not a restore generation.                                                                                                                                   |
+| `packages/pi-durable-adapter/src/lease.ts`                      | Its ownership is a host process identity, not a generation.                                                                                                                                                           |
+| `packages/pi-durable-adapter/src/adapter.ts`                    | It writes the journal's own records and its prepared/armed receipts. Those receipts are monotonic within one record and are not a restore generation.                                                                 |
+| `packages/pi-durable-adapter/src/cancellation-history.ts`       | It writes history metadata through the journal it was handed (`transitionCurrent`), so it is a durable writer with no generation of its own.                                                                          |
+| `packages/pi-durable-adapter/src/upgrade-manifest.ts`           | It **reads** the store and produces a digest of it. Its own contract says "grants no execution or restore authority". It is not a writer. It detects a rolled-back store by byte identity, which is not a generation. |
+| `packages/pi-durable-adapter/src/resume-permit.ts`              | It is an in-process `WeakSet` identity and is deliberately **not** re-exported from the package entry point, so a consumer can pass a permit on but not mint one.                                                     |
+| `packages/pi-cloudflare-host/src/owner.ts`                      | Its owner epoch is over its own durable object storage, which is the storage a restore would replace.                                                                                                                 |
+| `packages/pi-cloudflare-host/src/sessions.ts`                   | It holds a session body for the native conversation. It carries no epoch and no generation.                                                                                                                           |
+| `apps/control-api/src/pi-durable/node-admission.ts`             | It binds a digest and a record condition over its own intent-admission, budget and binding rows. The digest is tamper consistency, not restore authority.                                                             |
+| `apps/control-api/src/pi-durable/lead-preparation.ts`           | It binds a record condition over its own preparation rows.                                                                                                                                                            |
+| `apps/control-api/src/pi-durable/lead-running-lifecycle.ts`     | It retains its own running receipt rows.                                                                                                                                                                              |
+| `apps/control-api/src/pi-durable/management-governed-call.ts`   | It advances a revision over its own call-gate rows.                                                                                                                                                                   |
+| `apps/control-api/src/pi-durable/pi-durable-lead.service.ts`    | It advances a revision over its own lead receipt and command rows.                                                                                                                                                    |
+| `apps/control-api/src/models/production-lead-product.ts`        | It binds its own selection rows.                                                                                                                                                                                      |
+| `apps/control-api/src/models/production-role-selection.ts`      | It binds its own selection rows.                                                                                                                                                                                      |
+| `apps/control-api/src/models/production-source-lead-product.ts` | It binds its own binding rows.                                                                                                                                                                                        |
+| `apps/control-api/src/pi-durable/lead-fence-live-harness.mjs`   | Shared test support: it writes durable Pi state only while it drives the production composition inside a test, and it holds no authority in production.                                                               |
 
 The enumeration test derives the writer set from the source, so a module that
 starts writing the durable state without being classified fails the file. The
 classification is what each writer actually holds, not a claim that it holds
-everything.
+everything. Two modules bind a restore generation — the cancellation owner
+contract and the native cancellation boundary — and both bind a
+caller-supplied value, not an independent one. Every other writer above is
+accounted for, and none of them is claimed to refuse a rolled-back generation.
 
 ## The open acceptance gap
 
@@ -102,6 +128,12 @@ missing:
 Closing this needs production authority beyond the current scope. The
 qualification stops here and records the gap rather than narrowing the writer
 universe or weakening a comparison to make a pass.
+
+Widening the enumeration from this package to the whole workspace did not
+change that conclusion: it named ten more durable writers that hold no
+generation authority, and it moved the cancellation history classifier out of
+the reader group, because it writes the journal record it is handed. The set of
+writers with no independent authority grew; the gap stayed open.
 
 ## What this does not prove
 
@@ -121,9 +153,10 @@ universe or weakening a comparison to make a pass.
 ## Reproduction
 
 ```
-bun test packages/pi-durable-adapter/src/durable-writer-coverage.test.mjs
+cd packages/pi-durable-adapter && bun test src/durable-writer-coverage.test.mjs
 ```
 
 The fixtures are pure contracts plus a disposable SQLite journal in a temporary
-directory. No fixture supplies production authority, no live resource is
-touched and no effect is performed.
+directory. The writer enumeration reads source text only: it opens no database,
+starts no process and touches no live resource. No fixture supplies production
+authority, no live resource is touched and no effect is performed.
