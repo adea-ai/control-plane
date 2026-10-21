@@ -93,6 +93,76 @@ export function assessRssSamples(samples) {
 }
 
 /**
+ * The host part of a listener address such as `127.0.0.1:3917` or `[::1]:3917`.
+ */
+export function listenerHost(address) {
+  const text = String(address ?? '')
+  if (text.startsWith('[')) {
+    const end = text.indexOf(']')
+    return end === -1 ? text : text.slice(1, end)
+  }
+  const index = text.lastIndexOf(':')
+  return index === -1 ? text : text.slice(0, index)
+}
+
+/**
+ * Whether a listener's address covers the address the probe talks to.
+ *
+ * A wildcard bind covers every address; an exact bind covers only its own.
+ */
+export function coversProbeAddress(address, probeAddress) {
+  const host = listenerHost(address)
+  if (host === '' || host === 'unknown') return false
+  if (host === '*' || host === '0.0.0.0' || host === '::') return true
+  return host === probeAddress
+}
+
+/**
+ * Decides whether the listener set on the probed port belongs to the child.
+ *
+ * The probe talks to one address (`127.0.0.1`), but a port can be listened on
+ * at several local addresses at once, and the listener on another address may
+ * belong to an unrelated process. The set is therefore acceptable only when
+ * EVERY listener on the port is the launched child or a descendant of it, and
+ * at least one of them covers the probed address. Anything unattributed or
+ * ambiguous fails closed.
+ */
+export function assessListenerOwnership({
+  listeners,
+  childPid,
+  parentOf,
+  probeAddress = '127.0.0.1',
+}) {
+  if (!Array.isArray(listeners) || listeners.length === 0)
+    return { owned: false, reason: 'no listener was found on the probed port' }
+  const foreign = []
+  let covering = 0
+  for (const listener of listeners) {
+    const classification = classifyListener({
+      listenerPid: listener.pid,
+      childPid,
+      parentOf,
+    })
+    if (!classification.owned) {
+      foreign.push(`${listener.pid} (${listener.address})`)
+      continue
+    }
+    if (coversProbeAddress(listener.address, probeAddress)) covering += 1
+  }
+  if (foreign.length > 0)
+    return {
+      owned: false,
+      reason: `a listener on the port is not the launched child: ${foreign.join(', ')}`,
+    }
+  if (covering === 0)
+    return {
+      owned: false,
+      reason: `no listener on the probed address ${probeAddress} belongs to the launched child`,
+    }
+  return { owned: true, reason: 'every listener on the port belongs to the launched child' }
+}
+
+/**
  * Stops the OWNED child and reports whether it really terminated.
  *
  * Only the handle this probe spawned is ever signalled: no discovered PID is
@@ -129,6 +199,7 @@ export async function runStartupBudgetProbe(options) {
     sleep,
     now,
     readyTimeoutMs,
+    probeAddress = '127.0.0.1',
     onFailure,
   } = options
 
@@ -150,7 +221,7 @@ export async function runStartupBudgetProbe(options) {
   }
   if (before.length > 0)
     return failure(
-      `the port is already in use by ${before.join(', ')}; refusing to measure an unrelated listener`
+      `the port is already in use by ${before.map((listener) => listener.pid).join(', ')}; refusing to measure an unrelated listener`
     )
 
   let child
@@ -195,10 +266,11 @@ export async function runStartupBudgetProbe(options) {
         const ready = await probeReady()
         if (ready.ok) {
           const listeners = listenerPids()
-          const classification = classifyListener({
-            listenerPid: listeners[0],
+          const classification = assessListenerOwnership({
+            listeners,
             childPid: child.pid,
             parentOf,
+            probeAddress,
           })
           if (!classification.owned) {
             primary = `the readiness came from a listener that is not the launched child: ${classification.reason}`
@@ -263,11 +335,15 @@ export function psParent(pid) {
 /**
  * The real listener lookup.
  *
+ * It returns one entry per listening socket — `{ pid, address }` — because a
+ * port can be listened on at several local addresses at once, and the
+ * ownership decision needs every one of them.
+ *
  * An unusable `lsof` is an inability to prove ownership, so it throws and the
  * probe fails closed rather than measuring blind.
  */
 export function readListenerPids(port) {
-  const result = spawnSync('lsof', ['-nP', '-iTCP:' + String(port), '-sTCP:LISTEN', '-F', 'p'], {
+  const result = spawnSync('lsof', ['-nP', '-iTCP:' + String(port), '-sTCP:LISTEN', '-F', 'pn'], {
     encoding: 'utf8',
   })
   if (result.error !== undefined && result.error !== null)
@@ -278,11 +354,28 @@ export function readListenerPids(port) {
     if (result.status === 1 && String(result.stdout ?? '').trim() === '') return []
     throw new Error(`lsof failed with status ${String(result.status)}`)
   }
-  return String(result.stdout ?? '')
-    .split('\n')
-    .filter((line) => line.startsWith('p'))
-    .map((line) => Number.parseInt(line.slice(1).trim(), 10))
-    .filter((pid) => Number.isSafeInteger(pid) && pid > 0)
+  const addressesByPid = new Map()
+  let currentPid = null
+  for (const line of String(result.stdout ?? '').split('\n')) {
+    if (line.startsWith('p')) {
+      const pid = Number.parseInt(line.slice(1).trim(), 10)
+      currentPid = Number.isSafeInteger(pid) && pid > 0 ? pid : null
+      if (currentPid !== null && !addressesByPid.has(currentPid)) addressesByPid.set(currentPid, [])
+    } else if (line.startsWith('n') && currentPid !== null) {
+      addressesByPid.get(currentPid).push(line.slice(1).trim())
+    }
+  }
+  const listeners = []
+  for (const [pid, addresses] of addressesByPid) {
+    if (addresses.length === 0) {
+      // A listener whose address could not be read is unattributed: it is
+      // reported so the ownership check can refuse it.
+      listeners.push({ pid, address: 'unknown' })
+      continue
+    }
+    for (const address of addresses) listeners.push({ pid, address })
+  }
+  return listeners
 }
 
 /**

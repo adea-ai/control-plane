@@ -9,10 +9,13 @@ import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 
 import {
+  assessListenerOwnership,
   assessRssSamples,
   classifyListener,
+  coversProbeAddress,
   createOwnedChildHandle,
   parseRssSample,
+  readListenerPids,
   runStartupBudgetProbe,
   stopOwnedChild,
   waitForExit,
@@ -23,12 +26,17 @@ import {
  * listeners afterwards: the probe refuses an occupied port BEFORE it starts,
  * so the ownership check only ever sees the listeners the launch produced.
  */
-function listenersAfterLaunch(pids) {
+function listenersAfterLaunch(listeners) {
   let calls = 0
   return () => {
     calls += 1
-    return calls === 1 ? [] : pids
+    return calls === 1 ? [] : listeners
   }
+}
+
+/** A listener entry as the real lookup reports it. */
+function listener(pid, address = '127.0.0.1:3917') {
+  return { pid, address }
 }
 
 /** A child handle that records every signal it is asked to receive. */
@@ -194,12 +202,86 @@ test('a listener PID that cannot be determined is not owned', () => {
   assert.equal(verdict.owned, false)
 })
 
+test('a listener set that mixes an owned and an unrelated listener fails closed', () => {
+  const parents = new Map()
+  const parentOf = (pid) => parents.get(pid)
+  // The owned listener is first: checking only the first listener would
+  // accept an ambiguous set.
+  const mixed = assessListenerOwnership({
+    listeners: [listener(4242), listener(9999)],
+    childPid: 4242,
+    parentOf,
+  })
+  assert.equal(mixed.owned, false)
+  assert.match(mixed.reason, /not the launched child/u)
+
+  // The order of the set does not change the verdict.
+  const reversed = assessListenerOwnership({
+    listeners: [listener(9999), listener(4242)],
+    childPid: 4242,
+    parentOf,
+  })
+  assert.equal(reversed.owned, false)
+})
+
+test('every listener on the port must be owned, whatever the order', () => {
+  const parentOf = () => undefined
+  assert.equal(
+    assessListenerOwnership({ listeners: [listener(4242)], childPid: 4242, parentOf }).owned,
+    true
+  )
+  assert.equal(
+    assessListenerOwnership({
+      listeners: [listener(4242), listener(9999), listener(9998)],
+      childPid: 4242,
+      parentOf,
+    }).owned,
+    false
+  )
+  assert.equal(
+    assessListenerOwnership({ listeners: [listener(9999)], childPid: 4242, parentOf }).owned,
+    false
+  )
+  assert.equal(assessListenerOwnership({ listeners: [], childPid: 4242, parentOf }).owned, false)
+})
+
+test('a listener on another address only is refused, and a wildcard is accepted', () => {
+  const parentOf = () => undefined
+  const otherAddress = assessListenerOwnership({
+    listeners: [listener(4242, '[::1]:3917')],
+    childPid: 4242,
+    parentOf,
+  })
+  assert.equal(otherAddress.owned, false)
+  assert.match(otherAddress.reason, /probed address/u)
+
+  const wildcard = assessListenerOwnership({
+    listeners: [listener(4242, '*:3917')],
+    childPid: 4242,
+    parentOf,
+  })
+  assert.equal(wildcard.owned, true)
+  assert.equal(coversProbeAddress('*:3917', '127.0.0.1'), true)
+  assert.equal(coversProbeAddress('127.0.0.1:3917', '127.0.0.1'), true)
+  assert.equal(coversProbeAddress('[::1]:3917', '127.0.0.1'), false)
+  assert.equal(coversProbeAddress('unknown', '127.0.0.1'), false)
+})
+
+test('several owned listeners on different addresses are accepted', () => {
+  const verdict = assessListenerOwnership({
+    listeners: [listener(4242, '127.0.0.1:3917'), listener(4242, '[::1]:3917')],
+    childPid: 4242,
+    parentOf: () => undefined,
+  })
+  assert.equal(verdict.owned, true)
+})
+
 test('an unrelated listener on the port stops the probe before it starts', async () => {
   const child = fakeChild()
   const outcome = await runStartupBudgetProbe({
     spawnChild: () => child.handle,
     probeReady: async () => ({ ok: true }),
-    listenerPids: () => [9999],
+    listenerPids: () => [listener(9999)],
     parentOf: () => undefined,
     sampleRss: () => ({ status: 0, stdout: '1024' }),
     sleep: async () => {},
@@ -217,7 +299,7 @@ test('readiness from a listener that is not the child fails closed', async () =>
   const outcome = await runStartupBudgetProbe({
     spawnChild: () => child.handle,
     probeReady: async () => ({ ok: true }),
-    listenerPids: listenersAfterLaunch([9999]),
+    listenerPids: listenersAfterLaunch([listener(9999)]),
     parentOf: () => undefined,
     sampleRss: () => ({ status: 0, stdout: '1024' }),
     sleep: async () => {},
@@ -297,7 +379,7 @@ test('a refused RSS sample fails the probe instead of being dropped', async () =
   const outcome = await runStartupBudgetProbe({
     spawnChild: () => child.handle,
     probeReady: async () => ({ ok: true }),
-    listenerPids: listenersAfterLaunch([4242]),
+    listenerPids: listenersAfterLaunch([listener(4242)]),
     parentOf: () => undefined,
     sampleRss: () => ({ status: 1, stdout: '' }),
     sleep: async () => {},
@@ -313,7 +395,7 @@ test('the cleanup signals only the owned child and awaits it', async () => {
   const outcome = await runStartupBudgetProbe({
     spawnChild: () => child.handle,
     probeReady: async () => ({ ok: true }),
-    listenerPids: listenersAfterLaunch([4242]),
+    listenerPids: listenersAfterLaunch([listener(4242)]),
     parentOf: () => undefined,
     sampleRss: () => ({ status: 0, stdout: '180224' }),
     sleep: async () => {},
@@ -354,7 +436,7 @@ test('a cleanup that does not terminate the child is an explicit failure', async
       stop: async () => ({ ok: false, reason: 'the child did not exit after SIGKILL' }),
     }),
     probeReady: async () => ({ ok: true }),
-    listenerPids: listenersAfterLaunch([4242]),
+    listenerPids: listenersAfterLaunch([listener(4242)]),
     parentOf: () => undefined,
     sampleRss: () => ({ status: 0, stdout: '180224' }),
     sleep: async () => {},
@@ -375,6 +457,92 @@ test('a cleanup that throws is reported as a cleanup failure', async () => {
   })
   assert.equal(cleanup.ok, false)
   assert.match(cleanup.reason, /could not be stopped/u)
+})
+
+test('a real unrelated listener on another loopback address makes the port ambiguous', async () => {
+  // The unrelated listener takes an ephemeral port on the IPv6 loopback; the
+  // owned child then listens on the IPv4 loopback of the same port, which is
+  // exactly the ambiguous set the ownership check must refuse.
+  const unrelated = spawn(
+    process.execPath,
+    [
+      '-e',
+      "const s = Bun.serve({ port: 0, hostname: '::1', fetch: () => new Response('ok') }); console.log(s.port)",
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'] }
+  )
+  const unrelatedHandle = createOwnedChildHandle(unrelated)
+  let port
+  try {
+    port = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('the listener did not report a port')), 5_000)
+      unrelated.stdout.once('data', (chunk) => {
+        clearTimeout(timer)
+        resolve(Number(chunk.toString().trim()))
+      })
+    })
+    assert.equal(Number.isSafeInteger(port) && port > 0, true)
+
+    const { handle } = spawnOwned(process.execPath, [
+      '-e',
+      `Bun.serve({ port: ${port}, hostname: '127.0.0.1', fetch: () => new Response('ok') })`,
+    ])
+    let outcome
+    try {
+      // The child must be listening before the readiness probe succeeds.
+      const deadline = Date.now() + 10_000
+      let ready = false
+      while (Date.now() < deadline) {
+        try {
+          const response = await fetch(`http://127.0.0.1:${port}/`)
+          if (response.ok) {
+            ready = true
+            break
+          }
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+      }
+      assert.equal(ready, true)
+
+      const listeners = readListenerPids(port)
+      assert.equal(listeners.length >= 2, true)
+
+      // The pre-launch check sees an empty port and the post-readiness check
+      // sees the real set: the ambiguous-set path, with real listener data.
+      let calls = 0
+      outcome = await runStartupBudgetProbe({
+        spawnChild: () => handle,
+        probeReady: async () => {
+          try {
+            const response = await fetch(`http://127.0.0.1:${port}/`)
+            return { ok: response.ok }
+          } catch {
+            return { ok: false }
+          }
+        },
+        listenerPids: () => {
+          calls += 1
+          return calls === 1 ? [] : readListenerPids(port)
+        },
+        parentOf: () => undefined,
+        sampleRss: () => ({ status: 0, stdout: '1024' }),
+        sleep: realSleep,
+        now: () => Date.now(),
+        readyTimeoutMs: 2_000,
+      })
+    } finally {
+      await handle.stop()
+    }
+    assert.equal(outcome.ok, false)
+    assert.match(outcome.reason, /not the launched child/u)
+    // The unrelated listener was never signalled: it is still serving.
+    assert.equal(unrelatedHandle.hasExited(), false)
+    const response = await fetch(`http://[::1]:${port}/`)
+    assert.equal(await response.text(), 'ok')
+  } finally {
+    await unrelatedHandle.stop()
+  }
 })
 
 test('a real spawn failure is reported and nothing is left running', async () => {
@@ -440,7 +608,7 @@ test('a thrown dependency fails closed and still cleans the child up', async () 
   const outcome = await runStartupBudgetProbe({
     spawnChild: () => handle,
     probeReady: async () => ({ ok: true }),
-    listenerPids: listenersAfterLaunch([handle.pid]),
+    listenerPids: listenersAfterLaunch([listener(handle.pid)]),
     parentOf: () => undefined,
     sampleRss: () => {
       throw new Error('the ps sample exploded')
@@ -469,7 +637,7 @@ test('a real unrelated listener is refused and is never signalled', async () => 
     const outcome = await runStartupBudgetProbe({
       spawnChild: () => child.handle,
       probeReady: async () => ({ ok: true }),
-      listenerPids: () => [handle.pid],
+      listenerPids: () => [listener(handle.pid, `127.0.0.1:${port}`)],
       parentOf: () => undefined,
       sampleRss: () => ({ status: 0, stdout: '1024' }),
       sleep: realSleep,
@@ -497,7 +665,7 @@ test('a real unrelated listener is refused after the launch and never signalled'
       outcome = await runStartupBudgetProbe({
         spawnChild: () => child,
         probeReady: async () => ({ ok: true }),
-        listenerPids: listenersAfterLaunch([handle.pid]),
+        listenerPids: listenersAfterLaunch([listener(handle.pid, `127.0.0.1:${port}`)]),
         parentOf: () => undefined,
         sampleRss: () => ({ status: 0, stdout: '1024' }),
         sleep: realSleep,

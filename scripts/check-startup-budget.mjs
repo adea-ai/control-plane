@@ -88,6 +88,9 @@ if (import.meta.main) {
     listenerPids: () => readListenerPids(port),
     parentOf: psParent,
     sampleRss: psRss,
+    // The readiness probe talks to the IPv4 loopback, so the ownership check
+    // is made about that address.
+    probeAddress: '127.0.0.1',
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now: () => Date.now(),
     readyTimeoutMs: readyCeilingSeconds * 2_000,

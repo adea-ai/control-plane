@@ -34,9 +34,14 @@ child. The probe now:
 
 - **refuses an occupied port before it starts** — an unrelated listener's
   readiness is never measured as the application's own;
-- **accepts readiness only once the listener is proved to be the launched
-  child or a descendant of it** (the ownership walk is injected, so it is
-  deterministic in tests);
+- **accepts readiness only once the whole listener set on the port is proved
+  to be the launched child** — every listener on the port must be the child
+  or a descendant of it, and at least one of them must cover the address the
+  readiness probe actually talks to. A port that is also listened on by an
+  unrelated process at another local address is ambiguous and fails closed,
+  and a listener whose address cannot be read is reported as unattributed
+  rather than dropped (the ownership walk is injected, so it is deterministic
+  in tests);
 - **refuses a malformed, empty, unsuccessful or zero `ps` sample**, and a run
   with no valid sample is a **failure**, not a zero-megabyte pass;
 - **fails fast on a spawn failure, a missing PID and an early child exit**,
