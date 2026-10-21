@@ -97,6 +97,7 @@ const repositoryGroups = {
     'tests/railway-production-plan.test.mjs',
     'tests/replacement-compatibility.test.mjs',
     'tests/repository.test.mjs',
+    'tests/task-cache-qualification.test.mjs',
     'tests/workspace-tooling.test.mjs',
     'tests/restate-identity.test.mjs',
   ],
