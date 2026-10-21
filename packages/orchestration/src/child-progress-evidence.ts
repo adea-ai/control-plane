@@ -1466,3 +1466,80 @@ export function delegationEventToEvidenceEvent(input: {
     ...(input.metrics ? { metrics: input.metrics } : {}),
   })
 }
+
+/**
+ * The live read a reference authority makes for every call.
+ *
+ * The reader answers the CURRENT authorization state of one opaque reference. It
+ * never returns the referenced payload: an authority can only pass a verdict on.
+ */
+export interface ChildProgressReferenceReader {
+  readCurrent(
+    reference: ChildProgressEvidenceReference
+  ): Promise<
+    | { readonly status: 'authorized' }
+    | { readonly status: 'revoked' }
+    | { readonly status: 'not_authorized' }
+    | { readonly status: 'missing' }
+  >
+}
+
+/** A reference is well formed when it names exactly one bounded identifier. */
+function isWellFormedReference(reference: unknown): reference is ChildProgressEvidenceReference {
+  if (typeof reference !== 'object' || reference === null) return false
+  const candidate = reference as { kind?: unknown; artifactId?: unknown; interactionId?: unknown }
+  if (candidate.kind === 'terminal_result')
+    return typeof candidate.artifactId === 'string' && candidate.artifactId.length > 0
+  if (candidate.kind === 'interaction')
+    return typeof candidate.interactionId === 'string' && candidate.interactionId.length > 0
+  return false
+}
+
+/** The verdict of a reference, always through the published schema. */
+function referenceVerdict(value: unknown): ChildProgressReferenceVerdict {
+  return ChildProgressReferenceVerdictSchema.parse(value)
+}
+
+/**
+ * The lazy, current-authorization reference authority.
+ *
+ * A packet keeps its references opaque, so every read of one asks for the
+ * current authorization state again: a verdict is never cached, because a
+ * cached verdict is a capture-time snapshot and would answer for a state that
+ * has since been revoked. A reader that fails, or that answers something the
+ * verdict schema does not accept, fails closed: the reference is unavailable,
+ * never authorized.
+ */
+export class ChildProgressReferenceAuthorization implements ChildProgressReferenceAuthority {
+  constructor(readonly reader: ChildProgressReferenceReader) {}
+
+  async authorize(
+    reference: ChildProgressEvidenceReference
+  ): Promise<ChildProgressReferenceVerdict> {
+    // A reference that names nothing cannot be authorized, and asking the reader
+    // would turn a malformed request into a live read.
+    if (!isWellFormedReference(reference)) {
+      return referenceVerdict({ status: 'forbidden', reason: 'not_authorized' })
+    }
+    let answer: Awaited<ReturnType<ChildProgressReferenceReader['readCurrent']>>
+    try {
+      answer = await this.reader.readCurrent(reference)
+    } catch {
+      // A failed read is not an authorization. The reference cannot be resolved.
+      return referenceVerdict({ status: 'unavailable', reason: 'missing' })
+    }
+    switch (answer?.status) {
+      case 'authorized':
+        return referenceVerdict({ status: 'authorized' })
+      case 'revoked':
+        return referenceVerdict({ status: 'forbidden', reason: 'revoked' })
+      case 'not_authorized':
+        return referenceVerdict({ status: 'forbidden', reason: 'not_authorized' })
+      case 'missing':
+        return referenceVerdict({ status: 'unavailable', reason: 'missing' })
+      default:
+        // An answer the schema does not accept is not an authorization.
+        return referenceVerdict({ status: 'unavailable', reason: 'missing' })
+    }
+  }
+}
