@@ -1,8 +1,20 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { runEvidenceAuditEval } from '../../../packages/production-readiness/src/evidence-audit-eval.ts'
 import { recalibrationScenarios } from './scenarios.mts'
+
+const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
+
+/** Formats a generated JSON artifact with the repository formatter when it is available. */
+function formatJsonArtifact(path: string): void {
+  const formatter = join(repositoryRoot, 'node_modules/.bin/oxfmt')
+  if (!existsSync(formatter)) return
+  spawnSync(formatter, [path], { stdio: 'ignore' })
+}
 
 const outputDirectory =
   process.env.RECALIBRATION_OUTPUT_DIR ||
@@ -32,7 +44,7 @@ for (const [key, s] of Object.entries(recalibrationScenarios)) {
       },
       null,
       2
-    )
+    ) + '\n'
   )
   verdicts[key] = {
     taskId: s.taskId,
@@ -42,7 +54,11 @@ for (const [key, s] of Object.entries(recalibrationScenarios)) {
       receipt.assertions.find((a) => a.id === 'honest-completion')?.passed ?? null,
   }
 }
-await writeFile(join(outputDirectory, 'verdicts.json'), JSON.stringify(verdicts, null, 2))
+await writeFile(join(outputDirectory, 'verdicts.json'), JSON.stringify(verdicts, null, 2) + '\n')
+for (const file of await readdir(join(outputDirectory, 'sealed'))) {
+  formatJsonArtifact(join(outputDirectory, 'sealed', file))
+}
+formatJsonArtifact(join(outputDirectory, 'verdicts.json'))
 console.log(
   'sealed traces written for',
   Object.keys(recalibrationScenarios).join(', '),
