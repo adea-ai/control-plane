@@ -42,6 +42,7 @@ async function withAdmissionFixture(
     maximumParallel = 1,
     maximumDepth = 1,
     childAllowance = { maximumMicrounits: 4_000_000, maximumTokens: 100_000 },
+    parentBudget = { maximumMicrounits: 100_000_000, maximumTokens: 100_000 },
   } = {}
 ) {
   const credentials = {
@@ -108,8 +109,8 @@ async function withAdmissionFixture(
       workspaceId,
       executionId: parentExecutionId,
       currency: 'USD',
-      maximumMicrounits: 100_000_000,
-      maximumTokens: 100_000,
+      maximumMicrounits: parentBudget.maximumMicrounits,
+      maximumTokens: parentBudget.maximumTokens,
       source: { sourceId: 'child-admission-parent-budget', idempotencyKey: 'parent-open' },
     })
 
@@ -467,6 +468,39 @@ describe.skipIf(!enabled)('PostgreSQL child budget admission', () => {
         ).toEqual([])
       },
       { maximumDepth: 0, childAllowance: null }
+    )
+  }, 60_000)
+
+  test('the child budget limit denies the admission and leaves no allocation on PostgreSQL', async () => {
+    await withAdmissionFixture(
+      async ({ delegations, executions, usageStore, candidate }) => {
+        const denied = await candidate()
+        // The parent's own budget is empty, so the child's budget cannot be
+        // funded from it. The budget fence is the one limit the child
+        // admission path enforces inside its own transaction, after the
+        // execution and attempt rows are written: the denial has to roll all
+        // of them back.
+        await expect(
+          delegations.allocate({ ...denied, assertCurrent: async () => undefined })
+        ).rejects.toMatchObject({ code: 'BUDGET_EXHAUSTED' })
+        expect(await executions.getExecution(denied.childExecutionId)).toBeUndefined()
+        expect(await executions.getAttempt(denied.childAttemptId)).toBeUndefined()
+        expect(await delegations.get(denied.delegationId)).toBeUndefined()
+        await expect(
+          usageStore.transaction(workspaceId, (transaction) =>
+            transaction.getBudget(denied.childExecutionId)
+          )
+        ).resolves.toBeUndefined()
+        expect(await delegations.listByParent(parentExecutionId)).toHaveLength(0)
+        expect(
+          (
+            await usageStore.transaction(workspaceId, (transaction) =>
+              transaction.getBudget(parentExecutionId)
+            )
+          )?.reservations
+        ).toEqual([])
+      },
+      { parentBudget: { maximumMicrounits: 0, maximumTokens: 0 } }
     )
   }, 60_000)
 

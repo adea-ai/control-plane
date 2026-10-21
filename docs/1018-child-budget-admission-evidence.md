@@ -27,6 +27,10 @@ The three states the acceptance names are **initial admission**, **retry** and
 keeps its slot; a compaction reopens the store, so the fences must survive
 the reopen.
 
+Every one of the five limits is now proved on the SQLite store **and** on the
+PostgreSQL store; §2.1 and §2.4 state the exact per-store coverage, and §2.2
+covers the compaction state on the native path.
+
 ## 2. The evidence, by exact test name and result
 
 Every command below was run on this branch's working tree with the pinned
@@ -82,17 +86,27 @@ toolchain (bun 1.4.3, node 24.21.0).
 `bun test src/child-budget-admission.integration.test.mjs` in
 `packages/database`, with `RUN_DATABASE_INTEGRATION=true` and the three
 credential roles, against a disposable isolated database →
-**4 passed, 0 failed, 52 assertions**.
+**5 passed, 0 failed, 60 assertions**.
 
 | State                  | Exact test name                                                                             |
 | ---------------------- | ------------------------------------------------------------------------------------------- |
 | authority + concurrent | `denials leave no allocation and concurrent requests serialize the parallel limit`          |
 | total                  | `the total child limit denies the admission and leaves no allocation on PostgreSQL`         |
 | depth                  | `the depth limit denies the admission and leaves no allocation on PostgreSQL`               |
+| budget                 | `the child budget limit denies the admission and leaves no allocation on PostgreSQL`        |
 | retry                  | `a retried child keeps its parallel slot and cannot mint a second allocation on PostgreSQL` |
 
+All five bounded limits are now proved on the production (hosted) store as
+well as on SQLite: the authority fence (case 1) rolls the admission back and
+leaves no allocation, the parallel limit serializes concurrent requests (case
+1), and the total, depth and budget limits each deny the admission and leave
+no allocation (cases 2–4). The retry state is proved by case 5. The
+authority case proves the **rollback and the absence of an allocation**; the
+denial code it surfaces is the caller's own authority error, which the
+repository propagates unchanged.
+
 Without `RUN_DATABASE_INTEGRATION=true` this suite is **skipped**, not passed:
-`0 passed, 1 skipped, 0 failed`. A green run of the offline suites never
+`0 passed, 5 skipped, 0 failed`. A green run of the offline suites never
 qualifies this gate.
 
 ## 3. What was missing, and what this pass adds
@@ -112,12 +126,27 @@ native test is unchanged: its assertion block is byte-identical, and only the
 setup moved into the shared `withAdmissionFixture` helper, which still
 disposes the isolated database on every path.
 
+A later increment closes the one dimension that was still unproved on the
+hosted store: the **parent/child budget** limit. It adds a fourth focused
+regression, `the child budget limit denies the admission and leaves no
+allocation on PostgreSQL`, and the fixture takes the parent's own budget as a
+parameter so the case can open a parent that cannot fund a child. The denial
+is `BUDGET_EXHAUSTED` from `DurableUsageLedger.openBudget`, and it is raised
+**inside the allocation transaction, after the child execution and attempt
+rows are written** — so the case also proves that the budget fence rolls
+those rows back, leaves no delegation and no child budget, and leaves the
+parent's reservation list empty.
+
 Each new regression was **mutation-verified** against the real implementation:
 removing the total-limit denial fails only the total regression, removing the
 depth-limit denial fails only the depth regression, and dropping the retried
 child from the active states fails the retry regression (and the concurrent
-one). The implementation file was restored after each check and is not part
-of this change.
+one). The budget regression was verified the same way: with the budget
+refusal in `packages/database/src/delegation-repository.ts` no longer refusing
+the admission, **only the budget regression fails** (4 passed, 1 failed) and
+the other four cases still pass, so the case is load-bearing and duplicates
+none of them. The implementation file was restored after each check and is not
+part of this change.
 
 ## 4. Qualification boundary
 
