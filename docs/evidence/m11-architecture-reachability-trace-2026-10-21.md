@@ -727,3 +727,112 @@ packet.
 pull request, recorded in section 8.1 and evidenced in the handoff packet. None of them changes a
 measured value: the architecture audit's complete output is byte-identical across the reviewed
 heads, and the capability matrix in section 2.3 is unchanged.
+
+## 12. Canonical CI discovery path for this regression suite (reproducible evidence)
+
+**The canonical CI does not discover or run this regression suite, and the fix is one line in a
+shared runner this branch does not own.** Nothing in this section edits that runner; the
+registration is proposed in 12.3 for root's decision.
+
+### 12.1 The facts, and how to reproduce them
+
+Canonical validation runs the repository's lane scripts — `bun scripts/run-bun-test-group.mjs
+<lane>` — and the lane discovery walks these roots only:
+
+```js
+const sourceRoots = ['apps', 'packages'] // the unit lane
+const testRoots = [...sourceRoots, 'tests'] // the integration lane
+```
+
+This suite lives at `scripts/m11-architecture-audit-regression.test.mjs`, which is **outside every
+discovery root**. Three reproducible confirmations:
+
+```console
+$ grep -n "const sourceRoots\|const testRoots" scripts/run-bun-test-group.mjs
+9:const sourceRoots = ['apps', 'packages']
+10:const testRoots = [...sourceRoots, 'tests']
+
+$ for r in apps packages tests scripts; do printf "%-9s " "$r"; ls "$r/m11-architecture-audit-regression.test.mjs" 2>/dev/null || echo "(absent)"; done
+apps      (absent)
+packages  (absent)
+tests     (absent)
+scripts   scripts/m11-architecture-audit-regression.test.mjs
+
+$ grep -n "root" bunfig.toml
+2:root = "tests"
+
+$ bun test scripts/m11-architecture-audit-regression.test.mjs      # from the repository root
+The following filters did not match any test files in --cwd="<repository>":
+ scripts/m11-architecture-audit-regression.test.mjs
+125 files were searched [8.00ms]
+```
+
+The last one is the sharpest statement of the gap: bun's own root-scoped discovery does not match
+the file, and that invocation **exits 0** — a silent pass. The suite is reachable only from its
+own directory:
+
+```console
+$ cd scripts && bun test m11-architecture-audit-regression.test.mjs
+ 28 pass
+ 0 fail
+ 196 expect() calls
+Ran 28 tests across 1 file. [1.29s]
+```
+
+The contrast that shows the audit itself is covered: the architecture audit's **own** test is
+registered in the lane runner (`scripts/run-bun-test-group.mjs:76` →
+`tests/m11-architecture-audit.test.mjs`), so the audit runs in CI while its regression suite does
+not.
+
+### 12.2 The suite is reproducible at this head
+
+Three consecutive runs at `bcea5ae46bd30179b66124b76e76ea9528a7b266`:
+
+| Run | Result                               | Wall   |
+| --- | ------------------------------------ | ------ |
+| 1   | 28 pass / 0 fail, 196 expect() calls | 1.62 s |
+| 2   | 28 pass / 0 fail                     | 1.33 s |
+| 3   | 28 pass / 0 fail                     | 1.14 s |
+
+The suite covers the three contract areas this branch owns: the **parser** (reachability by HTTP
+method, served-verb discovery, OpenAPI path-item keys, unbound operations, capability bindings,
+reordered profile port maps), the **cache isolation** (two checkout roots whose files share a path,
+size and time, and a source whose contents change while its size and time do not) and the
+**symlink escape** (an in-tree symlink pointing outside the repository is rejected, an in-tree
+symlink is still citable, a resolution loop is refused, a directory is not a file).
+
+### 12.3 The minimal registration proposed for root (not applied)
+
+The registration belongs to the shared lane runner, which this branch must not edit, so it is
+proposed rather than applied. The narrowest change that gives the file a canonical lane without
+touching any other owner's file:
+
+```diff
+--- a/scripts/run-bun-test-group.mjs
++++ b/scripts/run-bun-test-group.mjs
+@@ const repositoryRoot
+ const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
+ const sourceRoots = ['apps', 'packages']
+ const testRoots = [...sourceRoots, 'tests']
++// Test files that live outside the discovery roots but belong to the unit lane.
++// Registered one by one so no other owner's file changes lane membership.
++const extraUnitTestFiles = ['scripts/m11-architecture-audit-regression.test.mjs']
+ const repositoryGroups = {
+@@ export async function discoverTestFiles(group)
+     .filter(
+       (path) => path.endsWith('.test.mjs') && isIntegrationTest(path) === (group === 'integration')
+     )
+     .map((path) => relative(repositoryRoot, path))
++    .concat(group === 'unit' ? extraUnitTestFiles : [])
+     .toSorted()
+```
+
+Effect: the file joins the **unit** lane (its measured cost is about 1.3 s of that lane's ceiling),
+`discoverTestInventory` owns it, so the lane inventory reports no unowned or missing file, and the
+hardcoded e2e/smoke lists with their per-file cost tables stay untouched. The alternative — adding
+`scripts` to `sourceRoots` — would also move `scripts/runtime-node-identity-admin.test.mjs`, which
+belongs to another owner, into the unit lane, so it is not proposed.
+
+**This packet does not establish CI coverage for the regression suite.** Until the registration is
+approved and applied by the shared runner's owner, the suite runs only when it is invoked directly
+from `scripts/`, and the canonical CI cannot fail on a regression in it.
