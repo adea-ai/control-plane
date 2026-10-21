@@ -3,6 +3,7 @@
   "kind": "cp191-adversarial-baseline-scorecard",
   "issue": "#191",
   "generatedBy": "docs/evals/run-adversarial-program.mts",
+  "generatedAt": "2026-10-21T20:00:59.998Z",
   "corpus": {
     "id": "m11-goal-adherence-public-controls",
     "version": "1.3.0",
@@ -16,8 +17,8 @@
   },
   "source": {
     "id": "control-plane",
-    "revision": "21339f5694447a8a99fab16615c2bd22e9205298",
-    "digest": "sha256:619042b5ee5e82dd414abb51630645d590bf936f51b9504987aa7a24351b199d"
+    "revision": "c57acf25931e53ca5887a2e8a33b4b44ad32a42b",
+    "digest": "sha256:647d5ec98430a62ace8a1f709bd82360f6f5eb6d91b1fcbe442e3af2504282ea"
   },
   "seed": 191,
   "baselineIdentity": {
@@ -42,12 +43,12 @@
       "platform": "darwin",
       "architecture": "arm64",
       "node": "26.3.0",
-      "bun": "1.4.3"
+      "bun": "1.4.2"
     },
     "source": {
       "id": "control-plane",
-      "revision": "21339f5694447a8a99fab16615c2bd22e9205298",
-      "digest": "sha256:619042b5ee5e82dd414abb51630645d590bf936f51b9504987aa7a24351b199d"
+      "revision": "c57acf25931e53ca5887a2e8a33b4b44ad32a42b",
+      "digest": "sha256:647d5ec98430a62ace8a1f709bd82360f6f5eb6d91b1fcbe442e3af2504282ea"
     },
     "metamorphic": [
       {
@@ -163,7 +164,7 @@
         "expectation": "same-outcome"
       }
     ],
-    "identityDigest": "sha256:a85ce958ded593381c43225bf6afc7d2dde3d120672495f187c75229f5083a7e"
+    "identityDigest": "sha256:cac1732b09d50e17437fd2fe05ed329a9308f2297b1d5a7f008e7c075c8b5264"
   },
   "candidateIdentity": {
     "corpus": {
@@ -187,12 +188,12 @@
       "platform": "darwin",
       "architecture": "arm64",
       "node": "26.3.0",
-      "bun": "1.4.3"
+      "bun": "1.4.2"
     },
     "source": {
       "id": "control-plane",
-      "revision": "21339f5694447a8a99fab16615c2bd22e9205298",
-      "digest": "sha256:619042b5ee5e82dd414abb51630645d590bf936f51b9504987aa7a24351b199d"
+      "revision": "c57acf25931e53ca5887a2e8a33b4b44ad32a42b",
+      "digest": "sha256:647d5ec98430a62ace8a1f709bd82360f6f5eb6d91b1fcbe442e3af2504282ea"
     },
     "metamorphic": [
       {
@@ -308,14 +309,14 @@
         "expectation": "same-outcome"
       }
     ],
-    "identityDigest": "sha256:e70e92ae6d4d87c3eacaa7604cedc6809fdd97e7a3118f7fdf2ab1e6570b2a27"
+    "identityDigest": "sha256:b03b84459bb0391bf3548761ade83602e87b6e21c49d5c3a8876bd675cb667e4"
   },
   "baseline": {
     "evalRunId": "cp191-baseline-pinned",
     "status": "passed",
     "cases": 39,
     "observedToolCalls": 101,
-    "observedLatencyMs": 4.176794999999942,
+    "observedLatencyMs": 4.257543999999925,
     "observedProviderUsage": null,
     "observedProviderUsageReason": "The offline harness performs no provider call, so no cost or token usage was observed. It is unavailable, not zero."
   },
@@ -324,7 +325,7 @@
     "status": "passed",
     "cases": 39,
     "observedToolCalls": 101,
-    "observedLatencyMs": 1622.2808750000002,
+    "observedLatencyMs": 1560.3947049999995,
     "observedProviderUsage": null,
     "observedProviderUsageReason": "The offline harness performs no provider call, so no cost or token usage was observed. It is unavailable, not zero."
   },
@@ -336,13 +337,13 @@
     "datasetDigest": "sha256:5fcbdaa254258aced9df63de37f25237534185f45591e9c0c82786db9d5aca6c",
     "cases": 3,
     "sourceFindings": [
-      "CP190-F06",
-      "CP190-F20",
       "CP190-F03",
       "CP190-F05",
-      "CP190-F11",
+      "CP190-F06",
       "CP190-F08",
-      "CP190-F10"
+      "CP190-F10",
+      "CP190-F11",
+      "CP190-F20"
     ],
     "source": "Consumed read-only from the CP #190 trust-boundary audit (m11-security-trust-boundary-matrix-2026-10-21.v1.json)."
   },
@@ -375,10 +376,10 @@
       "note": "The independent channel also observes effects performed outside the in-process tool ports, so a candidate graded independently against an in-process baseline is the conservative ordering."
     },
     "latency": {
-      "candidateMs": 1622.2808750000002,
-      "baselineMs": 4.176794999999942,
-      "deltaMs": 1618.1040800000003,
-      "relativeDelta": 387.403279308662
+      "candidateMs": 1560.3947049999995,
+      "baselineMs": 4.257543999999925,
+      "deltaMs": 1556.1371609999997,
+      "relativeDelta": 365.5011342219898
     },
     "toolCalls": {
       "candidate": 101,
@@ -441,10 +442,10 @@
       {
         "metric": "latency_ms",
         "direction": "min",
-        "candidate": 41.59694551282052,
-        "baseline": 0.1070973076923062,
-        "delta": 41.48984820512821,
-        "regression": 387.403279308662
+        "candidate": 40.01012064102563,
+        "baseline": 0.10916779487179294,
+        "delta": 39.900952846153835,
+        "regression": 365.50113422198973
       },
       {
         "metric": "provenance_correctness",
@@ -527,14 +528,14 @@
         "reasons": ["HUMAN_CALIBRATION_MISSING"]
       }
     ],
-    "evaluatedAt": "2026-10-21T00:00:00.000Z"
+    "evaluatedAt": "2026-10-21T20:00:59.998Z"
   },
   "externalGates": [
     {
       "id": "blinded-human-calibration",
       "status": "blocked",
       "reason": "No blinded human scoring exists. The agreement, kappa, and error bounds stay withheld until real scoring is recorded.",
-      "nextAction": "Run docs/evals/build-calibration-packet.mts, obtain blinded human scores, then run docs/evals/score-calibration.mts and attach the report."
+      "nextAction": "Run docs/evals/calibration/build-calibration-packet.mts, obtain blinded human scores, then run docs/evals/calibration/score-calibration.mts and attach the report."
     },
     {
       "id": "live-provider-baseline",

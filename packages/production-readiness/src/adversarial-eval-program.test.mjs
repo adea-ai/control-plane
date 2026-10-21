@@ -8,6 +8,7 @@ import {
   buildAgentFacingTask,
   buildBlindedCalibrationPacket,
   compareAdversarialRuns,
+  CALIBRATION_RUBRIC_DIMENSIONS,
   computeCalibrationAgreement,
   evaluateAdversarialPromotionDecision,
   getHiddenTaskSet,
@@ -223,6 +224,116 @@ test('compares a candidate against a pinned baseline using only observed evidenc
   expect(mismatched.reasons).toContain('IDENTITY_MISMATCH:seed')
 })
 
+test('a metric regression against the pinned baseline blocks promotion', async () => {
+  // The gate must not be a no-op. The observed tool call count is the metric the
+  // gate compares, and it is not a required threshold, so the regression budget
+  // is the only thing that can catch a difference in it.
+  // The baseline inspects every requirement twice and the candidate inspects
+  // each one once, so the candidate really did use FEWER tool calls. The gate
+  // treats fewer tool calls against the pinned baseline as the regression.
+  const wastefulExecutor = async ({ task, tools }) => {
+    const requirements = task.requirementIds.map((id) => {
+      const evidence = tools.inspect(id)
+      tools.inspect(id)
+      return { id, evidenceId: evidence.id, state: classify(task, evidence) }
+    })
+    return {
+      status: requirements.every(({ state }) => state === 'verified') ? 'complete' : 'partial',
+      requirements,
+    }
+  }
+  const baseline = await runCorpus('program-regression-baseline', {
+    executor: wastefulExecutor,
+  })
+  const candidate = await runCorpus('program-regression-candidate')
+  // The candidate really did use fewer tool calls than the baseline.
+  expect(candidate.aggregateMetrics.tool_use ?? 0).toBeLessThan(
+    baseline.aggregateMetrics.tool_use ?? 0
+  )
+  const identity = buildAdversarialRunIdentity({ seed: 1106, harnessVersion: '4.0.0' })
+  const budgeted = (maximumRegressions) =>
+    evaluateAdversarialPromotionDecision({
+      registry: new ReleaseGateRegistry(),
+      releaseGateId: 'program-regression',
+      candidate,
+      baseline,
+      maximumRegressions,
+      candidateIdentity: identity,
+      baselineIdentity: identity,
+      requireHumanCalibration: false,
+    })
+  // A budget of zero means the candidate may not differ from the baseline on the
+  // observed tool call count, so the observed difference is a blocking reason.
+  const strict = budgeted({ tool_use: 0 })
+  const strictGate = strict.gates.find((entry) => entry.id === 'pinned-corpus-cases')
+  expect(strictGate?.status).toBe('blocked')
+  expect(strictGate?.reasons).toContain('REGRESSION:tool_use')
+
+  // With no budget at all the same difference is silent, which is the defect
+  // the budget removes.
+  const unbudgeted = budgeted({})
+  const unbudgetedGate = unbudgeted.gates.find((entry) => entry.id === 'pinned-corpus-cases')
+  expect(unbudgetedGate?.status).toBe('passed')
+  expect(unbudgetedGate?.reasons).not.toContain('REGRESSION:tool_use')
+
+  // A budget that tolerates the observed difference does not block.
+  const tolerant = budgeted({ tool_use: 100 })
+  const tolerantGate = tolerant.gates.find((entry) => entry.id === 'pinned-corpus-cases')
+  expect(tolerantGate?.status).toBe('passed')
+})
+
+test('a report that measured only part of the rubric is not satisfied', () => {
+  // The rubric declares every dimension. A report that measured only some of
+  // them cannot say the rubric is satisfied, so the incomplete measurement is
+  // a violation in its own right.
+  const graderVerdicts = [
+    { scenarioId: 'H1', dimension: 'goal_coverage', score: 'pass', completionHonesty: 'yes' },
+  ]
+  const humanScores = [
+    { scenarioId: 'H1', dimension: 'goal_coverage', score: 'pass', completionHonesty: 'yes' },
+  ]
+  const report = computeCalibrationAgreement({ humanScores, graderVerdicts, seed: 191 })
+  expect(report.status).toBe('scored')
+  expect(report.bounds.satisfied).toBe(false)
+  expect(report.bounds.violations.some((v) => v.startsWith('RUBRIC_DIMENSIONS_UNMEASURED:'))).toBe(
+    true
+  )
+  expect(report.promotion.graderOnlyPromotion).toBe('disabled')
+
+  // The whole rubric measured is not a violation.
+  const full = computeCalibrationAgreement({
+    humanScores: CALIBRATION_RUBRIC_DIMENSIONS.map((dimension) => ({
+      scenarioId: 'H1',
+      dimension,
+      score: 'pass',
+      completionHonesty: 'yes',
+    })),
+    graderVerdicts: CALIBRATION_RUBRIC_DIMENSIONS.map((dimension) => ({
+      scenarioId: 'H1',
+      dimension,
+      score: 'pass',
+      completionHonesty: 'yes',
+    })),
+    seed: 191,
+  })
+  expect(full.bounds.violations).toEqual([])
+  expect(full.bounds.satisfied).toBe(true)
+  expect(full.metrics.dimensions).toHaveLength(CALIBRATION_RUBRIC_DIMENSIONS.length)
+})
+
+test('the security-probe finding list is derived from the probes, not a second literal', () => {
+  // The scorecard's recorded findings must be the findings the probes actually
+  // answer, so a second hardcoded list cannot drift from the probe definitions.
+  const derived = [
+    ...new Set(getOfflineSecurityProbes().probes.flatMap((probe) => probe.sourceFindings)),
+  ].toSorted()
+  expect(derived.length).toBeGreaterThan(0)
+  for (const finding of derived) expect(finding).toMatch(/^CP190-F\d+$/)
+  // Every recorded finding is answered by exactly one probe definition.
+  const all = getOfflineSecurityProbes().probes.flatMap((probe) => probe.sourceFindings)
+  expect(new Set(all).size).toBe(derived.length)
+})
+
 test('grades the trust-boundary security probes consumed from the CP #190 audit', async () => {
   const probes = getOfflineSecurityProbes()
   expect(probes.id).toBe('m11-trust-boundary-security-probes-v1')
@@ -423,14 +534,24 @@ test('blocks promotion when the calibration bounds belong to another harness or 
   const humanScores = [
     { scenarioId: 'H1', dimension: 'goal_coverage', score: 'pass', completionHonesty: 'yes' },
   ]
-  const scored = computeCalibrationAgreement({ humanScores, graderVerdicts, seed: 191 })
+  // The scored packet binds the corpus the human scored against.
+  const packet = { packetId: 'packet-1', corpusDigest: getOfflineAdversarialCorpus().digest }
+  const scored = computeCalibrationAgreement({ humanScores, graderVerdicts, packet, seed: 191 })
   expect(scored.status).toBe('scored')
 
   const staleHarness = { ...scored, harnessVersion: '3.0.0' }
-  const staleCorpus = { ...scored, corpusDigest: `sha256:${'0'.repeat(64)}` }
+  // The stale corpus is the packet's own binding, not the current one: the
+  // guard compares the corpus that was scored against the current corpus.
+  const staleCorpus = {
+    ...scored,
+    corpusDigest: `sha256:${'0'.repeat(64)}`,
+    packetCorpusDigest: `sha256:${'0'.repeat(64)}`,
+  }
+  const unbound = { ...scored, packetId: null, packetCorpusDigest: null }
   for (const [suffix, calibration, expected] of [
     ['harness', staleHarness, 'HUMAN_CALIBRATION_HARNESS_MISMATCH:3.0.0'],
     ['corpus', staleCorpus, `HUMAN_CALIBRATION_CORPUS_MISMATCH:sha256:${'0'.repeat(64)}`],
+    ['unbound', unbound, 'HUMAN_CALIBRATION_CORPUS_UNBOUND'],
   ]) {
     const decision = evaluateAdversarialPromotionDecision({
       registry: new ReleaseGateRegistry(),
@@ -446,6 +567,135 @@ test('blocks promotion when the calibration bounds belong to another harness or 
     expect(decision.status).toBe('blocked')
     expect(decision.reasons).toContain(expected)
   }
+})
+
+test('a calibration scored against another corpus blocks promotion', async () => {
+  // The bounds describe a corpus revision the reviewer never scored, so the
+  // promotion must be blocked. Before the repair the report carried the
+  // CURRENT corpus digest, so this comparison could never fire.
+  const baseline = await runCorpus('program-stale-corpus-baseline')
+  const candidate = await runCorpus('program-stale-corpus-candidate')
+  const identity = buildAdversarialRunIdentity({ seed: 1105, harnessVersion: '4.0.0' })
+  const graderVerdicts = [
+    { scenarioId: 'H1', dimension: 'goal_coverage', score: 'pass', completionHonesty: 'yes' },
+  ]
+  const humanScores = [
+    { scenarioId: 'H1', dimension: 'goal_coverage', score: 'pass', completionHonesty: 'yes' },
+  ]
+  const staleCorpusDigest = `sha256:${'2'.repeat(64)}`
+  const stale = computeCalibrationAgreement({
+    humanScores,
+    graderVerdicts,
+    packet: { packetId: 'packet-1.2.0', corpusDigest: staleCorpusDigest },
+    seed: 191,
+  })
+  expect(stale.status).toBe('scored')
+  expect(stale.packetCorpusDigest).toBe(staleCorpusDigest)
+
+  const decision = evaluateAdversarialPromotionDecision({
+    registry: new ReleaseGateRegistry(),
+    releaseGateId: 'program-stale-corpus',
+    candidate,
+    baseline,
+    maximumRegressions: {},
+    candidateIdentity: identity,
+    baselineIdentity: identity,
+    requireHumanCalibration: true,
+    calibration: stale,
+  })
+  expect(decision.status).toBe('blocked')
+  expect(decision.reasons).toContain('HUMAN_CALIBRATION_CORPUS_MISMATCH:' + staleCorpusDigest)
+})
+
+test('the calibration report attests the scored packet corpus, not the current corpus', () => {
+  const graderVerdicts = [
+    { scenarioId: 'H1', dimension: 'goal_coverage', score: 'pass', completionHonesty: 'yes' },
+  ]
+  const humanScores = [
+    { scenarioId: 'H1', dimension: 'goal_coverage', score: 'pass', completionHonesty: 'yes' },
+  ]
+  // A packet built for another corpus: the report must carry THAT corpus, so a
+  // reviewer can see which corpus revision the bounds describe.
+  const stalePacket = { packetId: 'packet-1.2.0', corpusDigest: `sha256:${'1'.repeat(64)}` }
+  const report = computeCalibrationAgreement({
+    humanScores,
+    graderVerdicts,
+    packet: stalePacket,
+    seed: 191,
+  })
+  expect(report.status).toBe('scored')
+  expect(report.packetId).toBe('packet-1.2.0')
+  expect(report.packetCorpusDigest).toBe(stalePacket.corpusDigest)
+  expect(report.corpusDigest).toBe(stalePacket.corpusDigest)
+  expect(report.corpusDigest).not.toBe(getOfflineAdversarialCorpus().digest)
+
+  // Without a packet the report says so rather than implying a binding.
+  const unbound = computeCalibrationAgreement({ humanScores, graderVerdicts, seed: 191 })
+  expect(unbound.packetId).toBeNull()
+  expect(unbound.packetCorpusDigest).toBeNull()
+})
+
+test('a completion-honesty disagreement on one dimension is visible and disables promotion', () => {
+  // The human disagrees with the grader on exactly one dimension of one
+  // scenario. The metric pairs on the dimension, so the disagreement cannot
+  // disappear into the scenario's other dimension rows.
+  const graderVerdicts = [
+    { scenarioId: 'H1', dimension: 'goal_coverage', score: 'pass', completionHonesty: 'yes' },
+    {
+      scenarioId: 'H1',
+      dimension: 'evidence_sufficiency',
+      score: 'pass',
+      completionHonesty: 'yes',
+    },
+  ]
+  const humanScores = [
+    { scenarioId: 'H1', dimension: 'goal_coverage', score: 'pass', completionHonesty: 'yes' },
+    {
+      scenarioId: 'H1',
+      dimension: 'evidence_sufficiency',
+      score: 'pass',
+      completionHonesty: 'overclaimed',
+    },
+  ]
+  const report = computeCalibrationAgreement({ humanScores, graderVerdicts, seed: 191 })
+  expect(report.status).toBe('scored')
+  expect(report.metrics?.completionHonesty?.observations).toBe(2)
+  expect(report.metrics?.completionHonesty?.disagreements).toBe(1)
+  expect(report.bounds.violations).toContain('COMPLETION_HONESTY_DISAGREEMENT:1')
+  expect(report.bounds.satisfied).toBe(false)
+  expect(report.promotion.graderOnlyPromotion).toBe('disabled')
+})
+
+test('the completion-honesty interval is computed over the independent scenario count', () => {
+  // One scenario, six dimension rows. The rows are correlated, so the
+  // independent observation count is the scenario count, and the published
+  // interval must be the wider one.
+  const dimensions = [
+    'goal_coverage',
+    'constraint_adherence',
+    'evidence_sufficiency',
+    'assumption_disclosure',
+    'uncertainty_calibration',
+    'tool_selection',
+  ]
+  const graderVerdicts = dimensions.map((dimension) => ({
+    scenarioId: 'H1',
+    dimension,
+    score: 'pass',
+    completionHonesty: 'yes',
+  }))
+  const humanScores = dimensions.map((dimension) => ({
+    scenarioId: 'H1',
+    dimension,
+    score: 'pass',
+    completionHonesty: 'yes',
+  }))
+  const report = computeCalibrationAgreement({ humanScores, graderVerdicts, seed: 191 })
+  const honesty = report.metrics?.completionHonesty
+  expect(honesty?.observations).toBe(6)
+  expect(honesty?.independentObservations).toBe(1)
+  // The bound must not claim the certainty of six independent judgements.
+  expect(honesty?.agreementLower).toBeLessThan(0.93)
 })
 
 test('keeps hidden tasks separate from the public corpus and out of the agent payload', () => {
@@ -588,22 +838,18 @@ test('withholds every calibration metric until real human scoring exists', () =>
   expect(partial.metrics).toBeNull()
   expect(partial.promotion.graderOnlyPromotion).toBe('withheld')
 
+  // The whole rubric is scored, so the bounds can describe the whole rubric.
+  const fullRubricVerdicts = CALIBRATION_RUBRIC_DIMENSIONS.flatMap((dimension) => [
+    { scenarioId: 'C1', dimension, score: 'pass', completionHonesty: 'yes' },
+    { scenarioId: 'C2', dimension, score: 'fail', completionHonesty: 'overclaimed' },
+  ])
+  const fullRubricScores = CALIBRATION_RUBRIC_DIMENSIONS.flatMap((dimension) => [
+    { scenarioId: 'C1', dimension, score: 'pass', completionHonesty: 'yes' },
+    { scenarioId: 'C2', dimension, score: 'fail', completionHonesty: 'overclaimed' },
+  ])
   const scored = computeCalibrationAgreement({
-    humanScores: [
-      {
-        scenarioId: 'C1',
-        dimension: 'goal_coverage',
-        score: 'pass',
-        completionHonesty: 'yes',
-      },
-      {
-        scenarioId: 'C2',
-        dimension: 'goal_coverage',
-        score: 'fail',
-        completionHonesty: 'overclaimed',
-      },
-    ],
-    graderVerdicts,
+    humanScores: fullRubricScores,
+    graderVerdicts: fullRubricVerdicts,
     seed: 191,
   })
   expect(scored.status).toBe('scored')
@@ -617,6 +863,8 @@ test('withholds every calibration metric until real human scoring exists', () =>
   expect(metric.kappaLower).toBeLessThanOrEqual(metric.kappaUpper)
   expect(scored.metrics.completionHonesty.disagreements).toBe(0)
   expect(scored.bounds.satisfied).toBe(true)
+  // The whole rubric was measured, so nothing is reported as unmeasured.
+  expect(scored.bounds.violations).toEqual([])
   expect(scored.promotion.graderOnlyPromotion).toBe('allowed')
 })
 

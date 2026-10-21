@@ -3343,8 +3343,15 @@ export function evaluateAdversarialPromotionDecision(input: {
     } else if (calibration.harnessVersion !== ADVERSARIAL_HARNESS_VERSION) {
       // Bounds are re-checked on every harness version bump.
       calibrationReasons.push('HUMAN_CALIBRATION_HARNESS_MISMATCH:' + calibration.harnessVersion)
-    } else if (calibration.corpusDigest !== dataset.digest) {
-      calibrationReasons.push('HUMAN_CALIBRATION_CORPUS_MISMATCH:' + calibration.corpusDigest)
+    } else if (calibration.packetCorpusDigest === null) {
+      // The bounds were computed without a packet binding, so nothing ties them
+      // to the corpus that was scored. The report cannot attest a corpus it
+      // was not given.
+      calibrationReasons.push('HUMAN_CALIBRATION_CORPUS_UNBOUND')
+    } else if (calibration.packetCorpusDigest !== dataset.digest) {
+      // The scored packet's own corpus binding differs from the current corpus,
+      // so the bounds describe a corpus revision the reviewer did not score.
+      calibrationReasons.push('HUMAN_CALIBRATION_CORPUS_MISMATCH:' + calibration.packetCorpusDigest)
     } else if (calibration.bounds.satisfied !== true) {
       calibrationReasons.push('HUMAN_CALIBRATION_OUT_OF_BOUNDS')
     }
@@ -3536,14 +3543,31 @@ export interface CalibrationReport {
   readonly status: 'awaiting-blinded-human-scoring' | 'insufficient-observations' | 'scored'
   /** Grader version and corpus the bounds were computed against. */
   readonly harnessVersion: string
+  /**
+   * The corpus the bounds were computed against: the packet's own corpus
+   * binding when one was supplied, otherwise the current corpus digest. The
+   * distinction matters, because comparing the current corpus digest against
+   * itself can never detect a packet built for a different corpus.
+   */
   readonly corpusDigest: string
+  /** The packet the bounds were computed from, when the scorer was given one. */
+  readonly packetId: string | null
+  /** The corpus digest the scored packet itself declared. */
+  readonly packetCorpusDigest: string | null
   readonly expectedScenarios: number
   readonly scoredScenarios: number
   readonly observations: number
   readonly metrics: {
     readonly dimensions: readonly CalibrationDimensionMetric[]
     readonly completionHonesty: {
+      /** The number of paired dimension observations. */
       readonly observations: number
+      /**
+       * The number of independent human judgements: the distinct scenarios.
+       * The published interval is computed over this count, so a scenario's
+       * correlated dimension rows cannot overstate the certainty.
+       */
+      readonly independentObservations: number
       readonly disagreements: number
       readonly agreementRate: number
       readonly agreementLower: number
@@ -3572,6 +3596,15 @@ export const CALIBRATION_COMPLETION_HONESTY_DISAGREEMENT_TOLERANCE = 0
 export function computeCalibrationAgreement(input: {
   readonly humanScores: readonly CalibrationHumanScore[]
   readonly graderVerdicts: readonly CalibrationGraderVerdict[]
+  /**
+   * The blinded packet the human scores were made against. Its corpus binding
+   * is what the report attests, so a packet built for another corpus is
+   * detectable instead of being re-stamped with the current digest.
+   */
+  readonly packet?: {
+    readonly packetId: string
+    readonly corpusDigest: string
+  }
   readonly seed?: number
   readonly bootstrapSamples?: number
 }): CalibrationReport {
@@ -3579,6 +3612,8 @@ export function computeCalibrationAgreement(input: {
     ...new Set(input.graderVerdicts.map((verdict) => verdict.scenarioId)),
   ]
   const scoredScenarioIds = [...new Set(input.humanScores.map((score) => score.scenarioId))]
+  const packetCorpusDigest = input.packet?.corpusDigest ?? null
+  const packetId = input.packet?.packetId ?? null
   const bounds = {
     perDimensionKappaMinimum: CALIBRATION_PER_DIMENSION_KAPPA_MINIMUM,
     completionHonestyDisagreementTolerance: CALIBRATION_COMPLETION_HONESTY_DISAGREEMENT_TOLERANCE,
@@ -3589,7 +3624,9 @@ export function computeCalibrationAgreement(input: {
     return {
       status: 'awaiting-blinded-human-scoring',
       harnessVersion: ADVERSARIAL_HARNESS_VERSION,
-      corpusDigest: dataset.digest,
+      corpusDigest: packetCorpusDigest ?? dataset.digest,
+      packetId,
+      packetCorpusDigest,
       expectedScenarios: expectedScenarioIds.length,
       scoredScenarios: 0,
       observations: 0,
@@ -3603,7 +3640,9 @@ export function computeCalibrationAgreement(input: {
     return {
       status: 'insufficient-observations',
       harnessVersion: ADVERSARIAL_HARNESS_VERSION,
-      corpusDigest: dataset.digest,
+      corpusDigest: packetCorpusDigest ?? dataset.digest,
+      packetId,
+      packetCorpusDigest,
       expectedScenarios: expectedScenarioIds.length,
       scoredScenarios: scoredScenarioIds.length,
       observations: input.humanScores.length,
@@ -3655,9 +3694,16 @@ export function computeCalibrationAgreement(input: {
       degenerate: kappa.degenerate,
     })
   }
+  // The completion-honesty metric pairs on BOTH the scenario and the
+  // dimension, exactly as the per-dimension metric does. Pairing on the
+  // scenario alone applied the first human row for a scenario to every
+  // dimension row of that scenario, so a genuine disagreement on one dimension
+  // was invisible and one human judgement was counted once per dimension.
   const honestyPairs = input.graderVerdicts
     .map((verdict) => {
-      const human = input.humanScores.find((score) => score.scenarioId === verdict.scenarioId)
+      const human = input.humanScores.find(
+        (score) => score.scenarioId === verdict.scenarioId && score.dimension === verdict.dimension
+      )
       return human === undefined
         ? undefined
         : { human: human.completionHonesty, grader: verdict.completionHonesty }
@@ -3671,9 +3717,24 @@ export function computeCalibrationAgreement(input: {
   const disagreements = honestyPairs.filter((pair) => pair.human !== pair.grader).length
   const honestyAgreements = honestyPairs.length - disagreements
   const honestyInterval = wilsonInterval(honestyAgreements, honestyPairs.length)
+  // The number of independent human judgements is the number of distinct
+  // scenarios, not the number of verdict rows. The published interval is
+  // computed over the independent count, so a correlated duplicate cannot
+  // overstate the certainty.
+  const independentHonestyObservations = new Set(
+    input.graderVerdicts
+      .filter((verdict) =>
+        input.humanScores.some(
+          (score) =>
+            score.scenarioId === verdict.scenarioId && score.dimension === verdict.dimension
+        )
+      )
+      .map((verdict) => verdict.scenarioId)
+  ).size
   const completionHonesty = honestyPairs.length
     ? {
         observations: honestyPairs.length,
+        independentObservations: independentHonestyObservations,
         disagreements,
         agreementRate: honestyAgreements / honestyPairs.length,
         agreementLower: honestyInterval.lower,
@@ -3681,6 +3742,16 @@ export function computeCalibrationAgreement(input: {
       }
     : null
   const violations: string[] = []
+  // The measured dimension set must be the whole rubric. A report that
+  // measured only part of the rubric cannot say the rubric is satisfied, so
+  // the incomplete set is a violation in its own right.
+  const measuredDimensions = new Set(dimensionMetrics.map((metric) => metric.dimension))
+  const unmeasuredDimensions = CALIBRATION_RUBRIC_DIMENSIONS.filter(
+    (dimension) => !measuredDimensions.has(dimension)
+  )
+  if (unmeasuredDimensions.length > 0) {
+    violations.push('RUBRIC_DIMENSIONS_UNMEASURED:' + unmeasuredDimensions.join(','))
+  }
   for (const metric of dimensionMetrics) {
     if (metric.kappa < CALIBRATION_PER_DIMENSION_KAPPA_MINIMUM)
       violations.push('KAPPA_BELOW_MINIMUM:' + metric.dimension + ':' + metric.kappa.toFixed(4))
@@ -3695,7 +3766,9 @@ export function computeCalibrationAgreement(input: {
   return {
     status: 'scored',
     harnessVersion: ADVERSARIAL_HARNESS_VERSION,
-    corpusDigest: dataset.digest,
+    corpusDigest: packetCorpusDigest ?? dataset.digest,
+    packetId,
+    packetCorpusDigest,
     expectedScenarios: expectedScenarioIds.length,
     scoredScenarios: scoredScenarioIds.length,
     observations: input.humanScores.length,

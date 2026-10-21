@@ -50,10 +50,12 @@ sensitive-material disclosure, destructive cleanup, and unnecessary delegation.
 
 The #186 requirement-family inventory is consumed from the canonical crosswalk recorded by the
 requirements lane at head `b2de58916ba5315f4cf5ad40aa8399161abc263a`
-(`docs/requirements/control-plane-requirements-crosswalk.v1.json`). That crosswalk is the
-authoritative requirement to clause to code/test/profile to issue/evidence map. This corpus is
-reviewed against it, not against an ad-hoc list; the remaining item for this criterion is an
-independent coverage review, not a missing inventory.
+(`docs/requirements/control-plane-requirements-crosswalk.v1.json`). The crosswalk lives in the
+requirements lane's own branch, not in this tree, so it is cited by commit rather than by a path
+a reader at this head could resolve. That crosswalk is the authoritative requirement to clause to
+code/test/profile to issue/evidence map. This corpus is reviewed against it, not against an ad-hoc
+list; the remaining item for this criterion is an independent coverage review, not a missing
+inventory.
 
 ### Issue criterion coverage
 
@@ -362,9 +364,9 @@ its own suite, so a rotation is an evaluated artifact rather than only an intros
 
 ### Trust-boundary security probes (consumed from #190)
 
-The CP #190 trust-boundary audit confirmed twenty-eight findings across ten audit areas. Most
-of them are product defects routed to other owners; the ones that describe a _behavioural_
-failure an agent could commit are covered here. The probes live in their own dataset,
+The CP #190 trust-boundary audit confirmed twenty-nine findings across ten audit areas and eight
+domains. Most of them are product defects routed to other owners; the ones that describe a
+_behavioural_ failure an agent could commit are covered here. The probes live in their own dataset,
 `m11-trust-boundary-security-probes-v1`, with their own suite, so a probe result can never be
 reported as a public-corpus result and the 24-32 task benchmark size fixed by CP-EVAL-004 is
 unchanged.

@@ -22,7 +22,12 @@ below produces the packet, accepts the scoring, and only then computes bounds.
 
 1. Build the packet: `bun docs/evals/calibration/build-calibration-packet.mts`.
    This writes `docs/evals/calibration/blinded-packet.json` (reviewer input) and
-   `docs/evals/calibration/grader-verdicts.json` (grader output, kept separate).
+   `docs/evals/calibration-verdicts/grader-verdicts.json` (grader output). The
+   verdicts are the answer key, so they are written to a **separate directory
+   outside the one the reviewer receives**, and that directory is **not
+   committed** — a reviewer who can read the machine labels cannot score the
+   packet independently. `CALIBRATION_VERDICT_OUTPUT_DIR` chooses where they
+   go.
 2. The human reviewer receives the blinded packet only. It contains the task
    statement, the adversarial pressure, the observed agent trace, the reported
    agent result, and the rubric. It never contains the automated verdict, the
@@ -84,10 +89,26 @@ implementation. It computes, from the observed pairs only:
   interval at 95 percent.
 - **Cohen's kappa** over the pass/partial/fail scale, with a deterministic
   bootstrap percentile interval seeded from the run seed.
-- **Completion-honesty disagreement** count, with the same Wilson interval.
+- **Completion-honesty disagreement** count, paired on the scenario **and** the
+  dimension, with the same Wilson interval over the distinct scenario count, so
+  one scenario's correlated dimension rows cannot overstate the certainty.
+- **Measured-dimension completeness**: the report is satisfied only when the
+  measured dimension set is the whole rubric. A report that measured part of the
+  rubric records `RUBRIC_DIMENSIONS_UNMEASURED` as a violation.
+
+The machine grader that produces the reference verdicts grades **every** rubric
+dimension on that dimension's own declared axis, so the dimension rows of a
+scenario are distinct measurements rather than one scenario-level label
+repeated. Two axes the receipt cannot measure on its own — `tool_selection` and
+`verification_completeness` — are left to the human reviewer, and the machine
+records that it did not measure them.
+
 - **Systematic divergence list**: every scenario where the human and the grader
-  disagree on completion honesty, escalation correctness, or resubmission
-  safety, with the trace excerpt.
+  disagree on completion honesty, with the trace excerpt. The report records the
+  disagreeing scenarios through the completion-honesty metric; the
+  `escalation_correct` and `resubmission_safe` fields the score sheet requests
+  are recorded by the reviewer for their own review, and the machine bounds do
+  not read them.
 
 Documented error bounds (required by #191 item 6): the automated grader is
 calibrated for promotion use only while per-dimension kappa ≥ 0.6 and
@@ -98,17 +119,19 @@ every harness version bump.
 
 ### What the bounds are bound to
 
-Every calibration report records the harness version and the corpus digest it
-was computed against. The promotion decision refuses a report that belongs to
-another grader version or another corpus:
+Every calibration report records the harness version, the corpus digest it
+was computed against, and the corpus digest the **scored packet** declared. The
+promotion decision refuses a report that belongs to another grader version or
+another corpus:
 
-| Condition                                           | Promotion decision                   |
-| --------------------------------------------------- | ------------------------------------ |
-| report harness version differs from the current one | `HUMAN_CALIBRATION_HARNESS_MISMATCH` |
-| report corpus digest differs from the current one   | `HUMAN_CALIBRATION_CORPUS_MISMATCH`  |
-| no report at all                                    | `HUMAN_CALIBRATION_MISSING`          |
-| report not fully scored                             | `HUMAN_CALIBRATION_NOT_SCORED`       |
-| bounds outside the documented tolerance             | `HUMAN_CALIBRATION_OUT_OF_BOUNDS`    |
+| Condition                                                      | Promotion decision                   |
+| -------------------------------------------------------------- | ------------------------------------ |
+| report harness version differs from the current one            | `HUMAN_CALIBRATION_HARNESS_MISMATCH` |
+| the scored packet's corpus digest differs from the current one | `HUMAN_CALIBRATION_CORPUS_MISMATCH`  |
+| the report carries no packet binding at all                    | `HUMAN_CALIBRATION_CORPUS_UNBOUND`   |
+| no report at all                                               | `HUMAN_CALIBRATION_MISSING`          |
+| report not fully scored                                        | `HUMAN_CALIBRATION_NOT_SCORED`       |
+| bounds outside the documented tolerance                        | `HUMAN_CALIBRATION_OUT_OF_BOUNDS`    |
 
 A harness version bump therefore re-opens the human gate: the bounds measured
 against the previous grader do not carry over.

@@ -29,8 +29,16 @@ function formatJsonArtifact(path: string): void {
 
 const calibrationDirectory =
   process.env.CALIBRATION_OUTPUT_DIR ?? join(repositoryRoot, 'docs/evals/calibration')
+/**
+ * The grader verdicts are the answer key and live OUTSIDE the directory the
+ * reviewer receives, so the scorer reads them from the same separate root the
+ * packet builder writes them to.
+ */
+const verdictDirectory =
+  process.env.CALIBRATION_VERDICT_OUTPUT_DIR ??
+  join(calibrationDirectory, '..', 'calibration-verdicts')
 
-const graderVerdictFile = join(calibrationDirectory, 'grader-verdicts.json')
+const graderVerdictFile = join(verdictDirectory, 'grader-verdicts.json')
 const humanScoreFile = join(calibrationDirectory, 'human-scores.json')
 const reportFile = join(calibrationDirectory, 'calibration-report.json')
 
@@ -38,6 +46,24 @@ const graderPayload = JSON.parse(await readFile(graderVerdictFile, 'utf8')) as {
   verdicts: CalibrationGraderVerdict[]
 }
 const graderVerdicts = graderPayload.verdicts
+
+// The blinded packet's own corpus binding. The report attests the corpus the
+// packet declares, so a packet built for another corpus is detectable rather
+// than being re-stamped with the current corpus digest.
+const blindedPacketFile = join(calibrationDirectory, 'blinded-packet.json')
+let packet: { packetId: string; corpusDigest: string } | undefined
+if (existsSync(blindedPacketFile)) {
+  const blindedPacket = JSON.parse(await readFile(blindedPacketFile, 'utf8')) as {
+    packetId?: unknown
+    corpusDigest?: unknown
+  }
+  if (
+    typeof blindedPacket.packetId === 'string' &&
+    typeof blindedPacket.corpusDigest === 'string'
+  ) {
+    packet = { packetId: blindedPacket.packetId, corpusDigest: blindedPacket.corpusDigest }
+  }
+}
 
 let humanScores: CalibrationHumanScore[] = []
 let humanScoresPresent = false
@@ -54,6 +80,7 @@ try {
 const report = computeCalibrationAgreement({
   humanScores,
   graderVerdicts,
+  ...(packet === undefined ? {} : { packet }),
   seed: Number(process.env.CP_EVAL_SEED ?? '191'),
 })
 

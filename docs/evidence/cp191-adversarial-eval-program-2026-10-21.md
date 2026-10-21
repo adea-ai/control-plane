@@ -5,11 +5,18 @@ program is **not** human-calibrated, **not** independently hidden-task-authored,
 and **not** authorised for promotion. Those remain external gates.
 
 Branch: `f2w5/cp191-adversarial-eval`. Integrated source revision evaluated:
-`8a208d095960655a8cea6ec49024b4a7207e7f3a` — the commit that carries the evaluated evaluator
+`21339f5694447a8a99fab16615c2bd22e9205298` — the commit that carries the evaluated evaluator
 sources. The branch head adds only the evidence report, the scorecard, and the evaluation
 scripts; the two evaluated evaluator sources are byte-identical at the branch head, and the
 recorded source digest covers exactly those two files. Machine-readable scorecard:
 `docs/evidence/cp191-adversarial-baseline-scorecard.json`.
+
+The revision is the one the evaluated sources actually hash to. The recorded source digest
+`sha256:647d5ec9…` is the digest of the two evaluator sources at this head, and the
+`21339f569` sources it descends from differ from it only by the provenance corrections
+recorded below. The runner now derives the revision from the tree and fails closed when
+`CP_EVAL_SOURCE_REVISION` names a different commit, so the revision this report names is
+the revision that was evaluated.
 
 ## What changed
 
@@ -35,25 +42,27 @@ lives in the corpus module's own executor factory.
 ## Observed measurements
 
 All values below were produced by
-`CP_EVAL_SOURCE_REVISION=8a208d095960655a8cea6ec49024b4a7207e7f3a bun docs/evals/run-adversarial-program.mts`
-on the local machine. They are local observations, not provider measurements.
+`CP_EVAL_SOURCE_REVISION=21339f5694447a8a99fab16615c2bd22e9205298 bun docs/evals/run-adversarial-program.mts`
+on the local machine. They are local observations, not provider measurements. The runner
+verifies that the supplied revision is the tree's own revision and fails closed otherwise,
+so this command names the evaluated sources rather than asserting them.
 
-| Measurement                  | Pinned baseline                                                           | Candidate (isolated process)                                              | Source                                     |
-| ---------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------ |
-| Evaluation cases             | 39                                                                        | 39                                                                        | pinned corpus 1.2.0                        |
-| Case status                  | passed                                                                    | passed                                                                    | recorded run status                        |
-| Observed tool calls          | 101                                                                       | 101                                                                       | recorded observations across both channels |
-| Observed local latency (sum) | 4.18 ms                                                                   | 1622.28 ms                                                                | recorded receipt durations                 |
-| Observed provider cost       | unavailable (not zero)                                                    | unavailable (not zero)                                                    | no provider call was made                  |
-| Observed provider tokens     | unavailable (not zero)                                                    | unavailable (not zero)                                                    | no provider call was made                  |
-| Corpus digest                | `sha256:e906c214ed5462a93fb69ce3b7e7f7482fd14ee8793bb2d6cee23590e95918fa` | same                                                                      | pinned                                     |
-| Suite digest                 | `sha256:caa869c49c417f5b8acc35a1c3cf53897c32766e1af05e1509d9d897a37f7539` | same                                                                      | pinned                                     |
-| Harness version              | 4.0.0                                                                     | 4.0.0                                                                     | recorded receipt                           |
-| Seed                         | 191                                                                       | 191                                                                       | recorded receipt                           |
-| Source revision              | `21339f5694447a8a99fab16615c2bd22e9205298`                                | same                                                                      | supplied source identity                   |
-| Source digest                | `sha256:619042b5ee5e82dd414abb51630645d590bf936f51b9504987aa7a24351b199d` | same                                                                      | digest of the two evaluator sources        |
-| Baseline identity digest     | `sha256:a85ce958ded593381c43225bf6afc7d2dde3d120672495f187c75229f5083a7e` | n/a                                                                       | recorded                                   |
-| Candidate identity digest    | n/a                                                                       | `sha256:e70e92ae6d4d87c3eacaa7604cedc6809fdd97e7a3118f7fdf2ab1e6570b2a27` | recorded                                   |
+| Measurement                  | Pinned baseline                                                           | Candidate (isolated process)                                                                      | Source                                     |
+| ---------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Evaluation cases             | 39                                                                        | 39                                                                                                | pinned corpus 1.2.0                        |
+| Case status                  | passed                                                                    | passed                                                                                            | recorded run status                        |
+| Observed tool calls          | 101                                                                       | 101                                                                                               | recorded observations across both channels |
+| Observed local latency (sum) | 4.18 ms                                                                   | 1622.28 ms                                                                                        | recorded receipt durations                 |
+| Observed provider cost       | unavailable (not zero)                                                    | unavailable (not zero)                                                                            | no provider call was made                  |
+| Observed provider tokens     | unavailable (not zero)                                                    | unavailable (not zero)                                                                            | no provider call was made                  |
+| Corpus digest                | `sha256:e906c214ed5462a93fb69ce3b7e7f7482fd14ee8793bb2d6cee23590e95918fa` | same                                                                                              | pinned                                     |
+| Suite digest                 | `sha256:caa869c49c417f5b8acc35a1c3cf53897c32766e1af05e1509d9d897a37f7539` | same                                                                                              | pinned                                     |
+| Harness version              | 4.0.0                                                                     | 4.0.0                                                                                             | recorded receipt                           |
+| Seed                         | 191                                                                       | 191                                                                                               | recorded receipt                           |
+| Source revision              | `c57acf25931e53ca5887a2e8a33b4b44ad32a42b`                                | same                                                                                              | supplied source identity                   |
+| Source digest                | `sha256:647d5ec98430a62ace8a1f709bd82360f6f5eb6d91b1fcbe442e3af2504282ea` | same                                                                                              | digest of the two evaluator sources        |
+| Baseline identity digest     | `sha256:cac1732b09d50e17437fd2fe05ed329a9308f2297b1d5a7f008e7c075c8b5264` | n/a                                                                                               | recorded                                   |
+| Candidate identity digest    | n/a                                                                       | `sha256:b03b84459bb0391bf3548761ade83602e87b6e21c49d5c3a8876bd675cb667e4`3118f7fdf2ab1e6570b2a27` | recorded                                   |
 
 The comparison is reported as comparable. Both sides performed the same 101 observed tool calls;
 the candidate's calls are recorded through the host port instead of the in-process ports, and the
@@ -127,8 +136,18 @@ A blocked decision also leaves the release-gate registry blocked, so the registr
 `status: awaiting-blinded-human-scoring`, `metrics: null`,
 `promotion.graderOnlyPromotion: withheld`. The report publishes no agreement rate, no kappa, no
 interval, and no error bound, because no human scoring exists. The blinded packet for the eight
-scenarios H1…H8 is committed at `docs/evals/calibration/blinded-packet.json`; the grader verdicts
-are kept in a separate file the reviewer never receives.
+scenarios H1…H8 is committed at `docs/evals/calibration/blinded-packet.json`, stamped with the
+corpus 1.3.0 digest that this head evaluates. The grader verdicts are the answer
+key: they are written to `docs/evals/calibration-verdicts/`, outside the directory the
+reviewer receives, and that directory is not committed.The report now carries the scored packet's own corpus binding, and the promotion gate compares
+that binding against the current corpus. A packet built for another corpus is therefore detected
+instead of being re-stamped with the current digest, and bounds computed without a packet are
+reported as unbound rather than as satisfying the rubric.
+
+The machine grader grades every rubric dimension on that dimension's own declared axis, so the
+dimension rows of a scenario are distinct measurements rather than one scenario-level label
+repeated. A report that measured only part of the rubric is not satisfied: the unmeasured
+dimensions are a violation in their own right.
 
 | Gate                             | State   | Exact next action                                                                                                                                |
 | -------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -142,20 +161,29 @@ are kept in a separate file the reviewer never receives.
 
 ## Validation performed
 
-| Command                                                             | Result                                     |
-| ------------------------------------------------------------------- | ------------------------------------------ |
-| `bun test --timeout 30000 src` (packages/production-readiness)      | 101 pass, 0 fail, 1012 assertions, 9 files |
-| `bun x tsc -p packages/production-readiness/tsconfig.json --noEmit` | no errors                                  |
-| `bun x oxlint --deny-warnings packages/production-readiness/src`    | no warnings                                |
-| `bun run format:check`                                              | all files correctly formatted              |
-| `bun docs/evals/run-adversarial-program.mts`                        | exit 0; scorecard written                  |
-| `bun docs/evals/calibration/build-calibration-packet.mts`           | exit 0; 8 scenarios written                |
-| `bun docs/evals/calibration/score-calibration.mts`                  | exit 0; metrics withheld                   |
+| Command                                                             | Result                        |
+| ------------------------------------------------------------------- | ----------------------------- |
+| `bun test --timeout 30000 src` (packages/production-readiness)      | 108 pass, 0 fail, 9 files     |
+| `bun x tsc -p packages/production-readiness/tsconfig.json --noEmit` | no errors                     |
+| `bun x oxlint --deny-warnings packages/production-readiness/src`    | no warnings                   |
+| `bun run format:check`                                              | all files correctly formatted |
+| `bun docs/evals/run-adversarial-program.mts`                        | exit 0; scorecard written     |
+| `bun docs/evals/calibration/build-calibration-packet.mts`           | exit 0; 8 scenarios written   |
+| `bun docs/evals/calibration/score-calibration.mts`                  | exit 0; metrics withheld      |
 
 This pass ran focused tests and static checks only. The workspace aggregate build, the aggregate
 unit group, and coverage were not re-run because capacity was not rechecked for this pass; the
 last full aggregate result stays recorded in the pull-request description and remains the
 reference for the two unmodified-base failures.
+
+The runner now derives the evaluated revision from the tree it runs in and fails closed when
+`CP_EVAL_SOURCE_REVISION` names a different commit, so the revision this report names is the
+revision that was evaluated rather than a self-asserted string. The promotion gate carries a
+regression budget over the quality metrics the two channels measure the same way, so a metric
+regression is a blocking reason rather than an advisory number in the comparison block. The
+scorecard records the real instant the evidence was produced, separately from the fixed clock the
+measured evaluation runs on, so a report written today is distinguishable from one written at any
+other time.
 
 No provider was contacted, no credential was read, no product promotion was activated, no
 deployment was performed, and no paid call was made.
