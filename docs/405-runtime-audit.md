@@ -119,12 +119,24 @@ issue's audit trail and is not re-measured here.
 
 ### 3.1 Build and test timings
 
-| Measure                                   | Value                                 | Source                                                                                          |
-| ----------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `bun install --frozen-lockfile`           | 16.12 s                               | **[measured]**                                                                                  |
-| `bun run build`, fresh worktree, uncached | **56.18 s**                           | **[measured]** — the M13 audit's local reference was 3 m 28.5 s at 41/41 tasks on a colder host |
-| `bun run test` (full suite)               | see the pull-request receipt          | **[measured]**                                                                                  |
-| `bun scripts/check-budgets.mjs dist`      | **20.3 MB** against the 12 MB ceiling | **[measured]** — see §3.3                                                                       |
+| Measure                                                | Value                                 | Source                                                                                                                                                                                                     |
+| ------------------------------------------------------ | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bun install --frozen-lockfile`                        | 16.12 s                               | **[measured]**                                                                                                                                                                                             |
+| `bun run build`, fresh worktree, uncached              | **56.18 s**                           | **[measured]** — the M13 audit's local reference was 3 m 28.5 s at 41/41 tasks on a colder host. The current head differs from that commit only in `.mjs` and `.md` files, so the build graph is unchanged |
+| `bun run test` (all lanes, coverage-enabled unit lane) | **222.91 s**                          | **[measured]** at the current head `23fa6880` — smoke 629 pass / 0 fail, e2e 499 pass / 0 fail, unit 1 failure (the seeded baseline failure, see §5)                                                       |
+| `bun scripts/check-budgets.mjs dist`                   | **20.3 MB** against the 12 MB ceiling | **[measured]** — see §3.3                                                                                                                                                                                  |
+
+**CI timings.** The GitHub-visible _Code Foundry Validation_ runs on `main`
+(`39543810015` at `27f17bd55`, `39542783282` at `6d16a4951`) report the
+Code Foundry runtime, Gate, PostgreSQL-qualification and Mode jobs as
+**skipped**: the lane runner is the Code Foundry CI runtime, so no per-lane
+duration is publicly observable for the current `main`. The canonical CI lane
+baseline therefore remains the recorded M13 Validation run `35462414764`
+(Unit 256 s, Build 254 s, Type-Check 167 s, Format 107 s, Integration 98 s,
+E2E 85 s, Smoke 68 s, Lint 38 s, Dep-audit 33 s, Eval 17 s, Performance 8 s,
+Gate 14 s; critical path Unit → Gate, wall ≈ 4 m 52 s). The local candidate
+timings above are the current-candidate evidence; no lane was re-run in CI
+because the branch is not published.
 
 ### 3.2 Dependency cost
 
@@ -163,9 +175,58 @@ budgets are no longer being met, and the audit's dependency-cost finding is
 now materially larger than it was. That is the finding #405 owes, and it is
 routed to the dependency-cost work rather than absorbed by raising a ceiling.
 
+### 3.4 Local service latency, queue/runtime behaviour, memory and startup
+
+All **[measured]** on this developer host (darwin arm64, M2 Max, 12 CPU,
+64 GB, bun 1.4.3, SQLite 3.51.0) against the local profile at the current
+head `23fa6880` (clean tree). No cloud, Restate server, PostgreSQL, provider
+or device was contacted, and no production system was loaded.
+
+| Measure                                                                | Value                                                                                                                                                                                                      | How                                                                                |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| startup → ready (cold, first start after the build)                    | **8.1 s** (ceiling 45 s)                                                                                                                                                                                   | `bun scripts/check-startup-budget.mjs` — the repaired probe, on the real built app |
+| startup → ready (warm)                                                 | ≈ 0.1 s                                                                                                                                                                                                    | a second start on the same profile state                                           |
+| idle peak RSS at readiness                                             | **233.9 MB** (ceiling 256 MB)                                                                                                                                                                              | the same probe — the peak, not the steady state                                    |
+| steady-state RSS after readiness                                       | **78.8 MB**                                                                                                                                                                                                | `ps -o rss=` on the owned child once idle                                          |
+| local request latency, `/ready`                                        | **300 requests, 0 errors, p50 1.72 ms, p95 9.49 ms, p99 32.91 ms, max 38.7 ms**                                                                                                                            | a local in-process sample; `/ready` and `/health` both answer 200                  |
+| queue round trip (SQLite enqueue → claimDue → complete, 50 iterations) | **p50 5.03 ms, p95 21.80 ms, max 37.60 ms** (enqueue p50 0.62, claim p50 1.82, complete p50 0.67)                                                                                                          | `bun scripts/m17-runtime-baseline.mjs` on a disposable temp database               |
+| filesystem object put → get (50 iterations)                            | put p50 14.96 ms / p95 82.02 ms; get p50 2.60 ms / p95 22.04 ms; round trip p50 17.37 ms / p95 84.53 ms                                                                                                    | the same baseline run                                                              |
+| durable usage-ledger reserve (50 iterations)                           | open budget p50 23.03 ms; reserve p50 9.91 ms / p95 17.11 ms                                                                                                                                               | the same baseline run                                                              |
+| in-process policy authorize (200 iterations)                           | p50 0.07 ms, p95 1.71 ms, max 9.42 ms                                                                                                                                                                      | the same baseline run                                                              |
+| cold-import cost per layer                                             | pi-durable-node-adapter 855 ms, transports 488 ms, custom-runtime 351 ms, billing 328 ms, artifacts 327 ms, pi-cloudflare-host 279 ms, auth 258 ms, policy 180 ms, device-supervision 28 ms, restate 22 ms | the same baseline run                                                              |
+| runtime RSS after the probes                                           | 99.7 MB                                                                                                                                                                                                    | the same baseline run                                                              |
+
+The probe's own numbers are the budget-relevant ones: **8.1 s to ready and a
+233.9 MB peak against 45 s and 256 MB** — inside both ceilings, with the
+peak-RSS headroom now **22.1 MB** where the M13 audit recorded ≈176 MB
+against the same 256 MB ceiling. The growth is a finding for the memory
+posture, not a ceiling change: the ceiling is not raised here.
+
+### 3.5 Before/after evidence for the startup/RSS probe repair
+
+The same scenario was run against the **base** probe (`27f17bd55`) and the
+repaired probe, with an unrelated listener answering `200` on the probe's
+port:
+
+|                               | base probe (`27f17bd55`)                                                                                                                                             | repaired probe (`23fa6880`)                                                                                |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| exit status                   | **0 — passed**                                                                                                                                                       | **1 — refused**                                                                                            |
+| output                        | `OK: {"check":"startup-ready-seconds","measured":0.1,...}` and `OK: {"check":"idle-peak-rss-mb","measured":101.4,...}`                                               | `BUDGET EXCEEDED / FAILED: the port is already in use by 61023; refusing to measure an unrelated listener` |
+| what it measured              | the **unrelated listener's** readiness and a process it did not own — and with an unsuccessful or empty `ps` sample the peak would have stayed at 0 and still passed | nothing: it refuses before launching                                                                       |
+| unrelated listener afterwards | survived                                                                                                                                                             | **survived** (HTTP 200) — the refusal never signals a process the probe does not own                       |
+
+The base probe's `scripts/check-startup-budget.mjs` was run from the base
+commit as a temporary sibling script and deleted afterwards; the working tree
+is clean and the temporary script was never committed.
+
 ## 4. Safe shared runtime/data abstractions
 
-The M13 audit's findings are unchanged and are **not** re-derived here:
+The M13 audit's findings are unchanged and are **not** re-derived here; the
+current candidate's coupling measurement (`scripts/m17-runtime-baseline.mjs`
+at `23fa6880`) backs them: the custom-runtime layer couples to 48 targets
+(auth 27, billing 7, transports 7, artifacts 3, policy 1, restate 1,
+device-supervision 2), device-supervision to 38 and pi-durable-node-adapter
+to 25 — the concentration the consolidation findings already name.
 leave the two `gateway.ts` products separate (different semantics, per #192);
 consolidate the duplicated promise-pending-map process clients into a
 `ProcessRpcLink` primitive in `packages/deployment` (characterization suites
@@ -177,8 +238,21 @@ changes** are proposed or made.
 
 ## 5. Receipts
 
-The commands, their results and the exact head are in the pull request body
-for this branch.
+Exact commands and results for this candidate:
+
+| Command                                                          | Result                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bun scripts/check-startup-budget.mjs`                           | `OK` 8.1 s ready (ceiling 45), `OK` 233.9 MB peak RSS (ceiling 256); the owned child exited after `SIGTERM`                                                                                                                                                                                                                                                                                                                 |
+| `bun scripts/m17-runtime-baseline.mjs`                           | exit 0; candidate `23fa68806ebad0986239b0f3c311ff0c607ed6e7`, dirty `false`; queue round trip p50 5.03 ms / p95 21.80 ms                                                                                                                                                                                                                                                                                                    |
+| `bun scripts/check-budgets.mjs deps`                             | `BUDGET EXCEEDED` — measured 591, ceiling 285                                                                                                                                                                                                                                                                                                                                                                               |
+| `bun scripts/check-budgets.mjs dist`                             | `BUDGET EXCEEDED` — measured 20.3 MB, ceiling 12 MB                                                                                                                                                                                                                                                                                                                                                                         |
+| `bun scripts/check-budgets.mjs lane --group build --seconds 254` | `OK` — ceiling 300, baseline 254 (the build lane is measurable now)                                                                                                                                                                                                                                                                                                                                                         |
+| `bun run test` (all lanes)                                       | 222.91 s; smoke 629 pass / 0 fail, e2e 499 pass / 0 fail, **unit 1 failure — the seeded baseline failure** `Runtime Gateway production startup > forwards the host credential authority in an isolated subprocess`, which reproduces on the pristine baseline and is untouched by this diff (`git diff 27f17bd55..HEAD -- apps/runtime-gateway tests/` is empty). **The suite does not pass and is not reported as green.** |
+| `bun test src/startup-budget.test.mjs` (package cwd)             | 27 pass / 0 fail                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `bun run format:check`                                           | clean (1940 files)                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `bun run lint`                                                   | exit 0 — oxlint 0 errors, workspace boundaries 0 violations (1231 files / 45 packages), canonical-ordering and digest-writer checks pass                                                                                                                                                                                                                                                                                    |
+| `bun run type-check`                                             | every stage passes (type errors none in 7 + 34 files, drizzle `Everything's fine`, compatibility, architecture); **fails only at `requirements:check`** — "Unable to query GitHub issues through authenticated GitHub CLI (exit 4)", an environment limit of this host, not a defect                                                                                                                                        |
+| pre-commit hook                                                  | 45/45 tasks, 47/47 successful                                                                                                                                                                                                                                                                                                                                                                                               |
 
 ## 6. Release follow-up
 
