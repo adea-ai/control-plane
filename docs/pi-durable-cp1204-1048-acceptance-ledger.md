@@ -20,6 +20,239 @@ The `#1048` branch already contained the `#1204` head as an ancestor, so the
 integrated outcome is published on the `#1048` branch. The `#1204` branch is
 preserved unchanged at its published head.
 
+## The current published scope
+
+The published head is `7d599a7d2b48bc5ebfc0a8a125f6fd335df1aec6` over the base `f4f17194e04bcf8af65e8b5ff7aed7926b51ca88`. The complete changed scope is
+**182 paths: 65 added, 117 modified**; no path was deleted.
+
+| Area                          | Added | Modified | Total |
+| ----------------------------- | ----- | -------- | ----- |
+| `(repository root)`           | 0     | 4        | 4     |
+| `.github`                     | 0     | 1        | 1     |
+| `apps/control-api`            | 16    | 23       | 39    |
+| `apps/hosted-control-plane`   | 2     | 5        | 7     |
+| `apps/workflow-worker`        | 0     | 6        | 6     |
+| `docs/architecture`           | 0     | 2        | 2     |
+| `docs/evidence`               | 7     | 3        | 10    |
+| `packages/acp-adapter`        | 0     | 2        | 2     |
+| `packages/config`             | 0     | 2        | 2     |
+| `packages/contracts`          | 1     | 4        | 5     |
+| `packages/control-sdk`        | 1     | 4        | 5     |
+| `packages/database`           | 3     | 4        | 7     |
+| `packages/domain`             | 0     | 3        | 3     |
+| `packages/orchestration`      | 0     | 2        | 2     |
+| `packages/pi-durable-adapter` | 16    | 18       | 34    |
+| `packages/policy`             | 0     | 3        | 3     |
+| `packages/profile-adapters`   | 3     | 6        | 9     |
+| `packages/runtime-sdk`        | 0     | 1        | 1     |
+| `packages/sqlite-persistence` | 0     | 3        | 3     |
+| `packages/telemetry`          | 0     | 2        | 2     |
+| `scripts`                     | 1     | 3        | 4     |
+| `tests`                       | 15    | 16       | 31    |
+
+The complete path list, as published:
+
+```text
+M  .github/workflows/task-cache-qualification.yml
+M  .release-please-manifest.json
+M  CHANGELOG.md
+M  apps/control-api/CHANGELOG.md
+M  apps/control-api/package.json
+M  apps/control-api/src/app.module.ts
+M  apps/control-api/src/executions/execution-acceptance.service.ts
+M  apps/control-api/src/index.ts
+A  apps/control-api/src/models/production-cancellation-authority.test.mjs
+M  apps/control-api/src/models/production-child-configuration.test.mjs
+M  apps/control-api/src/models/production-model-composition.ts
+A  apps/control-api/src/pi-durable/cancellation-authority.test-fixture.mjs
+M  apps/control-api/src/pi-durable/child-progress-scanner.test.mjs
+M  apps/control-api/src/pi-durable/child-progress-scanner.ts
+A  apps/control-api/src/pi-durable/child-publication-current.controller.ts
+A  apps/control-api/src/pi-durable/child-publication-current.service.ts
+A  apps/control-api/src/pi-durable/child-publication-current.test.mjs
+A  apps/control-api/src/pi-durable/child-timeline-delivery.test.mjs
+A  apps/control-api/src/pi-durable/child-timeline-delivery.ts
+M  apps/control-api/src/pi-durable/current-tool-authority.test.mjs
+M  apps/control-api/src/pi-durable/lead-fence-consumer.test.mjs
+A  apps/control-api/src/pi-durable/lead-fence-cross-store-interleavings.test.mjs
+A  apps/control-api/src/pi-durable/lead-fence-late-authority.test.mjs
+M  apps/control-api/src/pi-durable/lead-fence-live-harness.mjs
+A  apps/control-api/src/pi-durable/lead-fence-service.test.mjs
+M  apps/control-api/src/pi-durable/lead-fenced-observation.test.mjs
+M  apps/control-api/src/pi-durable/lead-terminal-settlement.test.mjs
+M  apps/control-api/src/pi-durable/node-admission.test.mjs
+M  apps/control-api/src/pi-durable/node-admission.ts
+M  apps/control-api/src/pi-durable/node-candidate.fixture.mjs
+A  apps/control-api/src/pi-durable/node-canonical-classification.test.mjs
+M  apps/control-api/src/pi-durable/node-composition-lifecycle.test.mjs
+M  apps/control-api/src/pi-durable/node-composition.ts
+M  apps/control-api/src/pi-durable/pi-durable-lead.service.ts
+M  apps/control-api/src/pi-durable/pi-durable-lead.test.mjs
+A  apps/control-api/src/pi-durable/postgres-cancellation-request-reader.fixture.mjs
+A  apps/control-api/src/pi-durable/postgres-cancellation-requests.integration.test.mjs
+A  apps/control-api/src/pi-durable/postgres-cancellation-requests.ts
+A  apps/control-api/src/pi-durable/postgres-cancellation-test-database.fixture.mjs
+A  apps/control-api/src/pi-durable/postgres-cancellation-test-database.test.mjs
+M  apps/control-api/src/pi-durable/runtime-authority-router.ts
+M  apps/control-api/src/pi-durable/sqlite-publication-reader.ts
+M  apps/hosted-control-plane/package.json
+M  apps/hosted-control-plane/src/composition.ts
+A  apps/hosted-control-plane/src/hosted-model-forwarding.integration.test.mjs
+M  apps/hosted-control-plane/src/index.test.mjs
+M  apps/hosted-control-plane/src/index.ts
+M  apps/hosted-control-plane/src/reconciliation-wiring.test.mjs
+A  apps/hosted-control-plane/src/reconciliation-workflow-submitter.ts
+M  apps/workflow-worker/CHANGELOG.md
+M  apps/workflow-worker/package.json
+M  apps/workflow-worker/src/cloud-composition.ts
+M  apps/workflow-worker/src/index.test.mjs
+M  apps/workflow-worker/src/runtime-attempt-router.test.mjs
+M  apps/workflow-worker/src/runtime-attempt-router.ts
+M  bun.lock
+M  docs/architecture/control-plane-architecture.md
+M  docs/architecture/control-plane-architecture.v1.json
+M  docs/harnesses.md
+A  docs/pi-durable-cancellation-owner-proposal.md
+A  docs/pi-durable-committed-cancellation-authority.md
+A  docs/pi-durable-complete-writer-coverage.md
+A  docs/pi-durable-cp1048-path-ledger.md
+A  docs/pi-durable-cp1048-reconciliation.md
+A  docs/pi-durable-cp1204-1048-acceptance-ledger.md
+M  docs/pi-durable-report-back.md
+M  docs/pi-durable-runtime.md
+A  docs/profile-recovery-acceptance-map.md
+M  package.json
+M  packages/acp-adapter/src/acp-remote-crypto.ts
+M  packages/acp-adapter/src/acp-remote-transport.ts
+M  packages/config/src/managed-cloud.test.mjs
+M  packages/config/src/managed-cloud.ts
+M  packages/contracts/src/control-api.test.mjs
+M  packages/contracts/src/control-api.ts
+M  packages/contracts/src/decision-resolution.ts
+M  packages/contracts/src/index.ts
+A  packages/contracts/src/pi-child-publication.ts
+M  packages/control-sdk/openapi/control-plane.v3.json
+M  packages/control-sdk/src/client.ts
+M  packages/control-sdk/src/compatibility.test.mjs
+M  packages/control-sdk/src/operations.ts
+A  packages/control-sdk/src/pi-child-publication.test.mjs
+A  packages/database/drizzle/0074_dear_talisman.sql
+A  packages/database/drizzle/meta/0074_snapshot.json
+M  packages/database/drizzle/meta/_journal.json
+A  packages/database/src/execution-repository.test.mjs
+M  packages/database/src/execution-repository.ts
+M  packages/database/src/integration.test.mjs
+M  packages/database/src/schema/executions.ts
+M  packages/domain/src/command-inbox.test.mjs
+M  packages/domain/src/command-inbox.ts
+M  packages/domain/src/execution-lifecycle.ts
+M  packages/orchestration/src/delegation.test.mjs
+M  packages/orchestration/src/delegation.ts
+M  packages/pi-durable-adapter/src/adapter.ts
+A  packages/pi-durable-adapter/src/authority-outcome.ts
+A  packages/pi-durable-adapter/src/cancellation-authority.test-fixture.mjs
+M  packages/pi-durable-adapter/src/cancellation-generation.test.mjs
+A  packages/pi-durable-adapter/src/cancellation-history.ts
+A  packages/pi-durable-adapter/src/cancellation-owner.test.mjs
+A  packages/pi-durable-adapter/src/cancellation-owner.ts
+M  packages/pi-durable-adapter/src/canonical-authority.ts
+A  packages/pi-durable-adapter/src/committed-cancellation-authority.test.mjs
+A  packages/pi-durable-adapter/src/competing-recovery-owners.test.mjs
+A  packages/pi-durable-adapter/src/composition-drain.test.mjs
+M  packages/pi-durable-adapter/src/composition.ts
+M  packages/pi-durable-adapter/src/contracts.ts
+A  packages/pi-durable-adapter/src/durable-writer-coverage.test.mjs
+M  packages/pi-durable-adapter/src/index.ts
+M  packages/pi-durable-adapter/src/journal.test.mjs
+M  packages/pi-durable-adapter/src/journal.ts
+A  packages/pi-durable-adapter/src/native-cancellation-boundary.test.mjs
+A  packages/pi-durable-adapter/src/native-cancellation-boundary.ts
+A  packages/pi-durable-adapter/src/pi-engine-request-valued.fixture.mjs
+M  packages/pi-durable-adapter/src/pi-engine-tools.loopback.fixture.mjs
+M  packages/pi-durable-adapter/src/pi-engine-tools.test.mjs
+M  packages/pi-durable-adapter/src/pi-engine.test.mjs
+M  packages/pi-durable-adapter/src/pi-engine.ts
+A  packages/pi-durable-adapter/src/process-claim-fence.test.mjs
+M  packages/pi-durable-adapter/src/reconcile-owner-fence.test.mjs
+M  packages/pi-durable-adapter/src/recovery-races-owner.child.mjs
+M  packages/pi-durable-adapter/src/recovery-races.fixture.mjs
+M  packages/pi-durable-adapter/src/recovery-races.test.mjs
+A  packages/pi-durable-adapter/src/recovery-races.worker.mjs
+A  packages/pi-durable-adapter/src/resume-permit.ts
+A  packages/pi-durable-adapter/src/upgrade-manifest.ts
+M  packages/pi-durable-adapter/src/usage-authority.test.mjs
+M  packages/pi-durable-adapter/src/usage-authority.ts
+M  packages/policy/src/decision-resolution.test.mjs
+M  packages/policy/src/decision-resolution.ts
+M  packages/policy/src/index.ts
+M  packages/profile-adapters/README.md
+M  packages/profile-adapters/package.json
+M  packages/profile-adapters/src/guards.ts
+M  packages/profile-adapters/src/index.test.mjs
+M  packages/profile-adapters/src/index.ts
+A  packages/profile-adapters/src/wake-restart.worker.mjs
+M  packages/profile-adapters/src/wake.ts
+A  packages/profile-adapters/tsconfig.type-tests.json
+A  packages/profile-adapters/type-tests/retained-wake-repository-assignment.ts
+M  packages/runtime-sdk/src/pi-durable-lead.test.mjs
+M  packages/sqlite-persistence/src/delegation-repository.ts
+M  packages/sqlite-persistence/src/delegation-terminal-receipt.test.mjs
+M  packages/sqlite-persistence/src/delegation-terminal-receipt.ts
+M  packages/telemetry/CHANGELOG.md
+M  packages/telemetry/package.json
+M  scripts/integration-shards.mjs
+M  scripts/run-bun-test-group.mjs
+M  scripts/run-integration-tests.mjs
+A  scripts/task-cache-qualification.mjs
+A  tests/fixtures/pinned-process.mjs
+A  tests/fixtures/profile-recovery-cleanup.mjs
+A  tests/fixtures/runner-cleanup-signal.child.mjs
+A  tests/fixtures/runner-cleanup.mjs
+M  tests/integration-runner-lifecycle.test.mjs
+M  tests/integration-shards.test.mjs
+M  tests/j1-unfinished-child-process-restart.test.mjs
+M  tests/j1-unfinished-child-process.fixture.mjs
+M  tests/m11-architecture-audit.test.mjs
+M  tests/m11-standalone-e2e.test.mjs
+M  tests/pi-child-continuation-process.fixture.mjs
+M  tests/pi-child-continuation-sqlite.test.mjs
+M  tests/pi-durable-canonical-authority.test.mjs
+M  tests/pi-durable-child-host.test.mjs
+M  tests/pi-durable-compaction-governed-dispatch.fixture.mjs
+M  tests/pi-durable-compaction-governed-dispatch.test.mjs
+M  tests/pi-durable-production-child-composition.test.mjs
+M  tests/pi-durable-workspace-scope.test.mjs
+A  tests/process-evidence.fixture.mjs
+A  tests/profile-recovery-cleanup.test.mjs
+A  tests/profile-recovery-crash-restore.test.mjs
+A  tests/profile-recovery-fenced-rollback.test.mjs
+A  tests/profile-recovery-postgres-restore.integration.test.mjs
+A  tests/profile-recovery-rebind-fencing.test.mjs
+A  tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs
+A  tests/profile-recovery-self-hosted-simple.integration.test.mjs
+A  tests/profile-recovery-selfhosted-server-wake-replay.boundary.test.mjs
+M  tests/repository.test.mjs
+A  tests/runner-cleanup.test.mjs
+A  tests/task-cache-qualification.test.mjs
+M  tests/workspace-tooling.test.mjs
+```
+
+Constraints observed in that scope, re-derived from the diff rather than from a summary:
+
+- The only migration in the scope is `packages/database/drizzle/0074_dear_talisman.sql`,
+  with its metadata snapshot and its drizzle journal entry. No `#0075` migration exists
+  in any ref of this repository, and the `#0074`/`#0075` migration and journal holds are
+  preserved: the corrections in this outcome touch no migration file, no drizzle metadata,
+  no schema module and no journal module.
+- No path in the scope grants an independent restore-generation authority. The two modules
+  that bind a generation bind a caller-supplied value, and the only `PiCancellationOwnerPort`
+  implementation remains unavailable. The rollback fences the branch does have — the
+  journal epoch, the effect-gate revision, the process claim and the ordinary-cancellation
+  authority checks — are preserved unchanged.
+- The scope adds no live, native or production surface: the native cancellation boundary
+  refuses before any native effect, the hosted composition additions are source and
+  fixture only, and no deployment, credential or activation path is introduced.
+
 ## The acceptance items and their proofs
 
 | Issue | Acceptance item                                                                               | State in the integrated source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | The proof                                                                                           |
@@ -30,7 +263,7 @@ preserved unchanged at its published head.
 | #1019 | Distinguish estimated, reserved, reported, reconciled, settled and unknown cost               | present: `packages/pi-durable-adapter/src/usage-authority.ts`, `packages/pi-durable-adapter/src/completed-turn-usage-sources.test.mjs`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | the durable adapter lane                                                                            |
 | #1022 | Persist one canonical job/attempt/native-session mapping and an idempotent admission receipt  | present: `packages/pi-durable-adapter/src/child-continuation.ts`, `packages/pi-durable-adapter/src/child-continuation-authority.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | the durable adapter lane                                                                            |
 | #1022 | Atomically retain the terminal outcome plus a repairable publication intent                   | present: `packages/sqlite-persistence/src/delegation-terminal-receipt.ts` and its test                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | the durable adapter lane and the disposable PostgreSQL integration lane                             |
-| #1025 | Prove crash/recovery, upgrade/drain/rollback and backup/restore from the supported roots      | present: `tests/profile-recovery-fenced-rollback.test.mjs`, `tests/profile-recovery-rebind-fencing.test.mjs`, `tests/profile-recovery-selfhosted-server-wake-replay.boundary.test.mjs`, `tests/profile-recovery-postgres-restore.integration.test.mjs`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | the profile recovery lane, the disposable PostgreSQL restore drill, the disposable integration lane |
+| #1025 | Prove crash/recovery, upgrade/drain/rollback and backup/restore from the supported roots      | present: `tests/profile-recovery-fenced-rollback.test.mjs`, `tests/profile-recovery-rebind-fencing.test.mjs`, `tests/profile-recovery-selfhosted-server-wake-replay.boundary.test.mjs`, `tests/profile-recovery-postgres-restore.integration.test.mjs`, `packages/pi-durable-adapter/src/composition-drain.test.mjs`. The upgrade part of that clause is same-version store identity only, and it is opt-in: no production caller supplies the manifest, and a cross-version upgrade executor still does not exist                                                                                                                                                                                                                                                                                                            | the profile recovery lane, the disposable PostgreSQL restore drill, the disposable integration lane |
 | #1025 | Revalidate reconnect grants, target generations and input                                     | **partially qualified, and the remainder is recorded as an open gap**: `packages/pi-durable-adapter/src/durable-writer-coverage.test.mjs` proves tamper consistency — a digest binds the fields it covers. It also proves that tamper consistency is **not** restore authority: a rollback that restores the generation _and_ recomputes the matching digest is accepted by the pure contracts. The independent, non-rewound generation authority that this acceptance needs does not exist in the current architecture                                                                                                                                                                                                                                                                                                       | the writer-coverage qualification                                                                   |
 | #1025 | Fence one attempt owner throughout rollback                                                   | **partially qualified, and the remainder is recorded as an open gap**: the writers of the durable state are enumerated from the source across the whole workspace and each is classified by the authority it actually holds. A rewound epoch is refused by the two cancellation modules, the journal and the effect gate. The eighteen writers that carry **no** independent generation authority — the adapter's effect gate, journal, lease, adapter and cancellation history, the Cloudflare owner and session stores, the control API lead admission, preparation, running-lifecycle, management-call and lead-receipt stores, the three production selection stores, the shared live fence harness, the upgrade manifest and the resume permit — are named, and the full-writer restore-generation acceptance stays open | the writer-coverage qualification                                                                   |
 
