@@ -150,95 +150,87 @@ because the branch is not published.
 | unique package names             | 578, of which **58** are present at more than one version | **[measured]**            |
 | raw `bun pm ls --all` lines      | 644                                                       | **[measured]**            |
 
-### 3.3 The committed regression budgets are NOT met by the current candidate
+### 3.3 The committed regression budgets, and the remediation that closes one
 
-Two of the committed budgets are exceeded on this candidate, measured with the
-repository's own checkers. **Neither ceiling is inflated here** — the ceilings
-stay as the M13 audit and the later legitimate unit revision set them, and the
-growth is reported as the finding it is.
+Both budgets were measured on this candidate with the repository's own
+checkers, and **neither ceiling is inflated here**. The artifact budget is
+now met by a source-level fix; the dependency budget is reduced by a
+composition fix and its residual is a product decision, reported rather than
+absorbed.
 
-| Budget                      | Committed ceiling                                      | Measured on this candidate                            | Command                                                          |
-| --------------------------- | ------------------------------------------------------ | ----------------------------------------------------- | ---------------------------------------------------------------- |
-| external dependency closure | 285 (`budgets.json`)                                   | **591**                                               | `bun scripts/check-budgets.mjs deps`                             |
-| `dist` total size           | 12 MB (`budgets.json`)                                 | **20.3 MB**                                           | `bun scripts/check-budgets.mjs dist`                             |
-| build wall clock (CI lane)  | 300 s (now declared)                                   | 254 s recorded baseline; 56.18 s local uncached build | `bun scripts/check-budgets.mjs lane --group build --seconds <n>` |
-| unit lane                   | 480 s / 300 s baseline (the later legitimate revision) | unchanged                                             | `bun scripts/check-budgets.mjs lane --group unit --seconds <n>`  |
-| e2e / smoke lanes           | 120 s / 90 s                                           | unchanged                                             | the same lane subcommand                                         |
+| Budget                      | Committed ceiling    | Before                                            | After                    | Command                                                          |
+| --------------------------- | -------------------- | ------------------------------------------------- | ------------------------ | ---------------------------------------------------------------- |
+| `dist` total size           | 12 MB                | **20.3 MB — exceeded**                            | **11.8 MB — inside**     | `bun scripts/check-budgets.mjs dist`                             |
+| external dependency closure | 285                  | **591 — exceeded**                                | **591 — still exceeded** | `bun scripts/check-budgets.mjs deps`                             |
+| build wall clock (CI lane)  | 300 s (declared)     | 254 s recorded baseline; 36.40 s local cold build | unchanged                | `bun scripts/check-budgets.mjs lane --group build --seconds <n>` |
+| unit / e2e / smoke lanes    | 480 s / 120 s / 90 s | unchanged                                         | unchanged                | the same lane subcommand                                         |
 
-**Consequence and reading.** The dependency and artifact surfaces have grown
-well past the ceilings the audit recorded (274 → 591 external pairs; 9.8 → 20.3
-MB of `dist`), while the workspace graph itself only moved from 41 to 45
-packages. The growth is therefore not proportional to the package count: it is
-per-package dependency and artifact weight. Both paths are **manual checks**
-(the CI gate enforces the lane budgets only), so no CI gate breaks — but the
-budgets are no longer being met, and the audit's dependency-cost finding is
-now materially larger than it was. That is the finding #405 owes, and it is
-routed to the dependency-cost work rather than absorbed by raising a ceiling.
+**The artifact breach was a build-composition problem, not a code-size
+problem.** The compiled output carried the derived source-map and
+declaration-map artifacts: 1,308 map files, 5.22 MB of the 14.13 MB of
+built content — 37% of the bytes — and **nothing in the repository consumes
+them** (no bundler, script, workflow or test reads a `.map` file, and no
+package overrides the setting). The build configuration now stops emitting
+them, and a cold rebuild measures **11.8 MB against the 12 MB ceiling**.
 
-### 3.4 Local service latency, queue/runtime behaviour, memory and startup
+Two measurement facts make that number meaningful. First, the `dist` budget
+must be read from a **cold** build: the repository's build cache replayed
+the pre-change artifacts after a `tsconfig.base.json` change and after the
+`dist` directories were deleted, so a cached build re-reported 20.3 MB
+regardless of the configuration. Second, the headroom is now **0.2 MB** — the
+next meaningful code growth in this graph breaches the budget again, which
+belongs to the follow-up in §6.
 
-All **[measured]** on this developer host (darwin arm64, M2 Max, 12 CPU,
-64 GB, bun 1.4.3, SQLite 3.51.0) against the local profile at the current
-head `23fa6880` (clean tree). No cloud, Restate server, PostgreSQL, provider
-or device was contacted, and no production system was loaded.
+**The dependency breach is composition, and most of it is product surface.**
+The measured closure is the whole installed tree. Its composition, from the
+lockfile and the installed tree, is: the Pi SDK family
+(`@earendil-works/pi-durable` 102 and `@earendil-works/pi-ai` 96 packages),
+the Nest/Fastify generation (64 + 55 + 18 + 10 + 8), the repository
+toolchain (`vite-plus` 82, `miniflare` 31, `drizzle-kit` 13), Sentry and
+OpenTelemetry (34), the AWS SDK and Smithy (31) and LangChain (23). The
+bounded remediation removed what a package declares but never uses:
+`fastify` and `@nestjs/common` (local-control-plane) and
+`@restatedev/restate-sdk` (workflow-worker) — declarations that no source in
+those packages imports. **The measured closure stays 591**: those packages are
+still in the installed tree because other workspace packages need them, so
+the cleanup is a composition fix, not a closure reduction, and it is reported
+as exactly that. `class-transformer` was removed and then **restored**:
+`@nestjs/common`'s `ValidationPipe`, which `apps/control-api` applies, needs
+it, so the declaration is a peer requirement rather than an unused
+dependency — it is recorded as a reviewed exception in the check below.
 
-| Measure                                                                | Value                                                                                                                                                                                                      | How                                                                                |
-| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| startup → ready (cold, first start after the build)                    | **8.1 s** (ceiling 45 s)                                                                                                                                                                                   | `bun scripts/check-startup-budget.mjs` — the repaired probe, on the real built app |
-| startup → ready (warm)                                                 | ≈ 0.1 s                                                                                                                                                                                                    | a second start on the same profile state                                           |
-| idle peak RSS at readiness                                             | **233.9 MB** (ceiling 256 MB)                                                                                                                                                                              | the same probe — the peak, not the steady state                                    |
-| steady-state RSS after readiness                                       | **78.8 MB**                                                                                                                                                                                                | `ps -o rss=` on the owned child once idle                                          |
-| local request latency, `/ready`                                        | **300 requests, 0 errors, p50 1.72 ms, p95 9.49 ms, p99 32.91 ms, max 38.7 ms**                                                                                                                            | a local in-process sample; `/ready` and `/health` both answer 200                  |
-| queue round trip (SQLite enqueue → claimDue → complete, 50 iterations) | **p50 5.03 ms, p95 21.80 ms, max 37.60 ms** (enqueue p50 0.62, claim p50 1.82, complete p50 0.67)                                                                                                          | `bun scripts/m17-runtime-baseline.mjs` on a disposable temp database               |
-| filesystem object put → get (50 iterations)                            | put p50 14.96 ms / p95 82.02 ms; get p50 2.60 ms / p95 22.04 ms; round trip p50 17.37 ms / p95 84.53 ms                                                                                                    | the same baseline run                                                              |
-| durable usage-ledger reserve (50 iterations)                           | open budget p50 23.03 ms; reserve p50 9.91 ms / p95 17.11 ms                                                                                                                                               | the same baseline run                                                              |
-| in-process policy authorize (200 iterations)                           | p50 0.07 ms, p95 1.71 ms, max 9.42 ms                                                                                                                                                                      | the same baseline run                                                              |
-| cold-import cost per layer                                             | pi-durable-node-adapter 855 ms, transports 488 ms, custom-runtime 351 ms, billing 328 ms, artifacts 327 ms, pi-cloudflare-host 279 ms, auth 258 ms, policy 180 ms, device-supervision 28 ms, restate 22 ms | the same baseline run                                                              |
-| runtime RSS after the probes                                           | 99.7 MB                                                                                                                                                                                                    | the same baseline run                                                              |
+**The remaining gap to 285 is not reachable by a bounded source or
+configuration change**: it is the Pi SDK, the Nest/Fastify generation, the
+AWS and LangChain SDKs or the repository toolchain, and removing any of
+those is a product and architecture decision, not a budget repair. The
+ceiling stays at 285, nothing is hidden from the measurement, and the
+residual is routed in §6.
 
-**Repeat runs.** The same probe re-run against the same profile state
-measured **3.3 s** to ready and a **223.4 MB** peak RSS. The local request
-sample was taken three times on this host, 300 requests each with **0
-errors**: p50 1.72 / p95 9.49 / p99 32.91 / max 38.7 ms, then p50 0.50 / p95
-1.27 / p99 2.27 / max 5.47 ms, then p50 0.34 / p95 0.75 / p99 1.03 / max 3.51
-ms. The single-request RSS sample moves with the moment it is taken — 52.3
-MB, 78.8 MB and 242.0 MB across those runs — which is exactly why the budget
-measures the **peak** (233.9 MB cold, 223.4 MB warm) and not a point sample.
-The first (cold) run is the budget-relevant figure; the repeats show the
-steady-state cost once the profile's first-run setup is done. The evidence
-bundle keeps the runs.
+**A pre-existing lockfile drift was fixed on the way.** `bun.lock` still
+carried `@control-plane/control-api` 1.34.1 and `@control-plane/workflow-worker`
+1.18.1 while the manifests already declared 1.34.2 and 1.18.2, so the
+lockfile did not match the workspace it describes. The install that the
+dependency cleanup required resynchronised it.
 
-**Cleanup observation.** One orphaned `local-control-plane` process was
-observed after a measurement-harness run and was terminated by hand. A
-controlled repeat of the same harness showed the owned child exiting on
-`SIGTERM`, **no surviving app process and the port released**, so the
-observation did not reproduce; the repaired probe's cleanup — which waits for
-the child's actual termination — is the property under test, and the
-before/after row below records what the base probe could not show.
+### 3.6 The remediation and its regression checks
 
-The probe's own numbers are the budget-relevant ones: **8.1 s to ready and a
-233.9 MB peak against 45 s and 256 MB** — inside both ceilings, with the
-peak-RSS headroom now **22.1 MB** where the M13 audit recorded ≈176 MB
-against the same 256 MB ceiling. The growth is a finding for the memory
-posture, not a ceiling change: the ceiling is not raised here.
-
-### 3.5 Before/after evidence for the startup/RSS probe repair
-
-The same scenario was run against the **base** probe (`27f17bd55`) and the
-repaired probe, with an unrelated listener answering `200` on the probe's
-port:
-
-|                               | base probe (`27f17bd55`)                                                                                                                                             | repaired probe (`23fa6880`)                                                                                                         |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| exit status                   | **0 — passed**                                                                                                                                                       | **1 — refused**                                                                                                                     |
-| output                        | `OK: {"check":"startup-ready-seconds","measured":0.1,...}` and `OK: {"check":"idle-peak-rss-mb","measured":101.4,...}`                                               | `BUDGET EXCEEDED / FAILED: the port is already in use by 61023; refusing to measure an unrelated listener`                          |
-| what it measured              | the **unrelated listener's** readiness and a process it did not own — and with an unsuccessful or empty `ps` sample the peak would have stayed at 0 and still passed | nothing: it refuses before launching                                                                                                |
-| unrelated listener afterwards | survived                                                                                                                                                             | **survived** (HTTP 200) — the refusal never signals a process the probe does not own                                                |
-| the spawned child afterwards  | the base probe's `child.kill('SIGTERM')` was **never awaited**, so the run could not show the child was gone (source property)                                       | **gone, and awaited** — the probe waits for the actual exit, and a controlled repeat shows no surviving process and a released port |
-
-The base probe's `scripts/check-startup-budget.mjs` was run from the base
-commit as a temporary sibling script and deleted afterwards; the working tree
-is clean and the temporary script was never committed.
+- `tsconfig.base.json` stops emitting `sourceMap` and `declarationMap`;
+  `declaration` stays on, because the packages publish their types. The
+  trade-off is explicit: the built output no longer carries a mapping back
+  to the sources, so a production stack trace points at compiled positions.
+- Two workspace packages no longer declare the external dependencies nothing
+  in them imports (`fastify` and `@nestjs/common` in local-control-plane,
+  `@restatedev/restate-sdk` in workflow-worker).
+- `packages/production-readiness/src/budget-regression.test.mjs` pins the
+  repair: it asserts the build configuration does not emit the derived map
+  artifacts, it runs the **production** checker (`scripts/check-budgets.mjs
+  dist`) against the built output and asserts the measurement is inside the
+  committed ceiling, and it asserts that **no workspace package declares an
+  external dependency it never imports** — with two reviewed exceptions
+  recorded, each a peer requirement of `@sentry/node` or of
+  `@nestjs/common`'s `ValidationPipe`. The checker is
+  spawned as a subprocess, so the regression is pinned against the
+  production measurement rather than a test-only copy of it.
 
 ## 4. Safe shared runtime/data abstractions
 
@@ -265,8 +257,8 @@ Exact commands and results for this candidate:
 | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `bun scripts/check-startup-budget.mjs`                           | cold run: `OK` 8.1 s ready (ceiling 45), `OK` 233.9 MB peak RSS (ceiling 256); repeat run: `OK` 3.3 s ready, `OK` 223.4 MB peak RSS; the owned child exited after `SIGTERM` in both                                                                                                                                                                                                                                         |
 | `bun scripts/m17-runtime-baseline.mjs`                           | exit 0; candidate `23fa68806ebad0986239b0f3c311ff0c607ed6e7`, dirty `false`; queue round trip p50 5.03 ms / p95 21.80 ms                                                                                                                                                                                                                                                                                                    |
-| `bun scripts/check-budgets.mjs deps`                             | `BUDGET EXCEEDED` — measured 591, ceiling 285                                                                                                                                                                                                                                                                                                                                                                               |
-| `bun scripts/check-budgets.mjs dist`                             | `BUDGET EXCEEDED` — measured 20.3 MB, ceiling 12 MB                                                                                                                                                                                                                                                                                                                                                                         |
+| `bun scripts/check-budgets.mjs deps`                             | `BUDGET EXCEEDED` — measured 591, ceiling 285 (unchanged by the composition cleanup; the residual is the product runtime surface)                                                                                                                                                                                                                                                                                           |
+| `bun scripts/check-budgets.mjs dist`                             | `OK` — **11.8 MB** against the 12 MB ceiling after the build-composition fix (was 20.3 MB)                                                                                                                                                                                                                                                                                                                                  |
 | `bun scripts/check-budgets.mjs lane --group build --seconds 254` | `OK` — ceiling 300, baseline 254 (the build lane is measurable now)                                                                                                                                                                                                                                                                                                                                                         |
 | `bun run test` (all lanes)                                       | 222.91 s; smoke 629 pass / 0 fail, e2e 499 pass / 0 fail, **unit 1 failure — the seeded baseline failure** `Runtime Gateway production startup > forwards the host credential authority in an isolated subprocess`, which reproduces on the pristine baseline and is untouched by this diff (`git diff 27f17bd55..HEAD -- apps/runtime-gateway tests/` is empty). **The suite does not pass and is not reported as green.** |
 | `bun test src/startup-budget.test.mjs` (package cwd)             | 27 pass / 0 fail                                                                                                                                                                                                                                                                                                                                                                                                            |
