@@ -123,7 +123,10 @@ export const ChildCostStateSchema = z.enum([
 export type ChildCostState = z.output<typeof ChildCostStateSchema>
 
 /** Retained outcome for one child attempt's usage. */
-export const ChildUsageOutcomeSchema = z
+/** The cost stages, in the order the state machine advances. */
+const COST_STAGES = ['estimated', 'reserved', 'reported', 'reconciled', 'settled'] as const
+
+const ChildUsageOutcomeShape = z
   .object({
     identity: ChildUsageIdentitySchema,
     costState: ChildCostStateSchema,
@@ -136,6 +139,37 @@ export const ChildUsageOutcomeSchema = z
     settled: ChildUsageSettlementSchema.optional(),
   })
   .strict()
+
+export const ChildUsageOutcomeSchema = ChildUsageOutcomeShape.superRefine((outcome, ctx) => {
+  // The state names the most advanced stage whose evidence was recorded, so it
+  // never claims a stage without its evidence and never hides a later stage
+  // behind an earlier one. `unknown` is the explicit state of an attempt with
+  // no evidence at all.
+  const recorded = COST_STAGES.filter((stage) => outcome[stage] !== undefined)
+  if (outcome.costState === 'unknown') {
+    if (recorded.length > 0) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'an unknown cost state cannot carry recorded cost evidence',
+      })
+    }
+    return
+  }
+  if (!recorded.includes(outcome.costState)) {
+    ctx.addIssue({
+      code: 'custom',
+      message: `the ${outcome.costState} cost state requires its recorded evidence`,
+    })
+    return
+  }
+  const latest = recorded[recorded.length - 1]!
+  if (latest !== outcome.costState) {
+    ctx.addIssue({
+      code: 'custom',
+      message: `the ${outcome.costState} cost state cannot hide the recorded ${latest} evidence`,
+    })
+  }
+})
 
 export type ChildUsageOutcome = z.output<typeof ChildUsageOutcomeSchema>
 
@@ -160,7 +194,10 @@ const SnapshotFingerprintSchema = z.string().min(1).max(128)
  */
 export const ChildUsageLedgerSnapshotEntrySchema = z
   .object({
-    outcome: ChildUsageOutcomeSchema,
+    // The restore re-derives the cost state from the evidence itself and refuses a
+    // snapshot that does not agree, so the snapshot is parsed without the
+    // outcome's state rule here.
+    outcome: ChildUsageOutcomeShape,
     reportFingerprints: z.array(z.tuple([z.string().min(1).max(256), SnapshotFingerprintSchema])),
     supersededFingerprints: z.array(SnapshotFingerprintSchema),
     /**
@@ -538,7 +575,9 @@ export class ChildUsageLedger {
     const prepared: Array<{ readonly key: string; readonly entry: ChildUsageEntry }> = []
     const seen = new Set<string>()
     for (const item of parsed.entries) {
-      const outcome = ChildUsageOutcomeSchema.parse(item.outcome)
+      // The restore re-derives the cost state from the evidence itself, so the outcome is
+      // parsed without the state rule and the mismatch is refused with the ledger's own error.
+      const outcome = ChildUsageOutcomeShape.parse(item.outcome)
       const key = this.#key(outcome.identity)
       if (seen.has(key)) {
         throw new ChildUsageLedgerError(
