@@ -415,6 +415,60 @@ describe('decision-layer context consumer conformance (#558)', () => {
       resolvedSecond.data.profile.profileVersionId
     )
     expect(tieProfileVersionIds).toContain(resolvedFirst.data.profile.profileVersionId)
+    // The tie is broken by the version identifier, so the winner is the same
+    // version in every composition and not merely an equal one. The two
+    // stores above are only *asked* for opposite orders: a real store decides
+    // its own order, and the SQLite store lists by `updated_at, id`, so the
+    // order the two harnesses actually see depends on the millisecond the two
+    // versions were written in. The case below pins the winner instead of
+    // leaving it to the store.
+    expect(resolvedFirst.data.profile.profileVersionId).toBe(tieProfileVersionIds[0])
+    expect(resolvedSecond.data.profile.profileVersionId).toBe(tieProfileVersionIds[0])
+  }, 120_000)
+
+  /**
+   * The store-order contract, proven deterministically and independently of
+   * how a store happens to order its rows.
+   *
+   * The case above composes two real stores and asks each of them for the two
+   * tied versions in opposite orders, but a store decides its own order: the
+   * SQLite store lists by `updated_at, id`, so the two harnesses only see
+   * genuinely opposite orders when the two versions were written in different
+   * milliseconds. Against an implementation that resolves the default version
+   * by version and revision alone, that case therefore detects the defect
+   * only sometimes.
+   *
+   * Here the catalog is wrapped so it returns the tied versions in a chosen
+   * order, and the consumer is resolved twice with the two orders. The
+   * selection must be the same version both times, and it must be the version
+   * the identifier tie-break names, whatever order the store used.
+   */
+  test('selects the same default profile version whatever order the store returns versions in', async () => {
+    const harness = await createHarness('local', { isolated: true, label: 'store-order' })
+    await insertTiedProfileVersions(harness, tieProfileVersionIds)
+    const resolveWithStoreOrder = async (profileVersionIds) => {
+      const catalog = harness.store.catalog
+      const service = new RepositoryProfileResolutionService({
+        getAgentProfile: (profileId) => catalog.getAgentProfile(profileId),
+        getAgentProfileVersion: (profileVersionId) =>
+          catalog.getAgentProfileVersion(profileVersionId),
+        listAgentProfileVersions: async (profileId) => {
+          const versions = await catalog.listAgentProfileVersions(profileId)
+          const byId = new Map(versions.map((version) => [version.profileVersionId, version]))
+          return profileVersionIds
+            .map((profileVersionId) => byId.get(profileVersionId))
+            .filter((version) => version !== undefined)
+        },
+        getSkill: (skillId) => catalog.getSkill(skillId),
+        getSkillVersion: (skillVersionId) => catalog.getSkillVersion(skillVersionId),
+      })
+      return service.resolve(canonicalProfileResolutionRequest, canonicalPrincipalId)
+    }
+    const forward = await resolveWithStoreOrder(tieProfileVersionIds)
+    const reversed = await resolveWithStoreOrder(tieProfileVersionIds.toReversed())
+    expect(forward.data.profile.profileVersionId).toBe(reversed.data.profile.profileVersionId)
+    expect(forward.data.profile.profileVersionId).toBe(tieProfileVersionIds[0])
+    expect(reversed.data.profile.profileVersionId).toBe(tieProfileVersionIds[0])
   }, 120_000)
 
   test('assembles context with no provider and with a fake alternate provider', async () => {

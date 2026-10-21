@@ -153,14 +153,15 @@ fixtures hold the canonical inputs and the matrix. The suite:
 8. proves the redaction rule and the absence of a leak, and that a context
    reference whose content does not verify is not published;
 9. proves that an explicit pin wins over the current default, for both the
-   profile version and the context package; and
+   profile version and the context package, and that the default version
+   selection does not depend on the order a store returns versions in; and
 10. proves the suite's own resource discipline: an allocation whose
     migration fails is still released, an isolated allocation whose seeding
     fails is still released with the original error kept, and every owned
     disposer is attempted even when an earlier one fails, with the cleanup
     failures aggregated around the original errors.
 
-Five of those cases fail against the base implementation and pass only after
+Six of those cases fail against the base implementation and pass only after
 the repairs in this record: restoring the base consumer services
 (`apps/control-api/src/executions/execution-validation.service.ts`,
 `apps/control-api/src/queries/profile-resolution.service.ts`,
@@ -169,12 +170,26 @@ running the suite again fails "replays deterministically and re-checks the
 current catalog authorization", "refuses a replay whose catalog approval no
 longer holds", "denies a profile whose pinned skill reference no longer
 holds", "selects the same default profile version regardless of the store
-order" and "refuses to publish a context reference whose content does not
-verify". The approval-gate case and the lifecycle-revoke case are distinct:
-the first denies through the catalog approval gate, the second through the
-version lifecycle. The pin-precedence and the resource-discipline cases pass
-against the base as well, because they prove behavior this change preserves
-rather than repairs.
+order", "selects the same default profile version whatever order the store
+returns versions in" and "refuses to publish a context reference whose content
+does not verify". The approval-gate case and the lifecycle-revoke case are
+distinct: the first denies through the catalog approval gate, the second
+through the version lifecycle. The pin-precedence and the resource-discipline
+cases pass against the base as well, because they prove behavior this change
+preserves rather than repairs.
+
+The two store-order cases prove the same contract at two strengths, and the
+difference matters. The multi-composition case composes two real stores and
+asks each of them for the two tied versions in opposite orders, but a store
+decides its own order: the SQLite store lists by `updated_at, id`, so the two
+harnesses only see genuinely opposite orders when the two versions were
+written in different milliseconds, and against a base implementation that
+selects the default version by version and revision alone the case therefore
+detects the defect only sometimes. The second case wraps the catalog so that
+it returns the tied versions in a chosen order, and resolves the consumer once
+per order, so the selection is proven to be independent of the order a store
+returns versions in rather than independent of the order this store happens to
+return them in.
 
 The PostgreSQL legs need a configured database. They run when the database
 credentials are present, and a job that intends to qualify them sets
@@ -217,12 +232,14 @@ on branch `f2w1/cp558-context-consumer-27f17`.
 
 ```
 bun test src/decision-context-consumer-conformance.test.mjs --timeout 30000
-  17 pass, 0 fail (SQLite legs)
+  18 pass, 0 fail (SQLite legs)
 
 DATABASE_ADMIN_URL=… DATABASE_MIGRATION_URL=… DATABASE_URL=… \
   RUN_M10_POSTGRES_CONFORMANCE=true \
   bun test src/decision-context-consumer-conformance.test.mjs --timeout 60000
   17 pass, 0 fail (SQLite and PostgreSQL legs)
+  the recorded PostgreSQL run predates the store-order case this record adds;
+  the PostgreSQL legs were not re-run for it
 
 bun --cwd apps/control-api test src
   710 pass, 15 skip, 1 fail
@@ -240,7 +257,10 @@ bun scripts/run-bun-test-group.mjs unit --timeout 30000
   between the two runs is the conformance cases that need the repair,
   so every other failure is pre-existing
   the conformance file alone, with the three consumer services reverted to
-  the base commit, now reports 12 pass and 5 fail
+  the base commit, now reports 12 pass and 6 fail
+  the deterministic store-order case fails the base implementation in every
+  run (6 of 6), and the multi-composition store-order case fails it in 10 of
+  10 runs; both pass at this head in 10 of 10 runs
 bun run format:check
   All matched files use the correct format
 bun run lint
