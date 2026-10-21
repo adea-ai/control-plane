@@ -30,6 +30,11 @@ import {
   type PiDurableAdmission,
   type DurableExecutionAuthority,
 } from './contracts.js'
+import {
+  authoritativeDenial,
+  authorityOutcome,
+  transientAuthorityFailure,
+} from './authority-outcome.js'
 
 const ReferenceSchema = z.string().min(1).max(256)
 const AudienceSchema = z
@@ -87,7 +92,7 @@ export interface CanonicalLeadIntentReader {
  * Deleted messages, revoked grants or a replaced lead return no authority.
  * Implementations must not accept client prompt/configuration as canonical data.
  */
-export type CanonicalPiDurableAuthorityPurpose = 'inference' | 'read'
+export type CanonicalPiDurableAuthorityPurpose = 'inference' | 'read' | 'recovery'
 
 export interface CanonicalLeadMessageReader {
   /** `purpose` is `read` only for status, progress and cancel. A reader that gates on model
@@ -113,6 +118,17 @@ export interface CanonicalPiDurableAuthorityOptions {
     }): Promise<RuntimeAttemptBudgetAuthority>
   }
   readonly now?: () => string
+}
+
+/** The admission digest the canonical derivation commits to. Exported so the lead fence can verify
+ * a retained receipt from retained authority alone, without re-reading the withheld prompt. */
+export function canonicalAdmissionDigest(input: {
+  readonly startRequest: RuntimeStartRequest
+  readonly admission: PiDurableAdmission
+  readonly allowedPrincipalIds: readonly string[]
+  readonly deadlineAt: string
+}): string {
+  return digest(input)
 }
 
 export interface CanonicalPiDurableAdmission {
@@ -156,6 +172,24 @@ export class CanonicalPiDurableAuthority {
         authority.request,
         purpose === 'cancel' ? 'read' : 'inference'
       )
+      const admission = PiDurableAdmissionSchema.parse(authority.admission)
+      if (digest(resolved.admission) !== digest(admission)) reject()
+    })
+  }
+
+  /** Revalidates retained state for observation without allocating a new budget or attempt. */
+  async assertReadAuthority(authority: DurableExecutionAuthority): Promise<void> {
+    return this.#safe(async () => {
+      const resolved = await this.#fromRequest(authority.request, 'read')
+      const admission = PiDurableAdmissionSchema.parse(authority.admission)
+      if (digest(resolved.admission) !== digest(admission)) reject()
+    })
+  }
+
+  /** Revalidates a retained execution against its existing canonical budget pin without allocation. */
+  async assertRecoveryAuthority(authority: DurableExecutionAuthority): Promise<void> {
+    return this.#safe(async () => {
+      const resolved = await this.#fromRequest(authority.request, 'recovery')
       const admission = PiDurableAdmissionSchema.parse(authority.admission)
       if (digest(resolved.admission) !== digest(admission)) reject()
     })
@@ -260,15 +294,22 @@ export class CanonicalPiDurableAuthority {
       admission,
       allowedPrincipalIds,
       deadlineAt,
-      admissionDigest: digest({ startRequest, admission, allowedPrincipalIds, deadlineAt }),
+      admissionDigest: canonicalAdmissionDigest({
+        startRequest,
+        admission,
+        allowedPrincipalIds,
+        deadlineAt,
+      }),
     })
   }
 
   async #safe<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation()
-    } catch {
-      return reject()
+    } catch (error) {
+      // Only this module's own policy decisions keep the denial classification.
+      if (error instanceof Error && policyDenials.has(error)) throw error
+      throw publicFailure(error)
     }
   }
 }
@@ -300,8 +341,20 @@ function assertLifecycle(
   )
     reject()
 }
+// Denials decided by this module's own policy checks. A port or transport failure never enters.
+const policyDenials = new WeakSet<Error>()
+
 function reject(): never {
-  throw new Error('PI_CANONICAL_AUTHORITY_REJECTED')
+  const error = authoritativeDenial(new Error('PI_CANONICAL_AUTHORITY_REJECTED'))
+  policyDenials.add(error)
+  throw error
+}
+
+// Sanitized public rejection for every failure that is not an explicit local decision. The public
+// message is unchanged. Only the internal outcome separates a transient port failure from a denial.
+function publicFailure(error: unknown): Error {
+  const failure = new Error('PI_CANONICAL_AUTHORITY_REJECTED')
+  return authorityOutcome(error) === 'unavailable' ? transientAuthorityFailure(failure) : failure
 }
 function digest(input: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(input)).digest('hex')}`

@@ -9,8 +9,8 @@ import {
 } from './pi-durable-lead.service.ts'
 
 // M18.01.3 fenced receipt observation/cancel, driven through the real service with an
-// in-memory receipt store and stub adapter/authority. The admission bindings supplied by
-// `admissionBinding: true` are test-only: the production authority retains no admissionDigest.
+// in-memory receipt store and explicit retained-journal/fence-authority ports. The latter
+// are test doubles; production binding and cross-store races have separate live harness tests.
 
 const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
 const at = '2026-10-08T09:00:00.000Z'
@@ -131,17 +131,64 @@ async function harness({
       return { handle, state: 'cancelling', observedAt: at }
     },
   }
+  let initialFence
+  let bindingReads = 0
+  const retained = {
+    request: { executionId, attemptId, executionPlan: { correlation: {} } },
+    admission: {},
+    handle,
+  }
   const authority = {
     // `n` counts every authority read in this harness, including the lookup.
     resolveIntent: async ({ operation }) => {
       calls.resolve.push(operation)
-      return fencedFor(operation, calls.resolve.length)
+      initialFence = fencedFor(operation, calls.resolve.length)
+      bindingReads = 0
+      return initialFence
+    },
+    assertFencedBinding: async ({ operation }) => {
+      // The initial lookup's explicit binding validation uses that lookup's sample. Each later
+      // pre/post-effect check reads a fresh sample; all original drift/target negatives remain.
+      const sample =
+        bindingReads++ === 0
+          ? initialFence
+          : (() => {
+              calls.resolve.push(operation)
+              return fencedFor(operation, calls.resolve.length)
+            })()
+      if (!sample.retainedMatch || fencedReceiptGaps(sample).length)
+        throw new Error('PI_LEAD_UNAVAILABLE')
+      const pins = sample.retained
+      if (
+        pins.intentId !== intentId ||
+        pins.workspaceId !== workspaceId ||
+        pins.executionId !== executionId ||
+        pins.attemptId !== attemptId ||
+        pins.admissionDigest !== admissionDigest ||
+        pins.startDigest !== startDigest ||
+        pins.deadlineAt !== deadlineAt ||
+        hash(pins.allowedPrincipalIds) !== hash(receiptBase.allowedPrincipalIds) ||
+        hash(sample.fence) !== hash(initialFence.fence)
+      )
+        throw new Error('PI_LEAD_AUTHORITY_CONFLICT')
     },
     assertCurrent: async () => {
       calls.assertCurrent += 1
     },
   }
-  const service = new DurablePiDurableLeadService({ authority, receipts, adapter, now: () => at })
+  const service = new DurablePiDurableLeadService({
+    authority,
+    receipts,
+    adapter,
+    now: () => at,
+    fence: {
+      findRetainedAdmission: async () => retained,
+      cancelFenced: async (runtimeHandle, options, authorize) => {
+        await authorize(retained)
+        return adapter.cancel(runtimeHandle, options)
+      },
+    },
+  })
   return { service, receipts, calls }
 }
 

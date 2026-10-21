@@ -156,6 +156,7 @@ export function resolveHostedCompositionConfiguration(
     ...optional('graphActivities'),
     ...optional('contextAuthoring'),
     ...optional('memoryWriteback'),
+    ...optional('profileWorkflowWake'),
   }
 }
 

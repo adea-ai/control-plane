@@ -31,6 +31,7 @@
     "@control-plane/memory-writeback": "workspace:*",
     "@control-plane/object-store": "workspace:*",
     "@control-plane/orchestration": "workspace:*",
+    "@control-plane/profile-adapters": "workspace:*",
     "@control-plane/remote-control-relay": "workspace:*",
     "@control-plane/restate-runtime": "workspace:*",
     "@control-plane/secrets": "workspace:*",

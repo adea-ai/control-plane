@@ -646,6 +646,83 @@ for (const race of ['approval-response-change', 'approval-expiry']) {
   })
 }
 
+test('actor revocation before the effect-admission fence commit blocks executor admission', async () => {
+  const approval = {
+    interactionId: ids.interactionId,
+    allowedPrincipalIds: ['user:11111111-1111-4111-8111-111111111111'],
+    requestedAt: at,
+    expiresAt: expiry,
+  }
+  const f = await setup({
+    approval,
+    grantExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  })
+  const effects = { count: 0 }
+  const service = await composedToolService(f, effects)
+  const gateRequest = structuredClone(f.request)
+  delete gateRequest.traceId
+  delete gateRequest.interactionId
+  delete gateRequest.commandId
+  const directory = await mkdtemp(join(tmpdir(), 'pi-current-tool-authority-'))
+  let database
+  let resumeAdmissionCommit
+  try {
+    database = new DatabaseSync(join(directory, 'effect-gate.sqlite'))
+    const helper = f.createHelper(service)
+    const store = new SqliteDurableEffectGateStore(database)
+    let enterAdmissionCommit
+    const admissionCommitEntered = new Promise((resolve) => {
+      enterAdmissionCommit = resolve
+    })
+    const admissionCommitPaused = new Promise((resolve) => {
+      resumeAdmissionCommit = resolve
+    })
+    const gatedStore = {
+      get: store.get.bind(store),
+      insert: store.insert.bind(store),
+      async compareAndSet(expectedRevision, record) {
+        if (record.effectAdmittedAt) {
+          enterAdmissionCommit()
+          await admissionCommitPaused
+        }
+        return store.compareAndSet(expectedRevision, record)
+      },
+    }
+    const gate = new PiDurableEffectGate({
+      store: gatedStore,
+      service,
+      now: () => at,
+      assertAuthority: (request, boundary) => helper.assertCurrent(request, boundary),
+    })
+
+    const execution = gate.execute(gateRequest)
+    await admissionCommitEntered
+    f.f.setCurrent({ ...f.f.intent, canonicalActorPrincipalId: 'actor:revoked' })
+    resumeAdmissionCommit()
+    let outcome
+    let error
+    try {
+      outcome = await execution
+    } catch (caught) {
+      error = caught
+    }
+
+    expect(effects.count).toBe(0)
+    expect(error).toMatchObject({ code: 'PI_EFFECT_AUTHORITY_REJECTED' })
+    const key = JSON.stringify([gateRequest.workspaceId, gateRequest.idempotencyKey])
+    expect(await store.get(key)).toMatchObject({
+      state: 'settled',
+      effectAdmittedAt: expect.any(String),
+      outcome: { state: 'denied', reasonCode: 'PI_EFFECT_AUTHORITY_REJECTED' },
+    })
+    expect(outcome).toBeUndefined()
+  } finally {
+    resumeAdmissionCommit?.()
+    database?.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('publication permits a retained no-effect denial without inventing approval or a started effect', async () => {
   const f = await setup({ state: 'denied' })
   await expect(f.helper.assertCurrent(f.request, 'publication')).resolves.toBeUndefined()

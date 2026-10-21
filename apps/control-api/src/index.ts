@@ -270,6 +270,7 @@ export {
   RestateExecutionWorkflowDispatcher,
   UnavailableExecutionAcceptanceService,
   createExecutionId,
+  graphWorkflowInput,
   type ExecutionAcceptanceService,
   type ExecutionWorkflowDispatcher,
 } from './executions/execution-acceptance.service.js'

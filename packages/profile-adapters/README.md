@@ -68,12 +68,35 @@ and from the immutable plan requirements before `start`. An absent required
 capability fails closed. The package does not add capabilities or infer
 eligibility from method presence.
 
-`bindProfileWorkflowWake` accepts only the dispatcher for the exact canonical
-profile (`embedded-sqlite-queue` for Local, `restate-ingress` otherwise). It
-does not create a dispatcher or retry through a different profile. Its
-server-owned topology guard verifies the exact dispatcher instance; profile
-and wake-kind labels alone are not proof. Current authority and residency are
-checked before and after each submit.
+`bindRetainedProfileWorkflowWake` is the production submit boundary. It accepts
+only the dispatcher for the exact canonical profile (`embedded-sqlite-queue`
+for Local, `restate-ingress` otherwise), resolves the command, execution, and
+any latest attempt from server repositories, cross-checks the plan, scope,
+graph payload and workspace against the stored plan and the retained deadline,
+and admits only accepted or reconciliation-required executions with zero
+attempts. Existing attempts fail closed. A historical execution without a
+retained deadline fails closed; the binder does not infer an unbounded deadline
+from missing legacy data. It re-reads command and execution generations after
+current authority/residency checks and immediately before submit. The same
+retained admission snapshot is passed to all pre-submit and post-submit
+`workflow.wake` authority and residency callbacks. The post-submit callback
+receives the admission snapshot, not a claim that the execution still has zero
+attempts after dispatch. Its server-owned topology guard verifies the exact
+dispatcher instance; profile and wake-kind labels alone are not proof. The
+command's `callerPrincipalId` is retained for service admission and is not
+treated as the original product actor. Composition must supply guards that
+independently bind that actor to current grants and trusted residency. Hosted
+Server has opt-in wiring for caller-supplied placement and current guards, but
+it does not construct an original-actor/current-grant source, authoritative
+host/residency source, or independently re-read topology source. The Hosted
+path therefore remains unqualified. This
+generation check does not make separate stores and dispatcher effects atomic,
+and it does not prove active-attempt crash replay.
+
+`bindProfileWorkflowWake` remains a lower-level adapter-binding primitive for
+compositions whose server-side authority and residency checks are already
+bound. It does not resolve retained records itself and is not sufficient as a
+production submit path.
 
 ## Source basis
 
@@ -88,3 +111,14 @@ and the internal adapters in `packages/pi-cloudflare-host` and
 source boundaries and the tested qualification gate; it does not claim a live
 production certification or that the separate profile-specific adapter map
 requested by issue #941 has been accepted.
+
+## Recovery boundary evidence
+
+`tests/profile-recovery-rebind-fencing.test.mjs` exercises synthetic profile
+bindings across a rollback fence: operations from the old owner fail before
+upstream calls, a newly bound owner resumes the retained handle, and the
+managed-Pi fixture does not resend its physical start. This is adapter-binding
+evidence only. It does not prove process-level durability, self-hosted-server
+wake/replay, storage restore through every profile composition, or live
+production rollback; those recovery gaps are tracked in
+`docs/profile-recovery-acceptance-map.md`.

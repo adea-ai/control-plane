@@ -11,8 +11,10 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  renameSync,
   writeFileSync,
 } from 'node:fs'
+import { parseCompleteProcessEvidence } from './process-evidence.fixture.mjs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -26,21 +28,24 @@ export function appendProcessEvidence(directory, value) {
   }
 }
 
+// Publishes the descriptor atomically: a reader or a killed writer never observes a truncated
+// file, because the complete temporary file is renamed over the previous descriptor.
 export function writeProcessDescriptor(directory, value) {
-  const descriptor = openSync(join(directory, 'child-descriptor.json'), 'w', 0o600)
+  const target = join(directory, 'child-descriptor.json')
+  const temporary = `${target}.${process.pid}.tmp`
+  const descriptor = openSync(temporary, 'w', 0o600)
   try {
     writeFileSync(descriptor, JSON.stringify(value))
     fsyncSync(descriptor)
   } finally {
     closeSync(descriptor)
   }
+  renameSync(temporary, target)
 }
 
 export function readProcessEvidence(directory) {
   const path = join(directory, 'process-evidence.jsonl')
-  return existsSync(path)
-    ? readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)
-    : []
+  return existsSync(path) ? parseCompleteProcessEvidence(readFileSync(path, 'utf8')) : []
 }
 
 // Emitted recovery uses explicit compiled module paths and ordinary package exports.

@@ -28,6 +28,7 @@ import {
   createPiRecordedSpendingAuthority,
   createPiExecutionBoundModelComposition,
 } from '@control-plane/pi-durable-adapter'
+import { createMemoryCommittedCancellationAuthority } from './cancellation-authority.test-fixture.mjs'
 import {
   RuntimeProviderSelectionSchema,
   RecordedModelFundingDecisionSchema,
@@ -63,6 +64,7 @@ const hash = (value) => createHash('sha256').update(canonicalJsonStringify(value
 
 export async function startNodePiDurableCandidateHost(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'pi-node-candidate-'))
+  const committedCancellationAuthority = createMemoryCommittedCancellationAuthority()
   const at = new Date().toISOString()
   const expiresAt = new Date(Date.parse(at) + 3_600_000).toISOString()
   const workspaceId = IdentifierSchemas.workspaceId.parse(options.workspaceId ?? fixtureId('wsp'))
@@ -636,6 +638,7 @@ export async function startNodePiDurableCandidateHost(options = {}) {
       : spending
     composition = await createNodePiDurableLeadComposition({
       directory,
+      committedCancellationAuthority,
       ...(options.prepareFunding === true
         ? {
             preparationAuthority: {

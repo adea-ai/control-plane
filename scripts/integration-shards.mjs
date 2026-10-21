@@ -158,6 +158,17 @@ export const INTEGRATION_SHARDS = [
         ],
       },
       {
+        package: '.',
+        files: ['./tests/profile-recovery-postgres-restore.integration.test.mjs'],
+      },
+      {
+        package: '.',
+        files: [
+          './tests/profile-recovery-self-hosted-simple.integration.test.mjs',
+          './tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs',
+        ],
+      },
+      {
         package: 'apps/hosted-control-plane',
         files: [
           'src/hosted-graph-cancellation.integration.test.mjs',

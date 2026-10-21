@@ -161,12 +161,13 @@ test('incompatible retained Pi journal version blocks recovery without starting 
       },
     })
     expect(composition.recoveryBlocked).toEqual([
-      { handleId: handle.handleId, code: 'PI_RECOVERY_AUTHORITY_BLOCKED' },
+      { handleId: handle.handleId, code: 'PI_RECOVERY_INCOMPATIBLE' },
     ])
     expect(engineCreations).toBe(0)
     const after = composition.adapter.journal.get(handle.handleId)
     expect(after.state).toBe('unknown')
     expect(after.admission.version.journal).toBe(99)
+    expect(after.detail.reasonCode).not.toBe('PI_RECOVERY_AUTHORITY_BLOCKED')
   } finally {
     await composition?.close()
     await rm(directory, { recursive: true, force: true })

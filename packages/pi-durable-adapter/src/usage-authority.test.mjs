@@ -37,6 +37,7 @@ test('only a trusted exact-key no-send permit can reuse a held dispatch', async 
     ).rejects.toThrow('PI_INFERENCE_RESUME_PERMIT_INVALID')
     for (const forged of [
       { schemaVersion: 'pi-inference-resume-permit/v1', inferenceKey: key },
+      Object.freeze({ schemaVersion: 'pi-inference-resume-permit/v1', inferenceKey: key }),
       structuredClone(issueInferenceResumePermit(key)),
     ])
       await expect(recovered.authorizeInference(authority, key, forged)).rejects.toThrow(

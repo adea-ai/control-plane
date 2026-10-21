@@ -36,11 +36,11 @@ current tested #1204 head (which contains current main). The old branch history
 and source archives preserve all unique work. An isolated merge candidate is not
 a passing build, a published conflict resolution, or migration acceptance.
 
-## Twenty-four overlapping paths
+## Twenty-four overlapping paths (frozen extraction snapshot)
 
 The old 100-path inventory intersected the Pi 59-path snapshot at `4f71c840`
 in 21 paths. The qualified cleanup extraction adds three old fixture paths, so
-the current Pi 65-path snapshot intersects in **24 paths**, replacing the earlier
+the frozen Pi65-path extraction snapshot intersects in **24 paths**, replacing the earlier
 eleven-path map. The old claim that later adapter slices did not change the intersection was stale. The disposition below
 is a source reconciliation instruction; pending entries do not assert successful
 integration or acceptance.
@@ -150,17 +150,16 @@ only. It does not prove installed build compatibility, cross-version conversion,
 one-owner live upgrade, downgrade, rollback, or a copied Railway restore. No
 supported release-pair upgrade/rollback executor is qualified.
 
-Current ordinary and fenced cancellation can reach the adapter without a
-committed cross-store owner. #1048's optional outbox port and test-only SQLite
-coordinator are useful source candidates, but its own acceptance map and
-`docs/pi-durable-committed-cancellation-authority.md` state that no production
-owner coordinates product revocation, CP attempt versions, and the adapter
-effect in one serializable transaction or shared fencing lease. Existing
-approved cancellation authority must be enforced; no new child policy follows.
-Until that owner is supplied and qualified, cancellation cannot be declared
-production-safe. PostgreSQL generation/restore qualification is assigned to the
-database owner, and combined installed desktop/Railway acceptance remains
-separate.
+Current ordinary and fenced cancellation preserve current authority checks and unknown-on-drift
+reporting. The old grant-survives-revocation policy, production owner injection and startup
+abort delivery are explicitly superseded. Historical target/identity/retry coverage is ported
+to disconnected effect-free history reconciliation and current ordinary cancellation tests;
+see `docs/pi-durable-committed-cancellation-authority.md` for the complete old-assertion map.
+This does not prove a native commit-time effect guard or atomic cross-store cancellation.
+The all-writer revocation protocol and independently qualified restore-generation fence
+remain open. Retained request/outbox persistence grants no permission. PostgreSQL restore
+qualification stays with the database owner; combined installed desktop/Railway acceptance
+remains separate.
 
 The old map's SQLite+Restate `hosted-simple` and LangGraph/legacy graph paths are
 historical profile evidence. They do not define a fallback for the approved
@@ -168,3 +167,77 @@ Railway-only Pi migration. Supersession must name the supported replacement
 composition and run its acceptance matrix; historical tests must not be counted
 as current hosted Pi recovery, upgrade, or rollback proof. Keep #1025, #942,
 and Adea #1173 open until their full original criteria pass.
+
+## Isolated candidate continuation (not published acceptance)
+
+All nine original textual conflicts now have source candidates. The adapter combines the
+old unique durable process-claim identity/recovery cleanup with current physical prepared/armed
+markers, conservative restored-marker unknown behavior and exact generation recovery.
+The current ordinary cancellation path is retained, including fresh target selection after
+awaited authorization. The rejected old irreversible owner is not forwarded or invoked by
+production/Node construction or startup. Current authority still gates ordinary/fenced calls.
+
+The first isolated workspace build passed47/47 tasks. Initial current cancellation/production
+composition tests passed7 cases/51 assertions; revised historical retention/classification
+suite passed23 cases/119 assertions. Broader qualification and integration of the later
+#1204 registration/confinement delta are in progress. These are candidate receipts only;
+#1048 published e635 remains unchanged until a checked draft update is pushed. No legacy
+Restate/graph proof is counted as native Pi acceptance.
+
+### Candidate live-boundary evidence
+
+Broader Pi adapter plus seven lead/fence/composition suites ran412 cases:410 pass,
+2 fail,2,543 assertions. The two former “missing committed owner disables cancellation”
+checks are explicitly superseded as policy. Their underlying final-callback revocation
+and deadline races remain executed zero-effect requirements (not skipped or weakened).
+Current behavior returns `PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN` after the unguarded
+native boundary; this does not qualify rejection before effect. A new finite sequence
+of asynchronous reads would not establish atomicity. The independently reviewed
+native commit-time/all-writer fence remains required and unactivated. These two
+source acceptance failures are not a request to restore the rejected irrevocable grant.
+
+The source merge can be preserved in a draft with this explicit failing gate; it does
+not satisfy ready/merge or complete migration acceptance. Normal build hooks remain.
+
+## Integration of latest reviewed #1204 source
+
+The isolated source merge commit `845ef15cc31151a3f2a554b5d4a7b196d8f6d9fb`
+preserves old published e635 ancestry and current main through #1204 at4f71c840.
+The subsequent merge imports #1204 exact `df78ae61591c8e24b595203cf8acd1851971a300`,
+including the full inventory/shard registration repair, portable cleanup qualification,
+and PostgreSQL URL/identity confinement. Only this map needed textual reconciliation;
+no earlier source, old checkout or test gate was discarded. The24-path ledger above
+is a frozen historical extraction snapshot, not a claim about the final combined diff.
+
+The first merge's unchanged normal hooks passed47/47 build and97/97 aggregate tasks,
+plus schema, compatibility,200 requirements/103 issue audits,45 packages/55 operations/
+4 profiles, and208 infrastructure files. Final latest-head combined checks remain
+pending below; neither those hooks nor a conflict-free source merge clear the two
+executed native effect gates or installed/product/runtime acceptance.
+
+### Latest combined qualification and integration repair
+
+After importing df78, discovery caught an automatic-merge duplicate of the restart
+suite. The primary lane and exact expected list each now register it once; no measured
+shard schedule or inventory enforcement was reduced. Repository/shard/architecture,
+confinement negatives and portable cleanup:73 pass/486 assertions across6 files.
+Actual PostgreSQL18.6 private and normal confined modes:9 pass/42 assertions each;
+zero owned databases remain and the disposable cluster is stopped. The normal Mac
+proof uses the existing peer identity, not Docker TCP or distinct-role topology.
+
+The real child integration run then exposed a conclusion persistence defect:
+`terminalConclusion` was omitted from SQLite's mutable-field classification and its
+complete terminal receipt. Completion CAS failed with `DELEGATION_STATE_CONFLICT`.
+Two new regressions failed before repair; the two-line source repair now atomically
+retains the bounded canonical conclusion with the exact event and preserves conflict
+checks against changing/removing/injecting historical text. The existing rollback
+case includes the new field. Persistence/orchestration qualification:66 pass/805
+assertions. Four combined child/canonical/workspace suites:60 pass/423 assertions.
+The production child test fixture now explicitly supplies its required advisory
+notify port; captured wakes are not authenticated Adea timeline acceptance.
+
+Old ignored irreversible-owner fixtures are removed from runtime harness options;
+ordinary intent tests assert exact attempt/digest evidence and no manufactured grant.
+Historical standalone retention coverage remains preserved. Broader native effect
+and smoke gates stated above remain failing/pending; these passing slices do not
+close them or the aggregate issues.

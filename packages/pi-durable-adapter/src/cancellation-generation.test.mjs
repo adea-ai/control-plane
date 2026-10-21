@@ -103,15 +103,20 @@ test('cancellation pins the exact attempt and authorized inference until that ph
         .state
     ).toBe('cancelling')
     const intent = adapter.journal.get(handle.handleId).detail.cancellationIntent
-    expect(intent).toEqual({
+    const { authorityIntentId, ...intentWithoutAuthorityId } = intent
+    expect(intentWithoutAuthorityId).toEqual({
       schemaVersion: 'pi-cancellation-intent/v1',
       attemptId: request.attemptId,
       turnKey,
       requestedAt: at,
-      requestDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      requestDigest: intent.requestDigest,
       targetKind: 'active_generation',
       generation: beforeCancel.detail.activeInference,
     })
+    // Ordinary cancellation retains its existing authority checks; it never manufactures a
+    // committed coordinator grant from a journal intent.
+    expect(authorityIntentId).toBeUndefined()
+    expect(intent.requestDigest).toMatch(/^sha256:[a-f0-9]{64}$/)
     expect(cancellations).toBe(1)
     await adapter.drain()
     expect(sends).toBe(0)
@@ -338,6 +343,84 @@ test('cancelling a failed execution preserves its terminal failure and returns a
     expect(beforeCancel.detail.error).toEqual(retainedFailure)
     expect(beforeCancel.detail.cancellationIntent).toBeUndefined()
   } finally {
+    await adapter.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('an ordinary cancel targets the generation that is active when it commits, not the one it read before authorizing', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-cancel-fresh-target-'))
+  const factoryEntered = deferred()
+  const releaseFactory = deferred()
+  const authorizationEntered = deferred()
+  const releaseAuthorization = deferred()
+  const cancelAuthorityEntered = deferred()
+  const releaseCancelAuthority = deferred()
+  let holdNextAuthority = false
+  let sends = 0
+  const { options, request } = fixture(directory, {
+    assertAuthority: async () => {
+      if (!holdNextAuthority) return
+      holdNextAuthority = false
+      cancelAuthorityEntered.resolve()
+      await releaseCancelAuthority.promise
+    },
+    authorizeInference: async () => {
+      authorizationEntered.resolve()
+      await releaseAuthorization.promise
+      return { maxOutputTokens: 10, maximumInputTokens: 64, assertActive: async () => {} }
+    },
+    engineFactory: async (engineOptions) => {
+      factoryEntered.resolve()
+      await releaseFactory.promise
+      return {
+        run: async () => {
+          const allowance = await engineOptions.authorizeInference({
+            sessionId: 'ses_01JABCDEF0123456789ABCDEFG',
+            inferenceId,
+            provider: 'test',
+            modelId: 'mock',
+          })
+          await allowance.assertActive()
+          sends++
+          return result
+        },
+        close: async () => {},
+        cancel: async () => {
+          releaseAuthorization.resolve()
+        },
+      }
+    },
+  })
+  const adapter = new PiDurableRuntimeAdapter(options)
+  try {
+    const handle = await adapter.start(request)
+    await factoryEntered.promise
+    expect(adapter.journal.get(handle.handleId).detail.activeInference).toBeUndefined()
+
+    // The cancel reads the journal, then waits in authorization. A generation starts meanwhile.
+    holdNextAuthority = true
+    const cancelling = adapter.cancel(handle, {
+      idempotencyKey: 'cancel:fresh-target',
+      requestedAt: at,
+    })
+    await cancelAuthorityEntered.promise
+    releaseFactory.resolve()
+    await authorizationEntered.promise
+    const active = adapter.journal.get(handle.handleId).detail.activeInference
+    expect(active).toBeDefined()
+    releaseCancelAuthority.resolve()
+
+    expect((await cancelling).state).toBe('cancelling')
+    const intent = adapter.journal.get(handle.handleId).detail.cancellationIntent
+    expect(intent).toMatchObject({ targetKind: 'active_generation', generation: active })
+    expect(intent.resolution).not.toBe('target_generation_superseded')
+    await adapter.drain()
+    expect(sends).toBe(0)
+  } finally {
+    releaseFactory.resolve()
+    releaseAuthorization.resolve()
+    releaseCancelAuthority.resolve()
     await adapter.close()
     rmSync(directory, { recursive: true, force: true })
   }

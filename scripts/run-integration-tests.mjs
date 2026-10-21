@@ -280,6 +280,11 @@ try {
     run('bun', ['x', '--no-install', 'vp', 'run', 'orch:build:integration-roots'], {
       environment: integrationEnvironment,
     })
+    // Profile-recovery scenarios import profile-portability through its built entry
+    // point, which the integration-roots group does not cover.
+    run('bun', ['x', '--no-install', 'vp', 'run', 'orch:profile-portability:build'], {
+      environment: integrationEnvironment,
+    })
     // Repository-owned scenarios span composition roots; keep their fixtures
     // outside individual workspace packages.
     run(
@@ -293,6 +298,9 @@ try {
         './tests/memory-process-loss.integration.test.mjs',
         './tests/acp-remote-device-postgres.integration.test.mjs',
         './tests/langgraph-retirement-inventory-pg.integration.test.mjs',
+        './tests/profile-recovery-postgres-restore.integration.test.mjs',
+        './tests/profile-recovery-self-hosted-simple.integration.test.mjs',
+        './tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs',
         './tests/langgraph-retirement-status-adapter.integration.test.mjs',
         './tests/runtime-node-credential-revocation.integration.test.mjs',
       ],

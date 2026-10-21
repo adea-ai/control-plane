@@ -1008,6 +1008,17 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
     await host.admissions.retain(third)
     expect((await host.service.execute(third.request)).state).not.toBe('succeeded')
     expect(host.starts).toHaveLength(2)
+    // Verify the exact retained runtime/CP target before ordinary cancellation.
+    // No test-only coordinator supplies permission or an enduring grant.
+    const storedCancellation = runtime.adapter.journal.get(handles[0].handleId).admission
+    const cancelledExecution = await storage.executions.getExecution(
+      storedCancellation.request.executionId
+    )
+    const cancelledAttempt = await storage.executions.getAttempt(handles[0].attemptId)
+    expect(cancelledExecution.latestAttemptId).toBe(handles[0].attemptId)
+    expect(cancelledAttempt.executionId).toBe(cancelledExecution.executionId)
+    expect(typeof cancelledExecution.deadlineAt).toBe('string')
+    expect(cancelledAttempt.deadlineAt).toBe(cancelledExecution.deadlineAt)
     expect(
       (
         await runtime.adapter.cancel(handles[0], {
@@ -1016,6 +1027,12 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
         })
       ).state
     ).toBe('cancelling')
+    const retainedCancellation = runtime.adapter.journal.get(handles[0].handleId).detail
+      .cancellationIntent
+    // A current ordinary cancellation retains exact target evidence, never an irrevocable grant.
+    expect(retainedCancellation.authorityIntentId).toBeUndefined()
+    expect(retainedCancellation.attemptId).toBe(handles[0].attemptId)
+    expect(retainedCancellation.requestDigest).toMatch(/^sha256:[a-f0-9]{64}$/)
     release.forEach((item) => item.resolve())
     await runtime.adapter.drain()
     expect((await runtime.adapter.status(handles[1])).state).toBe('completed')
@@ -1136,11 +1153,14 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
     expect(requests).toHaveLength(2)
   } finally {
     release.forEach((item) => item.resolve())
-    await runtime?.close()
-    await server.stop(true)
-    await reopenedCanonical?.close()
-    provider.close()
-    await rm(directory, { recursive: true, force: true })
+    try {
+      await runtime?.close()
+      await server.stop(true)
+      await reopenedCanonical?.close()
+    } finally {
+      provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
   }
 }, 30000)
 
