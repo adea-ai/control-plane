@@ -23,7 +23,10 @@ not close #186 or #195, and does not promote any historical result.
 
 All four are deterministic: `bun run requirements:write` regenerates the report,
 the crosswalk and the figure inventory, and `bun run requirements:check` fails
-closed when any of them drifts from the ledger.
+closed when any of them drifts from the ledger. This record is hand-authored, so
+its own tables are checked against the artifacts they cite: a coverage number, a
+recorded worker head or a gate state that the crosswalk and the ledger do not
+carry fails the check instead of being published.
 
 ## Crosswalk coverage
 
@@ -165,6 +168,7 @@ step that folds an arrived contribution into the crosswalk.
 | Control                                                | Failure it prevents                                                                                                              |
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
 | Report, crosswalk and figure-inventory drift           | A published artifact that no longer matches the ledger it was generated from.                                                    |
+| Reconciliation record provenance                       | A record table that publishes a coverage number, a worker head or a gate state the cited artifacts do not carry.                 |
 | Gap reference resolution against the recorded snapshot | A gap that points at a missing or closed issue, or at an unauthorized milestone.                                                 |
 | Orphaned atomic clauses                                | A captured clause set with no requirement link and no accountable owner.                                                         |
 | Stale candidate proof                                  | A historical candidate presented as evidence about the current head.                                                             |

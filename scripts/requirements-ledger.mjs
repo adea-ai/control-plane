@@ -148,6 +148,10 @@ const lineagePath = resolve(
   repositoryRoot,
   'docs/requirements/canonical-source-lineage-2026-10-03.v1.json'
 )
+const reconciliationRecordPath = resolve(
+  repositoryRoot,
+  'docs/requirements/cp186-195-reconciliation-2026-10-21.md'
+)
 
 export async function validateRequirementsLedger(ledger, options = {}) {
   const errors = []
@@ -1543,6 +1547,102 @@ export async function validateFigureInventory(ledger, root) {
     : ['Canonical figure inventory drifted; run bun run requirements:write']
 }
 
+// The reconciliation record publishes the provenance of the artifacts generated
+// beside it: the coverage table, the worker table and the open-gate table. The
+// record is hand-authored, so those tables can drift from the crosswalk and the
+// ledger that produced them without anything noticing. This check compares each
+// claim with the artifact it cites and fails closed on a difference, so the
+// record cannot publish a number, a head or a gate state that the evidence does
+// not carry.
+export function validateReconciliationRecord(record, ledger, crosswalk) {
+  const errors = []
+  if (record === undefined) return errors
+  const rows = record.split('\n').filter((line) => line.startsWith('| '))
+  const cell = (line, index) => line.split('|')[index]?.trim() ?? ''
+  const leadingNumber = (value) => {
+    const match = /^\d+/.exec(value.trim())
+    return match ? Number(match[0]) : undefined
+  }
+  const coverage = [
+    ['Normative sources joined', crosswalk.summary.normativeSources],
+    ['Sources with a recorded current revision', crosswalk.summary.sourcesWithCurrentRevision],
+    [
+      'Sources whose text changed after the captured revision',
+      crosswalk.summary.sourcesWithChangedText,
+    ],
+    ['Captured atomic clauses', crosswalk.summary.atomicClauses],
+    ['Captured clauses whose source text changed', crosswalk.summary.clausesWithChangedSourceText],
+    ['Current clauses extracted into the lineage register', crosswalk.summary.currentClauses],
+    ['Explicit clause-to-requirement links', crosswalk.atomicSummary.linkCount],
+    ['Linked clauses', crosswalk.summary.linkedClauses],
+    [
+      'Unlinked clauses carrying an explicit per-source disposition',
+      crosswalk.summary.unlinkedClauses,
+    ],
+    ['Bounded requirement rows', crosswalk.summary.requirements],
+    [
+      'Requirement rows with at least one clause link',
+      crosswalk.summary.requirementsWithAtomicClauseLinks,
+    ],
+    ['Requirement rows with a recorded code target', crosswalk.summary.requirementsWithCodeTargets],
+    ['Requirement rows with a recorded test target', crosswalk.summary.requirementsWithTestTargets],
+    [
+      'Requirement rows with a recorded profile target',
+      crosswalk.summary.requirementsWithProfileTargets,
+    ],
+    ['M1–M10 issue audits', crosswalk.summary.priorIssueAudits],
+    ['External acceptance gates recorded', crosswalk.summary.externalGates],
+  ]
+  for (const [label, expected] of coverage) {
+    const row = rows.find((line) => cell(line, 1) === label)
+    if (row === undefined) {
+      errors.push(`reconciliation record is missing the "${label}" row`)
+      continue
+    }
+    const actual = leadingNumber(cell(row, 2))
+    if (actual !== expected) {
+      errors.push(
+        `reconciliation record "${label}" says ${String(actual)}, the crosswalk says ${String(expected)}`
+      )
+    }
+  }
+  for (const worker of ledger.workerEvidence ?? []) {
+    const row = rows.find((line) => cell(line, 1) === worker.id)
+    if (row === undefined) {
+      errors.push(`reconciliation record is missing the ${worker.id} worker row`)
+      continue
+    }
+    if (cell(row, 3) !== worker.status) {
+      errors.push(
+        `reconciliation record ${worker.id} says ${cell(row, 3)}, the ledger says ${worker.status}`
+      )
+    }
+    if (!row.includes(worker.head)) {
+      errors.push(
+        `reconciliation record ${worker.id} does not carry the recorded head ${worker.head}`
+      )
+    }
+  }
+  for (const gate of ledger.reconciliation?.externalGates ?? []) {
+    const row = rows.find((line) => cell(line, 1).startsWith(gate.id))
+    if (row === undefined) {
+      errors.push(`reconciliation record is missing the ${gate.id} gate row`)
+      continue
+    }
+    if (cell(row, 2) !== gate.status) {
+      errors.push(
+        `reconciliation record ${gate.id} says ${cell(row, 2)}, the ledger says ${gate.status}`
+      )
+    }
+    if (cell(row, 3) !== gate.severity) {
+      errors.push(
+        `reconciliation record ${gate.id} says severity ${cell(row, 3)}, the ledger says ${gate.severity}`
+      )
+    }
+  }
+  return errors
+}
+
 // The canonical crosswalk joins the current source revision, the captured atomic
 // clause, the bounded requirement row, the reachable code/test/profile targets,
 // and the issue and evidence records. It never upgrades a classification.
@@ -2030,6 +2130,24 @@ async function main() {
   if (!write && !refreshIssues) {
     errors.push(...(await validateCanonicalCrosswalk(ledger, repositoryRoot)))
     errors.push(...(await validateFigureInventory(ledger, repositoryRoot)))
+    // The reconciliation record publishes the provenance of the artifacts above.
+    // It is hand-authored, so its tables are checked against the artifacts they
+    // cite rather than trusted.
+    let record
+    try {
+      record = await readFile(reconciliationRecordPath, 'utf8')
+    } catch {
+      record = undefined
+    }
+    if (record !== undefined) {
+      const { errors: crosswalkErrors, crosswalk } = await collectCanonicalCrosswalk(
+        ledger,
+        repositoryRoot
+      )
+      if (crosswalkErrors.length === 0) {
+        errors.push(...validateReconciliationRecord(record, ledger, crosswalk))
+      }
+    }
   }
   for (const warning of warnings) console.warn(`Requirements ledger warning: ${warning}`)
   for (const finding of provenance) console.warn(`Requirements ledger provenance: ${finding}`)

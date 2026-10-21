@@ -19,6 +19,7 @@ import {
   validateCanonicalCrosswalk,
   validateFigureInventory,
   validateFormatterVersion,
+  validateReconciliationRecord,
   validateRequirementsLedger,
 } from '../scripts/requirements-ledger.mjs'
 
@@ -1489,5 +1490,71 @@ describe('M11.1 requirements ledger', () => {
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
+  }, 60000)
+})
+
+describe('CP #195 reconciliation record provenance (#186/#195)', () => {
+  const recordUrl = new URL(
+    '../docs/requirements/cp186-195-reconciliation-2026-10-21.md',
+    import.meta.url
+  )
+  const loadRecord = async () => readFile(recordUrl, 'utf8')
+  const loadCrosswalk = async () => {
+    const { errors, crosswalk } = await collectCanonicalCrosswalk(ledger, repositoryRoot)
+    expect(errors).toEqual([])
+    return crosswalk
+  }
+
+  test('the reconciliation record matches the artifacts it cites', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    expect(validateReconciliationRecord(record, ledger, crosswalk)).toEqual([])
+  }, 60000)
+
+  test('fails closed when the record drifts from the crosswalk coverage', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    const drifted = record.replace(/(\| Captured atomic clauses\s*\|\s*)6093/, '$16094')
+    expect(drifted).not.toBe(record)
+    expect(validateReconciliationRecord(drifted, ledger, crosswalk)).toContain(
+      'reconciliation record "Captured atomic clauses" says 6094, the crosswalk says 6093'
+    )
+  }, 60000)
+
+  test('fails closed when the record drops a coverage row', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    const drifted = record
+      .split('\n')
+      .filter((line) => !line.startsWith('| External acceptance gates recorded '))
+      .join('\n')
+    expect(validateReconciliationRecord(drifted, ledger, crosswalk)).toContain(
+      'reconciliation record is missing the "External acceptance gates recorded" row'
+    )
+  }, 60000)
+
+  test('fails closed when the record drifts from a recorded worker head', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    const worker = ledger.workerEvidence[0]
+    const drifted = record.replace(worker.head, '0'.repeat(40))
+    expect(drifted).not.toBe(record)
+    expect(validateReconciliationRecord(drifted, ledger, crosswalk)).toContain(
+      `reconciliation record ${worker.id} does not carry the recorded head ${worker.head}`
+    )
+  }, 60000)
+
+  test('fails closed when the record drifts from an open acceptance gate', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    const gate = ledger.reconciliation.externalGates[0]
+    const drifted = record.replace(
+      new RegExp(`(\\| ${gate.id}[^\\n]*?\\| )blocked( \\|)`),
+      '$1satisfied$2'
+    )
+    expect(drifted).not.toBe(record)
+    expect(validateReconciliationRecord(drifted, ledger, crosswalk)).toContain(
+      `reconciliation record ${gate.id} says satisfied, the ledger says ${gate.status}`
+    )
   }, 60000)
 })
