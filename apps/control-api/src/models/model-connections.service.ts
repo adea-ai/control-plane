@@ -30,7 +30,18 @@ import {
 
 export const MODEL_CONNECTION_SERVICE = Symbol('MODEL_CONNECTION_SERVICE')
 export interface ModelConnectionService {
-  funding?(input: unknown, principalId: string): Promise<unknown>
+  /**
+   * The pre-inference funding disclosure: the account, the auth mode and the
+   * explicit funding owner of the accepted selection.
+   *
+   * It is always present so that an unconfigured host refuses it the same
+   * bounded way it refuses every other model operation, instead of leaving a
+   * caller to discover that the operation does not exist and to invent its own
+   * refusal. A host without a funding view returns the bounded unavailability
+   * below; it never discloses a payer, never falls back to another account,
+   * model or provider, and never authorizes an inference.
+   */
+  funding(input: unknown, principalId: string): Promise<unknown>
   create(input: unknown, principalId: string): Promise<unknown>
   revoke(input: unknown, principalId: string): Promise<unknown>
   list(input: unknown, principalId: string): Promise<unknown>
@@ -39,6 +50,9 @@ export interface ModelConnectionService {
   resolve(input: unknown, principalId: string): Promise<unknown>
 }
 export class UnavailableModelConnectionService implements ModelConnectionService {
+  async funding() {
+    return unavailable(FUNDING_NOT_CONFIGURED)
+  }
   async create() {
     return unavailable()
   }
@@ -78,7 +92,7 @@ export class ConfiguredModelConnectionService implements ModelConnectionService 
   ) {}
   async funding(input: unknown, principalId: string) {
     const request = parse(ModelSelectionFundingRequestSchema, input, principalId)
-    if (!this.fundingView) return unavailable()
+    if (!this.fundingView) return unavailable(FUNDING_NOT_CONFIGURED)
     const resolver = this.fundingView
     return safely(async () => {
       const funding = ModelSelectionFundingViewSchema.parse(
@@ -214,9 +228,11 @@ async function safely<Value>(operation: () => Promise<Value>): Promise<Value> {
     })
   }
 }
-function unavailable(): never {
+/** The funding host is absent while the model host may still be present. */
+const FUNDING_NOT_CONFIGURED = 'Model funding is not configured'
+function unavailable(message = 'Model connections are not configured'): never {
   throw new ServiceUnavailableException({
     code: 'MODEL_CONNECTIONS_NOT_CONFIGURED',
-    message: 'Model connections are not configured',
+    message,
   })
 }
