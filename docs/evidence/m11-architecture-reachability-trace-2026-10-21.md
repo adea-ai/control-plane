@@ -15,7 +15,7 @@ registration. Those stay with their current owners.
 | Repository                                        | `adea-ai/control-plane`                                                                 |
 | Branch                                            | `f2w3/cp187-architecture-audit`                                                         |
 | Base commit                                       | `27f17bd55e0266439b5b3089163195c9e7a669be` (`chore(main): release 1.105.5 (#1209)`)     |
-| Change under review                               | the head of `f2w3/cp187-architecture-audit`; three owned files, sections 8 and 12       |
+| Change under review                               | the head of `f2w3/cp187-architecture-audit`; four owned files, sections 8, 12 and 13    |
 | Audited candidate recorded by the canonical audit | `6c922d487c3c2e70a047c11c55a1cb4ddbabad26` (`main`, recorded 2026-10-01)                |
 | Toolchain                                         | Bun 1.4.3, Node 24.21.0, `darwin-arm64` (`.bun-version`, `.node-version`)               |
 | Commands                                          | `bun scripts/architecture-audit.mjs`, `bun test tests/m11-architecture-audit*.test.mjs` |
@@ -561,8 +561,9 @@ touched.
 repository's lane system requires every `tests/**` file to be registered:
 
 - `scripts/run-bun-test-group.mjs` (`discoverTestInventory`) walks `apps/`, `packages/` and
-  `tests/`, and throws `Test lane inventory drift: unowned [...]` for any `*.test.mjs` file that
-  no lane claims.
+  `tests/` only, so it never sees a `scripts/**/*.test.mjs` file at all. Such a path is in neither
+  the discovered set nor any lane list, so it is reported neither as `unowned` nor as `missing`,
+  and the drift check stays silent about it.
 - `tests/repository.test.mjs` asserts the `e2e` and `smoke` lane lists by exact deep equality, so
   a registration also has to be mirrored into that file.
 
@@ -576,10 +577,11 @@ tests, at `scripts/m11-architecture-audit-regression.test.mjs`, following the ex
 
 **Consequence for the runner owner:** `scripts/` is outside the lane system
 (`testRoots = ['apps', 'packages', 'tests']`), so the file is neither lane-registered nor covered
-by `oxlint --deny-warnings tests`. To make it a CI lane member, the runner owner has to extend the
-lane roots to `scripts/` — a `scripts/**/*.test.mjs` path that is not under `testRoots` is
-reported as `missing` by `discoverTestInventory` — or move the file into a covered root and
-register it in `scripts/run-bun-test-group.mjs` and `tests/repository.test.mjs` together. Until
+by `oxlint --deny-warnings tests`, and the lane drift check is blind to it: a path outside
+`testRoots` is in neither the discovered set nor any lane list, so it is reported neither as
+`unowned` nor as `missing`. To make it a CI lane member, the runner owner has to extend the
+lane roots to `scripts/` — or move the file into a covered root and register it in
+`scripts/run-bun-test-group.mjs` and `tests/repository.test.mjs` together. Until
 that happens the file runs with
 `cd scripts && bun test --timeout 30000 m11-architecture-audit-regression.test.mjs`.
 
@@ -621,36 +623,19 @@ bun test tests/m2-core-domain.test.mjs tests/m3-durable-execution.test.mjs tests
 bun test tests/m9-production-hardening.test.mjs
 ```
 
-bun run check:boundaries
-bun run check:digest-writers
-bun run db:check
-bun run compatibility:check
-bun --cwd=packages/control-sdk run openapi:check
-bun --cwd=packages/domain test
-bun --cwd=packages/events test
-bun --cwd=packages/config test
-bun --cwd=packages/sqlite-persistence test
-bun test tests/m2-core-domain.test.mjs tests/m3-durable-execution.test.mjs tests/m10-portability-conformance.test.mjs
-bun test tests/m9-production-hardening.test.mjs
-
-```
-
 Final-candidate readback (section 3):
 
 ```
-
 git cat-file -e 6c922d487c3c2e70a047c11c55a1cb4ddbabad26^{commit}
 git merge-base --is-ancestor 6c922d487c3c2e70a047c11c55a1cb4ddbabad26 27f17bd55e0266439b5b3089163195c9e7a669be
 git ls-tree --name-only <candidate> packages/database/drizzle/ | grep -c '\.sql$'
 git show <candidate>:packages/control-sdk/src/operations.ts | grep -c "operation: '"
 git show <candidate>:packages/sqlite-persistence/src/migrations.ts | grep -c 'version: [0-9]*, statements:'
-
 ```
 
 The canonical audit reports these warnings on the current tree:
 
 ```
-
 workspace package versions drifted from the Bun lockfile: apps/control-api 1.34.2/1.34.1, apps/workflow-worker 1.18.2/1.18.1, packages/telemetry 1.8.2/1.8.1
 Control API serves 9 HTTP route(s) with no SDK operation binding: …
 Control API exposes 21 capability binding(s) that default to an unavailable implementation: …
@@ -660,7 +645,6 @@ hosted-simple: never binds 5 capability binding(s) …
 local: never binds 5 capability binding(s) …
 profiles local and hosted-simple share one composition source digest …
 measured migration inventory: PostgreSQL 74 migration(s) up to 0073_scope_version_pairing.sql, SQLite schema version 5
-
 ```
 
 ---
@@ -696,13 +680,12 @@ measured migration inventory: PostgreSQL 74 migration(s) up to 0073_scope_versio
    locally on `f2w3/cp187-architecture-audit` for root to review and publish.
 8. **Human gates.** No human acceptance, review, sign-off, provider qualification or deployed
    confirmation is claimed anywhere in this packet.
-```
 
 ---
 
 ## 12. State of this packet at the current head
 
-The three owned files on `f2w3/cp187-architecture-audit` are:
+The four owned files on `f2w3/cp187-architecture-audit` are:
 
 | Path                                                                          | Role                                                                                      |
 | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -728,13 +711,13 @@ pull request, recorded in section 8.1 and evidenced in the handoff packet. None 
 measured value: the architecture audit's complete output is byte-identical across the reviewed
 heads, and the capability matrix in section 2.3 is unchanged.
 
-## 12. Canonical CI discovery path for this regression suite (reproducible evidence)
+## 13. Canonical CI discovery path for this regression suite (reproducible evidence)
 
 **The canonical CI does not discover or run this regression suite, and the fix is one line in a
 shared runner this branch does not own.** Nothing in this section edits that runner; the
-registration is proposed in 12.3 for root's decision.
+registration is proposed in 13.3 for root's decision.
 
-### 12.1 The facts, and how to reproduce them
+### 13.1 The facts, and how to reproduce them
 
 Canonical validation runs the repository's lane scripts — `bun scripts/run-bun-test-group.mjs
 <lane>` — and the lane discovery walks these roots only:
@@ -765,11 +748,15 @@ $ bun test scripts/m11-architecture-audit-regression.test.mjs      # from the re
 The following filters did not match any test files in --cwd="<repository>":
  scripts/m11-architecture-audit-regression.test.mjs
 125 files were searched [8.00ms]
+$ echo $?
+1
 ```
 
 The last one is the sharpest statement of the gap: bun's own root-scoped discovery does not match
-the file, and that invocation **exits 0** — a silent pass. The suite is reachable only from its
-own directory:
+the file, and that invocation **exits 1** with the unmatched-filter message above. That
+invocation is loud rather than silent, so a person who runs it from the repository root sees the
+gap immediately; what stays silent is the canonical lane, which never discovers the file at all.
+The suite is reachable only from its own directory:
 
 ```console
 $ cd scripts && bun test m11-architecture-audit-regression.test.mjs
@@ -784,7 +771,7 @@ registered in the lane runner (`scripts/run-bun-test-group.mjs:76` →
 `tests/m11-architecture-audit.test.mjs`), so the audit runs in CI while its regression suite does
 not.
 
-### 12.2 The suite is reproducible at this head
+### 13.2 The suite is reproducible at this head
 
 Three consecutive runs at `bcea5ae46bd30179b66124b76e76ea9528a7b266`:
 
@@ -801,7 +788,7 @@ size and time, and a source whose contents change while its size and time do not
 **symlink escape** (an in-tree symlink pointing outside the repository is rejected, an in-tree
 symlink is still citable, a resolution loop is refused, a directory is not a file).
 
-### 12.3 The minimal registration proposed for root (not applied)
+### 13.3 The minimal registration proposed for root (not applied)
 
 The registration belongs to the shared lane runner, which this branch must not edit, so it is
 proposed rather than applied. The narrowest change that gives the file a canonical lane without

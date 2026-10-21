@@ -314,9 +314,6 @@ this task's instruction to run focused and static checks only.
 full lint lane. The last full smoke-lane result on this branch is the one recorded for the
 `fc169f506` bundle head — 629 pass / 5 skip / 0 fail across 634 tests in 44 files, exit 0 — and the
 lane budget owner should re-measure after this repair lands.
-full lint lane. The last full smoke-lane result on this branch is the one recorded for the
-`fc169f506` bundle head — 629 pass / 5 skip / 0 fail across 634 tests in 44 files, exit 0 — and the
-lane budget owner should re-measure after this repair lands.
 
 **Also not run, and why:** `bun run requirements:check` needs an authenticated GitHub CLI to read
 the issue set and cannot run in this environment; it is F2W2's gate and no requirement file is
