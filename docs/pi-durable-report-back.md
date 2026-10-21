@@ -147,3 +147,14 @@ readers must not receive records carrying the new field until they are upgraded.
 Do not delete inbox records while timeline delivery or effect reconciliation remains
 unsettled. Inbox retention/export integration and production composition are required
 before enabling this path for a launch cohort.
+
+Deduplication across the delivery kinds is independent. A command delivery, a child
+event and a retained user publication each own their identity, so the same identity
+used in two kinds is two deliveries: a command replay is answered by the command's
+own record, a child-event redelivery by the event inbox, and the retained publication
+intent by its own namespace. The offline proof in
+`packages/sqlite-persistence/src/child-callback-dedup-independence.test.mjs` drives the
+real command inbox, the real child-event inbox and the real receipt namespace together
+and shows that none of them answers for another. That is boundary evidence only: a
+fixture does not certify a live qualified child callback, and the callback path with
+bounded context and pre-effect controls stays an open acceptance gate.
