@@ -293,16 +293,35 @@ bun run infra:typecheck
 The cleanup and replay regressions in this record were added on top of that
 head, and were checked with the focused suite and the lightweight checks only
 (`format:check`, `lint`, and the `control-api` and `context` package type
-checks); the unit lane was not re-run for them.
+checks); the unit lane was not re-run for them. The focused consumer run for
+that head covers the conformance suite, the application test and the two
+consumer service tests:
+
+```
+bun --cwd apps/control-api test src/decision-context-consumer-conformance.test.mjs \
+  src/application.test.mjs src/queries/profile-resolution.service.test.mjs \
+  src/executions/execution-validation-graph.test.mjs --timeout 60000
+  81 pass, 0 fail
+```
 
 The lifecycle regressions for a revoked skill version, and the plan-integrity
 regression for a context package whose content does not verify, were added on
-top of that head as well and were checked with the focused suite and the same
-lightweight checks:
+top of that head as well and were checked with the focused suite, the
+`control-api` package lane, the full type-check chain and the normal
+pre-commit hook:
 
 ```
 bun test src/decision-context-consumer-conformance.test.mjs --timeout 30000
   20 pass, 0 fail (SQLite legs)
+  20 pass, 0 fail in 10 of 10 runs
+
+bun --cwd apps/control-api test src
+  720 pass, 15 skip, 0 fail (735 tests / 88 files)
+
+bun run type-check
+  Validated 200 requirements and 103 issue audits
+  Validated 45 packages, 54 operations, and 4 profiles
+  No type errors in 208 files
 
 # the three consumer services reverted to the base commit, head test file
 bun test src/decision-context-consumer-conformance.test.mjs --timeout 30000
@@ -316,14 +335,18 @@ bun test src/decision-context-consumer-conformance.test.mjs --timeout 30000
   the revoked-skill case fails: the replay resolves a revoked version
 ```
 
-The focused consumer run covers the conformance suite, the application test
-and the two consumer service tests:
+The pre-commit hook was run with this record's whole scope staged — the seven
+paths this change owns, on top of the base commit — and passed: the format
+check, the orchestrator build (47 of 47 tasks) and the type-check chain above.
+
+The focused consumer run for this head covers the same set — the conformance
+suite, the application test and the two consumer service tests:
 
 ```
 bun --cwd apps/control-api test src/decision-context-consumer-conformance.test.mjs \
   src/application.test.mjs src/queries/profile-resolution.service.test.mjs \
   src/executions/execution-validation-graph.test.mjs --timeout 60000
-  81 pass, 0 fail
+  84 pass, 0 fail
 ```
 
 Three repository checks fail in this environment for reasons outside this
