@@ -22,8 +22,12 @@ preserved unchanged at its published head.
 
 ## The current published scope
 
-The published head is `7d599a7d2b48bc5ebfc0a8a125f6fd335df1aec6` over the base `f4f17194e04bcf8af65e8b5ff7aed7926b51ca88`. The complete changed scope is
-**182 paths: 65 added, 117 modified**; no path was deleted.
+The published scope is the diff from the base `f4f17194e04bcf8af65e8b5ff7aed7926b51ca88`
+to the published head, which is the head that carries this section. The complete changed scope is
+**183 paths: 66 added, 117 modified**; no path was deleted.
+`tests/pi-durable-cp1048-evidence-discipline.test.mjs` checks this list, these counts and this
+area table against the repository, so the published scope cannot drift away from the code
+without that lane failing.
 
 | Area                          | Added | Modified | Total |
 | ----------------------------- | ----- | -------- | ----- |
@@ -48,7 +52,7 @@ The published head is `7d599a7d2b48bc5ebfc0a8a125f6fd335df1aec6` over the base `
 | `packages/sqlite-persistence` | 0     | 3        | 3     |
 | `packages/telemetry`          | 0     | 2        | 2     |
 | `scripts`                     | 1     | 3        | 4     |
-| `tests`                       | 15    | 16       | 31    |
+| `tests`                       | 16    | 16       | 32    |
 
 The complete path list, as published:
 
@@ -220,6 +224,7 @@ M  tests/pi-durable-canonical-authority.test.mjs
 M  tests/pi-durable-child-host.test.mjs
 M  tests/pi-durable-compaction-governed-dispatch.fixture.mjs
 M  tests/pi-durable-compaction-governed-dispatch.test.mjs
+A  tests/pi-durable-cp1048-evidence-discipline.test.mjs
 M  tests/pi-durable-production-child-composition.test.mjs
 M  tests/pi-durable-workspace-scope.test.mjs
 A  tests/process-evidence.fixture.mjs

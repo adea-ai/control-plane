@@ -93,13 +93,13 @@ files above:
 ## Bounded lifecycle and cancellation evidence
 
 The lifecycle baseline below was reviewed at historical code head
-`eb4b1a802f241f21f78aeec31e54af15130eea11`, not at this PR's head. PR head
-`4fd4e09009123230c93f0db8ff563eb86909a767` adds a test that holds two accepted
-public recovery passes (including a failed scan) until close drains them before
-Pi lead adapter and journal teardown. That head is itself historical: the map
-was last reconciled against a later head, and the receipts it cites are recorded
-in the CP #1204/#1048 acceptance ledger with the head they were taken at. This proves close ordering for those
-passes, not Pi-owned task drain.
+`eb4b1a802f241f21f78aeec31e54af15130eea11`, not at this PR's head. A superseded
+PR head, `4fd4e09009123230c93f0db8ff563eb86909a767`, added a test that holds two
+accepted public recovery passes (including a failed scan) until close drains
+them before Pi lead adapter and journal teardown. That head is itself historical:
+the map was last reconciled against a later head, and the receipts it cites are
+recorded in the CP #1204/#1048 acceptance ledger with the head they were taken
+at. This proves close ordering for those passes, not Pi-owned task drain.
 
 - `apps/control-api/src/pi-durable/node-composition-lifecycle.test.mjs` at the
   historical head held a periodic scan while close waited and refused

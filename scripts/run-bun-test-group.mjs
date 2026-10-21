@@ -88,6 +88,7 @@ const repositoryGroups = {
     'tests/m11-security-probes.test.mjs',
     'tests/m11-sqlite-benchmark.test.mjs',
     'tests/neon-workflow.test.mjs',
+    'tests/pi-durable-cp1048-evidence-discipline.test.mjs',
     'tests/profile-recovery-crash-restore.test.mjs',
     'tests/profile-recovery-fenced-rollback.test.mjs',
     'tests/profile-recovery-rebind-fencing.test.mjs',
