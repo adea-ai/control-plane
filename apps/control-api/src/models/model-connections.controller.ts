@@ -1,13 +1,4 @@
-import {
-  Body,
-  Controller,
-  HttpCode,
-  HttpStatus,
-  Inject,
-  Post,
-  Req,
-  ServiceUnavailableException,
-} from '@nestjs/common'
+import { Body, Controller, HttpCode, HttpStatus, Inject, Post, Req } from '@nestjs/common'
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 import type { FastifyRequest } from 'fastify'
 import { RequireServiceAuthentication } from '../auth/service-authentication.js'
@@ -30,11 +21,8 @@ export class ModelConnectionsController {
     description: 'Versioned ready/blocked funding view; confers no execution or spending authority',
   })
   funding(@Body() input: unknown, @Req() request: FastifyRequest) {
-    if (!this.service.funding)
-      throw new ServiceUnavailableException({
-        code: 'MODEL_CONNECTIONS_NOT_CONFIGURED',
-        message: 'Model funding is not configured',
-      })
+    // The service always carries the funding operation, so the bounded refusal
+    // for an unconfigured host is the service's, not this route's.
     return this.service.funding(input, request.servicePrincipal?.principalId ?? '')
   }
   @Post('create')

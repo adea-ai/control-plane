@@ -6,7 +6,10 @@ import {
 } from '@control-plane/model-gateway'
 import { createControlApiApplication, createOpenApiDocument } from '../application.ts'
 import { PolicyServiceAuthenticator } from '../auth/service-authentication.ts'
-import { ConfiguredModelConnectionService } from './model-connections.service.ts'
+import {
+  ConfiguredModelConnectionService,
+  UnavailableModelConnectionService,
+} from './model-connections.service.ts'
 import { createCurrentModelConnectionComposition } from './current-model-composition.ts'
 const connection = {
   connectionRef: `mconn_${'1'.repeat(32)}`,
@@ -290,6 +293,83 @@ test('strict secret-bearing requests and unavailable integration expose bounded 
   app = undefined
   await fixture(false)
   expect((await post('list', read('model-connections.list', { target }))).statusCode).toBe(503)
+})
+
+test('the unconfigured model host refuses every model operation, the funding disclosure included', async () => {
+  await fixture(false)
+
+  // The service itself carries the refusal: the operation exists and fails
+  // closed, so no caller can discover that it is missing and invent its own.
+  const unavailableService = new UnavailableModelConnectionService()
+  await expect(unavailableService.funding({}, principalId)).rejects.toMatchObject({
+    response: {
+      code: 'MODEL_CONNECTIONS_NOT_CONFIGURED',
+      message: 'Model funding is not configured',
+    },
+  })
+
+  const parameters = {
+    executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+    attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+    selectionRef: `msel_${'2'.repeat(32)}`,
+    selectionRevision: 1,
+  }
+  const requests = [
+    ['selection/funding/get', read('model-selection.funding.get', parameters)],
+    [
+      'create',
+      {
+        ...command({ credentialRef: connection.credentialRef, credentialRevision: 1 }),
+        operation: 'model-connections.create',
+      },
+    ],
+    [
+      'revoke',
+      {
+        ...command({ connectionRef: connection.connectionRef, expectedRevision: 1 }),
+        operation: 'model-connections.revoke',
+      },
+    ],
+    ['list', read('model-connections.list', { target })],
+    ['defaults/get', read('model-defaults.get', {})],
+    ['defaults/set', command({ expectedRevision: 0 })],
+    ['selection/resolve', read('model-selection.resolve', { role: 'direct', target })],
+  ]
+
+  for (const [path, payload] of requests) {
+    const response = await post(path, payload)
+    expect(response.statusCode).toBe(503)
+    expect(response.json().error.code).toBe('MODEL_CONNECTIONS_NOT_CONFIGURED')
+    // The refusal discloses no account, no payer and no provider detail.
+    const body = JSON.stringify(response.json())
+    expect(body).not.toContain(connection.accountRef)
+    expect(body).not.toContain(connection.credentialRef)
+    expect(body).not.toContain('payer')
+  }
+})
+
+test('an unconfigured funding host refuses the disclosure without disclosing a payer or falling back', async () => {
+  const parameters = {
+    executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+    attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+    selectionRef: `msel_${'2'.repeat(32)}`,
+    selectionRevision: 1,
+  }
+  const request = read('model-selection.funding.get', parameters)
+  await fixture(true)
+
+  const response = await post('selection/funding/get', request)
+  expect(response.statusCode).toBe(503)
+  expect(response.json().error.code).toBe('MODEL_CONNECTIONS_NOT_CONFIGURED')
+  expect(response.json().error.message).toBe('Model funding is not configured')
+  // No payer, account, credential or provider detail, and no fallback view.
+  const body = JSON.stringify(response.json())
+  expect(body).not.toContain(connection.accountRef)
+  expect(body).not.toContain(connection.credentialRef)
+  expect(body).not.toContain('payer')
+  expect(body).not.toContain('fundingOwner')
+  expect(body).not.toContain('authorizationRef')
+  expect(response.json().data).toBeUndefined()
 })
 
 test('connection create derives account/grant from trusted authority and revocation blocks subsequent resolution', async () => {
