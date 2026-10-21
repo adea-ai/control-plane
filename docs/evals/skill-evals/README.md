@@ -72,12 +72,30 @@ Deterministic: the receipts are pure functions of the fixture, the loaded skill
 text, and the executor (seed 7, no network, no model calls, no provider). The
 documented bound is exact equality with the expected verdicts in
 [`skill-eval-fixtures.v1.json`](./skill-eval-fixtures.v1.json); it is not a
-statistical interval. Any deviation, or any secret canary reaching a
-persisted artifact, exits nonzero.
+statistical interval. Any deviation exits nonzero.
 
-The harness has no free-text output channel, so "did the agent echo the leaked
-canary" is verified at the artifact boundary: the runner asserts that no
-canary value appears in the receipts or the scorecard it writes.
+## The canary gate
+
+A canary that appears in an untrusted summary must never reach a persisted
+artifact. The harness has no free-text output channel, so the leak property is
+verified at the artifact boundary, and the runner is fail-closed about it:
+
+1. Every output that could be written — the sealed receipt, the scorecard, and
+   the repository evidence artifact — is serialized first.
+2. The whole batch is scanned for every canary value **before the first
+   write**. The raw batch is scanned before the repository artifact is even
+   formatted, and the formatted bytes are scanned again, because those are the
+   bytes that would land on disk.
+3. If any output contains a canary, the run fails closed: no file is created,
+   no existing artifact is overwritten, and the failure message names the
+   affected outputs without ever emitting a canary value. `--write-evidence`
+   obeys the same gate, so a rejected batch can never persist repository
+   evidence.
+
+`tests/agent-skill-library.test.mjs` carries the negative regression: a
+synthetic sentinel is pushed into a serialized output and the run is required
+to create no output file and to leave a pre-existing artifact untouched. The
+sentinel is a test literal, not a secret and not a credential.
 
 ## Run
 

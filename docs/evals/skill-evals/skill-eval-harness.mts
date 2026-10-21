@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { readdir, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { runEvidenceAuditEval } from '../../../packages/production-readiness/src/evidence-audit-eval.ts'
 
 /**
@@ -207,6 +207,13 @@ function classify(evidence: any, candidate: string): string {
 
 /**
  * Build the modeled cold executor for one scenario against one skill text.
+ *
+ * Repository skill text is untrusted data, never instructions. It is only
+ * ever matched against fixed contract markers and parsed as frontmatter; no
+ * part of it is executed, interpolated into a command, or allowed to steer the
+ * report beyond deciding whether the contract this scenario needs is present.
+ * A skill that contains an instruction-shaped sentence therefore cannot change
+ * what the executor reports.
  *
  * The executor never sees the expected outcome. It sees the skill contract and
  * the instrumented read-only tools, and it decides its report from what it
@@ -456,4 +463,54 @@ export async function loadSuite(root: string): Promise<Suite> {
     throw new Error('skill-eval fixture set is empty')
   }
   return suite
+}
+
+/** Every canary value the fixture set declares, in scenario order. */
+export function suiteCanaries(suite: Suite): string[] {
+  return suite.scenarios
+    .map((scenario) => scenario.canary)
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+}
+
+/**
+ * One output the runner may persist. `content` is the exact byte sequence
+ * that would be written; `name` is a stable label used in failure messages.
+ */
+export type PersistedOutput = {
+  path: string
+  content: string
+  name: string
+}
+
+/**
+ * Fail-closed canary gate.
+ *
+ * Every output that could be persisted is scanned before the first byte is
+ * written, so a canary value never reaches disk and no existing artifact is
+ * overwritten. The failure message names the affected outputs only: a canary
+ * value is never emitted.
+ */
+export function assertOutputsCanaryFree(outputs: PersistedOutput[], canaries: string[]): void {
+  const affected = outputs
+    .filter((output) => canaries.some((canary) => output.content.includes(canary)))
+    .map((output) => output.name)
+  if (affected.length === 0) return
+  throw new Error(
+    `skill-eval canary gate refused to persist ${affected.length} output(s) containing a canary value: ${affected.join(', ')}`
+  )
+}
+
+/**
+ * Scan, then write. Nothing is created and nothing is overwritten when the
+ * gate rejects the batch.
+ */
+export async function persistOutputs(
+  outputs: PersistedOutput[],
+  canaries: string[]
+): Promise<void> {
+  assertOutputsCanaryFree(outputs, canaries)
+  for (const output of outputs) {
+    await mkdir(dirname(output.path), { recursive: true })
+    await writeFile(output.path, output.content)
+  }
 }

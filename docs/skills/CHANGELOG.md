@@ -6,6 +6,18 @@ changed, validation performed, and any evidence or compatibility limits.
 
 ## Unreleased — 2026-10-21
 
+- Skill-eval runner repair (root review of draft PR #1216): the runner
+  serialized and wrote its outputs before scanning them for canary values, so
+  a canary could reach a persisted artifact, and `--write-evidence` could
+  still write repository evidence after a canary was found. The runner now
+  precomputes every serialized output, scans the whole batch for canaries
+  before the first write, and fails closed: a rejected batch creates no file,
+  overwrites no existing artifact, and emits no canary value. `--write-evidence`
+  obeys the same gate. A negative regression with a synthetic sentinel proves
+  that no output file is created or overwritten when a serialized output
+  carries it. The committed evidence artifact is byte-identical to the
+  pre-repair run, and the successful output behavior is unchanged.
+
 - Every retained skill gained one explicit contract, and the routing surface
   became machine-checkable:
   - `description` now follows `Use when <trigger>. Not for <non-trigger>. …`.
