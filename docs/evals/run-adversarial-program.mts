@@ -13,7 +13,9 @@
  *
  *   CP_EVAL_SOURCE_REVISION=<git sha> bun docs/evals/run-adversarial-program.mts
  */
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -31,6 +33,13 @@ import { EvaluationConfigurationSchema } from '../../packages/production-readine
 import { ReleaseGateRegistry } from '../../packages/production-readiness/src/release-gates.ts'
 
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url))
+/** Formats a generated JSON artifact with the repository formatter when it is available. */
+function formatJsonArtifact(path: string): void {
+  const formatter = join(repositoryRoot, 'node_modules/.bin/oxfmt')
+  if (!existsSync(formatter)) return
+  spawnSync(formatter, [path], { stdio: 'ignore' })
+}
+
 const seed = Number(process.env.CP_EVAL_SEED ?? '191')
 const sourceRevision = process.env.CP_EVAL_SOURCE_REVISION ?? 'unknown'
 const outputPath =
@@ -282,6 +291,7 @@ const scorecard = {
 }
 
 await writeFile(outputPath, JSON.stringify(scorecard, null, 2) + '\n')
+formatJsonArtifact(outputPath)
 console.log(
   JSON.stringify(
     {

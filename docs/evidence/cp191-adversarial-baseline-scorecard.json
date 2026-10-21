@@ -16,7 +16,7 @@
   },
   "source": {
     "id": "control-plane",
-    "revision": "27f17bd55e0266439b5b3089163195c9e7a669be",
+    "revision": "36bb1a7ab21e77e2b948a0623062b9b97bf0849f",
     "digest": "sha256:aab81a866a5688a45e9d7964df11e7868ccd47a08609418a857102e60c2fd17c"
   },
   "seed": 191,
@@ -42,11 +42,11 @@
       "platform": "darwin",
       "architecture": "arm64",
       "node": "26.3.0",
-      "bun": "1.4.2"
+      "bun": "1.4.3"
     },
     "source": {
       "id": "control-plane",
-      "revision": "27f17bd55e0266439b5b3089163195c9e7a669be",
+      "revision": "36bb1a7ab21e77e2b948a0623062b9b97bf0849f",
       "digest": "sha256:aab81a866a5688a45e9d7964df11e7868ccd47a08609418a857102e60c2fd17c"
     },
     "metamorphic": [
@@ -163,7 +163,7 @@
         "expectation": "same-outcome"
       }
     ],
-    "identityDigest": "sha256:859c059f5e4060c1dbd5a8a908713995becb7b8caca9a8b0d0c6db2f888504cf"
+    "identityDigest": "sha256:eba27492c71e904c6ae8514deea25035c7cb3b41d22c3a02b68a9f54d3383282"
   },
   "candidateIdentity": {
     "corpus": {
@@ -187,11 +187,11 @@
       "platform": "darwin",
       "architecture": "arm64",
       "node": "26.3.0",
-      "bun": "1.4.2"
+      "bun": "1.4.3"
     },
     "source": {
       "id": "control-plane",
-      "revision": "27f17bd55e0266439b5b3089163195c9e7a669be",
+      "revision": "36bb1a7ab21e77e2b948a0623062b9b97bf0849f",
       "digest": "sha256:aab81a866a5688a45e9d7964df11e7868ccd47a08609418a857102e60c2fd17c"
     },
     "metamorphic": [
@@ -308,14 +308,14 @@
         "expectation": "same-outcome"
       }
     ],
-    "identityDigest": "sha256:ecbac4775ed1d6a7054e2a97bdbec0ffbbc6c301902c18056f493e399424dd5f"
+    "identityDigest": "sha256:6f52ade0853a421e25701603d9a655796e5def33fefc48f506a49ee679419024"
   },
   "baseline": {
     "evalRunId": "cp191-baseline-pinned",
     "status": "passed",
     "cases": 39,
     "observedToolCalls": 101,
-    "observedLatencyMs": 10.16729499999974,
+    "observedLatencyMs": 87.1172059999999,
     "observedProviderUsage": null,
     "observedProviderUsageReason": "The offline harness performs no provider call, so no cost or token usage was observed. It is unavailable, not zero."
   },
@@ -324,7 +324,7 @@
     "status": "passed",
     "cases": 39,
     "observedToolCalls": 0,
-    "observedLatencyMs": 3746.508956,
+    "observedLatencyMs": 5485.949413,
     "observedProviderUsage": null,
     "observedProviderUsageReason": "The offline harness performs no provider call, so no cost or token usage was observed. It is unavailable, not zero."
   },
@@ -340,10 +340,10 @@
     "comparable": true,
     "reasons": [],
     "latency": {
-      "candidateMs": 3746.508956,
-      "baselineMs": 10.16729499999974,
-      "deltaMs": 3736.3416610000004,
-      "relativeDelta": 367.48630397761605
+      "candidateMs": 5485.949413,
+      "baselineMs": 87.1172059999999,
+      "deltaMs": 5398.832207,
+      "relativeDelta": 61.97205414278331
     },
     "toolCalls": {
       "candidate": 0,
@@ -406,10 +406,10 @@
       {
         "metric": "latency_ms",
         "direction": "min",
-        "candidate": 96.06433220512821,
-        "baseline": 0.26069987179486515,
-        "delta": 95.80363233333334,
-        "regression": 367.48630397761605
+        "candidate": 140.66536956410258,
+        "baseline": 2.23377451282051,
+        "delta": 138.43159505128207,
+        "regression": 61.97205414278332
       },
       {
         "metric": "provenance_correctness",

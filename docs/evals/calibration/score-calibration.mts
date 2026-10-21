@@ -8,6 +8,8 @@
  *
  *   bun docs/evals/calibration/score-calibration.mts
  */
+import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -18,6 +20,13 @@ import {
 } from '../../../packages/production-readiness/src/adversarial-eval-corpus.ts'
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
+/** Formats a generated JSON artifact with the repository formatter when it is available. */
+function formatJsonArtifact(path: string): void {
+  const formatter = join(repositoryRoot, 'node_modules/.bin/oxfmt')
+  if (!existsSync(formatter)) return
+  spawnSync(formatter, [path], { stdio: 'ignore' })
+}
+
 const calibrationDirectory =
   process.env.CALIBRATION_OUTPUT_DIR ?? join(repositoryRoot, 'docs/evals/calibration')
 
@@ -49,6 +58,7 @@ const report = computeCalibrationAgreement({
 })
 
 await writeFile(reportFile, JSON.stringify(report, null, 2) + '\n')
+formatJsonArtifact(reportFile)
 
 if (!humanScoresPresent || report.status !== 'scored') {
   console.log(

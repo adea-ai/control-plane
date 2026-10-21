@@ -8,6 +8,8 @@
  *
  *   bun docs/evals/calibration/build-calibration-packet.mts
  */
+import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,6 +21,13 @@ import {
 import { recalibrationScenarios } from '../recalibration/scenarios.mts'
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
+/** Formats a generated JSON artifact with the repository formatter when it is available. */
+function formatJsonArtifact(path: string): void {
+  const formatter = join(repositoryRoot, 'node_modules/.bin/oxfmt')
+  if (!existsSync(formatter)) return
+  spawnSync(formatter, [path], { stdio: 'ignore' })
+}
+
 const outputDirectory =
   process.env.CALIBRATION_OUTPUT_DIR ?? join(repositoryRoot, 'docs/evals/calibration')
 
@@ -77,6 +86,8 @@ await writeFile(
   JSON.stringify({ schemaVersion: 1, kit: packet.packetId, verdicts: graderVerdicts }, null, 2) +
     '\n'
 )
+formatJsonArtifact(join(outputDirectory, 'blinded-packet.json'))
+formatJsonArtifact(join(outputDirectory, 'grader-verdicts.json'))
 console.log(
   `blinded packet written with ${packet.scenarios.length} scenarios to ${outputDirectory}`
 )
