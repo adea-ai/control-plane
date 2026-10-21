@@ -96,6 +96,8 @@ async function createTwoRootBindingFixture() {
   // The two files must be indistinguishable by size and timestamp.
   expect(Buffer.byteLength(binds)).toBe(Buffer.byteLength(doesNotBind))
   const timestamp = new Date('2026-10-21T00:00:00.000Z')
+  const moduleSource =
+    'useValue: options.executionAcceptanceService ?? new UnavailableExecutionAcceptanceService()\n'
   const sources = [
     'apps/control-api/src/app.module.ts',
     'apps/control-api/src/index.ts',
@@ -115,14 +117,27 @@ async function createTwoRootBindingFixture() {
       // The module that declares the defaults is identical in both roots.
       await writeFile(
         target,
-        source === 'apps/control-api/src/app.module.ts'
-          ? 'useValue: options.executionAcceptanceService ?? new UnavailableExecutionAcceptanceService()\n'
-          : content
+        source === 'apps/control-api/src/app.module.ts' ? moduleSource : content
       )
       await utimes(target, timestamp, timestamp)
     }
   }
-  return { directory, rootA, rootB }
+  return { directory, rootA, rootB, binds, doesNotBind, moduleSource, sources, timestamp }
+}
+
+/**
+ * Rewrites the fixture's sources with the same byte length and the same
+ * modification time, so only the contents differ.
+ */
+async function rewriteFixtureSources(fixture, root, content) {
+  for (const source of fixture.sources) {
+    const target = join(root, source)
+    await writeFile(
+      target,
+      source === 'apps/control-api/src/app.module.ts' ? fixture.moduleSource : content
+    )
+    await utimes(target, fixture.timestamp, fixture.timestamp)
+  }
 }
 
 const disabledCapabilityOptions = [
@@ -381,9 +396,59 @@ describe('M11.2 architecture audit tooling regressions', () => {
       expect(first.profiles.cloud.bound).toContain('executionAcceptanceService')
       expect(second.profiles.cloud.bound).not.toContain('executionAcceptanceService')
       expect(second.profiles.cloud.unbound).toContain('executionAcceptanceService')
+      // Auditing the first root again returns the first root's answer, so the
+      // second root did not overwrite the first root's cache entry.
+      const firstAgain = await discoverCapabilityBindings(fixture.rootA)
+      expect(firstAgain.profiles.cloud.bound).toContain('executionAcceptanceService')
+      expect(firstAgain.profiles.cloud.unbound).not.toContain('executionAcceptanceService')
     } finally {
       await rm(fixture.directory, { recursive: true, force: true })
     }
+  })
+
+  test('re-parses a source whose contents change while its size and time do not', async () => {
+    const fixture = await createTwoRootBindingFixture()
+    try {
+      const first = await discoverCapabilityBindings(fixture.rootA)
+      expect(first.profiles.cloud.bound).toContain('executionAcceptanceService')
+      // The same paths are rewritten with the same byte length and the same
+      // modification time, so only the contents identify the change.
+      await rewriteFixtureSources(fixture, fixture.rootA, fixture.doesNotBind)
+      const second = await discoverCapabilityBindings(fixture.rootA)
+      expect(second.profiles.cloud.bound).not.toContain('executionAcceptanceService')
+      expect(second.profiles.cloud.unbound).toContain('executionAcceptanceService')
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true })
+    }
+  })
+
+  test('documents the conservative first-declaration rule for a shadowed shorthand', () => {
+    // A shorthand property binds the variable it names. The detector resolves
+    // that variable by taking the first declaration of the name anywhere in the
+    // file, so the answer follows file order rather than lexical scope.
+    //
+    // This is exact for the admitted profile sources, where every capability
+    // name is declared once and that declaration encloses the shorthand site.
+    // It is not exact in general, and the two cases below show the limit: the
+    // inner shorthand binds `undefined` in both, yet the rule answers from the
+    // first declaration either way. The rule is pinned here so the limit stays
+    // visible and any change to it is deliberate.
+    const shadowedUndefinedFirst = [
+      'function bind() {',
+      '  const executionAcceptanceService = undefined',
+      '  return { executionAcceptanceService }',
+      '}',
+      'const executionAcceptanceService = composition.executionAcceptanceService',
+    ].join('\n')
+    const shadowedRealFirst = [
+      'const executionAcceptanceService = composition.executionAcceptanceService',
+      'function bind() {',
+      '  const executionAcceptanceService = undefined',
+      '  return { executionAcceptanceService }',
+      '}',
+    ].join('\n')
+    expect(bindsCapabilityOption(shadowedUndefinedFirst, 'executionAcceptanceService')).toBe(false)
+    expect(bindsCapabilityOption(shadowedRealFirst, 'executionAcceptanceService')).toBe(true)
   })
 
   test('rejects a persistence parity inventory that disagrees with its rows', async () => {

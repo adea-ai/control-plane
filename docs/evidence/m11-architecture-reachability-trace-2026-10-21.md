@@ -15,7 +15,7 @@ registration. Those stay with their current owners.
 | Repository                                        | `adea-ai/control-plane`                                                                 |
 | Branch                                            | `f2w3/cp187-architecture-audit`                                                         |
 | Base commit                                       | `27f17bd55e0266439b5b3089163195c9e7a669be` (`chore(main): release 1.105.5 (#1209)`)     |
-| Change under review                               | the committed head of `f2w3/cp187-architecture-audit` (three owned files, section 8)    |
+| Change under review                               | the head of `f2w3/cp187-architecture-audit`; three owned files, sections 8 and 12       |
 | Audited candidate recorded by the canonical audit | `6c922d487c3c2e70a047c11c55a1cb4ddbabad26` (`main`, recorded 2026-10-01)                |
 | Toolchain                                         | Bun 1.4.3, Node 24.21.0, `darwin-arm64` (`.bun-version`, `.node-version`)               |
 | Commands                                          | `bun scripts/architecture-audit.mjs`, `bun test tests/m11-architecture-audit*.test.mjs` |
@@ -24,6 +24,15 @@ Everything below is derived from the current tree at the base commit. Where a nu
 the tree it is reproducible with the commands in section 10. Local executions are **local synthetic
 or local process evidence only**: they are not live profile acceptance, not provider evidence, and
 not deployed evidence.
+
+**What the profile statements in this packet are.** Every per-profile reachability, capability
+binding and port statement here is a **static inventory** result: it is derived by reading the
+composition sources, the SDK registry, the OpenAPI document and the persistence manifests in the
+tree. It says what the sources bind, not what a running profile did. No profile was deployed, no
+provider was called and no runtime was exercised, so nothing here is proof that a profile started,
+accepted an operation, or served a route. Where this packet says a capability is "bound" or
+"never bound", that is a statement about the sources, and a live run is what would confirm or
+refute it.
 
 ---
 
@@ -114,6 +123,10 @@ delete the routes.
 
 ### 2.3 Capability binding per profile (the disabled-binding surface)
 
+**This matrix is a static inventory of the composition sources, not a runtime observation.** It
+records which capability options each profile's sources bind; it does not record what a running
+profile served. Section 11 keeps the live profile gate open.
+
 `apps/control-api/src/app.module.ts` accepts 22 optional capability bindings. Twenty-one of them
 default to an implementation whose name starts with `Unavailable`, `Disabled` or `Empty`, so a
 composition that does not supply its own implementation serves a route that always refuses. Only
@@ -196,6 +209,10 @@ architecture artifact owner (W1). Disposition: add per-profile reachability rows
 relay and tool-gateway entry surfaces, using the port bindings the audit already measures.
 
 ### 2.5 Which capabilities share the core
+
+This is a static inventory of the workspace manifests and the composition sources. It says which
+packages are core to the layering and which adapters a profile's sources may bind; it is not a
+runtime observation of any profile.
 
 Every profile composes the same 14 core packages; the rest of the 45 workspaces are adapters that
 a profile may or may not bind. The core is a DAG rooted at `@control-plane/contracts`:
@@ -451,15 +468,31 @@ the W1-owned `docs/architecture/control-plane-architecture.md` stays byte-identi
 | T11 | Composition digest collision              | `local` and `hosted-simple` sharing a digest was invisible                                                                                                                      | reported as a warning                                                                                                                                          |
 | T12 | Measured migration inventory              | the canonical audit's migration and schema figures were never compared with the tree                                                                                            | both dialects are measured on every run, the measured inventory is reported, and a PostgreSQL registry whose SQL files and journal disagree is an error        |
 
+### 8.1 Corrections after the base head
+
+Three further repairs were made after the base head, each from a root review of the published
+draft pull request. They are recorded here so this packet stays complete; the full evidence for
+each is in `docs/evidence/m11-architecture-audit-binding-detector-handoff-2026-10-21.md`.
+
+| #   | Repair                               | Before                                                                                                                           | After                                                                                                                       |
+| --- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| T13 | Binding detector reads parsed source | the detector matched names, so a commented example, a type-only declaration or an explicit `undefined` binding read as a binding | the source is parsed, so only a runtime object-literal assignment binds; a comment, a type or an `undefined` value does not |
+| T14 | Evidence containment by real path    | the evidence check resolved the path, verified containment lexically and then followed symlinks for the file test                | the root and the target are compared as canonical real paths, so an in-tree symlink pointing outside is rejected            |
+| T15 | Parse cache identity                 | the parse cache was keyed by the relative path and validated by size and modification time, so two roots could share an entry    | the entry is keyed by the canonical target path and validated by the content hash                                           |
+
+None of the three changes a measured value: the architecture audit's complete output stays
+byte-identical, and the per-profile capability matrix stays as section 2.3 records it.
+
 New exports used by the regression file: `discoverVersioningDefaults`, `discoverControllerRoutes`,
-`discoverCapabilityBindings`, `bindsCapabilityOption`, `discoverMigrationInventory`, and
-`discoverPublicOperations`.
+`discoverCapabilityBindings`, `bindsCapabilityOption`, `discoverMigrationInventory`,
+`evidencePathError` and `discoverPublicOperations`.
 
 ### Deterministic negative drift checks
 
-`scripts/m11-architecture-audit-regression.test.mjs` (new, dedicated) contains 16 tests. Each one
-mutates a clone of the canonical audit or of the discovered state and asserts that the tooling
-fails closed. None of them edits the canonical artifact.
+`scripts/m11-architecture-audit-regression.test.mjs` (new, dedicated) contains 28 tests. Each one
+mutates a clone of the canonical audit, of the discovered state, or of a synthetic fixture, and
+asserts that the tooling fails closed. None of them edits the canonical artifact, and none of them
+writes into the checkout: the fixtures are built in a temporary directory and removed afterwards.
 
 | Test                                                                          | Asserts                                                                                                                                                  |
 | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -479,6 +512,18 @@ fails closed. None of them edits the canonical artifact.
 | lockfile version drift reported                                               | a mutated `lockVersion` produces the warning                                                                                                             |
 | migration registry measured                                                   | SQL files and Drizzle journal entries agree, the last tags match, and the SQLite versions are ordered and contiguous                                     |
 | migration registry drift rejected                                             | error `PostgreSQL migration registry drifted: …` when the SQL files and journal entries disagree                                                         |
+| commented binding is not a binding                                            | a line comment, a block comment and a trailing comment do not bind; a comment beside a real binding does not hide it                                     |
+| type-only declaration is not a binding                                        | a `type` alias, an `interface`, an optional member and a class property signature do not bind                                                            |
+| explicit `undefined` is not a binding                                         | `undefined`, `void 0` and a shorthand over an `undefined` variable do not bind; `undefined ?? fallback` does                                             |
+| real runtime bindings are retained                                            | an object key with a real value, a shorthand, a shorthand over a declared value, a conditional spread guard and a quoted key all bind                    |
+| a comment cannot conceal a missing default in a real profile source           | a commented binding appended to the real `apps/control-api/src/index.ts` is still not read as a cloud binding                                            |
+| per-profile binding counts pinned                                             | the measured counts (20 / 13 / 16 / 16) and the disjointness of each profile's bound and unbound sets                                                    |
+| evidence symlink that escapes the repository is rejected                      | an in-tree symlink to an outside target is rejected directly and end to end                                                                              |
+| ordinary in-tree evidence is retained                                         | a regular in-tree file and an in-tree symlink that stays inside the root remain citable                                                                  |
+| unresolvable evidence path is rejected                                        | a symlink loop is rejected as unresolvable rather than mistaken for a missing file                                                                       |
+| two checkout roots are parsed separately                                      | two roots whose files share a relative path, byte length and modification time but differ in content produce different answers                           |
+| a changed source is re-parsed                                                 | the same path rewritten with the same byte length and modification time is parsed again                                                                  |
+| the conservative first-declaration rule is documented                         | a shadowed shorthand resolves by file order, not by lexical scope; the limit is pinned so it stays visible                                               |
 
 ---
 
@@ -542,12 +587,27 @@ that happens the file runs with
 
 ## 10. Reproducing this packet
 
+The focused, static checks that cover the owned tooling are the first block. They need only Bun
+and the workspace `node_modules`; they do not need a workspace build, a coverage run or a live
+service. The full lane block follows for a checkout that is allowed to build and run the wider
+suite.
+
+```
+bun scripts/architecture-audit.mjs                                        # canonical audit; warnings are the findings above
+bun test tests/m11-architecture-audit.test.mjs                            # existing owner coverage
+cd scripts && bun test --timeout 30000 m11-architecture-audit-regression.test.mjs   # new regression coverage
+cd .. && bun x oxfmt --check scripts/architecture-audit.mjs scripts/m11-architecture-audit-regression.test.mjs
+cd .. && bun x oxlint --deny-warnings scripts/architecture-audit.mjs scripts/m11-architecture-audit-regression.test.mjs
+```
+
+The wider suite (a workspace build, a full lint lane, the smoke lane and the package test suites)
+was last run at the head recorded in
+`docs/evidence/m11-architecture-audit-binding-detector-handoff-2026-10-21.md`. Re-running it needs
+cross-fleet capacity to be rechecked first.
+
 ```
 bun install --frozen-lockfile
 bun run build
-bun scripts/architecture-audit.mjs          # canonical audit; warnings are the findings above
-bun test tests/m11-architecture-audit.test.mjs            # existing owner coverage
-cd scripts && bun test --timeout 30000 m11-architecture-audit-regression.test.mjs # new regression coverage
 bun run check:boundaries
 bun run check:digest-writers
 bun run db:check
@@ -561,19 +621,36 @@ bun test tests/m2-core-domain.test.mjs tests/m3-durable-execution.test.mjs tests
 bun test tests/m9-production-hardening.test.mjs
 ```
 
+bun run check:boundaries
+bun run check:digest-writers
+bun run db:check
+bun run compatibility:check
+bun --cwd=packages/control-sdk run openapi:check
+bun --cwd=packages/domain test
+bun --cwd=packages/events test
+bun --cwd=packages/config test
+bun --cwd=packages/sqlite-persistence test
+bun test tests/m2-core-domain.test.mjs tests/m3-durable-execution.test.mjs tests/m10-portability-conformance.test.mjs
+bun test tests/m9-production-hardening.test.mjs
+
+```
+
 Final-candidate readback (section 3):
 
 ```
+
 git cat-file -e 6c922d487c3c2e70a047c11c55a1cb4ddbabad26^{commit}
 git merge-base --is-ancestor 6c922d487c3c2e70a047c11c55a1cb4ddbabad26 27f17bd55e0266439b5b3089163195c9e7a669be
 git ls-tree --name-only <candidate> packages/database/drizzle/ | grep -c '\.sql$'
 git show <candidate>:packages/control-sdk/src/operations.ts | grep -c "operation: '"
 git show <candidate>:packages/sqlite-persistence/src/migrations.ts | grep -c 'version: [0-9]*, statements:'
+
 ```
 
 The canonical audit reports these warnings on the current tree:
 
 ```
+
 workspace package versions drifted from the Bun lockfile: apps/control-api 1.34.2/1.34.1, apps/workflow-worker 1.18.2/1.18.1, packages/telemetry 1.8.2/1.8.1
 Control API serves 9 HTTP route(s) with no SDK operation binding: …
 Control API exposes 21 capability binding(s) that default to an unavailable implementation: …
@@ -583,6 +660,7 @@ hosted-simple: never binds 5 capability binding(s) …
 local: never binds 5 capability binding(s) …
 profiles local and hosted-simple share one composition source digest …
 measured migration inventory: PostgreSQL 74 migration(s) up to 0073_scope_version_pairing.sql, SQLite schema version 5
+
 ```
 
 ---
@@ -618,3 +696,34 @@ measured migration inventory: PostgreSQL 74 migration(s) up to 0073_scope_versio
    locally on `f2w3/cp187-architecture-audit` for root to review and publish.
 8. **Human gates.** No human acceptance, review, sign-off, provider qualification or deployed
    confirmation is claimed anywhere in this packet.
+```
+
+---
+
+## 12. State of this packet at the current head
+
+The three owned files on `f2w3/cp187-architecture-audit` are:
+
+| Path                                                                          | Role                                                                                      |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `scripts/architecture-audit.mjs`                                              | the audit tooling: discovery, the canonical validation and the report renderer            |
+| `scripts/m11-architecture-audit-regression.test.mjs`                          | the dedicated regression file: 28 deterministic negative drift checks                     |
+| `docs/evidence/m11-architecture-reachability-trace-2026-10-21.md`             | this packet                                                                               |
+| `docs/evidence/m11-architecture-audit-binding-detector-handoff-2026-10-21.md` | the handoff packet for the three root-review corrections and the proposed CI lane handoff |
+
+**What this packet establishes.** The four-profile reachability trace, the contract, OpenAPI,
+schema, migration and SDK compatibility matrix, the SQLite and PostgreSQL parity matrix, the dead
+ends and disabled bindings, and the findings routed to their exact source owners. Every one of those
+is a **static inventory** result over the tree at the base commit, reproducible with the commands in
+section 10.
+
+**What this packet does not establish.** No profile was deployed, no provider was called, no
+runtime was exercised and no artifact was published. The per-profile statements are not
+runtime-profile proof, and none of the four canonical profile rows is upgraded by this packet. The
+live profile gates in section 11 stay open, and CP #187 is not complete on the strength of this
+packet.
+
+**What changed after the base head.** Three corrections from root's review of the published draft
+pull request, recorded in section 8.1 and evidenced in the handoff packet. None of them changes a
+measured value: the architecture audit's complete output is byte-identical across the reviewed
+heads, and the capability matrix in section 2.3 is unchanged.

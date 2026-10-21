@@ -13,6 +13,7 @@ root's review of the resulting head.
 | First root-reviewed head  | `51ae5991e38cb25efe452d72ce0863e87cbfef2e`                                                                                                                          |
 | Second root-reviewed head | `ccd2d1798efe45804cfd112118af91508086851b` (binding-parser repair)                                                                                                  |
 | Third root-reviewed head  | `fc169f506ec98432883af6cd26bcc8a0101570f3` (evidence-path repair)                                                                                                   |
+| Fourth root-reviewed head | `70017bd9ae7a46a8a58aada372f9e75166004d02` (parse-cache identity)                                                                                                   |
 | Files in this bundle      | `scripts/architecture-audit.mjs`, `scripts/m11-architecture-audit-regression.test.mjs`, this packet                                                                 |
 | Toolchain                 | Bun 1.4.3, Node 24.21.0, `darwin-arm64`                                                                                                                             |
 | Prior evidence packet     | `docs/evidence/m11-architecture-reachability-trace-2026-10-21.md` — **unchanged**, and still specific to the base commit `27f17bd55e0266439b5b3089163195c9e7a669be` |
@@ -242,20 +243,22 @@ resolved, and the lookup deliberately stays that simple:
 
 ## 5. Regression coverage
 
-`scripts/m11-architecture-audit-regression.test.mjs` grows from 16 to 26 tests across this bundle.
+`scripts/m11-architecture-audit-regression.test.mjs` grows from 16 to 28 tests across this bundle.
 
-| Test                                                                                | Covers                                                                                                                                                                                             |
-| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `does not read a commented binding as a capability binding`                         | finding 1: the exact commented example, a block comment, a trailing comment inside a real options literal, and a comment next to a real binding                                                    |
-| `does not read a type-only declaration as a capability binding`                     | finding 1: a `type` alias, an `interface`, an optional `interface` member, an exported `interface`, a class property signature, and a type declaration next to a real binding                      |
-| `does not read an explicit undefined binding as a capability binding`               | finding 1: `undefined`, `void 0`, a shorthand whose variable is declared `undefined`, a conditional whose branches are both `undefined`, and the `undefined ?? fallback` case that must still bind |
-| `keeps reading real runtime object and shorthand bindings`                          | the positive cases: object key with a real value, shorthand, shorthand over a declared value, a conditional spread guard, a quoted key                                                             |
-| `does not let a comment conceal a missing default in a real profile source`         | end to end: a commented binding appended to the real `apps/control-api/src/index.ts` is still not read as a cloud binding                                                                          |
-| `pins the number of capability bindings each profile supplies`                      | the measured counts (20 / 13 / 16 / 16) and the disjointness of each profile's bound and unbound sets                                                                                              |
-| `rejects an in-tree evidence symlink that points outside the repository`            | finding 2: the escaping symlink is rejected directly and end to end through the audit validator                                                                                                    |
-| `keeps accepting ordinary in-tree evidence`                                         | finding 2: a regular in-tree file and an in-tree symlink that stays inside the root remain citable                                                                                                 |
-| `rejects an evidence path that cannot be resolved`                                  | finding 2: a symlink loop is rejected as unresolvable, not mistaken for a missing file                                                                                                             |
-| `parses two checkout roots separately when their files share a path, size and time` | finding 3: two roots with the same relative path, byte length and modification time, but different binding contents, are parsed separately                                                         |
+| Test                                                                                | Covers                                                                                                                                                                                                                |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `does not read a commented binding as a capability binding`                         | finding 1: the exact commented example, a block comment, a trailing comment inside a real options literal, and a comment next to a real binding                                                                       |
+| `does not read a type-only declaration as a capability binding`                     | finding 1: a `type` alias, an `interface`, an optional `interface` member, an exported `interface`, a class property signature, and a type declaration next to a real binding                                         |
+| `does not read an explicit undefined binding as a capability binding`               | finding 1: `undefined`, `void 0`, a shorthand whose variable is declared `undefined`, a conditional whose branches are both `undefined`, and the `undefined ?? fallback` case that must still bind                    |
+| `keeps reading real runtime object and shorthand bindings`                          | the positive cases: object key with a real value, shorthand, shorthand over a declared value, a conditional spread guard, a quoted key                                                                                |
+| `does not let a comment conceal a missing default in a real profile source`         | end to end: a commented binding appended to the real `apps/control-api/src/index.ts` is still not read as a cloud binding                                                                                             |
+| `pins the number of capability bindings each profile supplies`                      | the measured counts (20 / 13 / 16 / 16) and the disjointness of each profile's bound and unbound sets                                                                                                                 |
+| `rejects an in-tree evidence symlink that points outside the repository`            | finding 2: the escaping symlink is rejected directly and end to end through the audit validator                                                                                                                       |
+| `keeps accepting ordinary in-tree evidence`                                         | finding 2: a regular in-tree file and an in-tree symlink that stays inside the root remain citable                                                                                                                    |
+| `rejects an evidence path that cannot be resolved`                                  | finding 2: a symlink loop is rejected as unresolvable, not mistaken for a missing file                                                                                                                                |
+| `parses two checkout roots separately when their files share a path, size and time` | finding 3: two roots with the same relative path, byte length and modification time, but different binding contents, are parsed separately, and re-auditing the first root afterwards returns the first root's answer |
+| `re-parses a source whose contents change while its size and time do not`           | finding 3: the same path rewritten with the same byte length and the same modification time is parsed again, because the content hash is the change identity                                                          |
+| `documents the conservative first-declaration rule for a shadowed shorthand`        | the lexical-scope limit in section 4: a shadowed shorthand resolves by file order, not by scope, and the limit is pinned so it stays visible                                                                          |
 
 The four evidence cases root did not report — a lexical escape, an absolute path, a directory and
 a missing file — remain covered by `rejects evidence that escapes the repository or is not a
@@ -289,14 +292,28 @@ the changed tooling. What was run, and what was deliberately not run, are record
 
 | Check                           | Command                                                                                                          | Result                                                                                        |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| F2W3 dedicated regression file  | `cd scripts && bun test --timeout 30000 m11-architecture-audit-regression.test.mjs`                              | 26 pass / 0 fail, 188 expects                                                                 |
+| F2W3 dedicated regression file  | `cd scripts && bun test --timeout 30000 m11-architecture-audit-regression.test.mjs`                              | 28 pass / 0 fail, 196 expects                                                                 |
 | W1's existing audit coverage    | `bun test tests/m11-architecture-audit.test.mjs`                                                                 | 7 pass / 0 fail, 193 expects                                                                  |
-| Canonical architecture audit    | `bun run architecture:check`                                                                                     | PASS (exit 0); output byte-identical to `51ae5991e`, `ccd2d1798` and `fc169f506`              |
+| Canonical architecture audit    | `bun run architecture:check`                                                                                     | PASS (exit 0); output byte-identical to `51ae5991e`, `ccd2d1798`, `fc169f506` and `70017bd9a` |
 | Formatting of the changed files | `bun x oxfmt --check scripts/architecture-audit.mjs scripts/m11-architecture-audit-regression.test.mjs`          | all matched files use the correct format                                                      |
 | Lint of the changed files       | `bun x oxlint --deny-warnings scripts/architecture-audit.mjs scripts/m11-architecture-audit-regression.test.mjs` | clean                                                                                         |
 | Measured capability matrix      | `discoverCapabilityBindings` on the checkout                                                                     | unchanged: cloud 20, hosted-server 13, hosted-simple 16, local 16, with the same unbound sets |
 
+**Pinned dependency resolution.** `@control-plane/runtime-sdk` resolves in this checkout: the workspace
+symlink `node_modules/@control-plane/runtime-sdk -> packages/runtime-sdk` is present and the built
+`packages/runtime-sdk/dist/index.js` is in place, so the audit's dynamic import of the SDK operation
+registry succeeds (141 exports resolved). No dependency was changed and no package was installed.
+
+**Toolchain note.** This environment currently has Bun 1.4.3 (the version pinned by `.bun-version`) but
+no Node 24.21.0 binary: the toolchain install under the session directory holds only
+`npm`/`corepack`/`npx` for Node. The `vp run` lanes execute `node scripts/orch-toolchain.mjs` to verify the
+toolchain identity, so the full build, lint and smoke lanes cannot be executed here, independently of
+this task's instruction to run focused and static checks only.
+
 **Not run in this task, by instruction:** no full build, no coverage run, no full smoke lane, no
+full lint lane. The last full smoke-lane result on this branch is the one recorded for the
+`fc169f506` bundle head — 629 pass / 5 skip / 0 fail across 634 tests in 44 files, exit 0 — and the
+lane budget owner should re-measure after this repair lands.
 full lint lane. The last full smoke-lane result on this branch is the one recorded for the
 `fc169f506` bundle head — 629 pass / 5 skip / 0 fail across 634 tests in 44 files, exit 0 — and the
 lane budget owner should re-measure after this repair lands.
