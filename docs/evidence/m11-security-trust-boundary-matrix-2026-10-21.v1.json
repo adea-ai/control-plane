@@ -9,11 +9,16 @@
     "branch": "f2w4/cp190-trust-boundary",
     "head": "27f17bd55e0266439b5b3089163195c9e7a669be",
     "mainBase": "6d16a495186d2a4d84d422c936a02b4abdc93928",
+    "mainBaseNote": "the main commit this branch was cut from; the branch's merge base with main is the audited head recorded in head/mergeBase",
+    "currentMain": "4e126a7c3e55bfb05b8bdfc390705b83f777c6d4",
+    "currentMainNote": "main as read from the authoritative GitHub API at the reconciliation; five commits ahead of the audited head, and the fifth (#1224) is the owner fix for CP190-F04",
     "workspace": "1.105.5",
     "pr": 1220,
     "prHead": "d26b1ff0e7d27b98a7f23440abc5c69824f9a311",
     "mergeBase": "27f17bd55e0266439b5b3089163195c9e7a669be",
-    "headNote": "head is the merge base of the branch; prHead is the exact revision this matrix records"
+    "headNote": "head is the merge base of the branch and the audited head; prHead is the pull-request head this matrix was reconciled against, and the reconciliation itself is published on top of it",
+    "reconciledAt": "2026-10-21",
+    "reconciliation": "Reconciled against the repository as it stands now: main is 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4, and the packet's own probe suite was executed against that head."
   },
   "provenance": {
     "author": "Fleet 2 / F2W4 independent reviewer",
@@ -29,7 +34,7 @@
     "finalCandidateRecheck": {
       "method": "every branch in the fleet's shared origin was compared against the audited head for the files each finding depends on",
       "branchesCompared": 45,
-      "ownerFixesAvailable": 0,
+      "ownerFixesAvailable": 1,
       "filesDifferingOnUnmergedBranches": [
         "packages/remote-control-relay/src/relay.ts",
         "packages/deployment/src/checkpoint.ts",
@@ -37,8 +42,28 @@
         "packages/sqlite-persistence/src/provider.ts",
         "apps/workflow-worker/src/runtime-attempt-router.ts"
       ],
-      "findingImpact": "none; every difference is cosmetic or belongs to an unrelated change, so all 28 findings stand on the audited head and on every currently available unmerged branch",
-      "ownerFixVerification": "pending; no owner fix for any finding exists on an available head yet"
+      "findingImpact": "none; every difference is cosmetic or belongs to an unrelated change, so all 29 findings stand on the audited head and on every currently available unmerged branch. The one owner fix that exists is on main, not on an unmerged branch, and is recorded under ownerFixReVerification.",
+      "ownerFixVerification": "one owner fix exists and was re-verified by execution: CP190-F04 on main at 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4 (#1224). The other 28 findings are pending; no owner fix for them exists on an available head yet.",
+      "ownerFixesAvailableNote": "One: CP190-F04, on main at 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4 (#1224). The other 28 findings have no owner fix on any available head.",
+      "baseAdvance": {
+        "auditedHead": "27f17bd55e0266439b5b3089163195c9e7a669be",
+        "currentMain": "4e126a7c3e55bfb05b8bdfc390705b83f777c6d4",
+        "commitsAhead": ["2e68492ed", "b1dee8b9c", "df37ca85a", "5e4b8d331", "4e126a7c3"],
+        "dependencyFilesTouched": [
+          "packages/credential-vault/src/vault.ts",
+          "packages/credential-vault/src/index.test.mjs"
+        ],
+        "effect": "The fifth commit is the owner fix for CP190-F04. Of the thirty files the probes read, only packages/credential-vault/src/vault.ts differs between the audited head and current main; the other twenty-nine are byte-identical, so the advance bears on F-04 only."
+      },
+      "ownerFixReVerification": {
+        "method": "The packet's own probe suite was executed with main's credential-vault in place of the audited head's, and with every other file identical; the package was rebuilt from main's source and the audited head's source was restored afterwards.",
+        "head": "4e126a7c3e55bfb05b8bdfc390705b83f777c6d4",
+        "exitCode": 2,
+        "result": "24 open, 2 resolved, 0 harness failures",
+        "resolvedProbes": ["CP190-P05", "CP190-P23"],
+        "resolvedProbeNote": "Both are CP190-F04's probes. The suite reports 26 open and exits 0 on the audited head, so the difference is the fix and not the harness.",
+        "claimLimit": "This records that the F-04 defect is fixed on that head. It is not a close of the finding, not a deployed-credential-leak claim, and not a release or acceptance claim; the finding is still recorded against the audited head, where it reproduces."
+      }
     }
   },
   "domains": [
@@ -399,7 +424,7 @@
         "packages/remote-control-relay/src/protocol.ts:68-81",
         "packages/remote-control-relay/src/adapter.ts:154-173"
       ],
-      "probes": ["CP190-P01", "CP190-P02", "CP190-P21"],
+      "probes": ["CP190-P01", "CP190-P02", "CP190-P21", "CP190-P26"],
       "routedTo": "W1 (packages/remote-control-relay) with the Agent HQ product relay owner",
       "regression": "The processor must not be able to accept a metadata command that its caller has not authenticated, and a composition must refuse to start a relay adapter whose client does not assert authentication. Regression test: a metadata command with no authenticated-transport provenance is rejected by the processor, and the composition fails closed when the supplied client declares no authentication.",
       "reachability": "configured-only",
@@ -420,7 +445,7 @@
         "packages/remote-control-relay/src/relay.ts:376",
         "packages/remote-control-relay/src/execution.ts:135"
       ],
-      "probes": ["CP190-P03", "CP190-P04", "CP190-P22"],
+      "probes": ["CP190-P03", "CP190-P04", "CP190-P22", "CP190-P26"],
       "routedTo": "W1 (packages/remote-control-relay)",
       "regression": "Bind the effect and its receipt atomically, or bind the receipt to a stable effect key that the injected callback also uses. Do not move the receipt before the effect. Regression test: a receipt-store write that fails must leave the effect unapplied; a receipt and its effect must be indivisible; and a redelivery after a restart must be rejected as a duplicate by the durable receipt.",
       "reachability": "configured-only",
@@ -465,7 +490,20 @@
       "reachability": "library-contract",
       "reachabilityClass": "A library-level contract gap. No composed path in this repository reaches it, so no deployed behaviour is claimed.",
       "reachabilityNote": "Bounded to the returned value of a leased callback. packages/credential-vault/src/vault.ts:456-467 screens the value the callback returns with containsSecret, and containsSecret (:550-557) walks own enumerable string-keyed properties only, so a returned Error, Map, Set or byte container carrying the secret is not detected. Ordinary thrown errors are already sanitized: the catch at :462-466 converts any non-CredentialVaultError throw into PROVIDER_OPERATION_FAILED. The composed leased path is protected by a second control: the model-selection service returns safeCredentialResult(await operation(secret)) (packages/model-gateway/src/selection-service.ts:269), and safeCredentialResult (:341-380) rejects any object whose prototype is not Object.prototype or null, rejects symbol keys, rejects sparse arrays and rejects cycles, so a non-plain carrier cannot survive it. The two callers that return the raw result are the credential broker (packages/credential-vault/src/tool-broker.ts:91-99) and the MCP adapter (packages/tool-execution/src/mcp-adapter.ts:257-277, which reduces thrown transport errors to a bounded code but returns the invoke output raw); neither is composed into any application, and no application composes a VaultToolCredentialBroker. The composed profiles also do not lease: the Control API vault composes no policy decision point (apps/control-api/src/cloud-composition.ts:100-104), so leases deny before a secret is resolved (packages/credential-vault/src/vault.ts:326-332).",
-      "counterevidence": "The previous revision implied a deployed credential-leakage path. It does not: thrown errors are sanitized, the Control API vault denies leases without a policy decision point, and the demonstrated case is a library contract gap in the returned-value screen only."
+      "counterevidence": "The previous revision implied a deployed credential-leakage path. It does not: thrown errors are sanitized, the Control API vault denies leases without a policy decision point, and the demonstrated case is a library contract gap in the returned-value screen only.",
+      "ownerFix": {
+        "state": "landed and re-verified by execution; the finding is not closed by this lane",
+        "head": "4e126a7c3e55bfb05b8bdfc390705b83f777c6d4",
+        "commit": "4e126a7c3 Harden credential vault callback result inspection (#1224)",
+        "paths": [
+          "packages/credential-vault/src/vault.ts",
+          "packages/credential-vault/src/index.test.mjs"
+        ],
+        "pathsNote": "The second path is the exact regression file this packet proposes for F-04 in the report's section 4.",
+        "reVerification": "Probe suite executed against that head: 24 open, 2 resolved (CP190-P05, CP190-P23), 0 harness failures, exit code 2.",
+        "findingStillHoldsAt": "27f17bd55e0266439b5b3089163195c9e7a669be",
+        "closureOwner": "The controller confirms the fix head and closes the finding; this lane neither closes it nor edits either path."
+      }
     },
     {
       "id": "CP190-F05",
@@ -892,13 +930,23 @@
     "registeredWorktreesChecked": 11,
     "claudeCustody": "unverified in the shared index; the three paths are new and unique, and no existing file was modified, so a custody reversal can drop the branch without touching another owner",
     "existingFilesModified": [],
-    "sharedIndexReReadable": false,
-    "sharedIndexNote": "The shared ownership index cited by sharedIndex/sharedIndexSha256 was not readable at the audited head, so the claim below is scoped to the checkouts actually inspected and listed.",
+    "sharedIndexReReadable": true,
+    "sharedIndexNote": "The shared ownership index cited by sharedIndex was not readable at the audited head, so that claim was scoped to the checkouts actually inspected and listed. The index is readable again and is rewritten continuously, so its SHA-256 identifies a snapshot and not the file. The re-read below found the two proposed F-04 paths named as the scope of Fleet 2's F2W6 (branch f2w6/credential-vault-f04), and the owner fix on main at 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4 (#1224).",
     "registeredWorktreesInspected": [
       "adea-ai/control-plane (the shared main checkout)",
       "the F2W4 CP190 checkout (this branch)"
     ],
-    "openPullRequestsNote": "One reconciled list, captured at the audited head, excluding the pull request under review (#1220). The two irreconcilable lists in the audit document were collapsed into this one."
+    "openPullRequestsNote": "One reconciled list, captured at the audited head, excluding the pull request under review (#1220). The two irreconcilable lists in the audit document were collapsed into this one.",
+    "sharedIndexSha256AtAuditedHead": "561ccd22bdd6d5a4abb1ebbecc489d8ee055c046074df680262547ad52784f05",
+    "reReadAt": "2026-10-21",
+    "sharedIndexReRead": {
+      "readAt": "2026-10-21",
+      "sha256AtRead": "710d4f61af9ee26b08449a9bc940ee0f90d14acbfa877e53c9e08b8dc1abb263",
+      "occurrencesOfProposedPaths": 4,
+      "occurrencesOfPackagePath": 8,
+      "result": "The index now names both proposed F-04 paths as the scope of Fleet 2's F2W6 (branch f2w6/credential-vault-f04, base 27f17bd55). The owner fix is on main at 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4 (#1224), changing packages/credential-vault/src/vault.ts and adding packages/credential-vault/src/index.test.mjs.",
+      "note": "This lane made no change to either path. The index is read only; the shared index is written by its own writer."
+    }
   },
   "severitySummary": {
     "high": 2,
@@ -1118,8 +1166,9 @@
     "registeredWorktrees": {
       "dirtyPathsTouchingProposedPaths": 0
     },
-    "result": "no exact-path owner found for either proposed path in the shared index, in any open pull request or in any registered worktree",
-    "interpretation": "Absence of an exact-path claim is not ownership approval. Root must verify and admit the exact paths before any edit. This lane made no change to either path, and it must not make one until that admission exists.",
-    "notes": "Unchanged by the second calibration round. The two proposed F-04 paths still have no exact-path owner in the shared index, in any open pull request or in any registered worktree, and this lane made no change to either path."
+    "result": "no exact-path owner found for either proposed path in the shared index, in any open pull request or in any registered worktree, at the audited head",
+    "interpretation": "Absence of an exact-path claim is not ownership approval. Root must verify and admit the exact paths before any edit. This lane made no change to either path, and it must not make one until that admission exists. The admission has since happened upstream and the fix has landed on main; this lane still edits neither path and did not take them.",
+    "notes": "Unchanged by the second calibration round. The two proposed F-04 paths still have no exact-path owner in the shared index, in any open pull request or in any registered worktree, and this lane made no change to either path. Superseded on the ownership question by the later admission recorded in laterResult; the no-change statement still holds.",
+    "laterResult": "Both proposed paths were subsequently admitted to Fleet 2's F2W6 (branch f2w6/credential-vault-f04, base 27f17bd55), and the owner fix is on main at 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4 (#1224): it changes packages/credential-vault/src/vault.ts and adds packages/credential-vault/src/index.test.mjs, the exact regression file this packet proposes."
   }
 }

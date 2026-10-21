@@ -21,18 +21,46 @@ observation and the adapter-owned directory are reported separately, CP190-F29 w
 added for the adapter-owned directory, and five static reachability probes
 (CP190-P21 to CP190-P25) were added. The finding count is now 29 and the probe count 25. No severity changed in this round and no gate was released.
 
-| Field                   | Value                                                                                                                                                             |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Issue                   | [#190 — M19.06 Complete the security, trust-boundary, and adversarial audit](https://github.com/adea-ai/control-plane/issues/190)                                 |
-| Repository              | `adea-ai/control-plane`                                                                                                                                           |
-| Branch                  | `f2w4/cp190-trust-boundary`                                                                                                                                       |
-| Audited head            | `27f17bd55e0266439b5b3089163195c9e7a669be` (workspace `1.105.5`)                                                                                                  |
-| Base                    | `main` at `6d16a495186d2a4d84d422c936a02b4abdc93928`                                                                                                              |
-| Reviewer                | Fleet 2 / F2W4, independent of every code owner whose fix this report assesses                                                                                    |
-| Machine-readable matrix | [`docs/evidence/m11-security-trust-boundary-matrix-2026-10-21.v1.json`](m11-security-trust-boundary-matrix-2026-10-21.v1.json)                                    |
-| Executable probes       | [`scripts/security-trust-boundary-probes.mjs`](../../scripts/security-trust-boundary-probes.mjs) — `bun scripts/security-trust-boundary-probes.mjs`               |
-| Requirements source     | [`docs/requirements/security-trust-atomic-inventory.md`](../requirements/security-trust-atomic-inventory.md) (`STA-L*` atoms, Security & Trust Model revision 78) |
-| Prior source audit      | [`docs/requirements/security-trust-source-audit.md`](../requirements/security-trust-source-audit.md) (`STM-001`..`STM-035`)                                       |
+Revision 4 (2026-10-21): the packet was reconciled against the repository as it
+stands now, and several of its statements no longer described it. `main` has
+advanced one commit past the base this packet recorded —
+`4e126a7c3e55bfb05b8bdfc390705b83f777c6d4` ("Harden credential vault callback
+result inspection (#1224)") — and that commit **does** touch a dependency file this
+packet relies on: it is the owner fix for F-04. The probe suite was executed
+against that exact head and reports `24 open, 2 resolved, 0 harness failures`
+with exit code `2`; CP190-P05 and CP190-P23, which are F-04's two probes, no
+longer reproduce there. The other twenty-nine files this packet's probes read are
+identical on the audited head and on current `main`, so the base advance can only
+bear on F-04.
+
+Seven further corrections are recorded in place, each against a check that decides
+it: the probe count the script prints (26, not 25); the probe-kind split in §4
+(eight probes call the real code path, eighteen read source as text); CP190-P26's
+obligation mapping, whose two cited atoms do not exist in the cited inventory;
+F-09's probe list, which named CP190-P25 although that probe's reproduction is
+conditioned on the adapter-owned directory that F-29 reports; the pull-request
+list in §1.1, which counted a merged pull request and this pull request as open
+at the audited head; the file count in §3.1; the question count in §9.1; and the
+routing table in §9, which omitted F-04 and F-06 from W1 and left F-27's package
+owner unstated. §1.1's index claim is now scoped to the snapshot it cites, because
+the index is rewritten continuously, and the re-read result is in §7 and in the
+JSON matrix's custody block. §5's "seed 1104" is removed: it belongs to a
+different suite, and this packet's cited file has no randomised seed. No finding
+was added, removed or re-rated, no gate was released, and no acceptance is
+claimed.
+
+| Field                   | Value                                                                                                                                                                                                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Issue                   | [#190 — M19.06 Complete the security, trust-boundary, and adversarial audit](https://github.com/adea-ai/control-plane/issues/190)                                                                                                                                   |
+| Repository              | `adea-ai/control-plane`                                                                                                                                                                                                                                             |
+| Branch                  | `f2w4/cp190-trust-boundary`                                                                                                                                                                                                                                         |
+| Audited head            | `27f17bd55e0266439b5b3089163195c9e7a669be` (workspace `1.105.5`)                                                                                                                                                                                                    |
+| Base                    | the `main` commit this branch was cut from, `6d16a495186d2a4d84d422c936a02b4abdc93928`; the branch's merge base with `main` is the audited head `27f17bd55e0266439b5b3089163195c9e7a669be`, and `main` is now `4e126a7c3e55bfb05b8bdfc390705b83f777c6d4` — see §3.1 |
+| Reviewer                | Fleet 2 / F2W4, independent of every code owner whose fix this report assesses                                                                                                                                                                                      |
+| Machine-readable matrix | [`docs/evidence/m11-security-trust-boundary-matrix-2026-10-21.v1.json`](m11-security-trust-boundary-matrix-2026-10-21.v1.json)                                                                                                                                      |
+| Executable probes       | [`scripts/security-trust-boundary-probes.mjs`](../../scripts/security-trust-boundary-probes.mjs) — `bun scripts/security-trust-boundary-probes.mjs`                                                                                                                 |
+| Requirements source     | [`docs/requirements/security-trust-atomic-inventory.md`](../requirements/security-trust-atomic-inventory.md) (`STA-L*` atoms, Security & Trust Model revision 78)                                                                                                   |
+| Prior source audit      | [`docs/requirements/security-trust-source-audit.md`](../requirements/security-trust-source-audit.md) (`STM-001`..`STM-035`)                                                                                                                                         |
 
 ## 1. Scope and method
 
@@ -68,12 +96,19 @@ What this lane deliberately did **not** do:
 The shared cross-fleet index
 (`/tmp/opencode-three-fleet-20261020-fresh/data/cross-fleet-ownership.json`,
 SHA-256 `561ccd22bdd6d5a4abb1ebbecc489d8ee055c046074df680262547ad52784f05`) was
-searched for each candidate path. It contains **no** reference to
-`scripts/run-bun-test-group.mjs`, `tests/m11-security-probes.test.mjs`,
-`packages/credential-vault`, `packages/remote-control-relay`, `packages/sandbox`,
-`packages/deployment/src/checkpoint` or `packages/profile-portability`. The four open
-pull requests (1212, 1210, 1204, 1048) touch none of the three new paths, and no
-registered worktree has any of them dirty or untracked.
+searched for each candidate path **at the audited head**. In that snapshot it
+contains **no** reference to `scripts/run-bun-test-group.mjs`,
+`tests/m11-security-probes.test.mjs`, `packages/credential-vault`,
+`packages/remote-control-relay`, `packages/sandbox`,
+`packages/deployment/src/checkpoint` or `packages/profile-portability`. The open
+pull requests checked at that head (1048, 1204, 1210, 1214, 1215, 1216, 1217, 1218,
+1219, 1222, 1223 — 1212 is merged, and 1220 is this pull request) touch none of the
+three new paths, and no registered worktree had any of them dirty or untracked.
+
+**The index is rewritten continuously, so that snapshot is not the file as it
+stands now.** The re-read is recorded in the JSON matrix's custody block, and
+§7 records what it changed: the two F-04 paths this packet proposes are now named
+in the index as the scope of the owner whose fix has landed on `main`.
 
 Claude-lead custody is recorded as `unverified` in the shared index, so this lane used
 **new, unique, additive paths only** and modified no existing file. A later custody
@@ -159,8 +194,8 @@ unauthenticated approval path, or a cross-UID read.
 
 | ID   | Severity   | Reachability       | Finding                                                                                                                         | Release impact                                                                                                                             | Probe              |
 | ---- | ---------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
-| F-01 | Medium     | `configured-only`  | The relay host processor applies no authentication of its own to metadata-only commands                                         | does not block the release; the Control Plane ships no relay client, no adapter and no metadata effect at all                              | P01, P02, P21      |
-| F-02 | Medium     | `configured-only`  | The relay receipt layer adds no idempotency beyond the command identifier, and only in-memory receipt repositories ship         | bounds the remote-control idempotency claim; `create_execution` is idempotent through the CommandInbox                                     | P03, P04, P22      |
+| F-01 | Medium     | `configured-only`  | The relay host processor applies no authentication of its own to metadata-only commands                                         | does not block the release; the Control Plane ships no relay client, no adapter and no metadata effect at all                              | P01, P02, P21, P26 |
+| F-02 | Medium     | `configured-only`  | The relay receipt layer adds no idempotency beyond the command identifier, and only in-memory receipt repositories ship         | bounds the remote-control idempotency claim; `create_execution` is idempotent through the CommandInbox                                     | P03, P04, P22, P26 |
 | F-03 | High       | `deployed-now`     | The direct-local runtime path never consults a `LocalProjectGrant`, and the production discovery state is a hard-coded constant | blocks the Local filesystem/project acceptance claim: the working directory is bounded by operator configuration, not by a grant           | P08, P09, P10, P24 |
 | F-13 | High       | `evidence-gap`     | The sandbox provider contract is composed into no application and no live provider exists                                       | there is no sandbox boundary in any shipped profile                                                                                        | P18                |
 | F-04 | Low        | `library-contract` | The credential-vault returned-value screen does not descend into `Error`, `Map`, `Set` or byte containers                       | no deployed credential leakage is claimed; the one composed leased path normalizes the result before the screen sees it                    | P05, P23           |
@@ -168,7 +203,7 @@ unauthenticated approval path, or a cross-UID read.
 | F-06 | Medium     | `deployed-now`     | Redaction is key-name based and misses compound credential key names                                                            | secrets reach logs and events under such keys                                                                                              | P06                |
 | F-07 | Medium     | `configured-only`  | Runtime Gateway runtime commands are not bounded to 24 hours                                                                    | remote commands outlive their authority; the gateway is used only for non-co-located nodes                                                 | P11                |
 | F-08 | Medium     | `deployed-now`     | A Local filesystem checkpoint copies the private-file secrets directory in cleartext                                            | operator backups carry plaintext secrets                                                                                                   | P12                |
-| F-09 | Low        | `defense-in-depth` | SQLite WAL/SHM sidecars keep the pre-restriction file mode inside an owner-only parent directory                                | no cross-UID read is claimed and there is no supported traversal path in the provider                                                      | P13, P25           |
+| F-09 | Low        | `defense-in-depth` | SQLite WAL/SHM sidecars keep the pre-restriction file mode inside an owner-only parent directory                                | no cross-UID read is claimed and there is no supported traversal path in the provider                                                      | P13                |
 | F-10 | Medium     | `deployed-now`     | Portable import scans with an empty sensitive-value list; portable secret references are not workspace scoped                   | exports can carry another workspace's secret locator                                                                                       | P14, P15           |
 | F-11 | Medium     | `configured-only`  | Sandbox credential bindings are injected after the ambient-credential denial runs                                               | a raw secret reaches the sandbox environment; the sandbox is composed into no application                                                  | P16                |
 | F-12 | Medium     | `configured-only`  | The sandbox metadata-service deny list is incomplete                                                                            | non-default metadata endpoints stay reachable; the sandbox is composed into no application                                                 | P17                |
@@ -187,7 +222,9 @@ unauthenticated approval path, or a cross-UID read.
 | F-26 | Medium     | `configured-only`  | The Restate interaction handler resolves by name without a responding-principal check                                           | an approval delivered over the workflow ingress is not re-authorized on that path                                                          | source reading     |
 | F-28 | Medium     | `configured-only`  | Staging and production share one R2 bucket credential slot, separated by prefix only                                            | the asserted environment credential separation is a convention                                                                             | source reading     |
 | F-27 | Low-Medium | `deployed-now`     | Tool rate-limit events are only deleted for the tuple being checked                                                             | unbounded row growth for abandoned tuples                                                                                                  | source reading     |
-| F-29 | Low-Medium | `defense-in-depth` | The pi-durable adapter creates its own data directory without an owner-only mode                                                | the guarantee is inherited from an ancestor the composition happens to create owner-only, not enforced by the component that owns the data | P25                | ### 3.1 Final-candidate re-check against every available head |
+| F-29 | Low-Medium | `defense-in-depth` | The pi-durable adapter creates its own data directory without an owner-only mode                                                | the guarantee is inherited from an ancestor the composition happens to create owner-only, not enforced by the component that owns the data | P25                |
+
+### 3.1 Final-candidate re-check against every available head
 
 Every branch in the fleet's shared origin was compared against the audited head for
 the files each finding depends on. The comparison covered
@@ -209,22 +246,40 @@ the files each finding depends on. The comparison covered
 `packages/deployment/src/process-runtime.ts` and
 `apps/hosted-control-plane/src/composition.ts`.
 
-**The base has advanced since this packet was written.** The audited branch
-base is `df37ca85a`; `main` is now `5e4b8d331ecdf0cb698ed532e45bb459f776e484`
-("chore(main): release 1.105.7 (#1221)"), four commits ahead (`2e68492ed` #1211,
-`b1dee8b9c` #1213, `df37ca85a` #1212, `5e4b8d33` #1221). Those four commits touch
-only `.release-please-manifest.json`, `CHANGELOG.md`, `package.json`,
+**The base has advanced since this packet was written.** The branch's merge base
+with `main` is the audited head, `27f17bd55`; `main` is now
+`4e126a7c3e55bfb05b8bdfc390705b83f777c6d4` ("Harden credential vault callback
+result inspection (#1224)"), five commits ahead (`2e68492ed` #1211, `b1dee8b9c`
+#1213, `df37ca85a` #1212, `5e4b8d33` #1221, `4e126a7c3` #1224).
+
+The first four of those commits touch only `.release-please-manifest.json`,
+`CHANGELOG.md`, `package.json`,
 `packages/testing/{CHANGELOG.md,package.json,src/postgres.test.mjs}`,
 `scripts/railway-production-plan.mjs` and `tests/railway-production-plan.test.mjs`.
-**None of them is a dependency file this packet relies on**, so no finding is
-invalidated by the base advance. One packet row needs re-reading by its owner:
-F-28's proposed regression file `tests/railway-production-plan.test.mjs` gained
-+542 lines on the new main; F-28's cited source (`.railway/railway.ts`) is
-unchanged, so the finding stands and only the proposed regression location moves.
+**None of them is a dependency file this packet relies on**. One packet row needs
+re-reading by its owner: F-28's proposed regression file
+`tests/railway-production-plan.test.mjs` gained +542 lines on the new main;
+F-28's cited source (`.railway/railway.ts`) is unchanged, so the finding stands
+and only the proposed regression location moves.
 
-Result: **no owner fix for any of the 29 findings exists on any currently available
-head.** Four files differ on unmerged branches, and in every case the difference is
-cosmetic or belongs to an unrelated change:
+**The fifth commit does touch a dependency file this packet relies on, and it is
+the owner fix for F-04.** `4e126a7c3` changes
+`packages/credential-vault/src/vault.ts` (+302 lines) and adds
+`packages/credential-vault/src/index.test.mjs` (+219 lines): the returned-value
+egress screen F-04 is about, and the exact regression file §4 proposes for it.
+`packages/credential-vault/src/vault.ts` is the only one of the thirty files this
+packet's probes read that differs between the audited head and current `main`; the
+other twenty-nine are byte-identical, so the base advance can only bear on
+F-04.
+
+Result: **one owner fix exists on a currently available head: F-04's, on `main` at
+`4e126a7c3e55bfb05b8bdfc390705b83f777c6d4` (#1224).** The other 28 findings have no
+owner fix on any available head. The F-04 fix was re-verified by execution on that
+exact head, and the measurement is in §3.1a below. F-04 is **not closed by this
+lane**: the finding stands against the audited head, where it still reproduces, and
+closing a finding is the reviewer's act on the owner's fix head under §9.1 item 2,
+not the landing of the fix. Five files still differ on unmerged branches, and in
+every case the difference is cosmetic or belongs to an unrelated change:
 
 | File                                                 | Branch                                                 | Difference                                                     | Effect on a finding                                                                   |
 | ---------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
@@ -235,8 +290,42 @@ cosmetic or belongs to an unrelated change:
 | `apps/workflow-worker/src/runtime-attempt-router.ts` | `origin/w1/cp1048-restore-generation-authority-repair` | the per-model harness map from #678                            | none; the grant-state check is unchanged, so F-03 stands                              |
 
 The verification step required by the issue — "verify owner fixes on their new exact
-heads after they are available" — therefore has nothing to verify yet. It stays open
-until an owner lands a fix and records its exact head.
+heads after they are available" — therefore has one item to verify now, and it is
+F-04's. It stays open for the other 28 findings until an owner lands a fix and
+records its exact head.
+
+### 3.1a The F-04 owner fix, re-verified on its exact head
+
+The owner fix for F-04 landed on `main` at
+`4e126a7c3e55bfb05b8bdfc390705b83f777c6d4` (#1224, "Harden credential vault
+callback result inspection"). This reviewer re-verified it by **executing** the
+packet's own probe suite against that exact head, not by reading the fix's
+description:
+
+- the suite was run with `main`'s `packages/credential-vault` in place of the
+  audited head's, and with every other file identical — `main`'s credential-vault
+  is the only one of the thirty files the probes read that differs from the
+  audited head, so the run measures the fix and nothing else;
+- the run reports `24 open, 2 resolved, 0 harness failures` and exits `2`, the
+  exit code the script defines for "a recorded finding no longer reproduces";
+- the two probes that no longer reproduce are CP190-P05 ("the credential-vault
+  egress screen misses a returned carrier but a thrown error is sanitized") and
+  CP190-P23 ("the vault screen itself is an own-enumerable-key traversal") — which
+  are exactly F-04's two probes, and the two the finding names;
+- with the audited head's credential-vault restored and the package rebuilt, the
+  suite reports `26 open, 0 resolved, 0 harness failures` and exits `0`, so the
+  difference is the fix and not the harness.
+
+**What this does and does not say.** It says that the F-04 defect is fixed on
+that head, and that the fix removes the recorded gap: a returned `Error`, `Map`,
+`Set` or byte container that carries the secret is now screened. It does not say
+that F-04 is closed, and this lane does not close it: the finding is recorded
+against the audited head `27f17bd55`, where it still reproduces; the reviewer's
+close rule is the re-verification of the owner's fix head, and the closing
+decision, routing and acceptance remain the controller's. It says nothing about a
+deployed credential leak — the fix's own description says it is "not evidence of
+a deployed leak and not whole-vault acceptance", and neither does this packet. The
+gate in §8 that the vault rotation and restore evidence is missing is unaffected.
 
 ### 3.2 Calibration review
 
@@ -442,43 +531,43 @@ its own package before editing.
 
 The `CP190-Pnn` identifiers are the probes in
 `scripts/security-trust-boundary-probes.mjs`; running that script today prints
-`25 open, 0 resolved, 0 harness failures`. Fifteen probes execute a synthetic
-runtime path and ten read composed source; none performs a live call, reads a
-credential or contacts a deployed profile. Every probe result is a **synthetic
+`26 open, 0 resolved, 0 harness failures`. Eight of the probes synthesize an
+input and run the real code path, and the other eighteen read source as text;
+none performs a live call, reads a credential or contacts a deployed profile. Every probe result is a **synthetic
 demonstration** of a code-level property; none of them is a deployed observation,
 and the report claims no deployed behaviour anywhere.
 
-| ID                  | Owner                            | Proposed regression file                                                                      | Failing condition (credential-free synthetic)                                                                                                   | Assertion the owner must add                                                                                                                                                                                                                                                            |
-| ------------------- | -------------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| F-01 / P01-P02, P21 | W1                               | `packages/remote-control-relay/src/index.test.mjs`                                            | Submit a `RelayMetadataCommand` with only the eight schema fields and `operation: 'approve'` for a known `targetId`                             | The processor must not accept a metadata command its caller has not authenticated; a composition must refuse to start a relay adapter whose client declares no authentication                                                                                                           |
-| F-02 / P03-P04, P22 | W1                               | `packages/remote-control-relay/src/index.test.mjs`                                            | Re-submit the same logical effect under a new `commandId`; or make the receipt store's write fail                                               | The effect and its receipt must be indivisible; a receipt-write failure must leave the effect unapplied; a receipt written before the effect is **not** an acceptable repair                                                                                                            |
-| F-03 / P08-P10, P24 | W1                               | `packages/managed-pi-adapter/src/index.test.mjs`, `packages/acp-adapter/src/gateway.test.mjs` | Drive a direct-local dispatch with no grant, a revoked grant, and a symlinked path that escapes the grant root                                  | The direct-local driver must require a current grant and derive the working directory from it; a revoked or absent grant and an escaping symlink are rejected                                                                                                                           |
-| F-04 / P05, P23     | W1 — **custody pending, see §7** | `packages/credential-vault/src/index.test.mjs`                                                | Lease a credential and **return** `new Error(secret)`; separately, throw the same error                                                         | The returned-value screen must traverse `Error` message, stack and cause, `Map`, `Set`, `Buffer` and typed arrays, or reject a non-plain result; a thrown error must keep surfacing `PROVIDER_OPERATION_FAILED`; the model-selection normalizer must keep rejecting a non-plain carrier |
-| F-05 / P07          | W1                               | `apps/control-api/src/application.test.mjs`                                                   | Call the Local API with a valid token and a foreign `workspaceId`                                                                               | The Local principal must be bound to an authorized workspace and project set and compared against the request                                                                                                                                                                           |
-| F-06 / P06          | W1                               | `packages/telemetry/src/index.test.mjs`                                                       | `redactTelemetryValue({ sessionToken: canary })`                                                                                                | `sessionToken`, `passphrase`, `bearerToken`, `connectionString` and `apiSecret` must be redacted, or the production value-based canary guard must run at every sink                                                                                                                     |
-| F-07 / P11          | W1                               | `apps/runtime-gateway/src/context-command-delivery.test.mjs`                                  | Enqueue a runtime command with a one-year lifetime                                                                                              | The runtime family must apply the same 24-hour bound and reject with `EXPIRY_TOO_LONG`                                                                                                                                                                                                  |
-| F-08 / P12          | W1                               | `packages/deployment/src/checkpoint.test.mjs`                                                 | Checkpoint a data directory that contains `secrets/provider-key`                                                                                | The checkpoint must exclude or seal the secrets directory; the cleartext must not appear in the copy                                                                                                                                                                                    |
-| F-09 / P13, P25     | W1                               | `packages/sqlite-persistence/src/index.test.mjs`                                              | Open a provider in a 0755 directory and inspect the sidecar modes                                                                               | The `-wal` and `-shm` sidecars must be mode 0600, so the file mode does not depend on the parent directory mode                                                                                                                                                                         |
-| F-10 / P14-P15      | W1                               | `packages/profile-portability/src/credentials.test.mjs`                                       | Import a manifest whose record value carries a secret under a non-prohibited key; export a manifest with a foreign workspace's secret reference | The import path must scan with the export's sensitive values, and secret references must carry a workspace scope                                                                                                                                                                        |
-| F-11 / P16          | W1                               | `packages/sandbox/src/index.test.mjs`                                                         | Execute a sandbox command with `credentialBindings: [{ leaseId, environmentName: 'AWS_SESSION' }]`                                              | The ambient credential denial must apply to the effective environment including credential bindings                                                                                                                                                                                     |
-| F-12 / P17          | W1                               | `packages/sandbox/src/index.test.mjs`                                                         | Execute a sandbox command that targets `169.254.170.2`                                                                                          | The metadata denial must cover the link-local range and the known provider endpoints                                                                                                                                                                                                    |
-| F-13 / P18          | W1 + operations                  | `packages/sandbox/src/index.test.mjs`                                                         | Compose a hosted profile                                                                                                                        | A hosted composition must resolve a sandbox provider, and a composition without one must fail closed; the live E2B template, network, resource and cleanup evidence must be attached                                                                                                    |
-| F-14 / P19          | W1                               | `apps/control-api/src/application.test.mjs`                                                   | Send concurrent authenticated requests to the public API                                                                                        | A per-principal quota and an inbound deadline must exist; an over-quota request must get a bounded `429` without reaching the database                                                                                                                                                  |
-| F-15 / P20          | W1 + deployment                  | `apps/control-api/src/application.test.mjs`                                                   | Submit a workflow without the Restate request identity                                                                                          | The ingress submission must be authenticated, and the self-hosted ingress must bind to the private interface                                                                                                                                                                            |
-| F-16                | W1                               | `scripts/runtime-node-identity-admin.test.mjs`                                                | Inspect the production Control Plane image                                                                                                      | The image must not contain an issuer private key path; issuance must live on a separate operator surface                                                                                                                                                                                |
-| F-17                | W1                               | `apps/runtime-gateway/src/authentication.test.mjs`                                            | Present a device-signed credential with an issuer key id                                                                                        | The synthetic authority must sign with a distinct issuer key and enforce the node, workspace and generation fence                                                                                                                                                                       |
-| F-18                | W1                               | `apps/control-api/src/pi-durable/current-tool-authority.test.mjs`                             | Submit a tool call whose grant names a tool absent from the accepted plan                                                                       | The pi-durable path must cross-check `plan.constraints.tools.grants`                                                                                                                                                                                                                    |
-| F-19                | W1 + Cedar policy owner          | `packages/policy/src/index.test.mjs`                                                          | Compose a profile that leases a connector credential                                                                                            | A composed profile must resolve a decision point, and the permit matrix must be recorded                                                                                                                                                                                                |
-| F-20                | W1                               | `packages/context/src/provider.test.mjs`                                                      | Admit a provider contribution whose content carries a canary                                                                                    | Provider and ProjectState content must be filtered and marked as untrusted data                                                                                                                                                                                                         |
-| F-21                | W1                               | `packages/secrets/src/index.test.mjs`                                                         | Resolve the same reference under two different `use` contexts                                                                                   | Every provider must accept and enforce the `SecretUse` context                                                                                                                                                                                                                          |
-| F-22                | W1 + desktop owner               | `apps/hosted-control-plane/src/index.test.mjs`                                                | Compose the hosted server profile; resolve a packaged Local handle                                                                              | The hosted server profile must resolve a credential lifecycle; packaged Local must resolve an opaque OS-secure handle                                                                                                                                                                   |
-| F-23                | W1                               | `packages/deployment/src/process-runtime.test.mjs`                                            | Swap the allowlisted executable for a symlink after the check                                                                                   | The spawn must execute the resolved canonical path with a device and inode re-check                                                                                                                                                                                                     |
-| F-24                | W1                               | `apps/local-control-plane/src/acp-runtime.test.mjs`                                           | Create the exported ACP factory without a spawn policy                                                                                          | The factory must require an explicit spawn policy and fail closed without it                                                                                                                                                                                                            |
-| F-25                | W1                               | `apps/control-api/src/marketplace/registry.test.mjs`                                          | Point the marketplace registry base URL at a metadata address                                                                                   | The registry fetch must deny the link-local and metadata ranges                                                                                                                                                                                                                         |
-| F-26                | W1                               | `packages/workflow-runtime/src/restate-endpoint.test.mjs`                                     | Deliver an interaction response from a principal outside `allowedPrincipalIds`                                                                  | The workflow ingress must re-check the responding principal before resolving                                                                                                                                                                                                            |
-| F-27                | W1                               | `packages/database/src/tool-rate-limiter.test.mjs`                                            | Stop calling a principal, tool or operation tuple and wait out the window                                                                       | The retention sweep must remove expired `tool_rate_limit_events` rows for abandoned tuples                                                                                                                                                                                              |
-| F-28                | W1 + operations                  | `tests/railway-production-plan.test.mjs`                                                      | Use the staging credential against a production object key                                                                                      | Staging and production must hold distinct bucket-scoped R2 credentials; cross-environment reads must be denied                                                                                                                                                                          |
-| F-29 / P25          | W1                               | `packages/pi-durable-adapter/src/journal.test.mjs`                                            | Construct the adapter with a fresh directory under a 0755 parent                                                                                | The created directory must be 0700 and the database file 0600; the adapter must not inherit the guarantee from an ancestor                                                                                                                                                              |
+| ID                  | Owner                                                          | Proposed regression file                                                                      | Failing condition (credential-free synthetic)                                                                                                   | Assertion the owner must add                                                                                                                                                                                                                                                            |
+| ------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F-01 / P01-P02, P21 | W1                                                             | `packages/remote-control-relay/src/index.test.mjs`                                            | Submit a `RelayMetadataCommand` with only the eight schema fields and `operation: 'approve'` for a known `targetId`                             | The processor must not accept a metadata command its caller has not authenticated; a composition must refuse to start a relay adapter whose client declares no authentication                                                                                                           |
+| F-02 / P03-P04, P22 | W1                                                             | `packages/remote-control-relay/src/index.test.mjs`                                            | Re-submit the same logical effect under a new `commandId`; or make the receipt store's write fail                                               | The effect and its receipt must be indivisible; a receipt-write failure must leave the effect unapplied; a receipt written before the effect is **not** an acceptable repair                                                                                                            |
+| F-03 / P08-P10, P24 | W1                                                             | `packages/managed-pi-adapter/src/index.test.mjs`, `packages/acp-adapter/src/gateway.test.mjs` | Drive a direct-local dispatch with no grant, a revoked grant, and a symlinked path that escapes the grant root                                  | The direct-local driver must require a current grant and derive the working directory from it; a revoked or absent grant and an escaping symlink are rejected                                                                                                                           |
+| F-04 / P05, P23     | W1 — owner fix landed on `main` at `4e126a7c3` (#1224); see §7 | `packages/credential-vault/src/index.test.mjs`                                                | Lease a credential and **return** `new Error(secret)`; separately, throw the same error                                                         | The returned-value screen must traverse `Error` message, stack and cause, `Map`, `Set`, `Buffer` and typed arrays, or reject a non-plain result; a thrown error must keep surfacing `PROVIDER_OPERATION_FAILED`; the model-selection normalizer must keep rejecting a non-plain carrier |
+| F-05 / P07          | W1                                                             | `apps/control-api/src/application.test.mjs`                                                   | Call the Local API with a valid token and a foreign `workspaceId`                                                                               | The Local principal must be bound to an authorized workspace and project set and compared against the request                                                                                                                                                                           |
+| F-06 / P06          | W1                                                             | `packages/telemetry/src/index.test.mjs`                                                       | `redactTelemetryValue({ sessionToken: canary })`                                                                                                | `sessionToken`, `passphrase`, `bearerToken`, `connectionString` and `apiSecret` must be redacted, or the production value-based canary guard must run at every sink                                                                                                                     |
+| F-07 / P11          | W1                                                             | `apps/runtime-gateway/src/context-command-delivery.test.mjs`                                  | Enqueue a runtime command with a one-year lifetime                                                                                              | The runtime family must apply the same 24-hour bound and reject with `EXPIRY_TOO_LONG`                                                                                                                                                                                                  |
+| F-08 / P12          | W1                                                             | `packages/deployment/src/checkpoint.test.mjs`                                                 | Checkpoint a data directory that contains `secrets/provider-key`                                                                                | The checkpoint must exclude or seal the secrets directory; the cleartext must not appear in the copy                                                                                                                                                                                    |
+| F-09 / P13          | W1                                                             | `packages/sqlite-persistence/src/index.test.mjs`                                              | Open a provider in a 0755 directory and inspect the sidecar modes                                                                               | The `-wal` and `-shm` sidecars must be mode 0600, so the file mode does not depend on the parent directory mode                                                                                                                                                                         |
+| F-10 / P14-P15      | W1                                                             | `packages/profile-portability/src/credentials.test.mjs`                                       | Import a manifest whose record value carries a secret under a non-prohibited key; export a manifest with a foreign workspace's secret reference | The import path must scan with the export's sensitive values, and secret references must carry a workspace scope                                                                                                                                                                        |
+| F-11 / P16          | W1                                                             | `packages/sandbox/src/index.test.mjs`                                                         | Execute a sandbox command with `credentialBindings: [{ leaseId, environmentName: 'AWS_SESSION' }]`                                              | The ambient credential denial must apply to the effective environment including credential bindings                                                                                                                                                                                     |
+| F-12 / P17          | W1                                                             | `packages/sandbox/src/index.test.mjs`                                                         | Execute a sandbox command that targets `169.254.170.2`                                                                                          | The metadata denial must cover the link-local range and the known provider endpoints                                                                                                                                                                                                    |
+| F-13 / P18          | W1 + operations                                                | `packages/sandbox/src/index.test.mjs`                                                         | Compose a hosted profile                                                                                                                        | A hosted composition must resolve a sandbox provider, and a composition without one must fail closed; the live E2B template, network, resource and cleanup evidence must be attached                                                                                                    |
+| F-14 / P19          | W1                                                             | `apps/control-api/src/application.test.mjs`                                                   | Send concurrent authenticated requests to the public API                                                                                        | A per-principal quota and an inbound deadline must exist; an over-quota request must get a bounded `429` without reaching the database                                                                                                                                                  |
+| F-15 / P20          | W1 + deployment                                                | `apps/control-api/src/application.test.mjs`                                                   | Submit a workflow without the Restate request identity                                                                                          | The ingress submission must be authenticated, and the self-hosted ingress must bind to the private interface                                                                                                                                                                            |
+| F-16                | W1                                                             | `scripts/runtime-node-identity-admin.test.mjs`                                                | Inspect the production Control Plane image                                                                                                      | The image must not contain an issuer private key path; issuance must live on a separate operator surface                                                                                                                                                                                |
+| F-17                | W1                                                             | `apps/runtime-gateway/src/authentication.test.mjs`                                            | Present a device-signed credential with an issuer key id                                                                                        | The synthetic authority must sign with a distinct issuer key and enforce the node, workspace and generation fence                                                                                                                                                                       |
+| F-18                | W1                                                             | `apps/control-api/src/pi-durable/current-tool-authority.test.mjs`                             | Submit a tool call whose grant names a tool absent from the accepted plan                                                                       | The pi-durable path must cross-check `plan.constraints.tools.grants`                                                                                                                                                                                                                    |
+| F-19                | W1 + Cedar policy owner                                        | `packages/policy/src/index.test.mjs`                                                          | Compose a profile that leases a connector credential                                                                                            | A composed profile must resolve a decision point, and the permit matrix must be recorded                                                                                                                                                                                                |
+| F-20                | W1                                                             | `packages/context/src/provider.test.mjs`                                                      | Admit a provider contribution whose content carries a canary                                                                                    | Provider and ProjectState content must be filtered and marked as untrusted data                                                                                                                                                                                                         |
+| F-21                | W1                                                             | `packages/secrets/src/index.test.mjs`                                                         | Resolve the same reference under two different `use` contexts                                                                                   | Every provider must accept and enforce the `SecretUse` context                                                                                                                                                                                                                          |
+| F-22                | W1 + desktop owner                                             | `apps/hosted-control-plane/src/index.test.mjs`                                                | Compose the hosted server profile; resolve a packaged Local handle                                                                              | The hosted server profile must resolve a credential lifecycle; packaged Local must resolve an opaque OS-secure handle                                                                                                                                                                   |
+| F-23                | W1                                                             | `packages/deployment/src/process-runtime.test.mjs`                                            | Swap the allowlisted executable for a symlink after the check                                                                                   | The spawn must execute the resolved canonical path with a device and inode re-check                                                                                                                                                                                                     |
+| F-24                | W1                                                             | `apps/local-control-plane/src/acp-runtime.test.mjs`                                           | Create the exported ACP factory without a spawn policy                                                                                          | The factory must require an explicit spawn policy and fail closed without it                                                                                                                                                                                                            |
+| F-25                | W1                                                             | `apps/control-api/src/marketplace/registry.test.mjs`                                          | Point the marketplace registry base URL at a metadata address                                                                                   | The registry fetch must deny the link-local and metadata ranges                                                                                                                                                                                                                         |
+| F-26                | W1                                                             | `packages/workflow-runtime/src/restate-endpoint.test.mjs`                                     | Deliver an interaction response from a principal outside `allowedPrincipalIds`                                                                  | The workflow ingress must re-check the responding principal before resolving                                                                                                                                                                                                            |
+| F-27                | W1                                                             | `packages/database/src/tool-rate-limiter.test.mjs`                                            | Stop calling a principal, tool or operation tuple and wait out the window                                                                       | The retention sweep must remove expired `tool_rate_limit_events` rows for abandoned tuples                                                                                                                                                                                              |
+| F-28                | W1 + operations                                                | `tests/railway-production-plan.test.mjs`                                                      | Use the staging credential against a production object key                                                                                      | Staging and production must hold distinct bucket-scoped R2 credentials; cross-environment reads must be denied                                                                                                                                                                          |
+| F-29 / P25          | W1                                                             | `packages/pi-durable-adapter/src/journal.test.mjs`                                            | Construct the adapter with a fresh directory under a 0755 parent                                                                                | The created directory must be 0700 and the database file 0600; the adapter must not inherit the guarantee from an ancestor                                                                                                                                                              |
 
 ## 5. What the audit confirmed as sound
 
@@ -516,7 +605,8 @@ These are recorded so the next reviewer does not re-derive them.
   revocation re-checked on every command, strict frame-size and backpressure limits,
   and workspace/node binding on every frame.
 - **Existing probes.** `tests/m11-security-probes.test.mjs` passes at this head
-  (42 tests, 129 assertions, seed 1104). It covers policy denial, grant-handle
+  (42 tests, 129 assertions, re-run at this reconciliation; the file has no
+  randomised seed). It covers policy denial, grant-handle
   shape, secret-file traversal and symlink escape, spawn-policy limits, object-store
   content addressing, sandbox network and metadata denial, and HPKE tamper, expiry
   and cap behaviour. It does **not** cover any of the 29 findings in §3, which is
@@ -579,8 +669,9 @@ Custody check performed 2026-10-21:
   (SHA-256 `561ccd22bdd6d5a4abb1ebbecc489d8ee055c046074df680262547ad52784f05`): **0
   occurrences** of either proposed path, and 0 occurrences of `packages/credential-vault`
   or `credential-vault` anywhere in the index;
-- all twelve open pull requests (1048, 1204, 1210, 1214–1220, 1222, 1223): **0**
-  touch either proposed path. Several branches change
+- all twelve open pull requests at that head (1048, 1204, 1210, 1214–1220, 1222,
+  1223 — this pull request, #1220, included, because it is open): **0** touch
+  either proposed path. Several branches change
   `packages/credential-vault/CHANGELOG.md` and `packages/credential-vault/package.json`
   for release metadata; none changes the two proposed source or test paths;
 - every registered worktree, including the fleet and Fleet 1 checkouts: **0** dirty or
@@ -590,6 +681,24 @@ Result: **no exact-path owner found** for either proposed path. Absence of an
 exact-path claim is **not** ownership approval. Root must verify and admit the exact
 paths before any edit. This lane will not touch either path, and it will not touch
 `packages/sqlite-persistence`, until that admission exists.
+
+**The paths were subsequently admitted to an owner, and the owner fix has landed.**
+The shared index now names both proposed paths as the scope of Fleet 2's F2W6
+(`branch f2w6/credential-vault-f04`, base `27f17bd55`), and the fix is on `main`
+at `4e126a7c3e55bfb05b8bdfc390705b83f777c6d4` (#1224), which changes
+`packages/credential-vault/src/vault.ts` and adds
+`packages/credential-vault/src/index.test.mjs` — the two paths this section
+names. The custody observation above is therefore superseded for the purpose of
+recording who owns the edit: the edit happened, on `main`, with the owner
+regression test in the file this packet proposed. This lane still edits neither
+path, and it did not take them: the reviewer re-verified the landed fix by
+executing the probe suite on that head (§3.1a) and did not modify
+`packages/credential-vault` in the repository.
+
+The shared index this section cites has been rewritten since the audited head, so
+its SHA-256 no longer matches the cited value. The index is readable again, and
+the re-read result is recorded in the JSON matrix's custody block with the index's
+current SHA-256.
 
 ## 8. Unresolved gates — the reasons acceptance stays held
 
@@ -624,13 +733,13 @@ No source path is taken by this lane. Each finding is routed to the owner that a
 holds the affected package, and the routing table is in the JSON artifact
 (`findings[].routedTo`).
 
-| Owner                                       | Findings                                                                                                                                             |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| W1 — runtime and profile composition        | F-01, F-02, F-03, F-05, F-07, F-08, F-09, F-10, F-11, F-12, F-13, F-15, F-16, F-17, F-18, F-19, F-20, F-21, F-22, F-23, F-24, F-25, F-26, F-28, F-29 |
-| W2 — policy, contracts, decision resolution | F-19 (Cedar matrix and the per-profile authorization matrix)                                                                                         |
-| W4 — coverage and runner paths              | F-27 (retention sweep coverage), plus the probe-to-regression-test conversion for the packages it owns                                               |
-| Agent HQ / product owner                    | F-01 (the product relay's own transport authentication) and the `NONE-AHQ` controls in §8.2                                                          |
-| Operations                                  | F-13 (E2B template, network, resource and cleanup thresholds), F-14 (deployed limit values), F-28 (per-environment R2 credentials)                   |
+| Owner                                       | Findings                                                                                                                                                               |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| W1 — runtime and profile composition        | F-01, F-02, F-03, F-04, F-05, F-06, F-07, F-08, F-09, F-10, F-11, F-12, F-13, F-15, F-16, F-17, F-18, F-19, F-20, F-21, F-22, F-23, F-24, F-25, F-26, F-27, F-28, F-29 |
+| W2 — policy, contracts, decision resolution | F-19 (Cedar matrix and the per-profile authorization matrix)                                                                                                           |
+| W4 — coverage and runner paths              | F-27's retention-sweep coverage (the finding's package owner is W1), plus the probe-to-regression-test conversion for the packages it owns                             |
+| Agent HQ / product owner                    | F-01 (the product relay's own transport authentication) and the `NONE-AHQ` controls in §8.2                                                                            |
+| Operations                                  | F-13 (E2B template, network, resource and cleanup thresholds), F-14 (deployed limit values), F-28 (per-environment R2 credentials)                                     |
 
 ### 9.1 Next actions
 
@@ -648,9 +757,11 @@ holds the affected package, and the routing table is in the JSON artifact
 4. The live profile evidence in §8.1–§8.6 is requested from its owner; until it
    exists, `STA-L*` rows marked open in the inventory stay open and the whole-cloud
    trust acceptance stays held.
-5. The eight questions in §6 are answered by their owners; each answer either
+5. The nine questions in §6 are answered by their owners; each answer either
    promotes a finding, retires it, or narrows it further.
-6. F-04's repair waits for root to verify and admit
-   `packages/credential-vault/src/vault.ts` and
-   `packages/credential-vault/src/index.test.mjs` (see §7). This lane will not edit
-   either path before that admission.
+6. F-04's repair has landed on `main` at `4e126a7c3e55bfb05b8bdfc390705b83f777c6d4`
+   (#1224) and this reviewer re-verified it by execution on that exact head
+   (§3.1a). The remaining act is the controller's: confirm the fix head, close
+   F-04 against it, and carry the finding's status into the matrix. This lane
+   still edits neither `packages/credential-vault/src/vault.ts` nor
+   `packages/credential-vault/src/index.test.mjs` (see §7).

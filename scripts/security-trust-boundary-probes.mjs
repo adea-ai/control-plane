@@ -17,6 +17,15 @@
 // Exit codes: 0 = every probe reproduced the recorded open finding,
 //             2 = at least one probe stopped reproducing (owner fix landed),
 //             1 = a probe could not run (harness problem, not a finding).
+//
+// F-04 re-verification, 2026-10-21: the owner fix for F-04 landed on `main` at
+// 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4 (#1224). Executed against that head, this suite
+// reports `24 open, 2 resolved, 0 harness failures` and exits 2, and the two probes that no
+// longer reproduce are CP190-P05 and CP190-P23, which are F-04's two probes. On the audited
+// head 27f17bd55e0266439b5b3089163195c9e7a669be the tree is unchanged, the suite reports
+// `26 open, 0 resolved, 0 harness failures` and exits 0, and the probes are left as they are:
+// they are the record of the audited head, and the fix's head and its measurement are recorded
+// in docs/evidence/m11-security-trust-boundary-audit-2026-10-21.md.
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -901,10 +910,15 @@ probe(
   }
 )
 
+// The obligations are the ones the same two properties already carry elsewhere in this file:
+// the metadata command schema's authentication obligation (CP190-P01) and the metadata command
+// idempotency obligation (CP190-P22). The two atoms this probe previously cited, STA-L01-01 and
+// STA-L02-01, do not exist in the cited inventory: its lowest clause is STA-L08-01, so they
+// could not be traced to a requirement.
 probe(
   'CP190-P26',
   'The relay document claims an authenticated metadata command schema that binds an idempotency key, and the schema has neither field',
-  ['STA-L01-01', 'STA-L02-01'],
+  ['STA-L46-09', 'STA-L66-01', 'STA-L68-02', 'STA-L16-01', 'STA-L68-03'],
   async () => {
     const schema = await readSource('packages/remote-control-relay/src/protocol.ts')
     const start = schema.indexOf('export const RelayMetadataCommandSchema')
