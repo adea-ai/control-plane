@@ -10,6 +10,7 @@ import { redactTelemetryValue } from '@control-plane/telemetry'
 import {
   ContextCompilationError,
   ContextProviderResolutionError,
+  contextPackageMatchesConsumerScope,
   type ContextPackageAuthoringService,
   type ContextPackageRepository,
 } from '@control-plane/context'
@@ -23,8 +24,10 @@ import {
   catalogOwnershipAllowsAccess,
   ProjectStateSchema,
   type AgentProfileRepository,
+  type AgentProfileVersion,
   type ProjectStateRepository,
   type SkillRepository,
+  type SkillVersion,
 } from '@control-plane/domain'
 import {
   assertCatalogVersionApproved,
@@ -93,7 +96,13 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
     const payloadHash = executionValidationPayloadHash(request)
     const existing = await this.options.commands.get(scope)
     if (existing) {
-      await this.#resolveAuthorizedCatalog(request, callerPrincipalId)
+      // A replay returns the same recorded result, but only while the catalog
+      // authorization it was certified under still holds. The durable evidence
+      // the plan pins is never re-read — it was resolved once and is
+      // immutable — while the catalog versions the plan consumes are
+      // re-authorized against their current state.
+      const { profile, skills } = await this.#resolveAuthorizedCatalog(request, callerPrincipalId)
+      await this.#assertCatalogAuthorized(request, profile, skills)
       return replayResponse(request, scope, payloadHash, existing)
     }
 
@@ -125,29 +134,7 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
         reject()
     }
 
-    const approvalGate = this.options.approvalGate
-    if (approvalGate !== undefined) {
-      await assertCatalogVersionApproved(
-        approvalGate,
-        'PROFILE',
-        'agent_profile',
-        request.payload.profileVersionId,
-        {
-          revision: profile.revision,
-          contentDigest: profile.contentDigest,
-          publishedAt: profile.lifecycleMetadata.publishedAt,
-        }
-      )
-      for (const [index, skillVersionId] of request.payload.skillVersionIds.entries()) {
-        const skill = skills[index]
-        if (skill === undefined) reject()
-        await assertCatalogVersionApproved(approvalGate, 'SKILL', 'skill', skillVersionId, {
-          revision: skill.revision,
-          contentDigest: skill.manifest.contentDigest,
-          publishedAt: skill.lifecycleMetadata.publishedAt,
-        })
-      }
-    }
+    await this.#assertCatalogAuthorized(request, profile, skills)
 
     const state = ProjectStateSchema.parse(projectState)
     if (state.workspaceId !== request.workspaceId || state.projectId !== projectId) {
@@ -177,13 +164,17 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
       const contextPackage = await this.options.contextPackages.get(reference)
       if (
         !contextPackage ||
-        contextPackage.projectState.projectId === undefined ||
-        contextPackage.projectState.workspaceId !== request.workspaceId ||
-        contextPackage.projectState.projectId !== projectId ||
-        contextPackage.projectState.revision !== state.revision ||
-        (request.payload.contextPackage &&
-          (contextPackage.schemaVersion !== request.payload.contextPackage.schemaVersion ||
-            contextPackage.compiler.version !== request.payload.contextPackage.compilerVersion))
+        !contextPackageMatchesConsumerScope(contextPackage, {
+          workspaceId: request.workspaceId,
+          projectId,
+          projectStateRevision: state.revision,
+          ...(request.payload.contextPackage === undefined
+            ? {}
+            : {
+                schemaVersion: request.payload.contextPackage.schemaVersion,
+                compilerVersion: request.payload.contextPackage.compilerVersion,
+              }),
+        })
       )
         reject()
       const compiledAt = (this.options.now ?? (() => new Date().toISOString()))()
@@ -239,6 +230,48 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
       )
         conflict()
       throw error
+    }
+  }
+
+  /**
+   * The catalog authorization a consumer must hold at the moment it resolves
+   * a version: an approval when the policy requires one, and an executable
+   * version. Both are re-evaluated on a replay, so a profile or skill version
+   * that was revoked, deprecated or de-approved after the plan was certified
+   * is not resolved again. A draft, revoked, deprecated or superseded version
+   * is never executable.
+   */
+  async #assertCatalogAuthorized(
+    request: ExecutionRequestValidationRequest,
+    profile: AgentProfileVersion,
+    skills: SkillVersion[]
+  ): Promise<void> {
+    const approvalGate = this.options.approvalGate
+    if (approvalGate !== undefined) {
+      await assertCatalogVersionApproved(
+        approvalGate,
+        'PROFILE',
+        'agent_profile',
+        request.payload.profileVersionId,
+        {
+          revision: profile.revision,
+          contentDigest: profile.contentDigest,
+          publishedAt: profile.lifecycleMetadata.publishedAt,
+        }
+      )
+      for (const [index, skillVersionId] of request.payload.skillVersionIds.entries()) {
+        const skill = skills[index]
+        if (skill === undefined) reject()
+        await assertCatalogVersionApproved(approvalGate, 'SKILL', 'skill', skillVersionId, {
+          revision: skill.revision,
+          contentDigest: skill.manifest.contentDigest,
+          publishedAt: skill.lifecycleMetadata.publishedAt,
+        })
+      }
+    }
+    if (profile.lifecycle !== 'published') reject()
+    for (const skill of skills) {
+      if (skill.lifecycle !== 'published') reject()
     }
   }
 

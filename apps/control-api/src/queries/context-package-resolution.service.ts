@@ -3,7 +3,11 @@ import {
   ContextPackageResolutionRequestSchema,
   ContextPackageResolutionResponseSchema,
 } from '@control-plane/contracts'
-import type { ContextPackageRepository } from '@control-plane/context'
+import {
+  assertContextPackageIntegrity,
+  contextPackageMatchesConsumerScope,
+  type ContextPackageRepository,
+} from '@control-plane/context'
 
 export const CONTEXT_PACKAGE_RESOLUTION_SERVICE = Symbol('CONTEXT_PACKAGE_RESOLUTION_SERVICE')
 
@@ -32,11 +36,24 @@ export class RepositoryContextPackageResolutionService implements ContextPackage
         message: 'ContextPackage was not found',
       })
     }
+    // An immutable reference is only published when the stored content still
+    // verifies against the digest it is published under. A package whose
+    // content does not verify is not resolvable, so it is denied here rather
+    // than handed to a consumer that could not check it.
+    try {
+      assertContextPackageIntegrity(package_)
+    } catch {
+      throw new NotFoundException({
+        code: 'CONTEXT_PACKAGE_NOT_FOUND',
+        message: 'ContextPackage was not found',
+      })
+    }
     if (
       input.projectId === undefined ||
-      package_.projectState.projectId === undefined ||
-      package_.projectState.workspaceId !== input.workspaceId ||
-      package_.projectState.projectId !== input.projectId
+      !contextPackageMatchesConsumerScope(package_, {
+        workspaceId: input.workspaceId,
+        projectId: input.projectId,
+      })
     ) {
       throw new ForbiddenException({
         code: 'CONTEXT_PACKAGE_SCOPE_MISMATCH',
