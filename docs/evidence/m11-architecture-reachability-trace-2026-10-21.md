@@ -836,3 +836,62 @@ belongs to another owner, into the unit lane, so it is not proposed.
 **This packet does not establish CI coverage for the regression suite.** Until the registration is
 approved and applied by the shared runner's owner, the suite runs only when it is invoked directly
 from `scripts/`, and the canonical CI cannot fail on a regression in it.
+
+---
+
+## 13. The external half of the inward rule (CP #187 acceptance)
+
+### 13.1 The gap
+
+CP #187's acceptance criteria state: "No core package directly requires Neon, R2, Railway,
+Redis/Valkey, Runtime Gateway transport, OS keychain, or another deployment implementation."
+
+The audit proved the **workspace** half of that rule — a `core-port` package may not depend on an
+`adapter-infrastructure` workspace package (the core/adapter loop in `validateArchitectureAudit`).
+It never read a core package's **external** dependencies, even though the discovery already records
+them (`externalDependencies`, rendered in the package table of the canonical report). A core package
+could therefore require a deployment implementation directly — `postgres` for Neon/PostgreSQL,
+`@aws-sdk/client-s3` for R2, a Redis or Valkey client, `keytar` for the OS keychain, or the HPKE
+remote transport — and the canonical audit still validated with no error. The rule was therefore
+narrower than the acceptance criterion it exists to prove.
+
+### 13.2 The correction
+
+`scripts/architecture-audit.mjs` now checks the external half of the same rule against an explicit,
+reviewable list of the npm packages that bind the named implementations. A **development**
+dependency is not shipped with the package and is not checked; the workspace half is unchanged.
+
+| Rule                                                         | Message                                                                     |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| A core package requires a deployment implementation directly | `<package>: core package depends on deployment implementation <dependency>` |
+
+The list is `postgres`, `@neondatabase/serverless`, `@aws-sdk/client-s3`, `ioredis`, `redis`,
+`@valkey/valkey-glide`, `keytar`, `@hpke/core` and `@hpke/dhkem-x25519`. Railway is
+repository-owned deployment configuration rather than a package, so it stays covered by the profile
+configuration rules. No measured value changes: the canonical audit still validates with no errors
+(`Validated 45 packages, 54 operations, and 4 profiles`), and the package table is unchanged.
+
+### 13.3 The regressions
+
+`scripts/m11-architecture-audit-regression.test.mjs` gains two deterministic cases:
+
+- `rejects a core package that directly requires a deployment implementation` — a core package that
+  declares `postgres` fails the audit with the new message.
+- `does not read a development dependency as a deployment implementation` — the same package in its
+  development dependencies does not fail the rule.
+
+The first case fails when the new rule is removed and passes with it; the second passes in both
+states, which is what makes the development-dependency distinction a pinned rule rather than an
+accident.
+
+### 13.4 What this section does not claim
+
+- **No live acceptance.** The rule is proved by source regressions over synthetic package
+  inventories. It certifies the audit's own detection, not a deployed profile: every profile row
+  stays `partially_verified`, and no provider, database, deployment or native session was used.
+- **No shared-runner change.** Section 12's lane registration is still only proposed. This section
+  edits no CI workflow, no lane registration and no file owned by the shared runner's owner; the
+  regression suite still runs only when invoked directly from `scripts/`.
+- **No PostgreSQL integration.** The rule is about dependency declarations, not migrations or a
+  live database.
+- **No human, provider or production acceptance** is claimed, and CP #187 is not closed.

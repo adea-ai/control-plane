@@ -464,6 +464,56 @@ describe('M11.2 architecture audit tooling regressions', () => {
     )
   })
 
+  test('rejects a core package that directly requires a deployment implementation', async () => {
+    const discovered = await discoverArchitecture(repositoryRoot)
+    const core = discovered.packages.find((entry) => entry.name === '@control-plane/domain')
+    expect(core).toBeDefined()
+    const withDeployment = {
+      ...discovered,
+      packages: discovered.packages.map((entry) =>
+        entry.name === '@control-plane/domain'
+          ? { ...entry, externalDependencies: [...entry.externalDependencies, 'postgres'] }
+          : entry
+      ),
+    }
+    const { errors } = await validateArchitectureAudit(audit, {
+      repositoryRoot,
+      discovered: withDeployment,
+    })
+    expect(errors).toContain(
+      '@control-plane/domain: core package depends on deployment implementation postgres'
+    )
+  })
+
+  test('does not read a development dependency as a deployment implementation', async () => {
+    const discovered = await discoverArchitecture(repositoryRoot)
+    const core = discovered.packages.find((entry) => entry.name === '@control-plane/domain')
+    expect(core).toBeDefined()
+    const withDevelopment = {
+      ...discovered,
+      packages: discovered.packages.map((entry) =>
+        entry.name === '@control-plane/domain'
+          ? {
+              ...entry,
+              developmentExternalDependencies: [
+                ...entry.developmentExternalDependencies,
+                'postgres',
+              ],
+            }
+          : entry
+      ),
+    }
+    const { errors } = await validateArchitectureAudit(audit, {
+      repositoryRoot,
+      discovered: withDevelopment,
+    })
+    // A development dependency is not shipped with the package, so it is not a
+    // dependency of the core.
+    expect(
+      errors.some((error) => error.includes('core package depends on deployment implementation'))
+    ).toBe(false)
+  })
+
   test('surfaces every served route that has no SDK operation binding', async () => {
     const discovered = await discoverArchitecture(repositoryRoot)
     const { errors, warnings } = await validateArchitectureAudit(audit, {

@@ -619,6 +619,17 @@ export async function validateArchitectureAudit(audit, options = {}) {
         errors.push(`${entry.name}: core package depends on adapter ${dependency}`)
       }
     }
+    // The workspace half of the inward rule above cannot see a deployment
+    // implementation that a core package requires directly, so the external half
+    // is checked here. A development dependency is not shipped and is not
+    // checked.
+    for (const dependency of entry.externalDependencies) {
+      if (deploymentImplementationPackages.has(dependency)) {
+        errors.push(
+          `${entry.name}: core package depends on deployment implementation ${dependency}`
+        )
+      }
+    }
   }
   if (dependencyCycles(discoveredPackages).length > 0) {
     errors.push('workspace runtime dependency graph contains a cycle')
@@ -1306,6 +1317,27 @@ async function main() {
     `Validated ${audit.packages.length} packages, ${audit.operations.length} operations, and ${audit.profiles.length} profiles`
   )
 }
+
+// CP #187 acceptance: "No core package directly requires Neon, R2, Railway,
+// Redis/Valkey, Runtime Gateway transport, OS keychain, or another deployment
+// implementation." The audit proved the workspace half of that rule — a core
+// package may not depend on an adapter package — but it never read a core
+// package's own external dependencies, so a deployment implementation could be
+// required directly by a core package and the audit still validated. Each entry
+// below is the npm package that binds one of the named implementations.
+// Railway is repository-owned deployment configuration rather than a package,
+// so it is covered by the profile configuration rules instead.
+const deploymentImplementationPackages = new Set([
+  'postgres', // Neon / PostgreSQL
+  '@neondatabase/serverless', // Neon serverless driver
+  '@aws-sdk/client-s3', // R2 / S3-compatible object storage
+  'ioredis', // Redis
+  'redis', // Redis
+  '@valkey/valkey-glide', // Valkey
+  'keytar', // OS keychain
+  '@hpke/core', // remote transport (Runtime Gateway / relay)
+  '@hpke/dhkem-x25519', // remote transport (Runtime Gateway / relay)
+])
 
 function packageLayer(entry) {
   const name = basename(entry.path)
