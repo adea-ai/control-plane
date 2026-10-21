@@ -1,5 +1,9 @@
-import { expect, test } from 'bun:test'
-import { fileURLToPath } from 'node:url'
+import { afterAll, expect, test } from 'bun:test'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 // Bundle the real wrapper with private, synthetic dependency modules. Unlike
 // mock.module, these stubs cannot replace database modules in other test files.
@@ -36,9 +40,57 @@ const built = await Bun.build({
   ],
 })
 if (!built.success) throw new AggregateError(built.logs, 'Fixture test bundle failed')
-const { configure, createIsolatedPostgres, withIsolatedPostgres } = await import(
-  `data:text/javascript;base64,${Buffer.from(await built.outputs[0].text()).toString('base64')}`
+
+// The bundle is loaded from a temporary file this test owns.
+//
+// A module imported from a data: URL is not reportable by the coverage reporter
+// of the pinned Bun 1.4.3: it aborts the whole coverage run with "panic: range
+// end index 1884 out of range for slice of length 1024" before any summary is
+// printed. The file holds the bundle's bytes exactly as the build produced them,
+// so the fixture under test is unchanged, and the directory is removed when the
+// run ends and when the fixture cannot be loaded at all.
+
+/** The directory that holds the fixture file, created empty and owned by the test. */
+async function createFixtureDirectory() {
+  const directory = await mkdtemp(join(tmpdir(), 'control-plane-postgres-fixture-'))
+  // The bundle is generated output, so it is written into a dist/ directory: the
+  // repository's coverage configuration already ignores generated output, and the
+  // coverage report keeps the rows it had before.
+  await mkdir(join(directory, 'dist'))
+  return directory
+}
+
+/** The path of the fixture file inside an owned directory. */
+function fixtureFilePath(directory) {
+  return join(directory, 'dist', 'postgres-fixture.mjs')
+}
+
+/** Removes an owned directory and everything in it. */
+async function removeFixtureDirectory(directory) {
+  await rm(directory, { recursive: true, force: true })
+}
+
+/** Writes the fixture and loads it, leaving nothing behind when the load fails. */
+async function loadFixtureModule(directory, source) {
+  await writeFile(fixtureFilePath(directory), source)
+  try {
+    return await import(pathToFileURL(fixtureFilePath(directory)).href)
+  } catch (error) {
+    await removeFixtureDirectory(directory)
+    throw error
+  }
+}
+
+const fixtureSource = await built.outputs[0].text()
+const fixtureDirectory = await createFixtureDirectory()
+const fixtureFile = fixtureFilePath(fixtureDirectory)
+const { configure, createIsolatedPostgres, withIsolatedPostgres } = await loadFixtureModule(
+  fixtureDirectory,
+  fixtureSource
 )
+afterAll(async () => {
+  await removeFixtureDirectory(fixtureDirectory)
+})
 
 function fixture({ migrationError, cleanupError, creationError } = {}) {
   const calls = []
@@ -128,4 +180,28 @@ test('operation failure still disposes exactly once', async () => {
     )
   ).rejects.toBe(error)
   expect(calls).toEqual(['migrate', 'operation', 'dispose'])
+})
+
+test('loads the fixture from the temporary file this test owns', async () => {
+  expect(existsSync(fixtureFile)).toBe(true)
+  expect(await readFile(fixtureFile, 'utf8')).toBe(fixtureSource)
+  expect(fixtureDirectory.startsWith(tmpdir())).toBe(true)
+  expect(typeof configure).toBe('function')
+})
+
+test('removes the temporary fixture directory it owns', async () => {
+  const directory = await createFixtureDirectory()
+  const file = fixtureFilePath(directory)
+  await writeFile(file, 'export const probe = 1\n')
+
+  expect(existsSync(file)).toBe(true)
+  await removeFixtureDirectory(directory)
+  expect(existsSync(directory)).toBe(false)
+})
+
+test('removes the temporary fixture directory when the fixture cannot be loaded', async () => {
+  const directory = await createFixtureDirectory()
+
+  await expect(loadFixtureModule(directory, 'export const broken = (')).rejects.toThrow()
+  expect(existsSync(directory)).toBe(false)
 })
