@@ -563,6 +563,17 @@ describe('per-model harness mapping (M12/#678)', () => {
     ).rejects.toMatchObject({ code: 'NO_COMPATIBLE_RUNTIME' })
   })
 
+  test('a model id that names an inherited property is unmapped, not a harness', async () => {
+    for (const modelId of ['constructor', 'toString', 'valueOf', 'hasOwnProperty']) {
+      await expect(
+        routerFor([piRuntime()], { harnessByModel: { 'deepseek-flash': 'pi' } }).resolve({
+          execution: execution(plan(), modelId),
+          executionPlan: plan(),
+        })
+      ).rejects.toMatchObject({ code: 'HARNESS_MAP_MODEL_UNMAPPED' })
+    }
+  })
+
   test('an explicit pin that contradicts the map is denied', async () => {
     await expect(
       routerFor([piRuntime(), managedRuntime()], {

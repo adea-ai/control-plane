@@ -172,6 +172,11 @@ export function resolveMappedHarness(input: {
   if (input.modelId === undefined) {
     throw new DecisionResolutionDeniedError('HARNESS_MAP_MODEL_ABSENT')
   }
+  // Own-property lookup: a model id such as `constructor` or `toString` is
+  // unmapped, never an inherited object property.
+  if (!Object.hasOwn(map, input.modelId)) {
+    throw new DecisionResolutionDeniedError('HARNESS_MAP_MODEL_UNMAPPED')
+  }
   const mapped = map[input.modelId]
   if (mapped === undefined) {
     throw new DecisionResolutionDeniedError('HARNESS_MAP_MODEL_UNMAPPED')

@@ -552,6 +552,24 @@ describe('per-model harness mapping (M12/#678)', () => {
     )
   })
 
+  test('a model id that names an inherited property is unmapped', () => {
+    // Only ids the contract accepts reach the lookup; `__proto__` is not a
+    // model id at all and the request schema refuses it before the map.
+    for (const modelId of [
+      'constructor',
+      'toString',
+      'valueOf',
+      'hasOwnProperty',
+      'isPrototypeOf',
+    ]) {
+      expectDenied('HARNESS_MAP_MODEL_UNMAPPED', () =>
+        resolveDecisionLayer(mappedRequest({ model: { modelId } }), {
+          harnessByModel: { 'deepseek-flash': 'claude-code' },
+        })
+      )
+    }
+  })
+
   test('an explicit harness that contradicts the map is denied', () => {
     expectDenied('HARNESS_MAP_CONFLICTS_WITH_PIN', () =>
       resolveDecisionLayer(

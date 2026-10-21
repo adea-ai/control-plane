@@ -1,3 +1,4 @@
+import { HarnessIdSchema, ModelIdSchema } from '@control-plane/contracts'
 import { ConfigurationError } from './service.js'
 import { loadDatabaseCredentials, type DatabaseCredentials } from './database.js'
 import type { RawEnvironment } from './environment.js'
@@ -237,10 +238,17 @@ function loadHarnessByModel(
     return invalid()
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return invalid()
-  const map: Record<string, string> = {}
+  // A null-prototype map: a model id such as `constructor` or `__proto__` is an
+  // ordinary key, never an inherited property, and the map is only read by
+  // own-property lookups.
+  const map: Record<string, string> = Object.create(null)
   for (const [modelId, harnessId] of Object.entries(parsed as Record<string, unknown>)) {
-    if (!/^[a-z0-9][a-z0-9._/-]{0,127}$/i.test(modelId)) return invalid()
-    if (typeof harnessId !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(harnessId)) return invalid()
+    // The canonical schemas decide what a model id and a harness id are, so the
+    // configuration can never name an id the execution contract would refuse.
+    if (!ModelIdSchema.safeParse(modelId).success) return invalid()
+    if (typeof harnessId !== 'string' || !HarnessIdSchema.safeParse(harnessId).success) {
+      return invalid()
+    }
     map[modelId] = harnessId
   }
   return map
