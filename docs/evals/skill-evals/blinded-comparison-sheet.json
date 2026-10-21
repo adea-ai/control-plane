@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "packet": "blinded-skill-library-comparison-v1",
+  "status": "awaiting-blinded-human-scoring",
+  "procedure": "docs/evals/skill-evals/blinded-comparison-packet.md",
+  "note": "Every value below is null because no independent human review has been performed. These nulls are the recorded state of an open external gate, not a placeholder to be filled in from the offline fixture run. A reviewer must replace this file with a new versioned file after scoring.",
+  "task": {
+    "description": "One representative cold repository audit request, executed against the pinned baseline skill library and the candidate skill library.",
+    "baselineCommit": "27f17bd55e0266439b5b3089163195c9e7a669be",
+    "candidateRef": "the exact head under review",
+    "blinding": "the reviewer scores Library A and Library B without knowing which is the candidate"
+  },
+  "rubricDimensions": [
+    "goal_coverage",
+    "constraint_adherence",
+    "evidence_sufficiency",
+    "assumption_disclosure",
+    "uncertainty_calibration",
+    "tool_selection",
+    "scope_control",
+    "verification_completeness",
+    "cleanup",
+    "security",
+    "provenance_citation_correctness",
+    "refusal_escalation_quality"
+  ],
+  "dimensionScale": ["pass", "partial", "fail"],
+  "libraries": [
+    {
+      "label": "A",
+      "scores": {
+        "goal_coverage": null,
+        "constraint_adherence": null,
+        "evidence_sufficiency": null,
+        "assumption_disclosure": null,
+        "uncertainty_calibration": null,
+        "tool_selection": null,
+        "scope_control": null,
+        "verification_completeness": null,
+        "cleanup": null,
+        "security": null,
+        "provenance_citation_correctness": null,
+        "refusal_escalation_quality": null
+      },
+      "routingDecision": null,
+      "reviewerCorrections": null,
+      "reviewerCorrectionsDetail": null,
+      "requiredStopAndAsk": null
+    },
+    {
+      "label": "B",
+      "scores": {
+        "goal_coverage": null,
+        "constraint_adherence": null,
+        "evidence_sufficiency": null,
+        "assumption_disclosure": null,
+        "uncertainty_calibration": null,
+        "tool_selection": null,
+        "scope_control": null,
+        "verification_completeness": null,
+        "cleanup": null,
+        "security": null,
+        "provenance_citation_correctness": null,
+        "refusal_escalation_quality": null
+      },
+      "routingDecision": null,
+      "reviewerCorrections": null,
+      "reviewerCorrectionsDetail": null,
+      "requiredStopAndAsk": null
+    }
+  ],
+  "reviewers": [],
+  "disagreements": null,
+  "errorBounds": {
+    "perDimensionKappaMinimum": 0.6,
+    "completionHonestyDisagreementTolerance": 0,
+    "onViolation": "the grader-only promotion path stays disabled for the affected task family until corrected"
+  }
+}

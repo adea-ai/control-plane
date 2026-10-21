@@ -1,4 +1,5 @@
 import { lstat, readdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { compareCodePointOrder } from '../packages/contracts/src/canonical-json.ts'
@@ -6,6 +7,7 @@ import { compareCodePointOrder } from '../packages/contracts/src/canonical-json.
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const skillsDirectory = '.agents/skills'
 const inventoryFile = 'docs/skills/skill-library.json'
+const INVENTORY_SCHEMA_VERSION = 1
 const REGISTRY_FILE = 'README.md'
 const TEXT_FILE = /\.(?:md|ya?ml|json|m?js|ts|txt|sh|toml)$/iu
 const RESOURCE_DIRECTORY = /(?:^|\/)references\//u
@@ -13,6 +15,22 @@ const WHITESPACE = /\s/u
 const SEMANTIC_VERSION =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/u
 const MARKDOWN_REFERENCE = /^\s{0,3}\[[^\]]+\]:\s*(<[^>]+>|[^\s]+)(?:\s+.*)?$/gmu
+
+/**
+ * Routing contract: a skill's `description` is the only agent-visible
+ * selection surface, so its trigger and non-trigger clauses are parsed out of
+ * it and must be unique across the library.
+ */
+const ROUTING_PATTERN = /^Use when (?<trigger>.+?)\. Not for (?<nontrigger>.+?)\.(?=\s|$)/u
+const MIN_ROUTING_LENGTH = 20
+
+/** Boundary contract labels every retained skill must declare. */
+const BOUNDARY_LABELS = ['Secrets', 'Dirty worktree', 'Migration', 'Generated files', 'Provider']
+const BOUNDARY_HEADING = '### Boundary contract'
+const BOUNDARY_PATTERN = /^- \*\*([^:*]+):\*\* (.+)$/gmu
+const MIN_BOUNDARY_LENGTH = 30
+
+const PROVENANCE_ORIGINS = ['repository-owned', 'vendored-upstream']
 
 /** Machine-specific or absolute path markers that make skill text non-portable. */
 const NON_PORTABLE = [/^\/(?:Users|home)\//u, /^[A-Z]:\\/u, /\/Users\/amf\//u]
@@ -36,6 +54,7 @@ const REQUIRED_EVIDENCE_FIELDS = [
   '**Outputs:**',
   '**Verification commands:**',
   '**Failure/skip reporting:**',
+  '**Stop conditions:**',
   '**Cleanup:**',
   '**Completion-claim guard:**',
 ]
@@ -62,6 +81,53 @@ function parseFrontmatter(text) {
   } catch {
     return { metadata: null, error: 'frontmatter is not valid YAML' }
   }
+}
+
+/**
+ * Extract the routing contract from a skill description.
+ * The description must follow `Use when <trigger>. Not for <non-trigger>. …`.
+ */
+function parseRouting(description) {
+  const match = ROUTING_PATTERN.exec(description)
+  if (!match?.groups) return null
+  return {
+    trigger: match.groups.trigger.trim(),
+    nontrigger: match.groups.nontrigger.trim(),
+  }
+}
+
+/** Normalized form used for routing-clause uniqueness and overlap checks. */
+function normalizeRoutingClause(value) {
+  return value.replace(/[`*_]/gu, '').toLowerCase().replace(/\s+/gu, ' ').trim()
+}
+
+/** Extract the boundary contract block from a skill body. */
+function parseBoundaryContract(skillMd) {
+  const heading = skillMd.indexOf(BOUNDARY_HEADING)
+  if (heading < 0) return null
+  const rest = skillMd.slice(heading + BOUNDARY_HEADING.length)
+  const end = rest.search(/^##\s+/mu)
+  const block = end < 0 ? rest : rest.slice(0, end)
+  const boundaries = new Map()
+  for (const match of block.matchAll(BOUNDARY_PATTERN)) {
+    boundaries.set(match[1].trim(), match[2].trim())
+  }
+  return boundaries
+}
+
+/** SHA-256 digest of the skill entrypoint, used for pinned provenance. */
+function digestOf(content) {
+  return `sha256:${createHash('sha256').update(content, 'utf8').digest('hex')}`
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+}
+
+/** Read one labelled bullet out of a skill's Evidence contract. */
+function extractEvidenceField(skillMd, label) {
+  const match = new RegExp(`^- ${escapeRegExp(label)}\\s*(.*)$`, 'mu').exec(skillMd)
+  return match?.[1]?.trim()
 }
 
 function stripCode(markdown) {
@@ -234,14 +300,15 @@ function parseRegistry(markdown, errors) {
       .split('|')
       .slice(1, -1)
       .map((cell) => cell.trim())
-    if (cells.length !== 6 || cells[0] === 'Skill' || /^-+$/u.test(cells[0] ?? '')) continue
+    if (cells.length !== 7 || cells[0] === 'Skill' || /^-+$/u.test(cells[0] ?? '')) continue
     rows.push({
       name: cells[0].replace(/^`|`$/gu, ''),
       version: cells[1],
       purpose: cells[2],
       trigger: cells[3],
-      owner: cells[4],
-      evidence: cells[5],
+      nontrigger: cells[4],
+      owner: cells[5],
+      evidence: cells[6],
     })
   }
 
@@ -249,6 +316,7 @@ function parseRegistry(markdown, errors) {
   const uniqueValues = new Map([
     ['purpose', new Map()],
     ['trigger', new Map()],
+    ['nontrigger', new Map()],
   ])
   for (const row of rows) {
     if (byName.has(row.name)) {
@@ -265,7 +333,12 @@ function parseRegistry(markdown, errors) {
       if (!normalized) continue
       const previous = values.get(normalized)
       if (previous) {
-        const label = field === 'trigger' ? 'trigger boundary' : field
+        const label =
+          field === 'trigger'
+            ? 'trigger boundary'
+            : field === 'nontrigger'
+              ? 'non-trigger boundary'
+              : field
         errors.push({ skill: row.name, message: `registry ${label} duplicates '${previous}'` })
       } else {
         values.set(normalized, row.name)
@@ -404,6 +477,8 @@ export async function discoverSkillLibrary(options = {}) {
   }
 
   const skills = []
+  const routingClauses = []
+  const boundaryValues = []
   const registryPath = join(skillsRoot, REGISTRY_FILE)
   let registry
   try {
@@ -473,6 +548,148 @@ export async function discoverSkillLibrary(options = {}) {
       }
     }
 
+    // Routing contract: the description is the agent-visible selection surface.
+    const description = typeof frontmatter.description === 'string' ? frontmatter.description : ''
+    const routing = parseRouting(description)
+    if (!routing) {
+      errors.push({
+        skill: name,
+        message:
+          'SKILL.md description must follow the routing convention "Use when <trigger>. Not for <non-trigger>."',
+      })
+    } else {
+      if (routing.trigger.length < MIN_ROUTING_LENGTH) {
+        errors.push({ skill: name, message: 'routing trigger is missing or too short' })
+      }
+      if (routing.nontrigger.length < MIN_ROUTING_LENGTH) {
+        errors.push({ skill: name, message: 'routing non-trigger is missing or too short' })
+      }
+      routingClauses.push({ name, kind: 'trigger', value: routing.trigger })
+      routingClauses.push({ name, kind: 'non-trigger', value: routing.nontrigger })
+    }
+
+    // Boundary contract: secrets, dirty worktree, migration, generated files, provider.
+    const boundaries = parseBoundaryContract(skillMd)
+    if (!boundaries) {
+      errors.push({
+        skill: name,
+        message: `SKILL.md is missing the "${BOUNDARY_HEADING}" section`,
+      })
+    } else {
+      for (const label of BOUNDARY_LABELS) {
+        const value = boundaries.get(label)
+        if (!value) {
+          errors.push({ skill: name, message: `boundary contract is missing "${label}"` })
+          continue
+        }
+        if (value.length < MIN_BOUNDARY_LENGTH) {
+          errors.push({
+            skill: name,
+            message: `boundary contract "${label}" is missing or too short`,
+          })
+          continue
+        }
+        boundaryValues.push({ name, label, value })
+      }
+      for (const label of boundaries.keys()) {
+        if (!BOUNDARY_LABELS.includes(label)) {
+          errors.push({ skill: name, message: `boundary contract has an unknown label "${label}"` })
+        }
+      }
+    }
+
+    // Provenance: where the skill came from and which local revision applies.
+    const provenance = skillMetadata?.provenance
+    if (!provenance || typeof provenance !== 'object' || Array.isArray(provenance)) {
+      errors.push({ skill: name, message: 'SKILL.md frontmatter metadata.provenance is missing' })
+    } else if (!PROVENANCE_ORIGINS.includes(provenance.origin)) {
+      errors.push({
+        skill: name,
+        message: `SKILL.md frontmatter metadata.provenance.origin must be one of ${PROVENANCE_ORIGINS.join(', ')}`,
+      })
+    } else if (provenance.origin === 'repository-owned') {
+      if (provenance.source) {
+        errors.push({
+          skill: name,
+          message: 'repository-owned skills must not declare metadata.provenance.source',
+        })
+      }
+      if (provenance.integration_version !== undefined) {
+        if (
+          typeof provenance.integration_version !== 'string' ||
+          !SEMANTIC_VERSION.test(provenance.integration_version)
+        ) {
+          errors.push({
+            skill: name,
+            message:
+              'metadata.provenance.integration_version must be a semantic version when declared',
+          })
+        } else if (typeof version === 'string' && provenance.integration_version !== version) {
+          errors.push({
+            skill: name,
+            message:
+              'metadata.provenance.integration_version must match the skill metadata.version for repository-owned skills',
+          })
+        }
+      }
+    } else {
+      if (typeof provenance.source !== 'string' || provenance.source.trim().length === 0) {
+        errors.push({
+          skill: name,
+          message: 'vendored skills need metadata.provenance.source naming the upstream origin',
+        })
+      }
+      if (
+        typeof provenance.upstream_version !== 'string' ||
+        !SEMANTIC_VERSION.test(provenance.upstream_version)
+      ) {
+        errors.push({
+          skill: name,
+          message:
+            'vendored skills need metadata.provenance.upstream_version as a semantic version',
+        })
+      } else if (typeof version === 'string' && provenance.upstream_version !== version) {
+        errors.push({
+          skill: name,
+          message:
+            'metadata.provenance.upstream_version must match the pinned metadata.version for vendored skills',
+        })
+      }
+      if (
+        typeof provenance.integration_version !== 'string' ||
+        !SEMANTIC_VERSION.test(provenance.integration_version)
+      ) {
+        errors.push({
+          skill: name,
+          message:
+            'vendored skills need metadata.provenance.integration_version as a semantic version',
+        })
+      }
+    }
+
+    // Lifecycle: a deprecated skill must name its replacement.
+    const deprecated = skillMetadata?.deprecated === true
+    const supersededBy = skillMetadata?.superseded_by
+    if (deprecated) {
+      if (typeof supersededBy !== 'string' || supersededBy.trim().length === 0) {
+        errors.push({
+          skill: name,
+          message: 'a deprecated skill needs metadata.superseded_by naming its replacement',
+        })
+      }
+      if (!/^> \*\*Deprecated:\*\*/mu.test(skillMd)) {
+        errors.push({
+          skill: name,
+          message: 'a deprecated skill needs a "> **Deprecated:**" notice in its body',
+        })
+      }
+    } else if (supersededBy !== undefined) {
+      errors.push({
+        skill: name,
+        message: 'metadata.superseded_by is only allowed on a deprecated skill',
+      })
+    }
+
     const registryRow = registry.get(name)
     if (!registryRow) {
       errors.push({
@@ -486,6 +703,12 @@ export async function discoverSkillLibrary(options = {}) {
       if (!registryRow.trigger || registryRow.trigger.length < 10) {
         errors.push({ skill: name, message: 'registry trigger boundary is missing or too short' })
       }
+      if (!registryRow.nontrigger || registryRow.nontrigger.length < 10) {
+        errors.push({
+          skill: name,
+          message: 'registry non-trigger boundary is missing or too short',
+        })
+      }
       if (typeof version === 'string' && registryRow.version !== version) {
         errors.push({
           skill: name,
@@ -497,6 +720,20 @@ export async function discoverSkillLibrary(options = {}) {
           skill: name,
           message: `registry owner '${registryRow.owner}' does not match SKILL.md owner`,
         })
+      }
+      if (routing) {
+        if (registryRow.trigger !== routing.trigger) {
+          errors.push({
+            skill: name,
+            message: `registry trigger boundary does not match the SKILL.md description trigger`,
+          })
+        }
+        if (registryRow.nontrigger !== routing.nontrigger) {
+          errors.push({
+            skill: name,
+            message: `registry non-trigger boundary does not match the SKILL.md description non-trigger`,
+          })
+        }
       }
       if (!registryRow.evidence.includes(`./${name}/SKILL.md#evidence-contract`)) {
         errors.push({
@@ -563,20 +800,85 @@ export async function discoverSkillLibrary(options = {}) {
 
     skills.push({
       name,
-      description: (typeof frontmatter.description === 'string' ? frontmatter.description : '')
+      description: description
         .split(/\r?\n\s*\r?\n/u, 1)[0]
         .replace(/\s+/gu, ' ')
         .trim()
         .slice(0, 400),
       version: typeof version === 'string' ? version : undefined,
+      owner: typeof owner === 'string' ? owner : undefined,
+      trigger: routing?.trigger,
+      nontrigger: routing?.nontrigger,
+      boundaries:
+        routing && boundaries
+          ? Object.fromEntries(BOUNDARY_LABELS.map((label) => [label, boundaries.get(label)]))
+          : undefined,
+      stopConditions: extractEvidenceField(skillMd, '**Stop conditions:**'),
+      cleanup: extractEvidenceField(skillMd, '**Cleanup:**'),
+      deprecated,
+      supersededBy: typeof supersededBy === 'string' ? supersededBy : undefined,
+      provenance: provenance
+        ? {
+            origin: provenance.origin,
+            source: provenance.source,
+            upstreamVersion: provenance.upstream_version,
+            integrationVersion: provenance.integration_version,
+          }
+        : undefined,
       files,
       skillMdBytes: Buffer.byteLength(skillMd, 'utf8'),
+      skillMdDigest: digestOf(skillMd),
     })
+  }
+
+  // Cross-skill routing uniqueness: no two skills may share a trigger or a
+  // non-trigger clause, and no clause may overlap another skill's clause.
+  for (const clause of routingClauses) {
+    const normalized = normalizeRoutingClause(clause.value)
+    for (const other of routingClauses) {
+      if (other.name === clause.name) continue
+      const otherNormalized = normalizeRoutingClause(other.value)
+      if (normalized === otherNormalized) {
+        errors.push({
+          skill: clause.name,
+          message: `routing ${clause.kind} duplicates '${other.name}'`,
+        })
+      } else if (otherNormalized.includes(normalized)) {
+        errors.push({
+          skill: clause.name,
+          message: `routing ${clause.kind} overlaps '${other.name}' ${other.kind}`,
+        })
+      }
+    }
+  }
+
+  // Cross-skill boundary uniqueness: a declared boundary must be
+  // skill-specific, not a shared boilerplate line.
+  for (const entry of boundaryValues) {
+    for (const other of boundaryValues) {
+      if (other.name === entry.name || other.label !== entry.label) continue
+      if (normalizeRoutingClause(other.value) === normalizeRoutingClause(entry.value)) {
+        errors.push({
+          skill: entry.name,
+          message: `boundary "${entry.label}" duplicates '${other.name}'`,
+        })
+      }
+    }
   }
 
   for (const name of registry.keys()) {
     if (!directories.includes(name)) {
       errors.push({ skill: name, message: 'registry row has no matching skill directory' })
+    }
+  }
+
+  for (const skill of skills) {
+    if (!skill.deprecated) continue
+    if (skill.supersededBy && !directories.includes(skill.supersededBy)) {
+      errors.push({
+        skill: skill.name,
+        message: `metadata.superseded_by '${skill.supersededBy}' does not name a retained skill`,
+      })
     }
   }
 
@@ -630,14 +932,20 @@ export async function validateSkillLibrary(options = {}) {
     throw new Error(`Skill library validation found ${errors.length} problem(s).`)
   }
   const inventoryPath = join(root, inventoryFile)
+  const manifest = { schemaVersion: INVENTORY_SCHEMA_VERSION, skills }
   if (options.refresh) {
-    await writeFile(inventoryPath, `${JSON.stringify({ skills }, null, 2)}\n`)
+    await writeFile(inventoryPath, `${JSON.stringify(manifest, null, 2)}\n`)
   }
   let stored
   try {
     stored = JSON.parse(await readFile(inventoryPath, 'utf8'))
   } catch {
     throw new Error(`${inventoryFile} is missing; run with --refresh to write it.`)
+  }
+  if (stored?.schemaVersion !== INVENTORY_SCHEMA_VERSION) {
+    throw new Error(
+      `${inventoryFile} declares schemaVersion '${stored?.schemaVersion}'; expected '${INVENTORY_SCHEMA_VERSION}'.`
+    )
   }
   if (JSON.stringify(stored.skills) !== JSON.stringify(skills)) {
     throw new Error(

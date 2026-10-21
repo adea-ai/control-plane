@@ -1,9 +1,12 @@
 ---
 name: code-simplification
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   owner: "Control Plane maintainers"
-description: Simplifies code for clarity. Use when refactoring code for clarity without changing behavior. Use when code works but is harder to read, maintain, or extend than it should be. Use when reviewing code that has accumulated unnecessary complexity.
+  provenance:
+    origin: repository-owned
+    integration_version: "1.1.0"
+description: "Use when existing code works but is hard to read, maintain, or extend and behavior must not change. Not for behavior changes, for code whose intent is not yet understood, or for performance-critical paths. Simplifies code for clarity while preserving behavior exactly."
 ---
 
 # Code Simplification
@@ -343,3 +346,12 @@ After completing a simplification pass:
 - **Failure/skip reporting:** any failing test, type check, or lint run is reported as a failed simplification with the change reverted — never shipped and explained away.
 - **Cleanup:** no dead code, unused imports, or unreachable branches left behind by the pass; speculative abstractions removed are gone, not commented out.
 - **Completion-claim guard:** the skill must not claim simplification succeeded while any test, type check, or lint run fails, or while behavior changed — report the failure instead.
+- **Stop conditions:** Stop and revert the increment when a test, type check, or lint run fails, when the intent of the code is not yet understood, or when the change would alter a public API surface.
+
+### Boundary contract
+
+- **Secrets:** Never inline secret values, and never refactor credential-bearing configuration into code; secret material stays where it is.
+- **Dirty worktree:** Preserve pre-existing and unrelated working-tree edits; confine refactors to the requested scope and report anything left out.
+- **Migration:** Do not edit migration files or schema history; a simplification that would require a migration is out of scope.
+- **Generated files:** Never hand-edit generated output; simplify the generator or the source it reads instead.
+- **Provider:** Make no provider calls; the pass is local analysis over the supplied code region.

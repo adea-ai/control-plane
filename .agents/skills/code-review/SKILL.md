@@ -1,9 +1,12 @@
 ---
 name: code-review
-description: Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes — Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/spec asked for?). Runs both reviews in parallel sub-agents and reports them side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to "review since X".
+description: "Use when the user asks to review a branch, pull request, or work-in-progress diff against a fixed point. Not for fixing the findings, approving the change, or merging it. Reviews two axes in parallel sub-agents and reports them side by side — Standards (this repository's documented coding standards) and Spec (the originating issue or spec)."
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   owner: "Control Plane maintainers"
+  provenance:
+    origin: repository-owned
+    integration_version: "1.1.0"
 ---
 
 Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
@@ -120,3 +123,12 @@ Reporting them separately stops one axis from masking the other.
 - **Failure/skip reporting:** an empty committed diff ends a committed-only review; a missing spec is reported as "no spec available" and the Spec axis is marked skipped, never passed.
 - **Cleanup:** none — the review leaves no files, comments, issues, or PR artifacts behind.
 - **Completion-claim guard:** reviews are advisory — the skill must not claim the reviewed work is correct, complete, or mergeable, and closed issues or green CI never stand in for spec compliance.
+- **Stop conditions:** Stop and report when the fixed point does not resolve, when no requested review surface is non-empty, or when the originating spec cannot be located; a stopped axis is reported as skipped, never as a pass.
+
+### Boundary contract
+
+- **Secrets:** Read only tracked review content; never open `.env` files, credential stores, or provider tokens, and never copy secret-shaped strings into a finding.
+- **Dirty worktree:** Never reset, stash, stage, or overwrite unrelated working-tree changes; inspect staged, unstaged, and untracked surfaces without modifying them.
+- **Migration:** Do not apply, revert, or generate database migrations; a migration-file change in the diff is reported as a finding only.
+- **Generated files:** Treat generated artifacts as review inputs and never regenerate them; report drift between a generator and its committed output instead.
+- **Provider:** Make no provider calls; issue-tracker retrieval is the only external read, and its authentication state is reported when unavailable.

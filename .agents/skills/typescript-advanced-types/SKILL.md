@@ -1,9 +1,12 @@
 ---
 name: typescript-advanced-types
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   owner: "Control Plane maintainers"
-description: Master TypeScript's advanced type system including generics, conditional types, mapped types, template literals, and utility types for building type-safe applications. Use when implementing complex type logic, creating reusable type utilities, or ensuring compile-time type safety in TypeScript projects.
+  provenance:
+    origin: repository-owned
+    integration_version: "1.1.0"
+description: "Use when designing complex TypeScript type logic such as generics, conditional types, mapped types, template literals, or reusable utility types. Not for everyday typing that the compiler already infers correctly. Reference for type-level design and compile-time type safety."
 ---
 
 # TypeScript Advanced Types
@@ -330,3 +333,12 @@ type ShouldError = ExpectError<AssertEqual<string, number>>;
 - **Failure/skip reporting:** compiler errors under strict mode, or type tests that pass when they should fail, are reported as failures — never worked around.
 - **Cleanup:** no temporary `any`, `as unknown as`, or experimental type aliases left in the diff.
 - **Completion-claim guard:** the skill must not claim typing success while `tsc` reports errors under strict mode or any `any` escape was introduced to force compilation.
+- **Stop conditions:** Stop and report when the type change cannot be expressed under strict mode without an `any` escape, when the compiler errors are pre-existing, or when a type-level test passes when it should fail.
+
+### Boundary contract
+
+- **Secrets:** Type definitions never encode real credentials or personal data; use an opaque placeholder type for sensitive values.
+- **Dirty worktree:** Type-only edits stay inside the requested scope and never reset or overwrite unrelated working-tree changes.
+- **Migration:** A type change that alters persisted or API types requires the matching schema or migration change in the same change.
+- **Generated files:** Never hand-edit generated declaration or schema files; change the source type and regenerate.
+- **Provider:** Make no provider calls; type-level verification is local compilation.

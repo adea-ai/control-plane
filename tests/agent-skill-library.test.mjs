@@ -3,12 +3,24 @@ import { readFile, readdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { discoverSkillLibrary, validateSkillLibrary } from '../scripts/validate-skills.mjs'
+import {
+  buildEvidence,
+  loadSuite,
+  routingBytes,
+  runScenario,
+  skillOwner,
+  skillVersion,
+  snapshotBaselineLibrary,
+  snapshotCandidateLibrary,
+} from '../docs/evals/skill-evals/skill-eval-harness.mts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const skillRoot = resolve(root, '.agents/skills')
 const read = (path) => readFile(resolve(root, path), 'utf8')
 const bunRunCommands = (markdown) =>
   [...markdown.matchAll(/`bun run ([^\s`]+)/gu)].map((command) => command[1])
+
+const BOUNDARY_LABELS = ['Secrets', 'Dirty worktree', 'Migration', 'Generated files', 'Provider']
 
 test('skill command extraction preserves the full command token for validation', () => {
   expect(bunRunCommands('`bun run build` `bun run test --timeout 1` `bun run build.foo`')).toEqual([
@@ -48,6 +60,7 @@ test('every retained skill has an owner, version, complete evidence contract, va
     '**Outputs:**',
     '**Verification commands:**',
     '**Failure/skip reporting:**',
+    '**Stop conditions:**',
     '**Cleanup:**',
     '**Completion-claim guard:**',
   ]
@@ -70,6 +83,10 @@ test('every retained skill has an owner, version, complete evidence contract, va
     expect(metadata.metadata?.owner?.trim().length, name).toBeGreaterThan(0)
     expect(/^## Evidence contract$/m.test(text), name).toBe(true)
     for (const field of requiredContractFields) expect(text, `${name}: ${field}`).toContain(field)
+    expect(/^### Boundary contract$/m.test(text), name).toBe(true)
+    for (const label of BOUNDARY_LABELS) {
+      expect(text, `${name}: ${label}`).toContain(`**${label}:**`)
+    }
 
     for (const file of skill.files.filter((path) => path.endsWith('.md'))) {
       const markdown = await read(`.agents/skills/${name}/${file}`)
@@ -78,5 +95,217 @@ test('every retained skill has an owner, version, complete evidence contract, va
         expect(typeof scripts[command], `${name}/${file}: bun run ${command}`).toBe('string')
       }
     }
+  }
+})
+
+test('every retained skill declares a unique, non-overlapping trigger and non-trigger', async () => {
+  const { skills } = await discoverSkillLibrary()
+  const clauses = skills.flatMap((skill) => [
+    { name: skill.name, kind: 'trigger', value: skill.trigger },
+    { name: skill.name, kind: 'non-trigger', value: skill.nontrigger },
+  ])
+  expect(clauses.every((clause) => typeof clause.value === 'string')).toBe(true)
+  for (const clause of clauses) {
+    expect(clause.value.length, `${clause.name} ${clause.kind}`).toBeGreaterThanOrEqual(20)
+  }
+  const normalized = clauses.map((clause) => ({
+    ...clause,
+    value: clause.value.toLowerCase().replace(/\s+/gu, ' ').trim(),
+  }))
+  for (const clause of normalized) {
+    for (const other of normalized) {
+      if (other.name === clause.name) continue
+      expect(clause.value).not.toBe(other.value)
+      expect(other.value).not.toContain(clause.value)
+    }
+  }
+})
+
+test('every retained skill boundary is present, substantive, and skill-specific', async () => {
+  const { skills } = await discoverSkillLibrary()
+  for (const skill of skills) {
+    for (const label of BOUNDARY_LABELS) {
+      const value = skill.boundaries?.[label]
+      expect(typeof value, `${skill.name}: ${label}`).toBe('string')
+      expect(value.length, `${skill.name}: ${label}`).toBeGreaterThanOrEqual(30)
+    }
+    for (const other of skills) {
+      if (other.name === skill.name) continue
+      for (const label of BOUNDARY_LABELS) {
+        expect(skill.boundaries[label], `${skill.name}: ${label}`).not.toBe(other.boundaries[label])
+      }
+    }
+  }
+})
+
+test('every retained skill declares provenance, and vendored skills stay pinned', async () => {
+  const { skills } = await discoverSkillLibrary()
+  for (const skill of skills) {
+    expect(skill.provenance?.origin, skill.name).toMatch(/^(repository-owned|vendored-upstream)$/)
+    if (skill.provenance.origin === 'vendored-upstream') {
+      expect(skill.provenance.source?.length, skill.name).toBeGreaterThan(0)
+      expect(skill.provenance.upstreamVersion, skill.name).toBe(skill.version)
+      expect(skill.provenance.integrationVersion, skill.name).toMatch(
+        /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)/
+      )
+    } else {
+      expect(skill.provenance.source, skill.name).toBeUndefined()
+      expect(skill.provenance.upstreamVersion, skill.name).toBeUndefined()
+    }
+  }
+})
+
+test('the committed skill-eval evidence matches the current skill library', async () => {
+  const evidence = JSON.parse(await read('docs/evals/skill-evals/skill-eval-evidence.v1.json'))
+  const { skills } = await discoverSkillLibrary()
+  expect(evidence.schemaVersion).toBe(1)
+  expect(evidence.candidate.skillCount).toBe(skills.length)
+  expect(evidence.baseline.commit).toMatch(/^[a-f0-9]{40}$/)
+  expect(evidence.harness.api).toBe('runEvidenceAuditEval')
+  expect(evidence.harness.ownership).toContain('F2W5')
+
+  const candidateByName = new Map(evidence.candidate.skills.map((skill) => [skill.name, skill]))
+  for (const skill of skills) {
+    const recorded = candidateByName.get(skill.name)
+    expect(recorded, skill.name).toBeDefined()
+    const text = await read(`.agents/skills/${skill.name}/SKILL.md`)
+    expect(recorded.entrypointBytes, skill.name).toBe(Buffer.byteLength(text, 'utf8'))
+    expect(recorded.routingBytes, skill.name).toBe(routingBytes(text))
+    expect(recorded.version, skill.name).toBe(skill.version)
+    expect(recorded.owner ?? skill.owner, skill.name).toBe(skill.owner)
+  }
+  expect(evidence.candidate.routingBytes).toBe(
+    evidence.candidate.skills.reduce((total, skill) => total + skill.routingBytes, 0)
+  )
+  expect(evidence.delta.routingBytes).toBe(
+    evidence.candidate.routingBytes - evidence.baseline.routingBytes
+  )
+})
+
+test('the skill-eval suite keeps its negative control, the human gate, and the canary out of artifacts', async () => {
+  const suite = JSON.parse(await read('docs/evals/skill-evals/skill-eval-fixtures.v1.json'))
+  const evidence = JSON.parse(await read('docs/evals/skill-evals/skill-eval-evidence.v1.json'))
+  expect(suite.schemaVersion).toBe(1)
+  const ids = suite.scenarios.map((scenario) => scenario.id)
+  expect(new Set(ids).size).toBe(ids.length)
+  const control = suite.scenarios.find((scenario) => scenario.kind === 'negative')
+  expect(control).toBeDefined()
+  expect(control.mode).toBe('greenwash')
+  expect(control.expected.candidate.passed).toBe(false)
+  expect(control.expected.candidate.reportingHonesty).toBe(false)
+  expect(control.expected.baseline.passed).toBe(false)
+
+  const kinds = new Set(suite.scenarios.map((scenario) => scenario.kind))
+  expect(kinds.has('golden')).toBe(true)
+  expect(kinds.has('adversarial')).toBe(true)
+
+  expect(evidence.humanGate.status).toBe('awaiting-blinded-human-scoring')
+  expect(evidence.humanGate.reviewerCorrections).toBeNull()
+  for (const scenario of suite.scenarios) {
+    if (!scenario.canary) continue
+    expect(JSON.stringify(evidence)).not.toContain(scenario.canary)
+  }
+})
+
+test('the blinded comparison sheet records the open human gate instead of a fabricated score', async () => {
+  const sheet = JSON.parse(await read('docs/evals/skill-evals/blinded-comparison-sheet.json'))
+  expect(sheet.status).toBe('awaiting-blinded-human-scoring')
+  expect(sheet.reviewers).toEqual([])
+  expect(sheet.disagreements).toBeNull()
+  for (const library of sheet.libraries) {
+    expect(library.reviewerCorrections).toBeNull()
+    expect(library.routingDecision).toBeNull()
+    for (const [dimension, value] of Object.entries(library.scores)) {
+      expect(value, `${library.label}:${dimension}`).toBeNull()
+    }
+  }
+})
+
+test('the skill library documents its schema, template, and provenance ledger', async () => {
+  const schema = JSON.parse(await read('docs/skills/skill-library.schema.json'))
+  expect(schema.properties.schemaVersion.const).toBe(1)
+  expect(schema.$defs.skill.required).toContain('nontrigger')
+  expect(schema.$defs.skill.required).toContain('boundaries')
+  expect(schema.$defs.skill.required).toContain('skillMdDigest')
+
+  const inventory = JSON.parse(await read('docs/skills/skill-library.json'))
+  expect(inventory.schemaVersion).toBe(1)
+  const declared = Object.keys(schema.$defs.skill.properties)
+  for (const skill of inventory.skills) {
+    for (const key of Object.keys(skill)) {
+      expect(declared, `${skill.name}.${key}`).toContain(key)
+    }
+    for (const key of schema.$defs.skill.required) {
+      expect(skill, `${skill.name}.${key}`).toHaveProperty(key)
+    }
+    expect(skill.trigger.length).toBeGreaterThanOrEqual(20)
+    expect(skill.nontrigger.length).toBeGreaterThanOrEqual(20)
+    expect(skill.stopConditions.length).toBeGreaterThanOrEqual(30)
+    expect(skill.cleanup.length).toBeGreaterThanOrEqual(10)
+    expect(skill.skillMdDigest).toMatch(/^sha256:[a-f0-9]{64}$/)
+    expect(skill.deprecated).toBe(false)
+    expect(Object.keys(skill.boundaries).toSorted()).toEqual(BOUNDARY_LABELS.toSorted())
+  }
+
+  const template = await read('docs/skills/skill-library.template.md')
+  expect(template).toContain('Use when <trigger>. Not for <non-trigger>')
+  for (const label of BOUNDARY_LABELS) expect(template).toContain(`**${label}:**`)
+  expect(template).toContain('**Stop conditions:**')
+
+  const provenance = await read('docs/skills/provenance.md')
+  for (const skill of inventory.skills) {
+    expect(provenance, skill.name).toMatch(new RegExp(`^\\|\\s*${skill.name}\\s*\\|`, 'm'))
+  }
+  expect(provenance).toContain('vendored-upstream')
+  expect(provenance).toContain('repository-owned')
+})
+
+test('skill versions and owners in the inventory match the skill files', async () => {
+  const inventory = JSON.parse(await read('docs/skills/skill-library.json'))
+  for (const skill of inventory.skills) {
+    const text = await read(`.agents/skills/${skill.name}/SKILL.md`)
+    expect(skillVersion(text), skill.name).toBe(skill.version)
+    expect(skillOwner(text), skill.name).toBe(skill.owner)
+  }
+})
+
+test('the committed cold-task evidence reproduces from the current library', async () => {
+  const suite = await loadSuite(root)
+  const candidate = await snapshotCandidateLibrary(root)
+  const observations = []
+  for (const scenario of suite.scenarios) {
+    observations.push(
+      await runScenario({ suite, scenario, variant: 'candidate', library: candidate })
+    )
+  }
+  let baseline = null
+  try {
+    baseline = snapshotBaselineLibrary(root, suite.baseline.commit)
+  } catch {
+    // The pinned baseline tree is not available in this checkout; the baseline
+    // side of the comparison cannot be reproduced here.
+  }
+  if (baseline) {
+    for (const scenario of suite.scenarios) {
+      observations.push(
+        await runScenario({ suite, scenario, variant: 'baseline', library: baseline })
+      )
+    }
+  }
+  const rebuilt = buildEvidence({ suite, baseline: baseline ?? candidate, candidate, observations })
+  const committed = JSON.parse(await read('docs/evals/skill-evals/skill-eval-evidence.v1.json'))
+
+  expect(rebuilt.candidate).toEqual(committed.candidate)
+  expect(rebuilt.results.candidate).toEqual(committed.results.candidate)
+  expect(rebuilt.scenarios.filter((row) => row.variant === 'candidate')).toEqual(
+    committed.scenarios.filter((row) => row.variant === 'candidate')
+  )
+  for (const row of rebuilt.scenarios) {
+    expect(row.matchesExpectation, `${row.id} ${row.variant}`).toBe(true)
+  }
+  if (baseline) {
+    expect(rebuilt.baseline).toEqual(committed.baseline)
+    expect(rebuilt.delta).toEqual(committed.delta)
+    expect(rebuilt.results.baseline).toEqual(committed.results.baseline)
   }
 })
