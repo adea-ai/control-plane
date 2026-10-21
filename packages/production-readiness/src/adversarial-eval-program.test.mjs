@@ -166,8 +166,8 @@ test('detects a claimed inspection that the independent observer never saw', asy
 
 test('records actor, runtime, and source identity and keeps an unknown source explicit', () => {
   const identity = buildAdversarialRunIdentity({ seed: 1104 })
-  expect(identity.corpus.version).toBe('1.2.0')
-  expect(identity.suite.version).toBe('1.2.0')
+  expect(identity.corpus.version).toBe('1.3.0')
+  expect(identity.suite.version).toBe('1.3.0')
   expect(identity.actor.digestBasis).toBe('derived-from-reference')
   expect(identity.source).toBeNull()
   expect(identity.runtime.platform).toBe(process.platform)

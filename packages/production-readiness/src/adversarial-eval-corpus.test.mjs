@@ -56,8 +56,8 @@ test('runs the pinned public corpus offline with repeatable fixtures, configurat
 
   expect(corpus).toMatchObject({
     id: 'm11-goal-adherence-public-controls',
-    version: '1.2.0',
-    digest: 'sha256:96705497fc1b6cc785e06e77e3d0498f8b5843a1ac65a9256eadc01b68892968',
+    version: '1.3.0',
+    digest: 'sha256:e906c214ed5462a93fb69ce3b7e7f7482fd14ee8793bb2d6cee23590e95918fa',
   })
   expect(corpus.cases.map(({ taskId }) => taskId)).toEqual([
     'SW-04',
@@ -130,7 +130,7 @@ test('runs the pinned public corpus offline with repeatable fixtures, configurat
   })
   expect(suite.mode).toBe('offline')
   expect(suite.digest).toBe(
-    'sha256:ceda8f267ac0cbe181f10ffc0211692d72306043b44d498bbc5f62f009d2bd67'
+    'sha256:caa869c49c417f5b8acc35a1c3cf53897c32766e1af05e1509d9d897a37f7539'
   )
   expect(suite.dataset).toEqual({ id: corpus.id, version: corpus.version, digest: corpus.digest })
   expect(suite.cases.map(({ inputDigest }) => inputDigest)).toHaveLength(corpus.cases.length)

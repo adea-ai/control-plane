@@ -28,13 +28,13 @@ import {
 import { ReleaseGateRegistry } from './release-gates.js'
 
 const CORPUS_ID = 'm11-goal-adherence-public-controls'
-const CORPUS_VERSION = '1.2.0'
+const CORPUS_VERSION = '1.3.0'
 const PINNED_CORPUS_DIGEST =
-  'sha256:96705497fc1b6cc785e06e77e3d0498f8b5843a1ac65a9256eadc01b68892968'
+  'sha256:e906c214ed5462a93fb69ce3b7e7f7482fd14ee8793bb2d6cee23590e95918fa'
 const SUITE_ID = 'm11-goal-adherence-offline'
-const SUITE_VERSION = '1.2.0'
+const SUITE_VERSION = '1.3.0'
 const PINNED_SUITE_DIGEST =
-  'sha256:ceda8f267ac0cbe181f10ffc0211692d72306043b44d498bbc5f62f009d2bd67'
+  'sha256:caa869c49c417f5b8acc35a1c3cf53897c32766e1af05e1509d9d897a37f7539'
 
 const criticalMetrics = [
   'functional_correctness',
@@ -2041,7 +2041,7 @@ const acceptanceCriterionDefinitions = [
       'Corpus covers every critical goal and constraint family from #186 and prior milestones.',
     coverage: 'partial-offline',
     remainingEvidence:
-      'Every one of the 31 public task specifications now has an executable evidence-audit fixture across all seven domains, with an explicit required/prohibited behaviour taxonomy. The complete #186 and prior-milestone requirement-family inventory and an independent coverage review remain open.',
+      'Every one of the 31 public task specifications now has an executable evidence-audit fixture across all seven domains, with an explicit required/prohibited behaviour taxonomy. The #186 requirement-family inventory is consumed from the canonical crosswalk (docs/requirements/control-plane-requirements-crosswalk.v1.json, recorded by the requirements lane at head b2de58916ba5315f4cf5ad40aa8399161abc263a). An independent coverage review of this corpus against that crosswalk remains open.',
   },
   {
     id: 'M11.6-AC-02',

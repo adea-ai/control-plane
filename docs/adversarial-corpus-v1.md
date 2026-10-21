@@ -8,7 +8,7 @@ authorisation.
 Normative source: [Evaluation & Benchmarking Plan](https://docs.google.com/document/d/1EDjY_r7suDDQnRnl6LswAxYXxPSpIeTcJWF_JAjrQxo/edit), retrieved 2026-09-07, source modified 2026-08-28T07:21:53.910Z; Control Plane issue #191 and requirements CP-EVAL-001 through CP-EVAL-004.
 
 The 31 tasks below are public task specifications. They are not hidden evaluation cases. Corpus
-v1.2.0 has 39 deterministic, public evidence-audit fixtures: one executable fixture for each of the
+v1.3.0 has 39 deterministic, public evidence-audit fixtures: one executable fixture for each of the
 31 task specifications plus 8 metamorphic variants, across the seven issue #191 domains. The
 fixtures run through the trusted in-process evidence audit and, separately, through harness 4.0.0
 inside a separate operating-system process whose real effects the host observes. They still do not
@@ -28,9 +28,9 @@ or criterion link is missing, the fixture set differs from the manifest, a requi
 behaviour is uncovered, a case names an unknown behaviour, or a metamorphic group is incomplete.
 Tests also remove a domain, a criterion, and a behaviour to verify those failures.
 
-Corpus v1.2.0 is pinned to `sha256:96705497fc1b6cc785e06e77e3d0498f8b5843a1ac65a9256eadc01b68892968`;
-its offline suite `m11-goal-adherence-offline@1.2.0` is pinned to
-`sha256:ceda8f267ac0cbe181f10ffc0211692d72306043b44d498bbc5f62f009d2bd67`.
+Corpus v1.3.0 is pinned to `sha256:e906c214ed5462a93fb69ce3b7e7f7482fd14ee8793bb2d6cee23590e95918fa`;
+its offline suite `m11-goal-adherence-offline@1.3.0` is pinned to
+`sha256:caa869c49c417f5b8acc35a1c3cf53897c32766e1af05e1509d9d897a37f7539`.
 
 ### Required and prohibited behaviour coverage
 
@@ -46,11 +46,20 @@ gates, silent scope reduction, premature completion, unsupported assumptions, pr
 effects, unsupported retries, unauthorised provider calls, embedded-instruction override,
 sensitive-material disclosure, destructive cleanup, and unnecessary delegation.
 
+### Consumed requirement-family inventory
+
+The #186 requirement-family inventory is consumed from the canonical crosswalk recorded by the
+requirements lane at head `b2de58916ba5315f4cf5ad40aa8399161abc263a`
+(`docs/requirements/control-plane-requirements-crosswalk.v1.json`). That crosswalk is the
+authoritative requirement to clause to code/test/profile to issue/evidence map. This corpus is
+reviewed against it, not against an ad-hoc list; the remaining item for this criterion is an
+independent coverage review, not a missing inventory.
+
 ### Issue criterion coverage
 
 | Issue criterion                                                                                                                   | Offline manifest coverage                                                                      | Evidence still required                                                                         |
 | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| M11.6-AC-01: cover critical goal and constraint families from #186 and prior milestones                                           | Partial; all 31 task specifications have an executable fixture across all seven domains        | Full requirement-family inventory and independent coverage review                               |
+| M11.6-AC-01: cover critical goal and constraint families from #186 and prior milestones                                           | Partial; all 31 task specifications have an executable fixture across all seven domains        | An independent coverage review against the #186 crosswalk                                       |
 | M11.6-AC-02: test prohibited actions and required completion                                                                      | Partial; denied attempts, honest reports, and harness 4.0.0 independent effects                | Production agent/runtime execution with a real supervisor                                       |
 | M11.6-AC-03: detect unsupported assumptions, fabricated evidence, silent scope reduction, skipped gates, and premature completion | Partial; every behaviour family has at least one deterministic control                         | End-to-end cases with real agents and human adjudication                                        |
 | M11.6-AC-04: preserve immutable authority against prompt, tool, provider, and memory content                                      | Partial; injected summary, tool-like, memory, and retrieved-content text are checked           | Separate provider and memory channels with independent observation                              |
@@ -254,10 +263,10 @@ statistical quality thresholds, a calibrated agent benchmark, or authorization t
 ### Pinned evidence-quality control slice
 
 `packages/production-readiness/src/adversarial-eval-corpus.ts` holds the executable public offline
-control corpus `m11-goal-adherence-public-controls@1.2.0`, pinned to
-`sha256:96705497fc1b6cc785e06e77e3d0498f8b5843a1ac65a9256eadc01b68892968`; its offline suite
-`m11-goal-adherence-offline@1.2.0` is pinned to
-`sha256:ceda8f267ac0cbe181f10ffc0211692d72306043b44d498bbc5f62f009d2bd67`. It contains 39
+control corpus `m11-goal-adherence-public-controls@1.3.0`, pinned to
+`sha256:e906c214ed5462a93fb69ce3b7e7f7482fd14ee8793bb2d6cee23590e95918fa`; its offline suite
+`m11-goal-adherence-offline@1.3.0` is pinned to
+`sha256:caa869c49c417f5b8acc35a1c3cf53897c32766e1af05e1509d9d897a37f7539`. It contains 39
 versioned fixtures: one for each of the 31 public task specifications plus 8 metamorphic variants.
 
 Receipt schema version 2 / harness 3.0.0 adds explicit evidence authority and coverage. A candidate
