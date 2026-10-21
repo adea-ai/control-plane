@@ -31,6 +31,7 @@ import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from '
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { JSONC } from 'bun'
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
 const budgets = JSON.parse(readFileSync(join(repositoryRoot, 'budgets.json'), 'utf8'))
@@ -307,4 +308,67 @@ test('the real listing is the lockfile tree, and the checker counts it exactly',
   const { countExternalPackages } = await loadChecker()
   const listing = realListing()
   assert.equal(countExternalPackages(listing), externalPairs(listing).size)
+})
+
+test('no package entry of the real listing is dropped by the identity rule', async () => {
+  // Every line of the real listing that names a package must yield a usable
+  // identity: a package the counter silently drops would make the measured
+  // closure smaller than the graph, and the measurement would understate the
+  // breach instead of overstating it.
+  const { normalizePackageName } = await loadChecker()
+  const listing = realListing()
+  let packageLines = 0
+  for (const line of listing.split('\n')) {
+    const body = line.replace(/^[│├└─\s]*/, '')
+    if (body === '' || !body.includes('@')) continue
+    packageLines += 1
+    const at = body.lastIndexOf('@')
+    assert.ok(at > 0, `a listing entry has no identity separator: ${line}`)
+    const name = normalizePackageName(body.slice(0, at))
+    const version = body.slice(at + 1)
+    assert.notEqual(name, '', `a listing entry has no package identity: ${line}`)
+    assert.equal(/\s/u.test(version), false, `a listing entry has an unusable version: ${line}`)
+  }
+  assert.ok(packageLines > 0, 'the real listing has no package entries')
+})
+
+test('every counted identity is named by the lockfile, and only the workspaces are excluded', async () => {
+  // The attribution the audit depends on: each counted identity resolves to a
+  // lockfile entry, so the measured closure is the lockfile's external
+  // closure and not a parser artefact. The only lockfile packages the count
+  // leaves out are the workspace packages, which are not external.
+  const { externalPackagePairs, normalizePackageName } = await loadChecker()
+  const listing = realListing()
+  const lock = JSONC.parse(readFileSync(join(repositoryRoot, 'bun.lock'), 'utf8'))
+  const lockNames = new Set(
+    Object.keys(lock.packages ?? {}).map((key) => normalizePackageName(key))
+  )
+  const counted = [...externalPackagePairs(listing)]
+  const countedNames = new Set(counted.map((pair) => pair.slice(0, pair.lastIndexOf('@'))))
+
+  const phantom = [...countedNames].filter((name) => !lockNames.has(name))
+  assert.deepEqual(phantom, [], 'a counted identity is not named by the lockfile')
+
+  const excluded = [...lockNames].filter((name) => !countedNames.has(name)).toSorted()
+  assert.ok(excluded.length > 0, 'the lockfile names packages the count excludes')
+  assert.deepEqual(
+    excluded.filter((name) => !name.startsWith('@control-plane/')),
+    [],
+    'a non-workspace lockfile package is excluded from the count'
+  )
+})
+
+test('every counted identity of the real listing is a plain package identity', async () => {
+  // The identity rule over the real measurement, not only over a fixture: an
+  // install path or a mangled version in the measured set would be counted
+  // under an identity the lockfile does not name.
+  const { externalPackagePairs } = await loadChecker()
+  for (const identity of externalPackagePairs(realListing())) {
+    assert.equal(
+      /^(@[a-z0-9._-]+\/)?[a-z0-9._-]+@[0-9][^\s@]*$/u.test(identity),
+      true,
+      `not a plain package identity: ${identity}`
+    )
+    assert.equal(identity.startsWith('@control-plane/'), false)
+  }
 })

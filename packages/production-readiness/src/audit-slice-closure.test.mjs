@@ -47,6 +47,15 @@ function importSpecifiers(source) {
   return specifiers
 }
 
+/**
+ * The runtime's own modules. They are builtins, not dependencies of the
+ * package: `bun:test` is the test runner and `bun` is the runtime module the
+ * lockfile reader uses. Neither adds anything to the measured closure.
+ */
+function isBuiltinSpecifier(specifier) {
+  return specifier === 'bun' || specifier.startsWith('bun:')
+}
+
 /** The source of a slice file, read from the package or from `scripts/`. */
 function sliceSource(file) {
   const path = SLICE_FILES.includes(file)
@@ -69,6 +78,7 @@ test('the audit slice imports no external package', () => {
     const source = sliceSource(file)
     for (const specifier of importSpecifiers(source)) {
       if (specifier.startsWith('node:')) continue
+      if (isBuiltinSpecifier(specifier)) continue
       if (specifier.startsWith('.') || specifier.startsWith('/')) continue
       external.push(`${file} -> ${specifier}`)
     }
@@ -111,14 +121,17 @@ test('the slice inventory covers the files the slice added', () => {
   for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) {
     for (const name of Object.keys(manifest[section] ?? {})) declared.add(name)
   }
-  // The test runner is a builtin, not a dependency of the package.
+  // The test runner and the runtime module are builtins, not dependencies of
+  // the package.
   declared.add('bun:test')
+  declared.add('bun')
   const undeclared = []
   for (const entry of readdirSync(packageRoot, { withFileTypes: true })) {
     if (!entry.isFile()) continue
     if (!/\.(ts|tsx|mjs|js)$/u.test(entry.name)) continue
     for (const specifier of importSpecifiers(readFileSync(join(packageRoot, entry.name), 'utf8'))) {
       if (specifier.startsWith('node:')) continue
+      if (isBuiltinSpecifier(specifier)) continue
       if (specifier.startsWith('.') || specifier.startsWith('/')) continue
       if (specifier.startsWith('@control-plane/')) continue
       if (declared.has(specifier)) continue
