@@ -4,6 +4,8 @@ import { recordId } from '../packages/sqlite-persistence/src/record-storage.ts'
 import { withChildMappingRecovery } from './pi-durable-child-mapping-recovery.fixture.mjs'
 import { PersistentModelSelectionRepository } from '../packages/model-gateway/src/selection-repository.ts'
 import { SqliteCredentialVaultRepository } from '../packages/sqlite-persistence/src/credential-vault-repository.ts'
+import { SqliteDelegationRepository } from '../packages/sqlite-persistence/src/delegation-repository.ts'
+import { SqlitePersistenceProvider } from '../packages/sqlite-persistence/src/provider.ts'
 import {
   readPersistenceTransaction,
   writePersistenceTransaction,
@@ -629,3 +631,36 @@ test(
     }),
   30000
 )
+
+test('the retained lookup receipt is never rewritten by a later attempt', () =>
+  withChildMappingRecovery(async (x) => {
+    const delegationId = x.mapping.delegationId
+    const request = {
+      ...x.snapshot.receipt.request,
+      attemptId: '11111111-1111-4111-8111-111111111111',
+    }
+    await expect(x.records.retainChildRuntimeStart({ delegationId, request })).rejects.toThrow()
+    const retained = await x.records.getChildRuntimeStart(delegationId)
+    expect(retained.receipt.requestDigest).toBe(x.snapshot.receipt.requestDigest)
+    expect(retained.receipt.childAttemptId).toBe(x.snapshot.receipt.childAttemptId)
+    await x.assertNoOtherEffects()
+  }, 30000))
+
+test('the retained lookup receipt survives a store restart and reads back identically', () =>
+  withChildMappingRecovery(async (x) => {
+    const delegationId = x.mapping.delegationId
+    const before = await x.records.getChildRuntimeStart(delegationId)
+    // The store is restarted: the first provider releases the write lock.
+    await x.provider.close()
+    const reopened = new SqlitePersistenceProvider({ path: x.canonicalPath })
+    await reopened.migrate()
+    try {
+      const records = new SqliteDelegationRepository(reopened)
+      const after = await records.getChildRuntimeStart(delegationId)
+      expect(after.receipt.requestDigest).toBe(before.receipt.requestDigest)
+      expect(after.receipt.childAttemptId).toBe(before.receipt.childAttemptId)
+      expect(after.receipt.runtimeConnectionId).toBe(before.receipt.runtimeConnectionId)
+    } finally {
+      await reopened.close()
+    }
+  }, 30000))
