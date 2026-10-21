@@ -691,6 +691,77 @@ describe('decision-layer context consumer conformance (#558)', () => {
       })
     ).rejects.toMatchObject({ response: { code: 'CONTEXT_PACKAGE_NOT_FOUND' } })
   }, 120_000)
+
+  test('refuses a revoked skill version on a first pass and on a replay', async () => {
+    // An isolated store: the revocation must not reach the records another
+    // composition resolves.
+    const harness = await createHarness('local', {
+      isolated: true,
+      label: 'revoked-skill-validation',
+    })
+    const resolved = await resolveCanonicalObjective(harness)
+    // The skill version the plan consumes is revoked after the plan was
+    // certified. A revoked version is not executable, so neither a new request
+    // nor the replay of the recorded one may resolve it again.
+    const skillVersion = await harness.store.catalog.getSkillVersion(canonicalIds.skillVersionId)
+    expect(skillVersion).toBeDefined()
+    await harness.catalog.revokeSkillVersion(
+      canonicalIds.skillVersionId,
+      skillVersion.revision,
+      canonicalCompiledAt,
+      'conformance revocation'
+    )
+    const request = canonicalExecutionValidationRequest(
+      resolved.context.reference,
+      'cp558-revoked-skill-validation'
+    )
+    await expect(
+      harness.validationService.validate(request, canonicalPrincipalId)
+    ).rejects.toMatchObject({ response: { code: 'EXECUTION_VALIDATION_REJECTED' } })
+    // The replay re-reads the catalog authorization and re-checks the version
+    // lifecycle; it never re-reads the durable evidence, so this refusal is the
+    // consumer's own.
+    await expect(
+      harness.validationService.validate(harness.validationRequest, canonicalPrincipalId)
+    ).rejects.toMatchObject({ response: { code: 'EXECUTION_VALIDATION_REJECTED' } })
+  }, 120_000)
+
+  test('refuses to compile a plan from a context package whose content does not verify', async () => {
+    const harness = await createHarness('local', { label: 'plan-integrity' })
+    const resolved = await resolveCanonicalObjective(harness)
+    const stored = await harness.contextPackages.get(resolved.context.reference)
+    expect(stored).toBeDefined()
+    // The stored package's content no longer matches the digest it is published
+    // under: the object was damaged after it was written. The consumer that
+    // resolves a package by reference binds it by that digest, so a package
+    // whose content does not verify is not the package the plan may consume —
+    // the same rule the resolution endpoint applies.
+    const tampered = { ...stored, objective: `${canonicalObjective} (tampered)` }
+    const damaged = new DurableExecutionValidationService({
+      compilerVersion: '1.0.0',
+      contextPackages: {
+        async get() {
+          return tampered
+        },
+      },
+      commands: harness.store.validationCommands,
+      contextAuthoring: harness.authoring,
+      now: () => canonicalCompiledAt,
+      profiles: harness.store.catalog,
+      projectStates: harness.store.projectStates,
+      skills: harness.store.catalog,
+    })
+    // A first pass under its own idempotency key: a replay returns the recorded
+    // result and deliberately re-reads no durable evidence, so it never
+    // resolves the package again.
+    const request = canonicalExecutionValidationRequest(
+      resolved.context.reference,
+      'cp558-damaged-package-validation'
+    )
+    await expect(damaged.validate(request, canonicalPrincipalId)).rejects.toMatchObject({
+      response: { code: 'EXECUTION_VALIDATION_REJECTED' },
+    })
+  }, 120_000)
 })
 
 /**

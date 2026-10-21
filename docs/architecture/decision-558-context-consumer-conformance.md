@@ -79,6 +79,11 @@ given:
   against the digest it publishes. A package whose content does not verify is
   not resolvable, and the endpoint does not publish a reference that no
   consumer could check.
+- `DurableExecutionValidationService` refuses a context package whose content
+  no longer verifies against the digest it is published under, so a package
+  that was damaged after it was written cannot be compiled into a plan. The
+  plan compiler verifies the same content independently, and the consumer does
+  not rely on that layer to refuse it.
 - `DurableExecutionValidationService` resolves a context package against the
   shared consumer scope rule: same workspace, same project, same pinned
   project-state revision, and — when the caller pinned an existing package —
@@ -95,7 +100,10 @@ the run consumed:
   pass. A version that is no longer approved is not resolved again.
 - A profile or skill version that is no longer executable — revoked,
   deprecated or superseded after the plan was certified — is not resolved
-  again.
+  again. The skill version's lifecycle is re-checked the same way the profile
+  version's is: a revoked skill version is refused on a first pass and on a
+  replay. A replay never re-reads the durable evidence, so on that path the
+  lifecycle refusal is the consumer's own and not the plan compiler's.
 
 The durable evidence a plan pins is deliberately _not_ re-read on a replay.
 The context package and the project state were resolved once, are immutable,
@@ -146,22 +154,26 @@ fixtures hold the canonical inputs and the matrix. The suite:
    that an unchanged approval keeps the replay idempotent while a
    de-approved pinned profile denies the replay, without a provider read and
    without rewriting the recorded plan;
-6. assembles context with no provider and with a fake alternate provider;
-7. denies denied scope, a foreign identity, a revoked or expired reference,
+6. shows that a revoked skill version denies a first pass and a replay, so the
+   skill half of the "no longer executable" rule is proved and not only the
+   profile half;
+7. assembles context with no provider and with a fake alternate provider;
+8. denies denied scope, a foreign identity, a revoked or expired reference,
    an incompatible explicit pin, unsupported context and out-of-bounds
    context;
-8. proves the redaction rule and the absence of a leak, and that a context
-   reference whose content does not verify is not published;
-9. proves that an explicit pin wins over the current default, for both the
-   profile version and the context package, and that the default version
-   selection does not depend on the order a store returns versions in; and
-10. proves the suite's own resource discipline: an allocation whose
+9. proves the redaction rule and the absence of a leak, that a context
+   reference whose content does not verify is not published, and that a plan
+   is not compiled from a context package whose content does not verify;
+10. proves that an explicit pin wins over the current default, for both the
+    profile version and the context package, and that the default version
+    selection does not depend on the order a store returns versions in; and
+11. proves the suite's own resource discipline: an allocation whose
     migration fails is still released, an isolated allocation whose seeding
     fails is still released with the original error kept, and every owned
     disposer is attempted even when an earlier one fails, with the cleanup
     failures aggregated around the original errors.
 
-Six of those cases fail against the base implementation and pass only after
+Seven of those cases fail against the base implementation and pass only after
 the repairs in this record: restoring the base consumer services
 (`apps/control-api/src/executions/execution-validation.service.ts`,
 `apps/control-api/src/queries/profile-resolution.service.ts`,
@@ -171,12 +183,15 @@ current catalog authorization", "refuses a replay whose catalog approval no
 longer holds", "denies a profile whose pinned skill reference no longer
 holds", "selects the same default profile version regardless of the store
 order", "selects the same default profile version whatever order the store
-returns versions in" and "refuses to publish a context reference whose content
-does not verify". The approval-gate case and the lifecycle-revoke case are
-distinct: the first denies through the catalog approval gate, the second
-through the version lifecycle. The pin-precedence and the resource-discipline
-cases pass against the base as well, because they prove behavior this change
-preserves rather than repairs.
+returns versions in", "refuses to publish a context reference whose content
+does not verify" and "refuses a revoked skill version on a first pass and on a
+replay". The approval-gate case and the lifecycle-revoke cases are distinct:
+the first denies through the catalog approval gate, the others through the
+version lifecycle. The pin-precedence, the resource-discipline and the
+damaged-package cases pass against the base as well, because they prove
+behavior this change preserves rather than repairs: the plan compiler
+verifies a context package's content independently of the consumer, so a
+damaged package is refused there too.
 
 The two store-order cases prove the same contract at two strengths, and the
 difference matters. The multi-composition case composes two real stores and
@@ -279,6 +294,27 @@ The cleanup and replay regressions in this record were added on top of that
 head, and were checked with the focused suite and the lightweight checks only
 (`format:check`, `lint`, and the `control-api` and `context` package type
 checks); the unit lane was not re-run for them.
+
+The lifecycle regressions for a revoked skill version, and the plan-integrity
+regression for a context package whose content does not verify, were added on
+top of that head as well and were checked with the focused suite and the same
+lightweight checks:
+
+```
+bun test src/decision-context-consumer-conformance.test.mjs --timeout 30000
+  20 pass, 0 fail (SQLite legs)
+
+# the three consumer services reverted to the base commit, head test file
+bun test src/decision-context-consumer-conformance.test.mjs --timeout 30000
+  13 pass, 7 fail
+  the seven failures are the six cases this record already listed plus
+  "refuses a revoked skill version on a first pass and on a replay"
+
+# the consumer's skill-lifecycle check removed from the replay path
+bun test src/decision-context-consumer-conformance.test.mjs --timeout 30000
+  1 fail
+  the revoked-skill case fails: the replay resolves a revoked version
+```
 
 The focused consumer run covers the conformance suite, the application test
 and the two consumer service tests:
