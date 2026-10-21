@@ -126,6 +126,30 @@ The check is proven to bite: with `.node-version` moved to `24.22.0` the file
 reports 31 passes and 1 failure on exactly the new assertion, and with the
 declared value restored it reports 32 passes and 0 failures.
 
+### The comparator defect that this check carried
+
+The first revision of the check compared two versions with a closure that found
+the first differing component and then returned the difference of the **major**
+components alone. The comparison therefore decided every same-major pair as
+equal: it accepted `1.3.0` against a `>=1.4.0` floor and it rejected `1.4.3`
+against a `<1.5.0` ceiling. The declared range happened to survive it only
+because the pinned runtime is `1.4.3` and the declared range is `>=1.4.0 <2`,
+whose bounds differ from the pin in the major or the patch component.
+
+The comparator now decides on the first component that differs, and the range
+check is one helper that the regressions exercise directly. The same-major
+boundaries are covered: a version below the lower bound is refused, the lower
+bound itself is admitted, a version inside the range is admitted, and the upper
+bound and a version above it are refused — for a same-major range and for the
+declared range. With the defective comparator in place the file reports 31
+passes and 1 failure on those boundaries, and with the correction it reports 32
+passes and 0 failures.
+
+No established semver implementation is used instead: `semver` is present in the
+workspace only as an undeclared transitive dependency that no repository code
+imports, and taking a dependency for one comparison would change the
+repository's dependency surface. The corrected comparison is dependency-free.
+
 ## The checks that were run, and their results
 
 ### This repository, `adea-ai/control-plane`

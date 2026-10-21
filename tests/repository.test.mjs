@@ -101,18 +101,49 @@ test('the declared toolchain agrees with the files continuous integration instal
   assert.match(manifest.engines.node, /^\d+\.\d+\.\d+$/)
 
   // The declared bun engine admits the pinned runtime, so the floor a consumer resolves
-  // against does not exclude the version the repository runs.
-  const range = /^>=(\d+)(?:\.(\d+))?(?:\.(\d+))?\s+<(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(
-    manifest.engines.bun
+  // against does not exclude the version the repository runs. The comparison decides on the
+  // first component that differs, so a same-major comparison is decided by the minor or
+  // the patch component and not by the major one alone.
+  const compare = (left, right) => {
+    for (let index = 0; index < 3; index += 1) {
+      if (left[index] !== right[index]) return left[index] - right[index]
+    }
+    return 0
+  }
+  const admits = (range, candidate) => {
+    const match = /^>=(\d+)(?:\.(\d+))?(?:\.(\d+))?\s+<(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(range)
+    if (!match) return undefined
+    const lower = [Number(match[1]), Number(match[2] ?? 0), Number(match[3] ?? 0)]
+    const upper = [Number(match[4]), Number(match[5] ?? 0), Number(match[6] ?? 0)]
+    return compare(candidate, lower) >= 0 && compare(candidate, upper) < 0
+  }
+
+  // The boundaries that a comparison reading only the major component decides wrongly:
+  // a version below the same-major lower bound is refused, and a version inside the
+  // same-major range is admitted.
+  assert.equal(
+    admits('>=1.4.0 <1.5.0', [1, 3, 0]),
+    false,
+    'a version below the lower bound is refused'
   )
-  assert.ok(range, 'the bun engine must be one bounded range')
-  const lower = [Number(range[1]), Number(range[2] ?? 0), Number(range[3] ?? 0)]
-  const upper = [Number(range[4]), Number(range[5] ?? 0), Number(range[6] ?? 0)]
-  const compare = (left, right) =>
-    left.findIndex((part, index) => part !== right[index]) === -1 ? 0 : left[0] - right[0]
+  assert.equal(admits('>=1.4.0 <1.5.0', [1, 4, 0]), true, 'the lower bound itself is admitted')
+  assert.equal(admits('>=1.4.0 <1.5.0', [1, 4, 3]), true, 'a version inside the range is admitted')
+  assert.equal(admits('>=1.4.0 <1.5.0', [1, 5, 0]), false, 'the upper bound is refused')
+  assert.equal(
+    admits('>=1.4.0 <1.5.0', [1, 5, 1]),
+    false,
+    'a version above the upper bound is refused'
+  )
+  assert.equal(
+    admits('>=1.4.0 <2', [1, 3, 0]),
+    false,
+    'a version below the declared lower bound is refused'
+  )
+  assert.equal(admits('>=1.4.0 <2', [1, 4, 3]), true, 'the pinned runtime is admitted')
+
   const pinned = bunVersion.split('.').map(Number)
   assert.ok(
-    compare(pinned, lower) >= 0 && compare(pinned, upper) < 0,
+    admits(manifest.engines.bun, pinned),
     `engines.bun ${manifest.engines.bun} must admit the pinned bun ${bunVersion}`
   )
 
