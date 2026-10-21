@@ -52,8 +52,8 @@ What this lane did:
   IPC and path handling, the remote Runtime Gateway and the product relay separately,
   HPKE AAD/recipient/replay/expiry, SQLite/backup/import, provider and secret
   providers, sandbox boundaries and supply chain;
-- ran **20 credential-free synthetic probes** against the audited head. Every probe
-  reproduces a confirmed finding at this head. All 20 reproduce; 0 harness failures.
+- ran **26 credential-free synthetic probes** against the audited head. Every probe
+  reproduces a confirmed finding at this head. All 26 reproduce; 0 harness failures.
 
 What this lane deliberately did **not** do:
 
@@ -86,7 +86,7 @@ reversal can drop the branch without touching another owner.
 | `docs/evidence/m11-security-trust-boundary-audit-2026-10-21.md`       | This independent review report                                                                                                                              |
 
 `tests/m11-security-probes.test.mjs` was **not** modified: it is a shared lane file and
-its custody is not established here. The 20 new probes are therefore a separate,
+its custody is not established here. The 26 new probes are therefore a separate,
 dedicated artifact rather than an edit to the existing probe suite.
 
 ## 2. Threat/control → entrypoint → evidence matrix
@@ -124,6 +124,21 @@ By the thirteen audit areas the issue requires:
 | 13. Independent threat-model review and targeted manual penetration                                                                                            | partial      | this report is the independent read-only threat review; the penetration half is still open               |
 
 ## 3. Confirmed findings
+
+**Additional source-supported evidence for F-01/F-02 (the documented trust
+properties are not in the contract).** `docs/remote-control-relay.md` states that
+the metadata-only operations "use a separate strict, **authenticated** command
+schema" that "bind each **idempotency key** to the exact command body", but
+`packages/remote-control-relay/src/protocol.ts` (`RelayMetadataCommandSchema`,
+`.strict()`) carries neither an authentication field nor an idempotency-key
+field - its fields are `schemaVersion`, `workspaceId`, `hostId`, `commandId`,
+`operation`, `issuedAt`, `expiresAt` and `targetId`. The schema therefore cannot
+be the enforcement point the document describes, and the document's own hedge
+("authentication of that metadata transport remains the responsibility of the
+concrete relay client") covers the transport only, not the schema-level claim.
+`CP190-P26` reads both files and reproduces the mismatch; the correction belongs
+to the owner of `docs/remote-control-relay.md` and of the relay contract, and
+this packet edits neither.
 
 Severity is the reviewer's assessment against the release, not a CVSS score.
 "Release impact" states what the finding blocks. **Reachability** states how a
@@ -194,7 +209,20 @@ the files each finding depends on. The comparison covered
 `packages/deployment/src/process-runtime.ts` and
 `apps/hosted-control-plane/src/composition.ts`.
 
-Result: **no owner fix for any of the 28 findings exists on any currently available
+**The base has advanced since this packet was written.** The audited branch
+base is `df37ca85a`; `main` is now `5e4b8d331ecdf0cb698ed532e45bb459f776e484`
+("chore(main): release 1.105.7 (#1221)"), four commits ahead (`2e68492ed` #1211,
+`b1dee8b9c` #1213, `df37ca85a` #1212, `5e4b8d33` #1221). Those four commits touch
+only `.release-please-manifest.json`, `CHANGELOG.md`, `package.json`,
+`packages/testing/{CHANGELOG.md,package.json,src/postgres.test.mjs}`,
+`scripts/railway-production-plan.mjs` and `tests/railway-production-plan.test.mjs`.
+**None of them is a dependency file this packet relies on**, so no finding is
+invalidated by the base advance. One packet row needs re-reading by its owner:
+F-28's proposed regression file `tests/railway-production-plan.test.mjs` gained
++542 lines on the new main; F-28's cited source (`.railway/railway.ts`) is
+unchanged, so the finding stands and only the proposed regression location moves.
+
+Result: **no owner fix for any of the 29 findings exists on any currently available
 head.** Four files differ on unmerged branches, and in every case the difference is
 cosmetic or belongs to an unrelated change:
 
@@ -491,7 +519,7 @@ These are recorded so the next reviewer does not re-derive them.
   (42 tests, 129 assertions, seed 1104). It covers policy denial, grant-handle
   shape, secret-file traversal and symlink escape, spawn-policy limits, object-store
   content addressing, sandbox network and metadata denial, and HPKE tamper, expiry
-  and cap behaviour. It does **not** cover any of the 28 findings in §3, which is
+  and cap behaviour. It does **not** cover any of the 29 findings in §3, which is
   why the dedicated probe file was necessary.
 - **Relay ordering.** The effect-before-receipt order in the relay processors is
   correct and must not be inverted: a receipt written before the effect would record
@@ -611,8 +639,12 @@ holds the affected package, and the routing table is in the JSON artifact
 2. The owner records the fix head; this reviewer re-verifies each fix on that exact
    head and updates this report and the JSON matrix.
 3. `scripts/security-trust-boundary-probes.mjs` must be updated in the same change as
-   any fix that stops a probe from reproducing; a probe that stops reproducing
-   without that update is a CI-visible drift, not a silent pass.
+   any fix that stops a probe from reproducing. **The probe suite is not wired
+   into CI**: at the audited head the script is referenced only by its own usage
+   comment, no workflow invokes it and no `package.json` script runs it, so a
+   probe that stops reproducing is a **manual owner obligation**, not a
+   CI-visible drift. Nothing in this packet claims CI visibility that does not
+   exist.
 4. The live profile evidence in §8.1–§8.6 is requested from its owner; until it
    exists, `STA-L*` rows marked open in the inventory stay open and the whole-cloud
    trust acceptance stays held.

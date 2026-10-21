@@ -9,7 +9,11 @@
     "branch": "f2w4/cp190-trust-boundary",
     "head": "27f17bd55e0266439b5b3089163195c9e7a669be",
     "mainBase": "6d16a495186d2a4d84d422c936a02b4abdc93928",
-    "workspace": "1.105.5"
+    "workspace": "1.105.5",
+    "pr": 1220,
+    "prHead": "d26b1ff0e7d27b98a7f23440abc5c69824f9a311",
+    "mergeBase": "27f17bd55e0266439b5b3089163195c9e7a669be",
+    "headNote": "head is the merge base of the branch; prHead is the exact revision this matrix records"
   },
   "provenance": {
     "author": "Fleet 2 / F2W4 independent reviewer",
@@ -884,10 +888,17 @@
       "docs/evidence/m11-security-trust-boundary-matrix-2026-10-21.v1.json"
     ],
     "exactPathOwnerFound": false,
-    "openPullRequestsChecked": [1212, 1210, 1204, 1048],
+    "openPullRequestsChecked": [1048, 1204, 1210, 1214, 1215, 1216, 1217, 1218, 1219, 1222, 1223],
     "registeredWorktreesChecked": 11,
     "claudeCustody": "unverified in the shared index; the three paths are new and unique, and no existing file was modified, so a custody reversal can drop the branch without touching another owner",
-    "existingFilesModified": []
+    "existingFilesModified": [],
+    "sharedIndexReReadable": false,
+    "sharedIndexNote": "The shared ownership index cited by sharedIndex/sharedIndexSha256 was not readable at the audited head, so the claim below is scoped to the checkouts actually inspected and listed.",
+    "registeredWorktreesInspected": [
+      "adea-ai/control-plane (the shared main checkout)",
+      "the F2W4 CP190 checkout (this branch)"
+    ],
+    "openPullRequestsNote": "One reconciled list, captured at the audited head, excluding the pull request under review (#1220). The two irreconcilable lists in the audit document were collapsed into this one."
   },
   "severitySummary": {
     "high": 2,

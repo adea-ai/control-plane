@@ -901,6 +901,27 @@ probe(
   }
 )
 
+probe(
+  'CP190-P26',
+  'The relay document claims an authenticated metadata command schema that binds an idempotency key, and the schema has neither field',
+  ['STA-L01-01', 'STA-L02-01'],
+  async () => {
+    const schema = await readSource('packages/remote-control-relay/src/protocol.ts')
+    const start = schema.indexOf('export const RelayMetadataCommandSchema')
+    const body = schema.slice(start, start + 900)
+    const hasAuthentication = /auth|signature|credential|principal/i.test(body)
+    const hasIdempotencyKey = /idempotency/i.test(body)
+    const document = await readSource('docs/remote-control-relay.md')
+    const claimsAuthenticated = /separate strict, authenticated command schema/.test(document)
+    const claimsIdempotency = /bind each idempotency key to the exact command body/.test(document)
+    return {
+      reproduced:
+        claimsAuthenticated && claimsIdempotency && !hasAuthentication && !hasIdempotencyKey,
+      detail: `the document claims a separate strict, authenticated metadata command schema = ${claimsAuthenticated}; it claims each idempotency key is bound to the exact command body = ${claimsIdempotency}; the strict RelayMetadataCommandSchema carries an authentication field = ${hasAuthentication}; it carries an idempotency key field = ${hasIdempotencyKey}. The documented trust properties are not in the contract, so the schema cannot be the enforcement point the document describes.`,
+    }
+  }
+)
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
