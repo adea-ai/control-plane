@@ -152,6 +152,7 @@ const lineagePath = resolve(
 export async function validateRequirementsLedger(ledger, options = {}) {
   const errors = []
   const warnings = []
+  const provenance = []
   const rootOption = options.repositoryRoot ?? new URL('..', import.meta.url)
   const root = typeof rootOption === 'string' ? rootOption : fileURLToPath(rootOption)
   let candidateAvailable = false
@@ -318,7 +319,11 @@ export async function validateRequirementsLedger(ledger, options = {}) {
   const candidateProof = validateCandidateProof(ledger, root)
   errors.push(...candidateProof.errors)
   warnings.push(...candidateProof.warnings)
-  errors.push(...validateWorkerEvidence(ledger, root))
+  const workerEvidence = validateWorkerEvidence(ledger, root)
+  errors.push(...workerEvidence.errors)
+  provenance.push(...workerEvidence.provenance)
+  errors.push(...(await validateFigureLineage(ledger, root)))
+  provenance.push(...profileJoinProvenance(ledger))
 
   const expectedProfiles = ['cloud', 'hosted-server', 'hosted-simple', 'local']
   const actualProfiles = (ledger.deploymentProfiles ?? []).map(({ id }) => id).toSorted()
@@ -451,7 +456,7 @@ export async function validateRequirementsLedger(ledger, options = {}) {
   if (!Array.isArray(ledger.verificationRuns) || ledger.verificationRuns.length === 0) {
     errors.push('verificationRuns must identify exact commands and results')
   }
-  return { errors, warnings }
+  return { errors, warnings, provenance }
 }
 
 export async function listGitHubIssues(options = {}) {
@@ -1171,18 +1176,69 @@ function validateCandidateProof(ledger, root) {
   return { errors, warnings }
 }
 
+// Resolve many revision:path pairs in one Git call. Each pair resolves to the
+// committed blob id, or to null when that revision does not carry the path. A
+// path that exists is not the same artifact as the path with the same name at
+// another revision, so identity is compared by blob.
+function resolveBlobs(root, pairs) {
+  const resolved = new Map()
+  if (pairs.length === 0) return resolved
+  const result = spawnSync('git', ['cat-file', '--batch-check'], {
+    cwd: root,
+    encoding: 'utf8',
+    input: `${pairs.map(([revision, path]) => `${revision}:${path}`).join('\n')}\n`,
+  })
+  const lines = (result.stdout ?? '').trim().split('\n')
+  if (result.status !== 0 || lines.length !== pairs.length) {
+    // The batch call did not answer every query, so nothing is resolved by
+    // position. Each pair is resolved on its own rather than letting a short
+    // answer shift a blob onto the wrong path.
+    for (const [revision, path] of pairs) {
+      const single = spawnSync('git', ['rev-parse', '--verify', '-q', `${revision}:${path}`], {
+        cwd: root,
+        encoding: 'utf8',
+      })
+      const value = (single.stdout ?? '').trim()
+      if (single.status === 0 && value.length > 0) resolved.set(`${revision}:${path}`, value)
+    }
+    return resolved
+  }
+  pairs.forEach(([revision, path], index) => {
+    const match = /^([0-9a-f]{40})\s/.exec(lines[index] ?? '')
+    if (match) resolved.set(`${revision}:${path}`, match[1])
+  })
+  return resolved
+}
+
 // Worker contributions are integrated by stable ID and exact head. A contribution
 // that has not arrived stays pending instead of being reported as evidence. The
 // evidence of a received contribution is proven against the tree of its own head,
 // because the lane's files are not in this branch until it is merged.
+//
+// A path that resolves at the recorded head is not the reviewed artifact when the
+// same path in this tree carries different content: a lane may rewrite a file
+// that already existed here. The blob identity of every recorded evidence path is
+// therefore compared between the recorded head and this tree, and a difference is
+// reported as provenance so it can never be read as coverage.
 function validateWorkerEvidence(ledger, root) {
   const errors = []
+  const provenance = []
   const workers = ledger.workerEvidence ?? []
   if (!Array.isArray(workers) || workers.length === 0)
     errors.push('workerEvidence must record the contributing lanes')
+  const blobPairs = []
+  for (const worker of workers) {
+    if (worker.status === 'pending') continue
+    if (!/^[0-9a-f]{40}$/.test(worker.head ?? '')) continue
+    for (const entry of worker.evidence ?? []) {
+      if (!entry.path) continue
+      blobPairs.push([worker.head, entry.path], ['HEAD', entry.path])
+    }
+  }
+  const blobs = resolveBlobs(root, blobPairs)
   const ids = new Set()
   for (const worker of workers) {
-    if (!/^W[1-9]$/.test(worker.id ?? '')) errors.push(`${worker.id}: worker ID is invalid`)
+    if (!/^W\d+$/.test(worker.id ?? '')) errors.push(`${worker.id}: worker ID is invalid`)
     if (ids.has(worker.id)) errors.push(`duplicate worker ID: ${worker.id}`)
     ids.add(worker.id)
     if (!['pending', 'received', 'integrated'].includes(worker.status))
@@ -1207,20 +1263,36 @@ function validateWorkerEvidence(ledger, root) {
     })
     if (exists.status !== 0)
       errors.push(`${worker.id}: worker head ${worker.head} is unavailable in the repository`)
+    const diverged = []
     for (const entry of worker.evidence ?? []) {
       if (!entry.path) {
         errors.push(`${worker.id}: worker evidence must identify a path`)
         continue
       }
-      const atHead = spawnSync('git', ['cat-file', '-e', `${worker.head}:${entry.path}`], {
-        cwd: root,
-        encoding: 'utf8',
-      })
-      if (atHead.status !== 0)
+      if (entry.commit !== worker.head) {
+        errors.push(
+          `${worker.id}: worker evidence commit must match the worker head for ${entry.path}`
+        )
+      }
+      const headBlob = blobs.get(`${worker.head}:${entry.path}`)
+      if (!headBlob) {
         errors.push(
           `${worker.id}: worker evidence path is absent at head ${worker.head}: ${entry.path}`
         )
-      if (worker.status === 'integrated') {
+        continue
+      }
+      const treeBlob = blobs.get(`HEAD:${entry.path}`)
+      if (treeBlob && headBlob !== treeBlob)
+        diverged.push(`${entry.path} (${headBlob} at ${worker.head}, ${treeBlob} at HEAD)`)
+    }
+    if (diverged.length > 0) {
+      provenance.push(
+        `${worker.id} (${worker.lane}): ${diverged.length} of ${(worker.evidence ?? []).length} evidence paths resolve to different content in this tree: ${diverged.join('; ')}; a matching path is not the reviewed artifact`
+      )
+    }
+    if (worker.status === 'integrated') {
+      for (const entry of worker.evidence ?? []) {
+        if (!entry.path) continue
         try {
           accessSync(resolve(root, entry.path))
         } catch {
@@ -1228,6 +1300,111 @@ function validateWorkerEvidence(ledger, root) {
             `${worker.id}: integrated worker evidence is absent from this tree: ${entry.path}`
           )
         }
+      }
+    }
+  }
+  return { errors, provenance }
+}
+
+// The profile and requirement rows are joined in two directions: a requirement row
+// names the profiles its recorded evidence came from, and a profile row links the
+// requirements it covers. The two directions are derived from different evidence
+// kinds, so they can disagree. A disagreement means the profile column cannot be
+// read as a coverage claim, and it is reported instead of being inferred from an
+// empty array.
+function profileJoinProvenance(ledger) {
+  const findings = []
+  const profileEvidencePaths = new Map()
+  for (const profile of ledger.deploymentProfiles ?? []) {
+    profileEvidencePaths.set(
+      profile.id,
+      new Set((profile.evidence ?? []).map((entry) => entry.path).filter(Boolean))
+    )
+  }
+  const namedByProfile = new Map()
+  for (const requirement of ledger.requirements ?? []) {
+    const named = new Set()
+    for (const entry of requirement.evidence ?? []) {
+      if (entry.profile) named.add(entry.profile)
+      for (const [profileId, paths] of profileEvidencePaths)
+        if (entry.path && paths.has(entry.path)) named.add(profileId)
+    }
+    for (const profileId of named) {
+      if (!namedByProfile.has(profileId)) namedByProfile.set(profileId, [])
+      namedByProfile.get(profileId).push(requirement.id)
+    }
+  }
+  for (const profile of ledger.deploymentProfiles ?? []) {
+    const paths = profileEvidencePaths.get(profile.id) ?? new Set()
+    const named = (namedByProfile.get(profile.id) ?? []).toSorted()
+    const linked = (ledger.requirements ?? [])
+      .filter((requirement) =>
+        (requirement.evidence ?? []).some(
+          (entry) =>
+            entry.path &&
+            paths.has(entry.path) &&
+            ['code', 'test', 'document'].includes(evidenceTarget(entry))
+        )
+      )
+      .map((requirement) => requirement.id)
+      .toSorted()
+    if (named.length === linked.length && named.every((id, index) => id === linked[index])) continue
+    findings.push(
+      `deployment profile ${profile.id}: ${named.length} requirement row(s) name this profile in their recorded evidence (${named.join(', ') || 'none'}) while the profile row links ${linked.length} (${linked.join(', ') || 'none'}); the profile evidence kinds do not intersect the requirement join, so the profile column is a reference and not a coverage claim`
+    )
+  }
+  return findings
+}
+
+// The historical figure identities and digests are carried from the 2026-09-30
+// audit document. Every recorded object must appear in that document with the
+// same revision, byte length and digest, so the figure inventory cannot drift
+// away from the evidence it claims to carry.
+async function validateFigureLineage(ledger, root) {
+  const errors = []
+  let audit
+  try {
+    audit = await readFile(
+      resolve(root, 'docs/requirements/canonical-figure-audit-2026-09-30.md'),
+      'utf8'
+    )
+  } catch (error) {
+    return [`canonical figure audit document is unavailable: ${error.message}`]
+  }
+  const recorded = new Map()
+  for (const match of audit.matchAll(
+    /^\|[^|]*\|\s*(\d+)\s*\|\s*`(kix\.[a-z0-9]+)`\s*\|\s*(\d+)\s*\|\s*`([0-9a-f]{64})`\s*\|/gm
+  )) {
+    recorded.set(match[2], {
+      revision: match[1],
+      byteLength: match[3],
+      sha256: match[4],
+    })
+  }
+  if (recorded.size === 0)
+    return ['canonical figure audit document records no inline object identities']
+  for (const source of ledger.sources ?? []) {
+    for (const observation of source.embeddedObjects?.historicalObservations ?? []) {
+      for (const object of observation.objects ?? []) {
+        const row = recorded.get(object.objectId)
+        if (!row) {
+          errors.push(
+            `${source.id}: historical figure object ${object.objectId} is absent from the canonical figure audit`
+          )
+          continue
+        }
+        if (row.revision !== String(observation.observedRevision))
+          errors.push(
+            `${source.id}: historical figure object ${object.objectId} was observed at revision ${observation.observedRevision} but the canonical figure audit records revision ${row.revision}`
+          )
+        if (row.byteLength !== String(object.byteLength))
+          errors.push(
+            `${source.id}: historical figure object ${object.objectId} records ${object.byteLength} bytes but the canonical figure audit records ${row.byteLength}`
+          )
+        if (row.sha256 !== object.sha256)
+          errors.push(
+            `${source.id}: historical figure object ${object.objectId} records a digest that differs from the canonical figure audit`
+          )
       }
     }
   }
@@ -1355,7 +1532,9 @@ export async function validateFigureInventory(ledger, root) {
   if (errors.length > 0) return errors
   let current
   try {
-    current = JSON.parse(await readFile(figureInventoryPath, 'utf8'))
+    current = JSON.parse(
+      await readFile(resolve(root, 'docs/requirements/canonical-figure-inventory.v1.json'), 'utf8')
+    )
   } catch {
     return ['canonical figure inventory is missing or malformed']
   }
@@ -1673,7 +1852,12 @@ export async function validateCanonicalCrosswalk(ledger, root) {
   if (errors.length > 0) return errors
   let current
   try {
-    current = JSON.parse(await readFile(crosswalkPath, 'utf8'))
+    current = JSON.parse(
+      await readFile(
+        resolve(root, 'docs/requirements/control-plane-requirements-crosswalk.v1.json'),
+        'utf8'
+      )
+    )
   } catch {
     return ['Canonical requirements crosswalk is missing or malformed']
   }
@@ -1839,7 +2023,7 @@ async function main() {
       divergences.push(...compareGitHubIssueSnapshot(ledger, issues))
     }
   }
-  const { errors, warnings } = await validateRequirementsLedger(ledger, {
+  const { errors, warnings, provenance } = await validateRequirementsLedger(ledger, {
     repositoryRoot: new URL('..', import.meta.url),
   })
   errors.push(...(await validateCanonicalSourceLineage(repositoryRoot)))
@@ -1848,6 +2032,7 @@ async function main() {
     errors.push(...(await validateFigureInventory(ledger, repositoryRoot)))
   }
   for (const warning of warnings) console.warn(`Requirements ledger warning: ${warning}`)
+  for (const finding of provenance) console.warn(`Requirements ledger provenance: ${finding}`)
   for (const divergence of divergences)
     console.warn(`Requirements ledger warning: GitHub snapshot divergence: ${divergence}`)
   if (errors.length > 0)

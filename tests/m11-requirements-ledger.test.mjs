@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   collectCanonicalCrosswalk,
@@ -1397,5 +1400,94 @@ describe('M11.1 requirements ledger', () => {
     expect(await readFile(figureInventoryUrl, 'utf8')).toBe(
       await renderFigureInventory(ledger, repositoryRoot)
     )
+  }, 60000)
+
+  test('binds every worker evidence entry to the recorded worker head', async () => {
+    const changed = clone(ledger)
+    const worker = changed.workerEvidence.find(({ status }) => status === 'received')
+    worker.evidence[0].commit = 'f'.repeat(40)
+    const { errors } = await validateRequirementsLedger(changed, { repositoryRoot })
+    expect(errors).toContain(
+      `${worker.id}: worker evidence commit must match the worker head for ${worker.evidence[0].path}`
+    )
+  }, 60000)
+
+  test('reports worker evidence whose content differs from this tree', async () => {
+    const { provenance } = await validateRequirementsLedger(ledger, { repositoryRoot })
+    // W2 records the head this lane last published. Its crosswalk and its
+    // reconciliation record were rewritten by later commits, so the paths resolve
+    // to different content here and must be reported.
+    const w2 = provenance.find((finding) => finding.startsWith('W2 '))
+    expect(w2).toBeDefined()
+    expect(w2).toContain('docs/requirements/control-plane-requirements-crosswalk.v1.json')
+    expect(w2).toContain('a matching path is not the reviewed artifact')
+    // The figure inventory is byte-identical at the recorded head and at HEAD, so
+    // a path that resolves to the same blob is not reported.
+    expect(w2).not.toContain('docs/requirements/canonical-figure-inventory.v1.json')
+    // The adversarial corpus is cited as requirement evidence while this tree
+    // carries the earlier corpus, so the shadowing is reported for that lane too.
+    const w5 = provenance.find((finding) => finding.startsWith('W5 '))
+    expect(w5).toBeDefined()
+    expect(w5).toContain('docs/adversarial-corpus-v1.md')
+  }, 60000)
+
+  test('reports the profile join that the requirement rows contradict', async () => {
+    const { provenance } = await validateRequirementsLedger(ledger, { repositoryRoot })
+    const cloud = provenance.find((finding) => finding.startsWith('deployment profile cloud:'))
+    expect(cloud).toBeDefined()
+    expect(cloud).toContain('AHQ-CP-005')
+    expect(cloud).toContain('CP-TDD-004')
+    expect(cloud).toContain('not a coverage claim')
+    // No requirement row names the remaining profiles, so there is nothing to
+    // contradict and nothing is reported.
+    expect(provenance.some((finding) => finding.startsWith('deployment profile local:'))).toBe(
+      false
+    )
+  }, 60000)
+
+  test('fails closed when a historical figure identity leaves the canonical audit', async () => {
+    const changed = clone(ledger)
+    const source = changed.sources.find(({ id }) => id === 'security-trust-model')
+    const object = source.embeddedObjects.historicalObservations[0].objects[0]
+    expect(object.objectId).toBe('kix.vlyjrmx8itur')
+    object.sha256 = 'a'.repeat(64)
+    const { errors } = await validateRequirementsLedger(changed, { repositoryRoot })
+    expect(errors).toContain(
+      'security-trust-model: historical figure object kix.vlyjrmx8itur records a digest that differs from the canonical figure audit'
+    )
+    const renamed = clone(ledger)
+    renamed.sources.find(
+      ({ id }) => id === 'control-plane-tdd'
+    ).embeddedObjects.historicalObservations[0].objects[0].objectId = 'kix.notrecorded00'
+    const renamedResult = await validateRequirementsLedger(renamed, { repositoryRoot })
+    expect(renamedResult.errors).toContain(
+      'control-plane-tdd: historical figure object kix.notrecorded00 is absent from the canonical figure audit'
+    )
+  }, 60000)
+
+  test('accepts a worker ID beyond the ninth lane', async () => {
+    const changed = clone(ledger)
+    const worker = changed.workerEvidence.find(({ status }) => status === 'received')
+    worker.id = 'W10'
+    const { errors } = await validateRequirementsLedger(changed, { repositoryRoot })
+    expect(errors).not.toContain('W10: worker ID is invalid')
+  }, 60000)
+
+  test('reads the generated artifacts from the requested repository root', async () => {
+    // The generated artifacts are compared against the root the caller names, not
+    // against the checkout the script happens to live in.
+    const directory = mkdtempSync(join(tmpdir(), 'requirements-root-'))
+    try {
+      mkdirSync(resolve(directory, 'docs/requirements'), { recursive: true })
+      copyFileSync(
+        resolve(repositoryRoot, 'docs/requirements/canonical-source-freshness-2026-10-03.v1.json'),
+        resolve(directory, 'docs/requirements/canonical-source-freshness-2026-10-03.v1.json')
+      )
+      expect(await validateFigureInventory(ledger, directory)).toContain(
+        'canonical figure inventory is missing or malformed'
+      )
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   }, 60000)
 })
