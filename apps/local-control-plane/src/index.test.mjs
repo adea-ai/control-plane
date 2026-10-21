@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
 import { DirectLocalRuntimeTransport, TransportedRuntimeAdapter } from '@control-plane/runtime-sdk'
+import { operationsMetricNames } from '@control-plane/telemetry'
 import { FilesystemObjectStore } from '@control-plane/object-store'
 import {
   createExecutionPlanTestFixture,
@@ -946,4 +947,147 @@ describe('Local Control Plane composition', () => {
       await rm(directory, { recursive: true, force: true })
     }
   })
+})
+
+/**
+ * The Local operations measurement wiring (#1030).
+ *
+ * The measurement is the workspace-scoped operations report sampled from the composition's own
+ * SQLite store and recorded through the injected metric adapter. These tests hold the wiring
+ * itself: that it starts with the composition, that it emits only bounded, scoped points, that a
+ * partial startup failure drains it, and that nothing is emitted or left running after the stop.
+ */
+const OPERATIONS_WORKSPACE_ID = 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+
+function recordingAdapter() {
+  const observations = []
+  const gauges = []
+  const counters = []
+  const adapter = {
+    add(name, value, attributes) {
+      counters.push({ name, value, attributes })
+    },
+    record(name, value, attributes) {
+      observations.push({ name, value, attributes })
+    },
+    recordGauge(name, value, attributes) {
+      gauges.push({ name, value, attributes })
+    },
+  }
+  return { adapter, observations, gauges, counters, all: () => [...observations, ...gauges] }
+}
+
+const OPERATIONS_METRIC_NAMES = new Set(Object.values(operationsMetricNames))
+
+/** Waits until the adapter has recorded at least one operations point, or the budget runs out. */
+async function untilRecorded(adapter, budgetMs = 20_000) {
+  const end = Date.now() + budgetMs
+  while (Date.now() < end) {
+    if (adapter.all().length > 0) return true
+    await new Promise((done) => setTimeout(done, 25))
+  }
+  return false
+}
+
+describe('Local operations measurement wiring', () => {
+  test('the measurement starts with the composition and records bounded, scoped points', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-operations-measurement-'))
+    const recorded = recordingAdapter()
+    const composition = new LocalControlPlaneComposition({
+      dataDirectory: directory,
+      metricAdapter: recorded.adapter,
+      operationsMeasurements: { workspaceId: OPERATIONS_WORKSPACE_ID, intervalMs: 60_000 },
+    })
+    try {
+      await composition.start()
+      expect(await untilRecorded(recorded)).toBe(true)
+
+      const points = recorded.all()
+      // Every recorded point is a catalogued operations metric.
+      for (const point of points) expect(OPERATIONS_METRIC_NAMES.has(point.name)).toBe(true)
+      // Every value is finite.
+      for (const point of points) expect(Number.isFinite(point.value)).toBe(true)
+      // The scope never reaches a label: the label contract is bounded and carries no workspace.
+      for (const point of points) {
+        for (const [key, value] of Object.entries(point.attributes)) {
+          expect(key).not.toContain('workspace')
+          expect(String(value)).not.toContain(OPERATIONS_WORKSPACE_ID)
+        }
+      }
+      // Nothing was accumulated as a counter: operations points are observations.
+      expect(recorded.counters).toEqual([])
+      await composition.close()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  test('no measurement is sampled without an injected metric adapter', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-operations-no-adapter-'))
+    const composition = new LocalControlPlaneComposition({
+      dataDirectory: directory,
+      operationsMeasurements: { workspaceId: OPERATIONS_WORKSPACE_ID, intervalMs: 60_000 },
+    })
+    try {
+      await composition.start()
+      await new Promise((done) => setTimeout(done, 250))
+      await composition.close()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  test('a partial startup failure drains the measurement and emits nothing afterwards', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-operations-startup-failure-'))
+    const recorded = recordingAdapter()
+    const composition = new LocalControlPlaneComposition({
+      dataDirectory: directory,
+      metricAdapter: recorded.adapter,
+      // The lifecycle's own cadence bound is one second: an undrained measurement would keep
+      // sampling and emitting after the failure.
+      operationsMeasurements: { workspaceId: OPERATIONS_WORKSPACE_ID, intervalMs: 1000 },
+      endpointFactory: {
+        create: async () => {
+          throw new Error('LOCAL_TEST_ENDPOINT_UNAVAILABLE')
+        },
+      },
+    })
+    try {
+      await expect(composition.start()).rejects.toThrow('LOCAL_TEST_ENDPOINT_UNAVAILABLE')
+      // The measurement was drained by the failed startup: nothing is emitted afterwards.
+      const afterFailure = recorded.all().length
+      await new Promise((done) => setTimeout(done, 1500))
+      expect(recorded.all().length).toBe(afterFailure)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  test('a repeated close is safe, and nothing is emitted or left running after the stop', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-operations-repeat-close-'))
+    const recorded = recordingAdapter()
+    const composition = new LocalControlPlaneComposition({
+      dataDirectory: directory,
+      metricAdapter: recorded.adapter,
+      // The lifecycle's own cadence bound is one second: without the drain the timer would keep
+      // sampling and emitting after the stop.
+      operationsMeasurements: { workspaceId: OPERATIONS_WORKSPACE_ID, intervalMs: 1000 },
+    })
+    try {
+      await composition.start()
+      expect(await untilRecorded(recorded)).toBe(true)
+      // The cadence really was emitting, so a still-running timer would show after the stop.
+      const beforeClose = recorded.all().length
+      await new Promise((done) => setTimeout(done, 1500))
+      expect(recorded.all().length).toBeGreaterThan(beforeClose)
+      await composition.close()
+      const afterClose = recorded.all().length
+      // A second close changes nothing and emits nothing.
+      await composition.close()
+      await new Promise((done) => setTimeout(done, 1500))
+      expect(recorded.all().length).toBe(afterClose)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 60_000)
 })

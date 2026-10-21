@@ -85,10 +85,11 @@ import {
   DurableRuntimeBudgetAdmission,
 } from '@control-plane/workflow-worker'
 import { createConsistencyMetricEmitter } from '@control-plane/telemetry'
-import type { MetricAdapter } from '@control-plane/telemetry'
+import type { MetricAdapter, OperationsMeasurementLifecycle } from '@control-plane/telemetry'
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.js'
 import { LocalRuntimeInteractions } from './runtime-interactions.js'
 import { LocalControlApiComposition } from './local-api-composition.js'
+import { createLocalRuntimeMeasurements } from './runtime-measurements.js'
 import { LocalAdmissionControlService } from './operator-admission-control-service.js'
 import { admissionControlledBeforeEnqueue } from './operator-admission-controls.js'
 import {
@@ -253,6 +254,24 @@ export interface LocalControlPlaneCompositionOptions {
   readonly environmentSecretReferences?: Readonly<Record<string, string>>
   readonly environment?: Readonly<Record<string, string | undefined>>
   readonly metricAdapter?: MetricAdapter
+  /**
+   * Local operations measurement (#1030): the workspace-scoped operations points are sampled from
+   * this composition's own SQLite store on a fixed cadence and recorded through the injected
+   * metric adapter. Present only together with a metric adapter: without one nothing is sampled,
+   * exactly like the consistency metrics, so starting the process is never a measurement side
+   * effect. The measurement never writes, and it observes the store read-only.
+   */
+  readonly operationsMeasurements?: {
+    readonly workspaceId: string
+    readonly intervalMs: number
+    readonly windowSeconds?: number
+    readonly limit?: number
+    readonly storageUsdPerGibMonth?: number
+    /** Longest one pass may run before it is aborted and its result discarded. */
+    readonly passTimeoutMs?: number
+    /** Longest `close()` waits for an active pass before aborting it and returning. */
+    readonly closeTimeoutMs?: number
+  }
   readonly reconciliation?: LocalReconciliationConfiguration
 }
 
@@ -310,6 +329,10 @@ export class LocalControlPlaneComposition {
   readonly #reconciliationScheduler: ReconciliationScheduler | undefined
   readonly #retentionSweep: RetentionSweep | undefined
   readonly #initializeGraphRuntime: (() => Promise<void>) | undefined
+  /** The operations measurement lifecycle, when a metric adapter and a scope are configured. */
+  readonly #operationsMeasurements: OperationsMeasurementLifecycle | undefined
+  /** Whether the operations measurement is running; it is started once and drained once. */
+  #operationsMeasurementsStarted = false
   #endpoint: RestateEndpointHandle | undefined
   #started = false
 
@@ -365,10 +388,12 @@ export class LocalControlPlaneComposition {
             },
           }))
     const workflowEndpointPort = options.workflowEndpointPort ?? 9080
+    // The store the composition owns and the operations measurement observes read-only.
+    const databasePath = join(this.dataDirectory, 'control-plane.sqlite')
     const restateAdminUrl = `http://127.0.0.1:${options.restateAdminPort ?? 9070}`
     const restateIngressUrl = `http://127.0.0.1:${options.restateIngressPort ?? 8080}`
     this.persistence = new SqlitePersistenceProvider({
-      path: join(this.dataDirectory, 'control-plane.sqlite'),
+      path: databasePath,
       profile: this.profile,
     })
     this.secureAcpDevice =
@@ -414,6 +439,36 @@ export class LocalControlPlaneComposition {
       options.metricAdapter === undefined
         ? undefined
         : createConsistencyMetricEmitter(options.metricAdapter, 'local-control-plane')
+    // The operations measurement observes this composition's own store read-only and records the
+    // workspace-scoped points through the same adapter. It is constructed only when both a scope
+    // and an adapter are configured, and it is started once with the composition and drained once
+    // with it: an operations measurement is never a side effect of a missing adapter.
+    this.#operationsMeasurements =
+      options.operationsMeasurements === undefined || options.metricAdapter === undefined
+        ? undefined
+        : createLocalRuntimeMeasurements({
+            adapter: options.metricAdapter,
+            databasePath,
+            intervalMs: options.operationsMeasurements.intervalMs,
+            measurement: {
+              workspaceId: options.operationsMeasurements.workspaceId,
+              ...(options.operationsMeasurements.windowSeconds === undefined
+                ? {}
+                : { windowSeconds: options.operationsMeasurements.windowSeconds }),
+              ...(options.operationsMeasurements.limit === undefined
+                ? {}
+                : { limit: options.operationsMeasurements.limit }),
+              ...(options.operationsMeasurements.storageUsdPerGibMonth === undefined
+                ? {}
+                : { storageUsdPerGibMonth: options.operationsMeasurements.storageUsdPerGibMonth }),
+            },
+            ...(options.operationsMeasurements.passTimeoutMs === undefined
+              ? {}
+              : { passTimeoutMs: options.operationsMeasurements.passTimeoutMs }),
+            ...(options.operationsMeasurements.closeTimeoutMs === undefined
+              ? {}
+              : { closeTimeoutMs: options.operationsMeasurements.closeTimeoutMs }),
+          })
     // The embedded mode routes acceptance, interactions, cancellations, and
     // reconciliation remediation through one queue-backed dispatcher; restate
     // mode keeps the ingress client as the default inside the API composition.
@@ -691,6 +746,13 @@ export class LocalControlPlaneComposition {
     await mkdir(this.dataDirectory, { recursive: true, mode: 0o700 })
     await this.persistence.migrate()
     try {
+      // The operations measurement observes the migrated store, so it starts first and a later
+      // failure has it to drain. It is started exactly once: a start after a drain is refused by the
+      // lifecycle itself, so a partially started composition never measures twice.
+      if (!this.#operationsMeasurementsStarted && this.#operationsMeasurements !== undefined) {
+        this.#operationsMeasurements.start()
+        this.#operationsMeasurementsStarted = true
+      }
       await this.#initializeGraphRuntime?.()
       await this.runtimeTransport?.open?.()
       if (this.#endpointFactory !== undefined) {
@@ -702,6 +764,8 @@ export class LocalControlPlaneComposition {
       this.#reconciliationScheduler?.start()
       this.#retentionSweep?.start()
     } catch (error) {
+      // Drain the measurement before anything it observes is torn down.
+      await this.#drainOperationsMeasurements()
       await this.#reconciliationScheduler?.close().catch(() => undefined)
       await Promise.resolve()
         .then(() => this.remoteControl?.stop())
@@ -718,6 +782,17 @@ export class LocalControlPlaneComposition {
       occurredAt: new Date().toISOString(),
       attributes: { profile: this.profile },
     })
+  }
+
+  /**
+   * Stops the operations measurement and waits for its last pass. It is idempotent: a measurement
+   * that never started is not stopped, and a stopped one is not stopped twice. A measurement that
+   * fails to drain is not authoritative and never fails the composition's own shutdown.
+   */
+  async #drainOperationsMeasurements(): Promise<void> {
+    if (!this.#operationsMeasurementsStarted) return
+    this.#operationsMeasurementsStarted = false
+    await this.#operationsMeasurements?.close().catch(() => undefined)
   }
 
   async manifest(): Promise<LocalComponentManifest> {
@@ -752,6 +827,8 @@ export class LocalControlPlaneComposition {
     // Drain the scheduler first: a clean close never abandons an in-flight pass.
     await this.#reconciliationScheduler?.close()
     await this.#retentionSweep?.close()
+    // The operations measurement drains its own last pass before the store it reads is closed.
+    await this.#drainOperationsMeasurements()
     try {
       await this.remoteControl?.stop()
     } finally {
