@@ -245,6 +245,39 @@ test('every listener on the port must be owned, whatever the order', () => {
   assert.equal(assessListenerOwnership({ listeners: [], childPid: 4242, parentOf }).owned, false)
 })
 
+test('a listener whose address could not be read is refused, whoever owns it', () => {
+  const parentOf = () => undefined
+  // The case root named: the owned child on the probed address plus a socket
+  // of the same child whose address could not be read. PID ownership alone
+  // does not establish which local address that socket serves, so the set is
+  // refused rather than accepted.
+  const owned = assessListenerOwnership({
+    listeners: [listener(4242), { pid: 4242, address: 'unknown' }],
+    childPid: 4242,
+    parentOf,
+  })
+  assert.equal(owned.owned, false)
+  assert.match(owned.reason, /address could not be read/u)
+
+  // A foreign PID with an unreadable address is refused as a foreign listener.
+  const foreign = assessListenerOwnership({
+    listeners: [listener(4242), { pid: 9999, address: 'unknown' }],
+    childPid: 4242,
+    parentOf,
+  })
+  assert.equal(foreign.owned, false)
+  assert.match(foreign.reason, /not the launched child/u)
+
+  // The unreadable socket on its own leaves nothing that covers the probed
+  // address either.
+  const alone = assessListenerOwnership({
+    listeners: [{ pid: 4242, address: 'unknown' }],
+    childPid: 4242,
+    parentOf,
+  })
+  assert.equal(alone.owned, false)
+})
+
 test('a listener on another address only is refused, and a wildcard is accepted', () => {
   const parentOf = () => undefined
   const otherAddress = assessListenerOwnership({

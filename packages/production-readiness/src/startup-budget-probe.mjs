@@ -106,6 +106,18 @@ export function listenerHost(address) {
 }
 
 /**
+ * Whether a listener's address could be read at all.
+ *
+ * An address that could not be read is incomplete ownership evidence: the
+ * probe cannot tell which local address that socket serves, so it refuses
+ * the set rather than accepting it.
+ */
+export function hasReadableAddress(address) {
+  const host = listenerHost(address)
+  return host !== '' && host !== 'unknown'
+}
+
+/**
  * Whether a listener's address covers the address the probe talks to.
  *
  * A wildcard bind covers every address; an exact bind covers only its own.
@@ -123,9 +135,11 @@ export function coversProbeAddress(address, probeAddress) {
  * The probe talks to one address (`127.0.0.1`), but a port can be listened on
  * at several local addresses at once, and the listener on another address may
  * belong to an unrelated process. The set is therefore acceptable only when
- * EVERY listener on the port is the launched child or a descendant of it, and
- * at least one of them covers the probed address. Anything unattributed or
- * ambiguous fails closed.
+ * EVERY listener on the port is the launched child or a descendant of it, at
+ * least one of them covers the probed address, and every one of them has an
+ * address that could be read. Anything unattributed, unreadable or ambiguous
+ * fails closed: a socket whose address cannot be read is incomplete ownership
+ * evidence, not evidence of ownership.
  */
 export function assessListenerOwnership({
   listeners,
@@ -153,6 +167,14 @@ export function assessListenerOwnership({
     return {
       owned: false,
       reason: `a listener on the port is not the launched child: ${foreign.join(', ')}`,
+    }
+  const unreadable = listeners
+    .filter((listener) => !hasReadableAddress(listener.address))
+    .map((listener) => `${listener.pid} (${listener.address})`)
+  if (unreadable.length > 0)
+    return {
+      owned: false,
+      reason: `a listener's address could not be read, so its ownership cannot be established: ${unreadable.join(', ')}`,
     }
   if (covering === 0)
     return {
@@ -368,8 +390,8 @@ export function readListenerPids(port) {
   const listeners = []
   for (const [pid, addresses] of addressesByPid) {
     if (addresses.length === 0) {
-      // A listener whose address could not be read is unattributed: it is
-      // reported so the ownership check can refuse it.
+      // A listener whose address could not be read is reported, never dropped:
+      // the ownership check refuses the set rather than ignoring it.
       listeners.push({ pid, address: 'unknown' })
       continue
     }

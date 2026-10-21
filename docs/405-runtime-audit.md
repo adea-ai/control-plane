@@ -36,12 +36,14 @@ child. The probe now:
   readiness is never measured as the application's own;
 - **accepts readiness only once the whole listener set on the port is proved
   to be the launched child** — every listener on the port must be the child
-  or a descendant of it, and at least one of them must cover the address the
-  readiness probe actually talks to. A port that is also listened on by an
+  or a descendant of it, at least one of them must cover the address the
+  readiness probe actually talks to, and every one of them must have an
+  address that could be read. A port that is also listened on by an
   unrelated process at another local address is ambiguous and fails closed,
-  and a listener whose address cannot be read is reported as unattributed
-  rather than dropped (the ownership walk is injected, so it is deterministic
-  in tests);
+  and a listener whose address cannot be read is refused outright: the
+  ownership evidence is incomplete, and the set is reported rather than
+  dropped (the ownership walk is injected, so it is deterministic in
+  tests);
 - **refuses a malformed, empty, unsuccessful or zero `ps` sample**, and a run
   with no valid sample is a **failure**, not a zero-megabyte pass;
 - **fails fast on a spawn failure, a missing PID and an early child exit**,
@@ -294,12 +296,15 @@ is clean and the temporary script was never committed.
 
 ## 4. Safe shared runtime/data abstractions
 
-The M13 audit's findings are unchanged and are **not** re-derived here; the
-current candidate's coupling measurement (`scripts/m17-runtime-baseline.mjs`
-at `23fa6880`) backs them: the custom-runtime layer couples to 48 targets
-(auth 27, billing 7, transports 7, artifacts 3, policy 1, restate 1,
-device-supervision 2), device-supervision to 38 and pi-durable-node-adapter
-to 25 — the concentration the consolidation findings already name.
+The M13 audit's findings are unchanged and are **not** re-derived here. The
+coupling measurement that backs them was taken at `23fa6880` and re-taken at
+the current candidate `487883cd`, with **identical totals** at both: the
+custom-runtime layer couples to 48 targets (auth 27, billing 7, transports
+7, artifacts 3, policy 1, restate 1, device-supervision 2),
+device-supervision to 38 and pi-durable-node-adapter to 25 — the
+concentration the consolidation findings already name. The measurement is
+historical evidence from those two candidates, not a live reading of the
+default deployment.
 leave the two `gateway.ts` products separate (different semantics, per #192);
 consolidate the duplicated promise-pending-map process clients into a
 `ProcessRpcLink` primitive in `packages/deployment` (characterization suites
