@@ -67,6 +67,11 @@ export const projectStateMutations = pgTable(
     projectId: identifier('project_id').notNull(),
     mutationId: identifier('mutation_id').notNull(),
     inputDigest: varchar('input_digest', { length: 71 }).notNull(),
+    /**
+     * The canonicalization the writer used for `input_digest`. NULL on every row written
+     * before explicit versioning; the reader treats a NULL version as an untagged record.
+     */
+    inputDigestVersion: integer('input_digest_version'),
     resultingRevision: integer('resulting_revision').notNull(),
     touchedItemIds: jsonb('touched_item_ids')
       .$type<AppliedStateMutation['touchedItemIds']>()
