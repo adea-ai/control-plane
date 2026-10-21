@@ -130,23 +130,23 @@ The seven contributing lanes are recorded by stable ID with an exact head. A
 received contribution names a commit that exists in the repository, and each of
 its evidence paths is proven against the tree of that commit, because a lane's
 files are not in this branch until it is merged. No contribution is integrated
-into the current tree, so no worker result is reported as evidence.
+into the current tree, so no worker result is reported as evidence and no
+worker result is promoted into a requirement or issue classification.
 
 | Worker | Lane                              | Status   | Exact head                                 | Issues     | Evidence                                                               |
 | ------ | --------------------------------- | -------- | ------------------------------------------ | ---------- | ---------------------------------------------------------------------- |
-| W1     | cp558-resolution                  | received | `661bb80f606d9637de8b4199b3e862e127a33968` | #558       | #558 context-consumer conformance record and conformance tests         |
-| W2     | cp186-195-requirements            | received | `b2de58916ba5315f4cf5ad40aa8399161abc263a` | #186, #195 | canonical crosswalk, figure inventory, this record                     |
-| W3     | cp187-architecture-audit          | received | `fc169f506ec98432883af6cd26bcc8a0101570f3` | #187       | architecture binding-detector handoff, audit script, regression checks |
-| W4     | cp190-trust-boundary              | received | `40444c70a5d688628f4ddbc792c91ce957a2c2e9` | #190       | security/trust-boundary audit record and its matrix                    |
-| W5     | cp191-adversarial-eval            | received | `2326e670420ebc1725ab36e0442b1849d425686d` | #191       | adversarial evaluation program record, baseline scorecard, corpus      |
-| W6     | cp196-skill-library               | received | `683fe954028901841bb6c20f27a795cdde757db2` | #196       | blinded comparison packet, skill-eval harness, audit skill             |
-| W7     | cp612-project-state-digest-compat | pending  | —                                          | #612       | —                                                                      |
+| W1     | cp558-resolution                  | received | `24c84da87575ec458116138ceaa647258a9e51f8` | #558       | #558 context-consumer conformance record and conformance tests         |
+| W2     | cp186-195-requirements            | received | `076cc525a9ca2d45f9a727cb44e4e763cef261f4` | #186, #195 | canonical crosswalk, figure inventory, this record                     |
+| W3     | cp187-architecture-audit          | received | `70017bd9ae7a46a8a58aada372f9e75166004d02` | #187       | architecture binding-detector handoff, audit script, regression checks |
+| W4     | cp190-trust-boundary              | received | `43295261c6a8a5ef112e1e319961f3601f6de71b` | #190       | security/trust-boundary audit record, matrix and probes                |
+| W5     | cp191-adversarial-eval            | received | `9bf1cb374a189345750e6dad6057191233c52a61` | #191       | adversarial evaluation program record, baseline scorecard, corpus      |
+| W6     | cp196-skill-library               | received | `eb84f92e73a665f676a9a7ff22041b73e0844076` | #196       | blinded comparison packet, skill-eval harness, audit skill             |
+| W7     | cp612-project-state-digest-compat | received | `eb7d3ba7f42af0550f14dab8a30fc6a710ebcafc` | #612       | project-state digest compatibility record and reopen-race checks       |
 
-The architecture, adversarial-evaluation and skill-library lanes still had
-uncommitted changes when this record was written, so their recorded heads are
-provisional. The project-state digest lane had not published a head. W2 records
-the commit that carries the canonical crosswalk, the figure inventory and this
-record.
+Every lane has published a commit, and each recorded head is that lane's current
+published commit. W2 records the branch head this refresh was taken from, which
+carries the canonical crosswalk, the figure inventory and this record. A lane
+that publishes a further commit needs one more refresh.
 
 `bun run requirements:refresh` re-reads the live issue identities and is the
 step that folds an arrived contribution into the crosswalk.
@@ -178,7 +178,7 @@ against the version pinned in `bun.lock`.
 | GATE-SOURCE-IMAGE-ACCESS | blocked | high     | documentation-governance | With read-only Drive/Docs access, re-read every parent tab including nested tabs at the current revision and record the native inline-object identity, byte length and SHA-256 of each image. |
 | GATE-HUMAN-RATIFICATION  | blocked | high     | documentation-governance | The source owner reviews the 1529 changed clauses and the current figure inventory and ratifies or corrects each disposition.                                                                 |
 | GATE-INDEPENDENT-SAMPLE  | blocked | high     | independent-reviewer     | An independent reviewer reproduces the crosswalk, the drift controls and a representative sample on the exact recorded head.                                                                  |
-| GATE-WORKER-EVIDENCE     | pending | medium   | requirements-ledger      | Refresh the ledger after each lane publishes its final head; the received lanes still have uncommitted changes.                                                                               |
+| GATE-WORKER-EVIDENCE     | pending | medium   | requirements-ledger      | Refresh the ledger after a lane publishes a further commit; every lane currently has a published head and none is merged into this tree.                                                      |
 | GATE-CURRENT-CANDIDATE   | blocked | high     | validation-architecture  | Freeze a current candidate on the reconciled head, record it in `candidate`, and run the required deterministic lanes.                                                                        |
 
 Human semantic ratification, an independent representative sample and current

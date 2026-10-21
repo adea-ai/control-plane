@@ -9675,141 +9675,154 @@
       "id": "W1",
       "lane": "cp558-resolution",
       "status": "received",
-      "head": "661bb80f606d9637de8b4199b3e862e127a33968",
+      "head": "24c84da87575ec458116138ceaa647258a9e51f8",
       "branch": "f2w1/cp558-resolution",
       "issueRefs": [558],
       "evidence": [
         {
           "path": "docs/architecture/decision-558-context-consumer-conformance.md",
-          "commit": "661bb80f606d9637de8b4199b3e862e127a33968"
+          "commit": "24c84da87575ec458116138ceaa647258a9e51f8"
         },
         {
           "path": "apps/control-api/src/decision-context-consumer-conformance.test.mjs",
-          "commit": "661bb80f606d9637de8b4199b3e862e127a33968"
+          "commit": "24c84da87575ec458116138ceaa647258a9e51f8"
         }
       ],
-      "nextAction": "Refresh the recorded head when the #558 resolution lane publishes its final commit; the recorded context-consumer conformance head is provisional."
+      "nextAction": "Refresh the recorded head when the #558 resolution lane publishes a further commit."
     },
     {
       "id": "W2",
       "lane": "cp186-195-requirements",
       "status": "received",
-      "head": "b2de58916ba5315f4cf5ad40aa8399161abc263a",
+      "head": "076cc525a9ca2d45f9a727cb44e4e763cef261f4",
       "branch": "f2w2/cp186-195-requirements",
       "issueRefs": [186, 195],
       "evidence": [
         {
           "path": "docs/requirements/control-plane-requirements-crosswalk.v1.json",
-          "commit": "b2de58916ba5315f4cf5ad40aa8399161abc263a"
+          "commit": "076cc525a9ca2d45f9a727cb44e4e763cef261f4"
         },
         {
           "path": "docs/requirements/canonical-figure-inventory.v1.json",
-          "commit": "b2de58916ba5315f4cf5ad40aa8399161abc263a"
+          "commit": "076cc525a9ca2d45f9a727cb44e4e763cef261f4"
         },
         {
           "path": "docs/requirements/cp186-195-reconciliation-2026-10-21.md",
-          "commit": "b2de58916ba5315f4cf5ad40aa8399161abc263a"
+          "commit": "076cc525a9ca2d45f9a727cb44e4e763cef261f4"
         }
       ],
-      "nextAction": "Re-run bun run requirements:refresh after this branch lands so the recorded head names the published commit."
+      "nextAction": "Refresh the recorded head when this branch publishes its next commit; the recorded head names the last published state of this lane."
     },
     {
       "id": "W3",
       "lane": "cp187-architecture-audit",
       "status": "received",
-      "head": "fc169f506ec98432883af6cd26bcc8a0101570f3",
+      "head": "70017bd9ae7a46a8a58aada372f9e75166004d02",
       "branch": "f2w3/cp187-architecture-audit",
       "issueRefs": [187],
       "evidence": [
         {
           "path": "docs/evidence/m11-architecture-audit-binding-detector-handoff-2026-10-21.md",
-          "commit": "fc169f506ec98432883af6cd26bcc8a0101570f3"
+          "commit": "70017bd9ae7a46a8a58aada372f9e75166004d02"
         },
         {
           "path": "scripts/architecture-audit.mjs",
-          "commit": "fc169f506ec98432883af6cd26bcc8a0101570f3"
+          "commit": "70017bd9ae7a46a8a58aada372f9e75166004d02"
         },
         {
           "path": "scripts/m11-architecture-audit-regression.test.mjs",
-          "commit": "fc169f506ec98432883af6cd26bcc8a0101570f3"
+          "commit": "70017bd9ae7a46a8a58aada372f9e75166004d02"
         }
       ],
-      "nextAction": "Refresh the recorded head when the architecture lane publishes its final commit; the lane still has uncommitted changes."
+      "nextAction": "Refresh the recorded head when the architecture lane publishes a further commit."
     },
     {
       "id": "W4",
       "lane": "cp190-trust-boundary",
       "status": "received",
-      "head": "40444c70a5d688628f4ddbc792c91ce957a2c2e9",
+      "head": "43295261c6a8a5ef112e1e319961f3601f6de71b",
       "branch": "f2w4/cp190-trust-boundary",
       "issueRefs": [190],
       "evidence": [
         {
           "path": "docs/evidence/m11-security-trust-boundary-audit-2026-10-21.md",
-          "commit": "40444c70a5d688628f4ddbc792c91ce957a2c2e9"
+          "commit": "43295261c6a8a5ef112e1e319961f3601f6de71b"
         },
         {
           "path": "docs/evidence/m11-security-trust-boundary-matrix-2026-10-21.v1.json",
-          "commit": "40444c70a5d688628f4ddbc792c91ce957a2c2e9"
+          "commit": "43295261c6a8a5ef112e1e319961f3601f6de71b"
+        },
+        {
+          "path": "scripts/security-trust-boundary-probes.mjs",
+          "commit": "43295261c6a8a5ef112e1e319961f3601f6de71b"
         }
       ],
-      "nextAction": "Refresh the recorded head when the trust-boundary lane publishes its final commit; the recorded final-candidate re-check head is provisional."
+      "nextAction": "Refresh the recorded head when the trust-boundary lane publishes a further commit."
     },
     {
       "id": "W5",
       "lane": "cp191-adversarial-eval",
       "status": "received",
-      "head": "2326e670420ebc1725ab36e0442b1849d425686d",
+      "head": "9bf1cb374a189345750e6dad6057191233c52a61",
       "branch": "f2w5/cp191-adversarial-eval",
       "issueRefs": [191],
       "evidence": [
         {
           "path": "docs/evidence/cp191-adversarial-eval-program-2026-10-21.md",
-          "commit": "2326e670420ebc1725ab36e0442b1849d425686d"
+          "commit": "9bf1cb374a189345750e6dad6057191233c52a61"
         },
         {
           "path": "docs/evidence/cp191-adversarial-baseline-scorecard.json",
-          "commit": "2326e670420ebc1725ab36e0442b1849d425686d"
+          "commit": "9bf1cb374a189345750e6dad6057191233c52a61"
         },
         {
           "path": "docs/adversarial-corpus-v1.md",
-          "commit": "2326e670420ebc1725ab36e0442b1849d425686d"
+          "commit": "9bf1cb374a189345750e6dad6057191233c52a61"
         }
       ],
-      "nextAction": "Refresh the recorded head when the adversarial-evaluation lane publishes its final commit; the lane still has uncommitted changes."
+      "nextAction": "Refresh the recorded head when the adversarial-evaluation lane publishes a further commit."
     },
     {
       "id": "W6",
       "lane": "cp196-skill-library",
       "status": "received",
-      "head": "683fe954028901841bb6c20f27a795cdde757db2",
+      "head": "eb84f92e73a665f676a9a7ff22041b73e0844076",
       "branch": "f2w6/cp196-skill-library",
       "issueRefs": [196],
       "evidence": [
         {
           "path": "docs/evals/skill-evals/blinded-comparison-packet.md",
-          "commit": "683fe954028901841bb6c20f27a795cdde757db2"
+          "commit": "eb84f92e73a665f676a9a7ff22041b73e0844076"
         },
         {
           "path": "docs/evals/skill-evals/README.md",
-          "commit": "683fe954028901841bb6c20f27a795cdde757db2"
+          "commit": "eb84f92e73a665f676a9a7ff22041b73e0844076"
         },
         {
           "path": ".agents/skills/control-plane-audit/SKILL.md",
-          "commit": "683fe954028901841bb6c20f27a795cdde757db2"
+          "commit": "eb84f92e73a665f676a9a7ff22041b73e0844076"
         }
       ],
-      "nextAction": "Refresh the recorded head when the skill-library lane publishes its final commit; the lane still has uncommitted changes."
+      "nextAction": "Refresh the recorded head when the skill-library lane publishes a further commit; the lane also carries a separate credential-vault branch."
     },
     {
       "id": "W7",
       "lane": "cp612-project-state-digest-compat",
-      "status": "pending",
-      "head": null,
+      "status": "received",
+      "head": "eb7d3ba7f42af0550f14dab8a30fc6a710ebcafc",
       "branch": "f2w7/cp612-project-state-digest-compat",
       "issueRefs": [612],
-      "evidence": [],
-      "nextAction": "Record the exact head and the evidence paths of the #612 project-state digest compatibility work when the lane publishes them."
+      "evidence": [
+        {
+          "path": "docs/project-state-digest-compatibility.md",
+          "commit": "eb7d3ba7f42af0550f14dab8a30fc6a710ebcafc"
+        },
+        {
+          "path": "packages/sqlite-persistence/src/project-state-digest-reopen-race.test.mjs",
+          "commit": "eb7d3ba7f42af0550f14dab8a30fc6a710ebcafc"
+        }
+      ],
+      "nextAction": "Refresh the recorded head when the project-state digest lane publishes a further commit."
     }
   ],
   "externalGates": [
@@ -9850,8 +9863,8 @@
       "severity": "medium",
       "owner": "requirements-ledger",
       "issue": 195,
-      "disposition": "Six contributing lanes have published a commit and are recorded as received with their exact head and the evidence paths proven against the tree of that head. The architecture, adversarial-evaluation and skill-library lanes still have uncommitted changes, so their recorded heads are provisional. The project-state digest lane has not published a head. No worker contribution is integrated into the current tree and no worker result is reported as evidence.",
-      "nextAction": "Re-run bun run requirements:refresh after each lane publishes its final commit, re-record the exact head and evidence paths per stable worker ID, and re-run the crosswalk so the integrated evidence appears against the requirement and issue rows it covers."
+      "disposition": "All seven contributing lanes have published a commit, and each is recorded as received with its exact head and with its evidence paths proven against the tree of that head. No contribution is merged into this tree, so no worker result is integrated into the crosswalk and no worker result is reported as evidence. The recorded heads are the lanes’ current published commits and are refreshed again whenever a lane publishes a further commit.",
+      "nextAction": "Re-run bun run requirements:refresh after a lane publishes a further commit to re-record the live issue identities and the exact head per stable worker ID, then re-run the crosswalk so an integrated contribution appears against the requirement and issue rows it covers."
     },
     {
       "id": "GATE-CURRENT-CANDIDATE",

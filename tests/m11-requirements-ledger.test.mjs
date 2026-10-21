@@ -1283,13 +1283,17 @@ describe('M11.1 requirements ledger', () => {
   test('requires an exact resolvable head for every received worker contribution', async () => {
     const { errors } = await validateRequirementsLedger(ledger, { repositoryRoot })
     expect(errors).toEqual([])
-    const pendingId = ledger.workerEvidence.find(({ status }) => status === 'pending').id
+    const pendingId = ledger.workerEvidence[0].id
     const pendingWithHead = clone(ledger)
-    pendingWithHead.workerEvidence.find(({ id }) => id === pendingId).head = 'a'.repeat(40)
+    const pendingWorker = pendingWithHead.workerEvidence.find(({ id }) => id === pendingId)
+    pendingWorker.status = 'pending'
+    pendingWorker.head = 'a'.repeat(40)
     const pendingResult = await validateRequirementsLedger(pendingWithHead, { repositoryRoot })
     expect(pendingResult.errors).toContain(`${pendingId}: a pending worker must not record a head`)
     const missingHead = clone(ledger)
-    missingHead.workerEvidence.find(({ id }) => id === pendingId).status = 'received'
+    const missingHeadWorker = missingHead.workerEvidence.find(({ id }) => id === pendingId)
+    missingHeadWorker.status = 'received'
+    missingHeadWorker.head = null
     const missingResult = await validateRequirementsLedger(missingHead, { repositoryRoot })
     expect(missingResult.errors).toContain(
       `${pendingId}: a received worker must record an exact full Git head`
