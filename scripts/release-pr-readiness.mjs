@@ -100,14 +100,30 @@ function isMissingConclusion(conclusion) {
  *
  * The newest run for the exact head wins, so an older live run cannot mask a
  * newer failed qualification and a newer live run supersedes an older
- * cancelled one. A malformed entry or an incomplete page is an error, never
- * evidence that validation is missing.
+ * cancelled one.
+ *
+ * Two things are refused rather than interpreted:
+ *
+ * - A malformed entry — an unidentifiable run, a nonpositive attempt number, or
+ *   a status the Actions API does not define — is an error, never evidence
+ *   that validation is missing. An unknown status is not "not running yet": it
+ *   is a state this policy does not understand, and guessing at it could hide a
+ *   failed qualification behind a readiness transition.
+ * - An incomplete page is an error too, but only when the page can be shown to
+ *   be incomplete. The Actions API reports the number of runs it holds, and
+ *   that count is the completeness witness: without it a truncated page cannot
+ *   be told apart from a genuinely absent owner, so the caller must supply it
+ *   and this function refuses a page whose count does not match.
  *
  * Returns 'owned', 'failed' or 'missing'. Throws when the ownership cannot be
  * established.
  */
-export function classifyValidationOwner(runs, { head, branch, repository }) {
+export function classifyValidationOwner(runs, { head, branch, repository, totalCount }) {
   if (!Array.isArray(runs)) throw new Error('Invalid validation owner response')
+  if (!Number.isInteger(totalCount) || totalCount < 0) {
+    throw new Error('Incomplete validation owner response')
+  }
+  if (totalCount !== runs.length) throw new Error('Incomplete validation owner response')
   const candidates = runs.filter((run) => {
     if (run === null || typeof run !== 'object') {
       throw new Error('Invalid validation run identity or state')
@@ -115,7 +131,11 @@ export function classifyValidationOwner(runs, { head, branch, repository }) {
     if (typeof run.id !== 'number' || !Number.isInteger(run.id) || run.id <= 0) {
       throw new Error('Invalid validation run identity or state')
     }
-    if (typeof run.run_attempt !== 'number' || !Number.isInteger(run.run_attempt)) {
+    if (
+      typeof run.run_attempt !== 'number' ||
+      !Number.isInteger(run.run_attempt) ||
+      run.run_attempt < 1
+    ) {
       throw new Error('Invalid validation run identity or state')
     }
     if (typeof run.head_sha !== 'string' || !HEAD_PATTERN.test(run.head_sha)) {
@@ -136,10 +156,16 @@ export function classifyValidationOwner(runs, { head, branch, repository }) {
     if (typeof run.path !== 'string' || run.path.length === 0) {
       throw new Error('Invalid validation run identity or state')
     }
-    if (
-      typeof run.status !== 'string' ||
-      (isActiveRun(run) && run.conclusion !== null && run.conclusion !== undefined)
-    ) {
+    if (typeof run.status !== 'string') {
+      throw new Error('Invalid validation run identity or state')
+    }
+    if (!isActiveRun(run) && run.status !== 'completed') {
+      // A status the Actions API does not define is not a run that is merely
+      // still going. It is a state this policy does not understand, so it is
+      // refused instead of being read as an absent owner.
+      throw new Error('Invalid validation run identity or state')
+    }
+    if (isActiveRun(run) && run.conclusion !== null && run.conclusion !== undefined) {
       throw new Error('Invalid validation run identity or state')
     }
     if (
@@ -254,6 +280,15 @@ export async function effectiveReleaseRuntime(root) {
  * resets it and cancels its validation.
  */
 export function assertReleaseRuntimeCarriesReadinessFix(versions) {
+  if (!Array.isArray(versions) || versions.length === 0) {
+    // An empty detected set proves nothing: the release wiring may have moved
+    // and the detector may simply no longer recognise it. The floor cannot be
+    // shown to be met, so the guard refuses rather than passing vacuously.
+    throw new Error(
+      'No shared Code Foundry release runtime was detected in the release wiring, so the ' +
+        `unchanged-ready-head fix (${RELEASE_READINESS_FIX_MINIMUM}) cannot be shown to be present.`
+    )
+  }
   const stale = versions.filter((version) => !versionAtLeast(version))
   if (stale.length > 0) {
     throw new Error(
