@@ -197,11 +197,24 @@ or device was contacted, and no production system was loaded.
 | runtime RSS after the probes                                           | 99.7 MB                                                                                                                                                                                                    | the same baseline run                                                              |
 
 **Repeat runs.** The same probe re-run against the same profile state
-measured **3.3 s** to ready and a **223.4 MB** peak RSS, and the repeated
-local request sample measured **p50 0.50 ms, p95 1.27 ms, p99 2.27 ms, max
-5.47 ms** at **52.3 MB** idle RSS. The first (cold) run is the budget-relevant
-figure; the repeats show the steady-state cost once the profile's first-run
-setup is done. The evidence bundle keeps both runs.
+measured **3.3 s** to ready and a **223.4 MB** peak RSS. The local request
+sample was taken three times on this host, 300 requests each with **0
+errors**: p50 1.72 / p95 9.49 / p99 32.91 / max 38.7 ms, then p50 0.50 / p95
+1.27 / p99 2.27 / max 5.47 ms, then p50 0.34 / p95 0.75 / p99 1.03 / max 3.51
+ms. The single-request RSS sample moves with the moment it is taken — 52.3
+MB, 78.8 MB and 242.0 MB across those runs — which is exactly why the budget
+measures the **peak** (233.9 MB cold, 223.4 MB warm) and not a point sample.
+The first (cold) run is the budget-relevant figure; the repeats show the
+steady-state cost once the profile's first-run setup is done. The evidence
+bundle keeps the runs.
+
+**Cleanup observation.** One orphaned `local-control-plane` process was
+observed after a measurement-harness run and was terminated by hand. A
+controlled repeat of the same harness showed the owned child exiting on
+`SIGTERM`, **no surviving app process and the port released**, so the
+observation did not reproduce; the repaired probe's cleanup — which waits for
+the child's actual termination — is the property under test, and the
+before/after row below records what the base probe could not show.
 
 The probe's own numbers are the budget-relevant ones: **8.1 s to ready and a
 233.9 MB peak against 45 s and 256 MB** — inside both ceilings, with the
@@ -215,12 +228,13 @@ The same scenario was run against the **base** probe (`27f17bd55`) and the
 repaired probe, with an unrelated listener answering `200` on the probe's
 port:
 
-|                               | base probe (`27f17bd55`)                                                                                                                                             | repaired probe (`23fa6880`)                                                                                |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| exit status                   | **0 — passed**                                                                                                                                                       | **1 — refused**                                                                                            |
-| output                        | `OK: {"check":"startup-ready-seconds","measured":0.1,...}` and `OK: {"check":"idle-peak-rss-mb","measured":101.4,...}`                                               | `BUDGET EXCEEDED / FAILED: the port is already in use by 61023; refusing to measure an unrelated listener` |
-| what it measured              | the **unrelated listener's** readiness and a process it did not own — and with an unsuccessful or empty `ps` sample the peak would have stayed at 0 and still passed | nothing: it refuses before launching                                                                       |
-| unrelated listener afterwards | survived                                                                                                                                                             | **survived** (HTTP 200) — the refusal never signals a process the probe does not own                       |
+|                               | base probe (`27f17bd55`)                                                                                                                                             | repaired probe (`23fa6880`)                                                                                                         |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| exit status                   | **0 — passed**                                                                                                                                                       | **1 — refused**                                                                                                                     |
+| output                        | `OK: {"check":"startup-ready-seconds","measured":0.1,...}` and `OK: {"check":"idle-peak-rss-mb","measured":101.4,...}`                                               | `BUDGET EXCEEDED / FAILED: the port is already in use by 61023; refusing to measure an unrelated listener`                          |
+| what it measured              | the **unrelated listener's** readiness and a process it did not own — and with an unsuccessful or empty `ps` sample the peak would have stayed at 0 and still passed | nothing: it refuses before launching                                                                                                |
+| unrelated listener afterwards | survived                                                                                                                                                             | **survived** (HTTP 200) — the refusal never signals a process the probe does not own                                                |
+| the spawned child afterwards  | the base probe's `child.kill('SIGTERM')` was **never awaited**, so the run could not show the child was gone (source property)                                       | **gone, and awaited** — the probe waits for the actual exit, and a controlled repeat shows no surviving process and a released port |
 
 The base probe's `scripts/check-startup-budget.mjs` was run from the base
 commit as a temporary sibling script and deleted afterwards; the working tree
