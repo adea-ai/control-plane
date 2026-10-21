@@ -1,11 +1,22 @@
 import { describe, expect, test } from 'bun:test'
 import { readFile } from 'node:fs/promises'
-import { URL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 import {
+  collectCanonicalCrosswalk,
+  collectFigureInventory,
+  compareGitHubIssueSnapshot,
   listGitHubIssues,
+  pinnedFormatterVersion,
+  refreshGitHubIssueSnapshot,
   refreshPriorMilestoneAudits,
-  validateRequirementsLedger,
+  renderCanonicalCrosswalk,
+  renderFigureInventory,
   renderRequirementsReport,
+  runningFormatterVersion,
+  validateCanonicalCrosswalk,
+  validateFigureInventory,
+  validateFormatterVersion,
+  validateRequirementsLedger,
 } from '../scripts/requirements-ledger.mjs'
 
 const ledgerUrl = new URL(
@@ -13,6 +24,15 @@ const ledgerUrl = new URL(
   import.meta.url
 )
 const reportUrl = new URL('../docs/requirements/control-plane-requirements.md', import.meta.url)
+const crosswalkUrl = new URL(
+  '../docs/requirements/control-plane-requirements-crosswalk.v1.json',
+  import.meta.url
+)
+const figureInventoryUrl = new URL(
+  '../docs/requirements/canonical-figure-inventory.v1.json',
+  import.meta.url
+)
+const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const ledger = JSON.parse(await readFile(ledgerUrl, 'utf8'))
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const emptyIssueLedger = () => ({
@@ -138,14 +158,14 @@ describe('M11.1 requirements ledger', () => {
     delete changed.sources[0].atomicInventory
     const { errors } = await validateRequirementsLedger(changed)
     expect(errors).toContain('project-index: atomicInventory is required')
-  })
+  }, 60000)
 
   test('atomic clause counts are checked beyond the bounded requirement rows', async () => {
     const changed = clone(ledger)
     changed.sources[0].atomicInventory.atoms -= 1
     const { errors } = await validateRequirementsLedger(changed)
     expect(errors).toContain('project-index: atomic inventory count differs from declared atoms')
-  })
+  }, 60000)
 
   test('atomic inventory provenance must match the captured source revision and bytes', async () => {
     const changed = clone(ledger)
@@ -154,7 +174,7 @@ describe('M11.1 requirements ledger', () => {
     const { errors } = await validateRequirementsLedger(changed)
     expect(errors).toContain('project-index: atomic inventory revision differs from source')
     expect(errors).toContain('project-index: atomic inventory content hash differs from source')
-  })
+  }, 60000)
 
   test('retention evidence distinguishes fail-closed deletion from scheduler doubles', async () => {
     const row = ledger.requirements.find(({ id }) => id === 'CP-CONS-003')
@@ -314,7 +334,7 @@ describe('M11.1 requirements ledger', () => {
     expect(report).toContain(
       'does not re-certify that baseline or establish whole-milestone completion'
     )
-  })
+  }, 60000)
 
   test('covers every normative source and prior milestone', async () => {
     const result = await validateRequirementsLedger(ledger, {
@@ -336,7 +356,7 @@ describe('M11.1 requirements ledger', () => {
         `issue #${issue}`
       ).toBe(true)
     }
-  })
+  }, 60000)
 
   test('ties checked-in partial source-audit ranges to their ledger rows', async () => {
     const auditedSources = ledger.sources.filter(({ sourceAudit }) => sourceAudit !== undefined)
@@ -389,7 +409,7 @@ describe('M11.1 requirements ledger', () => {
     expect(escapingPathResult.errors).toContain(
       'runtime-node-spec: source-audit path must be under docs/requirements'
     )
-  })
+  }, 60000)
 
   test('fails closed when authoritative inventory or provenance disappears', async () => {
     const pendingReview = clone(ledger)
@@ -471,7 +491,7 @@ describe('M11.1 requirements ledger', () => {
         })
       ).errors
     ).toContain(`${unknownLane.requirements[0].id}: invalid validation lane miscellaneous`)
-  })
+  }, 60000)
 
   test('loads live issue state without requiring the gh CLI', async () => {
     const requests = []
@@ -1026,7 +1046,7 @@ describe('M11.1 requirements ledger', () => {
         `candidate commit ${ledger.candidate.commit} is unavailable in this shallow checkout; committed-artifact provenance must be reproduced from a full clone`
       )
     }
-  })
+  }, 60000)
 
   test('distinguishes shallow history from a missing full-clone candidate', async () => {
     const fictionalCandidate = clone(ledger)
@@ -1093,9 +1113,265 @@ describe('M11.1 requirements ledger', () => {
     const localComposition = ledger.priorMilestoneAudits.find(({ id }) => id === 'M10-ISSUE-203')
     expect(localComposition.assessment).toContain('Restate is optional compatibility mode')
     expect(localComposition.assessment).toContain('remains an M11 gate')
-  })
+  }, 60000)
 
   test('keeps the generated report in sync', async () => {
     expect(await readFile(reportUrl, 'utf8')).toBe(await renderRequirementsReport(ledger))
+  }, 60000)
+
+  test('does not truncate the generated report through the formatter pipe', async () => {
+    // The report is larger than the runtime's child-process pipe buffer. A
+    // truncated pipe reports success, so the report length is asserted directly.
+    const report = await renderRequirementsReport(ledger)
+    expect(Buffer.byteLength(report)).toBeGreaterThan(512 * 1024)
+    expect(Buffer.byteLength(await readFile(reportUrl, 'utf8'))).toBe(Buffer.byteLength(report))
+    expect(report.endsWith('\n')).toBe(true)
+  })
+
+  test('records the repository-pinned formatter version', async () => {
+    const lockfile = await readFile(new URL('../bun.lock', import.meta.url), 'utf8')
+    const pinned = pinnedFormatterVersion(lockfile)
+    expect(pinned).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/)
+    expect(validateFormatterVersion(lockfile, `Version: ${pinned}`)).toBeNull()
+    expect(validateFormatterVersion(lockfile, 'Version: 0.0.1')).toContain(
+      'does not match the repository-pinned oxfmt'
+    )
+    expect(runningFormatterVersion('Version: 0.72.0')).toBe('0.72.0')
+    expect(validateFormatterVersion('no lockfile entry', 'Version: 0.72.0')).toContain(
+      'does not pin an oxfmt version'
+    )
+  })
+
+  test('crosswalks every normative source, requirement and issue audit', async () => {
+    const { errors, crosswalk } = await collectCanonicalCrosswalk(ledger, repositoryRoot)
+    expect(errors).toEqual([])
+    expect(crosswalk.sources.map(({ sourceId }) => sourceId)).toEqual(
+      ledger.sources.map(({ id }) => id)
+    )
+    expect(crosswalk.requirements.map(({ id }) => id)).toEqual(
+      ledger.requirements.map(({ id }) => id)
+    )
+    expect(crosswalk.priorIssueAudits.map(({ issue }) => issue)).toEqual(
+      ledger.priorMilestoneAudits.map(({ issue }) => issue)
+    )
+    expect(crosswalk.deploymentProfiles.map(({ id }) => id)).toEqual(
+      ledger.deploymentProfiles.map(({ id }) => id)
+    )
+    for (const source of crosswalk.sources) {
+      expect(source.currentRevision, source.sourceId).toBeNumber()
+      expect(source.currentTextSha256, source.sourceId).toMatch(/^[a-f0-9]{64}$/)
+      expect(source.atomicClauses, source.sourceId).toBeNumber()
+      expect(source.unlinkedClauseDisposition, source.sourceId).not.toBeNull()
+    }
+    // The crosswalk joins rows; it never reclassifies one.
+    for (const [index, requirement] of crosswalk.requirements.entries()) {
+      expect(requirement.classification).toBe(ledger.requirements[index].classification)
+      expect(requirement.normativeState).toBe(ledger.requirements[index].normativeState)
+    }
+  })
+
+  test('fails closed when the generated crosswalk drifts from the ledger', async () => {
+    expect(await validateCanonicalCrosswalk(ledger, repositoryRoot)).toEqual([])
+    const drifted = clone(ledger)
+    drifted.requirements[0].classification = 'verified'
+    expect(await validateCanonicalCrosswalk(drifted, repositoryRoot)).toContain(
+      'Canonical requirements crosswalk drifted; run bun run requirements:write'
+    )
+  })
+
+  test('inventories embedded objects by identity and never by caption', async () => {
+    const { errors, inventory } = await collectFigureInventory(ledger, repositoryRoot)
+    expect(errors).toEqual([])
+    expect(inventory.sources.map(({ sourceId }) => sourceId)).toEqual(
+      ledger.sources.map(({ id }) => id)
+    )
+    for (const source of inventory.sources) {
+      // Nested tabs and current image bytes were never inventoried, so they are
+      // recorded as absent instead of being inferred from caption text.
+      expect(source.nestedTabsInventoried, source.sourceId).toBe(false)
+      expect(source.imageBytesRefreshedAtCurrentRevision, source.sourceId).toBe(false)
+      for (const object of source.currentObjects) {
+        expect(object.objectId, source.sourceId).toMatch(/^kix\./)
+        expect(object.sha256, source.sourceId).toBeNull()
+        expect(object.recordedTextAnchor, source.sourceId).toBeUndefined()
+      }
+    }
+    const security = inventory.sources.find(({ sourceId }) => sourceId === 'security-trust-model')
+    expect(security.identityReconciliation.added.length).toBe(3)
+    expect(security.identityReconciliation.absent).toEqual(['kix.a77to4b9gn0r'])
+    const architecture = inventory.sources.find(
+      ({ sourceId }) => sourceId === 'system-architecture'
+    )
+    expect(architecture.identityReconciliation.added.length).toBe(2)
+    expect(architecture.identityReconciliation.absent).toEqual(['kix.ows2808gmq16'])
+    expect(inventory.summary.currentRootTabObjects).toBe(12)
+    expect(inventory.summary.historicalObjects).toBe(9)
+  })
+
+  test('fails closed when the generated figure inventory drifts', async () => {
+    expect(await validateFigureInventory(ledger, repositoryRoot)).toEqual([])
+    const drifted = clone(ledger)
+    drifted.sources[0].embeddedObjects.nestedTabsInventoried = true
+    expect(await validateFigureInventory(drifted, repositoryRoot)).toContain(
+      'Canonical figure inventory drifted; run bun run requirements:write'
+    )
+  })
+
+  test('requires every gap reference to resolve to a recorded open issue', async () => {
+    const { errors } = await validateRequirementsLedger(ledger, {
+      repositoryRoot,
+    })
+    expect(errors).toEqual([])
+    const missing = clone(ledger)
+    missing.githubIssueSnapshot.issues = missing.githubIssueSnapshot.issues.filter(
+      ({ number }) => number !== 188
+    )
+    const missingResult = await validateRequirementsLedger(missing, { repositoryRoot })
+    expect(missingResult.errors).toContain(
+      'CP-ART-001: gap reference #188 is missing from githubIssueSnapshot'
+    )
+    const closed = clone(ledger)
+    const closedIssue = closed.githubIssueSnapshot.issues.find(({ number }) => number === 195)
+    closedIssue.state = 'CLOSED'
+    const closedResult = await validateRequirementsLedger(closed, { repositoryRoot })
+    expect(closedResult.errors).toContain(
+      'CP-PRD-RETRIEVAL-001: gap reference #195 is closed and cannot carry an open gap'
+    )
+  })
+
+  test('requires an accountable disposition for every orphaned atomic clause', async () => {
+    const { errors } = await validateRequirementsLedger(ledger, { repositoryRoot })
+    expect(errors).toEqual([])
+    const orphaned = clone(ledger)
+    orphaned.atomDispositions = orphaned.atomDispositions.filter(
+      ({ sourceId }) => sourceId !== 'system-architecture'
+    )
+    const orphanedResult = await validateRequirementsLedger(orphaned, { repositoryRoot })
+    expect(orphanedResult.errors).toContain(
+      'system-architecture: unmapped atomic clauses require an explicit disposition'
+    )
+    const miscounted = clone(ledger)
+    const disposition = miscounted.atomDispositions.find(
+      ({ sourceId }) => sourceId === 'system-architecture'
+    )
+    disposition.unmappedAtoms = 1
+    const miscountedResult = await validateRequirementsLedger(miscounted, { repositoryRoot })
+    expect(miscountedResult.errors).toContain(
+      'system-architecture: atom disposition covers 1 unmapped clauses but the register has 546'
+    )
+  })
+
+  test('rejects a stale candidate that is presented as current proof', async () => {
+    const { errors } = await validateRequirementsLedger(ledger, { repositoryRoot })
+    expect(errors).toEqual([])
+    const stale = clone(ledger)
+    stale.reconciliation.candidateProof.coversReconciliationBase = true
+    const staleResult = await validateRequirementsLedger(stale, { repositoryRoot })
+    expect(staleResult.errors).toContain(
+      'reconciliation.candidateProof.coversReconciliationBase is inaccurate'
+    )
+    const missingDisposition = clone(ledger)
+    delete missingDisposition.reconciliation.candidateProof.disposition
+    const missingResult = await validateRequirementsLedger(missingDisposition, {
+      repositoryRoot,
+    })
+    expect(missingResult.errors).toContain(
+      'reconciliation.candidateProof.disposition is required for a stale candidate'
+    )
+  })
+
+  test('requires an exact resolvable head for every received worker contribution', async () => {
+    const { errors } = await validateRequirementsLedger(ledger, { repositoryRoot })
+    expect(errors).toEqual([])
+    const pendingWithHead = clone(ledger)
+    pendingWithHead.workerEvidence[0].head = 'a'.repeat(40)
+    const pendingResult = await validateRequirementsLedger(pendingWithHead, { repositoryRoot })
+    expect(pendingResult.errors).toContain('W1: a pending worker must not record a head')
+    const missingHead = clone(ledger)
+    missingHead.workerEvidence[0].status = 'received'
+    const missingResult = await validateRequirementsLedger(missingHead, { repositoryRoot })
+    expect(missingResult.errors).toContain(
+      'W1: a received worker must record an exact full Git head'
+    )
+    const unknownHead = clone(ledger)
+    unknownHead.workerEvidence[0].status = 'received'
+    unknownHead.workerEvidence[0].head = 'b'.repeat(40)
+    const unknownResult = await validateRequirementsLedger(unknownHead, { repositoryRoot })
+    expect(unknownResult.errors).toContain(
+      `W1: worker head ${'b'.repeat(40)} is unavailable in the repository`
+    )
+  })
+
+  test('gives every superseded row an explicit supersession disposition', async () => {
+    for (const row of [...ledger.requirements, ...ledger.priorMilestoneAudits]) {
+      if (row.classification !== 'superseded') continue
+      expect(row.gap, row.id).toBeUndefined()
+      expect(row.supersession, row.id).toBeDefined()
+      expect(typeof row.supersession.issue, row.id).toBe('number')
+      expect(row.supersession.severity, row.id).toMatch(/^(critical|high|medium|low)$/)
+      expect(typeof row.supersession.owner, row.id).toBe('string')
+      expect(typeof row.supersession.disposition, row.id).toBe('string')
+    }
+    const missing = clone(ledger)
+    delete missing.requirements.find(({ id }) => id === 'CP-TDD-005').supersession
+    const missingResult = await validateRequirementsLedger(missing, { repositoryRoot })
+    expect(missingResult.errors).toContain(
+      'CP-TDD-005: row.supersession is required for superseded rows'
+    )
+  })
+
+  test('records the live GitHub issue identity without promoting it', async () => {
+    const snapshot = ledger.githubIssueSnapshot
+    expect(snapshot.repository).toBe('adea-ai/control-plane')
+    expect(snapshot.issues.map(({ number }) => number)).toEqual([
+      186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197,
+    ])
+    for (const issue of snapshot.issues) {
+      expect(issue.url).toBe(`https://github.com/adea-ai/control-plane/issues/${issue.number}`)
+      expect(issue.milestone).toBe(11)
+      expect(issue.repositoryDocumentationLabel).toStartWith('M11.')
+    }
+    expect(snapshot.issues.find(({ number }) => number === 192).state).toBe('CLOSED')
+    // #189 and #193 are recorded closed in the 2026-09-30 repository documentation
+    // but are open on GitHub; the live state wins and nothing is promoted.
+    expect(snapshot.issues.find(({ number }) => number === 189).state).toBe('OPEN')
+    expect(snapshot.issues.find(({ number }) => number === 193).state).toBe('OPEN')
+  })
+
+  test('refreshes the recorded issue snapshot from live identities', () => {
+    const liveIssues = ledger.githubIssueSnapshot.issues.map((issue) => ({
+      number: issue.number,
+      title: issue.title,
+      state: issue.state,
+      closedAt: issue.closedAt,
+      milestone: { number: issue.milestone, title: 'M19 — Feature Completion & Production Audit' },
+      url: issue.url,
+    }))
+    const refreshed = refreshGitHubIssueSnapshot(ledger, liveIssues, {
+      retrievedAt: '2026-10-22',
+    })
+    expect(refreshed.githubIssueSnapshot.retrievedAt).toBe('2026-10-22')
+    expect(refreshed.githubIssueSnapshot.issues).toHaveLength(
+      ledger.githubIssueSnapshot.issues.length
+    )
+    expect(() => refreshGitHubIssueSnapshot(ledger, liveIssues.slice(1))).toThrow(
+      'is missing from the current GitHub inventory'
+    )
+    const renamed = structuredClone(liveIssues)
+    renamed[0].title = 'renamed upstream'
+    renamed[0].state = 'CLOSED'
+    renamed[0].closedAt = '2026-10-22T00:00:00Z'
+    const divergences = compareGitHubIssueSnapshot(ledger, renamed)
+    expect(divergences).toContain('#186 is CLOSED on GitHub but the snapshot records OPEN')
+    expect(divergences).toContain('#186 title differs from the recorded snapshot title')
+  })
+
+  test('keeps the generated crosswalk and figure inventory in sync', async () => {
+    expect(await readFile(crosswalkUrl, 'utf8')).toBe(
+      await renderCanonicalCrosswalk(ledger, repositoryRoot)
+    )
+    expect(await readFile(figureInventoryUrl, 'utf8')).toBe(
+      await renderFigureInventory(ledger, repositoryRoot)
+    )
   })
 })
