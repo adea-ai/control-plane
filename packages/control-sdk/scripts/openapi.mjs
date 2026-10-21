@@ -26,7 +26,101 @@ const major = PublicContractManifest.current.major
 const artifactUrl = new URL(`openapi/control-plane.v${major}.json`, packageRoot)
 const baselineUrl = new URL(`compatibility/control-plane.v${major}.baseline.json`, packageRoot)
 
+/**
+ * The runtime patterns that accept both cases, as the generated document spells
+ * them.
+ *
+ * A JSON Schema `pattern` has no case-insensitive flag, so a runtime regex that
+ * accepts both cases would be published narrower than the contract that accepts
+ * it. Each of these runtime sources is published as its explicit ASCII form,
+ * which matches exactly the same ASCII strings: the runtime model id accepts
+ * `DeepSeek-V3`, and the published pattern has to accept it too.
+ *
+ * The declaration cannot drift silently. The generation fails when a declared
+ * source no longer appears in the document, and the parity test compares the
+ * published pattern with the runtime schema over the ASCII domain, so a
+ * runtime change that is not published here breaks the check instead of
+ * narrowing the contract.
+ */
+const caseInsensitiveRuntimePatterns = ['^[a-z0-9][a-z0-9._/-]*$']
+
+/**
+ * The explicit ASCII form of a case-insensitive pattern: every ASCII letter
+ * becomes a two-character class or an expanded range, which matches exactly
+ * the strings the case-insensitive pattern matches.
+ */
+export function expandAsciiCasePattern(source) {
+  let expanded = ''
+  let inClass = false
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]
+    if (character === '\\') {
+      expanded += source.slice(index, index + 2)
+      index += 1
+      continue
+    }
+    if (character === '[') {
+      inClass = true
+      expanded += character
+      continue
+    }
+    if (character === ']') {
+      inClass = false
+      expanded += character
+      continue
+    }
+    if (
+      inClass &&
+      /[A-Za-z]/.test(character) &&
+      source[index + 1] === '-' &&
+      /[A-Za-z]/.test(source[index + 2] ?? '')
+    ) {
+      const start = character
+      const end = source[index + 2]
+      const flip = (letter) =>
+        letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase()
+      expanded += `${start}-${end}${flip(start)}-${flip(end)}`
+      index += 2
+      continue
+    }
+    if (/[A-Za-z]/.test(character)) {
+      const lower = character.toLowerCase()
+      const upper = character.toUpperCase()
+      expanded += inClass ? `${lower}${upper}` : `[${lower}${upper}]`
+      continue
+    }
+    expanded += character
+  }
+  return expanded
+}
+
+/**
+ * Publishes every declared case-insensitive runtime pattern as its explicit
+ * ASCII form, and fails when a declared source is not in the document.
+ */
+function applyCaseInsensitivePatterns(document, expanded) {
+  const declared = new Set(caseInsensitiveRuntimePatterns)
+  const walk = (value) => {
+    if (Array.isArray(value)) {
+      for (const child of value) walk(child)
+      return
+    }
+    if (typeof value !== 'object' || value === null) return
+    for (const [key, child] of Object.entries(value)) {
+      if (key === 'pattern' && typeof child === 'string' && declared.has(child)) {
+        value[key] = expandAsciiCasePattern(child)
+        expanded.add(child)
+        continue
+      }
+      walk(child)
+    }
+  }
+  walk(document)
+  return document
+}
+
 export function createControlApiOpenApiDocument() {
+  const expanded = new Set()
   const paths = {}
   for (const operation of Object.values(ControlApiOperations)) {
     paths[operation.path] = {
@@ -36,25 +130,35 @@ export function createControlApiOpenApiDocument() {
         requestBody: {
           required: true,
           content: {
-            'application/json': { schema: jsonSchema(operation.requestSchema, 'input') },
+            'application/json': { schema: jsonSchema(operation.requestSchema, 'input', expanded) },
           },
         },
         responses: {
           [operation.responseStatus ?? 200]: {
             description: 'Successful response',
             content: {
-              'application/json': { schema: jsonSchema(operation.responseSchema, 'output') },
+              'application/json': {
+                schema: jsonSchema(operation.responseSchema, 'output', expanded),
+              },
             },
           },
           default: {
             description: 'Normalized error response',
             content: {
-              'application/json': { schema: jsonSchema(ErrorResponseEnvelopeSchema, 'output') },
+              'application/json': {
+                schema: jsonSchema(ErrorResponseEnvelopeSchema, 'output', expanded),
+              },
             },
           },
         },
       },
     }
+  }
+  const missing = caseInsensitiveRuntimePatterns.filter((source) => !expanded.has(source))
+  if (missing.length > 0) {
+    throw new Error(
+      `The generated contract does not carry the declared case-insensitive pattern(s): ${missing.join(', ')}`
+    )
   }
   return {
     openapi: '3.1.0',
@@ -236,12 +340,12 @@ function compareConstraints(previous, next, context) {
   }
 }
 
-function jsonSchema(schema, io) {
+function jsonSchema(schema, io, expanded) {
   const { $schema: _schema, ...document } = z.toJSONSchema(schema, {
     io,
     unrepresentable: 'any',
   })
-  return sortObject(document)
+  return sortObject(applyCaseInsensitivePatterns(document, expanded))
 }
 
 function sortObject(value) {
