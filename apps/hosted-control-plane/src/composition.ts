@@ -232,6 +232,14 @@ export interface HostedServerCompositionOptions {
    * HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME.
    */
   readonly pinnedHarnessId?: string
+  /**
+   * Optional per-model harness map (M12/#678): the deployment maps a model id
+   * to the harness id that must serve it. When the map is present it is a
+   * policy, not a fallback: an execution whose model is absent from the map,
+   * or which carries no model at all, is denied instead of being routed to
+   * another harness. Absent leaves routing exactly as it is today.
+   */
+  readonly harnessByModel?: Readonly<Record<string, string>>
   readonly restateIngressUrl?: string
   readonly workflowDeploymentUri?: string
   readonly workflowEndpointPort?: number
@@ -586,6 +594,10 @@ export class HostedServerControlPlaneComposition {
       ...(options.pinnedHarnessId === undefined
         ? {}
         : { pinnedHarnessId: options.pinnedHarnessId }),
+      // The per-model map is a deployment policy, not a fallback. It is handed
+      // to the real router unchanged: a map that does not name the execution's
+      // model denies the attempt rather than routing it to another harness.
+      ...(options.harnessByModel === undefined ? {} : { harnessByModel: options.harnessByModel }),
     })
     const activities = new DurableExecutionLifecycleActivities({
       lifecycle: new ExecutionLifecycleService(executions),

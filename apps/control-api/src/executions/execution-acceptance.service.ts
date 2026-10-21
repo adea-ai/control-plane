@@ -107,6 +107,11 @@ export class DurableExecutionAcceptanceService implements ExecutionAcceptanceSer
           agentId: request.payload.agentId,
         },
         executionPlan: request.payload.executionPlan,
+        // The model the caller accepted is recorded on the execution read model
+        // (M12/#678) so the routing layer can map it to a harness through the
+        // deployment's per-model map. Absent leaves today's behavior: the
+        // execution carries no model and the map is not consulted.
+        ...(request.payload.modelId === undefined ? {} : { modelId: request.payload.modelId }),
         ...(request.payload.marketplacePluginReferences === undefined
           ? {}
           : { marketplacePluginReferences: request.payload.marketplacePluginReferences }),
