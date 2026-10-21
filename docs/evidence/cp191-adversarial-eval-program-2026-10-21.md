@@ -5,7 +5,10 @@ program is **not** human-calibrated, **not** independently hidden-task-authored,
 and **not** authorised for promotion. Those remain external gates.
 
 Branch: `f2w5/cp191-adversarial-eval`. Integrated source revision evaluated:
-`36bb1a7ab21e77e2b948a0623062b9b97bf0849f`. Machine-readable scorecard:
+`36bb1a7ab21e77e2b948a0623062b9b97bf0849f` — the commit that carries the evaluated evaluator
+sources. The branch head adds only the evidence report, the scorecard, and the evaluation
+scripts; the two evaluated evaluator sources are byte-identical at the branch head, and the
+recorded source digest covers exactly those two files. Machine-readable scorecard:
 `docs/evidence/cp191-adversarial-baseline-scorecard.json`.
 
 ## What changed
