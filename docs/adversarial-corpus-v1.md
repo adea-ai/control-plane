@@ -269,7 +269,9 @@ control corpus `m11-goal-adherence-public-controls@1.3.0`, pinned to
 `sha256:caa869c49c417f5b8acc35a1c3cf53897c32766e1af05e1509d9d897a37f7539`. It contains 39
 versioned fixtures: one for each of the 31 public task specifications plus 8 metamorphic variants.
 
-Receipt schema version 2 / harness 3.0.0 adds explicit evidence authority and coverage. A candidate
+The adversarial program runs on harness 4.0.0 by default, so every corpus, hidden, rotating, and
+security-probe run records the actor, runtime, and source identity, the observed tool count, and
+the observation mode. Receipt schema version 2 / harness 3.0.0 adds explicit evidence authority and coverage. A candidate
 mismatch is stale; summary-only or sampled validation is weak; not-run or unavailable validation
 remains unavailable. The host derives provenance and scope-control metrics from observations. Older
 schema version 1 / harness 2.0.0 receipts and fixtures remain readable with their original metric
@@ -299,6 +301,14 @@ transform, expectation, and role. The identity is digested and the digest is ret
 run. An unknown source revision stays explicitly `null`; it is never invented. The actor digest is
 either supplied by the caller or derived from the actor reference, and the receipt records which.
 
+### Observed tool calls
+
+`tool_use` counts the tool calls the host actually observed. The in-process tool ports and the
+independent observer are two channels onto the same calls, so a call both channels saw is counted
+once. A task that performs its work through the host port instead of the in-process ports is not
+reported as having made no calls: the in-process and the independently observed lanes report the
+same observed call count for the same work.
+
 ### Candidate versus pinned baseline
 
 `compareAdversarialRuns` compares a candidate run against a pinned baseline run using only values
@@ -316,12 +326,24 @@ The comparison is only valid when the corpus, suite, harness version, seed, runt
 identity match between the two runs. The actor identity is recorded on both sides rather than
 required to match, because the actor is the thing being compared.
 
+The comparison also records how strongly each side was observed. The independent channel is
+stronger than the in-process tool ports because it also sees effects performed outside them, so a
+candidate graded independently against an in-process baseline is the conservative ordering and is
+allowed, while a candidate graded from the weaker in-process channel against a strictly observed
+baseline is blocked as `OBSERVATION_STRENGTH_MISMATCH`.
+
 ### Fail-closed promotion decision
 
 `evaluateAdversarialPromotionDecision` composes five gates: the pinned corpus cases, the run
 identity, independent observation, the hidden/rotating set, and blinded human calibration. Every
 gate that is required but missing blocks the decision, and a blocked decision also leaves the
-release-gate registry blocked so the registry's own promotion path stays closed. The recorded
+release-gate registry blocked so the registry's own promotion path stays closed.
+
+The independent-observation gate requires the candidate to be graded from independently observed
+effects, requires the hidden set to be graded the same way, and refuses a comparison that would
+flatter the candidate. The human-calibration gate requires a calibration report that was computed
+against the current harness version and the current corpus digest, because the bounds are
+re-checked on every harness version bump. The recorded
 decision for the current program run is in
 `docs/evidence/cp191-adversarial-baseline-scorecard.json`: four gates hold and the human
 calibration gate is blocked.
@@ -335,7 +357,8 @@ assertion `assertHiddenSetSeparatedFromPublicCorpus` fails closed if that ever c
 receives, and `assertAgentFacingTaskHasNoHeldOutAnswers` fails closed when an evidence identity,
 an answer key, or an expected state reaches that payload. `getRotatingTaskSet` derives a
 deterministic rotation from a seed; the rotation identity is a digest over the selected tasks, so
-one rotation cannot be inferred from another.
+one rotation cannot be inferred from another. `runRotatingAdversarialTaskSet` runs one rotation on
+its own suite, so a rotation is an evaluated artifact rather than only an introspection.
 
 ### Trust-boundary security probes (consumed from #190)
 

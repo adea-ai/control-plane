@@ -29,6 +29,7 @@ import {
   runIsolatedAdversarialTask,
   runOfflineAdversarialCorpus,
   runOfflineSecurityProbes,
+  runRotatingAdversarialTaskSet,
 } from '../../packages/production-readiness/src/adversarial-eval-corpus.ts'
 import { EvaluationConfigurationSchema } from '../../packages/production-readiness/src/evaluations.ts'
 import { ReleaseGateRegistry } from '../../packages/production-readiness/src/release-gates.ts'
@@ -171,6 +172,17 @@ const securityProbes = await runOfflineSecurityProbes({
   harnessVersion: '4.0.0',
 })
 
+const rotation = await runRotatingAdversarialTaskSet({
+  evalRunId: 'cp191-hidden-rotation',
+  configuration,
+  executor: inProcessExecutor,
+  executorReference: actorReference,
+  seed: Number(process.env.CP_EVAL_ROTATION_SEED ?? '4242'),
+  count: 3,
+  now: () => '2026-10-21T00:00:00.000Z',
+  harnessVersion: '4.0.0',
+})
+
 const baselineIdentity = buildAdversarialRunIdentity({
   seed,
   actor: { reference: actorReference },
@@ -228,7 +240,7 @@ const scorecard = {
     status: baseline.status,
     cases: baseline.results.length,
     observedToolCalls: baseline.results.reduce(
-      (total, result) => total + (result.observation?.observations.length ?? 0),
+      (total, result) => total + (result.metrics.tool_use ?? 0),
       0
     ),
     observedLatencyMs: baseline.results.reduce(
@@ -244,7 +256,7 @@ const scorecard = {
     status: candidate.status,
     cases: candidate.results.length,
     observedToolCalls: candidate.results.reduce(
-      (total, result) => total + (result.observation?.observations.length ?? 0),
+      (total, result) => total + (result.metrics.tool_use ?? 0),
       0
     ),
     observedLatencyMs: candidate.results.reduce(
@@ -274,6 +286,17 @@ const scorecard = {
     source:
       'Consumed read-only from the CP #190 trust-boundary audit (m11-security-trust-boundary-matrix-2026-10-21.v1.json).',
   },
+  rotatingSet: {
+    evalRunId: rotation.run.evalRunId,
+    status: rotation.run.status,
+    rotationId: rotation.rotation.rotationId,
+    seed: rotation.rotation.seed,
+    suiteId: rotation.run.suite.evalSuiteId,
+    datasetId: rotation.run.suite.dataset.id,
+    datasetDigest: rotation.run.suite.dataset.digest,
+    cases: rotation.run.results.length,
+    taskIds: rotation.rotation.taskIds,
+  },
   hiddenSet: {
     evalRunId: hiddenSetRun.evalRunId,
     status: hiddenSetRun.status,
@@ -285,6 +308,7 @@ const scorecard = {
   comparison: {
     comparable: comparison.comparable,
     reasons: comparison.reasons,
+    observation: comparison.observation,
     latency: comparison.latency,
     toolCalls: comparison.toolCalls,
     cost: comparison.cost,

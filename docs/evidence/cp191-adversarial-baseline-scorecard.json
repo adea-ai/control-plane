@@ -16,8 +16,8 @@
   },
   "source": {
     "id": "control-plane",
-    "revision": "8a208d095960655a8cea6ec49024b4a7207e7f3a",
-    "digest": "sha256:f5ee05c87ba832c902f3bfc4b605c87290b519ede9eb3bf4262df7a2ee89550d"
+    "revision": "9bf1cb374a189345750e6dad6057191233c52a61",
+    "digest": "sha256:619042b5ee5e82dd414abb51630645d590bf936f51b9504987aa7a24351b199d"
   },
   "seed": 191,
   "baselineIdentity": {
@@ -46,8 +46,8 @@
     },
     "source": {
       "id": "control-plane",
-      "revision": "8a208d095960655a8cea6ec49024b4a7207e7f3a",
-      "digest": "sha256:f5ee05c87ba832c902f3bfc4b605c87290b519ede9eb3bf4262df7a2ee89550d"
+      "revision": "9bf1cb374a189345750e6dad6057191233c52a61",
+      "digest": "sha256:619042b5ee5e82dd414abb51630645d590bf936f51b9504987aa7a24351b199d"
     },
     "metamorphic": [
       {
@@ -163,7 +163,7 @@
         "expectation": "same-outcome"
       }
     ],
-    "identityDigest": "sha256:2f9447937e4534235b450edcf3e827404507bcb241f9894a91a0b46c2e5753ed"
+    "identityDigest": "sha256:f6a1db4c3004ad08b6e3875b112540a1f55065617f16c75db403170419c44e14"
   },
   "candidateIdentity": {
     "corpus": {
@@ -191,8 +191,8 @@
     },
     "source": {
       "id": "control-plane",
-      "revision": "8a208d095960655a8cea6ec49024b4a7207e7f3a",
-      "digest": "sha256:f5ee05c87ba832c902f3bfc4b605c87290b519ede9eb3bf4262df7a2ee89550d"
+      "revision": "9bf1cb374a189345750e6dad6057191233c52a61",
+      "digest": "sha256:619042b5ee5e82dd414abb51630645d590bf936f51b9504987aa7a24351b199d"
     },
     "metamorphic": [
       {
@@ -308,14 +308,14 @@
         "expectation": "same-outcome"
       }
     ],
-    "identityDigest": "sha256:657a83619f281c621047a241e28829e2529aab1f90d180e2654567de29d4d57d"
+    "identityDigest": "sha256:af549075419b6a845fc5dcea49606e2cf0fa50d5b3cf1279e72e4b7d13420456"
   },
   "baseline": {
     "evalRunId": "cp191-baseline-pinned",
     "status": "passed",
     "cases": 39,
     "observedToolCalls": 101,
-    "observedLatencyMs": 7.829957000000007,
+    "observedLatencyMs": 32.84245799999985,
     "observedProviderUsage": null,
     "observedProviderUsageReason": "The offline harness performs no provider call, so no cost or token usage was observed. It is unavailable, not zero."
   },
@@ -323,8 +323,8 @@
     "evalRunId": "cp191-candidate-isolated",
     "status": "passed",
     "cases": 39,
-    "observedToolCalls": 0,
-    "observedLatencyMs": 2556.2260420000007,
+    "observedToolCalls": 101,
+    "observedLatencyMs": 5864.513791000001,
     "observedProviderUsage": null,
     "observedProviderUsageReason": "The offline harness performs no provider call, so no cost or token usage was observed. It is unavailable, not zero."
   },
@@ -346,6 +346,17 @@
     ],
     "source": "Consumed read-only from the CP #190 trust-boundary audit (m11-security-trust-boundary-matrix-2026-10-21.v1.json)."
   },
+  "rotatingSet": {
+    "evalRunId": "cp191-hidden-rotation",
+    "status": "passed",
+    "rotationId": "rotation-4242-eb985c93b791",
+    "seed": 4242,
+    "suiteId": "m11-goal-adherence-hidden-v1-rotation-4242",
+    "datasetId": "m11-goal-adherence-hidden-v1",
+    "datasetDigest": "sha256:eb985c93b791ed3cfafe4eb6889fbb0e5d6c1dfe18417448b3e8b85d06f5cb28",
+    "cases": 3,
+    "taskIds": ["HID-SW-11", "HID-WR-08", "HID-RT-02"]
+  },
   "hiddenSet": {
     "evalRunId": "cp191-hidden-rotating",
     "status": "passed",
@@ -357,16 +368,22 @@
   "comparison": {
     "comparable": true,
     "reasons": [],
+    "observation": {
+      "candidateMode": "independent-isolated-observer",
+      "baselineMode": "in-process-tool-ports",
+      "baselineIsStricter": false,
+      "note": "The independent channel also observes effects performed outside the in-process tool ports, so a candidate graded independently against an in-process baseline is the conservative ordering."
+    },
     "latency": {
-      "candidateMs": 2556.2260420000007,
-      "baselineMs": 7.829957000000007,
-      "deltaMs": 2548.3960850000008,
-      "relativeDelta": 325.46744318008365
+      "candidateMs": 5864.513791000001,
+      "baselineMs": 32.84245799999985,
+      "deltaMs": 5831.671333000001,
+      "relativeDelta": 177.56500847165665
     },
     "toolCalls": {
-      "candidate": 0,
+      "candidate": 101,
       "baseline": 101,
-      "delta": -101
+      "delta": 0
     },
     "cost": {
       "candidate": null,
@@ -424,10 +441,10 @@
       {
         "metric": "latency_ms",
         "direction": "min",
-        "candidate": 65.54425748717951,
-        "baseline": 0.2007681282051284,
-        "delta": 65.34348935897438,
-        "regression": 325.46744318008365
+        "candidate": 150.37214848717952,
+        "baseline": 0.8421143076923039,
+        "delta": 149.53003417948722,
+        "regression": 177.56500847165665
       },
       {
         "metric": "provenance_correctness",
@@ -464,9 +481,9 @@
       {
         "metric": "tool_use",
         "direction": "min",
-        "candidate": 0,
+        "candidate": 2.58974358974359,
         "baseline": 2.58974358974359,
-        "delta": -2.58974358974359,
+        "delta": 0,
         "regression": 0
       },
       {

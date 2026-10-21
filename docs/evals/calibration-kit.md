@@ -96,6 +96,23 @@ disables grader-only promotion for the affected task family until the grader
 is corrected. Bounds are recorded in the calibration report and re-checked on
 every harness version bump.
 
+### What the bounds are bound to
+
+Every calibration report records the harness version and the corpus digest it
+was computed against. The promotion decision refuses a report that belongs to
+another grader version or another corpus:
+
+| Condition                                           | Promotion decision                   |
+| --------------------------------------------------- | ------------------------------------ |
+| report harness version differs from the current one | `HUMAN_CALIBRATION_HARNESS_MISMATCH` |
+| report corpus digest differs from the current one   | `HUMAN_CALIBRATION_CORPUS_MISMATCH`  |
+| no report at all                                    | `HUMAN_CALIBRATION_MISSING`          |
+| report not fully scored                             | `HUMAN_CALIBRATION_NOT_SCORED`       |
+| bounds outside the documented tolerance             | `HUMAN_CALIBRATION_OUT_OF_BOUNDS`    |
+
+A harness version bump therefore re-opens the human gate: the bounds measured
+against the previous grader do not carry over.
+
 ### Withholding rule
 
 | Human scoring state            | Report status                    | Published metrics                   |

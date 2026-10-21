@@ -38,34 +38,37 @@ All values below were produced by
 `CP_EVAL_SOURCE_REVISION=8a208d095960655a8cea6ec49024b4a7207e7f3a bun docs/evals/run-adversarial-program.mts`
 on the local machine. They are local observations, not provider measurements.
 
-| Measurement                  | Pinned baseline                                                           | Candidate (isolated process)                                              | Source                              |
-| ---------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------- |
-| Evaluation cases             | 39                                                                        | 39                                                                        | pinned corpus 1.2.0                 |
-| Case status                  | passed                                                                    | passed                                                                    | recorded run status                 |
-| Observed tool calls          | 101                                                                       | 0                                                                         | recorded observations               |
-| Observed local latency (sum) | 7.83 ms                                                                   | 2556.23 ms                                                                | recorded receipt durations          |
-| Observed provider cost       | unavailable (not zero)                                                    | unavailable (not zero)                                                    | no provider call was made           |
-| Observed provider tokens     | unavailable (not zero)                                                    | unavailable (not zero)                                                    | no provider call was made           |
-| Corpus digest                | `sha256:e906c214ed5462a93fb69ce3b7e7f7482fd14ee8793bb2d6cee23590e95918fa` | same                                                                      | pinned                              |
-| Suite digest                 | `sha256:caa869c49c417f5b8acc35a1c3cf53897c32766e1af05e1509d9d897a37f7539` | same                                                                      | pinned                              |
-| Harness version              | 4.0.0                                                                     | 4.0.0                                                                     | recorded receipt                    |
-| Seed                         | 191                                                                       | 191                                                                       | recorded receipt                    |
-| Source revision              | `8a208d095960655a8cea6ec49024b4a7207e7f3a`                                | same                                                                      | supplied source identity            |
-| Source digest                | `sha256:f5ee05c87ba832c902f3bfc4b605c87290b519ede9eb3bf4262df7a2ee89550d` | same                                                                      | digest of the two evaluator sources |
-| Baseline identity digest     | `sha256:2f9447937e4534235b450edcf3e827404507bcb241f9894a91a0b46c2e5753ed` | n/a                                                                       | recorded                            |
-| Candidate identity digest    | n/a                                                                       | `sha256:657a83619f281c621047a241e28829e2529aab1f90d180e2654567de29d4d57d` | recorded                            |
+| Measurement                  | Pinned baseline                                                           | Candidate (isolated process)                                              | Source                                     |
+| ---------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------ |
+| Evaluation cases             | 39                                                                        | 39                                                                        | pinned corpus 1.2.0                        |
+| Case status                  | passed                                                                    | passed                                                                    | recorded run status                        |
+| Observed tool calls          | 101                                                                       | 101                                                                       | recorded observations across both channels |
+| Observed local latency (sum) | 32.84 ms                                                                  | 5864.51 ms                                                                | recorded receipt durations                 |
+| Observed provider cost       | unavailable (not zero)                                                    | unavailable (not zero)                                                    | no provider call was made                  |
+| Observed provider tokens     | unavailable (not zero)                                                    | unavailable (not zero)                                                    | no provider call was made                  |
+| Corpus digest                | `sha256:e906c214ed5462a93fb69ce3b7e7f7482fd14ee8793bb2d6cee23590e95918fa` | same                                                                      | pinned                                     |
+| Suite digest                 | `sha256:caa869c49c417f5b8acc35a1c3cf53897c32766e1af05e1509d9d897a37f7539` | same                                                                      | pinned                                     |
+| Harness version              | 4.0.0                                                                     | 4.0.0                                                                     | recorded receipt                           |
+| Seed                         | 191                                                                       | 191                                                                       | recorded receipt                           |
+| Source revision              | `9bf1cb374a189345750e6dad6057191233c52a61`                                | same                                                                      | supplied source identity                   |
+| Source digest                | `sha256:619042b5ee5e82dd414abb51630645d590bf936f51b9504987aa7a24351b199d` | same                                                                      | digest of the two evaluator sources        |
+| Baseline identity digest     | `sha256:f6a1db4c3004ad08b6e3875b112540a1f55065617f16c75db403170419c44e14` | n/a                                                                       | recorded                                   |
+| Candidate identity digest    | n/a                                                                       | `sha256:af549075419b6a845fc5dcea49606e2cf0fa50d5b3cf1279e72e4b7d13420456` | recorded                                   |
 
-The comparison is reported as comparable. The candidate's higher latency and lower in-process
-tool count are the real cost of running each task in a separate operating-system process with a
-host-served inspection port; they are measurements, not regressions in agent quality. The latency
-figures are local, run-local observations: re-running the runner on the same revision produces a
-different millisecond total and a different digest-free number, which is why they are recorded as
-observations and not pinned identity.
+The comparison is reported as comparable. Both sides performed the same 101 observed tool calls;
+the candidate's calls are recorded through the host port instead of the in-process ports, and the
+observed call count merges both channels so a call both channels saw is counted once. The
+candidate's higher latency is the real cost of running each task in a separate operating-system
+process with a host-served inspection port; it is a measurement, not a regression in agent quality.
+The latency figures are local, run-local observations: re-running the runner on the same revision
+produces a different millisecond total, which is why they are recorded as observations and not
+pinned identity.
 
-The candidate's in-process tool count is 0 because the isolated task never touches the in-process
-ports: every inspection is served by the host port and recorded as an independently observed
-effect. The 39 isolated tasks each recorded 2 to 4 observed reads; the equivalent count is visible
-in the candidate receipts' `independentObservation.effects`.
+Observation strength: the candidate was graded from `independent-isolated-observer` and the
+baseline from `in-process-tool-ports`. That is the conservative ordering, because the independent
+channel also observes effects performed outside the in-process tool ports. The reverse ordering —
+a strictly observed baseline against an in-process candidate — is blocked as
+`OBSERVATION_STRENGTH_MISMATCH`.
 
 ### Trust-boundary security probes
 
@@ -78,6 +81,17 @@ in the candidate receipts' `independentObservation.effects`.
 | Status         | passed                                                                      |
 | Findings       | CP190-F03, CP190-F05, CP190-F06, CP190-F08, CP190-F10, CP190-F11, CP190-F20 |
 | Source         | the CP #190 trust-boundary audit, consumed read-only                        |
+
+### Rotating set
+
+| Measurement    | Value                                                                     |
+| -------------- | ------------------------------------------------------------------------- |
+| Rotation       | `rotation-4242-eb985c93b791`                                              |
+| Seed           | 4242                                                                      |
+| Suite          | `m11-goal-adherence-hidden-v1-rotation-4242`                              |
+| Dataset digest | `sha256:eb985c93b791ed3cfafe4eb6889fbb0e5d6c1dfe18417448b3e8b85d06f5cb28` |
+| Cases          | 3 (HID-SW-11, HID-WR-08, HID-RT-02)                                       |
+| Status         | passed                                                                    |
 
 ### Hidden and rotating set
 
@@ -96,13 +110,13 @@ in the candidate receipts' `independentObservation.effects`.
 `evaluateAdversarialPromotionDecision` recorded `status: blocked` with the single reason
 `HUMAN_CALIBRATION_MISSING`.
 
-| Gate                    | Status  | Reason                                                           |
-| ----------------------- | ------- | ---------------------------------------------------------------- |
-| pinned-corpus-cases     | passed  | 39 of 39 pinned cases observed and passing                       |
-| run-identity            | passed  | corpus, suite, harness, seed, runtime, and source identity match |
-| independent-observation | passed  | every candidate case carries an independent observation          |
-| hidden-rotating-set     | passed  | the hidden set is a separate dataset and every case passed       |
-| human-calibration       | blocked | no blinded human scoring exists                                  |
+| Gate                    | Status  | Reason                                                                                                                   |
+| ----------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------ |
+| pinned-corpus-cases     | passed  | 39 of 39 pinned cases observed and passing                                                                               |
+| run-identity            | passed  | corpus, suite, harness, seed, runtime, and source identity match                                                         |
+| independent-observation | passed  | every candidate case carries an independent observation, and the baseline is not graded more strictly than the candidate |
+| hidden-rotating-set     | passed  | the hidden set and the seed-derived rotation are separate datasets and every case passed                                 |
+| human-calibration       | blocked | no blinded human scoring exists                                                                                          |
 
 A blocked decision also leaves the release-gate registry blocked, so the registry's own
 `promote` path stays closed. Nothing in this outcome activates product promotion.
@@ -116,30 +130,32 @@ interval, and no error bound, because no human scoring exists. The blinded packe
 scenarios H1…H8 is committed at `docs/evals/calibration/blinded-packet.json`; the grader verdicts
 are kept in a separate file the reviewer never receives.
 
-| Gate                          | State   | Exact next action                                                                                                                                |
-| ----------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Blinded human scoring H1…H8   | blocked | A human reviewer scores `docs/evals/calibration/blinded-packet.json` and records `docs/evals/calibration/human-scores.json` from the template.   |
-| Error bounds sign-off         | blocked | Re-run `bun docs/evals/calibration/score-calibration.mts`; attach the resulting report to the promotion review.                                  |
-| Grader-only promotion         | blocked | Root authorises grader-only promotion only after the bounds hold (per-dimension kappa ≥ 0.6 and zero completion-honesty disagreement).           |
-| Live-provider baseline        | blocked | Obtain separate authority for a controlled live-provider run over the same pinned suite and seed; record authoritative usage, latency, and cost. |
-| Independent hidden authorship | blocked | Hand the held-out set to an independent author and re-run the hidden gate with the independently authored set.                                   |
-| Product promotion integration | blocked | Out of scope for this lane; no promotion activation was performed.                                                                               |
+| Gate                             | State   | Exact next action                                                                                                                                |
+| -------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Blinded human scoring H1…H8      | blocked | A human reviewer scores `docs/evals/calibration/blinded-packet.json` and records `docs/evals/calibration/human-scores.json` from the template.   |
+| Calibration bound to this grader | blocked | The bounds are recorded against harness 4.0.0 and the corpus 1.3.0 digest; a harness bump re-opens the gate and the bounds must be recomputed.   |
+| Error bounds sign-off            | blocked | Re-run `bun docs/evals/calibration/score-calibration.mts`; attach the resulting report to the promotion review.                                  |
+| Grader-only promotion            | blocked | Root authorises grader-only promotion only after the bounds hold (per-dimension kappa ≥ 0.6 and zero completion-honesty disagreement).           |
+| Live-provider baseline           | blocked | Obtain separate authority for a controlled live-provider run over the same pinned suite and seed; record authoritative usage, latency, and cost. |
+| Independent hidden authorship    | blocked | Hand the held-out set to an independent author and re-run the hidden gate with the independently authored set.                                   |
+| Product promotion integration    | blocked | Out of scope for this lane; no promotion activation was performed.                                                                               |
 
 ## Validation performed
 
-| Command                                                             | Result                                                                                                                                                                                        |
-| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bun test --timeout 30000 src` (packages/production-readiness)      | 94 pass, 0 fail, 806 assertions, 9 files                                                                                                                                                      |
-| `bun x tsc -p packages/production-readiness/tsconfig.json --noEmit` | no errors                                                                                                                                                                                     |
-| `bun x oxlint --deny-warnings packages/production-readiness/src`    | no warnings                                                                                                                                                                                   |
-| `bun run format:check`                                              | all files correctly formatted                                                                                                                                                                 |
-| `bun run check:boundaries`                                          | 1230 files checked, 0 boundary violations                                                                                                                                                     |
-| `bun run check:canonical-ordering`                                  | passed                                                                                                                                                                                        |
-| `bun run check:digest-writers`                                      | passed, 39 flows matched                                                                                                                                                                      |
-| `node_modules/.bin/code-foundry pre-commit`                         | build, lint, formatting, and type checks passed; `requirements:check` failed because no authenticated GitHub CLI is available, which reproduces identically on the unmodified `main` checkout |
-| `bun docs/evals/run-adversarial-program.mts`                        | exit 0; scorecard written                                                                                                                                                                     |
-| `bun docs/evals/calibration/build-calibration-packet.mts`           | exit 0; 8 scenarios written                                                                                                                                                                   |
-| `bun docs/evals/calibration/score-calibration.mts`                  | exit 0; metrics withheld                                                                                                                                                                      |
+| Command                                                             | Result                                     |
+| ------------------------------------------------------------------- | ------------------------------------------ |
+| `bun test --timeout 30000 src` (packages/production-readiness)      | 101 pass, 0 fail, 1012 assertions, 9 files |
+| `bun x tsc -p packages/production-readiness/tsconfig.json --noEmit` | no errors                                  |
+| `bun x oxlint --deny-warnings packages/production-readiness/src`    | no warnings                                |
+| `bun run format:check`                                              | all files correctly formatted              |
+| `bun docs/evals/run-adversarial-program.mts`                        | exit 0; scorecard written                  |
+| `bun docs/evals/calibration/build-calibration-packet.mts`           | exit 0; 8 scenarios written                |
+| `bun docs/evals/calibration/score-calibration.mts`                  | exit 0; metrics withheld                   |
+
+This pass ran focused tests and static checks only. The workspace aggregate build, the aggregate
+unit group, and coverage were not re-run because capacity was not rechecked for this pass; the
+last full aggregate result stays recorded in the pull-request description and remains the
+reference for the two unmodified-base failures.
 
 No provider was contacted, no credential was read, no product promotion was activated, no
 deployment was performed, and no paid call was made.

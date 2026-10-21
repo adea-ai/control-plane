@@ -141,7 +141,7 @@ test('runs the pinned public corpus offline with repeatable fixtures, configurat
     corpus.cases.map(({ taskId }) => taskId)
   )
   expect(first.results.map(({ observation }) => observation.harnessVersion)).toEqual(
-    Array(corpus.cases.length).fill('3.0.0')
+    Array(corpus.cases.length).fill('4.0.0')
   )
   expect(first.results.map(({ observation }) => observation.executorReference)).toEqual(
     Array(corpus.cases.length).fill('scripted-control-v1')

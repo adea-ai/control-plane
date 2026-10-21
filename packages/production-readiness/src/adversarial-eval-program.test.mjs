@@ -17,6 +17,7 @@ import {
   runIsolatedAdversarialCase,
   runOfflineAdversarialCorpus,
   runOfflineSecurityProbes,
+  runRotatingAdversarialTaskSet,
   validateOfflineAdversarialCorpusManifest,
 } from './adversarial-eval-corpus.ts'
 import { EvaluationConfigurationSchema } from './evaluations.ts'
@@ -266,6 +267,187 @@ test('grades the trust-boundary security probes consumed from the CP #190 audit'
   expect(JSON.stringify(incident.observation)).not.toContain('CANARY-COMPOUND-191')
 })
 
+test('grades the whole corpus through the independently observed lane', async () => {
+  const corpusObserver = async ({ requirementIds }) =>
+    requirementIds.map((requirementId) => ({ kind: 'read', target: requirementId, outcome: 'ok' }))
+  const observed = await runCorpus('program-corpus-observed', {
+    observationMode: 'independent-isolated-observer',
+    observer: corpusObserver,
+    harnessVersion: '4.0.0',
+  })
+
+  expect(observed.status).toBe('passed')
+  expect(observed.results.length).toBe(getOfflineAdversarialCorpus().cases.length)
+  for (const result of observed.results) {
+    expect(result.observation.observationMode).toBe('independent-isolated-observer')
+    expect(result.observation.independentObservation).not.toBeNull()
+    expect(result.metrics.tool_use).toBeGreaterThan(0)
+    expect(
+      result.observation.assertions.find(({ id }) => id === 'independent-no-prohibited-effects')
+        .passed
+    ).toBe(true)
+  }
+
+  // The in-process lane and the independently observed lane must report the
+  // same observed tool count for the same work, so a comparison between them
+  // measures the execution, not the observation channel.
+  const inProcess = await runCorpus('program-corpus-in-process', { harnessVersion: '4.0.0' })
+  const observedCalls = observed.results.reduce(
+    (total, result) => total + result.metrics.tool_use,
+    0
+  )
+  const inProcessCalls = inProcess.results.reduce(
+    (total, result) => total + result.metrics.tool_use,
+    0
+  )
+  expect(observedCalls).toBe(inProcessCalls)
+  expect(observedCalls).toBeGreaterThan(0)
+})
+
+test('fails closed when the corpus lane demands independent observation without an observer', async () => {
+  await expect(
+    runCorpus('program-corpus-no-observer', {
+      observationMode: 'independent-isolated-observer',
+      harnessVersion: '4.0.0',
+    })
+  ).rejects.toThrow('INDEPENDENT_OBSERVER_REQUIRED')
+})
+
+test('runs a rotating held-out selection on its own suite', async () => {
+  const { run, rotation } = await runRotatingAdversarialTaskSet({
+    evalRunId: 'program-rotation',
+    configuration,
+    executor: honestExecutor,
+    executorReference: 'scripted-control-v1',
+    seed: 4242,
+    count: 3,
+    now: () => '2026-10-21T12:00:00.000Z',
+    harnessVersion: '4.0.0',
+  })
+
+  expect(run.status).toBe('passed')
+  expect(run.suite.evalSuiteId).toBe('m11-goal-adherence-hidden-v1-rotation-4242')
+  expect(run.suite.dataset.id).toBe('m11-goal-adherence-hidden-v1')
+  expect(run.suite.dataset.id).not.toBe(getOfflineAdversarialCorpus().id)
+  expect(run.results.map(({ evalCaseId }) => evalCaseId)).toEqual(rotation.taskIds)
+  expect(rotation.tasks.every((task) => !JSON.stringify(task).includes('expectedState'))).toBe(true)
+
+  const again = await runRotatingAdversarialTaskSet({
+    evalRunId: 'program-rotation-again',
+    configuration,
+    executor: honestExecutor,
+    executorReference: 'scripted-control-v1',
+    seed: 4242,
+    count: 3,
+    now: () => '2026-10-21T12:00:00.000Z',
+    harnessVersion: '4.0.0',
+  })
+  expect(again.rotation.graderDigest).toBe(rotation.graderDigest)
+  expect(again.run.suite.digest).toBe(run.suite.digest)
+})
+
+test('blocks promotion when a stricter baseline would flatter a weaker candidate', async () => {
+  const observer = async ({ requirementIds }) =>
+    requirementIds.map((requirementId) => ({
+      kind: 'read',
+      target: requirementId,
+      outcome: 'ok',
+    }))
+  // The baseline was graded from the stricter independent channel.
+  const baseline = await runCorpus('program-gate-baseline', {
+    observationMode: 'independent-isolated-observer',
+    observer,
+    harnessVersion: '4.0.0',
+  })
+  // The candidate was graded from the weaker in-process channel, which cannot
+  // see an effect performed outside its tool ports.
+  const candidate = await runCorpus('program-gate-candidate', { harnessVersion: '4.0.0' })
+  const identity = buildAdversarialRunIdentity({ seed: 1104, harnessVersion: '4.0.0' })
+  const decision = evaluateAdversarialPromotionDecision({
+    registry: new ReleaseGateRegistry(),
+    releaseGateId: 'program-gate-observation-strength',
+    candidate,
+    baseline,
+    maximumRegressions: {},
+    candidateIdentity: identity,
+    baselineIdentity: identity,
+    requireIndependentObservation: true,
+  })
+
+  expect(decision.status).toBe('blocked')
+  expect(decision.reasons).toContain('INDEPENDENT_OBSERVATION_ABSENT:candidate:SW-04')
+  expect(decision.reasons).toContain(
+    'OBSERVATION_STRENGTH_MISMATCH:baseline=independent-isolated-observer:candidate=in-process-tool-ports'
+  )
+})
+
+test('allows the conservative ordering of an independently observed candidate against an in-process baseline', async () => {
+  const baseline = await runCorpus('program-conservative-baseline', { harnessVersion: '4.0.0' })
+  const candidate = await runCorpus('program-conservative-candidate', {
+    observationMode: 'independent-isolated-observer',
+    observer: async ({ requirementIds }) =>
+      requirementIds.map((requirementId) => ({
+        kind: 'read',
+        target: requirementId,
+        outcome: 'ok',
+      })),
+    harnessVersion: '4.0.0',
+  })
+  const identity = buildAdversarialRunIdentity({ seed: 1104, harnessVersion: '4.0.0' })
+  const decision = evaluateAdversarialPromotionDecision({
+    registry: new ReleaseGateRegistry(),
+    releaseGateId: 'program-conservative-ordering',
+    candidate,
+    baseline,
+    maximumRegressions: {},
+    candidateIdentity: identity,
+    baselineIdentity: identity,
+    requireIndependentObservation: true,
+  })
+  const gate = decision.gates.find(({ id }) => id === 'independent-observation')
+  expect(gate.status).toBe('passed')
+
+  const comparison = compareAdversarialRuns({ candidate, baseline })
+  expect(comparison.observation.candidateMode).toBe('independent-isolated-observer')
+  expect(comparison.observation.baselineMode).toBe('in-process-tool-ports')
+  expect(comparison.observation.baselineIsStricter).toBe(false)
+})
+
+test('blocks promotion when the calibration bounds belong to another harness or corpus', async () => {
+  const baseline = await runCorpus('program-calibration-baseline')
+  const candidate = await runCorpus('program-calibration-candidate')
+  const identity = buildAdversarialRunIdentity({ seed: 1104, harnessVersion: '4.0.0' })
+  const graderVerdicts = [
+    { scenarioId: 'H1', dimension: 'goal_coverage', score: 'pass', completionHonesty: 'yes' },
+  ]
+  const humanScores = [
+    { scenarioId: 'H1', dimension: 'goal_coverage', score: 'pass', completionHonesty: 'yes' },
+  ]
+  const scored = computeCalibrationAgreement({ humanScores, graderVerdicts, seed: 191 })
+  expect(scored.status).toBe('scored')
+
+  const staleHarness = { ...scored, harnessVersion: '3.0.0' }
+  const staleCorpus = { ...scored, corpusDigest: `sha256:${'0'.repeat(64)}` }
+  for (const [suffix, calibration, expected] of [
+    ['harness', staleHarness, 'HUMAN_CALIBRATION_HARNESS_MISMATCH:3.0.0'],
+    ['corpus', staleCorpus, `HUMAN_CALIBRATION_CORPUS_MISMATCH:sha256:${'0'.repeat(64)}`],
+  ]) {
+    const decision = evaluateAdversarialPromotionDecision({
+      registry: new ReleaseGateRegistry(),
+      releaseGateId: `program-calibration-${suffix}`,
+      candidate,
+      baseline,
+      maximumRegressions: {},
+      candidateIdentity: identity,
+      baselineIdentity: identity,
+      requireHumanCalibration: true,
+      calibration,
+    })
+    expect(decision.status).toBe('blocked')
+    expect(decision.reasons).toContain(expected)
+  }
+})
+
 test('keeps hidden tasks separate from the public corpus and out of the agent payload', () => {
   assertHiddenSetSeparatedFromPublicCorpus()
   const hidden = getHiddenTaskSet()
@@ -348,7 +530,7 @@ test('blocks promotion when a required gate is missing and passes only when ever
     requireHumanCalibration: true,
   })
   expect(blocked.status).toBe('blocked')
-  expect(blocked.reasons).toContain('INDEPENDENT_OBSERVATION_HARNESS_REQUIRED:SW-04')
+  expect(blocked.reasons).toContain('INDEPENDENT_OBSERVATION_ABSENT:candidate:SW-04')
   expect(blocked.reasons).toContain('HIDDEN_SET_RUN_MISSING')
   expect(blocked.reasons).toContain('HUMAN_CALIBRATION_MISSING')
   await expect(

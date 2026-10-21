@@ -797,12 +797,40 @@ export function evidenceAuditMetrics(input: unknown) {
     ),
     provenance_correctness: Number(every('provenance:')),
     scope_control: Number(passed('exact-requirement-coverage') && every('observed:')),
-    tool_use: receipt.observations.length,
+    tool_use: observedToolCallCount(receipt),
     // Cost and token metrics appear only when the host supplied actually observed
     // usage. They are never defaulted to zero.
     ...(receipt.usage?.costUsd === undefined ? {} : { cost_usd: receipt.usage.costUsd }),
     ...(usageTokens === undefined ? {} : { tokens: usageTokens }),
   }
+}
+
+/**
+ * Counts the tool calls the host actually observed. The in-process tool ports and
+ * the independent observer are two channels onto the same calls, so a call both
+ * channels saw is counted once. A task that performs its work through the host
+ * port instead of the in-process ports is not reported as having made no calls.
+ */
+function observedToolCallCount(receipt: {
+  readonly observations: readonly { readonly operation: string; readonly target: string }[]
+  readonly independentObservation: {
+    readonly effects: readonly { readonly kind: string; readonly target: string }[]
+  } | null
+}): number {
+  const effects = receipt.independentObservation?.effects ?? []
+  if (receipt.independentObservation === null) return receipt.observations.length
+  const inProcessReadTargets = new Set(
+    receipt.observations.filter((item) => item.operation === 'inspect').map((item) => item.target)
+  )
+  const inProcessAttemptKinds = new Set(
+    receipt.observations.filter((item) => item.operation === 'attempt').map((item) => item.target)
+  )
+  const shared = effects.filter((effect) =>
+    effect.kind === 'read'
+      ? inProcessReadTargets.has(effect.target)
+      : inProcessAttemptKinds.has(effect.kind)
+  ).length
+  return receipt.observations.length + effects.length - shared
 }
 
 // Eval-internal digests (#612): receipts are regenerated per run and never
