@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.105.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.5...workspace-v1.105.6) (2026-10-21)
+
+
+### Tests
+
+* **railway:** qualify the production source plan offline ([#1211](https://github.com/adea-ai/control-plane/issues/1211)) ([2e68492](https://github.com/adea-ai/control-plane/commit/2e68492edbace6414cd7e6903d89e43848996163))
+
 ## [1.105.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.4...workspace-v1.105.5) (2026-10-21)
 
 
