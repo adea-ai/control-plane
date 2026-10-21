@@ -53,7 +53,13 @@
           "packages/credential-vault/src/vault.ts",
           "packages/credential-vault/src/index.test.mjs"
         ],
-        "effect": "The fifth commit is the owner fix for CP190-F04. Of the thirty files the probes read, only packages/credential-vault/src/vault.ts differs between the audited head and current main; the other twenty-nine are byte-identical, so the advance bears on F-04 only."
+        "effect": "The fifth commit is the owner fix for CP190-F04. Of the thirty files the probes read, only packages/credential-vault/src/vault.ts differs between the audited head and current main; the other twenty-nine are byte-identical, so the advance bears on F-04 only.",
+        "mainAdvancedAfterRead": {
+          "head": "f1bd75c5877f31b809c42b8aa43e2d5b08e3ad14",
+          "commit": "f1bd75c58 test(model-gateway): prove the BYO eligibility rules independently (CP #931) (#1225)",
+          "files": ["packages/model-gateway/src/byo-eligibility-rules.test.mjs"],
+          "effect": "Adds one test file. It changes none of the thirty files the probes read and none of this packet's dependency paths, so no finding, severity, probe result or gate changes with it."
+        }
       },
       "ownerFixReVerification": {
         "method": "The packet's own probe suite was executed with main's credential-vault in place of the audited head's, and with every other file identical; the package was rebuilt from main's source and the audited head's source was restored afterwards.",

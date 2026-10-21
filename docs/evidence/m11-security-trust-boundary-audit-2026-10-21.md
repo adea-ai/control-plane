@@ -272,6 +272,14 @@ packet's probes read that differs between the audited head and current `main`; t
 other twenty-nine are byte-identical, so the base advance can only bear on
 F-04.
 
+**`main` advanced once more after that read.** The authoritative read behind this
+reconciliation returned `4e126a7c3`; a later read returned `f1bd75c58`
+("test(model-gateway): prove the BYO eligibility rules independently (CP #931)
+(#1225)"), which adds one test file under `packages/model-gateway/src`. That
+commit changes none of the thirty files this packet's probes read and none of
+this packet's dependency paths, so no finding, severity, probe result or gate
+changes with it.
+
 Result: **one owner fix exists on a currently available head: F-04's, on `main` at
 `4e126a7c3e55bfb05b8bdfc390705b83f777c6d4` (#1224).** The other 28 findings have no
 owner fix on any available head. The F-04 fix was re-verified by execution on that
