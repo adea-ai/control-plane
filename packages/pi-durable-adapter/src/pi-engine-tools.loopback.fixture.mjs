@@ -36,6 +36,8 @@ export async function createNativeEngineToolFixture({
   enabled = true,
   firstGenerationUsage = { promptTokens: 5, completionTokens: 3 },
   failGeneration,
+  dispatchMarkers,
+  armFault = false,
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'pi-native-tool-'))
   const requests = [],
@@ -46,6 +48,7 @@ export async function createNativeEngineToolFixture({
     hostname: '127.0.0.1',
     port: 0,
     async fetch(request) {
+      if (dispatchMarkers) expect(dispatchMarkers.at(-1)?.stage).toBe('armed')
       requests.push(await request.json())
       if (requests.length === failGeneration)
         return new Response('Scripted provider failure', { status: 503 })
@@ -101,7 +104,21 @@ export async function createNativeEngineToolFixture({
     assertAuthority: async () => {},
     authorizeInference: async (input) => {
       receipts.push(input.inferenceId)
-      return { maxOutputTokens: 32, maximumInputTokens: 1024, assertActive: async () => {} }
+      return {
+        maxOutputTokens: 32,
+        maximumInputTokens: 1024,
+        assertActive: async () => {},
+        ...(dispatchMarkers
+          ? {
+              preparePhysicalSend: async (requestDigest) =>
+                dispatchMarkers.push({ stage: 'prepared', requestDigest }),
+              armPhysicalSend: async (requestDigest) => {
+                dispatchMarkers.push({ stage: 'armed', requestDigest })
+                if (armFault) throw new Error('ARM_COMMIT_RESULT_UNKNOWN')
+              },
+            }
+          : {}),
+      }
     },
     withModels: async (use) => {
       const models = createModels()

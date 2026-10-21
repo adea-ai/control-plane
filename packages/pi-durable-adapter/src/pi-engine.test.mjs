@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +15,9 @@ import {
 import { createPiDurableEngine } from './pi-engine.ts'
 
 const fixture = fileURLToPath(new URL('./pi-engine.fixture.mjs', import.meta.url))
+const requestValuedFixture = fileURLToPath(
+  new URL('./pi-engine-request-valued.fixture.mjs', import.meta.url)
+)
 const node =
   process.env.CONTROL_PLANE_TEST_NODE ?? (process.versions.bun ? 'node' : process.execPath)
 
@@ -477,12 +481,13 @@ describe('persistent Pi engine', () => {
     const directory = await mkdtemp(join(tmpdir(), 'pi-engine-physical-fetch-'))
     const originalFetch = globalThis.fetch
     const sent = []
-    globalThis.fetch = async (_input, init) => {
-      sent.push(init)
+    globalThis.fetch = async (input, init) => {
+      sent.push({ redirect: input instanceof Request ? input.redirect : init?.redirect })
       return new Response('{}')
     }
     let active = true
     let sendChecks = 0
+    const dispatchStages = []
     const faux = fauxProvider()
     const provider = {
       ...faux.provider,
@@ -526,6 +531,12 @@ describe('persistent Pi engine', () => {
           sendChecks++
           if (!active) throw new Error('REVOKED')
         },
+        preparePhysicalSend: async (requestDigest) => {
+          dispatchStages.push(['prepared', requestDigest])
+        },
+        armPhysicalSend: async (requestDigest) => {
+          dispatchStages.push(['armed', requestDigest])
+        },
       }),
       withModels: async (use) => {
         const models = createModels()
@@ -539,7 +550,10 @@ describe('persistent Pi engine', () => {
       ).rejects.toThrow('PI_SUBMISSION_UNANSWERED')
       expect(sent).toHaveLength(1)
       expect(sent[0].redirect).toBe('error')
-      expect(sendChecks).toBe(2)
+      expect(sendChecks).toBe(3)
+      expect(dispatchStages.map(([stage]) => stage)).toEqual(['prepared', 'armed'])
+      expect(dispatchStages[0][1]).toMatch(/^sha256:[a-f0-9]{64}$/)
+      expect(dispatchStages[0][1]).toBe(dispatchStages[1][1])
       // Simulate credential resolution revocation after streamSimple's preflight.
       const delayed = {
         ...provider,
@@ -574,10 +588,208 @@ describe('persistent Pi engine', () => {
       } finally {
         await denied.close()
       }
+      active = true
+      const armAmbiguous = createPiDurableEngine({
+        directory,
+        model: { provider: 'faux', modelId: 'faux-1' },
+        maxOutputTokens: 32,
+        assertAuthority: async () => {},
+        authorizeInference: async () => ({
+          maxOutputTokens: 32,
+          maximumInputTokens: faux.getModel().contextWindow,
+          assertActive: async () => {},
+          preparePhysicalSend: async () => {},
+          armPhysicalSend: async () => {
+            throw new Error('ARM_COMMIT_RESULT_UNKNOWN')
+          },
+        }),
+        withModels: async (use) => {
+          const models = createModels()
+          models.setProvider(provider)
+          return use(models)
+        },
+      })
+      try {
+        await expect(
+          armAmbiguous.run({ sessionId: 'three', requestId: 'turn:1', input: 'Question' })
+        ).rejects.toThrow('PI_SUBMISSION_UNANSWERED')
+        expect(sent).toHaveLength(1)
+      } finally {
+        await armAmbiguous.close()
+      }
+      let authorityCurrent = true
+      let spendingChecks = 0
+      const lateRevocation = createPiDurableEngine({
+        directory,
+        model: { provider: 'faux', modelId: 'faux-1' },
+        maxOutputTokens: 32,
+        assertAuthority: async () => {
+          if (!authorityCurrent) throw new Error('OWNER_EPOCH_CHANGED')
+        },
+        authorizeInference: async () => ({
+          maxOutputTokens: 32,
+          maximumInputTokens: faux.getModel().contextWindow,
+          assertActive: async () => {
+            if (++spendingChecks === 3) authorityCurrent = false
+          },
+          preparePhysicalSend: async () => {},
+          armPhysicalSend: async () => {},
+        }),
+        withModels: async (use) => {
+          const models = createModels()
+          models.setProvider(provider)
+          return use(models)
+        },
+      })
+      try {
+        await expect(
+          lateRevocation.run({ sessionId: 'four', requestId: 'turn:1', input: 'Question' })
+        ).rejects.toThrow('PI_SUBMISSION_UNANSWERED')
+        expect(spendingChecks).toBe(3)
+        expect(sent).toHaveLength(1)
+      } finally {
+        await lateRevocation.close()
+      }
     } finally {
       globalThis.fetch = originalFetch
       await engine.close()
       await rm(directory, { recursive: true, force: true })
     }
   })
+
+  test('a Request-valued POST reaches the physical fetch with its body, headers and redirect fence', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pi-request-valued-fetch-'))
+    const originalFetch = globalThis.fetch
+    const sent = []
+    const fingerprints = []
+    globalThis.fetch = async (input) => {
+      sent.push({
+        method: input.method,
+        body: await input.text(),
+        header: input.headers.get('x-pi-test'),
+        redirect: input.redirect,
+      })
+      return new Response('{}')
+    }
+    const faux = fauxProvider()
+    const provider = {
+      ...faux.provider,
+      streamSimple: (_model, _transcript, options) => {
+        const events = createAssistantMessageEventStream()
+        queueMicrotask(async () => {
+          try {
+            await options.fetch(
+              new Request('https://example.invalid/inference', {
+                method: 'POST',
+                headers: {
+                  'content-type': 'text/plain;charset=UTF-8',
+                  'x-pi-test': 'retained',
+                  'a-b': 'hyphen',
+                  a_b: 'underscore',
+                  ab: 'plain',
+                },
+                body: 'exact request body',
+                redirect: 'follow',
+              })
+            )
+            events.push({ type: 'done', reason: 'stop', message: fauxAssistantMessage('Done') })
+          } catch (error) {
+            events.push({
+              type: 'error',
+              reason: 'error',
+              error: {
+                ...fauxAssistantMessage(''),
+                stopReason: 'error',
+                errorMessage: error.message,
+              },
+            })
+          } finally {
+            events.end()
+          }
+        })
+        return events
+      },
+    }
+    const engine = createPiDurableEngine({
+      directory,
+      model: { provider: 'faux', modelId: 'faux-1' },
+      maxOutputTokens: 32,
+      assertAuthority: async () => {},
+      authorizeInference: async () => ({
+        maxOutputTokens: 32,
+        maximumInputTokens: faux.getModel().contextWindow,
+        assertActive: async () => {},
+        preparePhysicalSend: async (digest) => {
+          fingerprints.push(digest)
+        },
+        armPhysicalSend: async (digest) => {
+          fingerprints.push(digest)
+        },
+      }),
+      withModels: async (use) => {
+        const models = createModels()
+        models.setProvider(provider)
+        return use(models)
+      },
+    })
+    try {
+      await engine.run({ sessionId: 'request-input', requestId: 'turn:1', input: 'Question' })
+      expect(sent).toEqual([
+        {
+          method: 'POST',
+          body: 'exact request body',
+          header: 'retained',
+          redirect: 'error',
+        },
+      ])
+      const expected = `sha256:${createHash('sha256')
+        .update(
+          JSON.stringify([
+            'POST',
+            'https://example.invalid/inference',
+            [
+              ['a-b', 'hyphen'],
+              ['a_b', 'underscore'],
+              ['ab', 'plain'],
+              ['content-type', 'text/plain;charset=UTF-8'],
+              ['x-pi-test', 'retained'],
+            ],
+            createHash('sha256').update('exact request body').digest('hex'),
+          ])
+        )
+        .digest('hex')}`
+      expect(fingerprints).toEqual([expected, expected])
+    } finally {
+      globalThis.fetch = originalFetch
+      await engine.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('the Node executor preserves a Request-valued POST across the fingerprint boundary', async () => {
+    const child = spawn(node, ['--experimental-strip-types', requestValuedFixture], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = '',
+      stderr = ''
+    child.stdout.on('data', (data) => {
+      stdout += data
+    })
+    child.stderr.on('data', (data) => {
+      stderr += data
+    })
+    const result = await new Promise((resolve, reject) => {
+      child.on('error', reject)
+      child.on('close', (code, signal) => resolve({ code, signal }))
+    })
+    expect(result, stderr).toEqual({ code: 0, signal: null })
+    expect(JSON.parse(stdout)).toEqual([
+      {
+        method: 'POST',
+        body: 'exact request body',
+        header: 'retained',
+        redirect: 'error',
+      },
+    ])
+  }, 30_000)
 })

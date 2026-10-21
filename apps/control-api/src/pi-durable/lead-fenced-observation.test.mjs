@@ -288,6 +288,39 @@ test('authority drift before the effect fails closed without calling the adapter
   expect(calls.status).toBe(0)
 })
 
+for (const [name, changed] of [
+  ['authority revision', { fenceOverrides: { authorityRevision: 8 } }],
+  ['original actor', { fenceOverrides: { canonicalActorPrincipalId: 'user:revoked' } }],
+  ['audience', { fenceOverrides: { allowedPrincipalIds: ['svc_other'] } }],
+  ['attempt binding', { retainedOverrides: { attemptId: id('att').replace(/G$/, 'H') } }],
+]) {
+  test(`fenced cancellation refuses changed ${name} before calling the adapter`, async () => {
+    const { service, calls } = await harness({
+      fencedFor: (operation, n) =>
+        fenced(operation, { admissionBinding: true, ...(n === 1 ? {} : changed) }),
+    })
+    await expect(service.cancel(cancelRequest(), caller)).rejects.toThrow(
+      'PI_LEAD_AUTHORITY_CONFLICT'
+    )
+    expect(calls.cancel).toBe(0)
+    expect(calls.start).toBe(0)
+  })
+}
+
+test('retry after an unknown cancellation outcome rechecks revoked authority before another effect', async () => {
+  const { service, calls } = await harness({
+    fencedFor: (operation, n) =>
+      fenced(operation, { admissionBinding: true, retainedMatch: n <= 2 }),
+  })
+  await expect(service.cancel(cancelRequest(), caller)).rejects.toThrow(
+    'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN'
+  )
+  expect(calls.cancel).toBe(1)
+  await expect(service.cancel(cancelRequest(), caller)).rejects.toThrow('PI_LEAD_UNAVAILABLE')
+  expect(calls.cancel).toBe(1)
+  expect(calls.start).toBe(0)
+})
+
 test('authority drift after the effect fails closed and returns no observation', async () => {
   const { service, calls } = await harness({
     // Lookup and pre-effect recheck (reads 1-2) match; the post-effect recheck (read 3) drifts.
@@ -303,6 +336,20 @@ test('authority drift after the effect fails closed and returns no observation',
   expect(calls.status).toBe(1)
 })
 
+test('fenced cancellation drift after the effect reports an unknown outcome', async () => {
+  const { service, calls } = await harness({
+    fencedFor: (operation, n) =>
+      fenced(operation, {
+        admissionBinding: true,
+        fenceOverrides: n <= 2 ? {} : { authorityRevision: 8 },
+      }),
+  })
+  await expect(service.cancel(cancelRequest(), caller)).rejects.toThrow(
+    'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN'
+  )
+  expect(calls.cancel).toBe(1)
+})
+
 test('receipt generation change during the effect fails closed', async () => {
   const { service, calls } = await harness({
     fencedFor: withBinding,
@@ -310,7 +357,9 @@ test('receipt generation change during the effect fails closed', async () => {
       if (operation === 'cancel') await receipts.compareAndSet(2, { ...receiptBase, revision: 3 })
     },
   })
-  await expect(service.cancel(cancelRequest(), caller)).rejects.toThrow('PI_LEAD_DISPATCH_CONFLICT')
+  await expect(service.cancel(cancelRequest(), caller)).rejects.toThrow(
+    'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN'
+  )
   expect(calls.cancel).toBe(1)
 })
 

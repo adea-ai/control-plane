@@ -66,6 +66,7 @@ const publicOperations = [
   'model-defaults.set',
   'model-selection.funding.get',
   'model-selection.resolve',
+  'pi-durable.child.publication.current',
   'pi-durable.lead.cancel',
   'pi-durable.lead.children',
   'pi-durable.lead.dispatch',

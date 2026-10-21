@@ -44,7 +44,7 @@ export async function deriveRecipientKeyPair(ikm: Uint8Array): Promise<Recipient
   return { keyPair, publicKey: await serializeRecipientPublicKey(keyPair.publicKey) }
 }
 
-async function serializeRecipientPublicKey(publicKey: CryptoKey): Promise<string> {
+async function serializeRecipientPublicKey(publicKey: HpkeKeyPair['publicKey']): Promise<string> {
   return encodeBase64Url(new Uint8Array(await suite.kem.serializePublicKey(publicKey)))
 }
 
@@ -69,7 +69,7 @@ export async function hpkeSeal(input: {
 }
 
 export async function hpkeOpen(input: {
-  readonly recipientPrivateKey: CryptoKey
+  readonly recipientPrivateKey: HpkeKeyPair['privateKey']
   readonly info: string
   readonly aad: Uint8Array
   readonly encapsulatedKey: string

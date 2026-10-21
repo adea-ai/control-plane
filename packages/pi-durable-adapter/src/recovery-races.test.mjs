@@ -111,6 +111,105 @@ function fixture(directory, overrides = {}) {
   return { request, options }
 }
 
+test('physical send journal advances prepared to armed once and fences a cancelled owner', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-physical-dispatch-'))
+  const admitted = deferred()
+  const finish = deferred()
+  const setup = fixture(directory, {
+    engineFactory: async (engine) => ({
+      run: async () => {
+        const allowance = await engine.authorizeInference({
+          sessionId: 'session',
+          inferenceId: 'pi-generation:1',
+          provider: 'scripted',
+          modelId: 'race-model',
+        })
+        admitted.resolve(allowance)
+        await finish.promise
+        return result
+      },
+      close: async () => {},
+      cancel: async () => {},
+    }),
+  })
+  const adapter = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    const handle = await adapter.start(setup.request)
+    const allowance = await admitted.promise
+    const digest = `sha256:${'a'.repeat(64)}`
+    await expect(allowance.armPhysicalSend(digest)).rejects.toThrow('PI_PHYSICAL_SEND_NOT_PREPARED')
+    await allowance.preparePhysicalSend(digest)
+    const prepared = adapter.journal.get(handle.handleId)
+    const key = prepared.detail.activeInference.inferenceKey
+    expect(prepared.detail.physicalDispatches[key]).toMatchObject({
+      stage: 'prepared',
+      attemptId: setup.request.attemptId,
+      requestDigest: digest,
+      providerDigest: prepared.detail.physicalDispatches[key].providerDigest,
+      ownerEpoch: prepared.epoch,
+    })
+    await allowance.armPhysicalSend(digest)
+    expect(adapter.journal.get(handle.handleId).detail.physicalDispatches[key].stage).toBe('armed')
+    await expect(allowance.preparePhysicalSend(digest)).rejects.toThrow(
+      'PI_PHYSICAL_SEND_ALREADY_ARMED_OR_CHANGED'
+    )
+    await adapter.cancel(handle, { idempotencyKey: 'cancel:physical', requestedAt: at })
+    await expect(allowance.armPhysicalSend(digest)).rejects.toThrow()
+    expect(adapter.journal.get(handle.handleId).detail.physicalDispatches[key].stage).toBe('armed')
+    finish.resolve()
+    await adapter.drain()
+  } finally {
+    finish.resolve()
+    await adapter.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test.each(['prepared', 'armed'])(
+  'the %s physical send marker remains unresolved without restore-generation proof',
+  async (stage) => {
+    const directory = mkdtempSync(join(tmpdir(), 'pi-armed-recovery-'))
+    let runs = 0
+    let noSendGuesses = 0
+    const setup = fixture(directory, {
+      reconcileInference: async () => {
+        noSendGuesses++
+        return 'safe_to_resume'
+      },
+      engineFactory: async (engine) => ({
+        run: async () => {
+          runs++
+          const allowance = await engine.authorizeInference({
+            sessionId: 'session',
+            inferenceId: 'pi-generation:1',
+            provider: 'scripted',
+            modelId: 'race-model',
+          })
+          const digest = `sha256:${'b'.repeat(64)}`
+          await allowance.preparePhysicalSend(digest)
+          if (stage === 'armed') await allowance.armPhysicalSend(digest)
+          throw new Error('PROVIDER_OUTCOME_UNKNOWN')
+        },
+        close: async () => {},
+        cancel: async () => {},
+      }),
+    })
+    const adapter = new PiDurableRuntimeAdapter(setup.options)
+    try {
+      const handle = await adapter.start(setup.request)
+      await adapter.drain()
+      expect((await adapter.status(handle)).state).toBe('unknown')
+      expect((await adapter.reconcile(handle)).state).toBe('unknown')
+      await adapter.drain()
+      expect(runs).toBe(1)
+      expect(noSendGuesses).toBe(0)
+    } finally {
+      await adapter.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }
+)
+
 test.each(['running', 'unknown', 'cancelling'])(
   'reopened %s inference cannot become a fresh input or approval while reconciliation is unresolved',
   async (state) => {
@@ -1176,3 +1275,79 @@ test('concurrent close shares one drain and store close while admitted inference
     rmSync(directory, { recursive: true, force: true })
   }
 }, 10000)
+
+test('a failed engine creation keeps the confirmed safe-resume generation for the retry', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-resume-engine-failure-'))
+  const inferenceId = 'pi-generation:1'
+  const probes = []
+  const permits = []
+  let creations = 0
+  let sends = 0
+  const setup = fixture(directory, {
+    authorizeInference: async (_authority, key, safeResume) => {
+      permits.push({ key, safeResume })
+      return { maxOutputTokens: 10, maximumInputTokens: 64, assertActive: async () => {} }
+    },
+    reconcileInference: async (_authority, key) => {
+      probes.push(key)
+      return 'safe_to_resume'
+    },
+    engineFactory: async (engineOptions) => {
+      creations++
+      // Creation 2 fails before the engine can authorize any inference.
+      if (creations === 2) throw new Error('engine creation failed')
+      return {
+        run: async () => {
+          await engineOptions.authorizeInference({ inferenceId })
+          // Creation 1 loses its process after authorizing the inference; the send is undecided.
+          if (creations === 1) throw new Error('process lost after authorization')
+          sends++
+          return result
+        },
+        close: async () => {},
+        cancel: async () => {},
+      }
+    },
+  })
+  const adapter = new PiDurableRuntimeAdapter(setup.options)
+  try {
+    const handle = await adapter.start(setup.request)
+    await adapter.drain()
+    const turnKey = `pi-turn:${setup.request.attemptId}:initial`
+    const inferenceKey = `${turnKey}:${inferenceId}`
+    expect(adapter.journal.get(handle.handleId).state).toBe('unknown')
+    expect(adapter.journal.get(handle.handleId).detail.activeInference?.inferenceKey).toBe(
+      inferenceKey
+    )
+
+    // Recovery confirms the exact generation safe; the resumed run then fails creating its engine.
+    await adapter.reconcile(handle)
+    await adapter.drain()
+    const afterCreationFailure = adapter.journal.get(handle.handleId)
+    expect(creations).toBe(2)
+    expect(afterCreationFailure.state).toBe('unknown')
+    // The generation stays the reconciliation identity; permission to execute is revoked.
+    expect(afterCreationFailure.detail.resumeGenerationKey).toBe(inferenceKey)
+    expect(afterCreationFailure.detail.safeResumeInferenceKey).toBeUndefined()
+
+    // The retry re-observes that same generation and still carries its resume permit.
+    await adapter.reconcile(handle)
+    await adapter.drain()
+    expect(probes).toEqual([inferenceKey, inferenceKey, inferenceKey, inferenceKey])
+    expect(permits).toEqual([
+      { key: inferenceKey, safeResume: undefined },
+      {
+        key: inferenceKey,
+        safeResume: { schemaVersion: 'pi-inference-resume-permit/v1', inferenceKey },
+      },
+    ])
+    const completed = adapter.journal.get(handle.handleId)
+    expect(completed.state).toBe('completed')
+    expect(completed.detail.safeResumeInferenceKey).toBeUndefined()
+    expect(completed.detail.resumeGenerationKey).toBeUndefined()
+    expect(sends).toBe(1)
+  } finally {
+    await adapter.close().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  }
+})

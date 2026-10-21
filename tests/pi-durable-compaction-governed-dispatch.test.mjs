@@ -1070,6 +1070,11 @@ test('the production composition settles the admitted child through its own sett
       unpriced: 0,
     })
     await host.reopenComposition()
+    expect(hooks.evidence.timelineWakes).toContainEqual({
+      workspaceId: host.workspaceId,
+      intentId: hooks.intentId,
+      principalId: 'svc_factory-proof',
+    })
     expect(await host.composition.settleChildTerminalAccounting()).toEqual({
       settled: 1,
       pending: 0,

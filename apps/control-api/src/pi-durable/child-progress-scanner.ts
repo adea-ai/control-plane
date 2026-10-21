@@ -1,4 +1,8 @@
-import { canonicalJsonStringify, IdentifierSchemas } from '@control-plane/contracts'
+import {
+  canonicalJsonStringify,
+  IdentifierSchemas,
+  PiChildConclusionSchema,
+} from '@control-plane/contracts'
 import {
   DelegationInteractionContextSchema,
   DelegationRuntimeAdmissionRequestSchema,
@@ -36,6 +40,23 @@ export const PiDurableRetainedChildSchema = z
       context.addIssue({ code: 'custom', message: 'Child handle must bind its canonical attempt' })
   })
 export type PiDurableRetainedChild = z.output<typeof PiDurableRetainedChildSchema>
+
+/** The Pi adapter's exact `{ text }` final result is the only conclusion producer.
+ * Generic JSON, partial excerpts and artifact IDs never become display text. */
+function canonicalConclusion(result: RuntimeExecutionResult): string | undefined {
+  const output = result.output
+  if (
+    !output ||
+    typeof output !== 'object' ||
+    Array.isArray(output) ||
+    Object.keys(output).length !== 1 ||
+    typeof output['text'] !== 'string' ||
+    output['text'].length > 4096
+  )
+    return undefined
+  const text = output['text'].normalize('NFC').replace(/\s+/gu, ' ').trim()
+  return PiChildConclusionSchema.safeParse(text).success ? text : undefined
+}
 
 export interface PiDurableChildProgressScannerOptions {
   readonly listRetainedChildren: () => Promise<readonly PiDurableRetainedChild[]>
@@ -150,7 +171,13 @@ export class PiDurableChildProgressScanner {
             )
           )
           await this.options.assertCurrent(structuredClone(record))
-          progress = { ...base, state: 'completed', terminalResultRef }
+          const conclusion = canonicalConclusion(status.result)
+          progress = {
+            ...base,
+            state: 'completed',
+            terminalResultRef,
+            ...(conclusion ? { conclusion } : {}),
+          }
         } else if (target === 'failed') {
           progress = {
             ...base,

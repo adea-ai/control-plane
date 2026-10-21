@@ -6,6 +6,11 @@ import type {
   PiDurableGovernedDelegateChildCompiler,
 } from './contracts.js'
 import { PiDurableEffectGate, SqliteDurableEffectGateStore } from './effect-gate.js'
+import {
+  createPiDurableLocalUpgradeManifest,
+  verifyPiDurableLocalUpgradeManifest,
+  type PiDurableLocalUpgradeManifest,
+} from './upgrade-manifest.js'
 
 export interface NodePiDurableCompositionOptions extends Omit<
   PiDurableRuntimeOptions,
@@ -13,6 +18,8 @@ export interface NodePiDurableCompositionOptions extends Omit<
 > {
   /** Trusted host initialization, completed before any retained recovery is scheduled. */
   readonly onAdapterReady?: (adapter: PiDurableRuntimeAdapter) => void | Promise<void>
+  /** Optional byte-identical local handoff check, never a restore or resend authorization. */
+  readonly sameVersionManifest?: PiDurableLocalUpgradeManifest
   readonly governedDelegateChild?: PiDurableGovernedDelegateChildCompiler
   /** Bind this port to the canonical parent in the host, never to model/request input. */
   readonly parentInbox?: { list(): Promise<readonly DelegationEvent[]> }
@@ -31,8 +38,15 @@ export interface NodePiDurableCompositionOptions extends Omit<
 export async function createNodePiDurableRuntime(options: NodePiDurableCompositionOptions) {
   if (options.governedDelegateChild && !options.tools)
     throw new Error('PI_GOVERNED_TOOL_GATE_REQUIRED')
+  if (options.sameVersionManifest)
+    await verifyPiDurableLocalUpgradeManifest(options.directory, options.sameVersionManifest)
   let effects: PiDurableEffectGate | undefined
-  const { governedDelegateChild, onAdapterReady, ...runtimeOptions } = options
+  const {
+    governedDelegateChild,
+    onAdapterReady,
+    sameVersionManifest: _manifest,
+    ...runtimeOptions
+  } = options
   const adapter = new PiDurableRuntimeAdapter({
     ...runtimeOptions,
     ...(governedDelegateChild
@@ -103,6 +117,10 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
         return recoveryBlocked
       },
       close: () => adapter.close(),
+      closeForSameVersionUpgrade: async () => {
+        await adapter.close()
+        return createPiDurableLocalUpgradeManifest(options.directory)
+      },
       profile: 'node-sqlite' as const,
     }
   } catch (error) {

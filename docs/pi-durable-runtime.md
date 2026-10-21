@@ -193,6 +193,13 @@ published. Production integration requires a compatible authorized signer; this
 work creates no grants or credentials. Candidate tests use synthetic policy and
 provider transport.
 
+The child publication operation can expose a bounded plain-text conclusion only from
+the canonical Pi adapter's exact terminal `{ text }` result. It is retained with the
+child attempt and terminal event, then checked against the current parent binding,
+original actor and publication grant on each read. Other result JSON and oversized
+text are withheld. An artifact ID is only a reference; it does not grant a read of
+artifact bytes or expose substantial output in Adea's timeline.
+
 ## Provider, spend and recovery gates
 
 R2 owns immutable `model-selection/v1` connection/account/auth/location/funding
@@ -221,7 +228,11 @@ the retained pinned price through the existing ledger. Missing historical price
 or spending evidence leaves reconciliation required, rather than repricing.
 
 An uncertain admitted inference wakes as `unknown` and needs trusted no-resend
-reconciliation. `safe_to_resume` must mean that retained accounting/native evidence
+reconciliation. The adapter itself may resume without an external verdict only
+when its durable v1 pre-run marker proves the engine never entered `run`, no
+generation or receipt was retained, and a new process claim plus current
+authority succeeds. A missing legacy marker, timeout, absent ledger hold, or
+any generation identity never proves no-send. `safe_to_resume` must mean that retained accounting/native evidence
 permits replay without another uncertain paid effect. Cancellation remains
 `cancelling` until the same policy proves the outstanding send reconciled; then it
 can become `cancelled` without new inference. A revoked record blocks only itself
