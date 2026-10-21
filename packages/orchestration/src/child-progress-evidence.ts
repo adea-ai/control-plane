@@ -363,6 +363,7 @@ const DEFAULTS = {
   maximumBytes: 16_384,
   maximumTrackedEventIds: 8_192,
   maximumCoalescedEventsPerDelivery: 128,
+  maximumPendingDeliveries: 256,
 } as const
 
 const encoder = new TextEncoder()
@@ -1152,6 +1153,20 @@ export interface ChildProgressLeadDispatcherOptions {
    * burst cannot postpone the next snapshot delivery past this many events.
    */
   readonly maximumCoalescedEventsPerDelivery?: number
+  /**
+   * The maximum number of deliveries that may wait for the lead at once.
+   * Default 256.
+   *
+   * The packets themselves are bounded, but the outbox that holds them was
+   * not: a lead that does not drain let routine progress accumulate without
+   * limit, and every human input queued behind that backlog. The pending
+   * backlog is therefore bounded here, and the bound is applied to the
+   * unbounded stream — routine progress. A delivery that carries a retained
+   * entry (a terminal outcome or an approval request) and every human input
+   * are material and are never dropped; they are delivered even when the
+   * backlog is full, and the overrun is counted so an operator can see it.
+   */
+  readonly maximumPendingDeliveries?: number
 }
 
 /**
@@ -1177,11 +1192,16 @@ export interface ChildProgressLeadDispatcherOptions {
 export class ChildProgressLeadDispatcher {
   readonly #buffer: ChildProgressEvidenceBuffer
   readonly #maximumCoalescedEventsPerDelivery: number
+  readonly #maximumPendingDeliveries: number
   readonly #outbox: ChildProgressLeadDelivery[] = []
   #routineEventsSinceDelivery = 0
   #sequence = 0
   #deliveredPackets = 0
   #deliveredHumanInputs = 0
+  /** Routine deliveries refused because the pending backlog was full. */
+  #refusedRoutineDeliveries = 0
+  /** Material deliveries admitted past the bound (never dropped). */
+  #overBoundDeliveries = 0
 
   constructor(options: ChildProgressLeadDispatcherOptions) {
     this.#buffer = options.buffer
@@ -1191,6 +1211,14 @@ export class ChildProgressLeadDispatcher {
       throw new ChildProgressEvidenceError(
         'CONFIGURATION',
         'maximumCoalescedEventsPerDelivery must be at least 1'
+      )
+    }
+    this.#maximumPendingDeliveries =
+      options.maximumPendingDeliveries ?? DEFAULTS.maximumPendingDeliveries
+    if (this.#maximumPendingDeliveries < 1) {
+      throw new ChildProgressEvidenceError(
+        'CONFIGURATION',
+        'maximumPendingDeliveries must be at least 1'
       )
     }
   }
@@ -1217,9 +1245,18 @@ export class ChildProgressLeadDispatcher {
     if (receipt.outcome === 'coalesced') {
       this.#routineEventsSinceDelivery += 1
       if (this.#routineEventsSinceDelivery >= this.#maximumCoalescedEventsPerDelivery) {
-        const packet = this.#buffer.flush()
-        if (packet) this.#enqueueEvidence(packet, 'coalescing_pressure')
-        this.#routineEventsSinceDelivery = 0
+        if (this.#atPendingBound() && this.#buffer.stats().pendingEntries === 0) {
+          // The lead has not taken the pending deliveries yet and the open
+          // window holds routine progress only. Keep the window open instead of
+          // sealing another routine packet: the window still holds the latest
+          // snapshot per child, so the next delivery carries the newer state and
+          // nothing is lost. The refusal is counted, never silent.
+          this.#refusedRoutineDeliveries += 1
+        } else {
+          const packet = this.#buffer.flush()
+          if (packet) this.#enqueueEvidence(packet, 'coalescing_pressure')
+          this.#routineEventsSinceDelivery = 0
+        }
       }
     }
     return receipt
@@ -1239,14 +1276,29 @@ export class ChildProgressLeadDispatcher {
       sequence: this.#sequence,
       input: parsed,
     }
+    // Human input is material: it is never dropped, not even when the pending
+    // backlog is full. The overrun is counted so the operator can see it.
     this.#outbox.push(delivery)
+    if (this.#outbox.length > this.#maximumPendingDeliveries) this.#overBoundDeliveries += 1
     return delivery
   }
 
-  /** Owner-driven batch deadline: seals the open packet for the lead now. */
+  /**
+   * Owner-driven batch deadline: seals the open packet for the lead now.
+   *
+   * Returns the delivered packet, or `undefined` when the pending backlog was
+   * full and the open window held routine progress only — the window stays
+   * open in that case, so the latest snapshot per child survives for the next
+   * delivery instead of being dropped.
+   */
   flushDeadline(): ChildProgressEvidencePacket | undefined {
+    if (this.#atPendingBound() && this.#buffer.stats().pendingEntries === 0) {
+      this.#refusedRoutineDeliveries += 1
+      return undefined
+    }
     const packet = this.#buffer.flush()
-    if (packet) this.#enqueueEvidence(packet, 'deadline')
+    if (!packet) return undefined
+    if (!this.#enqueueEvidence(packet, 'deadline')) return undefined
     return packet
   }
 
@@ -1267,22 +1319,71 @@ export class ChildProgressLeadDispatcher {
     readonly routineEventsSinceDelivery: number
     readonly deliveredPacketCount: number
     readonly deliveredHumanInputCount: number
+    /**
+     * Routine deliveries refused because the pending backlog was full. The
+     * refusal is counted, never silent: the newest coalesced snapshot for
+     * every child stays in the open window and rides the next delivery.
+     */
+    readonly refusedRoutineDeliveryCount: number
+    /**
+     * Material deliveries admitted while the pending backlog was already full.
+     * Material evidence (a terminal outcome, an approval request) and human
+     * input are never dropped, so the backlog can exceed its bound only by
+     * these; the overrun is counted so the operator can see it.
+     */
+    readonly overBoundDeliveryCount: number
+    readonly maximumPendingDeliveries: number
   } {
     return {
       pendingDeliveries: this.#outbox.length,
       routineEventsSinceDelivery: this.#routineEventsSinceDelivery,
       deliveredPacketCount: this.#deliveredPackets,
       deliveredHumanInputCount: this.#deliveredHumanInputs,
+      refusedRoutineDeliveryCount: this.#refusedRoutineDeliveries,
+      overBoundDeliveryCount: this.#overBoundDeliveries,
+      maximumPendingDeliveries: this.#maximumPendingDeliveries,
     }
   }
 
+  /**
+   * A delivery that carries no retained entry is routine progress: it holds
+   * coalesced snapshots only, and the newest snapshot supersedes it. A delivery
+   * that carries a retained entry (a terminal outcome or an approval request)
+   * is material and is never dropped.
+   */
+  #isRoutine(packet: ChildProgressEvidencePacket): boolean {
+    return packet.entries.length === 0
+  }
+
+  /** True when the lead has not taken the pending deliveries yet. */
+  #atPendingBound(): boolean {
+    return this.#outbox.length >= this.#maximumPendingDeliveries
+  }
+
+  /**
+   * Places a sealed packet on the outbox.
+   *
+   * Returns `false` when a routine delivery was refused because the pending
+   * backlog was full; material evidence is always delivered, and an overrun is
+   * counted.
+   */
   #enqueueEvidence(
     packet: ChildProgressEvidencePacket,
     trigger: Extract<ChildProgressLeadDelivery, { kind: 'evidence' }>['trigger']
-  ): void {
+  ): boolean {
+    if (this.#atPendingBound() && this.#isRoutine(packet)) {
+      // The backlog is full of deliveries the lead has not taken yet. Routine
+      // progress is coalesced state, so the newest snapshot supersedes it:
+      // refusing keeps the pending deliveries bounded and keeps the lead's
+      // input latency bounded by the bound rather than by the backlog.
+      this.#refusedRoutineDeliveries += 1
+      return false
+    }
     this.#sequence += 1
     this.#deliveredPackets += 1
     this.#outbox.push({ kind: 'evidence', sequence: this.#sequence, packet, trigger })
+    if (this.#outbox.length > this.#maximumPendingDeliveries) this.#overBoundDeliveries += 1
+    return true
   }
 }
 

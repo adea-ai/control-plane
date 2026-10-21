@@ -128,6 +128,10 @@ test('two siblings under one real parent compose through coordinator admission, 
     const publications = new SqliteDelegationEventPublisher(provider, ids.parentExecutionId)
     const dispatcher = new ChildProgressLeadDispatcher({
       buffer: new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId }),
+      // One pending delivery at a time: the backlog is bounded even when the
+      // lead does not drain it, and the two siblings' terminal evidence is
+      // still delivered.
+      maximumPendingDeliveries: 1,
     })
     const leadFeed = new ChildProgressLeadFeed({
       publications,
@@ -310,6 +314,12 @@ test('two siblings under one real parent compose through coordinator admission, 
       new Set(branchIds.map((branch) => branch.delegationId))
     )
     expect(JSON.stringify(evidence)).not.toContain('Complete researcher branch')
+    // Both siblings' terminal evidence was delivered even though the pending
+    // backlog held at most one delivery: material evidence is never dropped to
+    // satisfy the bound, and the overrun is counted rather than hidden.
+    expect(dispatcher.stats().maximumPendingDeliveries).toBe(1)
+    expect(dispatcher.stats().overBoundDeliveryCount).toBeGreaterThan(0)
+    expect(dispatcher.stats().pendingDeliveries).toBe(0)
 
     // 8. Real restart: close and reopen the durable store.
     provider.close()

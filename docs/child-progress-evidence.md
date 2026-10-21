@@ -17,7 +17,18 @@ stay wired to the canonical durable paths rather than a parallel ledger.
   critical observations (awaiting input, terminal outcomes) reach the outbox in
   the same scheduling step that accepted them, routine progress coalesces under
   bounded pressure, and every delivery carries a monotonic `sequence` so
-  consumers can detect reordering.
+  consumers can detect reordering. The pending backlog is bounded too
+  (`maximumPendingDeliveries`, default 256): a lead that does not drain cannot
+  let routine progress accumulate without limit, so the latency of a human
+  input queued behind that backlog stays bounded. The bound is applied to the
+  unbounded stream — routine progress — and never to material evidence: a
+  delivery carrying a retained entry (a terminal outcome or an approval
+  request) and every human input are delivered even when the backlog is full.
+  A refused routine delivery is counted (`refusedRoutineDeliveryCount`), and
+  the open window is kept open instead of being sealed, so the newest coalesced
+  snapshot for every child rides the next delivery rather than being dropped;
+  an admitted material delivery past the bound is counted as well
+  (`overBoundDeliveryCount`), so no loss is silent.
 - **`ChildProgressLeadFeed`** is the live wiring: it implements the canonical
   `DelegationEventPublisher` over the durable publication inbox
   (`SqliteDelegationEventPublisher`), so every publication the
@@ -135,3 +146,10 @@ stay wired to the canonical durable paths rather than a parallel ledger.
 - Evidence and usage states are projections; authoritative money, publications
   and identity remain the durable usage ledger, delegation publications, and
   canonical execution/attempt records.
+- The bounded surfaces are the packets and the pending delivery backlog. The
+  retained outcome set is deliberately _not_ bounded: `ChildUsageLedger` keeps
+  one entry per child attempt (and the durable outcome store keeps a
+  forward-only revision per change), because acceptance item 4 asks for
+  material outcomes to be retained. The ledger's own dedup and superseded-report
+  horizons are bounded, so an attempt's _history_ cannot grow without limit
+  even though the number of retained attempts can.

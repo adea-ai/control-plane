@@ -1585,11 +1585,137 @@ describe('responsive lead delivery with two running children', () => {
           maximumCoalescedEventsPerDelivery: 0,
         })
     ).toThrow(ChildProgressEvidenceError)
+    expect(
+      () =>
+        new ChildProgressLeadDispatcher({
+          buffer: new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId }),
+          maximumPendingDeliveries: 0,
+        })
+    ).toThrow(ChildProgressEvidenceError)
     const dispatcher = new ChildProgressLeadDispatcher({
       buffer: new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId }),
     })
     expect(() => dispatcher.acceptHumanInput({ kind: 'input', receivedAt: at(0) })).toThrow()
     expect(dispatcher.takeDeliveries()).toStrictEqual([])
+  })
+})
+
+describe('bounded lead delivery backlog', () => {
+  const childA = { delegationId: ids.delegationIdA, childExecutionId: ids.childExecutionIdA }
+  const childEvent = (child, overrides = {}) =>
+    runningEvent({
+      delegationId: child.delegationId,
+      childExecutionId: child.childExecutionId,
+      ...overrides,
+    })
+
+  test('routine progress is refused while the pending backlog is full, and the newest snapshot survives', () => {
+    const dispatcher = new ChildProgressLeadDispatcher({
+      buffer: trackedBuffer({ parentExecutionId: ids.parentExecutionId }),
+      maximumCoalescedEventsPerDelivery: 1,
+      maximumPendingDeliveries: 2,
+    })
+
+    // Two routine events seal two packets: the backlog is now at its bound.
+    dispatcher.acceptProgress(childEvent(childA, { observedAt: at(0) }))
+    dispatcher.acceptProgress(childEvent(childA, { observedAt: at(1) }))
+    expect(dispatcher.stats().pendingDeliveries).toBe(2)
+
+    // Further routine progress is refused instead of growing the backlog.
+    for (let index = 2; index < 8; index += 1) {
+      dispatcher.acceptProgress(childEvent(childA, { observedAt: at(index) }))
+    }
+    expect(dispatcher.stats().pendingDeliveries).toBe(2)
+    expect(dispatcher.stats().refusedRoutineDeliveryCount).toBeGreaterThan(0)
+    expect(dispatcher.stats().overBoundDeliveryCount).toBe(0)
+
+    // The lead takes the backlog, and the next routine delivery still carries
+    // the child's newest state: the refused seals kept the window open, so no
+    // child state was dropped.
+    expect(dispatcher.takeDeliveries()).toHaveLength(2)
+    dispatcher.acceptProgress(childEvent(childA, { observedAt: at(8) }))
+    const deliveries = dispatcher.takeDeliveries()
+    expect(deliveries).toHaveLength(1)
+    expect(deliveries[0].packet.childSnapshots).toHaveLength(1)
+    expect(deliveries[0].packet.childSnapshots[0].observedEventCount).toBe(9)
+  })
+
+  test('material evidence is never dropped while the pending backlog is full', () => {
+    const dispatcher = new ChildProgressLeadDispatcher({
+      buffer: trackedBuffer({ parentExecutionId: ids.parentExecutionId }),
+      maximumCoalescedEventsPerDelivery: 1,
+      maximumPendingDeliveries: 1,
+    })
+    dispatcher.acceptProgress(childEvent(childA, { observedAt: at(0) }))
+    expect(dispatcher.stats().pendingDeliveries).toBe(1)
+
+    // A terminal outcome is material: it is delivered even though the backlog
+    // is full, and the overrun is counted rather than hidden.
+    const terminal = dispatcher.acceptProgress(
+      childEvent(childA, {
+        phase: 'completed',
+        observedAt: at(1),
+        terminalResultRef: ids.resultRefA,
+      })
+    )
+    expect(terminal).toMatchObject({ outcome: 'retained', entryKind: 'terminal' })
+    expect(dispatcher.stats().pendingDeliveries).toBe(2)
+    expect(dispatcher.stats().overBoundDeliveryCount).toBe(1)
+    expect(dispatcher.stats().refusedRoutineDeliveryCount).toBe(0)
+
+    const deliveries = dispatcher.takeDeliveries()
+    expect(deliveries).toHaveLength(2)
+    expect(deliveries[1].trigger).toBe('critical')
+    expect(deliveries[1].packet.entries[0].terminalResultRef).toBe(ids.resultRefA)
+  })
+
+  test('human input is never dropped while the pending backlog is full', () => {
+    const dispatcher = new ChildProgressLeadDispatcher({
+      buffer: trackedBuffer({ parentExecutionId: ids.parentExecutionId }),
+      maximumCoalescedEventsPerDelivery: 1,
+      maximumPendingDeliveries: 1,
+    })
+    dispatcher.acceptProgress(childEvent(childA, { observedAt: at(0) }))
+    expect(dispatcher.stats().pendingDeliveries).toBe(1)
+
+    const input = dispatcher.acceptHumanInput({
+      interactionId: ids.interactionId,
+      kind: 'input',
+      receivedAt: at(1),
+    })
+    expect(dispatcher.stats().pendingDeliveries).toBe(2)
+    expect(dispatcher.stats().overBoundDeliveryCount).toBe(1)
+
+    const deliveries = dispatcher.takeDeliveries()
+    expect(deliveries.map((delivery) => delivery.kind)).toStrictEqual(['evidence', 'human_input'])
+    expect(deliveries[1].sequence).toBe(input.sequence)
+  })
+
+  test('the deadline flush keeps the window open while the backlog is full and loses no state', () => {
+    const dispatcher = new ChildProgressLeadDispatcher({
+      buffer: trackedBuffer({ parentExecutionId: ids.parentExecutionId }),
+      maximumCoalescedEventsPerDelivery: 128,
+      maximumPendingDeliveries: 1,
+    })
+    dispatcher.acceptProgress(childEvent(childA, { observedAt: at(0) }))
+    dispatcher.acceptProgress(childEvent(childA, { observedAt: at(1) }))
+    // Fill the backlog with a routine delivery.
+    dispatcher.flushDeadline()
+    expect(dispatcher.stats().pendingDeliveries).toBe(1)
+
+    dispatcher.acceptProgress(childEvent(childA, { observedAt: at(2) }))
+    // The deadline flush is refused while the backlog is full: the window stays
+    // open, so the newest snapshot per child is still there for the next
+    // delivery.
+    expect(dispatcher.flushDeadline()).toBeUndefined()
+    expect(dispatcher.stats().refusedRoutineDeliveryCount).toBe(1)
+    expect(dispatcher.stats().pendingDeliveries).toBe(1)
+
+    dispatcher.takeDeliveries()
+    const packet = dispatcher.flushDeadline()
+    expect(packet).toBeDefined()
+    expect(packet.childSnapshots).toHaveLength(1)
+    expect(packet.childSnapshots[0].observedEventCount).toBe(3)
   })
 })
 
