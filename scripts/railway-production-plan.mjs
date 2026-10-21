@@ -157,7 +157,15 @@ export function planProductionConfig(options = {}) {
     injectedRunner ?? ((args, commandOptions) => runRailway(args, commandOptions.env))
   const railwayBinary = injectedRunner ? (env._ ?? 'railway') : findRailwayBinary(env.PATH)
   const callRailway = (args, commandOptions) => {
-    const result = runCommand(args, commandOptions)
+    let result
+    try {
+      result = runCommand(args, commandOptions)
+    } catch {
+      // A runner that throws carries no Railway output, so it earns the same
+      // refusal a failed command earns: the command is named, the output is
+      // not repeated, and the failure is not mistaken for a plan.
+      throw new Error(`Railway ${args[0]} command failed; output was withheld.`)
+    }
     if (typeof result === 'string') return result
     if (result?.error || result?.status !== 0) {
       throw new Error(`Railway ${args[0]} command failed; output was withheld.`)
