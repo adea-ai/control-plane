@@ -1,11 +1,14 @@
 import { JSONC } from 'bun'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { access, readFile, readdir, writeFile } from 'node:fs/promises'
-import { basename, relative, resolve } from 'node:path'
+import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { basename, isAbsolute, relative, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { compareCodePointOrder } from '../packages/contracts/src/canonical-json.ts'
+import {
+  canonicalJsonStringify,
+  compareCodePointOrder,
+} from '../packages/contracts/src/canonical-json.ts'
 
 function formatMarkdown(text) {
   const result = spawnSync(
@@ -91,6 +94,27 @@ const lifecycleConcerns = [
   'state-machine-and-cas',
 ]
 const traceStages = ['auth', 'service', 'persistence', 'execution', 'delivery', 'cleanup']
+// Every HTTP verb the Control API can bind. Path-item keys that are not verbs
+// (`parameters`, `summary`, `description`, ...) are OpenAPI documentation, not
+// operations, and must never be discovered as public operations.
+const httpMethods = ['delete', 'get', 'head', 'options', 'patch', 'post', 'put']
+const controllerDecorators = ['All', 'Delete', 'Get', 'Head', 'Options', 'Patch', 'Post', 'Put']
+// Sources that decide which Control API capability bindings a profile composes.
+// These are the entrypoint/composition files that assemble the API options; the
+// per-profile digest list is deliberately separate because the canonical audit
+// pins its own digests (that list is W1-owned and must not move under this audit).
+const profileBindingSources = {
+  cloud: ['apps/control-api/src/index.ts', 'apps/control-api/src/cloud-composition.ts'],
+  'hosted-server': [
+    'apps/hosted-control-plane/src/index.ts',
+    'apps/hosted-control-plane/src/composition.ts',
+  ],
+  'hosted-simple': [
+    'apps/local-control-plane/src/index.ts',
+    'apps/local-control-plane/src/composition.ts',
+  ],
+  local: ['apps/local-control-plane/src/index.ts', 'apps/local-control-plane/src/composition.ts'],
+}
 const profilePorts = {
   cloud: {
     coordination: 'not-composed',
@@ -220,25 +244,28 @@ export async function discoverArchitecture(rootUrl = new URL('..', import.meta.u
   )
   const openapiOperations = Object.entries(openApi.paths)
     .flatMap(([path, methods]) =>
-      Object.entries(methods).map(([method, operation]) => ({
-        path,
-        method: method.toUpperCase(),
-        operationId: operation.operationId,
-        responseStatuses: Object.keys(operation.responses ?? {}).toSorted(),
-        secured: Array.isArray(operation.security) && operation.security.length > 0,
-        hasRequestSchema:
-          operation.requestBody?.content?.['application/json']?.schema !== undefined,
-      }))
+      Object.entries(methods)
+        .filter(([method]) => httpMethods.includes(method.toLowerCase()))
+        .map(([method, operation]) => ({
+          path,
+          method: method.toUpperCase(),
+          operationId: operation.operationId,
+          responseStatuses: Object.keys(operation.responses ?? {}).toSorted(),
+          secured: Array.isArray(operation.security) && operation.security.length > 0,
+          hasRequestSchema:
+            operation.requestBody?.content?.['application/json']?.schema !== undefined,
+        }))
     )
-    .toSorted((left, right) => compareCodePointOrder(left.operationId, right.operationId))
-  const controllerFiles = (await walk(resolve(root, 'apps/control-api/src'))).filter((path) =>
-    path.endsWith('.controller.ts')
-  )
-  const controllerPaths = (
-    await Promise.all(controllerFiles.map((path) => discoverControllerPaths(path)))
-  )
-    .flat()
-    .toSorted()
+    .toSorted(
+      (left, right) =>
+        compareCodePointOrder(left.operationId ?? '', right.operationId ?? '') ||
+        compareCodePointOrder(left.path, right.path) ||
+        compareCodePointOrder(left.method, right.method)
+    )
+  const versioning = await discoverVersioningDefaults(root)
+  const controllerRoutes = await discoverControllerRoutes(root, versioning)
+  const capabilityBindings = await discoverCapabilityBindings(root)
+  const migrationInventory = await discoverMigrationInventory(root)
   const profileSourceDigests = Object.fromEntries(
     await Promise.all(
       [
@@ -260,9 +287,122 @@ export async function discoverArchitecture(rootUrl = new URL('..', import.meta.u
     releaseManifest,
     sdkOperations,
     openapiOperations,
-    controllerPaths,
+    controllerRoutes,
+    capabilityBindings,
+    migrationInventory,
     profileSourceDigests,
   }
+}
+
+/**
+ * Measures the migration registry of both persistence dialects.
+ *
+ * The canonical audit states migration and schema figures in prose. Measuring
+ * them here keeps the next re-baseline on recorded numbers instead of
+ * remembered ones, and catches a PostgreSQL registry whose SQL files and
+ * Drizzle journal disagree.
+ */
+export async function discoverMigrationInventory(root) {
+  const drizzleDirectory = resolve(root, 'packages/database/drizzle')
+  const sqlFiles = (await readdir(drizzleDirectory))
+    .filter((name) => name.endsWith('.sql'))
+    .toSorted()
+  const journal = JSONC.parse(
+    await readFile(resolve(drizzleDirectory, 'meta/_journal.json'), 'utf8')
+  )
+  const journalEntries = Array.isArray(journal?.entries) ? journal.entries : []
+  const sqliteSource = await readFile(
+    resolve(root, 'packages/sqlite-persistence/src/migrations.ts'),
+    'utf8'
+  )
+  const sqliteVersions = [...sqliteSource.matchAll(/\{\s*version:\s*(\d+),\s*statements:/g)].map(
+    (match) => Number(match[1])
+  )
+  return {
+    postgres: {
+      sqlFiles: sqlFiles.length,
+      lastSqlFile: sqlFiles.at(-1) ?? null,
+      journalEntries: journalEntries.length,
+      lastJournalTag: journalEntries.at(-1)?.tag ?? null,
+    },
+    sqlite: {
+      schemaVersion: sqliteVersions.length === 0 ? null : Math.max(...sqliteVersions),
+      versions: sqliteVersions,
+    },
+  }
+}
+
+/**
+ * Discovers the Control API capability bindings that exist only as a default.
+ *
+ * Every optional capability the Control API module accepts has a default
+ * provider. When that default is an `Unavailable*`, `Disabled*` or `Empty*`
+ * implementation, the capability is a disabled binding: a composition that
+ * does not supply its own implementation serves a route that always refuses.
+ * Those are the dead ends the reachability audit has to surface.
+ */
+export async function discoverCapabilityBindings(root) {
+  const modulePath = 'apps/control-api/src/app.module.ts'
+  const source = await readFile(resolve(root, modulePath), 'utf8')
+  const defaults = [...source.matchAll(/options\.(\w+)\s*\?\?\s*new\s+(\w+)\s*\(/g)].map(
+    (match) => ({
+      option: match[1],
+      implementation: match[2],
+      disabled: /^(Unavailable|Disabled|Empty)/.test(match[2]),
+    })
+  )
+  const uniqueDefaults = [
+    ...new Map(defaults.map((entry) => [entry.option, entry])).values(),
+  ].toSorted((left, right) => compareCodePointOrder(left.option, right.option))
+  const profiles = {}
+  for (const [profile, paths] of Object.entries(profileBindingSources)) {
+    const sources = await Promise.all(
+      paths.map(async (path) => {
+        try {
+          return await readFile(resolve(root, path), 'utf8')
+        } catch {
+          return ''
+        }
+      })
+    )
+    const bound = uniqueDefaults
+      .filter((entry) => sources.some((text) => bindsCapabilityOption(text, entry.option)))
+      .map((entry) => entry.option)
+      .toSorted()
+    profiles[profile] = {
+      bound,
+      // A capability the profile never binds is served by the Control API from
+      // its unavailable default, so the route exists and always refuses.
+      unbound: uniqueDefaults
+        .filter((entry) => entry.disabled && !bound.includes(entry.option))
+        .map((entry) => entry.option)
+        .toSorted(),
+    }
+  }
+  return { defaults: uniqueDefaults, profiles }
+}
+
+/**
+ * Conservative source scan for a capability binding.
+ *
+ * A capability counts as bound when the option name appears as an object
+ * literal key (`executionAcceptanceService:`) or as a shorthand property
+ * (`{ executionAcceptanceService }`). Type members, member access
+ * (`composition.executionAcceptanceService`) and unrelated prose are not
+ * bindings and are ignored.
+ */
+export function bindsCapabilityOption(source, option) {
+  const pattern = new RegExp(`(?<![A-Za-z0-9_$])${option}(?![A-Za-z0-9_$])`, 'g')
+  for (const match of source.matchAll(pattern)) {
+    const before = source.slice(Math.max(0, match.index - 64), match.index)
+    const after = source.slice(match.index + option.length, match.index + option.length + 8)
+    if (/\breadonly\s+$/.test(before)) continue
+    if (/\?\s*$/.test(before) && /^\s*:/.test(after)) continue
+    if (!/[{,]\s*$/.test(before) && /[.\w$'"]\s*$/.test(before)) continue
+    if (/^\s*:/.test(after)) return true
+    if (/^\s*[},]/.test(after)) return true
+  }
+  return false
 }
 
 export async function validateArchitectureAudit(audit, options = {}) {
@@ -316,6 +456,18 @@ export async function validateArchitectureAudit(audit, options = {}) {
     discoveredPackages.some(({ path, version }) => discovered.releaseManifest?.[path] !== version)
   ) {
     errors.push('workspace package versions drifted from release-please manifest')
+  }
+  // The lockfile records each workspace's own version. A recorded version that
+  // lags the manifest means the lockfile metadata no longer describes the
+  // workspace it locks, and no other gate compares the two.
+  const lockDrift = discoveredPackages
+    .filter(({ version, lockVersion }) => lockVersion !== null && lockVersion !== version)
+    .map(({ path, version, lockVersion }) => `${path} ${version}/${lockVersion}`)
+    .toSorted()
+  if (lockDrift.length > 0) {
+    warnings.push(
+      `workspace package versions drifted from the Bun lockfile: ${lockDrift.join(', ')}`
+    )
   }
   const packageByName = new Map(discoveredPackages.map((entry) => [entry.name, entry]))
   for (const entry of discoveredPackages.filter(({ layer }) => layer === 'core-port')) {
@@ -375,7 +527,12 @@ export async function validateArchitectureAudit(audit, options = {}) {
     if (JSON.stringify(Object.keys(profile.ports ?? {}).toSorted()) !== JSON.stringify(portIds)) {
       errors.push(`${profile.id}: infrastructure port inventory is incomplete`)
     }
-    if (JSON.stringify(profile.ports) !== JSON.stringify(profilePorts[profile.id])) {
+    // The port map is a map, not a list: JSON key order carries no meaning, so a
+    // reordered-but-identical binding map must not read as drift.
+    if (
+      canonicalJsonStringify(profile.ports ?? {}) !==
+      canonicalJsonStringify(profilePorts[profile.id] ?? {})
+    ) {
       errors.push(`${profile.id}: infrastructure port bindings drifted`)
     }
     if (profile.sourceDigest !== discovered.profileSourceDigests[profile.id]) {
@@ -385,6 +542,17 @@ export async function validateArchitectureAudit(audit, options = {}) {
   const parityIds = (audit.persistenceParity ?? []).map(({ id }) => id).toSorted()
   if (JSON.stringify(parityIds) !== JSON.stringify(persistenceIds)) {
     errors.push('persistence parity inventory drifted')
+  }
+  // The canonical audit carries both the parity rows and a flat inventory of
+  // their identifiers. The inventory was previously unvalidated dead data; it
+  // must agree with the rows it summarises.
+  if (Array.isArray(audit.persistenceParityInventory)) {
+    if (
+      canonicalJsonStringify([...audit.persistenceParityInventory].toSorted()) !==
+      canonicalJsonStringify(parityIds)
+    ) {
+      errors.push('persistence parity inventory drifted from the persistence parity rows')
+    }
   }
   const actualCompatibility = (audit.compatibilityMatrix ?? []).map(({ id }) => id).toSorted()
   if (JSON.stringify(actualCompatibility) !== JSON.stringify(compatibilityIds)) {
@@ -445,7 +613,88 @@ export async function validateArchitectureAudit(audit, options = {}) {
     ...(audit.lifecycleCoverage ?? []),
   ].map(({ id }) => id)
   if (new Set(ids).size !== ids.length) errors.push('audit row IDs must be unique')
+  reportContractSurface(errors, warnings, discovered)
   return { errors, warnings }
+}
+
+/**
+ * Cross-checks the three public-contract surfaces against each other.
+ *
+ * The SDK declares the public operations, the OpenAPI artifact publishes them,
+ * and the Control API controllers serve them. The SDK is the source of truth:
+ * an OpenAPI operation with no SDK binding is a published contract that no
+ * client can call, and a served route with no SDK binding is a public
+ * operation the reachability audit cannot trace.
+ */
+function reportContractSurface(errors, warnings, discovered) {
+  const sdkRoutes = discovered.sdkOperations.map((operation) => ({
+    method: operation.method,
+    path: operation.path,
+  }))
+  const servedBySdk = (method, path) => sdkRoutes.some((entry) => routeMatches(entry, method, path))
+  for (const operation of discovered.openapiOperations) {
+    // A path-item key that is not an HTTP verb is OpenAPI documentation, not an
+    // operation, and can never be an unbound public operation.
+    if (!httpMethods.includes(operation.method.toLowerCase())) continue
+    if (!servedBySdk(operation.method, operation.path)) {
+      errors.push(
+        `OpenAPI advertises an operation with no SDK binding: ${operation.method} ${operation.path}`
+      )
+    }
+  }
+  const unboundRoutes = (discovered.controllerRoutes ?? []).filter(
+    (route) => !servedBySdk(route.method, route.path)
+  )
+  if (unboundRoutes.length > 0) {
+    warnings.push(
+      `Control API serves ${unboundRoutes.length} HTTP route(s) with no SDK operation binding: ${unboundRoutes
+        .map((route) => `${route.method} ${route.path}`)
+        .join(', ')}`
+    )
+  }
+  const disabled = discovered.capabilityBindings?.defaults.filter((entry) => entry.disabled) ?? []
+  if (disabled.length > 0) {
+    warnings.push(
+      `Control API exposes ${disabled.length} capability binding(s) that default to an unavailable implementation: ${disabled
+        .map((entry) => entry.option)
+        .join(', ')}`
+    )
+  }
+  for (const [profile, bindings] of Object.entries(discovered.capabilityBindings?.profiles ?? {})) {
+    if (bindings.unbound.length > 0) {
+      warnings.push(
+        `${profile}: never binds ${bindings.unbound.length} capability binding(s), so the Control API serves them from an unavailable default: ${bindings.unbound.join(', ')}`
+      )
+    }
+  }
+  const digests = discovered.profileSourceDigests ?? {}
+  const colliding = Object.entries(digests)
+    .filter(([, digest]) => digest !== undefined)
+    .filter(([profile, digest]) =>
+      Object.entries(digests).some(
+        ([other, otherDigest]) => other !== profile && otherDigest === digest
+      )
+    )
+    .map(([profile]) => profile)
+  if (colliding.length > 1) {
+    warnings.push(
+      `profiles ${colliding.join(' and ')} share one composition source digest, so a change to the source that separates them is not digest-covered`
+    )
+  }
+  const migrations = discovered.migrationInventory
+  if (migrations !== undefined) {
+    const { postgres, sqlite } = migrations
+    if (postgres.sqlFiles !== postgres.journalEntries) {
+      errors.push(
+        `PostgreSQL migration registry drifted: ${postgres.sqlFiles} SQL file(s) against ${postgres.journalEntries} Drizzle journal entr(ies)`
+      )
+    }
+    if (postgres.sqlFiles > 0 && sqlite.schemaVersion !== null) {
+      warnings.push(
+        `measured migration inventory: PostgreSQL ${postgres.sqlFiles} migration(s) up to ${postgres.lastSqlFile}, SQLite schema version ${sqlite.schemaVersion}`
+      )
+    }
+  }
 }
 
 export async function renderArchitectureReport(audit) {
@@ -565,15 +814,68 @@ function exportKeys(exports) {
   return typeof exports === 'string' ? ['.'] : Object.keys(exports).toSorted()
 }
 
-async function discoverControllerPaths(path) {
-  const source = await readFile(path, 'utf8')
-  const controller = source.match(/@Controller\(\{([^}]+)\}\)/s)?.[1] ?? ''
-  const version = controller.match(/version:\s*'([^']+)'/)?.[1]
-  const base = controller.match(/path:\s*'([^']+)'/)?.[1] ?? ''
-  if (version === undefined) return []
-  return [...source.matchAll(/@Post\('([^']+)'\)/g)].map(
-    (match) => `/${['v' + version, base, match[1]].filter(Boolean).join('/')}`
+/**
+ * Reads the Nest URI-versioning defaults the API actually serves with, so a
+ * controller that does not pin its own version is resolved the same way the
+ * running application resolves it instead of being dropped from discovery.
+ */
+export async function discoverVersioningDefaults(root) {
+  const source = await readFile(resolve(root, 'apps/control-api/src/application.ts'), 'utf8')
+  const defaultVersion = source.match(/defaultVersion:\s*'([^']*)'/)?.[1]
+  const prefix = source.match(/prefix:\s*'([^']*)'/)?.[1]
+  return {
+    defaultVersion: defaultVersion ?? '1',
+    prefix: prefix ?? 'v',
+  }
+}
+
+/**
+ * Resolves the URI segment a controller contributes. `VERSION_NEUTRAL` serves the
+ * route unversioned; a pinned version serves `v<version>`; a controller without
+ * a version inherits the application's default version.
+ */
+function controllerVersionSegment(controller, versioning) {
+  if (/version:\s*VERSION_NEUTRAL\b/.test(controller)) return null
+  const pinned = controller.match(/version:\s*'([^']*)'/)?.[1]
+  const version = pinned ?? versioning.defaultVersion
+  if (version === '' || version === 'VERSION_NEUTRAL') return null
+  return `${versioning.prefix}${version}`
+}
+
+/**
+ * Discovers every HTTP route the Control API controllers serve, keeping the
+ * HTTP method with the path. Reachability is a method-and-path property: a
+ * `GET` route never satisfies a `POST` operation.
+ */
+export async function discoverControllerRoutes(root, versioning) {
+  const controllerFiles = (await walk(resolve(root, 'apps/control-api/src'))).filter((path) =>
+    path.endsWith('.controller.ts')
   )
+  const routes = (
+    await Promise.all(
+      controllerFiles.map(async (path) => {
+        const source = await readFile(path, 'utf8')
+        const controller = source.match(/@Controller\(\{([^}]*)\}\)/s)?.[1]
+        if (controller === undefined) return []
+        const version = controllerVersionSegment(controller, versioning)
+        const base = controller.match(/path:\s*'([^']*)'/)?.[1] ?? ''
+        const decorator = new RegExp(`@(${controllerDecorators.join('|')})\\('([^']*)'\\)`, 'g')
+        return [...source.matchAll(decorator)].map((match) => ({
+          method: match[1].toUpperCase(),
+          path: `/${[version, base, match[2]].filter(Boolean).join('/')}`,
+          controller: relative(root, path),
+        }))
+      })
+    )
+  )
+    .flat()
+    .toSorted(
+      (left, right) =>
+        compareCodePointOrder(left.path, right.path) ||
+        compareCodePointOrder(left.method, right.method) ||
+        compareCodePointOrder(left.controller, right.controller)
+    )
+  return routes
 }
 
 async function walk(directory) {
@@ -599,7 +901,8 @@ async function digestFiles(root, paths) {
   return `sha256:${digest.digest('hex')}`
 }
 
-function discoverPublicOperations(discovered) {
+export function discoverPublicOperations(discovered) {
+  const routes = discovered.controllerRoutes ?? []
   return discovered.sdkOperations.map((operation) => {
     const openApi = discovered.openapiOperations.find(
       (entry) => entry.path === operation.path && entry.method === operation.method
@@ -611,9 +914,19 @@ function discoverPublicOperations(discovered) {
       openApiResponseStatuses: openApi?.responseStatuses ?? [],
       openApiSecured: openApi?.secured ?? false,
       openApiHasRequestSchema: openApi?.hasRequestSchema ?? false,
-      controllerReachable: discovered.controllerPaths.includes(operation.path),
+      // Reachability is a method-and-path property: a route served under a
+      // different HTTP verb does not make the operation reachable.
+      controllerReachable: routes.some((route) =>
+        routeMatches(route, operation.method, operation.path)
+      ),
     }
   })
+}
+
+/** A route serves an operation when the path matches and the verb does too. `@All` serves every verb. */
+function routeMatches(route, method, path) {
+  if (route.path !== path) return false
+  return route.method === 'ALL' || route.method === method
 }
 
 function dependencyCycles(packages) {
@@ -663,10 +976,28 @@ async function validateEvidence(errors, row, root) {
       errors.push(`${row.id}: evidence kind and path are required`)
       continue
     }
+    // Evidence must be a repository-relative file inside the audited checkout:
+    // an absolute or escaping path could cite anything on the host, and a
+    // directory is not a citable artifact.
+    if (isAbsolute(evidence.path)) {
+      errors.push(`${row.id}: evidence path must be repository-relative: ${evidence.path}`)
+      continue
+    }
+    const resolved = resolve(root, evidence.path)
+    const inside = relative(root, resolved)
+    if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
+      errors.push(`${row.id}: evidence path escapes the repository: ${evidence.path}`)
+      continue
+    }
+    let stats
     try {
-      await access(resolve(root, evidence.path))
+      stats = await stat(resolved)
     } catch {
       errors.push(`${row.id}: evidence path does not exist: ${evidence.path}`)
+      continue
+    }
+    if (!stats.isFile()) {
+      errors.push(`${row.id}: evidence path is not a file: ${evidence.path}`)
     }
   }
 }
