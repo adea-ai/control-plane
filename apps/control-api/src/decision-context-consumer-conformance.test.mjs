@@ -215,56 +215,96 @@ describe('decision-layer context consumer conformance (#558)', () => {
   }, 120_000)
 
   test('replays deterministically and re-checks the current catalog authorization', async () => {
-    const harness = await createHarness('local', { isolated: true, label: 'replay' })
-    const first = await resolveCanonicalObjective(harness)
-    const replay = await resolveCanonicalObjective(harness)
-    expect(replay).toEqual(first)
+    for (const profile of availableProfiles()) {
+      // Each composition replays on its own store, so a revocation in one
+      // composition never reaches the records another composition resolves.
+      const harness = await createHarness(profile, { isolated: true, label: `replay-${profile}` })
+      const first = await resolveCanonicalObjective(harness)
+      const replay = await resolveCanonicalObjective(harness)
+      expect(replay).toEqual(first)
 
-    // The profile version the plan consumes is revoked after the plan was
-    // certified. The replay must not resolve a revoked version again, even
-    // though the recorded result is unchanged.
-    await harness.revokeProfileVersion()
-    await expect(
-      harness.validationService.validate(harness.validationRequest, canonicalPrincipalId)
-    ).rejects.toMatchObject({ response: { code: 'EXECUTION_VALIDATION_REJECTED' } })
-  }, 120_000)
+      // The profile version the plan consumes is revoked after the plan was
+      // certified. The replay must not resolve a revoked version again, even
+      // though the recorded result is unchanged.
+      await harness.revokeProfileVersion()
+      await expect(
+        harness.validationService.validate(harness.validationRequest, canonicalPrincipalId)
+      ).rejects.toMatchObject({ response: { code: 'EXECUTION_VALIDATION_REJECTED' } })
+    }
+  }, 300_000)
 
   test('refuses a replay whose catalog approval no longer holds', async () => {
-    const harness = await createHarness('local', {
-      isolated: true,
-      label: 'approval-gate',
-      approvalGate: true,
-      enableProviderComposition: true,
-    })
-    const first = await resolveCanonicalObjective(harness)
-    // The provider composed the context once, when the context was assembled.
-    expect(harness.providerInvocations).toBe(1)
-    expect(harness.committedPlans).toHaveLength(1)
+    for (const profile of availableProfiles()) {
+      const harness = await createHarness(profile, {
+        label: `approval-gate-${profile}`,
+        approvalGate: true,
+        enableProviderComposition: true,
+      })
+      const first = await resolveCanonicalObjective(harness)
+      // The provider composed the context once, when the context was
+      // assembled.
+      expect(harness.providerInvocations).toBe(1)
+      expect(harness.committedPlans).toHaveLength(1)
 
-    // An unchanged approval keeps the replay idempotent: the same recorded
-    // plan, no second commit, and no second provider read.
-    const replay = await resolveCanonicalObjective(harness)
-    expect(replay.executionPlan).toEqual(first.executionPlan)
-    expect(harness.committedPlans).toHaveLength(1)
-    expect(harness.providerInvocations).toBe(1)
+      // An unchanged approval keeps the replay idempotent: the same recorded
+      // plan, no second commit, and no second provider read.
+      const replay = await resolveCanonicalObjective(harness)
+      expect(replay.executionPlan).toEqual(first.executionPlan)
+      expect(harness.committedPlans).toHaveLength(1)
+      expect(harness.providerInvocations).toBe(1)
 
-    // The pinned profile is de-approved: a newer decision for the same
-    // version no longer binds to it, so the version has no current approval.
-    await harness.deapproveProfileVersion()
-    await expect(
-      harness.validationService.validate(harness.validationRequest, canonicalPrincipalId)
-    ).rejects.toMatchObject({ response: { code: 'PROFILE_APPROVAL_MISSING' } })
-    await expect(
-      harness.profileResolutionService.resolve(
-        canonicalProfileResolutionRequest,
-        canonicalPrincipalId
-      )
-    ).rejects.toMatchObject({ response: { code: 'PROFILE_APPROVAL_MISSING' } })
+      // The pinned profile is de-approved: a newer decision for the same
+      // version no longer binds to it, so the version has no current approval.
+      await harness.deapproveProfileVersion()
+      await expect(
+        harness.validationService.validate(harness.validationRequest, canonicalPrincipalId)
+      ).rejects.toMatchObject({ response: { code: 'PROFILE_APPROVAL_MISSING' } })
+      await expect(
+        harness.profileResolutionService.resolve(
+          canonicalProfileResolutionRequest,
+          canonicalPrincipalId
+        )
+      ).rejects.toMatchObject({ response: { code: 'PROFILE_APPROVAL_MISSING' } })
 
-    // The refused replay read no provider and rewrote no plan.
-    expect(harness.providerInvocations).toBe(1)
+      // The refused replay read no provider and rewrote no plan.
+      expect(harness.providerInvocations).toBe(1)
+      expect(harness.committedPlans).toHaveLength(1)
+      expect(harness.committedPlans[0].contentDigest).toBe(first.executionPlan.contentDigest)
+    }
+  }, 300_000)
+
+  test('honors an explicit pin over the current default', async () => {
+    const harness = await createHarness('local', { label: 'pin-precedence' })
+    // A newer published version of the same profile exists. The explicit pin
+    // still wins over it, and the default selection still moves to it.
+    await insertTiedProfileVersions(harness, tieProfileVersionIds)
+    const pinned = await harness.profileResolutionService.resolve(
+      {
+        ...canonicalProfileResolutionRequest,
+        parameters: {
+          profileId: canonicalIds.profileId,
+          profileVersionId: canonicalIds.profileVersionId,
+        },
+      },
+      canonicalPrincipalId
+    )
+    expect(pinned.data.profile.profileVersionId).toBe(canonicalIds.profileVersionId)
+    const defaulted = await harness.profileResolutionService.resolve(
+      canonicalProfileResolutionRequest,
+      canonicalPrincipalId
+    )
+    expect(defaulted.data.profile.profileVersionId).not.toBe(canonicalIds.profileVersionId)
+
+    // The pinned context package is the one the plan consumes; the consumer
+    // does not substitute a freshly assembled one.
+    const resolved = await resolveCanonicalObjective(harness)
     expect(harness.committedPlans).toHaveLength(1)
-    expect(harness.committedPlans[0].contentDigest).toBe(first.executionPlan.contentDigest)
+    expect(harness.committedPlans[0].contextPackage.contextPackageId).toBe(
+      resolved.context.contextPackageId
+    )
+    expect(harness.committedPlans[0].contextPackage.contentDigest).toBe(
+      resolved.context.contentDigest
+    )
   }, 120_000)
 
   test('releases an allocated resource when its migration fails', async () => {
@@ -302,6 +342,24 @@ describe('decision-layer context consumer conformance (#558)', () => {
       })
     ).rejects.toBe(failure)
     expect(released).toBe(1)
+  })
+
+  test('releases an isolated harness whose seeding fails', async () => {
+    const failure = new Error('CP558_INJECTED_HARNESS_SEED_FAILURE')
+    await expect(
+      createHarness('local', {
+        isolated: true,
+        label: 'harness-seed-failure',
+        seedFailure: failure,
+      })
+    ).rejects.toBe(failure)
+    // The harness was never registered, and the store it had already
+    // allocated was released with it.
+    const entry = owned.entries.find(
+      (candidate) => candidate.label === 'isolated-store:local:harness-seed-failure'
+    )
+    expect(entry).toBeDefined()
+    expect(entry.released).toBe(true)
   })
 
   test('attempts every owned disposer and aggregates the cleanup failures', async () => {
@@ -761,7 +819,7 @@ async function createHarness(profile, options = {}) {
   const harness = await owned.guard(ownedStore, async () => {
     const catalog = new VersionedCatalog(store.catalog, store.catalog)
     const seeded = await seedCatalog(store)
-    await seedProjectState(store, scope)
+    await seedProjectState(store, scope, options.seedFailure)
 
     const grant = {
       ...canonicalContextCommandGrant,
@@ -1120,7 +1178,7 @@ async function insertTiedProfileVersions(harness, profileVersionIds) {
   }
 }
 
-async function seedProjectState(store, scope) {
+async function seedProjectState(store, scope, injectedFailure) {
   const projectStates = new ProjectStateService(
     store.projectStates,
     new InMemoryStatePromotionProposalRepository(),
@@ -1135,6 +1193,7 @@ async function seedProjectState(store, scope) {
   } catch {
     // The state already exists in this store; the mutation below is idempotent.
   }
+  if (injectedFailure !== undefined) throw injectedFailure
   await projectStates.applyMutation({
     mutationId: 'stm_01JABCDEF0123456789ABCDEFG',
     workspaceId: scope.workspaceId,

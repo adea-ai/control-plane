@@ -174,9 +174,11 @@ export function createOwnedResourceRegistry() {
     let released = false
     const entry = {
       label,
+      released: false,
       async release() {
         if (released) return
         released = true
+        entry.released = true
         await dispose()
       },
     }
@@ -185,6 +187,10 @@ export function createOwnedResourceRegistry() {
   }
   return {
     register,
+    /** The registered entries, so a case can observe what was released. */
+    get entries() {
+      return [...entries]
+    },
     /**
      * Allocates a resource, registers its disposer before the preparation
      * runs, and prepares it. A preparation failure releases the resource and

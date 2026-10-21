@@ -140,23 +140,25 @@ fixtures hold the canonical inputs and the matrix. The suite:
    objective, the assembled context and the resolved pins stay equal — the
    suite never requires a whole-digest equality across distinct runtime
    selections;
-4. replays deterministically and shows that a revoked profile version denies
-   the replay;
-5. shows, with a configured catalog approval gate, that an unchanged
-   approval keeps the replay idempotent while a de-approved pinned profile
-   denies the replay, without a provider read and without rewriting the
-   recorded plan;
+4. replays deterministically in every composition and shows that a revoked
+   profile version denies the replay;
+5. shows, in every composition and with a configured catalog approval gate,
+   that an unchanged approval keeps the replay idempotent while a
+   de-approved pinned profile denies the replay, without a provider read and
+   without rewriting the recorded plan;
 6. assembles context with no provider and with a fake alternate provider;
 7. denies denied scope, a foreign identity, a revoked or expired reference,
    an incompatible explicit pin, unsupported context and out-of-bounds
    context;
 8. proves the redaction rule and the absence of a leak, and that a context
-   reference whose content does not verify is not published; and
-9. proves the suite's own resource discipline: an allocation whose migration
-   fails is still released, an isolated allocation whose seeding fails is
-   still released with the original error kept, and every owned disposer is
-   attempted even when an earlier one fails, with the cleanup failures
-   aggregated around the original errors.
+   reference whose content does not verify is not published;
+9. proves that an explicit pin wins over the current default, for both the
+   profile version and the context package; and
+10. proves the suite's own resource discipline: an allocation whose
+    migration fails is still released, an isolated allocation whose seeding
+    fails is still released with the original error kept, and every owned
+    disposer is attempted even when an earlier one fails, with the cleanup
+    failures aggregated around the original errors.
 
 Five of those cases fail against the base implementation and pass only after
 the repairs in this record: restoring the base consumer services
@@ -170,7 +172,9 @@ holds", "selects the same default profile version regardless of the store
 order" and "refuses to publish a context reference whose content does not
 verify". The approval-gate case and the lifecycle-revoke case are distinct:
 the first denies through the catalog approval gate, the second through the
-version lifecycle.
+version lifecycle. The pin-precedence and the resource-discipline cases pass
+against the base as well, because they prove behavior this change preserves
+rather than repairs.
 
 The PostgreSQL legs need a configured database. They run when the database
 credentials are present, and a job that intends to qualify them sets
@@ -213,12 +217,12 @@ on branch `f2w1/cp558-context-consumer-27f17`.
 
 ```
 bun test src/decision-context-consumer-conformance.test.mjs --timeout 30000
-  15 pass, 0 fail (SQLite legs)
+  17 pass, 0 fail (SQLite legs)
 
 DATABASE_ADMIN_URL=… DATABASE_MIGRATION_URL=… DATABASE_URL=… \
   RUN_M10_POSTGRES_CONFORMANCE=true \
-  bun test src/decision-context-consumer-conformance.test.mjs --timeout 30000
-  15 pass, 0 fail (SQLite and PostgreSQL legs)
+  bun test src/decision-context-consumer-conformance.test.mjs --timeout 60000
+  17 pass, 0 fail (SQLite and PostgreSQL legs)
 
 bun --cwd apps/control-api test src
   710 pass, 15 skip, 1 fail
@@ -233,8 +237,10 @@ bun scripts/run-bun-test-group.mjs unit --timeout 30000
   4287 pass, 11 skip, 48 fail, 2 errors
   the same lane with the four repaired source files reverted to the base
   commit reports 4283 pass, 11 skip, 52 fail, 2 errors; the only difference
-  between the two runs is the four conformance cases that need the repair,
+  between the two runs is the conformance cases that need the repair,
   so every other failure is pre-existing
+  the conformance file alone, with the three consumer services reverted to
+  the base commit, now reports 12 pass and 5 fail
 bun run format:check
   All matched files use the correct format
 bun run lint
@@ -253,6 +259,16 @@ The cleanup and replay regressions in this record were added on top of that
 head, and were checked with the focused suite and the lightweight checks only
 (`format:check`, `lint`, and the `control-api` and `context` package type
 checks); the unit lane was not re-run for them.
+
+The focused consumer run covers the conformance suite, the application test
+and the two consumer service tests:
+
+```
+bun --cwd apps/control-api test src/decision-context-consumer-conformance.test.mjs \
+  src/application.test.mjs src/queries/profile-resolution.service.test.mjs \
+  src/executions/execution-validation-graph.test.mjs --timeout 60000
+  81 pass, 0 fail
+```
 
 Three repository checks fail in this environment for reasons outside this
 change, and all of them are preserved rather than worked around:
