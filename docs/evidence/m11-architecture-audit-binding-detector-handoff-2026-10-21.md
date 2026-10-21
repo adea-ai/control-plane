@@ -243,7 +243,7 @@ resolved, and the lookup deliberately stays that simple:
 
 ## 5. Regression coverage
 
-`scripts/m11-architecture-audit-regression.test.mjs` grows from 16 to 28 tests across this bundle.
+`scripts/m11-architecture-audit-regression.test.mjs` grows from 16 to 29 tests across this bundle.
 
 | Test                                                                                | Covers                                                                                                                                                                                                                |
 | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -292,7 +292,7 @@ the changed tooling. What was run, and what was deliberately not run, are record
 
 | Check                           | Command                                                                                                          | Result                                                                                        |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| F2W3 dedicated regression file  | `cd scripts && bun test --timeout 30000 m11-architecture-audit-regression.test.mjs`                              | 28 pass / 0 fail, 196 expects                                                                 |
+| F2W3 dedicated regression file  | `cd scripts && bun test --timeout 30000 m11-architecture-audit-regression.test.mjs`                              | 29 pass / 0 fail, 199 expects                                                                 |
 | W1's existing audit coverage    | `bun test tests/m11-architecture-audit.test.mjs`                                                                 | 7 pass / 0 fail, 193 expects                                                                  |
 | Canonical architecture audit    | `bun run architecture:check`                                                                                     | PASS (exit 0); output byte-identical to `51ae5991e`, `ccd2d1798`, `fc169f506` and `70017bd9a` |
 | Formatting of the changed files | `bun x oxfmt --check scripts/architecture-audit.mjs scripts/m11-architecture-audit-regression.test.mjs`          | all matched files use the correct format                                                      |
@@ -311,9 +311,6 @@ toolchain identity, so the full build, lint and smoke lanes cannot be executed h
 this task's instruction to run focused and static checks only.
 
 **Not run in this task, by instruction:** no full build, no coverage run, no full smoke lane, no
-full lint lane. The last full smoke-lane result on this branch is the one recorded for the
-`fc169f506` bundle head — 629 pass / 5 skip / 0 fail across 634 tests in 44 files, exit 0 — and the
-lane budget owner should re-measure after this repair lands.
 full lint lane. The last full smoke-lane result on this branch is the one recorded for the
 `fc169f506` bundle head — 629 pass / 5 skip / 0 fail across 634 tests in 44 files, exit 0 — and the
 lane budget owner should re-measure after this repair lands.

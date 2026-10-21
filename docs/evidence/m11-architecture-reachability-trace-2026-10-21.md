@@ -15,7 +15,7 @@ registration. Those stay with their current owners.
 | Repository                                        | `adea-ai/control-plane`                                                                 |
 | Branch                                            | `f2w3/cp187-architecture-audit`                                                         |
 | Base commit                                       | `27f17bd55e0266439b5b3089163195c9e7a669be` (`chore(main): release 1.105.5 (#1209)`)     |
-| Change under review                               | the head of `f2w3/cp187-architecture-audit`; three owned files, sections 8 and 12       |
+| Change under review                               | the head of `f2w3/cp187-architecture-audit`; four owned files, sections 8, 12 and 13    |
 | Audited candidate recorded by the canonical audit | `6c922d487c3c2e70a047c11c55a1cb4ddbabad26` (`main`, recorded 2026-10-01)                |
 | Toolchain                                         | Bun 1.4.3, Node 24.21.0, `darwin-arm64` (`.bun-version`, `.node-version`)               |
 | Commands                                          | `bun scripts/architecture-audit.mjs`, `bun test tests/m11-architecture-audit*.test.mjs` |
@@ -489,7 +489,7 @@ New exports used by the regression file: `discoverVersioningDefaults`, `discover
 
 ### Deterministic negative drift checks
 
-`scripts/m11-architecture-audit-regression.test.mjs` (new, dedicated) contains 28 tests. Each one
+`scripts/m11-architecture-audit-regression.test.mjs` (new, dedicated) contains 29 tests. Each one
 mutates a clone of the canonical audit, of the discovered state, or of a synthetic fixture, and
 asserts that the tooling fails closed. None of them edits the canonical artifact, and none of them
 writes into the checkout: the fixtures are built in a temporary directory and removed afterwards.
@@ -561,8 +561,9 @@ touched.
 repository's lane system requires every `tests/**` file to be registered:
 
 - `scripts/run-bun-test-group.mjs` (`discoverTestInventory`) walks `apps/`, `packages/` and
-  `tests/`, and throws `Test lane inventory drift: unowned [...]` for any `*.test.mjs` file that
-  no lane claims.
+  `tests/` only, so it never sees a `scripts/**/*.test.mjs` file at all. Such a path is in neither
+  the discovered set nor any lane list, so it is reported neither as `unowned` nor as `missing`,
+  and the drift check stays silent about it.
 - `tests/repository.test.mjs` asserts the `e2e` and `smoke` lane lists by exact deep equality, so
   a registration also has to be mirrored into that file.
 
@@ -576,10 +577,11 @@ tests, at `scripts/m11-architecture-audit-regression.test.mjs`, following the ex
 
 **Consequence for the runner owner:** `scripts/` is outside the lane system
 (`testRoots = ['apps', 'packages', 'tests']`), so the file is neither lane-registered nor covered
-by `oxlint --deny-warnings tests`. To make it a CI lane member, the runner owner has to extend the
-lane roots to `scripts/` — a `scripts/**/*.test.mjs` path that is not under `testRoots` is
-reported as `missing` by `discoverTestInventory` — or move the file into a covered root and
-register it in `scripts/run-bun-test-group.mjs` and `tests/repository.test.mjs` together. Until
+by `oxlint --deny-warnings tests`, and the lane drift check is blind to it: a path outside
+`testRoots` is in neither the discovered set nor any lane list, so it is reported neither as
+`unowned` nor as `missing`. To make it a CI lane member, the runner owner has to extend the
+lane roots to `scripts/` — or move the file into a covered root and register it in
+`scripts/run-bun-test-group.mjs` and `tests/repository.test.mjs` together. Until
 that happens the file runs with
 `cd scripts && bun test --timeout 30000 m11-architecture-audit-regression.test.mjs`.
 
@@ -621,36 +623,19 @@ bun test tests/m2-core-domain.test.mjs tests/m3-durable-execution.test.mjs tests
 bun test tests/m9-production-hardening.test.mjs
 ```
 
-bun run check:boundaries
-bun run check:digest-writers
-bun run db:check
-bun run compatibility:check
-bun --cwd=packages/control-sdk run openapi:check
-bun --cwd=packages/domain test
-bun --cwd=packages/events test
-bun --cwd=packages/config test
-bun --cwd=packages/sqlite-persistence test
-bun test tests/m2-core-domain.test.mjs tests/m3-durable-execution.test.mjs tests/m10-portability-conformance.test.mjs
-bun test tests/m9-production-hardening.test.mjs
-
-```
-
 Final-candidate readback (section 3):
 
 ```
-
 git cat-file -e 6c922d487c3c2e70a047c11c55a1cb4ddbabad26^{commit}
 git merge-base --is-ancestor 6c922d487c3c2e70a047c11c55a1cb4ddbabad26 27f17bd55e0266439b5b3089163195c9e7a669be
 git ls-tree --name-only <candidate> packages/database/drizzle/ | grep -c '\.sql$'
 git show <candidate>:packages/control-sdk/src/operations.ts | grep -c "operation: '"
 git show <candidate>:packages/sqlite-persistence/src/migrations.ts | grep -c 'version: [0-9]*, statements:'
-
 ```
 
 The canonical audit reports these warnings on the current tree:
 
 ```
-
 workspace package versions drifted from the Bun lockfile: apps/control-api 1.34.2/1.34.1, apps/workflow-worker 1.18.2/1.18.1, packages/telemetry 1.8.2/1.8.1
 Control API serves 9 HTTP route(s) with no SDK operation binding: …
 Control API exposes 21 capability binding(s) that default to an unavailable implementation: …
@@ -660,7 +645,6 @@ hosted-simple: never binds 5 capability binding(s) …
 local: never binds 5 capability binding(s) …
 profiles local and hosted-simple share one composition source digest …
 measured migration inventory: PostgreSQL 74 migration(s) up to 0073_scope_version_pairing.sql, SQLite schema version 5
-
 ```
 
 ---
@@ -696,13 +680,12 @@ measured migration inventory: PostgreSQL 74 migration(s) up to 0073_scope_versio
    locally on `f2w3/cp187-architecture-audit` for root to review and publish.
 8. **Human gates.** No human acceptance, review, sign-off, provider qualification or deployed
    confirmation is claimed anywhere in this packet.
-```
 
 ---
 
 ## 12. State of this packet at the current head
 
-The three owned files on `f2w3/cp187-architecture-audit` are:
+The four owned files on `f2w3/cp187-architecture-audit` are:
 
 | Path                                                                          | Role                                                                                      |
 | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -728,13 +711,13 @@ pull request, recorded in section 8.1 and evidenced in the handoff packet. None 
 measured value: the architecture audit's complete output is byte-identical across the reviewed
 heads, and the capability matrix in section 2.3 is unchanged.
 
-## 12. Canonical CI discovery path for this regression suite (reproducible evidence)
+## 13. Canonical CI discovery path for this regression suite (reproducible evidence)
 
 **The canonical CI does not discover or run this regression suite, and the fix is one line in a
 shared runner this branch does not own.** Nothing in this section edits that runner; the
-registration is proposed in 12.3 for root's decision.
+registration is proposed in 13.3 for root's decision.
 
-### 12.1 The facts, and how to reproduce them
+### 13.1 The facts, and how to reproduce them
 
 Canonical validation runs the repository's lane scripts — `bun scripts/run-bun-test-group.mjs
 <lane>` — and the lane discovery walks these roots only:
@@ -765,18 +748,22 @@ $ bun test scripts/m11-architecture-audit-regression.test.mjs      # from the re
 The following filters did not match any test files in --cwd="<repository>":
  scripts/m11-architecture-audit-regression.test.mjs
 125 files were searched [8.00ms]
+$ echo $?
+1
 ```
 
 The last one is the sharpest statement of the gap: bun's own root-scoped discovery does not match
-the file, and that invocation **exits 0** — a silent pass. The suite is reachable only from its
-own directory:
+the file, and that invocation **exits 1** with the unmatched-filter message above. That
+invocation is loud rather than silent, so a person who runs it from the repository root sees the
+gap immediately; what stays silent is the canonical lane, which never discovers the file at all.
+The suite is reachable only from its own directory:
 
 ```console
 $ cd scripts && bun test m11-architecture-audit-regression.test.mjs
- 28 pass
+ 29 pass
  0 fail
- 196 expect() calls
-Ran 28 tests across 1 file. [1.29s]
+ 199 expect() calls
+Ran 29 tests across 1 file. [1.29s]
 ```
 
 The contrast that shows the audit itself is covered: the architecture audit's **own** test is
@@ -784,15 +771,15 @@ registered in the lane runner (`scripts/run-bun-test-group.mjs:76` →
 `tests/m11-architecture-audit.test.mjs`), so the audit runs in CI while its regression suite does
 not.
 
-### 12.2 The suite is reproducible at this head
+### 13.2 The suite is reproducible at this head
 
 Three consecutive runs at `bcea5ae46bd30179b66124b76e76ea9528a7b266`:
 
 | Run | Result                               | Wall   |
 | --- | ------------------------------------ | ------ |
-| 1   | 28 pass / 0 fail, 196 expect() calls | 1.62 s |
-| 2   | 28 pass / 0 fail                     | 1.33 s |
-| 3   | 28 pass / 0 fail                     | 1.14 s |
+| 1   | 29 pass / 0 fail, 199 expect() calls | 1.62 s |
+| 2   | 29 pass / 0 fail                     | 1.33 s |
+| 3   | 29 pass / 0 fail                     | 1.14 s |
 
 The suite covers the three contract areas this branch owns: the **parser** (reachability by HTTP
 method, served-verb discovery, OpenAPI path-item keys, unbound operations, capability bindings,
@@ -801,7 +788,7 @@ size and time, and a source whose contents change while its size and time do not
 **symlink escape** (an in-tree symlink pointing outside the repository is rejected, an in-tree
 symlink is still citable, a resolution loop is refused, a directory is not a file).
 
-### 12.3 The minimal registration proposed for root (not applied)
+### 13.3 The minimal registration proposed for root (not applied)
 
 The registration belongs to the shared lane runner, which this branch must not edit, so it is
 proposed rather than applied. The narrowest change that gives the file a canonical lane without
@@ -837,11 +824,47 @@ belongs to another owner, into the unit lane, so it is not proposed.
 approved and applied by the shared runner's owner, the suite runs only when it is invoked directly
 from `scripts/`, and the canonical CI cannot fail on a regression in it.
 
+### 13.4 The discovery result is check-bound, and no owned registration path exists
+
+Two facts are now recorded by a check rather than by prose, so neither can silently rot.
+
+**The discovery result is check-bound.** The owned regression file now contains
+`binds the canonical lane discovery result for this regression suite`. It imports the shared lane
+runner read-only — `scripts/run-bun-test-group.mjs` is never edited — and asserts three things at
+the current head:
+
+| Assertion                                          | Verified value                                                                                                                                                       |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the suite is in no canonical lane                  | `unit` false, `integration` false, `e2e` false, `smoke` false                                                                                                        |
+| the lane drift check does not name it              | `discoverTestInventory()` does not throw, and no drift message contains the suite's path, so the file is reported neither as `unowned` nor as `missing`              |
+| the architecture audit's own test is still covered | `tests/m11-architecture-audit.test.mjs` **is** in the `smoke` lane, and the canonical Code Foundry Validation / Gate runs the unit, integration, E2E and smoke lanes |
+
+The first assertion is the drift signal. It **fails the moment the shared runner registration is
+applied**, because the direct invocation and the proposal in 13.3 are then stale. That was verified
+against a scratch copy of the runner with the registration applied: the lane then reports the
+suite, and the shared runner file itself was byte-identical before and after that probe.
+
+**No owned registration path exists.** The unit lane would discover a `packages/**` or `apps/**`
+test by itself, but the suite cannot live there: `scripts/workspace-boundaries.mjs` rejects an
+import that leaves the package directory. That was confirmed by probe rather than by reading: a
+throwaway file at `packages/contracts/src/_cp190_boundary_probe.mjs` importing
+`../../../scripts/architecture-audit.mjs` produces
+
+```
+packages/contracts/src/_cp190_boundary_probe.mjs: import ../../../scripts/architecture-audit.mjs leaves @control-plane/contracts
+```
+
+and `bun run check:boundaries` exits 1. The probe file was removed and the checkout was clean
+afterwards. A `tests/` placement would need registration in the shared runner and in
+`tests/repository.test.mjs`, and `scripts/` is outside every discovery root. **Every remaining
+route to a canonical lane therefore crosses a shared file**, which is why this branch proposes the
+registration in 13.3 instead of applying it.
+
 ---
 
-## 13. The external half of the inward rule (CP #187 acceptance)
+## 14. The external half of the inward rule (CP #187 acceptance)
 
-### 13.1 The gap
+### 14.1 The gap
 
 CP #187's acceptance criteria state: "No core package directly requires Neon, R2, Railway,
 Redis/Valkey, Runtime Gateway transport, OS keychain, or another deployment implementation."
@@ -855,7 +878,7 @@ could therefore require a deployment implementation directly — `postgres` for 
 remote transport — and the canonical audit still validated with no error. The rule was therefore
 narrower than the acceptance criterion it exists to prove.
 
-### 13.2 The correction
+### 14.2 The correction
 
 `scripts/architecture-audit.mjs` now checks the external half of the same rule against an explicit,
 reviewable list of the npm packages that bind the named implementations. A **development**
@@ -871,7 +894,7 @@ repository-owned deployment configuration rather than a package, so it stays cov
 configuration rules. No measured value changes: the canonical audit still validates with no errors
 (`Validated 45 packages, 54 operations, and 4 profiles`), and the package table is unchanged.
 
-### 13.3 The regressions
+### 14.3 The regressions
 
 `scripts/m11-architecture-audit-regression.test.mjs` gains two deterministic cases:
 
@@ -884,12 +907,12 @@ The first case fails when the new rule is removed and passes with it; the second
 states, which is what makes the development-dependency distinction a pinned rule rather than an
 accident.
 
-### 13.4 What this section does not claim
+### 14.4 What this section does not claim
 
 - **No live acceptance.** The rule is proved by source regressions over synthetic package
   inventories. It certifies the audit's own detection, not a deployed profile: every profile row
   stays `partially_verified`, and no provider, database, deployment or native session was used.
-- **No shared-runner change.** Section 12's lane registration is still only proposed. This section
+- **No shared-runner change.** The lane registration proposed in 13.3 is still only proposed. This section
   edits no CI workflow, no lane registration and no file owned by the shared runner's owner; the
   regression suite still runs only when invoked directly from `scripts/`.
 - **No PostgreSQL integration.** The rule is about dependency declarations, not migrations or a

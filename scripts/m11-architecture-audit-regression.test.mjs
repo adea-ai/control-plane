@@ -807,4 +807,41 @@ describe('M11.2 architecture audit tooling regressions', () => {
       true
     )
   })
+
+  test('binds the canonical lane discovery result for this regression suite', async () => {
+    // The canonical lane runner is read here, never edited: it belongs to the
+    // shared test-runner owner. Importing it records what the canonical CI
+    // actually discovers, so the gap in section 13 of the evidence packet is a
+    // checked fact rather than a prose claim.
+    const { discoverTestFiles, discoverTestInventory } = await import('./run-bun-test-group.mjs')
+    const self = 'scripts/m11-architecture-audit-regression.test.mjs'
+    const inLane = []
+    for (const lane of ['unit', 'integration', 'e2e', 'smoke']) {
+      const files = await discoverTestFiles(lane)
+      if (files.includes(self)) inLane.push(lane)
+    }
+    // The suite lives outside every discovery root, so the canonical lane
+    // inventory cannot see it and the drift check stays silent about it: the
+    // file is reported neither as `unowned` nor as `missing`.
+    let drift = ''
+    try {
+      await discoverTestInventory()
+    } catch (error) {
+      drift = String(error instanceof Error ? error.message : error)
+    }
+    expect(drift, 'the lane inventory must not name this suite').not.toContain(self)
+    // The architecture audit's own test is registered in the smoke lane, so the
+    // audit itself is covered by the canonical CI.
+    expect(
+      (await discoverTestFiles('smoke')).includes('tests/m11-architecture-audit.test.mjs'),
+      "the architecture audit's own test must stay registered in the smoke lane"
+    ).toBe(true)
+    // Drift signal: this assertion fails as soon as the shared runner
+    // registration is applied, because the direct invocation and the
+    // registration proposal in the evidence packet are then stale.
+    expect(
+      inLane,
+      'this suite joined a canonical lane, so the shared runner registration has been applied: the direct `cd scripts && bun test` invocation and the registration proposal in section 13.3 of the evidence packet are now stale and must be updated'
+    ).toEqual([])
+  })
 })
