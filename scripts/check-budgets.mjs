@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const budgetFile = resolveBudgetFile()
-const usage = 'usage: check-budgets.mjs [lane --group <unit|e2e|smoke> --seconds <n> | dist | deps]'
+const usage =
+  'usage: check-budgets.mjs [lane --group <unit|e2e|smoke|build> --seconds <n> | dist | deps]'
 
 function resolveBudgetFile() {
   if (process.env.BUDGETS_FILE !== undefined) return process.env.BUDGETS_FILE
