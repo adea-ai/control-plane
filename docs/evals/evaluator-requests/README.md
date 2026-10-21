@@ -10,10 +10,10 @@ The following module surface is frozen for consumers. A consumer may import it
 and rely on it; it does not change without a versioned, root-reviewed change to
 the evaluator itself.
 
-| Module                                                         | Frozen exports                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/production-readiness/src/evidence-audit-eval.ts`     | `EvidenceAuditFixtureV3Schema`, `EvidenceAuditFixtureSchema`, `EvidenceAuditReceiptSchema`, `EvidenceAuditObservedEffectSchema`, `EvidenceAuditObserver`, `EvidenceAuditExecutor`, `EvidenceAuditObservationMode`, `runEvidenceAuditEval`, `evidenceAuditMetrics`, `evidenceAuditFixtureDigest`                                                                                                                                                                                                                   |
-| `packages/production-readiness/src/adversarial-eval-corpus.ts` | `getOfflineAdversarialCorpus`, `getOfflineAdversarialSuite`, `runOfflineAdversarialCorpus`, `runHiddenAdversarialTaskSet`, `evaluateOfflineAdversarialCorpusPromotion`, `evaluateAdversarialPromotionDecision`, `compareAdversarialRuns`, `buildAdversarialRunIdentity`, `getHiddenTaskSet`, `buildAgentFacingTask`, `getRotatingTaskSet`, `runIsolatedAdversarialTask`, `runIsolatedAdversarialCase`, `buildBlindedCalibrationPacket`, `computeCalibrationAgreement`, `validateOfflineAdversarialCorpusManifest` |
+| Module                                                         | Frozen exports                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/production-readiness/src/evidence-audit-eval.ts`     | `EvidenceAuditFixtureV3Schema`, `EvidenceAuditFixtureSchema`, `EvidenceAuditReceiptSchema`, `EvidenceAuditObservedEffectSchema`, `EvidenceAuditObserver`, `EvidenceAuditExecutor`, `EvidenceAuditObservationMode`, `runEvidenceAuditEval`, `evidenceAuditMetrics`, `evidenceAuditFixtureDigest`                                                                                                                                                                                                                                                                                                            |
+| `packages/production-readiness/src/adversarial-eval-corpus.ts` | `getOfflineAdversarialCorpus`, `getOfflineAdversarialSuite`, `runOfflineAdversarialCorpus`, `getOfflineSecurityProbes`, `runOfflineSecurityProbes`, `runHiddenAdversarialTaskSet`, `runRotatingAdversarialTaskSet`, `evaluateOfflineAdversarialCorpusPromotion`, `evaluateAdversarialPromotionDecision`, `compareAdversarialRuns`, `buildAdversarialRunIdentity`, `getHiddenTaskSet`, `buildAgentFacingTask`, `getRotatingTaskSet`, `runIsolatedAdversarialTask`, `runIsolatedAdversarialCase`, `buildBlindedCalibrationPacket`, `computeCalibrationAgreement`, `validateOfflineAdversarialCorpusManifest` |
 
 Consumers import these modules directly, for example:
 
@@ -23,16 +23,21 @@ import { runEvidenceAuditEval } from '../../../packages/production-readiness/src
 
 ## Receipt versions
 
-| Receipt schema | Harness | Status                                                                                        |
-| -------------- | ------- | --------------------------------------------------------------------------------------------- |
-| 1              | 2.0.0   | Legacy; readable, never re-interpreted as newer evidence quality.                             |
-| 2              | 3.0.0   | Current legacy lane used by the skill-library evals.                                          |
-| 3              | 4.0.0   | Adds actor/runtime/source identity, independent observation, tool counts, and observed usage. |
+| Receipt schema | Harness | Status                                                                                                                                                          |
+| -------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1              | 2.0.0   | Legacy; readable, never re-interpreted as newer evidence quality.                                                                                               |
+| 2              | 3.0.0   | Current legacy lane used by the skill-library evals.                                                                                                            |
+| 3              | 4.0.0   | Adds actor/runtime/source identity, independent observation, observed tool counts, and observed usage. The adversarial program runs on this version by default. |
 
 `evidenceAuditMetrics` keeps the older metric shape for the older receipt
 versions. A consumer that requires the 4.0.0 metric set must assert
 `receipt.schemaVersion === 3` before reading `tool_use`, `cost_usd`, or
 `tokens`.
+
+In receipt version 3, `tool_use` counts the tool calls the host actually
+observed across both the in-process tool ports and the independent observer; a
+call both channels saw is counted once. `cost_usd` and `tokens` appear only when
+the host supplied actually observed usage, and are never defaulted to zero.
 
 ## How to submit a change request
 
