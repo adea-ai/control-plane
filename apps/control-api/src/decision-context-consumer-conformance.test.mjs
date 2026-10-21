@@ -17,6 +17,7 @@ import {
   executionConstraintFixtures,
 } from '@control-plane/domain'
 import {
+  PostgresCatalogApprovalRepository,
   PostgresCatalogRepository,
   PostgresContextAuthoringCommandRepository,
   PostgresContextCommandGrantRepository,
@@ -27,6 +28,7 @@ import {
 } from '@control-plane/database'
 import { createIsolatedTestDatabase } from '@control-plane/database/testing'
 import {
+  SqliteCatalogApprovalRepository,
   SqliteContextAuthoringCommandRepository,
   SqliteContextCommandGrantRepository,
   SqliteContextPackageRepository,
@@ -45,11 +47,14 @@ import {
   canonicalAlternateConnectionId,
   canonicalAlternateProviderId,
   canonicalAlternateProviderSuffix,
+  canonicalApprovalDecision,
+  canonicalCatalogApprovalPolicy,
   canonicalCompiledAt,
   canonicalContextAuthoringInputs,
   canonicalContextAuthoringPolicy,
   canonicalContextCommandGrant,
   canonicalContextPackageResolutionRequest,
+  canonicalDeapprovalDecision,
   canonicalDigest,
   canonicalExecutionValidationRequest,
   canonicalIds,
@@ -65,6 +70,7 @@ import {
   canonicalSkill,
   canonicalSkillDraft,
   canonicalStateItems,
+  createOwnedResourceRegistry,
   decisionContextCompositions,
   foreignPrincipalId,
   foreignScope,
@@ -107,17 +113,38 @@ const postgresCredentials = (() => {
 
 const harnesses = []
 const stores = new Map()
-const temporaryDirectories = []
+const owned = createOwnedResourceRegistry()
 
 afterAll(async () => {
-  for (const harness of harnesses.splice(0)) await harness.dispose()
-  for (const store of stores.values()) await store.close()
+  // Every owned disposer is attempted, even when an earlier one fails, and
+  // the failures are aggregated with the original error objects preserved: a
+  // cleanup failure never replaces the error that caused it.
+  const failures = []
+  for (const harness of harnesses.splice(0)) {
+    try {
+      await harness.dispose()
+    } catch (error) {
+      failures.push(error)
+    }
+  }
+  for (const store of stores.values()) {
+    try {
+      await store.close()
+    } catch (error) {
+      failures.push(error)
+    }
+  }
   stores.clear()
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map(async (directory) => rm(directory, { recursive: true, force: true }))
-  )
+  try {
+    await owned.releaseAll()
+  } catch (error) {
+    failures.push(error)
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, `CP558_CLEANUP_FAILED:${failures.length}`, {
+      cause: failures[0],
+    })
+  }
 })
 
 describe('decision-layer context consumer conformance (#558)', () => {
@@ -202,6 +229,112 @@ describe('decision-layer context consumer conformance (#558)', () => {
     ).rejects.toMatchObject({ response: { code: 'EXECUTION_VALIDATION_REJECTED' } })
   }, 120_000)
 
+  test('refuses a replay whose catalog approval no longer holds', async () => {
+    const harness = await createHarness('local', {
+      isolated: true,
+      label: 'approval-gate',
+      approvalGate: true,
+      enableProviderComposition: true,
+    })
+    const first = await resolveCanonicalObjective(harness)
+    // The provider composed the context once, when the context was assembled.
+    expect(harness.providerInvocations).toBe(1)
+    expect(harness.committedPlans).toHaveLength(1)
+
+    // An unchanged approval keeps the replay idempotent: the same recorded
+    // plan, no second commit, and no second provider read.
+    const replay = await resolveCanonicalObjective(harness)
+    expect(replay.executionPlan).toEqual(first.executionPlan)
+    expect(harness.committedPlans).toHaveLength(1)
+    expect(harness.providerInvocations).toBe(1)
+
+    // The pinned profile is de-approved: a newer decision for the same
+    // version no longer binds to it, so the version has no current approval.
+    await harness.deapproveProfileVersion()
+    await expect(
+      harness.validationService.validate(harness.validationRequest, canonicalPrincipalId)
+    ).rejects.toMatchObject({ response: { code: 'PROFILE_APPROVAL_MISSING' } })
+    await expect(
+      harness.profileResolutionService.resolve(
+        canonicalProfileResolutionRequest,
+        canonicalPrincipalId
+      )
+    ).rejects.toMatchObject({ response: { code: 'PROFILE_APPROVAL_MISSING' } })
+
+    // The refused replay read no provider and rewrote no plan.
+    expect(harness.providerInvocations).toBe(1)
+    expect(harness.committedPlans).toHaveLength(1)
+    expect(harness.committedPlans[0].contentDigest).toBe(first.executionPlan.contentDigest)
+  }, 120_000)
+
+  test('releases an allocated resource when its migration fails', async () => {
+    const registry = createOwnedResourceRegistry()
+    const failure = new Error('CP558_INJECTED_MIGRATION_FAILURE')
+    let released = 0
+    await expect(
+      registry.allocate({
+        label: 'injected-store',
+        allocate: async () => ({ id: 'injected' }),
+        prepare: async () => {
+          throw failure
+        },
+        release: async () => {
+          released += 1
+        },
+      })
+    ).rejects.toBe(failure)
+    // The disposer was registered before the migration ran, so the failed
+    // migration still released the allocation.
+    expect(released).toBe(1)
+    expect(registry.size).toBe(1)
+  })
+
+  test('releases an isolated allocation when the work that follows it fails', async () => {
+    const registry = createOwnedResourceRegistry()
+    const failure = new Error('CP558_INJECTED_SEED_FAILURE')
+    let released = 0
+    const entry = registry.register('injected-isolated-store', async () => {
+      released += 1
+    })
+    await expect(
+      registry.guard(entry, async () => {
+        throw failure
+      })
+    ).rejects.toBe(failure)
+    expect(released).toBe(1)
+  })
+
+  test('attempts every owned disposer and aggregates the cleanup failures', async () => {
+    const registry = createOwnedResourceRegistry()
+    const first = new Error('CP558_INJECTED_FIRST_CLEANUP_FAILURE')
+    const second = new Error('CP558_INJECTED_SECOND_CLEANUP_FAILURE')
+    const released = []
+    registry.register('failing-first', async () => {
+      released.push('first')
+      throw first
+    })
+    registry.register('succeeding-second', async () => {
+      released.push('second')
+    })
+    registry.register('failing-third', async () => {
+      released.push('third')
+      throw second
+    })
+    let aggregate
+    try {
+      await registry.releaseAll()
+    } catch (error) {
+      aggregate = error
+    }
+    // Every disposer ran, including the ones after the first failure.
+    expect(released).toEqual(['first', 'second', 'third'])
+    expect(aggregate).toBeInstanceOf(AggregateError)
+    expect(aggregate.errors).toEqual([first, second])
+    // The original error objects are preserved, and the first one stays the
+    // primary cause.
+    expect(aggregate.cause).toBe(first)
+  })
+
   test('selects the same default profile version regardless of the store order', async () => {
     const [first, second] = await Promise.all([
       createHarness('local', { isolated: true, label: 'tie-first' }),
@@ -211,7 +344,7 @@ describe('decision-layer context consumer conformance (#558)', () => {
     // revision. The stores hold them in opposite orders; the resolution must
     // not.
     await insertTiedProfileVersions(first, tieProfileVersionIds)
-    await insertTiedProfileVersions(second, [...tieProfileVersionIds].reverse())
+    await insertTiedProfileVersions(second, tieProfileVersionIds.toReversed())
     const resolvedFirst = await first.profileResolutionService.resolve(
       canonicalProfileResolutionRequest,
       canonicalPrincipalId
@@ -547,12 +680,25 @@ async function sharedStore(profile) {
 async function createStore(composition) {
   if (composition.dialect === 'sqlite') {
     const directory = await mkdtemp(join(tmpdir(), `cp558-${composition.profile}-`))
-    temporaryDirectories.push(directory)
-    const persistence = new SqlitePersistenceProvider({
-      path: join(directory, 'state.sqlite'),
-      profile: composition.profile,
+    owned.register(`sqlite-directory:${composition.profile}`, () =>
+      rm(directory, { recursive: true, force: true })
+    )
+    // The provider is closed before the migration is awaited, so a failed
+    // migration still releases it.
+    const { resource: persistence, entry } = await owned.allocate({
+      label: `sqlite-provider:${composition.profile}`,
+      allocate: async () =>
+        new SqlitePersistenceProvider({
+          path: join(directory, 'state.sqlite'),
+          profile: composition.profile,
+        }),
+      prepare: async (provider) => {
+        await provider.migrate()
+      },
+      release: (provider) => {
+        provider.close()
+      },
     })
-    await persistence.migrate()
     return {
       composition,
       catalog: new SqliteVersionedCatalogRepository(persistence),
@@ -560,18 +706,25 @@ async function createStore(composition) {
       contextPackages: new SqliteContextPackageRepository(persistence),
       authoringCommands: new SqliteContextAuthoringCommandRepository(persistence),
       validationCommands: new SqliteExecutionValidationCommandRepository(persistence),
+      approvals: new SqliteCatalogApprovalRepository(persistence),
       grants: new SqliteContextCommandGrantRepository(persistence),
       registrations: new SqliteContextProviderRegistrationRepository(persistence),
-      close: () => {
-        persistence.close()
-      },
+      close: () => entry.release(),
     }
   }
   if (postgresCredentials === undefined) {
     throw new Error('CP558_POSTGRES_UNAVAILABLE')
   }
-  const database = await createIsolatedTestDatabase(postgresCredentials)
-  await database.migrate()
+  // The isolated database is disposed before the migration is awaited, so a
+  // failed migration still releases it.
+  const { resource: database, entry } = await owned.allocate({
+    label: `postgres-database:${composition.profile}`,
+    allocate: async () => createIsolatedTestDatabase(postgresCredentials),
+    prepare: async (isolated) => {
+      await isolated.migrate()
+    },
+    release: (isolated) => isolated.dispose(),
+  })
   return {
     composition,
     catalog: new PostgresCatalogRepository(database.application),
@@ -579,9 +732,10 @@ async function createStore(composition) {
     contextPackages: new PostgresContextPackageRepository(database.application),
     authoringCommands: new PostgresContextAuthoringCommandRepository(database.application),
     validationCommands: new PostgresExecutionValidationCommandRepository(database.application),
+    approvals: new PostgresCatalogApprovalRepository(database.application),
     grants: new PostgresContextCommandGrantRepository(database.application),
     registrations: new PostgresContextProviderRegistrationRepository(database.application),
-    close: () => database.dispose(),
+    close: () => entry.release(),
   }
 }
 
@@ -597,134 +751,212 @@ async function createHarness(profile, options = {}) {
     options.isolated === true ? await createStore(composition) : await sharedStore(profile)
   const scope = options.scope ?? canonicalScope
   const label = options.label ?? 'canonical'
-  const catalog = new VersionedCatalog(store.catalog, store.catalog)
-  const seeded = await seedCatalog(store)
-  await seedProjectState(store, scope)
+  // An isolated store is owned by this harness. When the work that follows
+  // its allocation fails, the store is released before the error leaves and
+  // the original error is kept. A shared store stays owned by the suite.
+  const ownedStore =
+    options.isolated === true
+      ? owned.register(`isolated-store:${profile}:${label}`, () => store.close())
+      : undefined
+  const harness = await owned.guard(ownedStore, async () => {
+    const catalog = new VersionedCatalog(store.catalog, store.catalog)
+    const seeded = await seedCatalog(store)
+    await seedProjectState(store, scope)
 
-  const grant = {
-    ...canonicalContextCommandGrant,
-    ...(options.grantBinding === undefined
-      ? {}
-      : {
-          providerRef: options.grantBinding.providerRef,
-          authorizationRef: options.grantBinding.authorizationRef,
-          mappedProjectRef: options.grantBinding.mappedProjectRef,
-        }),
-    ...(scope === canonicalScope ? {} : { workspaceId: scope.workspaceId }),
-    ...(options.grantExpiry === undefined ? {} : { expiresAt: options.grantExpiry }),
-  }
-  try {
-    await store.grants.create(grant)
-  } catch {
-    // The grant already exists in this store; the case mutates it below.
-  }
+    const grant = {
+      ...canonicalContextCommandGrant,
+      ...(options.grantBinding === undefined
+        ? {}
+        : {
+            providerRef: options.grantBinding.providerRef,
+            authorizationRef: options.grantBinding.authorizationRef,
+            mappedProjectRef: options.grantBinding.mappedProjectRef,
+          }),
+      ...(scope === canonicalScope ? {} : { workspaceId: scope.workspaceId }),
+      ...(options.grantExpiry === undefined ? {} : { expiresAt: options.grantExpiry }),
+    }
+    try {
+      await store.grants.create(grant)
+    } catch {
+      // The grant already exists in this store; the case mutates it below.
+    }
 
-  const provider = createFakeContextProvider({
-    suffix: options.providerSuffix ?? canonicalAlternateProviderSuffix,
-    workspaceId: scope.workspaceId,
-    scopeDigest: canonicalScopeDigest,
-    state: 'active',
-    health: 'healthy',
-    capabilities: { boundedRetrieval: true },
-    kind: 'context',
-    tokenCount: 8,
-  })
-  // The provider registration is the binding the authority reads the grant
-  // through; without it there is no eligible provider binding at all.
-  await store.registrations.save(0, {
-    version: 1,
-    readModel: provider.readModel,
-    providerRef: grant.providerRef,
-    mappedProjectRef: grant.mappedProjectRef,
-    authorizationRef: grant.authorizationRef,
-  })
+    const provider = createFakeContextProvider({
+      suffix: options.providerSuffix ?? canonicalAlternateProviderSuffix,
+      workspaceId: scope.workspaceId,
+      scopeDigest: canonicalScopeDigest,
+      state: 'active',
+      health: 'healthy',
+      capabilities: { boundedRetrieval: true },
+      kind: 'context',
+      tokenCount: 8,
+    })
+    // The provider registration is the binding the authority reads the grant
+    // through; without it there is no eligible provider binding at all.
+    await store.registrations.save(0, {
+      version: 1,
+      readModel: provider.readModel,
+      providerRef: grant.providerRef,
+      mappedProjectRef: grant.mappedProjectRef,
+      authorizationRef: grant.authorizationRef,
+    })
 
-  const authority = new GrantsBackedContextAuthoringAuthority({
-    grants: store.grants,
-    registrations: store.registrations,
-    policy:
-      options.enableProviderComposition === true
-        ? alternateProviderContextAuthoringPolicy
-        : canonicalContextAuthoringPolicy,
-    now: () => new Date(canonicalCompiledAt),
-  })
-  const authoring = new ContextPackageAuthoringService({
-    compilerVersion: '1.0.0',
-    packages: store.contextPackages,
-    projectStates: store.projectStates,
-    commands: store.authoringCommands,
-    authority,
-    ...(options.enableProviderComposition === true
-      ? { providerResolver: new ContextProviderResolver([provider]) }
-      : {}),
-    now: () => new Date(canonicalCompiledAt),
-  })
-  const validationService = new DurableExecutionValidationService({
-    compilerVersion: '1.0.0',
-    contextPackages: store.contextPackages,
-    commands: store.validationCommands,
-    contextAuthoring: authoring,
-    now: () => canonicalCompiledAt,
-    profiles: store.catalog,
-    projectStates: store.projectStates,
-    skills: store.catalog,
-  })
-  const profileResolutionService = new RepositoryProfileResolutionService(store.catalog)
-  const contextPackageResolutionService = new RepositoryContextPackageResolutionService(
-    store.contextPackages
-  )
+    const authority = new GrantsBackedContextAuthoringAuthority({
+      grants: store.grants,
+      registrations: store.registrations,
+      policy:
+        options.enableProviderComposition === true
+          ? alternateProviderContextAuthoringPolicy
+          : canonicalContextAuthoringPolicy,
+      now: () => new Date(canonicalCompiledAt),
+    })
+    let providerInvocations = 0
+    const providerResolver = new ContextProviderResolver([provider])
+    const authoring = new ContextPackageAuthoringService({
+      compilerVersion: '1.0.0',
+      packages: store.contextPackages,
+      projectStates: store.projectStates,
+      commands: store.authoringCommands,
+      authority,
+      ...(options.enableProviderComposition === true
+        ? {
+            providerResolver: {
+              resolve: async (input) => {
+                providerInvocations += 1
+                return providerResolver.resolve(input)
+              },
+            },
+          }
+        : {}),
+      now: () => new Date(canonicalCompiledAt),
+    })
+    const committedPlans = []
+    const validationCommands = {
+      get: (commandScope) => store.validationCommands.get(commandScope),
+      commit: (record, plan) => {
+        committedPlans.push(plan)
+        return store.validationCommands.commit(record, plan)
+      },
+    }
+    const approvalGate =
+      options.approvalGate === true
+        ? { approvals: store.approvals, policy: canonicalCatalogApprovalPolicy }
+        : undefined
+    if (approvalGate !== undefined) await seedApprovals(store)
+    const validationService = new DurableExecutionValidationService({
+      compilerVersion: '1.0.0',
+      contextPackages: store.contextPackages,
+      commands: validationCommands,
+      contextAuthoring: authoring,
+      now: () => canonicalCompiledAt,
+      profiles: store.catalog,
+      projectStates: store.projectStates,
+      skills: store.catalog,
+      ...(approvalGate === undefined ? {} : { approvalGate }),
+    })
+    const profileResolutionService = new RepositoryProfileResolutionService(
+      store.catalog,
+      approvalGate === undefined ? undefined : { ...approvalGate, skills: store.catalog }
+    )
+    const contextPackageResolutionService = new RepositoryContextPackageResolutionService(
+      store.contextPackages
+    )
 
-  const harness = {
-    store,
-    scope,
-    catalog,
-    seeded,
-    contextPackages: store.contextPackages,
-    grants: store.grants,
-    authoring,
-    validationService,
-    profileResolutionService,
-    contextPackageResolutionService,
-    negativeProfileId: seeded.negativeProfileId,
-    validationRequest: undefined,
-    validationIdempotencyKey: `cp558-validate-${profile}-${label}`,
-    async author() {
-      return authoring.createForCommand(
-        canonicalProviderPrincipalRef,
-        `cp558-author-${profile}-${label}`,
-        {
-          ...canonicalContextAuthoringInputs,
-          workspaceId: scope.workspaceId,
-          projectId: scope.projectId,
-          projectStateRevision: 1,
-        }
-      )
-    },
-    async revokeGrant() {
-      await store.grants.revoke(scope.workspaceId, grant.authorizationRef)
-    },
-    async revokeProfileVersion() {
-      await catalog.revokeAgentProfileVersion(
-        canonicalIds.profileVersionId,
-        seeded.profileVersion.revision,
-        canonicalCompiledAt,
-        'conformance revocation'
-      )
-    },
-    async revokeSkillVersion() {
-      await catalog.revokeSkillVersion(
-        seeded.negativeSkillVersion.skillVersionId,
-        seeded.negativeSkillVersion.revision,
-        canonicalCompiledAt,
-        'conformance revocation'
-      )
-    },
-    async dispose() {
-      if (options.isolated === true) await store.close()
-    },
-  }
+    return {
+      store,
+      scope,
+      catalog,
+      seeded,
+      contextPackages: store.contextPackages,
+      grants: store.grants,
+      authoring,
+      validationService,
+      profileResolutionService,
+      contextPackageResolutionService,
+      negativeProfileId: seeded.negativeProfileId,
+      validationRequest: undefined,
+      validationIdempotencyKey: `cp558-validate-${profile}-${label}`,
+      get providerInvocations() {
+        return providerInvocations
+      },
+      committedPlans,
+      async author() {
+        return authoring.createForCommand(
+          canonicalProviderPrincipalRef,
+          `cp558-author-${profile}-${label}`,
+          {
+            ...canonicalContextAuthoringInputs,
+            workspaceId: scope.workspaceId,
+            projectId: scope.projectId,
+            projectStateRevision: 1,
+          }
+        )
+      },
+      async revokeGrant() {
+        await store.grants.revoke(scope.workspaceId, grant.authorizationRef)
+      },
+      async deapproveProfileVersion() {
+        const profileVersion = await store.catalog.getAgentProfileVersion(
+          canonicalIds.profileVersionId
+        )
+        if (profileVersion === undefined) throw new Error('CP558_APPROVAL_TARGET_MISSING')
+        await store.approvals.insert(
+          canonicalDeapprovalDecision('agent_profile', {
+            versionId: canonicalIds.profileVersionId,
+            revision: profileVersion.revision,
+            contentDigest: profileVersion.contentDigest,
+          })
+        )
+      },
+      async revokeProfileVersion() {
+        await catalog.revokeAgentProfileVersion(
+          canonicalIds.profileVersionId,
+          seeded.profileVersion.revision,
+          canonicalCompiledAt,
+          'conformance revocation'
+        )
+      },
+      async revokeSkillVersion() {
+        await catalog.revokeSkillVersion(
+          seeded.negativeSkillVersion.skillVersionId,
+          seeded.negativeSkillVersion.revision,
+          canonicalCompiledAt,
+          'conformance revocation'
+        )
+      },
+      async dispose() {
+        if (ownedStore !== undefined) await ownedStore.release()
+      },
+    }
+  })
   harnesses.push(harness)
   return harness
+}
+
+/**
+ * Records the approval decisions the pinned profile and skill versions need
+ * before a gated consumer may resolve them.
+ */
+async function seedApprovals(store) {
+  const profileVersion = await store.catalog.getAgentProfileVersion(canonicalIds.profileVersionId)
+  const skillVersion = await store.catalog.getSkillVersion(canonicalIds.skillVersionId)
+  if (profileVersion === undefined || skillVersion === undefined) {
+    throw new Error('CP558_APPROVAL_TARGET_MISSING')
+  }
+  await store.approvals.insert(
+    canonicalApprovalDecision('agent_profile', {
+      versionId: canonicalIds.profileVersionId,
+      revision: profileVersion.revision,
+      contentDigest: profileVersion.contentDigest,
+    })
+  )
+  await store.approvals.insert(
+    canonicalApprovalDecision('skill', {
+      versionId: canonicalIds.skillVersionId,
+      revision: skillVersion.revision,
+      contentDigest: skillVersion.manifest.contentDigest,
+    })
+  )
 }
 
 /**

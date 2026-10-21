@@ -110,7 +110,134 @@ export const tieProfileVersionIds = Object.freeze([
   `pfv_01J${'Z'.repeat(23)}`,
 ])
 
+/**
+ * The approval policy the conformance suite configures on the catalog
+ * consumers. It requires an explicit decision for every consumed version and
+ * grants no grandfathering window.
+ */
+export const canonicalCatalogApprovalPolicy = Object.freeze({ required: true })
+
+/** An approval decision bound to the version's current revision and digest. */
+export const canonicalApprovalDecision = (kind, version) => ({
+  versionKind: kind,
+  versionId: version.versionId,
+  revision: version.revision,
+  contentDigest: version.contentDigest,
+  decision: 'approved',
+  actorPrincipalRef: 'principal://operator',
+  decidedAt: canonicalObservedAt,
+})
+
+/**
+ * A newer decision for the same version that no longer binds to it. The
+ * shipped approval gate treats evidence bound to another revision as no
+ * approval, so the version's current verdict becomes missing and the version
+ * is no longer consumable.
+ */
+export const canonicalDeapprovalDecision = (kind, version) => ({
+  versionKind: kind,
+  versionId: version.versionId,
+  revision: version.revision + 1,
+  contentDigest: version.contentDigest,
+  decision: 'rejected',
+  actorPrincipalRef: 'principal://operator',
+  decidedAt: canonicalCompiledAt,
+})
+
 export const canonicalDigest = (character) => `sha256:${character.repeat(64)}`
+
+/**
+ * Releases a resource after a failure and keeps the original error. A
+ * release failure is aggregated with the original error, never in place of
+ * it: the error that caused the failure stays the primary cause.
+ */
+async function releaseAfterFailure(entry, error) {
+  try {
+    await entry.release()
+  } catch (releaseError) {
+    return new AggregateError([error, releaseError], 'CP558_OWNED_RELEASE_FAILED', { cause: error })
+  }
+  return error
+}
+
+/**
+ * The registry of resources the conformance suite allocates.
+ *
+ * A resource is registered before any awaited work follows its allocation, so
+ * a migration or seeding failure still releases it. Every release is
+ * attempted, and the failures are aggregated with the original error objects
+ * intact, so a cleanup failure never hides the error that caused it.
+ */
+export function createOwnedResourceRegistry() {
+  const entries = []
+  const register = (label, dispose) => {
+    let released = false
+    const entry = {
+      label,
+      async release() {
+        if (released) return
+        released = true
+        await dispose()
+      },
+    }
+    entries.push(entry)
+    return entry
+  }
+  return {
+    register,
+    /**
+     * Allocates a resource, registers its disposer before the preparation
+     * runs, and prepares it. A preparation failure releases the resource and
+     * keeps the original error.
+     */
+    async allocate({ label, allocate, prepare, release }) {
+      const resource = await allocate()
+      const entry = register(label, () => release(resource))
+      try {
+        if (prepare !== undefined) await prepare(resource)
+      } catch (error) {
+        throw await releaseAfterFailure(entry, error)
+      }
+      return { resource, entry }
+    },
+    /**
+     * Runs owned work that follows an allocation. A failure releases the
+     * allocation when one is owned here and keeps the original error.
+     */
+    async guard(entry, work) {
+      try {
+        return await work()
+      } catch (error) {
+        if (entry === undefined) throw error
+        throw await releaseAfterFailure(entry, error)
+      }
+    },
+    /**
+     * Releases every registered resource. Every disposer is attempted even
+     * when an earlier one fails, and the failures are aggregated with the
+     * original error objects preserved.
+     */
+    async releaseAll() {
+      const failures = []
+      for (const entry of entries) {
+        try {
+          await entry.release()
+        } catch (error) {
+          failures.push(error)
+        }
+      }
+      if (failures.length > 0) {
+        throw new AggregateError(failures, `CP558_OWNED_RELEASE_FAILED:${failures.length}`, {
+          cause: failures[0],
+        })
+      }
+      return failures
+    },
+    get size() {
+      return entries.length
+    },
+  }
+}
 
 /**
  * The project state the canonical objective is resolved against. The

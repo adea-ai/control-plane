@@ -142,23 +142,35 @@ fixtures hold the canonical inputs and the matrix. The suite:
    selections;
 4. replays deterministically and shows that a revoked profile version denies
    the replay;
-5. assembles context with no provider and with a fake alternate provider;
-6. denies denied scope, a foreign identity, a revoked or expired reference,
+5. shows, with a configured catalog approval gate, that an unchanged
+   approval keeps the replay idempotent while a de-approved pinned profile
+   denies the replay, without a provider read and without rewriting the
+   recorded plan;
+6. assembles context with no provider and with a fake alternate provider;
+7. denies denied scope, a foreign identity, a revoked or expired reference,
    an incompatible explicit pin, unsupported context and out-of-bounds
-   context; and
-7. proves the redaction rule and the absence of a leak, and that a context
-   reference whose content does not verify is not published.
+   context;
+8. proves the redaction rule and the absence of a leak, and that a context
+   reference whose content does not verify is not published; and
+9. proves the suite's own resource discipline: an allocation whose migration
+   fails is still released, an isolated allocation whose seeding fails is
+   still released with the original error kept, and every owned disposer is
+   attempted even when an earlier one fails, with the cleanup failures
+   aggregated around the original errors.
 
-Four of those cases fail against the base implementation and pass only after
+Five of those cases fail against the base implementation and pass only after
 the repairs in this record: restoring the base consumer services
 (`apps/control-api/src/executions/execution-validation.service.ts`,
 `apps/control-api/src/queries/profile-resolution.service.ts`,
 `apps/control-api/src/queries/context-package-resolution.service.ts`) and
 running the suite again fails "replays deterministically and re-checks the
-current catalog authorization", "denies a profile whose pinned skill
-reference no longer holds", "selects the same default profile version
-regardless of the store order" and "refuses to publish a context reference
-whose content does not verify".
+current catalog authorization", "refuses a replay whose catalog approval no
+longer holds", "denies a profile whose pinned skill reference no longer
+holds", "selects the same default profile version regardless of the store
+order" and "refuses to publish a context reference whose content does not
+verify". The approval-gate case and the lifecycle-revoke case are distinct:
+the first denies through the catalog approval gate, the second through the
+version lifecycle.
 
 The PostgreSQL legs need a configured database. They run when the database
 credentials are present, and a job that intends to qualify them sets
@@ -201,12 +213,12 @@ on branch `f2w1/cp558-context-consumer-27f17`.
 
 ```
 bun test src/decision-context-consumer-conformance.test.mjs --timeout 30000
-  11 pass, 0 fail (SQLite legs)
+  15 pass, 0 fail (SQLite legs)
 
 DATABASE_ADMIN_URL=… DATABASE_MIGRATION_URL=… DATABASE_URL=… \
   RUN_M10_POSTGRES_CONFORMANCE=true \
   bun test src/decision-context-consumer-conformance.test.mjs --timeout 30000
-  11 pass, 0 fail (SQLite and PostgreSQL legs)
+  15 pass, 0 fail (SQLite and PostgreSQL legs)
 
 bun --cwd apps/control-api test src
   710 pass, 15 skip, 1 fail
@@ -237,6 +249,11 @@ bun run infra:typecheck
   No type errors in 208 files
 ```
 
+The cleanup and replay regressions in this record were added on top of that
+head, and were checked with the focused suite and the lightweight checks only
+(`format:check`, `lint`, and the `control-api` and `context` package type
+checks); the unit lane was not re-run for them.
+
 Three repository checks fail in this environment for reasons outside this
 change, and all of them are preserved rather than worked around:
 
@@ -259,6 +276,13 @@ change, and all of them are preserved rather than worked around:
 
 ## Accepted limits
 
+- The conformance suite composes the consumer services, the repositories and
+  the context authority by hand, from the same classes the composition roots
+  construct. It is not a real application bootstrap, it does not start the
+  Nest application, and it does not exercise a live Cloud authority: the
+  authority, the approval decisions and the provider are injected fixtures.
+  The Cloud composition's missing default authority is therefore a modelled
+  difference, not an observed production one.
 - The conformance suite compares semantic projections across compositions. It
   does not require a whole-digest equality across distinct runtime
   selections, and it does not duplicate the current actor's authority.
