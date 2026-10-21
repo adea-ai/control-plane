@@ -455,6 +455,8 @@ export class CredentialVault {
     }
     try {
       const result = await operation(secret)
+      // Fail closed: a result that carries the secret, or that cannot be proven
+      // not to carry it, never leaves the vault.
       if (containsSecret(result, secret)) fail('SECRET_EGRESS_BLOCKED')
       await this.#record('lease.used', credential.metadata, {
         credentialLeaseId: lease.credentialLeaseId,
@@ -547,13 +549,172 @@ function assertSecret(secret: unknown): asserts secret is string {
 const sensitiveKey =
   /^(?:api[_-]?key|authorization|cookie|credential|password|private[_-]?key|refresh[_-]?token|secret|token)$/i
 
+/**
+ * Outcome of inspecting one value for secret material.
+ *
+ * - `absent`: the value was inspected completely and does not carry the secret.
+ * - `present`: the secret was found.
+ * - `unverifiable`: the value's shape cannot be inspected without running
+ *   caller-controlled code, so the vault cannot prove that it is secret-free.
+ */
+type SecretPresence = 'absent' | 'present' | 'unverifiable'
+
+/** Bounds the inspection so a hostile or accidental structure cannot stall a lease. */
+const MAXIMUM_INSPECTED_NODES = 100_000
+const MAXIMUM_INSPECTION_DEPTH = 64
+
+/**
+ * True when `value` carries `secret`, and also when `value` cannot be proven
+ * not to carry it.
+ *
+ * Every caller must read `true` as "this value must not leave the vault", so an
+ * uninspectable value fails closed. The inspection is bounded, it never invokes
+ * a getter, a `toString`, or any other caller-controlled code, and it
+ * understands the containers a callback may realistically return: plain objects
+ * and arrays, `Error`, `Map`, `Set`, `Buffer`, typed arrays, and `ArrayBuffer`.
+ *
+ * The guarantee is about a result's own contents. A result that fabricates
+ * values through a proxy is outside it: such an operation already holds the
+ * secret, and the inspection reads only the own-property view.
+ */
 export function containsSecret(value: unknown, secret: string): boolean {
-  if (typeof value === 'string') return value.includes(secret)
-  if (Array.isArray(value)) return value.some((entry) => containsSecret(entry, secret))
-  if (value === null || typeof value !== 'object') return false
-  return Object.entries(value).some(
-    ([key, entry]) => sensitiveKey.test(key) || containsSecret(entry, secret)
-  )
+  return secretPresence(value, secret) !== 'absent'
+}
+
+function secretPresence(value: unknown, secret: string): SecretPresence {
+  const seen = new Set<object>()
+  const secretBytes = Buffer.from(secret, 'utf8')
+  let nodes = 0
+
+  const visit = (input: unknown, depth: number): SecretPresence => {
+    nodes += 1
+    if (nodes > MAXIMUM_INSPECTED_NODES) return 'unverifiable'
+    if (typeof input === 'string') return input.includes(secret) ? 'present' : 'absent'
+    if (typeof input === 'symbol') {
+      const description = input.description ?? ''
+      return description.includes(secret) ? 'present' : 'absent'
+    }
+    if (input === null || input === undefined) return 'absent'
+    if (typeof input === 'number' || typeof input === 'boolean' || typeof input === 'bigint') {
+      return 'absent'
+    }
+    // A function can close over the secret without exposing it as a property.
+    if (typeof input === 'function') return 'unverifiable'
+    if (typeof input !== 'object') return 'absent'
+    if (depth > MAXIMUM_INSPECTION_DEPTH) return 'unverifiable'
+    // A cycle is outside the inspectable representation; fail closed instead
+    // of recursing without bound.
+    if (seen.has(input)) return 'unverifiable'
+
+    seen.add(input)
+    try {
+      if (Array.isArray(input)) return inspectOwnProperties(input, visit, depth)
+      if (input instanceof Error) return inspectOwnProperties(input, visit, depth)
+      if (input instanceof Map) return inspectMap(input, visit, depth)
+      if (input instanceof Set) return inspectSet(input, visit, depth)
+      const bytes = byteSource(input)
+      if (bytes !== undefined) {
+        return containsBytes(bytes, secretBytes) ? 'present' : 'absent'
+      }
+      const prototype = Object.getPrototypeOf(input)
+      if (prototype === Object.prototype || prototype === null) {
+        return inspectOwnProperties(input, visit, depth)
+      }
+      // A class instance, an exotic object, or a proxy: its contents cannot be
+      // read without running caller-controlled code.
+      return 'unverifiable'
+    } finally {
+      seen.delete(input)
+    }
+  }
+
+  try {
+    return visit(value, 0)
+  } catch {
+    // Reading the value failed, so the secret cannot be ruled out.
+    return 'unverifiable'
+  }
+}
+
+/**
+ * Inspects own properties without invoking accessors. A property whose value
+ * cannot be read without running caller code makes the whole value
+ * unverifiable rather than being skipped.
+ */
+function inspectOwnProperties(
+  input: object,
+  visit: (value: unknown, depth: number) => SecretPresence,
+  depth: number
+): SecretPresence {
+  for (const key of Object.getOwnPropertyNames(input)) {
+    const descriptor = Object.getOwnPropertyDescriptor(input, key)
+    if (!descriptor) continue
+    if (!('value' in descriptor)) return 'unverifiable'
+    if (sensitiveKey.test(key)) return 'present'
+    const presence = visit(descriptor.value, depth + 1)
+    if (presence !== 'absent') return presence
+  }
+  for (const symbol of Object.getOwnPropertySymbols(input)) {
+    const descriptor = Object.getOwnPropertyDescriptor(input, symbol)
+    if (!descriptor) continue
+    if (!('value' in descriptor)) return 'unverifiable'
+    const presence = visit(descriptor.value, depth + 1)
+    if (presence !== 'absent') return presence
+  }
+  return 'absent'
+}
+
+function inspectMap(
+  input: Map<unknown, unknown>,
+  visit: (value: unknown, depth: number) => SecretPresence,
+  depth: number
+): SecretPresence {
+  // `Map.prototype.entries` is called directly so a proxy cannot run its traps.
+  for (const [key, value] of Map.prototype.entries.call(input)) {
+    if (typeof key === 'string' && sensitiveKey.test(key)) return 'present'
+    const keyPresence = visit(key, depth + 1)
+    if (keyPresence !== 'absent') return keyPresence
+    const valuePresence = visit(value, depth + 1)
+    if (valuePresence !== 'absent') return valuePresence
+  }
+  return 'absent'
+}
+
+function inspectSet(
+  input: Set<unknown>,
+  visit: (value: unknown, depth: number) => SecretPresence,
+  depth: number
+): SecretPresence {
+  for (const value of Set.prototype.values.call(input)) {
+    const presence = visit(value, depth + 1)
+    if (presence !== 'absent') return presence
+  }
+  return 'absent'
+}
+
+/** The raw bytes of a binary container, or undefined when the value is not binary. */
+function byteSource(input: object): Uint8Array | undefined {
+  if (ArrayBuffer.isView(input)) {
+    return new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+  }
+  if (input instanceof ArrayBuffer) return new Uint8Array(input)
+  if (typeof SharedArrayBuffer !== 'undefined' && input instanceof SharedArrayBuffer) {
+    return new Uint8Array(input)
+  }
+  return undefined
+}
+
+/** Byte-exact search, so binary material is matched without decoding it. */
+function containsBytes(haystack: Uint8Array, needle: Uint8Array): boolean {
+  if (needle.length === 0) return true
+  if (needle.length > haystack.length) return false
+  outer: for (let start = 0; start <= haystack.length - needle.length; start += 1) {
+    for (let offset = 0; offset < needle.length; offset += 1) {
+      if (haystack[start + offset] !== needle[offset]) continue outer
+    }
+    return true
+  }
+  return false
 }
 
 export function hash(value: unknown): string {
