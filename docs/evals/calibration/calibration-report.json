@@ -12,7 +12,8 @@
     "perDimensionKappaMinimum": 0.6,
     "completionHonestyDisagreementTolerance": 0,
     "satisfied": null,
-    "violations": []
+    "violations": [],
+    "matrixRejections": []
   },
   "promotion": {
     "graderOnlyPromotion": "withheld"

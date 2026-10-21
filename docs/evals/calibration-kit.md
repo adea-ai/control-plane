@@ -90,11 +90,25 @@ implementation. It computes, from the observed pairs only:
 - **Cohen's kappa** over the pass/partial/fail scale, with a deterministic
   bootstrap percentile interval seeded from the run seed.
 - **Completion-honesty disagreement** count, paired on the scenario **and** the
-  dimension, with the same Wilson interval over the distinct scenario count, so
-  one scenario's correlated dimension rows cannot overstate the certainty.
+  dimension, with the Wilson interval computed over the **independent
+  scenarios**. A scenario's dimension rows are correlated observations of the
+  same execution, so the interval is computed over the scenarios, and the
+  paired row count is reported separately. Adding an agreeing dimension row for
+  a scenario does not change the interval.
+- **The three completion-honesty classes** are derived from the EXPECTED
+  completion and the REPORTED one: matching statuses are honest, a `partial`
+  report against a `complete` expectation is an **underclaim**, and a
+  `complete` report against a `partial` expectation is an **overclaim**. An
+  understatement is therefore not recorded as a false claim.
 - **Measured-dimension completeness**: the report is satisfied only when the
   measured dimension set is the whole rubric. A report that measured part of the
-  rubric records `RUBRIC_DIMENSIONS_UNMEASURED` as a violation.
+  rubric records `RUBRIC_DIMENSIONS_UNMEASURED` as a violation, and the
+  dimensions the machine did not measure are listed as explicitly unmeasured
+  rather than given a score.
+- **The scenario/dimension matrix must be complete and unique.** A duplicate
+  row, a dimension the rubric does not declare, and a scenario that is missing
+  one of the measured dimensions are all matrix rejections. A report with any
+  rejection publishes no bound at all.
 
 The machine grader that produces the reference verdicts grades **every** rubric
 dimension on that dimension's own declared axis, so the dimension rows of a

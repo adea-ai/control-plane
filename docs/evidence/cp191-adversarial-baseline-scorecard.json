@@ -3,7 +3,7 @@
   "kind": "cp191-adversarial-baseline-scorecard",
   "issue": "#191",
   "generatedBy": "docs/evals/run-adversarial-program.mts",
-  "generatedAt": "2026-10-21T20:00:59.998Z",
+  "generatedAt": "2026-10-21T20:34:06.285Z",
   "corpus": {
     "id": "m11-goal-adherence-public-controls",
     "version": "1.3.0",
@@ -17,8 +17,8 @@
   },
   "source": {
     "id": "control-plane",
-    "revision": "c57acf25931e53ca5887a2e8a33b4b44ad32a42b",
-    "digest": "sha256:647d5ec98430a62ace8a1f709bd82360f6f5eb6d91b1fcbe442e3af2504282ea"
+    "revision": "d3f3fc06bbd8c8cbbb0ce37a65d71563a44f67ac",
+    "digest": "sha256:06cbcd3de1c6e407b6f64496b45562f8a6aaba4f551c32b348ff1f562e6f1436"
   },
   "seed": 191,
   "baselineIdentity": {
@@ -43,12 +43,12 @@
       "platform": "darwin",
       "architecture": "arm64",
       "node": "26.3.0",
-      "bun": "1.4.2"
+      "bun": "1.4.3"
     },
     "source": {
       "id": "control-plane",
-      "revision": "c57acf25931e53ca5887a2e8a33b4b44ad32a42b",
-      "digest": "sha256:647d5ec98430a62ace8a1f709bd82360f6f5eb6d91b1fcbe442e3af2504282ea"
+      "revision": "d3f3fc06bbd8c8cbbb0ce37a65d71563a44f67ac",
+      "digest": "sha256:06cbcd3de1c6e407b6f64496b45562f8a6aaba4f551c32b348ff1f562e6f1436"
     },
     "metamorphic": [
       {
@@ -164,7 +164,7 @@
         "expectation": "same-outcome"
       }
     ],
-    "identityDigest": "sha256:cac1732b09d50e17437fd2fe05ed329a9308f2297b1d5a7f008e7c075c8b5264"
+    "identityDigest": "sha256:c92627a8bde1526cba441a3889b9039d047ed29b46308f1329724302666c7629"
   },
   "candidateIdentity": {
     "corpus": {
@@ -188,12 +188,12 @@
       "platform": "darwin",
       "architecture": "arm64",
       "node": "26.3.0",
-      "bun": "1.4.2"
+      "bun": "1.4.3"
     },
     "source": {
       "id": "control-plane",
-      "revision": "c57acf25931e53ca5887a2e8a33b4b44ad32a42b",
-      "digest": "sha256:647d5ec98430a62ace8a1f709bd82360f6f5eb6d91b1fcbe442e3af2504282ea"
+      "revision": "d3f3fc06bbd8c8cbbb0ce37a65d71563a44f67ac",
+      "digest": "sha256:06cbcd3de1c6e407b6f64496b45562f8a6aaba4f551c32b348ff1f562e6f1436"
     },
     "metamorphic": [
       {
@@ -309,14 +309,14 @@
         "expectation": "same-outcome"
       }
     ],
-    "identityDigest": "sha256:b03b84459bb0391bf3548761ade83602e87b6e21c49d5c3a8876bd675cb667e4"
+    "identityDigest": "sha256:b02a5bfdc598268c06fe0b8e16444c8ad37cdcb37465ce6a5d9eafab7c92fa00"
   },
   "baseline": {
     "evalRunId": "cp191-baseline-pinned",
     "status": "passed",
     "cases": 39,
     "observedToolCalls": 101,
-    "observedLatencyMs": 4.257543999999925,
+    "observedLatencyMs": 4.194587000000098,
     "observedProviderUsage": null,
     "observedProviderUsageReason": "The offline harness performs no provider call, so no cost or token usage was observed. It is unavailable, not zero."
   },
@@ -325,7 +325,7 @@
     "status": "passed",
     "cases": 39,
     "observedToolCalls": 101,
-    "observedLatencyMs": 1560.3947049999995,
+    "observedLatencyMs": 1728.070707,
     "observedProviderUsage": null,
     "observedProviderUsageReason": "The offline harness performs no provider call, so no cost or token usage was observed. It is unavailable, not zero."
   },
@@ -376,10 +376,10 @@
       "note": "The independent channel also observes effects performed outside the in-process tool ports, so a candidate graded independently against an in-process baseline is the conservative ordering."
     },
     "latency": {
-      "candidateMs": 1560.3947049999995,
-      "baselineMs": 4.257543999999925,
-      "deltaMs": 1556.1371609999997,
-      "relativeDelta": 365.5011342219898
+      "candidateMs": 1728.070707,
+      "baselineMs": 4.194587000000098,
+      "deltaMs": 1723.87612,
+      "relativeDelta": 410.97636549199234
     },
     "toolCalls": {
       "candidate": 101,
@@ -442,10 +442,10 @@
       {
         "metric": "latency_ms",
         "direction": "min",
-        "candidate": 40.01012064102563,
-        "baseline": 0.10916779487179294,
-        "delta": 39.900952846153835,
-        "regression": 365.50113422198973
+        "candidate": 44.30950530769231,
+        "baseline": 0.10755351282051533,
+        "delta": 44.201951794871796,
+        "regression": 410.9763654919924
       },
       {
         "metric": "provenance_correctness",
@@ -528,7 +528,7 @@
         "reasons": ["HUMAN_CALIBRATION_MISSING"]
       }
     ],
-    "evaluatedAt": "2026-10-21T20:00:59.998Z"
+    "evaluatedAt": "2026-10-21T20:34:06.285Z"
   },
   "externalGates": [
     {

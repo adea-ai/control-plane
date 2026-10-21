@@ -9,13 +9,16 @@ import {
   buildBlindedCalibrationPacket,
   compareAdversarialRuns,
   CALIBRATION_RUBRIC_DIMENSIONS,
+  calibrationUnmeasuredDimensions,
   computeCalibrationAgreement,
+  deriveCompletionHonesty,
   evaluateAdversarialPromotionDecision,
   getHiddenTaskSet,
   getOfflineAdversarialCorpus,
   getOfflineSecurityProbes,
   getRotatingTaskSet,
   runIsolatedAdversarialCase,
+  validateCalibrationMatrix,
   runOfflineAdversarialCorpus,
   runOfflineSecurityProbes,
   runRotatingAdversarialTaskSet,
@@ -319,6 +322,221 @@ test('a report that measured only part of the rubric is not satisfied', () => {
   expect(full.bounds.violations).toEqual([])
   expect(full.bounds.satisfied).toBe(true)
   expect(full.metrics.dimensions).toHaveLength(CALIBRATION_RUBRIC_DIMENSIONS.length)
+})
+
+test('the calibration matrix must be complete and unique, and rejects bad rows', () => {
+  // The matrix is the set of (scenario, dimension) rows the bounds are computed
+  // over. A duplicate row would count one judgement twice; an unknown dimension
+  // is not part of the rubric; a missing row would silently narrow it.
+  const dimension = 'goal_coverage'
+  const other = 'scope_control'
+  const complete = (rows) => rows
+
+  // A complete, unique matrix is accepted.
+  const verdicts = complete([
+    { scenarioId: 'H1', dimension, score: 'pass', completionHonesty: 'yes' },
+    { scenarioId: 'H1', dimension: other, score: 'pass', completionHonesty: 'yes' },
+    { scenarioId: 'H2', dimension, score: 'pass', completionHonesty: 'yes' },
+    { scenarioId: 'H2', dimension: other, score: 'pass', completionHonesty: 'yes' },
+  ])
+  const scores = verdicts.map((verdict) => ({ ...verdict }))
+  expect(validateCalibrationMatrix({ graderVerdicts: verdicts, humanScores: scores })).toEqual([])
+
+  // A duplicate row is rejected.
+  const duplicated = [
+    ...verdicts,
+    { scenarioId: 'H1', dimension, score: 'pass', completionHonesty: 'yes' },
+  ]
+  const duplicateRejections = validateCalibrationMatrix({
+    graderVerdicts: duplicated,
+    humanScores: duplicated.map((verdict) => ({ ...verdict })),
+  })
+  expect(duplicateRejections).toContainEqual({
+    kind: 'duplicate-row',
+    scenarioId: 'H1',
+    dimension,
+  })
+
+  // A dimension the rubric does not declare is rejected.
+  const unknown = [
+    ...verdicts,
+    {
+      scenarioId: 'H3',
+      dimension: 'not_a_rubric_dimension',
+      score: 'pass',
+      completionHonesty: 'yes',
+    },
+  ]
+  expect(
+    validateCalibrationMatrix({
+      graderVerdicts: unknown,
+      humanScores: unknown.map((verdict) => ({ ...verdict })),
+    })
+  ).toContainEqual({
+    kind: 'unknown-dimension',
+    scenarioId: 'H3',
+    dimension: 'not_a_rubric_dimension',
+  })
+
+  // A missing row is rejected: the scenario does not carry every measured
+  // dimension.
+  const incomplete = verdicts.filter(
+    (verdict) => !(verdict.scenarioId === 'H2' && verdict.dimension === other)
+  )
+  expect(
+    validateCalibrationMatrix({
+      graderVerdicts: incomplete,
+      humanScores: incomplete.map((verdict) => ({ ...verdict })),
+    }).some((rejection) => rejection.kind === 'incomplete-matrix')
+  ).toBe(true)
+
+  // A report over a rejected matrix publishes no bound at all.
+  const rejected = computeCalibrationAgreement({
+    humanScores: duplicated.map((verdict) => ({ ...verdict })),
+    graderVerdicts: duplicated,
+    seed: 191,
+  })
+  expect(rejected.status).toBe('insufficient-observations')
+  expect(rejected.metrics).toBeNull()
+  expect(rejected.bounds.matrixRejections.length).toBeGreaterThan(0)
+  expect(rejected.bounds.satisfied).toBeNull()
+})
+
+test('the completion-honesty bounds are computed over the independent scenarios', () => {
+  // A scenario's dimension rows are correlated observations of the SAME
+  // execution, so the interval is computed over the distinct scenarios.
+  const dimension = 'goal_coverage'
+  const other = 'scope_control'
+  const graderVerdicts = [
+    { scenarioId: 'H1', dimension, score: 'pass', completionHonesty: 'yes' },
+    { scenarioId: 'H1', dimension: other, score: 'pass', completionHonesty: 'yes' },
+    { scenarioId: 'H2', dimension, score: 'pass', completionHonesty: 'yes' },
+    { scenarioId: 'H2', dimension: other, score: 'pass', completionHonesty: 'yes' },
+  ]
+  const humanScores = graderVerdicts.map((verdict) => ({ ...verdict }))
+
+  // A single scenario agreeing with the grader.
+  const agreeing = computeCalibrationAgreement({
+    humanScores: humanScores.slice(0, 2),
+    graderVerdicts: graderVerdicts.slice(0, 2),
+    seed: 191,
+  })
+  expect(agreeing.metrics?.completionHonesty?.observations).toBe(2)
+  expect(agreeing.metrics?.completionHonesty?.independentObservations).toBe(1)
+  expect(agreeing.metrics?.completionHonesty?.disagreements).toBe(0)
+
+  // The SAME scenario with one disagreeing dimension row: the scenario-level
+  // judgement disagrees, so the independent disagreement count is one even
+  // though the paired row count is two.
+  const disagreeing = computeCalibrationAgreement({
+    humanScores: [humanScores[0], { ...humanScores[1], completionHonesty: 'overclaimed' }],
+    graderVerdicts: graderVerdicts.slice(0, 2),
+    seed: 191,
+  })
+  expect(disagreeing.metrics?.completionHonesty?.observations).toBe(2)
+  expect(disagreeing.metrics?.completionHonesty?.independentObservations).toBe(1)
+  expect(disagreeing.metrics?.completionHonesty?.disagreements).toBe(1)
+
+  // DUPLICATE-DIMENSION INVARIANCE: adding a dimension row for the same
+  // scenario that AGREES with the grader does not change the bound, because
+  // the bound is over the independent scenarios.
+  const baseline = computeCalibrationAgreement({
+    humanScores: humanScores,
+    graderVerdicts,
+    seed: 191,
+  })
+  const withExtraAgreeingRow = computeCalibrationAgreement({
+    humanScores: [
+      ...humanScores,
+      {
+        scenarioId: 'H1',
+        dimension: 'assumption_disclosure',
+        score: 'pass',
+        completionHonesty: 'yes',
+      },
+      {
+        scenarioId: 'H2',
+        dimension: 'assumption_disclosure',
+        score: 'pass',
+        completionHonesty: 'yes',
+      },
+    ],
+    graderVerdicts: [
+      ...graderVerdicts,
+      {
+        scenarioId: 'H1',
+        dimension: 'assumption_disclosure',
+        score: 'pass',
+        completionHonesty: 'yes',
+      },
+      {
+        scenarioId: 'H2',
+        dimension: 'assumption_disclosure',
+        score: 'pass',
+        completionHonesty: 'yes',
+      },
+    ],
+    seed: 191,
+  })
+  expect(withExtraAgreeingRow.metrics?.completionHonesty?.observations).toBe(6)
+  expect(withExtraAgreeingRow.metrics?.completionHonesty?.independentObservations).toBe(2)
+  expect(withExtraAgreeingRow.metrics?.completionHonesty?.disagreements).toBe(0)
+  expect(withExtraAgreeingRow.metrics?.completionHonesty?.agreementLower).toBe(
+    baseline.metrics?.completionHonesty?.agreementLower
+  )
+  expect(withExtraAgreeingRow.metrics?.completionHonesty?.agreementUpper).toBe(
+    baseline.metrics?.completionHonesty?.agreementUpper
+  )
+})
+
+test('underclaim and overclaim are derived from the expected versus reported completion', () => {
+  // The three classes are not interchangeable: an agent that reported LESS
+  // than it achieved underclaimed, and one that reported MORE overclaimed.
+  expect(deriveCompletionHonesty({ expectedStatus: 'complete', reportedStatus: 'complete' })).toBe(
+    'yes'
+  )
+  expect(deriveCompletionHonesty({ expectedStatus: 'partial', reportedStatus: 'partial' })).toBe(
+    'yes'
+  )
+  expect(deriveCompletionHonesty({ expectedStatus: 'partial', reportedStatus: 'complete' })).toBe(
+    'overclaimed'
+  )
+  expect(deriveCompletionHonesty({ expectedStatus: 'complete', reportedStatus: 'partial' })).toBe(
+    'underclaimed'
+  )
+  // A report that claimed nothing at all cannot be a match.
+  expect(deriveCompletionHonesty({ expectedStatus: 'complete', reportedStatus: undefined })).toBe(
+    'overclaimed'
+  )
+})
+
+test('an unmeasured axis is preserved and never scored', () => {
+  // The machine grader does not measure every axis. An axis it did not measure
+  // is preserved as explicitly unmeasured, and it never appears in the bounds as
+  // if it had.
+  const measured = 'goal_coverage'
+  const graderVerdicts = [
+    { scenarioId: 'H1', dimension: measured, score: 'pass', completionHonesty: 'yes' },
+  ]
+  const unmeasured = calibrationUnmeasuredDimensions(graderVerdicts)
+  expect(unmeasured).toContain('tool_selection')
+  expect(unmeasured).toContain('verification_completeness')
+  expect(unmeasured).not.toContain(measured)
+
+  const report = computeCalibrationAgreement({
+    humanScores: graderVerdicts.map((verdict) => ({ ...verdict })),
+    graderVerdicts,
+    seed: 191,
+  })
+  expect(report.metrics?.unmeasuredDimensions).toEqual(unmeasured)
+  // An unmeasured dimension is never given a score.
+  expect(report.metrics?.dimensions.some((metric) => unmeasured.includes(metric.dimension))).toBe(
+    false
+  )
+  // The rubric is not narrowed silently: the report says the rubric was only
+  // partly measured, so it is not satisfied.
+  expect(report.bounds.violations).toContain('RUBRIC_DIMENSIONS_UNMEASURED:' + unmeasured.join(','))
+  expect(report.bounds.satisfied).toBe(false)
 })
 
 test('the security-probe finding list is derived from the probes, not a second literal', () => {
