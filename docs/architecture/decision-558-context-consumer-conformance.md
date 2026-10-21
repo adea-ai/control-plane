@@ -253,8 +253,9 @@ DATABASE_ADMIN_URL=… DATABASE_MIGRATION_URL=… DATABASE_URL=… \
   RUN_M10_POSTGRES_CONFORMANCE=true \
   bun test src/decision-context-consumer-conformance.test.mjs --timeout 60000
   17 pass, 0 fail (SQLite and PostgreSQL legs)
-  the recorded PostgreSQL run predates the store-order case this record adds;
-  the PostgreSQL legs were not re-run for it
+  the recorded PostgreSQL run predates the three cases this record adds after
+  it — the store-order case, the revoked-skill case and the plan-integrity
+  case; the PostgreSQL legs were not re-run for them
 
 bun --cwd apps/control-api test src
   710 pass, 15 skip, 1 fail
@@ -272,7 +273,7 @@ bun scripts/run-bun-test-group.mjs unit --timeout 30000
   between the two runs is the conformance cases that need the repair,
   so every other failure is pre-existing
   the conformance file alone, with the three consumer services reverted to
-  the base commit, now reports 12 pass and 6 fail
+  the base commit, reported 12 pass and 6 fail
   the deterministic store-order case fails the base implementation in every
   run (6 of 6), and the multi-composition store-order case fails it in 10 of
   10 runs; both pass at this head in 10 of 10 runs
@@ -328,6 +329,8 @@ bun test src/decision-context-consumer-conformance.test.mjs --timeout 30000
   13 pass, 7 fail
   the seven failures are the six cases this record already listed plus
   "refuses a revoked skill version on a first pass and on a replay"
+  the earlier receipt's 12 pass and 6 fail belongs to the head it was taken
+  on; the same recipe at this head reports the counts above
 
 # the consumer's skill-lifecycle check removed from the replay path
 bun test src/decision-context-consumer-conformance.test.mjs --timeout 30000
