@@ -45,12 +45,61 @@ rather than asserted in prose:
 | Counted identities that the lockfile does not name                  | **0** of 591                                               |
 | Lockfile packages the count excludes                                | **45** — exactly the `@control-plane/*` workspace packages |
 | Counted identities that are not plain `package@version` identities  | **0** of 591                                               |
+| Identities reachable from the declared roots that the count misses  | **0** of 591                                               |
+| Counted identities the declared roots do not reach                  | **0** of 591                                               |
 
 So the counter neither drops an entry nor invents one, and the identities it reports are the
 lockfile's own package identities. **The 591 is the exact size of the lockfile's external
 closure**; the 306-entry gap is real graph growth, not a measurement artefact. The gap was
 already measured against the ceiling's own baseline: `budgets.json` records 274 pairs at
 `c37de22`, and the same reconstruction over that lockfile yields 274 again.
+
+## 2a. The attribution, reproduced
+
+The attribution is now **recomputed by a test** rather than stated in prose.
+`packages/production-readiness/src/dependency-budget-scope.test.mjs` walks the
+lockfile graph from the declared roots and compares it with the counted set:
+
+- the walk follows the `dependencies`, `optionalDependencies` and
+  `peerDependencies` edges of every `bun.lock` entry, resolving a dependency
+  name to the entries that carry it (a nested entry such as
+  `@fastify/ajv-compiler/fast-uri` names the package `fast-uri`);
+- an identity is `<package name>@<resolved version>`, with the workspace
+  packages excluded, exactly as the counter names them;
+- **the reachable set and the counted set are the same set** — 591 identities
+  each, with no identity counted but unreachable and none reachable but
+  uncounted, and every declared root resolving to a lockfile entry.
+
+The per-root and per-manifest closures below are that walk's output on the
+current lockfile. The per-root table in `docs/405-runtime-audit.md` §3.3 was
+produced with a narrower walk (it does not follow every edge this walk
+follows), so it does not reproduce under this definition, while the totals the
+budget measures and the identity-level agreement do. The difference is in the
+walk's edges, not in the graph: `bun.lock` has not changed between the audit's
+published head and this head.
+
+| Declared root                | Transitive external identities (this walk) |
+| ---------------------------- | ------------------------------------------ |
+| `vite-plus`                  | 264                                        |
+| `@earendil-works/pi-durable` | 125                                        |
+| `@earendil-works/pi-ai`      | 95                                         |
+| `@nestjs/platform-fastify`   | 84                                         |
+| `miniflare`                  | 62                                         |
+| `fastify`                    | 49                                         |
+| `@sentry/node`               | 45                                         |
+| `drizzle-kit`                | 38                                         |
+
+| Declaring manifest            | Transitive external identities |
+| ----------------------------- | ------------------------------ |
+| repository root               | 379                            |
+| `apps/control-api`            | 220                            |
+| `packages/pi-cloudflare-host` | 178                            |
+| `packages/sqlite-persistence` | 142                            |
+| `packages/pi-durable-adapter` | 125                            |
+| `packages/langgraph-adapter`  | 71                             |
+| `packages/database`           | 55                             |
+| `packages/telemetry`          | 49                             |
+| `packages/object-store`       | 29                             |
 
 ## 3. The composition of the 591
 
@@ -130,16 +179,17 @@ reporting the breach: `BUDGET EXCEEDED … 591 against 285`, exit 1.
 
 ## 8. What this slice changed
 
-| Path                                                                 | Change                                                                                                                                                                                                                                                    |
-| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/check-budgets.mjs`                                          | **unchanged** — no parser defect is proven (§2), so the counter is not touched                                                                                                                                                                            |
-| `packages/production-readiness/src/dependency-budget-scope.test.mjs` | three regression tests pin the §2 invariants over the **real** listing: no listing entry is dropped, every counted identity is named by the lockfile and only the workspace packages are excluded, and every counted identity is a plain package identity |
-| `docs/1230-dependency-budget-attribution.md`                         | this document                                                                                                                                                                                                                                             |
+| Path                                                                 | Change                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/check-budgets.mjs`                                          | **unchanged** — no parser defect is proven (§2), so the counter is not touched                                                                                                                                                                                                                                                                                                                                                   |
+| `packages/production-readiness/src/dependency-budget-scope.test.mjs` | five regression tests pin the §2 invariants over the **real** listing: no listing entry is dropped, every counted identity is named by the lockfile and only the workspace packages are excluded, and every counted identity is a plain package identity; the measured closure is exactly the lockfile graph reachable from the declared roots; and the closure without the Vite+ toolchain is still above the unchanged ceiling |
+| `docs/1230-dependency-budget-attribution.md`                         | this document                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ## 9. Receipts
 
 - Real measurement, seam unset: `BUDGET EXCEEDED: {"ok":false,"ceiling":285,"measured":591,"scope":"lockfile tree"}`, exit 1.
 - Installed graph: 374 distinct external identities on this host (1031 store entries walked).
-- Focused regression: `bun test src/dependency-budget-scope.test.mjs` (packages/production-readiness) — 14 pass / 0 fail, of which 3 are new.
+- Focused regression: `bun test src/dependency-budget-scope.test.mjs` (packages/production-readiness) — 16 pass / 0 fail, of which 5 are new.
+- Reproduced attribution: the lockfile walk reaches exactly the 591 counted identities (591 = 591, no difference in either direction, no unresolved root).
 - The ceiling is unchanged: `budgets.json` → `dependencies.externalPackageCeiling = 285`.
 - No release and no deployment were performed or requested.

@@ -372,3 +372,103 @@ test('every counted identity of the real listing is a plain package identity', a
     assert.equal(identity.startsWith('@control-plane/'), false)
   }
 })
+
+/**
+ * The lockfile graph the audit attributes, walked from the declared roots.
+ *
+ * The walk is what makes the attribution reproducible: every counted identity
+ * must be reachable from a declared root, and nothing reachable may be missing
+ * from the count. `baseName` is the checker's own identity rule, so the walk
+ * names packages exactly as the counter does.
+ */
+function lockfileGraph(baseName) {
+  const lock = JSONC.parse(readFileSync(join(repositoryRoot, 'bun.lock'), 'utf8'))
+  const entries = new Map()
+  for (const [key, value] of Object.entries(lock.packages ?? {})) {
+    entries.set(key, {
+      spec: Array.isArray(value) ? value[0] : value,
+      meta: Array.isArray(value) ? (value[2] ?? {}) : {},
+    })
+  }
+  const byBaseName = new Map()
+  for (const key of entries.keys()) {
+    const base = baseName(key)
+    if (!byBaseName.has(base)) byBaseName.set(base, [])
+    byBaseName.get(base).push(key)
+  }
+  const roots = []
+  for (const workspace of Object.values(lock.workspaces ?? {})) {
+    for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+      for (const name of Object.keys(workspace[section] ?? {})) roots.push(name)
+    }
+  }
+  const closureOf = (rootNames) => {
+    const identities = new Set()
+    const visited = new Set()
+    const queue = []
+    const unresolved = []
+    for (const root of new Set(rootNames)) {
+      const keys = byBaseName.get(root)
+      if (!keys?.length) {
+        unresolved.push(root)
+        continue
+      }
+      queue.push(...keys)
+    }
+    while (queue.length > 0) {
+      const key = queue.pop()
+      if (visited.has(key)) continue
+      visited.add(key)
+      const { spec, meta } = entries.get(key)
+      const at = spec.lastIndexOf('@')
+      const identity = `${baseName(key)}@${spec.slice(at + 1)}`
+      if (!identity.startsWith('@control-plane/')) identities.add(identity)
+      for (const section of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+        for (const name of Object.keys(meta[section] ?? {})) {
+          for (const child of byBaseName.get(name) ?? []) queue.push(child)
+        }
+      }
+    }
+    return { identities, unresolved }
+  }
+  return { closureOf, roots }
+}
+
+test('the measured closure is exactly the lockfile graph reachable from the declared roots', async () => {
+  // The attribution the audit rests on, recomputed: the counted identities and
+  // the identities reachable from the declared roots are the same set. A
+  // difference in either direction means the measurement and the attribution
+  // have drifted apart.
+  const { externalPackagePairs, normalizePackageName } = await loadChecker()
+  const counted = new Set(externalPackagePairs(realListing()))
+  const { closureOf, roots } = lockfileGraph(normalizePackageName)
+  const { identities, unresolved } = closureOf(roots)
+  assert.deepEqual(unresolved, [], 'a declared root has no lockfile entry')
+  assert.deepEqual(
+    [...counted].filter((identity) => !identities.has(identity)),
+    []
+  )
+  assert.deepEqual(
+    [...identities].filter((identity) => !counted.has(identity)),
+    []
+  )
+})
+
+test('the Vite+ toolchain closure is attributable, and the residual overage is not a measurement artefact', async () => {
+  // The residual, recomputed rather than asserted in prose: the toolchain
+  // closure is a proper part of the measured set, and removing it entirely
+  // still leaves the closure above the unchanged ceiling. That is what makes
+  // the breach a genuine overage rather than a counting artefact. If the
+  // reduction ever lands, this check fails loudly and the audit is revisited.
+  const { externalPackagePairs, normalizePackageName } = await loadChecker()
+  const counted = new Set(externalPackagePairs(realListing()))
+  const { closureOf } = lockfileGraph(normalizePackageName)
+  const toolchain = closureOf(['vite-plus']).identities
+  assert.ok(toolchain.size > 0, 'the toolchain closure is empty')
+  for (const identity of toolchain) assert.equal(counted.has(identity), true, identity)
+  const withoutToolchain = [...counted].filter((identity) => !toolchain.has(identity))
+  assert.ok(
+    withoutToolchain.length > budgets.dependencies.externalPackageCeiling,
+    `the closure without the toolchain (${withoutToolchain.length}) is no longer above the ceiling`
+  )
+})
