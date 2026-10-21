@@ -431,6 +431,95 @@ describe('secret egress inspection of callback results', () => {
     expect(containsSecret({ [Symbol('held')]: synthetic }, synthetic)).toBe(true)
   })
 
+  test('finds the secret in an ordinary property name', () => {
+    expect(containsSecret({ [synthetic]: 'value' }, synthetic)).toBe(true)
+    expect(containsSecret({ [`prefix-${synthetic}`]: 'value' }, synthetic)).toBe(true)
+    const map = new Map()
+    map[synthetic] = 'value'
+    expect(containsSecret(map, synthetic)).toBe(true)
+    const buffer = Buffer.from('accepted', 'utf8')
+    buffer[synthetic] = 'value'
+    expect(containsSecret(buffer, synthetic)).toBe(true)
+    // A name that does not carry the secret is left alone.
+    expect(containsSecret({ status: 'ok', 'user-id': 'u-1' }, synthetic)).toBe(false)
+  })
+
+  test('finds the secret in own properties of a Map or a Set', () => {
+    const map = new Map([['status', 'ok']])
+    map.payload = synthetic
+    expect(containsSecret(map, synthetic)).toBe(true)
+
+    const set = new Set(['accepted'])
+    set.payload = synthetic
+    expect(containsSecret(set, synthetic)).toBe(true)
+
+    const sensitive = new Map()
+    sensitive.token = 'opaque'
+    expect(containsSecret(sensitive, synthetic)).toBe(true)
+
+    const cleanMap = new Map([['status', 'ok']])
+    cleanMap.note = 'accepted'
+    expect(containsSecret(cleanMap, synthetic)).toBe(false)
+    const cleanSet = new Set(['accepted'])
+    cleanSet.note = 'accepted'
+    expect(containsSecret(cleanSet, synthetic)).toBe(false)
+  })
+
+  test('finds the secret in own properties of a binary container', () => {
+    const buffer = Buffer.from('accepted', 'utf8')
+    buffer.payload = synthetic
+    expect(containsSecret(buffer, synthetic)).toBe(true)
+
+    const view = new Uint8Array([1, 2, 3])
+    view.payload = synthetic
+    expect(containsSecret(view, synthetic)).toBe(true)
+
+    const cleanBuffer = Buffer.from('accepted', 'utf8')
+    cleanBuffer.note = 'accepted'
+    expect(containsSecret(cleanBuffer, synthetic)).toBe(false)
+  })
+
+  test('finds the secret in a symbol key description', () => {
+    expect(containsSecret({ [Symbol(synthetic)]: 'value' }, synthetic)).toBe(true)
+    expect(containsSecret({ [Symbol('held')]: 'value' }, synthetic)).toBe(false)
+  })
+
+  test('reads binary containers without running caller accessors', () => {
+    let accessorCalls = 0
+    class Hostile extends Uint8Array {
+      get buffer() {
+        accessorCalls += 1
+        return super.buffer
+      }
+      get byteLength() {
+        accessorCalls += 1
+        return super.byteLength
+      }
+    }
+    const hostile = new Hostile(4)
+    expect(containsSecret(hostile, synthetic)).toBe(false)
+    // The subclass's accessors never ran: the bytes are read intrinsically.
+    expect(accessorCalls).toBe(0)
+
+    const binary = Buffer.from('accepted', 'utf8')
+    Object.defineProperty(binary, 'payload', {
+      get() {
+        accessorCalls += 1
+        return synthetic
+      },
+      enumerable: true,
+      configurable: true,
+    })
+    expect(containsSecret(binary, synthetic)).toBe(true)
+    // The accessor was not invoked; the shape is unverifiable instead.
+    expect(accessorCalls).toBe(0)
+  })
+
+  test('rejects a binary container above the enumeration bound', () => {
+    expect(containsSecret(new Uint8Array(70_000), synthetic)).toBe(true)
+    expect(containsSecret(new Uint8Array(70_000).fill(0x61), synthetic)).toBe(true)
+  })
+
   test('reports containers that do not carry the secret as clean', () => {
     expect(containsSecret(new Error('request failed'), synthetic)).toBe(false)
     expect(containsSecret(new Error('failed', { cause: 'upstream timeout' }), synthetic)).toBe(

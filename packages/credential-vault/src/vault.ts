@@ -564,18 +564,68 @@ const MAXIMUM_INSPECTED_NODES = 100_000
 const MAXIMUM_INSPECTION_DEPTH = 64
 
 /**
+ * Bounds for binary containers. Their own properties can only be listed by
+ * walking every element, so a container larger than this is rejected rather
+ * than inspected.
+ */
+const MAXIMUM_BINARY_BYTES = 65_536
+
+/**
+ * Reads an intrinsic accessor without running caller-defined code. The
+ * accessors are captured once, from the built-in prototypes, so a subclass that
+ * overrides `buffer`, `byteOffset`, or `byteLength` never runs.
+ */
+function intrinsicGetter(prototype: object, name: string): (() => unknown) | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, name)
+  return descriptor && typeof descriptor.get === 'function'
+    ? (descriptor.get as () => unknown)
+    : undefined
+}
+
+/** Calls an intrinsic accessor; a shape that does not match yields undefined. */
+function callIntrinsic(getter: (() => unknown) | undefined, receiver: unknown): unknown {
+  if (getter === undefined) return undefined
+  try {
+    return getter.call(receiver)
+  } catch {
+    return undefined
+  }
+}
+
+const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype) as object
+const typedArrayBuffer = intrinsicGetter(typedArrayPrototype, 'buffer')
+const typedArrayByteOffset = intrinsicGetter(typedArrayPrototype, 'byteOffset')
+const typedArrayByteLength = intrinsicGetter(typedArrayPrototype, 'byteLength')
+const typedArrayLength = intrinsicGetter(typedArrayPrototype, 'length')
+const dataViewBuffer = intrinsicGetter(DataView.prototype, 'buffer')
+const dataViewByteOffset = intrinsicGetter(DataView.prototype, 'byteOffset')
+const dataViewByteLength = intrinsicGetter(DataView.prototype, 'byteLength')
+const arrayBufferByteLength = intrinsicGetter(ArrayBuffer.prototype, 'byteLength')
+const sharedArrayBufferByteLength =
+  typeof SharedArrayBuffer === 'undefined'
+    ? undefined
+    : intrinsicGetter(SharedArrayBuffer.prototype, 'byteLength')
+const mapSize = intrinsicGetter(Map.prototype, 'size')
+const setSize = intrinsicGetter(Set.prototype, 'size')
+
+/**
  * True when `value` carries `secret`, and also when `value` cannot be proven
  * not to carry it.
  *
  * Every caller must read `true` as "this value must not leave the vault", so an
- * uninspectable value fails closed. The inspection is bounded, it never invokes
- * a getter, a `toString`, or any other caller-controlled code, and it
- * understands the containers a callback may realistically return: plain objects
- * and arrays, `Error`, `Map`, `Set`, `Buffer`, typed arrays, and `ArrayBuffer`.
+ * uninspectable value fails closed. The inspection reads own property
+ * descriptors and intrinsic accessors, so it never invokes a getter, a
+ * `toString`, or any other caller-defined code, and it understands the
+ * containers a callback may realistically return: plain objects and arrays,
+ * `Error`, `Map`, `Set`, `Buffer`, typed arrays, and `ArrayBuffer`.
  *
- * The guarantee is about a result's own contents. A result that fabricates
- * values through a proxy is outside it: such an operation already holds the
- * secret, and the inspection reads only the own-property view.
+ * The guarantee is about a result's own contents and is bounded: a traversal
+ * visits at most {@link MAXIMUM_INSPECTED_NODES} values and
+ * {@link MAXIMUM_INSPECTION_DEPTH} levels, and a binary container larger than
+ * {@link MAXIMUM_BINARY_BYTES} is rejected rather than inspected. This is not a
+ * sandbox for hostile JavaScript: reading a prototype can still run a proxy's
+ * `getPrototypeOf` trap, so a result that fabricates values through a proxy is
+ * outside the guarantee, and such an operation already holds the secret.
  */
 export function containsSecret(value: unknown, secret: string): boolean {
   return secretPresence(value, secret) !== 'absent'
@@ -608,20 +658,37 @@ function secretPresence(value: unknown, secret: string): SecretPresence {
 
     seen.add(input)
     try {
-      if (Array.isArray(input)) return inspectOwnProperties(input, visit, depth)
-      if (input instanceof Error) return inspectOwnProperties(input, visit, depth)
-      if (input instanceof Map) return inspectMap(input, visit, depth)
-      if (input instanceof Set) return inspectSet(input, visit, depth)
-      const bytes = byteSource(input)
-      if (bytes !== undefined) {
-        return containsBytes(bytes, secretBytes) ? 'present' : 'absent'
+      if (Array.isArray(input)) return inspectOwnProperties(input, secret, visit, depth)
+      // The `size` accessors are intrinsic, so they identify a genuine Map or
+      // Set without running a proxy's traps.
+      if (callIntrinsic(mapSize, input) !== undefined) {
+        return inspectMap(input as Map<unknown, unknown>, secret, visit, depth)
+      }
+      if (callIntrinsic(setSize, input) !== undefined) {
+        return inspectSet(input as Set<unknown>, secret, visit, depth)
+      }
+      const binary = binaryShape(input)
+      if (binary !== undefined) {
+        // A binary container above the enumeration bound is rejected rather than
+        // inspected: its own properties can only be listed by walking every
+        // element, which is not bounded work.
+        if (binary.bytes.byteLength > MAXIMUM_BINARY_BYTES) return 'unverifiable'
+        if (containsBytes(binary.bytes, secretBytes)) return 'present'
+        return inspectOwnProperties(input, secret, visit, depth, (key) =>
+          isElementSlot(key, binary.elementCount)
+        )
       }
       const prototype = Object.getPrototypeOf(input)
       if (prototype === Object.prototype || prototype === null) {
-        return inspectOwnProperties(input, visit, depth)
+        return inspectOwnProperties(input, secret, visit, depth)
       }
-      // A class instance, an exotic object, or a proxy: its contents cannot be
-      // read without running caller-controlled code.
+      // An error carries its message, stack, and cause as own properties, so it
+      // is inspected like a plain object even though its prototype is not one.
+      if (hasErrorPrototype(prototype)) {
+        return inspectOwnProperties(input, secret, visit, depth)
+      }
+      // A class instance or an exotic object: its contents cannot be read
+      // without running caller-controlled code.
       return 'unverifiable'
     } finally {
       seen.delete(input)
@@ -639,17 +706,23 @@ function secretPresence(value: unknown, secret: string): SecretPresence {
 /**
  * Inspects own properties without invoking accessors. A property whose value
  * cannot be read without running caller code makes the whole value
- * unverifiable rather than being skipped.
+ * unverifiable rather than being skipped. A symbol key's own description is
+ * inspected too, because a key can carry the secret as well.
  */
 function inspectOwnProperties(
   input: object,
+  secret: string,
   visit: (value: unknown, depth: number) => SecretPresence,
-  depth: number
+  depth: number,
+  skip?: (key: string) => boolean
 ): SecretPresence {
   for (const key of Object.getOwnPropertyNames(input)) {
+    if (skip?.(key) === true) continue
     const descriptor = Object.getOwnPropertyDescriptor(input, key)
     if (!descriptor) continue
     if (!('value' in descriptor)) return 'unverifiable'
+    // The name itself is material: a property can be named after the secret.
+    if (key.includes(secret)) return 'present'
     if (sensitiveKey.test(key)) return 'present'
     const presence = visit(descriptor.value, depth + 1)
     if (presence !== 'absent') return presence
@@ -658,6 +731,8 @@ function inspectOwnProperties(
     const descriptor = Object.getOwnPropertyDescriptor(input, symbol)
     if (!descriptor) continue
     if (!('value' in descriptor)) return 'unverifiable'
+    // The key itself is material: a symbol description can name the secret.
+    if (symbol.description?.includes(secret) === true) return 'present'
     const presence = visit(descriptor.value, depth + 1)
     if (presence !== 'absent') return presence
   }
@@ -666,6 +741,7 @@ function inspectOwnProperties(
 
 function inspectMap(
   input: Map<unknown, unknown>,
+  secret: string,
   visit: (value: unknown, depth: number) => SecretPresence,
   depth: number
 ): SecretPresence {
@@ -677,11 +753,13 @@ function inspectMap(
     const valuePresence = visit(value, depth + 1)
     if (valuePresence !== 'absent') return valuePresence
   }
-  return 'absent'
+  // A Map may also carry own properties beside its entries.
+  return inspectOwnProperties(input, secret, visit, depth)
 }
 
 function inspectSet(
   input: Set<unknown>,
+  secret: string,
   visit: (value: unknown, depth: number) => SecretPresence,
   depth: number
 ): SecretPresence {
@@ -689,19 +767,70 @@ function inspectSet(
     const presence = visit(value, depth + 1)
     if (presence !== 'absent') return presence
   }
-  return 'absent'
+  // A Set may also carry own properties beside its values.
+  return inspectOwnProperties(input, secret, visit, depth)
 }
 
-/** The raw bytes of a binary container, or undefined when the value is not binary. */
-function byteSource(input: object): Uint8Array | undefined {
+/**
+ * The bytes of a binary container, read through intrinsic accessors only, so a
+ * subclass that overrides `buffer`, `byteOffset`, or `byteLength` never runs. A
+ * shape that cannot be read that way yields undefined and fails closed.
+ */
+function binaryShape(
+  input: object
+): { readonly bytes: Uint8Array; readonly elementCount: number } | undefined {
   if (ArrayBuffer.isView(input)) {
-    return new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+    const dataViewLength = callIntrinsic(dataViewByteLength, input) as number | undefined
+    if (dataViewLength !== undefined) {
+      const byteOffset = callIntrinsic(dataViewByteOffset, input) as number | undefined
+      const buffer = callIntrinsic(dataViewBuffer, input) as ArrayBufferLike | undefined
+      if (byteOffset === undefined || buffer === undefined) return undefined
+      return { bytes: byteView(buffer, byteOffset, dataViewLength), elementCount: 0 }
+    }
+    const byteLength = callIntrinsic(typedArrayByteLength, input) as number | undefined
+    if (byteLength === undefined) return undefined
+    const byteOffset = callIntrinsic(typedArrayByteOffset, input) as number | undefined
+    const buffer = callIntrinsic(typedArrayBuffer, input) as ArrayBufferLike | undefined
+    const length = callIntrinsic(typedArrayLength, input) as number | undefined
+    if (byteOffset === undefined || buffer === undefined || length === undefined) return undefined
+    return { bytes: byteView(buffer, byteOffset, byteLength), elementCount: length }
   }
-  if (input instanceof ArrayBuffer) return new Uint8Array(input)
-  if (typeof SharedArrayBuffer !== 'undefined' && input instanceof SharedArrayBuffer) {
-    return new Uint8Array(input)
+  // The `byteLength` accessor only answers for a genuine buffer, so it is the
+  // type test as well as the measurement.
+  if (callIntrinsic(arrayBufferByteLength, input) !== undefined) {
+    return { bytes: new Uint8Array(input as ArrayBuffer), elementCount: 0 }
+  }
+  if (callIntrinsic(sharedArrayBufferByteLength, input) !== undefined) {
+    return { bytes: new Uint8Array(input as SharedArrayBuffer), elementCount: 0 }
   }
   return undefined
+}
+
+/** True for a key that names an element slot rather than a user-added property. */
+function isElementSlot(key: string, elementCount: number): boolean {
+  if (!/^(0|[1-9]\d*)$/u.test(key)) return false
+  return Number(key) < elementCount
+}
+
+/**
+ * True when the prototype chain reaches `Error.prototype`, so an error and an
+ * error subclass are both recognised. The walk is bounded.
+ */
+function hasErrorPrototype(prototype: object | null): boolean {
+  let current = prototype
+  for (let depth = 0; current !== null && depth < 16; depth += 1) {
+    if (current === Error.prototype) return true
+    current = Object.getPrototypeOf(current) as object | null
+  }
+  return false
+}
+
+/**
+ * A byte view over a buffer. A shared buffer is accepted at runtime; the
+ * library types are narrower than the runtime behaviour.
+ */
+function byteView(buffer: ArrayBufferLike, byteOffset: number, byteLength: number): Uint8Array {
+  return new Uint8Array(buffer as ArrayBuffer, byteOffset, byteLength)
 }
 
 /** Byte-exact search, so binary material is matched without decoding it. */
