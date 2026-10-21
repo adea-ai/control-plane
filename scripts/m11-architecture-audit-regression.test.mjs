@@ -292,6 +292,20 @@ describe('M11.2 architecture audit tooling regressions', () => {
     )
   })
 
+  test('pins the number of capability bindings each profile supplies', async () => {
+    const bindings = await discoverCapabilityBindings(fileURLToPath(repositoryRoot))
+    // The detector only reads runtime object-literal bindings, so these counts
+    // are the measured profile bindings and not a name-only match.
+    expect(bindings.profiles.cloud.bound).toHaveLength(20)
+    expect(bindings.profiles['hosted-server'].bound).toHaveLength(13)
+    expect(bindings.profiles['hosted-simple'].bound).toHaveLength(16)
+    expect(bindings.profiles.local.bound).toHaveLength(16)
+    for (const profile of Object.keys(bindings.profiles)) {
+      const { bound, unbound } = bindings.profiles[profile]
+      expect(new Set([...bound, ...unbound]).size, profile).toBe(bound.length + unbound.length)
+    }
+  })
+
   test('does not read a type member or a member access as a capability binding', () => {
     expect(
       bindsCapabilityOption(
@@ -314,6 +328,167 @@ describe('M11.2 architecture audit tooling regressions', () => {
     expect(
       bindsCapabilityOption('{\n  executionAcceptanceService,\n}', 'executionAcceptanceService')
     ).toBe(true)
+  })
+
+  test('does not read a commented binding as a capability binding', () => {
+    // The example the review reported: a commented example reads as a binding
+    // under a name-only scan, which conceals the unavailable default.
+    expect(
+      bindsCapabilityOption(
+        '// example: { executionAcceptanceService: adapter }',
+        'executionAcceptanceService'
+      )
+    ).toBe(false)
+    expect(
+      bindsCapabilityOption(
+        '/*\n * { executionAcceptanceService: adapter }\n */',
+        'executionAcceptanceService'
+      )
+    ).toBe(false)
+    expect(
+      bindsCapabilityOption(
+        'const options = {\n  // executionAcceptanceService: adapter\n  modelConnectionService: x,\n}',
+        'executionAcceptanceService'
+      )
+    ).toBe(false)
+    expect(
+      bindsCapabilityOption(
+        'const options = {\n  /* executionAcceptanceService: adapter */\n  modelConnectionService: x,\n}',
+        'executionAcceptanceService'
+      )
+    ).toBe(false)
+    // A comment next to a real binding does not hide the real binding either.
+    expect(
+      bindsCapabilityOption(
+        'const options = {\n  // executionAcceptanceService: adapter\n  executionAcceptanceService: composition.x,\n}',
+        'executionAcceptanceService'
+      )
+    ).toBe(true)
+  })
+
+  test('does not read a type-only declaration as a capability binding', () => {
+    expect(
+      bindsCapabilityOption(
+        'type Options = { executionAcceptanceService: Service }',
+        'executionAcceptanceService'
+      )
+    ).toBe(false)
+    expect(
+      bindsCapabilityOption(
+        'interface Options { executionAcceptanceService: Service }',
+        'executionAcceptanceService'
+      )
+    ).toBe(false)
+    expect(
+      bindsCapabilityOption(
+        'interface Options { readonly executionAcceptanceService?: Service }',
+        'executionAcceptanceService'
+      )
+    ).toBe(false)
+    expect(
+      bindsCapabilityOption(
+        'export interface Options {\n  readonly executionAcceptanceService?: Service\n}',
+        'executionAcceptanceService'
+      )
+    ).toBe(false)
+    expect(
+      bindsCapabilityOption(
+        'class Composition { readonly executionAcceptanceService: Service }',
+        'executionAcceptanceService'
+      )
+    ).toBe(false)
+    expect(
+      bindsCapabilityOption(
+        'type Options = { executionAcceptanceService: Service }\nconst options = { executionAcceptanceService: composition.x }',
+        'executionAcceptanceService'
+      )
+    ).toBe(true)
+  })
+
+  test('does not read an explicit undefined binding as a capability binding', () => {
+    expect(
+      bindsCapabilityOption(
+        '{ executionAcceptanceService: undefined }',
+        'executionAcceptanceService'
+      )
+    ).toBe(false)
+    expect(
+      bindsCapabilityOption(
+        'const options = { executionAcceptanceService: undefined }',
+        'executionAcceptanceService'
+      )
+    ).toBe(false)
+    expect(
+      bindsCapabilityOption('{ executionAcceptanceService: void 0 }', 'executionAcceptanceService')
+    ).toBe(false)
+    expect(
+      bindsCapabilityOption(
+        'const executionAcceptanceService = undefined\nconst options = { executionAcceptanceService }',
+        'executionAcceptanceService'
+      )
+    ).toBe(false)
+    expect(
+      bindsCapabilityOption(
+        '{ executionAcceptanceService: condition ? undefined : undefined }',
+        'executionAcceptanceService'
+      )
+    ).toBe(false)
+    // An undefined that falls back to a real value still binds that value.
+    expect(
+      bindsCapabilityOption(
+        '{ executionAcceptanceService: undefined ?? composition.x }',
+        'executionAcceptanceService'
+      )
+    ).toBe(true)
+  })
+
+  test('keeps reading real runtime object and shorthand bindings', () => {
+    expect(
+      bindsCapabilityOption(
+        'const options = { executionAcceptanceService: composition.executionAcceptanceService }',
+        'executionAcceptanceService'
+      )
+    ).toBe(true)
+    expect(
+      bindsCapabilityOption(
+        'const options = { executionAcceptanceService }',
+        'executionAcceptanceService'
+      )
+    ).toBe(true)
+    expect(
+      bindsCapabilityOption(
+        'const executionAcceptanceService = composition.executionAcceptanceService\nconst options = { executionAcceptanceService }',
+        'executionAcceptanceService'
+      )
+    ).toBe(true)
+    expect(
+      bindsCapabilityOption(
+        'const options = {\n  ...(runtimeTransport === undefined ? {} : { executionAcceptanceService: runtimeTransport }),\n}',
+        'executionAcceptanceService'
+      )
+    ).toBe(true)
+    expect(
+      bindsCapabilityOption(
+        "const options = { 'executionAcceptanceService': composition.x }",
+        'executionAcceptanceService'
+      )
+    ).toBe(true)
+  })
+
+  test('does not let a comment conceal a missing default in a real profile source', async () => {
+    const bindings = await discoverCapabilityBindings(fileURLToPath(repositoryRoot))
+    const cloud = bindings.profiles.cloud
+    // The cloud profile binds no tool-effect-recovery implementation, so the
+    // Control API serves it from its unavailable default.
+    expect(cloud.unbound).toContain('toolEffectRecoveryService')
+    expect(cloud.bound).not.toContain('toolEffectRecoveryService')
+
+    const source = await readFile(
+      new URL('../apps/control-api/src/index.ts', import.meta.url),
+      'utf8'
+    )
+    const doctored = `${source}\n// toolEffectRecoveryService: composition.toolEffectRecoveryService\n`
+    expect(bindsCapabilityOption(doctored, 'toolEffectRecoveryService')).toBe(false)
   })
 
   test('reports a profile pair that shares one composition source digest', async () => {

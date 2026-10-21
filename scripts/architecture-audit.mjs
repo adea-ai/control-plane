@@ -5,6 +5,7 @@ import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, relative, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import ts from 'typescript6'
 import {
   canonicalJsonStringify,
   compareCodePointOrder,
@@ -354,19 +355,24 @@ export async function discoverCapabilityBindings(root) {
   const uniqueDefaults = [
     ...new Map(defaults.map((entry) => [entry.option, entry])).values(),
   ].toSorted((left, right) => compareCodePointOrder(left.option, right.option))
+  // Each source file is parsed once and answers for every capability, so the
+  // scan stays a single pass over the profile's composition sources. The parse
+  // is memoised per file identity (size and modification time), so repeated
+  // discovery in one process does not re-parse the tree, and an edited file is
+  // always re-read.
   const profiles = {}
   for (const [profile, paths] of Object.entries(profileBindingSources)) {
-    const sources = await Promise.all(
-      paths.map(async (path) => {
-        try {
-          return await readFile(resolve(root, path), 'utf8')
-        } catch {
-          return ''
-        }
-      })
-    )
+    const sources = []
+    for (const path of paths) {
+      sources.push(await parsedBindingSites(root, path))
+    }
     const bound = uniqueDefaults
-      .filter((entry) => sources.some((text) => bindsCapabilityOption(text, entry.option)))
+      .filter((entry) =>
+        sources.some((sites) => {
+          const matching = sites.get(entry.option)
+          return matching !== undefined && matching.some((site) => !site.isUndefined)
+        })
+      )
       .map((entry) => entry.option)
       .toSorted()
     profiles[profile] = {
@@ -382,25 +388,155 @@ export async function discoverCapabilityBindings(root) {
   return { defaults: uniqueDefaults, profiles }
 }
 
+/** Parsed binding sites per source file, memoised on the file's identity. */
+const parsedSourceCache = new Map()
+
+async function parsedBindingSites(root, path) {
+  const target = resolve(root, path)
+  let stats
+  try {
+    stats = await stat(target)
+  } catch {
+    stats = undefined
+  }
+  const cached = parsedSourceCache.get(path)
+  if (
+    cached !== undefined &&
+    stats !== undefined &&
+    cached.mtimeMs === stats.mtimeMs &&
+    cached.size === stats.size
+  ) {
+    return cached.sites
+  }
+  let text = ''
+  try {
+    text = await readFile(target, 'utf8')
+  } catch {
+    text = ''
+  }
+  const sites = allBindingSites(parseModule(text))
+  if (stats !== undefined) {
+    parsedSourceCache.set(path, { mtimeMs: stats.mtimeMs, size: stats.size, sites })
+  }
+  return sites
+}
+
 /**
  * Conservative source scan for a capability binding.
  *
- * A capability counts as bound when the option name appears as an object
- * literal key (`executionAcceptanceService:`) or as a shorthand property
- * (`{ executionAcceptanceService }`). Type members, member access
- * (`composition.executionAcceptanceService`) and unrelated prose are not
- * bindings and are ignored.
+ * A capability counts as bound only when the source contains a runtime object
+ * literal that assigns it: a property assignment with a real value, or a
+ * shorthand property whose value is not `undefined`.
+ *
+ * A name that appears only in a comment, only in a type-only declaration (an
+ * interface member, a `type` alias, a class property signature) or in a
+ * binding whose value is explicitly `undefined` is not a binding. The
+ * capability is then served by the Control API from its unavailable default,
+ * and reading it as a binding would conceal that missing default.
+ *
+ * The scan uses the TypeScript parser instead of a regular expression so the
+ * language itself decides what is code, what is a type and what is a comment.
  */
 export function bindsCapabilityOption(source, option) {
-  const pattern = new RegExp(`(?<![A-Za-z0-9_$])${option}(?![A-Za-z0-9_$])`, 'g')
-  for (const match of source.matchAll(pattern)) {
-    const before = source.slice(Math.max(0, match.index - 64), match.index)
-    const after = source.slice(match.index + option.length, match.index + option.length + 8)
-    if (/\breadonly\s+$/.test(before)) continue
-    if (/\?\s*$/.test(before) && /^\s*:/.test(after)) continue
-    if (!/[{,]\s*$/.test(before) && /[.\w$'"]\s*$/.test(before)) continue
-    if (/^\s*:/.test(after)) return true
-    if (/^\s*[},]/.test(after)) return true
+  for (const parsed of [parseModule(source), parseExpression(source)]) {
+    if (parsed === undefined) continue
+    const sites = allBindingSites(parsed).get(option)
+    if (sites !== undefined && sites.some((site) => !site.isUndefined)) return true
+  }
+  return false
+}
+
+function parseModule(source) {
+  return ts.createSourceFile(
+    'capability-binding.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    false,
+    ts.ScriptKind.TS
+  )
+}
+
+/**
+ * Parses a source that is a single expression, such as a bare object literal.
+ * A source that is not one expression (a type declaration, a statement list, a
+ * comment) is rejected instead of repaired, so it can never contribute a
+ * binding that is not really there.
+ */
+function parseExpression(source) {
+  const parsed = ts.createSourceFile(
+    'capability-binding.ts',
+    `const __capability_binding__ = (\n${source}\n)`,
+    ts.ScriptTarget.Latest,
+    false,
+    ts.ScriptKind.TS
+  )
+  return parsed.parseDiagnostics.length > 0 ? undefined : parsed
+}
+
+/** Every runtime object-literal site that assigns a name, with its value state. */
+function allBindingSites(parsed) {
+  const declarations = variableDeclarations(parsed)
+  const sites = new Map()
+  const record = (name, site) => {
+    const existing = sites.get(name)
+    if (existing === undefined) sites.set(name, [site])
+    else existing.push(site)
+  }
+  const visit = (node) => {
+    if (ts.isObjectLiteralExpression(node)) {
+      for (const property of node.properties) {
+        if (ts.isShorthandPropertyAssignment(property)) {
+          record(property.name.text, {
+            kind: 'shorthand',
+            isUndefined: shorthandIsUndefined(property, declarations),
+          })
+          continue
+        }
+        if (!ts.isPropertyAssignment(property)) continue
+        const name = property.name
+        const key = ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined
+        if (key === undefined) continue
+        record(key, { kind: 'property', isUndefined: isUndefinedExpression(property.initializer) })
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(parsed)
+  return sites
+}
+
+/** The first declaration of each variable in the source, keyed by name. */
+function variableDeclarations(parsed) {
+  const declarations = new Map()
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      if (!declarations.has(node.name.text)) declarations.set(node.name.text, node)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(parsed)
+  return declarations
+}
+
+/**
+ * A shorthand property binds the variable it names. It binds `undefined` only
+ * when that variable is declared as `undefined` in the same source; a variable
+ * the source does not declare (a parameter, an import) is treated as a
+ * binding, because its runtime value is unknown rather than absent.
+ */
+function shorthandIsUndefined(property, declarations) {
+  const declaration = declarations.get(property.name.text)
+  if (declaration === undefined) return false
+  return declaration.initializer !== undefined && isUndefinedExpression(declaration.initializer)
+}
+
+/** True when the expression can only ever produce `undefined`. */
+function isUndefinedExpression(node) {
+  if (ts.isIdentifier(node)) return node.text === 'undefined'
+  if (ts.isVoidExpression(node)) return true
+  if (ts.isParenthesizedExpression(node)) return isUndefinedExpression(node.expression)
+  if (ts.isConditionalExpression(node)) {
+    return isUndefinedExpression(node.whenTrue) && isUndefinedExpression(node.whenFalse)
   }
   return false
 }
