@@ -184,6 +184,16 @@ export interface LocalReconciliationConfiguration {
   readonly rateLimit?: ReconciliationRateLimit
 }
 
+/**
+ * A local resource that is started with the composition and drained when it closes. The
+ * reconciliation scheduler and the retention sweep both have that shape; an injected one replaces
+ * the configured instance, so the close contract of the composition can be exercised directly.
+ */
+export interface LocalDrainableResource {
+  start(): void
+  close(): Promise<void>
+}
+
 export interface LocalControlPlaneCompositionOptions {
   /**
    * Optional catalog approval policy (#188): when required, resolution,
@@ -273,6 +283,16 @@ export interface LocalControlPlaneCompositionOptions {
     readonly closeTimeoutMs?: number
   }
   readonly reconciliation?: LocalReconciliationConfiguration
+  /**
+   * The reconciliation scheduler. Used only when no reconciliation is configured: a configured
+   * reconciliation keeps its own scheduler, and the injection is then not used.
+   */
+  readonly reconciliationScheduler?: LocalDrainableResource
+  /**
+   * The retention sweep. Used only when no retention policy is configured: a configured retention
+   * policy keeps its own sweep, and the injection is then not used.
+   */
+  readonly retentionSweep?: LocalDrainableResource
 }
 
 export class LocalControlPlaneComposition {
@@ -326,9 +346,18 @@ export class LocalControlPlaneComposition {
   readonly observability = new BufferedObservabilityProvider()
   readonly discovery: StaticServiceDiscovery
   readonly #endpointFactory: RestateEndpointFactory | undefined
-  readonly #reconciliationScheduler: ReconciliationScheduler | undefined
-  readonly #retentionSweep: RetentionSweep | undefined
+  readonly #reconciliationScheduler: LocalDrainableResource | undefined
+  readonly #retentionSweep: LocalDrainableResource | undefined
   readonly #initializeGraphRuntime: (() => Promise<void>) | undefined
+  /**
+   * Whether the operations measurement exists. It needs BOTH a workspace scope and a metric
+   * adapter, so this is the construction seam: without an adapter no measurement exists and no
+   * sample can run. It reads the lifecycle that was actually built, so it cannot drift from the
+   * construction. Exposed so the wiring is externally verifiable.
+   */
+  get operationsMeasurementConfigured(): boolean {
+    return this.#operationsMeasurements !== undefined
+  }
   /** The operations measurement lifecycle, when a metric adapter and a scope are configured. */
   readonly #operationsMeasurements: OperationsMeasurementLifecycle | undefined
   /** Whether the operations measurement is running; it is started once and drained once. */
@@ -647,6 +676,8 @@ export class LocalControlPlaneComposition {
         intervalMs: reconciliation.intervalMs,
         batchLimit: reconciliation.batchLimit,
       })
+    } else if (options.reconciliationScheduler !== undefined) {
+      this.#reconciliationScheduler = options.reconciliationScheduler
     }
     // M11.9 retention worker: read-only retention assessment on a slow fixed
     // cadence. Physical deletion remains an explicit operator action.
@@ -680,6 +711,8 @@ export class LocalControlPlaneComposition {
           else console.info(output)
         },
       })
+    } else if (options.retentionSweep !== undefined) {
+      this.#retentionSweep = options.retentionSweep
     }
     // The Restate workflow endpoint exists only in restate mode; embedded mode
     // drives the lifecycle in-process. An explicitly injected endpoint factory
@@ -795,6 +828,21 @@ export class LocalControlPlaneComposition {
     await this.#operationsMeasurements?.close().catch(() => undefined)
   }
 
+  /**
+   * Closes the resources that precede the operations measurement. The measurement is drained
+   * whatever happens here, so a rejected earlier close cannot leave its timer running, and the
+   * first error is rethrown unchanged: the teardown order and the error semantics are the ones
+   * that were already there.
+   */
+  async #closeBeforeOperationsDrain(close: () => Promise<void>): Promise<void> {
+    try {
+      await close()
+    } catch (error) {
+      await this.#drainOperationsMeasurements()
+      throw error
+    }
+  }
+
   async manifest(): Promise<LocalComponentManifest> {
     const components = await Promise.all([
       this.persistence.health(),
@@ -824,9 +872,13 @@ export class LocalControlPlaneComposition {
   async close(): Promise<void> {
     if (!this.#started && this.#endpoint === undefined) return
     this.#started = false
-    // Drain the scheduler first: a clean close never abandons an in-flight pass.
-    await this.#reconciliationScheduler?.close()
-    await this.#retentionSweep?.close()
+    // Drain the scheduler first: a clean close never abandons an in-flight pass. The operations
+    // measurement is drained on this path too, even when one of these closes rejects: a rejected
+    // close must not leave the measurement's timer running.
+    await this.#closeBeforeOperationsDrain(async () => {
+      await this.#reconciliationScheduler?.close()
+      await this.#retentionSweep?.close()
+    })
     // The operations measurement drains its own last pass before the store it reads is closed.
     await this.#drainOperationsMeasurements()
     try {

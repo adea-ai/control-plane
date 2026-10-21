@@ -979,6 +979,16 @@ function recordingAdapter() {
 
 const OPERATIONS_METRIC_NAMES = new Set(Object.values(operationsMetricNames))
 
+/** A drainable resource whose close rejects, so the close order can be exercised. */
+function rejectingDrainable(message) {
+  return {
+    start() {},
+    close: async () => {
+      throw new Error(message)
+    },
+  }
+}
+
 /** Waits until the adapter has recorded at least one operations point, or the budget runs out. */
 async function untilRecorded(adapter, budgetMs = 20_000) {
   const end = Date.now() + budgetMs
@@ -1000,6 +1010,9 @@ describe('Local operations measurement wiring', () => {
     })
     try {
       await composition.start()
+      // The construction seam: the measurement exists because both a scope and an adapter were
+      // configured.
+      expect(composition.operationsMeasurementConfigured).toBe(true)
       expect(await untilRecorded(recorded)).toBe(true)
 
       const points = recorded.all()
@@ -1016,8 +1029,10 @@ describe('Local operations measurement wiring', () => {
       }
       // Nothing was accumulated as a counter: operations points are observations.
       expect(recorded.counters).toEqual([])
-      await composition.close()
     } finally {
+      // The owned composition is closed before the directory is removed, so a failed assertion
+      // cannot leave a measurement running.
+      await composition.close().catch(() => undefined)
       await rm(directory, { recursive: true, force: true })
     }
   }, 60_000)
@@ -1026,13 +1041,17 @@ describe('Local operations measurement wiring', () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-operations-no-adapter-'))
     const composition = new LocalControlPlaneComposition({
       dataDirectory: directory,
-      operationsMeasurements: { workspaceId: OPERATIONS_WORKSPACE_ID, intervalMs: 60_000 },
+      operationsMeasurements: { workspaceId: OPERATIONS_WORKSPACE_ID, intervalMs: 1000 },
     })
     try {
+      // The construction seam is the proof: without an injected adapter no measurement exists, so
+      // no sample can run. The absence of a crash alone would prove nothing.
+      expect(composition.operationsMeasurementConfigured).toBe(false)
       await composition.start()
-      await new Promise((done) => setTimeout(done, 250))
-      await composition.close()
+      await new Promise((done) => setTimeout(done, 1500))
+      expect(composition.operationsMeasurementConfigured).toBe(false)
     } finally {
+      await composition.close().catch(() => undefined)
       await rm(directory, { recursive: true, force: true })
     }
   }, 60_000)
@@ -1059,6 +1078,75 @@ describe('Local operations measurement wiring', () => {
       await new Promise((done) => setTimeout(done, 1500))
       expect(recorded.all().length).toBe(afterFailure)
     } finally {
+      // The failed startup already drained it; the close is still called, so an assertion
+      // failure cannot leave anything running.
+      await composition.close().catch(() => undefined)
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  test('a rejected earlier close still drains the measurement', async () => {
+    for (const [name, options] of [
+      [
+        'reconciliationScheduler',
+        { reconciliationScheduler: rejectingDrainable('LOCAL_TEST_SCHEDULER_CLOSE_FAILED') },
+      ],
+      ['retentionSweep', { retentionSweep: rejectingDrainable('LOCAL_TEST_SWEEP_CLOSE_FAILED') }],
+    ]) {
+      const directory = await mkdtemp(join(tmpdir(), `control-plane-operations-${name}-`))
+      const recorded = recordingAdapter()
+      const composition = new LocalControlPlaneComposition({
+        dataDirectory: directory,
+        metricAdapter: recorded.adapter,
+        operationsMeasurements: { workspaceId: OPERATIONS_WORKSPACE_ID, intervalMs: 1000 },
+        ...options,
+      })
+      try {
+        await composition.start()
+        expect(await untilRecorded(recorded)).toBe(true)
+        // The earlier close rejects: its error is the one that comes out.
+        await expect(composition.close()).rejects.toThrow(
+          name === 'reconciliationScheduler'
+            ? 'LOCAL_TEST_SCHEDULER_CLOSE_FAILED'
+            : 'LOCAL_TEST_SWEEP_CLOSE_FAILED'
+        )
+        // And the measurement is still drained: nothing is emitted afterwards.
+        const afterRejection = recorded.all().length
+        await new Promise((done) => setTimeout(done, 1500))
+        expect(recorded.all().length).toBe(afterRejection)
+      } finally {
+        // The close above rejected, so the composition's own teardown did not complete and a
+        // second close returns at once. The owned resources are closed explicitly here, so
+        // nothing is retained when the directory goes.
+        await composition.close().catch(() => undefined)
+        composition.persistence.close()
+        await composition.secrets.close()
+        await composition.objectStore.close()
+        composition.coordination.close()
+        composition.observability.close()
+        // The proof that the owned store is not retained: a closed store refuses to serve a
+        // health check.
+        await expect(composition.persistence.health()).rejects.toThrow()
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  }, 60_000)
+
+  test('a configured resource takes precedence over an injected one', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-operations-precedence-'))
+    const composition = new LocalControlPlaneComposition({
+      dataDirectory: directory,
+      // A configured retention policy keeps its own sweep, so the injected one is not used:
+      // its close would reject with a message that never arrives.
+      retention: { commandInboxMs: 60_000, executionEventsMs: 60_000, sweepIntervalMs: 60_000 },
+      retentionSweep: rejectingDrainable('LOCAL_TEST_INJECTED_CLOSE_FAILED'),
+    })
+    try {
+      await composition.start()
+      await composition.close()
+    } finally {
+      await composition.close().catch(() => undefined)
+      composition.persistence.close()
       await rm(directory, { recursive: true, force: true })
     }
   }, 60_000)
@@ -1087,6 +1175,9 @@ describe('Local operations measurement wiring', () => {
       await new Promise((done) => setTimeout(done, 1500))
       expect(recorded.all().length).toBe(afterClose)
     } finally {
+      // The close above already stopped the measurement; the finally closes it again, so an
+      // assertion failure cannot leave it running.
+      await composition.close().catch(() => undefined)
       await rm(directory, { recursive: true, force: true })
     }
   }, 60_000)
