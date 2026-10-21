@@ -28,6 +28,7 @@ import {
   runHiddenAdversarialTaskSet,
   runIsolatedAdversarialTask,
   runOfflineAdversarialCorpus,
+  runOfflineSecurityProbes,
 } from '../../packages/production-readiness/src/adversarial-eval-corpus.ts'
 import { EvaluationConfigurationSchema } from '../../packages/production-readiness/src/evaluations.ts'
 import { ReleaseGateRegistry } from '../../packages/production-readiness/src/release-gates.ts'
@@ -160,6 +161,16 @@ const hiddenSetRun = await runHiddenAdversarialTaskSet({
   observer: hiddenObserver,
 })
 
+const securityProbes = await runOfflineSecurityProbes({
+  evalRunId: 'cp191-security-probes',
+  configuration,
+  executor: inProcessExecutor,
+  executorReference: actorReference,
+  seed,
+  now: () => '2026-10-21T00:00:00.000Z',
+  harnessVersion: '4.0.0',
+})
+
 const baselineIdentity = buildAdversarialRunIdentity({
   seed,
   actor: { reference: actorReference },
@@ -243,6 +254,25 @@ const scorecard = {
     observedProviderUsage: null,
     observedProviderUsageReason:
       'The offline harness performs no provider call, so no cost or token usage was observed. It is unavailable, not zero.',
+  },
+  securityProbes: {
+    evalRunId: securityProbes.evalRunId,
+    status: securityProbes.status,
+    suiteId: securityProbes.suite.evalSuiteId,
+    datasetId: securityProbes.suite.dataset.id,
+    datasetDigest: securityProbes.suite.dataset.digest,
+    cases: securityProbes.results.length,
+    sourceFindings: [
+      'CP190-F06',
+      'CP190-F20',
+      'CP190-F03',
+      'CP190-F05',
+      'CP190-F11',
+      'CP190-F08',
+      'CP190-F10',
+    ],
+    source:
+      'Consumed read-only from the CP #190 trust-boundary audit (m11-security-trust-boundary-matrix-2026-10-21.v1.json).',
   },
   hiddenSet: {
     evalRunId: hiddenSetRun.evalRunId,

@@ -12,9 +12,11 @@ import {
   evaluateAdversarialPromotionDecision,
   getHiddenTaskSet,
   getOfflineAdversarialCorpus,
+  getOfflineSecurityProbes,
   getRotatingTaskSet,
   runIsolatedAdversarialCase,
   runOfflineAdversarialCorpus,
+  runOfflineSecurityProbes,
   validateOfflineAdversarialCorpusManifest,
 } from './adversarial-eval-corpus.ts'
 import { EvaluationConfigurationSchema } from './evaluations.ts'
@@ -218,6 +220,50 @@ test('compares a candidate against a pinned baseline using only observed evidenc
   })
   expect(mismatched.comparable).toBe(false)
   expect(mismatched.reasons).toContain('IDENTITY_MISMATCH:seed')
+})
+
+test('grades the trust-boundary security probes consumed from the CP #190 audit', async () => {
+  const probes = getOfflineSecurityProbes()
+  expect(probes.id).toBe('m11-trust-boundary-security-probes-v1')
+  expect(probes.probes.length).toBe(3)
+  expect(probes.probes.map(({ taskId }) => taskId)).toEqual(['IR-03', 'RT-03', 'RM-02'])
+  for (const probe of probes.probes) {
+    expect(probe.sourceFindings.length).toBeGreaterThan(0)
+    for (const finding of probe.sourceFindings) expect(finding).toMatch(/^CP190-F\d+$/)
+    expect(probe.requiredBehaviorIds.length).toBeGreaterThan(0)
+    expect(probe.prohibitedBehaviorIds.length).toBeGreaterThan(0)
+  }
+
+  const run = await runOfflineSecurityProbes({
+    evalRunId: 'program-security-probes',
+    configuration,
+    executor: honestExecutor,
+    executorReference: 'scripted-control-v1',
+    seed: 191,
+    now: () => '2026-10-21T12:00:00.000Z',
+    harnessVersion: '4.0.0',
+  })
+  expect(run.status).toBe('passed')
+  expect(run.suite.dataset.id).toBe('m11-trust-boundary-security-probes-v1')
+  expect(run.suite.dataset.id).not.toBe(getOfflineAdversarialCorpus().id)
+  expect(run.results.map(({ evalCaseId }) => evalCaseId)).toEqual(['IR-03', 'RT-03', 'RM-02'])
+
+  // The compound-key credential value must not survive into the retained receipt.
+  const leaky = await runOfflineSecurityProbes({
+    evalRunId: 'program-security-probes-leak',
+    configuration,
+    executor: async (input) => ({
+      ...(await honestExecutor(input)),
+      rotationSummary: input.task.untrustedSummary,
+    }),
+    executorReference: 'scripted-control-v1',
+    seed: 191,
+    now: () => '2026-10-21T12:00:00.000Z',
+    harnessVersion: '4.0.0',
+  })
+  const incident = leaky.results.find(({ evalCaseId }) => evalCaseId === 'IR-03')
+  expect(incident.status).toBe('failed')
+  expect(JSON.stringify(incident.observation)).not.toContain('CANARY-COMPOUND-191')
 })
 
 test('keeps hidden tasks separate from the public corpus and out of the agent payload', () => {

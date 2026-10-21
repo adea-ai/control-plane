@@ -16,8 +16,8 @@
   },
   "source": {
     "id": "control-plane",
-    "revision": "36bb1a7ab21e77e2b948a0623062b9b97bf0849f",
-    "digest": "sha256:aab81a866a5688a45e9d7964df11e7868ccd47a08609418a857102e60c2fd17c"
+    "revision": "2326e670420ebc1725ab36e0442b1849d425686d",
+    "digest": "sha256:1ee34a684d3c01516e5d42cd37da057a2090ccb231d11fc1d0521262bc08f930"
   },
   "seed": 191,
   "baselineIdentity": {
@@ -46,8 +46,8 @@
     },
     "source": {
       "id": "control-plane",
-      "revision": "36bb1a7ab21e77e2b948a0623062b9b97bf0849f",
-      "digest": "sha256:aab81a866a5688a45e9d7964df11e7868ccd47a08609418a857102e60c2fd17c"
+      "revision": "2326e670420ebc1725ab36e0442b1849d425686d",
+      "digest": "sha256:1ee34a684d3c01516e5d42cd37da057a2090ccb231d11fc1d0521262bc08f930"
     },
     "metamorphic": [
       {
@@ -163,7 +163,7 @@
         "expectation": "same-outcome"
       }
     ],
-    "identityDigest": "sha256:eba27492c71e904c6ae8514deea25035c7cb3b41d22c3a02b68a9f54d3383282"
+    "identityDigest": "sha256:71e5beb91151846f92d9119ffe6dabb2c290f81f67e8331c2549a5160204afb0"
   },
   "candidateIdentity": {
     "corpus": {
@@ -191,8 +191,8 @@
     },
     "source": {
       "id": "control-plane",
-      "revision": "36bb1a7ab21e77e2b948a0623062b9b97bf0849f",
-      "digest": "sha256:aab81a866a5688a45e9d7964df11e7868ccd47a08609418a857102e60c2fd17c"
+      "revision": "2326e670420ebc1725ab36e0442b1849d425686d",
+      "digest": "sha256:1ee34a684d3c01516e5d42cd37da057a2090ccb231d11fc1d0521262bc08f930"
     },
     "metamorphic": [
       {
@@ -308,14 +308,14 @@
         "expectation": "same-outcome"
       }
     ],
-    "identityDigest": "sha256:6f52ade0853a421e25701603d9a655796e5def33fefc48f506a49ee679419024"
+    "identityDigest": "sha256:6a7a731b899acf3692033cadb0c3b1c44addd67056b4e0cf7cd1b322a876d6b9"
   },
   "baseline": {
     "evalRunId": "cp191-baseline-pinned",
     "status": "passed",
     "cases": 39,
     "observedToolCalls": 101,
-    "observedLatencyMs": 87.1172059999999,
+    "observedLatencyMs": 11.007921000000039,
     "observedProviderUsage": null,
     "observedProviderUsageReason": "The offline harness performs no provider call, so no cost or token usage was observed. It is unavailable, not zero."
   },
@@ -324,9 +324,27 @@
     "status": "passed",
     "cases": 39,
     "observedToolCalls": 0,
-    "observedLatencyMs": 5485.949413,
+    "observedLatencyMs": 2984.5941239999993,
     "observedProviderUsage": null,
     "observedProviderUsageReason": "The offline harness performs no provider call, so no cost or token usage was observed. It is unavailable, not zero."
+  },
+  "securityProbes": {
+    "evalRunId": "cp191-security-probes",
+    "status": "passed",
+    "suiteId": "m11-trust-boundary-security-probes-v1-offline",
+    "datasetId": "m11-trust-boundary-security-probes-v1",
+    "datasetDigest": "sha256:5fcbdaa254258aced9df63de37f25237534185f45591e9c0c82786db9d5aca6c",
+    "cases": 3,
+    "sourceFindings": [
+      "CP190-F06",
+      "CP190-F20",
+      "CP190-F03",
+      "CP190-F05",
+      "CP190-F11",
+      "CP190-F08",
+      "CP190-F10"
+    ],
+    "source": "Consumed read-only from the CP #190 trust-boundary audit (m11-security-trust-boundary-matrix-2026-10-21.v1.json)."
   },
   "hiddenSet": {
     "evalRunId": "cp191-hidden-rotating",
@@ -340,10 +358,10 @@
     "comparable": true,
     "reasons": [],
     "latency": {
-      "candidateMs": 5485.949413,
-      "baselineMs": 87.1172059999999,
-      "deltaMs": 5398.832207,
-      "relativeDelta": 61.97205414278331
+      "candidateMs": 2984.5941239999993,
+      "baselineMs": 11.007921000000039,
+      "deltaMs": 2973.5862029999994,
+      "relativeDelta": 270.13149921769866
     },
     "toolCalls": {
       "candidate": 0,
@@ -406,10 +424,10 @@
       {
         "metric": "latency_ms",
         "direction": "min",
-        "candidate": 140.66536956410258,
-        "baseline": 2.23377451282051,
-        "delta": 138.43159505128207,
-        "regression": 61.97205414278332
+        "candidate": 76.52805446153845,
+        "baseline": 0.2822543846153856,
+        "delta": 76.24580007692306,
+        "regression": 270.1314992176987
       },
       {
         "metric": "provenance_correctness",
