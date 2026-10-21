@@ -45,7 +45,7 @@ closed when any of them drifts from the ledger.
 | Requirement rows with a recorded profile target              |                            2 |
 | M1–M10 issue audits                                          |                          103 |
 | Deployment profiles                                          | 4 (all `partially_verified`) |
-| Worker lanes recorded                                        |             6 (0 integrated) |
+| Worker lanes recorded                                        |             7 (0 integrated) |
 | External acceptance gates recorded                           |                            5 |
 
 The crosswalk joins what exists; it does not invent links. Every unlinked
@@ -126,7 +126,7 @@ the captured bytes; it is not refreshed by this inventory.
 
 ## Worker integration
 
-The six contributing lanes are recorded by stable ID with an exact head. A
+The seven contributing lanes are recorded by stable ID with an exact head. A
 received contribution names a commit that exists in the repository, and each of
 its evidence paths is proven against the tree of that commit, because a lane's
 files are not in this branch until it is merged. No contribution is integrated
@@ -145,7 +145,8 @@ into the current tree, so no worker result is reported as evidence.
 The architecture, adversarial-evaluation and skill-library lanes still had
 uncommitted changes when this record was written, so their recorded heads are
 provisional. The trust-boundary and project-state digest lanes had not published
-a head.
+a head. W2 records the commit that carries the canonical crosswalk, the figure
+inventory and this record.
 
 `bun run requirements:refresh` re-reads the live issue identities and is the
 step that folds an arrived contribution into the crosswalk.
