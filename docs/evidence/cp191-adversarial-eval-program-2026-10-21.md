@@ -5,7 +5,7 @@ program is **not** human-calibrated, **not** independently hidden-task-authored,
 and **not** authorised for promotion. Those remain external gates.
 
 Branch: `f2w5/cp191-adversarial-eval`. Integrated source revision evaluated:
-`36bb1a7ab21e77e2b948a0623062b9b97bf0849f` — the commit that carries the evaluated evaluator
+`8a208d095960655a8cea6ec49024b4a7207e7f3a` — the commit that carries the evaluated evaluator
 sources. The branch head adds only the evidence report, the scorecard, and the evaluation
 scripts; the two evaluated evaluator sources are byte-identical at the branch head, and the
 recorded source digest covers exactly those two files. Machine-readable scorecard:
@@ -35,7 +35,7 @@ lives in the corpus module's own executor factory.
 ## Observed measurements
 
 All values below were produced by
-`CP_EVAL_SOURCE_REVISION=36bb1a7ab21e77e2b948a0623062b9b97bf0849f bun docs/evals/run-adversarial-program.mts`
+`CP_EVAL_SOURCE_REVISION=8a208d095960655a8cea6ec49024b4a7207e7f3a bun docs/evals/run-adversarial-program.mts`
 on the local machine. They are local observations, not provider measurements.
 
 | Measurement                  | Pinned baseline                                                           | Candidate (isolated process)                                              | Source                              |
@@ -43,17 +43,17 @@ on the local machine. They are local observations, not provider measurements.
 | Evaluation cases             | 39                                                                        | 39                                                                        | pinned corpus 1.2.0                 |
 | Case status                  | passed                                                                    | passed                                                                    | recorded run status                 |
 | Observed tool calls          | 101                                                                       | 0                                                                         | recorded observations               |
-| Observed local latency (sum) | 5.85 ms                                                                   | 1863.30 ms                                                                | recorded receipt durations          |
+| Observed local latency (sum) | 7.83 ms                                                                   | 2556.23 ms                                                                | recorded receipt durations          |
 | Observed provider cost       | unavailable (not zero)                                                    | unavailable (not zero)                                                    | no provider call was made           |
 | Observed provider tokens     | unavailable (not zero)                                                    | unavailable (not zero)                                                    | no provider call was made           |
 | Corpus digest                | `sha256:e906c214ed5462a93fb69ce3b7e7f7482fd14ee8793bb2d6cee23590e95918fa` | same                                                                      | pinned                              |
 | Suite digest                 | `sha256:caa869c49c417f5b8acc35a1c3cf53897c32766e1af05e1509d9d897a37f7539` | same                                                                      | pinned                              |
 | Harness version              | 4.0.0                                                                     | 4.0.0                                                                     | recorded receipt                    |
 | Seed                         | 191                                                                       | 191                                                                       | recorded receipt                    |
-| Source revision              | `36bb1a7ab21e77e2b948a0623062b9b97bf0849f`                                | same                                                                      | supplied source identity            |
+| Source revision              | `8a208d095960655a8cea6ec49024b4a7207e7f3a`                                | same                                                                      | supplied source identity            |
 | Source digest                | `sha256:f5ee05c87ba832c902f3bfc4b605c87290b519ede9eb3bf4262df7a2ee89550d` | same                                                                      | digest of the two evaluator sources |
-| Baseline identity digest     | `sha256:ad0edeeddce53ceac63e18d3321ca1e8584658fbc7808329782e91b27cfd8d50` | n/a                                                                       | recorded                            |
-| Candidate identity digest    | n/a                                                                       | `sha256:d7ddfd0e81a3e7b7b024b3d3ded2fe739090975e61d8678434ab4b6be666fe75` | recorded                            |
+| Baseline identity digest     | `sha256:2f9447937e4534235b450edcf3e827404507bcb241f9894a91a0b46c2e5753ed` | n/a                                                                       | recorded                            |
+| Candidate identity digest    | n/a                                                                       | `sha256:657a83619f281c621047a241e28829e2529aab1f90d180e2654567de29d4d57d` | recorded                            |
 
 The comparison is reported as comparable. The candidate's higher latency and lower in-process
 tool count are the real cost of running each task in a separate operating-system process with a
