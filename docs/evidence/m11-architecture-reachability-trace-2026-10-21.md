@@ -489,7 +489,7 @@ New exports used by the regression file: `discoverVersioningDefaults`, `discover
 
 ### Deterministic negative drift checks
 
-`scripts/m11-architecture-audit-regression.test.mjs` (new, dedicated) contains 28 tests. Each one
+`scripts/m11-architecture-audit-regression.test.mjs` (new, dedicated) contains 29 tests. Each one
 mutates a clone of the canonical audit, of the discovered state, or of a synthetic fixture, and
 asserts that the tooling fails closed. None of them edits the canonical artifact, and none of them
 writes into the checkout: the fixtures are built in a temporary directory and removed afterwards.
@@ -760,10 +760,10 @@ The suite is reachable only from its own directory:
 
 ```console
 $ cd scripts && bun test m11-architecture-audit-regression.test.mjs
- 28 pass
+ 29 pass
  0 fail
- 196 expect() calls
-Ran 28 tests across 1 file. [1.29s]
+ 199 expect() calls
+Ran 29 tests across 1 file. [1.29s]
 ```
 
 The contrast that shows the audit itself is covered: the architecture audit's **own** test is
@@ -777,9 +777,9 @@ Three consecutive runs at `bcea5ae46bd30179b66124b76e76ea9528a7b266`:
 
 | Run | Result                               | Wall   |
 | --- | ------------------------------------ | ------ |
-| 1   | 28 pass / 0 fail, 196 expect() calls | 1.62 s |
-| 2   | 28 pass / 0 fail                     | 1.33 s |
-| 3   | 28 pass / 0 fail                     | 1.14 s |
+| 1   | 29 pass / 0 fail, 199 expect() calls | 1.62 s |
+| 2   | 29 pass / 0 fail                     | 1.33 s |
+| 3   | 29 pass / 0 fail                     | 1.14 s |
 
 The suite covers the three contract areas this branch owns: the **parser** (reachability by HTTP
 method, served-verb discovery, OpenAPI path-item keys, unbound operations, capability bindings,
@@ -823,3 +823,39 @@ belongs to another owner, into the unit lane, so it is not proposed.
 **This packet does not establish CI coverage for the regression suite.** Until the registration is
 approved and applied by the shared runner's owner, the suite runs only when it is invoked directly
 from `scripts/`, and the canonical CI cannot fail on a regression in it.
+
+### 13.4 The discovery result is check-bound, and no owned registration path exists
+
+Two facts are now recorded by a check rather than by prose, so neither can silently rot.
+
+**The discovery result is check-bound.** The owned regression file now contains
+`binds the canonical lane discovery result for this regression suite`. It imports the shared lane
+runner read-only — `scripts/run-bun-test-group.mjs` is never edited — and asserts three things at
+the current head:
+
+| Assertion                                          | Verified value                                                                                                                                                       |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the suite is in no canonical lane                  | `unit` false, `integration` false, `e2e` false, `smoke` false                                                                                                        |
+| the lane drift check does not name it              | `discoverTestInventory()` does not throw, and no drift message contains the suite's path, so the file is reported neither as `unowned` nor as `missing`              |
+| the architecture audit's own test is still covered | `tests/m11-architecture-audit.test.mjs` **is** in the `smoke` lane, and the canonical Code Foundry Validation / Gate runs the unit, integration, E2E and smoke lanes |
+
+The first assertion is the drift signal. It **fails the moment the shared runner registration is
+applied**, because the direct invocation and the proposal in 13.3 are then stale. That was verified
+against a scratch copy of the runner with the registration applied: the lane then reports the
+suite, and the shared runner file itself was byte-identical before and after that probe.
+
+**No owned registration path exists.** The unit lane would discover a `packages/**` or `apps/**`
+test by itself, but the suite cannot live there: `scripts/workspace-boundaries.mjs` rejects an
+import that leaves the package directory. That was confirmed by probe rather than by reading: a
+throwaway file at `packages/contracts/src/_cp190_boundary_probe.mjs` importing
+`../../../scripts/architecture-audit.mjs` produces
+
+```
+packages/contracts/src/_cp190_boundary_probe.mjs: import ../../../scripts/architecture-audit.mjs leaves @control-plane/contracts
+```
+
+and `bun run check:boundaries` exits 1. The probe file was removed and the checkout was clean
+afterwards. A `tests/` placement would need registration in the shared runner and in
+`tests/repository.test.mjs`, and `scripts/` is outside every discovery root. **Every remaining
+route to a canonical lane therefore crosses a shared file**, which is why this branch proposes the
+registration in 13.3 instead of applying it.
