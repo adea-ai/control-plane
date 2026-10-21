@@ -1,9 +1,36 @@
 # Runtime operations measurement lifecycle (#1030)
 
-This document covers the bounded lifecycle, the SQLite producer adapter and the
-Hosted PostgreSQL producer. Composition integration is a dependency, not
+This document covers the bounded lifecycle, the SQLite producer adapter, the
+Hosted PostgreSQL producer, and the Local composition wiring that starts the
+measurement with the composition. Composition integration is a dependency, not
 evidence that live Local or Hosted processes already emit measurements. The
 offline report and existing emitter are unchanged.
+
+## Composition integration (Local)
+
+The Local composition starts the operations measurement itself, so the
+measurement exists wherever the Local profile exists:
+
+- `operationsMeasurements` on the composition options carries the workspace
+  scope, the cadence and the bounded pass and close budgets. The measurement
+  needs **both** a workspace scope and a metric adapter; without an adapter
+  nothing is sampled, exactly like the consistency metrics, so starting the
+  process is never a measurement side effect. `operationsMeasurementConfigured()`
+  reports whether a measurement exists.
+- The measurement starts with the composition, after migrations and a successful
+  runtime startup. A failed startup closes it and leaves no measurement running.
+- A start attempt after a failed startup builds a fresh lifecycle from the same
+  inputs, instead of reporting a measurement that can never run.
+- The measurement is closed before persistence is shut down, so an active pass is
+  drained or aborted while the store it reads is still open.
+- The reconciliation scheduler and the retention sweep are injectable as
+  `LocalDrainableResource`, so the composition's close contract can be exercised
+  directly without replacing the configured instances.
+
+The measurement never writes, and it observes the store read-only. The
+qualification of the redundant-layer retirement gate is a separate control and is
+documented in
+[`redundant-layer-retirement-qualification.md`](redundant-layer-retirement-qualification.md).
 
 ## Composition contract
 
