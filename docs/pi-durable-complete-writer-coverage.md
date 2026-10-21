@@ -67,19 +67,20 @@ acceptance gap.
 | `effect-gate.ts`                  | a revision over its own records                    | a compare-and-set against a superseded revision is refused, and the stored record is the one the successful compare-and-set wrote                                                                |
 | `lease.ts`                        | a process identity on the host                     | a second owner for the same session is refused while the first holds it, and a new owner is admitted after the release                                                                           |
 | `resume-permit.ts`                | an in-process identity                             | the permit is identity-bound, not shape-bound: a structurally identical literal that was never issued does not pass                                                                              |
+| `upgrade-manifest.ts`             | byte identity of the store it reads                | a store that was rolled back to different bytes is refused by the manifest check                                                                                                                 |
 
 ## The writers that carry no restore generation
 
 These write or hold durable state but have **no** independent generation
 authority, so the restore-generation property is **not** proven for them:
 
-| Writer                | Why it has no generation authority                                                                                                                                |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `effect-gate.ts`      | Its revision is local to the gate's own record, not a restore generation.                                                                                         |
-| `journal.ts`          | Its epoch is the journal's own epoch over its own record, not a restore generation.                                                                               |
-| `lease.ts`            | Its ownership is a host process identity, not a generation.                                                                                                       |
-| `upgrade-manifest.ts` | It **reads** the store and produces a digest of it. Its own contract says "grants no execution or restore authority". It is not a writer.                         |
-| `resume-permit.ts`    | It is an in-process `WeakSet` identity and is deliberately **not** re-exported from the package entry point, so a consumer can pass a permit on but not mint one. |
+| Writer                | Why it has no generation authority                                                                                                                                                                                    |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `effect-gate.ts`      | Its revision is local to the gate's own record, not a restore generation.                                                                                                                                             |
+| `journal.ts`          | Its epoch is the journal's own epoch over its own record, not a restore generation.                                                                                                                                   |
+| `lease.ts`            | Its ownership is a host process identity, not a generation.                                                                                                                                                           |
+| `upgrade-manifest.ts` | It **reads** the store and produces a digest of it. Its own contract says "grants no execution or restore authority". It is not a writer. It detects a rolled-back store by byte identity, which is not a generation. |
+| `resume-permit.ts`    | It is an in-process `WeakSet` identity and is deliberately **not** re-exported from the package entry point, so a consumer can pass a permit on but not mint one.                                                     |
 
 The enumeration test derives the writer set from the source, so a module that
 starts writing the durable state without being classified fails the file. The

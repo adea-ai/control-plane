@@ -27,7 +27,7 @@
 // supplies production authority, no live resource is touched and no effect is
 // performed.
 import { expect, test } from 'bun:test'
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -54,6 +54,10 @@ import { SqliteDurableJournal } from './journal.ts'
 import { SqliteDurableEffectGateStore } from './effect-gate.ts'
 import { NodeSessionLease } from './lease.ts'
 import { issueInferenceResumePermit, isIssuedInferenceResumePermit } from './resume-permit.ts'
+import {
+  createPiDurableLocalUpgradeManifest,
+  verifyPiDurableLocalUpgradeManifest,
+} from './upgrade-manifest.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
@@ -453,6 +457,33 @@ test('the resume permit is identity-bound, not shape-bound', () => {
       'turn:initial:native:1'
     )
   ).toBe(false)
+})
+
+test('the upgrade manifest detects a rolled-back store by byte identity', async () => {
+  // The manifest is a reader, not a writer, but it does hold one authority:
+  // it records the exact bytes of the store, so a store that was rolled back
+  // to an earlier state is detected when the manifest is verified against it.
+  // It grants no execution or restore authority by its own contract, so this
+  // is byte identity and not a generation.
+  const directory = mkdtempSync(join(tmpdir(), 'pi-upgrade-manifest-writer-'))
+  try {
+    writeFileSync(join(directory, 'authority.sqlite'), 'store-bytes-one')
+    const manifest = await createPiDurableLocalUpgradeManifest(directory)
+    expect(manifest.files).toHaveLength(1)
+    expect(manifest.files[0]?.path).toBe('authority.sqlite')
+    expect(manifest.files[0]?.bytes).toBe('store-bytes-one'.length)
+
+    // The unchanged store verifies.
+    await expect(verifyPiDurableLocalUpgradeManifest(directory, manifest)).resolves.toBeUndefined()
+
+    // A store that was rolled back to different bytes is refused.
+    writeFileSync(join(directory, 'authority.sqlite'), 'store-bytes-two')
+    await expect(verifyPiDurableLocalUpgradeManifest(directory, manifest)).rejects.toThrow(
+      /PI_UPGRADE_STORE_MANIFEST_MISMATCH/
+    )
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 })
 
 test('the writers with no generation authority are named, and the gap stays open', () => {
