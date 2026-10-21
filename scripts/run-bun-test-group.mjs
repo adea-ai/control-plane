@@ -99,6 +99,7 @@ const repositoryGroups = {
     'tests/replacement-compatibility.test.mjs',
     'tests/repository.test.mjs',
     'tests/runner-cleanup.test.mjs',
+    'tests/task-cache-qualification.test.mjs',
     'tests/workspace-tooling.test.mjs',
     'tests/restate-identity.test.mjs',
   ],

@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/workflow-worker",
-  "version": "1.18.1",
+  "version": "1.18.2",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -32,7 +32,7 @@
     "@control-plane/telemetry": "workspace:*",
     "@control-plane/usage-ledger": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
-    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/api": "1.10.0",
     "@restatedev/restate-sdk": "1.17.2"
   },
   "engines": {

@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.105.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.6...workspace-v1.105.7) (2026-10-21)
+
+
+### Bug Fixes
+
+* **testing:** load the isolated postgres fixture from an owned temporary file ([#1212](https://github.com/adea-ai/control-plane/issues/1212)) ([df37ca8](https://github.com/adea-ai/control-plane/commit/df37ca85a616d04e8fc9dfd3d68094f6d19ddf67))
+
+## [1.105.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.5...workspace-v1.105.6) (2026-10-21)
+
+
+### Tests
+
+* **railway:** qualify the production source plan offline ([#1211](https://github.com/adea-ai/control-plane/issues/1211)) ([2e68492](https://github.com/adea-ai/control-plane/commit/2e68492edbace6414cd7e6903d89e43848996163))
+
+## [1.105.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.4...workspace-v1.105.5) (2026-10-21)
+
+
+### Bug Fixes
+
+* **ci:** qualify the production task cache from the real output inventory ([#1208](https://github.com/adea-ai/control-plane/issues/1208)) ([6d16a49](https://github.com/adea-ai/control-plane/commit/6d16a495186d2a4d84d422c936a02b4abdc93928))
+
+## [1.105.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.3...workspace-v1.105.4) (2026-10-20)
+
+
+### Maintenance
+
+* **deps:** update dependency @opentelemetry/sdk-metrics to v3 ([#1206](https://github.com/adea-ai/control-plane/issues/1206)) ([6ca4635](https://github.com/adea-ai/control-plane/commit/6ca46356510243d7a3752299dcd6ff076bb7bbd8))
+
 ## [1.105.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.2...workspace-v1.105.3) (2026-10-20)
 
 
