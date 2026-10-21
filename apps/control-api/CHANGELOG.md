@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.34.3](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.2...control-api-v1.34.3) (2026-10-21)
+
+
+### Bug Fixes
+
+* **control-api:** refuse the funding disclosure when the funding host is absent ([019b5fe](https://github.com/adea-ai/control-plane/commit/019b5fec91525a9adc152ea8bc605113c34865cf))
+* **control-api:** refuse the funding disclosure when the funding host is absent (CP [#931](https://github.com/adea-ai/control-plane/issues/931)) ([#1229](https://github.com/adea-ai/control-plane/issues/1229)) ([019b5fe](https://github.com/adea-ai/control-plane/commit/019b5fec91525a9adc152ea8bc605113c34865cf))
+
 ## [1.34.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.1...control-api-v1.34.2) (2026-10-20)
 
 

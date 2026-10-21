@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.42.2](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.42.1...sqlite-persistence-v1.42.2) (2026-10-21)
+
+
+### Tests
+
+* **sqlite-persistence:** prove the three delivery kinds deduplicate independently (CP [#1024](https://github.com/adea-ai/control-plane/issues/1024)) ([#1231](https://github.com/adea-ai/control-plane/issues/1231)) ([f2e5cce](https://github.com/adea-ai/control-plane/commit/f2e5ccebf01732c7643ce06f21212da8f6f880bb))
+
 ## [1.42.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.42.0...sqlite-persistence-v1.42.1) (2026-10-19)
 
 
