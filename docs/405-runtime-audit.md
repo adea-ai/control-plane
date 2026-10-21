@@ -221,7 +221,77 @@ internals (the oxlint/oxfmt runtime, `yuku-*`, `lightningcss`, `postcss`),
 not an orphan package. So the 591 is the real external surface of the product
 and the toolchain, and the committed ceiling of 285 does not describe it.
 
-**The composition of the closure, measured.**
+**The composition of the closure, measured.** The attribution below is
+computed from the lockfile graph the checker measures, at this head.
+
+| Declared root                              | Transitive pairs in the installed graph | Owning manifest                            |
+| ------------------------------------------ | --------------------------------------- | ------------------------------------------ |
+| `@earendil-works/pi-durable`               | 105                                     | `packages/sqlite-persistence/package.json` |
+| `@earendil-works/pi-ai`                    | 99                                      | `package.json`                             |
+| `@nestjs/platform-fastify`                 | 91                                      | `apps/control-api/package.json`            |
+| `vite-plus`                                | 85                                      | `package.json`                             |
+| `oxlint`                                   | 85                                      | `package.json`                             |
+| `oxfmt`                                    | 85                                      | `package.json`                             |
+| `@langchain/langgraph-checkpoint-postgres` | 65                                      | `packages/langgraph-adapter/package.json`  |
+| `@langchain/langgraph`                     | 59                                      | `package.json`                             |
+
+The per-manifest totals of the roots each manifest declares are the
+repository root 429, `apps/control-api` 258, `packages/langgraph-adapter`
+115, `packages/sqlite-persistence` 108, `packages/telemetry` 40,
+`packages/database` 33, `packages/pi-cloudflare-host` 31 and
+`packages/object-store` 30. Every one of those manifests is owned by another
+slice: the reduction
+candidates sit in `packages/pi-durable-adapter` (the Pi SDK), in
+`apps/control-api` (the Nest/Fastify, Sentry/OpenTelemetry and AWS families)
+and in the repository root (the `vite-plus` lint and format toolchain). The
+manifests this slice owns hold **no removable external dependency**: the four
+declarations it removed are gone, and the ones it still declares are used by
+its own sources (`zod` in `packages/production-readiness` and in
+local-control-plane, `semver` through `createRequire`, the Restate server
+package through `require.resolve`). The reduction is therefore blocked by
+ownership, not by effort, and it is not attempted from here.
+
+**The measurement's identities, corrected.** The checker counted the right
+_number_ but the wrong _identities_: its pattern matched a nested scoped
+install (`vite-plus/oxlint/@oxlint/binding-darwin-arm64@1.88.0`) as the
+package `vite-plus/oxlint` at the version
+`olint/binding-darwin-arm64@1.88.0`. The count is unchanged at **591** under
+the corrected pattern, which is the provenance statement that matters: the
+number is not a parsing artifact. The pattern now normalizes the install
+path, so the counted pairs are the real package identities, and
+`packages/production-readiness/src/dependency-budget-scope.test.mjs` pins
+the checker's number to the lockfile's distinct external pairs so a future
+change of scope is a visible diff.
+
+The attribution below is
+computed from the lockfile graph that the checker measures, at this head.
+
+| Declared root      | Transitive pairs | Owning manifest                          |
+| ------------------ | ---------------- | ---------------------------------------- |
+| `zod`              | 0                | `packages/credential-vault/package.json` |
+| `vite-plus`        | 0                | `package.json`                           |
+| `typescript6`      | 0                | `package.json`                           |
+| `typescript`       | 0                | `package.json`                           |
+| `semver`           | 0                | `apps/hosted-control-plane/package.json` |
+| `rxjs`             | 0                | `apps/control-api/package.json`          |
+| `reflect-metadata` | 0                | `package.json`                           |
+| `railway`          | 0                | `package.json`                           |
+
+The per-manifest totals of the roots each manifest declares are the
+repository root 429, `apps/control-api` 258, `packages/langgraph-adapter`
+115, `packages/sqlite-persistence` 108, `packages/telemetry` 40,
+`packages/database` 33, `packages/pi-cloudflare-host` 31 and
+`packages/object-store` 30. Every one of those manifests is owned by another
+slice: the reduction
+candidates sit in `packages/pi-durable-adapter` (the Pi SDK), in
+`apps/control-api` (the Nest/Fastify, Sentry/OpenTelemetry and AWS families)
+and in the repository root (the `vite-plus` lint and format toolchain). The
+manifests this slice owns hold no removable external dependency: the four
+declarations it removed are gone, and the remaining ones it declares are
+used by its own sources (`zod` in `packages/production-readiness` and in
+local-control-plane, `semver` through `createRequire`, the Restate server
+package through `require.resolve`).
+
 The measured closure is the whole installed tree. Its composition, from the
 lockfile and the installed tree, is: the Pi SDK family
 (`@earendil-works/pi-durable` 102 and `@earendil-works/pi-ai` 96 packages),

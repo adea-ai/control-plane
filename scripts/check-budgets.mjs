@@ -63,13 +63,40 @@ export function checkDistBudget(budgets, totalBytes) {
   }
 }
 
+/**
+ * The package name of a tree entry, without the install path it is nested
+ * under.
+ *
+ * `bun pm ls --all` prints a scoped package that lives under a nested
+ * install path as `vite-plus/oxlint/@oxlint/binding-darwin-arm64@1.88.0`;
+ * the package is `@oxlint/binding-darwin-arm64` and that is what the closure
+ * counts.
+ */
+export function normalizePackageName(raw) {
+  const segments = String(raw).trim().split('/')
+  if (segments.length >= 2 && segments[segments.length - 2].startsWith('@'))
+    return `${segments[segments.length - 2]}/${segments[segments.length - 1]}`
+  return segments[segments.length - 1]
+}
+
+/**
+ * The number of distinct external `package@version` pairs in a
+ * `bun pm ls --all` listing.
+ *
+ * The listing prints an install path for every nested dependency, so the
+ * name is normalized before it is counted: the same package installed under
+ * two paths is one package, and a nested scoped package is counted rather
+ * than dropped.
+ */
 export function countExternalPackages(lsOutput) {
   const external = new Set()
   for (const line of lsOutput.split('\n')) {
-    const match = line.match(/^(?:[│├└─\s]+)?([a-z@][^@\s]+)@(\S+)$/)
+    const match = line.match(/^(?:[│├└─\s]*)(.*)@([^@\s]+)$/)
     if (match === null) continue
-    if (match[1].startsWith('@control-plane/')) continue
-    external.add(`${match[1]}@${match[2]}`)
+    const name = normalizePackageName(match[1])
+    if (name === '') continue
+    if (name.startsWith('@control-plane/')) continue
+    external.add(`${name}@${match[2]}`)
   }
   return external.size
 }
