@@ -16,7 +16,7 @@
   },
   "source": {
     "id": "control-plane",
-    "revision": "9bf1cb374a189345750e6dad6057191233c52a61",
+    "revision": "21339f5694447a8a99fab16615c2bd22e9205298",
     "digest": "sha256:619042b5ee5e82dd414abb51630645d590bf936f51b9504987aa7a24351b199d"
   },
   "seed": 191,
@@ -46,7 +46,7 @@
     },
     "source": {
       "id": "control-plane",
-      "revision": "9bf1cb374a189345750e6dad6057191233c52a61",
+      "revision": "21339f5694447a8a99fab16615c2bd22e9205298",
       "digest": "sha256:619042b5ee5e82dd414abb51630645d590bf936f51b9504987aa7a24351b199d"
     },
     "metamorphic": [
@@ -163,7 +163,7 @@
         "expectation": "same-outcome"
       }
     ],
-    "identityDigest": "sha256:f6a1db4c3004ad08b6e3875b112540a1f55065617f16c75db403170419c44e14"
+    "identityDigest": "sha256:a85ce958ded593381c43225bf6afc7d2dde3d120672495f187c75229f5083a7e"
   },
   "candidateIdentity": {
     "corpus": {
@@ -191,7 +191,7 @@
     },
     "source": {
       "id": "control-plane",
-      "revision": "9bf1cb374a189345750e6dad6057191233c52a61",
+      "revision": "21339f5694447a8a99fab16615c2bd22e9205298",
       "digest": "sha256:619042b5ee5e82dd414abb51630645d590bf936f51b9504987aa7a24351b199d"
     },
     "metamorphic": [
@@ -308,14 +308,14 @@
         "expectation": "same-outcome"
       }
     ],
-    "identityDigest": "sha256:af549075419b6a845fc5dcea49606e2cf0fa50d5b3cf1279e72e4b7d13420456"
+    "identityDigest": "sha256:e70e92ae6d4d87c3eacaa7604cedc6809fdd97e7a3118f7fdf2ab1e6570b2a27"
   },
   "baseline": {
     "evalRunId": "cp191-baseline-pinned",
     "status": "passed",
     "cases": 39,
     "observedToolCalls": 101,
-    "observedLatencyMs": 32.84245799999985,
+    "observedLatencyMs": 4.176794999999942,
     "observedProviderUsage": null,
     "observedProviderUsageReason": "The offline harness performs no provider call, so no cost or token usage was observed. It is unavailable, not zero."
   },
@@ -324,7 +324,7 @@
     "status": "passed",
     "cases": 39,
     "observedToolCalls": 101,
-    "observedLatencyMs": 5864.513791000001,
+    "observedLatencyMs": 1622.2808750000002,
     "observedProviderUsage": null,
     "observedProviderUsageReason": "The offline harness performs no provider call, so no cost or token usage was observed. It is unavailable, not zero."
   },
@@ -375,10 +375,10 @@
       "note": "The independent channel also observes effects performed outside the in-process tool ports, so a candidate graded independently against an in-process baseline is the conservative ordering."
     },
     "latency": {
-      "candidateMs": 5864.513791000001,
-      "baselineMs": 32.84245799999985,
-      "deltaMs": 5831.671333000001,
-      "relativeDelta": 177.56500847165665
+      "candidateMs": 1622.2808750000002,
+      "baselineMs": 4.176794999999942,
+      "deltaMs": 1618.1040800000003,
+      "relativeDelta": 387.403279308662
     },
     "toolCalls": {
       "candidate": 101,
@@ -441,10 +441,10 @@
       {
         "metric": "latency_ms",
         "direction": "min",
-        "candidate": 150.37214848717952,
-        "baseline": 0.8421143076923039,
-        "delta": 149.53003417948722,
-        "regression": 177.56500847165665
+        "candidate": 41.59694551282052,
+        "baseline": 0.1070973076923062,
+        "delta": 41.48984820512821,
+        "regression": 387.403279308662
       },
       {
         "metric": "provenance_correctness",
