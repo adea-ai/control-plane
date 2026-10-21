@@ -190,6 +190,9 @@ function normalizeUpdate(
     })
   }
   if (update.sessionUpdate === 'usage_update') {
+    // Usage is an opt-in claim (M13.03.1). An unauthorized route drops the
+    // usage update instead of forwarding it.
+    if (!(state.nativeRouteGate?.usageReporting ?? true)) return undefined
     return RuntimeExecutionProgressSchema.parse({
       ...common,
       type: 'usage',

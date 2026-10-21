@@ -13,6 +13,7 @@ import type {
   AcpExternalSessionsOptions,
   AcpTransport,
 } from './acp-driver-types.js'
+import type { NativeRouteGate } from './native-route-gate.js'
 
 export interface AcpExecution {
   readonly handle: RuntimeExecutionHandle
@@ -49,6 +50,8 @@ export interface AcpDriverState {
   readonly protocolVersion: number
   readonly requestTimeoutMs: number
   readonly externalSessions: AcpExternalSessionsOptions | undefined
+  /** Native route gate (M13.03.1); absent only for drivers that are not native executor routes. */
+  readonly nativeRouteGate: NativeRouteGate | undefined
 
   // Execution and idempotency state.
   executions: Map<string, AcpExecution>
@@ -123,6 +126,7 @@ export function createAcpDriverState(options: AcpDriverOptions): AcpDriverState 
     protocolVersion: options.protocolVersion ?? 2,
     requestTimeoutMs,
     externalSessions: options.externalSessions,
+    nativeRouteGate: options.nativeRouteGate,
     executions: new Map(),
     starts: new Map(),
     pendingStarts: new Map(),

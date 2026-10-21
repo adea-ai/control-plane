@@ -266,6 +266,49 @@ the native harness removed while preserving their Control Plane references. Nati
 without taking ownership; concurrent native use always remains allowed. Existing public SDK list/get
 operations consume the projected normalized read model and never expose either native identifier.
 
+## Native route qualification and pre-effect controls
+
+A native executor route (Codex, OpenCode or Claude) may claim capabilities only when trusted
+deployment evidence and a live observation agree on the exact route identity. The adapter's
+`NativeRouteGate` turns that agreement into the three decisions a runtime must make, and it is
+fail-closed: an unqualified, expired, revoked, drifted, conflicting, offline, unauthorized or
+wrongly-authenticated route yields no capability, no usage claim and no governed native path.
+
+The evidence that decides a route is preserved exactly and is never widened at runtime:
+
+- **Harness and version** — the harness (`codex`, `opencode`, `claude`) and its exact semantic
+  version must match the observation; a version change denies as `evidence_mismatch`
+  (`HARNESS_VERSION_CHANGED`). Pi is not a qualifiable harness: Pi dispatch is not native
+  checkpointing or subscription entitlement.
+- **Authentication** — only `native_owned` qualifies, so credentials stay with the executor. A
+  `cloud_vault` or `delegated_session` route denies as `auth_unsupported`.
+- **Location and authorization** — `agent_hq_cloud` never qualifies a native executor route, and a
+  route without deployment authorization denies as `location_unauthorized`.
+- **Native installation** — repository, tag, commit and bundle digest must match the pinned build
+  identity; the codex route additionally pins the ACP build and its Codex version, and drift denies
+  as `deploymentPin` / `DEPLOYMENT_PIN_CHANGED`.
+- **Configuration digest** — a digest of the current native configuration (settings, hooks, MCP
+  registrations) detects changed native configuration and denies as `configurationDigest` /
+  `CONFIGURATION_DIGEST_CHANGED`.
+
+From that evidence the gate advertises **exactly** the allow-listed capabilities, so `session.resume`
+and `execution.cancel` stay disabled unless the evidence lists them. Usage is an opt-in claim:
+the `usage_update` progress and the observed terminal usage are only passed through when
+`usageReporting` is true. (A completed result's `usage` is a mandatory part of the execution result
+contract rather than a route claim; an unauthorized route cannot reach a completed result at all
+because the capability gate leaves it with no executable capabilities.)
+
+Native shell, network, hooks, MCP and extension effects are authorized per effect. A channel must
+be evidenced _and_ proven policy-enforced in the evidence, and the runtime's own pre-effect policy
+decision for that effect must have allowed it; otherwise the effect is refused with
+`route_unqualified`, `not_evidenced`, `controls_missing` or `effect_policy_denied`. An offline or
+revoked device is a local denial that never offers a cloud reroute.
+
+The gate performs no I/O, spawns no harness, contacts no provider, and never accepts, stores or
+returns credentials: the evidence schema has no credential fields and rejects unknown keys.
+See `packages/acp-adapter/docs/qualification-integration.md` for the evidence, detection and
+transport-mapping call-sites.
+
 ## Failure behavior and evidence
 
 Protocol mismatch fails closed before creating a session. Disconnects are retryable availability

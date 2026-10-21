@@ -59,6 +59,13 @@ export type {
   NativeInstallationEvidence,
   TransportState,
 } from './qualification.js'
+export { NativeRouteGate, mapNativeTransportState } from './native-route-gate.js'
+export type {
+  NativeEffectAuthorization,
+  NativeEffectDenialReason,
+  NativeEffectPolicy,
+  NativeRouteGateOptions,
+} from './native-route-gate.js'
 
 /**
  * ACP protocol state machine. Shared protocol state lives on the instance in a

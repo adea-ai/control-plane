@@ -151,7 +151,8 @@ export async function executionStatus(
     execution.handle,
     await transportCall(state, (signal) =>
       state.transport.snapshot(execution.nativeSessionId, signal)
-    )
+    ),
+    state.nativeRouteGate?.usageReporting ?? true
   )
 }
 
