@@ -222,7 +222,8 @@ not an orphan package. So the 591 is the real external surface of the product
 and the toolchain, and the committed ceiling of 285 does not describe it.
 
 **The composition of the closure, measured.** The attribution below is
-computed from the lockfile graph the checker measures, at this head.
+computed from the **installed** dependency graph at this head: the transitive
+packages each declared root pulls in, with the manifest that declares it.
 
 | Declared root                              | Transitive pairs in the installed graph | Owning manifest                            |
 | ------------------------------------------ | --------------------------------------- | ------------------------------------------ |
@@ -260,44 +261,21 @@ the corrected pattern, which is the provenance statement that matters: the
 number is not a parsing artifact. The pattern now normalizes the install
 path, so the counted pairs are the real package identities, and
 `packages/production-readiness/src/dependency-budget-scope.test.mjs` pins
-the checker's number to the lockfile's distinct external pairs so a future
-change of scope is a visible diff.
+the counted identities and the scope: small explicit listing fixtures
+exercise the checker's own `normalizePackageName` and
+`countExternalPackages` for nested scoped and unscoped installs, for the
+same package reached through two install paths, for distinct versions, for
+the workspace links and for the lines that are not packages, and the real
+listing is measured to confirm that every counted identity is a plain
+package identity. A wrong identity fails that regression even though the
+total count stays 591.
 
-The attribution below is
-computed from the lockfile graph that the checker measures, at this head.
-
-| Declared root      | Transitive pairs | Owning manifest                          |
-| ------------------ | ---------------- | ---------------------------------------- |
-| `zod`              | 0                | `packages/credential-vault/package.json` |
-| `vite-plus`        | 0                | `package.json`                           |
-| `typescript6`      | 0                | `package.json`                           |
-| `typescript`       | 0                | `package.json`                           |
-| `semver`           | 0                | `apps/hosted-control-plane/package.json` |
-| `rxjs`             | 0                | `apps/control-api/package.json`          |
-| `reflect-metadata` | 0                | `package.json`                           |
-| `railway`          | 0                | `package.json`                           |
-
-The per-manifest totals of the roots each manifest declares are the
-repository root 429, `apps/control-api` 258, `packages/langgraph-adapter`
-115, `packages/sqlite-persistence` 108, `packages/telemetry` 40,
-`packages/database` 33, `packages/pi-cloudflare-host` 31 and
-`packages/object-store` 30. Every one of those manifests is owned by another
-slice: the reduction
-candidates sit in `packages/pi-durable-adapter` (the Pi SDK), in
-`apps/control-api` (the Nest/Fastify, Sentry/OpenTelemetry and AWS families)
-and in the repository root (the `vite-plus` lint and format toolchain). The
-manifests this slice owns hold no removable external dependency: the four
-declarations it removed are gone, and the remaining ones it declares are
-used by its own sources (`zod` in `packages/production-readiness` and in
-local-control-plane, `semver` through `createRequire`, the Restate server
-package through `require.resolve`).
-
-The measured closure is the whole installed tree. Its composition, from the
-lockfile and the installed tree, is: the Pi SDK family
-(`@earendil-works/pi-durable` 102 and `@earendil-works/pi-ai` 96 packages),
-the Nest/Fastify generation (64 + 55 + 18 + 10 + 8), the repository
-toolchain (`vite-plus` 82, `miniflare` 31, `drizzle-kit` 13), Sentry and
-OpenTelemetry (34), the AWS SDK and Smithy (31) and LangChain (23). The
+The measured closure is the whole installed tree, and the table above is
+its composition, measured on the installed graph at this head. The
+transaction-based enumeration of that graph is deliberately not repeated
+here: the installed-graph numbers above are the ones the audit stands on,
+and an earlier lockfile-based enumeration of the same roots disagreed with
+them, so only the installed-graph measurement is quoted. The
 bounded remediation removed what a package declares but never uses:
 `fastify` and `@nestjs/common` (local-control-plane) and
 `@restatedev/restate-sdk` (workflow-worker) — declarations that no source in

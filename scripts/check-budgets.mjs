@@ -88,7 +88,7 @@ export function normalizePackageName(raw) {
  * two paths is one package, and a nested scoped package is counted rather
  * than dropped.
  */
-export function countExternalPackages(lsOutput) {
+export function externalPackagePairs(lsOutput) {
   const external = new Set()
   for (const line of lsOutput.split('\n')) {
     const match = line.match(/^(?:[│├└─\s]*)(.*)@([^@\s]+)$/)
@@ -98,7 +98,11 @@ export function countExternalPackages(lsOutput) {
     if (name.startsWith('@control-plane/')) continue
     external.add(`${name}@${match[2]}`)
   }
-  return external.size
+  return external
+}
+
+export function countExternalPackages(lsOutput) {
+  return externalPackagePairs(lsOutput).size
 }
 
 export function checkDependencyBudget(budgets, externalCount) {
@@ -131,15 +135,39 @@ if (import.meta.main) {
   } else if (command === 'dist') {
     report(checkDistBudget(budgets, await totalDistBytes()))
   } else if (command === 'deps') {
-    const result = spawnSync('bun', ['pm', 'ls', '--all'], {
-      cwd: repositoryRoot,
-      encoding: 'utf8',
-    })
-    if (result.error !== undefined || result.status !== 0) {
-      console.error('failed to enumerate dependencies via bun pm ls --all')
-      process.exitCode = 1
+    // The listing seam: when ADEA_DEPS_LISTING_FILE names a file, that
+    // listing is measured instead of the installed tree, and the counted
+    // package identities are reported with it. It exists so the measurement
+    // can be exercised on explicit fixtures; the measured scope of the
+    // repository is the installed tree.
+    const listingFile = process.env.ADEA_DEPS_LISTING_FILE
+    let listing
+    if (listingFile !== undefined && listingFile !== '') {
+      try {
+        listing = await readFile(listingFile, 'utf8')
+      } catch (error) {
+        console.error(`failed to read the dependency listing: ${error.message}`)
+        process.exitCode = 1
+        listing = undefined
+      }
     } else {
-      report(checkDependencyBudget(budgets, countExternalPackages(result.stdout ?? '')))
+      const result = spawnSync('bun', ['pm', 'ls', '--all'], {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+      })
+      if (result.error !== undefined || result.status !== 0) {
+        console.error('failed to enumerate dependencies via bun pm ls --all')
+        process.exitCode = 1
+      } else {
+        listing = result.stdout ?? ''
+      }
+    }
+    if (listing !== undefined) {
+      const pairs = [...externalPackagePairs(listing)].toSorted()
+      const check = checkDependencyBudget(budgets, pairs.length)
+      if (listingFile !== undefined && listingFile !== '')
+        report({ ...check, pairs, scope: 'listing file' })
+      else report(check)
     }
   } else {
     console.error(usage)
