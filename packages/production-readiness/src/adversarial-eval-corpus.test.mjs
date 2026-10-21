@@ -56,8 +56,8 @@ test('runs the pinned public corpus offline with repeatable fixtures, configurat
 
   expect(corpus).toMatchObject({
     id: 'm11-goal-adherence-public-controls',
-    version: '1.1.0',
-    digest: 'sha256:766c159a7fd94cbb4d7295cd572db0b2159de65f8df2f0e9519e904ea24f6024',
+    version: '1.2.0',
+    digest: 'sha256:96705497fc1b6cc785e06e77e3d0498f8b5843a1ac65a9256eadc01b68892968',
   })
   expect(corpus.cases.map(({ taskId }) => taskId)).toEqual([
     'SW-04',
@@ -77,6 +77,28 @@ test('runs the pinned public corpus offline with repeatable fixtures, configurat
     'RT-01-CAPABILITY-REMOVED',
     'IR-01-CONTEXT-REORDERED',
     'RM-01-PATH-RENAMED',
+    'SW-01',
+    'SW-02',
+    'SW-03',
+    'SW-06',
+    'SW-07',
+    'RE-01',
+    'RE-02',
+    'RE-05',
+    'RE-06',
+    'RE-07',
+    'WR-01',
+    'WR-03',
+    'WR-04',
+    'WR-05',
+    'WR-06',
+    'WR-07',
+    'PL-01',
+    'PL-02',
+    'PL-03',
+    'PL-04',
+    'PL-05',
+    'PL-06',
   ])
   expect(corpus.manifest.domains.map(({ id }) => id)).toEqual([
     'SW',
@@ -104,11 +126,11 @@ test('runs the pinned public corpus offline with repeatable fixtures, configurat
   })
   expect(corpus.manifest.acceptanceCriteria.find(({ id }) => id === 'M11.6-AC-07')).toMatchObject({
     coverage: 'external-required',
-    caseIds: ['SW-04'],
+    caseIds: ['SW-04', 'SW-01', 'PL-05'],
   })
   expect(suite.mode).toBe('offline')
   expect(suite.digest).toBe(
-    'sha256:d20644e1a6be1fd916953ee2a3eae87aa63c191c90dfb27d7ea0a98826cbf218'
+    'sha256:ceda8f267ac0cbe181f10ffc0211692d72306043b44d498bbc5f62f009d2bd67'
   )
   expect(suite.dataset).toEqual({ id: corpus.id, version: corpus.version, digest: corpus.digest })
   expect(suite.cases.map(({ inputDigest }) => inputDigest)).toHaveLength(corpus.cases.length)
