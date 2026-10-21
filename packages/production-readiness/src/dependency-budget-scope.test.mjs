@@ -1,12 +1,15 @@
 // The dependency budget's measurement: scope, identities and the ceiling.
 //
 // The committed dependency budget counts the unique external
-// `package@version` pairs of the resolved graph. Two things are pinned here:
+// `package@version` pairs of the resolved graph. Three things are pinned here:
 //
-//   - the fixtures drive the checker's own identity rule through its
-//     documented listing seam, on small explicit listings, so a wrong
-//     package identity fails the regression even when the total count does
-//     not change;
+//   - the checker's OWN exported identity rule is exercised directly:
+//     `normalizePackageName` and `countExternalPackages` are called on small
+//     explicit fixtures, so a wrong package identity or a wrong count fails
+//     the regression even when the measured total does not change;
+//   - the same rule is exercised end to end through the checker's documented
+//     listing seam, on small explicit listings, so the command and the
+//     exported function cannot drift apart;
 //   - the scope is measured on the REAL listing, with the seam **unset** —
 //     the way the budget is measured — and the number the checker reports
 //     must equal the distinct external pairs of `bun pm ls --all`, computed
@@ -14,25 +17,43 @@
 //     identities, the workspace packages must be absent, and the committed
 //     ceiling must still be 285.
 //
-// The checker stays self-contained (the repository's own lane test copies it
-// into a temporary repository and runs it there), so the fixtures reach it
-// through its documented listing seam rather than by importing it across a
-// workspace boundary. The seam changes the measurement's **input**, never its
-// scope: the test asserts that the seam and the real path measure the same
-// scope over the same listing.
+// The checker is copied into a temporary directory and imported from there,
+// which is the pattern the repository's own lane test uses when it copies
+// the checker into a temporary repository. Importing it in place would cross
+// a workspace boundary; the copy is the same file, so the exported functions
+// under test are the shipped ones. The seam changes the measurement's
+// **input**, never its scope: the test asserts that the seam and the real
+// path measure the same scope over the same listing.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
 const budgets = JSON.parse(readFileSync(join(repositoryRoot, 'budgets.json'), 'utf8'))
 
 /** The listing seam: the checker reads its listing from this file. */
 const LISTING_FILE = 'ADEA_DEPS_LISTING_FILE'
+
+/**
+ * The checker's exported functions, loaded from a copy of the shipped file.
+ *
+ * The copy is what keeps the import inside the workspace boundary; the
+ * functions under test are the ones the repository ships.
+ */
+async function loadChecker() {
+  const directory = mkdtempSync(join(tmpdir(), 'control-plane-deps-checker-'))
+  const file = join(directory, 'check-budgets.mjs')
+  try {
+    copyFileSync(new URL('../../../scripts/check-budgets.mjs', import.meta.url), file)
+    return await import(pathToFileURL(file).href)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+}
 
 /**
  * The listing the budget measures: the lockfile's dependency tree, as
@@ -213,4 +234,77 @@ test('a wrong package identity fails even when the count does not change', () =>
 
 test('the committed dependency ceiling is unchanged', () => {
   assert.equal(budgets.dependencies.externalPackageCeiling, 285)
+})
+
+test("the checker's own identity rule normalizes a package identity", async () => {
+  const { normalizePackageName } = await loadChecker()
+  // A plain package name is already an identity.
+  assert.equal(normalizePackageName('zod'), 'zod')
+  // A scoped package keeps its scope.
+  assert.equal(normalizePackageName('@oxlint/binding-darwin-arm64'), '@oxlint/binding-darwin-arm64')
+  // An install path in front of a scoped package is dropped, the scope is not.
+  assert.equal(
+    normalizePackageName('vite-plus/oxlint/@oxlint/binding-darwin-arm64'),
+    '@oxlint/binding-darwin-arm64'
+  )
+  // An install path in front of an unscoped package is dropped.
+  assert.equal(normalizePackageName('vendor/nested/semver'), 'semver')
+  // A nested entry under a scoped parent names the child, not the parent.
+  assert.equal(normalizePackageName('@fastify/ajv-compiler/fast-uri'), 'fast-uri')
+  assert.equal(normalizePackageName('vitest/vite'), 'vite')
+  // The workspace packages are recognisable by name, so they can be excluded.
+  assert.equal(normalizePackageName('@control-plane/domain'), '@control-plane/domain')
+  // Nothing is not a package.
+  assert.equal(normalizePackageName(''), '')
+})
+
+test("the checker's own counter counts distinct external identities", async () => {
+  const { countExternalPackages, externalPackagePairs } = await loadChecker()
+  // The same package under two install paths is one package.
+  assert.equal(
+    countExternalPackages(
+      [
+        'node_modules',
+        '├── vite-plus/oxlint/@oxlint/binding-darwin-arm64@1.88.0',
+        '└── @oxlint/binding-darwin-arm64@1.88.0',
+        '',
+      ].join('\n')
+    ),
+    1
+  )
+  // Distinct versions of the same package are two packages.
+  assert.equal(
+    countExternalPackages(['node_modules', '├── semver@7.8.5', '├── semver@7.6.3', ''].join('\n')),
+    2
+  )
+  // The workspace links and the lines that are not packages are not counted.
+  assert.equal(
+    countExternalPackages(
+      [
+        'node_modules',
+        '├── @control-plane/domain@1.0.0',
+        '├── @control-plane/testing@1.0.0',
+        '├── zod@4.6.5',
+        '└── ',
+        '',
+        'some other line that is not a package',
+      ].join('\n')
+    ),
+    1
+  )
+  // The counted identities are plain package identities, never install paths.
+  const pairs = externalPackagePairs(
+    ['node_modules', '├── vite-plus/oxlint/@oxlint/binding-darwin-arm64@1.88.0', ''].join('\n')
+  )
+  assert.deepEqual([...pairs], ['@oxlint/binding-darwin-arm64@1.88.0'])
+})
+
+test('the real listing is the lockfile tree, and the checker counts it exactly', async () => {
+  // The measurement's own source: `bun pm ls --all` lists the tree "according
+  // to the current lockfile", so the counted identities are the lockfile's
+  // external packages and every one of them is reachable from a workspace
+  // root. The checker's own counter must read the same number.
+  const { countExternalPackages } = await loadChecker()
+  const listing = realListing()
+  assert.equal(countExternalPackages(listing), externalPairs(listing).size)
 })
