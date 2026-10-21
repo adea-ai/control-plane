@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -12,6 +14,7 @@ import {
   outputInventory,
   parseSummary,
   repositoryRoot,
+  removeOutputs,
 } from '../scripts/task-cache-qualification.mjs'
 
 const toolchain = 'qualification-test-toolchain'
@@ -407,5 +410,257 @@ describe('the cache state is read from the disk', () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+/** Runs the qualification command line the way the lane runs it. */
+const runCli = (args) =>
+  spawnSync(
+    process.execPath,
+    [join(repositoryRoot, 'scripts', 'task-cache-qualification.mjs'), ...args],
+    { cwd: repositoryRoot, encoding: 'utf8' }
+  )
+
+const digestOf = (text) => createHash('sha256').update(text).digest('hex')
+
+/** An inventory of build outputs, with the digests the qualification records. */
+const inventoryFixture = (files, roots = ['packages/demo/dist']) => ({
+  files: files.map(([path, text]) => ({
+    path,
+    bytes: Buffer.byteLength(text),
+    sha256: digestOf(text),
+  })),
+  roots,
+})
+
+const withDirectory = (body) => {
+  const directory = mkdtempSync(join(tmpdir(), 'task-cache-qualification-'))
+  try {
+    return body(directory)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+}
+
+describe('the command line fails when two inventories differ', () => {
+  const baseline = inventoryFixture([
+    ['packages/demo/dist/a.js', 'export const a = 1\n'],
+    ['packages/demo/dist/b.js', 'export const b = 2\n'],
+  ])
+
+  const compareWith = (other) =>
+    withDirectory((directory) => {
+      const left = join(directory, 'left.json')
+      const right = join(directory, 'right.json')
+      writeFileSync(left, JSON.stringify(baseline))
+      writeFileSync(right, JSON.stringify(other))
+      return runCli(['compare', left, right])
+    })
+
+  test('identical inventories pass', () => {
+    const result = compareWith(baseline)
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout).equal).toBe(true)
+    expect(JSON.parse(result.stdout).ok).toBe(true)
+  })
+
+  test('a changed output fails', () => {
+    const changed = inventoryFixture([
+      ['packages/demo/dist/a.js', 'export const a = 2\n'],
+      ['packages/demo/dist/b.js', 'export const b = 2\n'],
+    ])
+    const result = compareWith(changed)
+    expect(result.status).toBe(1)
+    const report = JSON.parse(result.stdout)
+    expect(report.equal).toBe(false)
+    expect(report.ok).toBe(false)
+    expect(report.changed.map((entry) => entry.path)).toEqual(['packages/demo/dist/a.js'])
+    expect(result.stderr).toContain('the outputs differ')
+  })
+
+  test('a missing output fails', () => {
+    const missing = inventoryFixture([['packages/demo/dist/a.js', 'export const a = 1\n']])
+    const result = compareWith(missing)
+    expect(result.status).toBe(1)
+    const report = JSON.parse(result.stdout)
+    expect(report.equal).toBe(false)
+    expect(report.removed).toEqual(['packages/demo/dist/b.js'])
+  })
+
+  test('an extra output fails', () => {
+    const extra = inventoryFixture([
+      ['packages/demo/dist/a.js', 'export const a = 1\n'],
+      ['packages/demo/dist/b.js', 'export const b = 2\n'],
+      ['packages/demo/dist/c.js', 'export const c = 3\n'],
+    ])
+    const result = compareWith(extra)
+    expect(result.status).toBe(1)
+    const report = JSON.parse(result.stdout)
+    expect(report.equal).toBe(false)
+    expect(report.added).toEqual(['packages/demo/dist/c.js'])
+  })
+
+  test('an inventory that covers no declared output fails', () => {
+    const result = compareWith(inventoryFixture([], []))
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('proves nothing')
+  })
+})
+
+describe('the restored outputs must be complete and current', () => {
+  const baseline = inventoryFixture([
+    ['packages/demo/dist/a.js', 'export const a = 1\n'],
+    ['packages/demo/dist/b.js', 'export const b = 2\n'],
+  ])
+
+  const compareWith = (restored) =>
+    withDirectory((directory) => {
+      const left = join(directory, 'baseline.json')
+      const right = join(directory, 'restored.json')
+      writeFileSync(left, JSON.stringify(baseline))
+      writeFileSync(right, JSON.stringify(restored))
+      return runCli(['compare', left, right])
+    })
+
+  test('a restored output that is missing fails', () => {
+    const result = compareWith(
+      inventoryFixture([['packages/demo/dist/a.js', 'export const a = 1\n']])
+    )
+    expect(result.status).toBe(1)
+    expect(JSON.parse(result.stdout).removed).toEqual(['packages/demo/dist/b.js'])
+  })
+
+  test('a restored output that is truncated fails', () => {
+    const result = compareWith(
+      inventoryFixture([
+        ['packages/demo/dist/a.js', 'export const a = 1\n'],
+        ['packages/demo/dist/b.js', 'export const b ='],
+      ])
+    )
+    expect(result.status).toBe(1)
+    expect(JSON.parse(result.stdout).changed.map((entry) => entry.path)).toEqual([
+      'packages/demo/dist/b.js',
+    ])
+  })
+
+  test('a restored output that is stale fails', () => {
+    const result = compareWith(
+      inventoryFixture([
+        ['packages/demo/dist/a.js', 'export const a = 1\n'],
+        ['packages/demo/dist/b.js', 'export const b = 3\n'],
+      ])
+    )
+    expect(result.status).toBe(1)
+    expect(JSON.parse(result.stdout).changed.map((entry) => entry.path)).toEqual([
+      'packages/demo/dist/b.js',
+    ])
+  })
+
+  test('a restored output set that lost an output root fails', () => {
+    const widened = inventoryFixture(
+      [
+        ['packages/demo/dist/a.js', 'export const a = 1\n'],
+        ['packages/demo/dist/b.js', 'export const b = 2\n'],
+      ],
+      ['packages/demo/dist', 'packages/other/dist']
+    )
+    const result = withDirectory((directory) => {
+      const left = join(directory, 'baseline.json')
+      const right = join(directory, 'restored.json')
+      writeFileSync(left, JSON.stringify(widened))
+      writeFileSync(right, JSON.stringify(baseline))
+      return runCli(['compare', left, right])
+    })
+    expect(result.status).toBe(1)
+    expect(JSON.parse(result.stdout).roots.removed).toEqual(['packages/other/dist'])
+  })
+})
+
+describe('the command line fails when the run itself is wrong', () => {
+  const summaryFor = (summary) =>
+    withDirectory((directory) => {
+      const file = join(directory, 'last-summary.json')
+      writeFileSync(file, JSON.stringify(summary))
+      return runCli(['summary', '--summary', file, '--toolchain', toolchain])
+    })
+
+  test('a run that executed every task passes without a cache pattern', () => {
+    const result = summaryFor(summaryWith())
+    expect(result.status).toBe(0)
+    const report = JSON.parse(result.stdout)
+    expect(report.ok).toBe(true)
+    expect(report.expectation).toBe(null)
+  })
+
+  test('a missing task fails without a cache pattern', () => {
+    const summary = summaryWith()
+    summary.tasks = summary.tasks.filter((task) => task.task_name !== 'orch:contracts:build')
+    const result = summaryFor(summary)
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('orch:contracts:build')
+    expect(result.stderr).toContain('did not execute')
+  })
+
+  test('an unexpected task fails without a cache pattern', () => {
+    const summary = summaryWith()
+    summary.tasks.push({
+      package_name: '@control-plane/workspace',
+      task_name: 'orch:not-in-the-graph:build',
+      command: 'bun run --cwd packages/nothing build',
+      result: hit(),
+    })
+    const result = summaryFor(summary)
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('outside the graph')
+  })
+
+  test('a command the graph does not declare fails without a cache pattern', () => {
+    const summary = summaryWith()
+    const entry = summary.tasks.find((task) => task.task_name === 'orch:contracts:build')
+    entry.command = 'bun run --cwd packages/contracts build --other'
+    const result = summaryFor(summary)
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('but the graph expects')
+  })
+
+  test('a failed task fails without a cache pattern', () => {
+    const summary = summaryWith()
+    const entry = summary.tasks.find((task) => task.task_name === 'orch:contracts:build')
+    entry.result = {
+      Spawned: {
+        cache_status: { Miss: 'NotFound' },
+        outcome: { Failure: { message: 'the build failed' } },
+      },
+    }
+    const result = summaryFor(summary)
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('the run failed')
+  })
+
+  test('a non-zero exit status fails without a cache pattern', () => {
+    const result = summaryFor(summaryWith({}, { exitCode: 1 }))
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('exited with status 1')
+  })
+})
+
+describe('only the declared outputs are cleaned', () => {
+  test('the cleaning removes the declared outputs and nothing else', () => {
+    withDirectory((root) => {
+      mkdirSync(join(root, 'packages', 'demo', 'dist', 'nested'), { recursive: true })
+      mkdirSync(join(root, 'packages', 'demo', 'src'), { recursive: true })
+      writeFileSync(join(root, 'packages', 'demo', 'package.json'), '{"name":"demo"}\n')
+      writeFileSync(join(root, 'packages', 'demo', 'dist', 'a.js'), 'export const a = 1\n')
+      writeFileSync(
+        join(root, 'packages', 'demo', 'dist', 'nested', 'b.js'),
+        'export const b = 2\n'
+      )
+      writeFileSync(join(root, 'packages', 'demo', 'src', 'index.ts'), 'export const a = 1\n')
+      const removed = removeOutputs(root, ['packages/demo/dist/**'])
+      expect(removed).toEqual(['packages/demo/dist/a.js', 'packages/demo/dist/nested/b.js'])
+      expect(existsSync(join(root, 'packages', 'demo', 'src', 'index.ts'))).toBe(true)
+      expect(existsSync(join(root, 'packages', 'demo', 'package.json'))).toBe(true)
+      expect(existsSync(join(root, 'packages', 'demo', 'dist', 'a.js'))).toBe(false)
+    })
   })
 })

@@ -75,6 +75,12 @@ jobs:
           # The cache the runner restored, before any build touches it.
           $qualify cache-state --out "$qualification/restored-cache.json"
 
+          # The declared outputs are removed before every build this lane
+          # compares, so each build has to produce or restore all of them and
+          # none of them can be left over on disk. Only the outputs the build
+          # graph declares are removed.
+          $qualify clean-outputs --out "$qualification/cleaned-first.json"
+
           # The first build. A restored cache for this commit must serve every
           # task, and the run summary says which task came from the cache.
           bun run build
@@ -85,8 +91,11 @@ jobs:
           fi
           $qualify inventory --out "$qualification/first-inventory.json"
 
-          # The replay must come entirely from the cache and must reproduce the
-          # same outputs as the first build, byte for byte.
+          # The replay must come entirely from the cache and must restore the
+          # outputs the first build produced, byte for byte. The declared
+          # outputs are removed first, so the replay has to restore them from
+          # the cache instead of finding them left over on disk.
+          $qualify clean-outputs --out "$qualification/cleaned-replay.json"
           bun run build
           $qualify summary --expect hits --out "$qualification/replay-summary.json"
           $qualify inventory --out "$qualification/replay-inventory.json"
@@ -100,7 +109,16 @@ jobs:
           $qualify summary --scope orch:contracts:build --expect invalidated:source=orch:contracts:build --out "$qualification/source-summary.json"
           mv "$qualification/probe.bak" "$probe"
 
-          # A changed configuration input invalidates every task.
+          # Reseed the source baseline. The source probe left an entry for the
+          # changed source, so the cache is emptied and the scoped task is
+          # rebuilt from the restored source before the configuration probe.
+          # Only then is a configuration miss attributable to the configuration.
+          vp cache clean
+          vp run orch:contracts:build
+          $qualify summary --scope orch:contracts:build --expect misses --out "$qualification/reseed-summary.json"
+
+          # A changed configuration input invalidates the scoped task, and the
+          # invalidation has to name the configuration input that changed.
           cp package.json "$qualification/package.json.bak"
           node --input-type=module <<'PROBE'
           import { readFileSync, writeFileSync } from 'node:fs'
@@ -108,12 +126,14 @@ jobs:
           writeFileSync('package.json', text.replace('"private": true,', '"private": true, '))
           PROBE
           vp run orch:contracts:build
-          $qualify summary --scope orch:contracts:build --expect invalidated --out "$qualification/config-summary.json"
+          $qualify summary --scope orch:contracts:build --expect invalidated:config=orch:contracts:build --out "$qualification/config-summary.json"
           mv "$qualification/package.json.bak" package.json
 
-          # A clean build must reproduce exactly the outputs of the cached
-          # replay, and the cache it leaves behind must hold one entry per
-          # cached task the build graph declares.
+          # A clean build must reproduce exactly the outputs the cached replay
+          # restored, and the cache it leaves behind must hold one entry per
+          # cached task the build graph declares. The declared outputs are
+          # removed first, so the clean build has to produce all of them.
+          $qualify clean-outputs --out "$qualification/cleaned-baseline.json"
           vp cache clean
           bun run build
           $qualify summary --expect misses --out "$qualification/clean-summary.json"

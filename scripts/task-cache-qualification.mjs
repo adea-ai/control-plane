@@ -19,7 +19,15 @@
  */
 
 import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  rmdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -143,9 +151,9 @@ export class MalformedSummaryError extends Error {
  */
 
 /**
- * Every build output the graph declares.
+ * Every build output the graph declares, and the output roots they came from.
  *
- * @typedef {{ files: OutputFile[] }} Inventory
+ * @typedef {{ files: OutputFile[], roots?: string[] }} Inventory
  */
 
 /**
@@ -465,11 +473,36 @@ export function describeInvalidation(analysis, task) {
 export function evaluateExpectation(analysis, expectation) {
   /** @type {string[]} */
   const failures = []
-  if (!expectation) return { ok: true, failures }
-  const separator = expectation.indexOf('=')
-  const mode = separator === -1 ? expectation : expectation.slice(0, separator)
-  const argument = separator === -1 ? null : expectation.slice(separator + 1)
+  const pattern = expectation ?? ''
+  const separator = pattern.indexOf('=')
+  const mode = separator === -1 ? pattern : pattern.slice(0, separator)
+  const argument = separator === -1 ? null : pattern.slice(separator + 1)
   const explained = mode.startsWith('invalidated:') && argument ? new Set([argument]) : new Set()
+
+  // The semantic checks hold for every run, with or without a cache pattern: a
+  // run that did not execute the expected tasks, that executed tasks the graph
+  // does not declare, that ran a command the graph does not declare, that
+  // failed a task or that exited non-zero is never a qualification.
+  if (analysis.missing.length > 0) {
+    failures.push(`the run did not execute: ${analysis.missing.join(', ')}`)
+  }
+  if (analysis.unexpected.length > 0) {
+    failures.push(`the run executed tasks outside the graph: ${analysis.unexpected.join(', ')}`)
+  }
+  for (const mismatch of analysis.commandMismatches) {
+    if (explained.has(mismatch.task)) continue
+    failures.push(
+      `"${mismatch.task}" ran as "${mismatch.observed}" but the graph expects "${mismatch.expected}"`
+    )
+  }
+  if (analysis.failures.length > 0) {
+    failures.push(`the run failed: ${analysis.failures.join(', ')}`)
+  }
+  if (analysis.exitCode !== 0) {
+    failures.push(`the run exited with status ${analysis.exitCode}`)
+  }
+
+  if (!expectation) return { ok: failures.length === 0, failures }
   if (mode === 'hits') {
     for (const task of analysis.cached) {
       if (!analysis.hits.includes(task)) {
@@ -530,30 +563,8 @@ export function evaluateExpectation(analysis, expectation) {
   } else {
     failures.push(`unknown expectation "${expectation}"`)
   }
-  if (analysis.missing.length > 0) {
-    failures.push(`the run did not execute: ${analysis.missing.join(', ')}`)
-  }
-  if (analysis.unexpected.length > 0) {
-    failures.push(`the run executed tasks outside the graph: ${analysis.unexpected.join(', ')}`)
-  }
-  for (const mismatch of analysis.commandMismatches) {
-    if (explained.has(mismatch.task)) continue
-    failures.push(
-      `"${mismatch.task}" ran as "${mismatch.observed}" but the graph expects "${mismatch.expected}"`
-    )
-  }
-  if (analysis.failures.length > 0) {
-    failures.push(`the run failed: ${analysis.failures.join(', ')}`)
-  }
-  if (summaryFailed(analysis)) failures.push('the run exited with a non-zero status')
   return { ok: failures.length === 0, failures }
 }
-
-/**
- * @param {RunAnalysis} analysis
- * @returns {boolean}
- */
-const summaryFailed = (analysis) => analysis.exitCode !== 0
 
 /**
  * @param {string} glob
@@ -612,6 +623,7 @@ const walk = (directory) => {
  */
 export function outputInventory(root, globs) {
   const files = new Map()
+  const roots = new Set()
   for (const glob of globs) {
     const pattern = globToRegExp(glob)
     const prefix = staticPrefix(glob)
@@ -619,6 +631,7 @@ export function outputInventory(root, globs) {
       const path = relative(root, file).split('\\').join('/')
       if (!pattern.test(path)) continue
       const bytes = readFileSync(file)
+      roots.add(prefix)
       files.set(path, {
         path,
         bytes: bytes.length,
@@ -630,6 +643,7 @@ export function outputInventory(root, globs) {
     files: [...files.values()].toSorted((left, right) =>
       compareCodePointOrder(left.path, right.path)
     ),
+    roots: [...roots].toSorted(compareCodePointOrder),
   }
 }
 
@@ -637,7 +651,13 @@ export function outputInventory(root, globs) {
 /**
  * @param {Inventory} left
  * @param {Inventory} right
- * @returns {{ equal: boolean, added: string[], removed: string[], changed: { path: string, before: unknown, after: unknown }[] }}
+ * @returns {{
+ *   equal: boolean,
+ *   added: string[],
+ *   removed: string[],
+ *   changed: { path: string, before: unknown, after: unknown }[],
+ *   roots: { added: string[], removed: string[] },
+ * }}
  */
 export function compareInventories(left, right) {
   const before = new Map(left.files.map((file) => [file.path, file]))
@@ -656,11 +676,26 @@ export function compareInventories(left, right) {
     }
   }
   for (const path of before.keys()) if (!after.has(path)) removed.push(path)
+  const beforeRoots = new Set(left.roots ?? [])
+  const afterRoots = new Set(right.roots ?? [])
   return {
-    equal: added.length === 0 && removed.length === 0 && changed.length === 0,
+    equal:
+      added.length === 0 &&
+      removed.length === 0 &&
+      changed.length === 0 &&
+      beforeRoots.size === afterRoots.size &&
+      [...beforeRoots].every((root) => afterRoots.has(root)),
     added: added.toSorted(compareCodePointOrder),
     removed: removed.toSorted(compareCodePointOrder),
     changed: changed.toSorted((entry, other) => compareCodePointOrder(entry.path, other.path)),
+    roots: {
+      added: [...afterRoots]
+        .filter((root) => !beforeRoots.has(root))
+        .toSorted(compareCodePointOrder),
+      removed: [...beforeRoots]
+        .filter((root) => !afterRoots.has(root))
+        .toSorted(compareCodePointOrder),
+    },
   }
 }
 
@@ -827,9 +862,76 @@ const inventory = (options) => {
   const expected = expectedTasks(root, toolchain, scope)
   const globs = new Set()
   for (const task of expected.tasks.values()) for (const glob of task.outputs) globs.add(glob)
+  /** @type {string[]} */
+  const failures = []
+  if (globs.size === 0) {
+    failures.push('the build graph declares no build output, so there is nothing to compare')
+  }
   const result = outputInventory(root, [...globs])
+  const roots = result.roots ?? []
+  if (result.files.length === 0) {
+    failures.push('the build produced no declared output, so the inventory covers nothing')
+  }
+  if (roots.length === 0) {
+    failures.push('the inventory covers no declared output root')
+  }
   writeJson(option(options, 'out'), result)
-  return { files: result.files.length, globs: [...globs].toSorted(compareCodePointOrder) }
+  return {
+    files: result.files.length,
+    roots,
+    globs: [...globs].toSorted(compareCodePointOrder),
+    ok: failures.length === 0,
+    failures,
+  }
+}
+
+/**
+ * Removes the build outputs the graph declares, and nothing else.
+ *
+ * @param {string} root
+ * @param {string[]} globs
+ * @returns {string[]}
+ */
+export function removeOutputs(root, globs) {
+  /** @type {string[]} */
+  const removed = []
+  for (const glob of globs) {
+    const pattern = globToRegExp(glob)
+    const prefix = staticPrefix(glob)
+    for (const file of walk(join(root, prefix))) {
+      const path = relative(root, file).split('\\').join('/')
+      if (!pattern.test(path)) continue
+      rmSync(file, { force: true })
+      removed.push(path)
+    }
+    // The output root itself goes when it is empty, so the next build has to
+    // restore or rebuild every file it declared.
+    try {
+      rmdirSync(join(root, prefix))
+    } catch {
+      // the root still holds files the glob does not cover
+    }
+  }
+  return removed.toSorted(compareCodePointOrder)
+}
+
+/**
+ * @param {Options} options
+ */
+const cleanOutputs = (options) => {
+  const root = resolve(option(options, 'root') ?? repositoryRoot)
+  const toolchain = option(options, 'toolchain') ?? toolchainFor(root)
+  if (!toolchain) throw new Error('the toolchain could not be identified')
+  const scope = option(options, 'scope') ?? 'orch:build'
+  const expected = expectedTasks(root, toolchain, scope)
+  const globs = new Set()
+  for (const task of expected.tasks.values()) for (const glob of task.outputs) globs.add(glob)
+  if (globs.size === 0) {
+    throw new Error('the build graph declares no build output, so there is nothing to clean')
+  }
+  const removed = removeOutputs(root, [...globs])
+  writeJson(option(options, 'out'), { removed })
+  return { removed: removed.length, files: removed }
 }
 
 /**
@@ -841,8 +943,21 @@ const compare = (options) => {
   const left = JSON.parse(readFileSync(leftFile, 'utf8'))
   const right = JSON.parse(readFileSync(rightFile, 'utf8'))
   const difference = compareInventories(left, right)
-  writeJson(option(options, 'out'), difference)
-  return difference
+  /** @type {string[]} */
+  const failures = []
+  if (left.files.length === 0 || right.files.length === 0) {
+    failures.push('an inventory holds no output, so the comparison proves nothing')
+  }
+  if ((left.roots ?? []).length === 0 || (right.roots ?? []).length === 0) {
+    failures.push('an inventory covers no declared output root, so the comparison proves nothing')
+  }
+  if (!difference.equal) {
+    failures.push(
+      `the outputs differ: ${difference.added.length} added, ${difference.removed.length} removed, ${difference.changed.length} changed, ${difference.roots.added.length} output roots added, ${difference.roots.removed.length} output roots removed`
+    )
+  }
+  writeJson(option(options, 'out'), { ...difference, ok: failures.length === 0, failures })
+  return { ...difference, ok: failures.length === 0, failures }
 }
 
 /**
@@ -875,7 +990,13 @@ const state = (options) => {
 }
 
 /** @type {Record<string, (options: Options) => unknown>} */
-const commands = { summary: summarise, inventory, compare, 'cache-state': state }
+const commands = {
+  summary: summarise,
+  inventory,
+  compare,
+  'clean-outputs': cleanOutputs,
+  'cache-state': state,
+}
 
 const main = () => {
   const [command, ...rest] = process.argv.slice(2)
