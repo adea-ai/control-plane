@@ -41,14 +41,28 @@ child. The probe now:
   with no valid sample is a **failure**, not a zero-megabyte pass;
 - **fails fast on a spawn failure, a missing PID and an early child exit**,
   and bounds the readiness wait;
-- **awaits the owned child's exit** after `SIGTERM` (escalating to `SIGKILL`
-  after a bounded grace) and signals **only the child the probe spawned** — no
-  discovered PID is ever signalled.
+- **fails closed when the listener ownership check cannot be made** (an
+  unusable `lsof` is an inability to prove ownership, not an absence of a
+  listener);
+- **owns the child's whole lifecycle**: from the moment the child exists,
+  every exit path — a refusal, a thrown dependency, a failed sample — runs its
+  cleanup in a `finally`, so the probe never leaves a child behind, including
+  on the `process.exit(1)` path;
+- **preserves the primary failure** and reports a cleanup failure next to it
+  rather than in place of it;
+- **waits for the child's actual termination**: `SIGTERM`, then a bounded
+  grace, then `SIGKILL`, and a child that still has not exited is an explicit
+  cleanup failure — never a silent success;
+- signals **only the child the probe spawned** — no discovered PID is ever
+  signalled.
 
-`tests/startup-budget.test.mjs` drives the probe with injected fakes, so no
-process is launched and no signal is sent by the suite: the cases pin each
-negative path, including that a refused RSS sample fails the probe and that
-the cleanup signals exactly one process — the owned child.
+`packages/production-readiness/src/startup-budget.test.mjs` drives the probe
+two ways: injected fakes pin the parsing, ownership and refusal rules, and
+**real subprocesses** exercise the lifecycle — a failed spawn, a child that
+exits early, a child that never becomes ready, a thrown dependency and a real
+unrelated listener. The suite asserts that the owned child is actually
+terminated on every failing path, and that the unrelated listener keeps
+running and keeps serving, so no unrelated process can be killed.
 
 ### 2.2 The build ceiling is now measurable, as claimed
 
