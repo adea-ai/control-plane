@@ -95,6 +95,7 @@ const repositoryGroups = {
     'tests/m11-retention-hold-operator.test.mjs',
     'tests/m11-retention-restore-reapply.test.mjs',
     'tests/railway-production-plan.test.mjs',
+    'tests/release-pr-readiness.test.mjs',
     'tests/replacement-compatibility.test.mjs',
     'tests/repository.test.mjs',
     'tests/task-cache-qualification.test.mjs',
