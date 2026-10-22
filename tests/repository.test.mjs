@@ -13,7 +13,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { test } from 'bun:test'
 import { Glob } from 'bun'
@@ -27,6 +27,9 @@ import {
   discoverTestInventory,
   normalizedBunTestArguments,
 } from '../scripts/run-bun-test-group.mjs'
+import { buildTasks } from '../scripts/orch-graph.mjs'
+import { expectedId } from '../scripts/orch-toolchain.mjs'
+import { workspaces } from '../scripts/workspace-boundaries.mjs'
 import { INTEGRATION_SHARDS } from '../scripts/integration-shards.mjs'
 
 // The fleet upgrade rewrites the runtime pin on every release; tests assert
@@ -1262,4 +1265,84 @@ test('uses Renovate with grouped draft batches and sync-managed holds', async ()
     renovate.packageRules.every((rule) => !('automerge' in rule)),
     'dependency PRs must never automerge'
   )
+})
+
+test('the Bun type checker covers every package, and it is not vacuous', async () => {
+  const root = fileURLToPath(new URL('..', import.meta.url))
+  const workspacePackages = workspaces(root)
+  const tasks = buildTasks(root, expectedId(root))
+  const byName = new Map(workspacePackages.map((entry) => [entry.manifest.name, entry]))
+  const typechecked = workspacePackages.filter((entry) => entry.manifest.scripts?.typecheck)
+  assert.ok(typechecked.length > 0, 'the workspace must hold packages under the type checker')
+
+  for (const entry of typechecked) {
+    const short = entry.manifest.name.replace('@control-plane/', '')
+    const task = tasks[`orch:${short}:typecheck`]
+    assert.ok(task, `${short} must have a typecheck task in the check graph`)
+    assert.match(task.command, /bun run --cwd .* typecheck$/)
+    // The project must inherit the shared base, whose file set each package names
+    // in its own include. The repository's root project names no files, so a
+    // package that inherited it would pull its whole directory into the check
+    // instead of the sources its include names.
+    const project = await readJson(join(relative(root, entry.dir), 'tsconfig.json'))
+    assert.match(
+      String(project.extends ?? ''),
+      /tsconfig\.base\.json$/,
+      `${short} must extend the shared base, not a project that names no files`
+    )
+    // The generated declarations of every workspace dependency have to exist before
+    // this package is checked, or the cross-package types the checker resolves are
+    // stale or missing and the check passes against the wrong shapes.
+    const dependencies = Object.keys({
+      ...entry.manifest.dependencies,
+      ...entry.manifest.devDependencies,
+      ...entry.manifest.peerDependencies,
+      ...entry.manifest.optionalDependencies,
+    }).filter((name) => byName.has(name))
+    for (const dependency of dependencies) {
+      const dependencyShort = byName.get(dependency).manifest.name.replace('@control-plane/', '')
+      assert.ok(
+        task.dependsOn.includes(`orch:${dependencyShort}:build`),
+        `${short}'s check must wait for ${dependencyShort}'s build, so its generated declarations exist`
+      )
+    }
+  }
+
+  // The aggregate the repository's own type check runs must build first, so the
+  // declarations exist, and must include the openapi check.
+  assert.deepEqual([...tasks['orch:check'].dependsOn].toSorted(), [
+    'orch:build',
+    'orch:openapi:check',
+    'orch:typecheck',
+  ])
+
+  // The checker must not be vacuous: a disposable intentional type error has to
+  // fail the command, and removing it has to restore both the command and the
+  // source tree.
+  const probePackage = 'packages/tool-sdk'
+  const probeFile = join(root, probePackage, 'src', '__cp1233_typecheck_probe.ts')
+  const runCheck = () =>
+    spawnSync(process.execPath, ['check', '-p', 'tsconfig.json'], {
+      cwd: join(root, probePackage),
+      encoding: 'utf8',
+    })
+
+  const before = runCheck()
+  assert.equal(before.status, 0, 'the package must typecheck before the probe is added')
+  try {
+    await writeFile(probeFile, "export const cp1233TypecheckProbe: number = 'not a number'\n")
+    const failed = runCheck()
+    assert.notEqual(failed.status, 0, 'the checker must fail on an intentional type error')
+    assert.match(
+      `${failed.stdout}\n${failed.stderr}`,
+      /__cp1233_typecheck_probe\.ts/,
+      'the failure must name the file that carries the intentional error'
+    )
+  } finally {
+    await rm(probeFile, { force: true })
+  }
+
+  const after = runCheck()
+  assert.equal(after.status, 0, 'the checker must be green again once the probe is removed')
+  assert.equal(existsSync(probeFile), false, 'the disposable probe must leave no file behind')
 })

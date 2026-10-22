@@ -178,6 +178,9 @@ repository's dependency surface. The corrected comparison is dependency-free.
   comparator correction that the check carried.
 - The qualification runs recorded below, with their failures and environmental
   limits retained rather than presented as passes.
+- The Bun TypeScript checker's project graph, its generated-type coverage and its
+  non-vacuity, qualified with a disposable intentional type error, and the guard
+  that now keeps them true.
 
 **Not completed here, and still required by the issue.**
 
@@ -207,6 +210,109 @@ repository's dependency surface. The corrected comparison is dependency-free.
 - **The pre-existing runtime-gateway authority-marker failure** in this
   repository's unit lane, which is fixed on a separate local branch that is not
   published.
+- **The checker qualification of the repositories that were not measured.**
+  `adea-ai/agent-sim` and `adea-ai/assets` are not anonymously reachable, so
+  their checker graphs, generated types and failing-fixture exit codes are not
+  qualified here, and the per-repository checklist the issue requires is not
+  complete for them.
+- **The Bun APIs the issue names beyond the checker.** The checker's own graph,
+  generated types and exit codes are qualified here; the applicable Bun APIs
+  beyond the checker are not, and no API or version was substituted to reach a
+  green result.
+
+## The Bun TypeScript checker: project graph, generated types, and a disposable failure
+
+The issue now approves qualifying the Bun TypeScript checker and the applicable Bun
+APIs with supported, pinned behaviour, and names the checker project graph, the
+generated types, the intentional failing fixtures and their exit codes, and the
+required build and declaration generation. This section records what was measured
+on the repository as it stands, under the repository's own pinned tooling: **Bun
+1.4.3** and **Node 24.21.0**, the versions the manifest and the toolchain files
+name. Nothing was substituted and no version was changed.
+
+### The checker project graph
+
+The repository holds 47 `tsconfig` projects, and they are not all the same kind of
+thing:
+
+| Kind                                              | Count | Reached by                                                        |
+| ------------------------------------------------- | ----- | ----------------------------------------------------------------- |
+| Checked package and application projects          | 45    | one `bun check -p tsconfig.json` per package, all of them present |
+| The shared base, `tsconfig.base.json`             | 1     | extended by all 45 checked projects                               |
+| The infrastructure project, `tsconfig.infra.json` | 1     | `bun run infra:typecheck`                                         |
+| The repository root project, `tsconfig.json`      | 1     | **nothing**: no project extends it and no command checks it       |
+
+The root project is worth naming, because it is the one that would mislead a
+reader: it extends the shared base, it declares the two decorator options, and it
+names **no** files, so a project that inherited it would take its whole directory
+into the check rather than the sources its own `include` names. The one package
+that uses decorators, `apps/control-api`, declares the decorator options in its
+own project, so the check is correct where the decorators are.
+
+### The generated types
+
+Every checked project resolves the types of the other workspace packages from
+their **built** declarations, so the check is only meaningful when those
+declarations exist. The graph orders it: a package's `typecheck` task depends on
+the `build` task of every workspace package it depends on, over dependencies,
+development dependencies, peer dependencies and optional dependencies alike, and
+the aggregate `orch:check` depends on `orch:build`, `orch:typecheck` and
+`orch:openapi:check`. The build therefore produces the declarations before the
+checker resolves against them.
+
+### The disposable intentional type error
+
+A disposable file carrying an intentional type error was written into a package's
+source directory, the package's own checker was run, and the file was removed
+again:
+
+```
+export const cp190Probe: number = 'not a number'
+```
+
+- with the error in place, `bun check -p packages/tool-sdk/tsconfig.json` exits
+  **1** and reports the error where it was written:
+  `<error file="packages/tool-sdk/src/__cp190_typecheck_probe.ts" line="1" column="14" code="TS2322">`,
+  `Type 'string' is not assignable to type 'number'.`, and
+  `Found 1 error in 1 file, checked 2 files`;
+- after the file was removed, the same command exits **0** with
+  `No type errors in 1 file`, and the source tree is exactly as it was
+  (`git status` clean, and the package's source directory holds only its own two
+  files again).
+
+So the checker is not vacuous, and the cleanup restores the tree.
+
+### The gaps this found, and the guard that now prevents them
+
+Two real gaps were found, and neither was guarded by anything in the repository:
+
+1. **Nothing asserted that the check graph still covers the workspace.** A package
+   whose `typecheck` script was renamed, or a workspace dependency that dropped
+   out of the graph's dependency set, would have left the check running against
+   stale or missing declarations with nothing to notice.
+2. **Nothing proved the checker can still fail.** A project whose `include` was
+   emptied, or narrowed past the sources, would still have reported "no type
+   errors" for every package, and the whole lane would have stayed green.
+
+`tests/repository.test.mjs` now carries one guard that closes both, and it is
+proven to bite:
+
+- it asserts that every workspace package with a `typecheck` script has a
+  typecheck task in the graph, that the task runs that package's own checker, that
+  it waits for the build of every workspace dependency, and that the aggregate
+  depends on the build, the type checks and the openapi check;
+- it asserts that every checked project inherits the shared base rather than a
+  project that names no files;
+- it proves the checker is not vacuous by writing a disposable intentional type
+  error, requiring the command to exit nonzero and to name the file, removing it,
+  and requiring the command to be green again with no file left behind.
+
+The mutations that make the guard fail, each applied and then reverted: emptying
+a package's `include` fails the baseline; narrowing an `include` past the
+sources fails "the checker must fail on an intentional type error"; removing the
+dependency builds from the graph fails "runtime-gateway's check must wait for
+bootstrap's build"; and making a checked project inherit the root project fails
+"tool-sdk must extend the shared base".
 
 ## The checks that were run, and their results
 
