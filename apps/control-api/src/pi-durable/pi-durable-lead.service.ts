@@ -1135,7 +1135,7 @@ function childViews(
         : {}),
     })
   }
-  return views.sort(compareChildren)
+  return views.toSorted(compareChildren)
 }
 
 type ChildView = PiDurableLeadChild
