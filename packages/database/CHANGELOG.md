@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.52.3](https://github.com/adea-ai/control-plane/compare/database-v1.52.2...database-v1.52.3) (2026-10-22)
+
+
+### Maintenance
+
+* **railway:** finish production PostgreSQL reference cleanup ([#1259](https://github.com/adea-ai/control-plane/issues/1259)) ([bc15dfb](https://github.com/adea-ai/control-plane/commit/bc15dfbe7ef59723acb3d0da438515f7ea30417d))
+
 ## [1.52.2](https://github.com/adea-ai/control-plane/compare/database-v1.52.1...database-v1.52.2) (2026-10-22)
 
 
