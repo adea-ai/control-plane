@@ -25,6 +25,21 @@ export const REAP_TIMEOUT_MS = 5_000
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/** A bounded blocking wait, used only while the fixture publishes its receipt. */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/** The receipt the child published, read without waiting when it is there. */
+function readReceiptFile(receiptPath) {
+  if (!existsSync(receiptPath)) return undefined
+  try {
+    return JSON.parse(readFileSync(receiptPath, 'utf8'))
+  } catch {
+    return undefined
+  }
+}
+
 /** The process state, or undefined when the process is gone. */
 export function processState(pid) {
   try {
@@ -141,6 +156,7 @@ setInterval(() => {}, 1000)
 `
   )
   let ownedPid
+  let receipt
   return {
     nonce,
     receiptPath,
@@ -160,6 +176,16 @@ setInterval(() => {}, 1000)
         stdio: ['ignore', 'pipe', 'pipe'],
       })
       ownedPid = child.pid
+      // The receipt is published by the child as it starts. Waiting for it here
+      // makes the grandchild's identity deterministic for the caller and for
+      // the cleanup, and it happens before the helper's budget starts.
+      const deadline = Date.now() + 5_000
+      let published = readReceiptFile(receiptPath)
+      while (published === undefined && Date.now() < deadline) {
+        sleepSync(25)
+        published = readReceiptFile(receiptPath)
+      }
+      receipt = published
       return child
     },
     /**
@@ -168,14 +194,13 @@ setInterval(() => {}, 1000)
      * assertion produced.
      */
     async readReceipt(timeoutMs = 5_000) {
+      if (receipt !== undefined) return receipt
       const deadline = Date.now() + timeoutMs
       while (Date.now() < deadline) {
-        if (existsSync(receiptPath)) {
-          try {
-            return JSON.parse(readFileSync(receiptPath, 'utf8'))
-          } catch {
-            /* the receipt is still being written */
-          }
+        const published = readReceiptFile(receiptPath)
+        if (published !== undefined) {
+          receipt = published
+          return receipt
         }
         await sleep(25)
       }
@@ -191,27 +216,72 @@ setInterval(() => {}, 1000)
  * was started and the assertions never ran, and it works when an assertion
  * failed half way through.
  *
- * @returns {Promise<{ grandchild: string, ownedChild: string, receiptsRemoved: boolean }>}
+ * It also fails closed. When the reap of an owned process cannot be confirmed,
+ * or when the receipt that names the grandchild is missing, the cleanup does
+ * not claim success: it reports the failure and keeps the receipt and the
+ * directory, because the receipt is the only record of which process still
+ * has to be reaped and deleting it would leave that process unrecoverable.
+ *
+ * @param {object} fixture the fixture to clean up
+ * @param {object} [options]
+ * @param {(pid: number, nonce: string) => Promise<string>} [options.reap] the reap to use
+ * @param {(timeoutMs: number) => Promise<object | undefined>} [options.readReceipt] the receipt reader
+ * @returns {Promise<{ success: boolean, grandchild: string, ownedChild: string, problems: string[], receiptPresent: boolean, directoryPreserved: boolean }>}
  */
-export async function cleanupOwnedTimeoutFixture(fixture) {
-  const receipt = await fixture.readReceipt(1_000)
-  const grandchildPid = receipt?.grandchildPid
-  const grandchild = grandchildPid
-    ? await reapOwnedProcess(grandchildPid, fixture.nonce)
-    : 'not-started'
-  const ownedChild = fixture.ownedPid
-    ? await reapOwnedProcess(fixture.ownedPid, fixture.nonce)
-    : 'not-started'
-  // The grandchild's parent is gone now, so a grandchild that was still a
-  // zombie is collected by init; give that a bounded moment.
-  if (grandchildPid && isProcessAlive(grandchildPid)) {
+export async function cleanupOwnedTimeoutFixture(fixture, options = {}) {
+  const reap = options.reap ?? reapOwnedProcess
+  // The receipt is read from the file the child published: that file is the
+  // durable record of which process still has to be reaped, so a deleted
+  // receipt must read as missing rather than as a cached identity.
+  const readReceipt = options.readReceipt ?? (async () => readReceiptFile(fixture.receiptPath))
+  const problems = []
+  const receipt = await readReceipt(1_000)
+  let grandchild = 'not-started'
+  if (receipt === undefined) {
+    // A missing receipt is not proof that no grandchild was started: the
+    // identity of a running process would be lost with it.
+    problems.push('receipt-missing')
+    grandchild = 'unknown'
+  } else if (typeof receipt.grandchildPid !== 'number') {
+    problems.push('receipt-without-grandchild')
+    grandchild = 'unknown'
+  } else {
+    grandchild = await reap(receipt.grandchildPid, fixture.nonce)
+    if (grandchild !== 'reaped' && grandchild !== 'already-gone') {
+      problems.push(`grandchild-${grandchild}`)
+    }
+  }
+  let ownedChild = 'not-started'
+  if (fixture.ownedPid) {
+    ownedChild = await reap(fixture.ownedPid, fixture.nonce)
+    if (ownedChild !== 'reaped' && ownedChild !== 'already-gone') {
+      problems.push(`owned-child-${ownedChild}`)
+    }
+  }
+  // The grandchild's parent is gone now, so a grandchild that was killed but
+  // not yet collected is collected by init; give that a bounded moment. This
+  // only applies to a confirmed kill: an unconfirmed reap is reported, not
+  // waited on.
+  if (grandchild === 'reaped' && receipt?.grandchildPid && isProcessAlive(receipt.grandchildPid)) {
     const deadline = Date.now() + REAP_TIMEOUT_MS
-    while (Date.now() < deadline && isProcessAlive(grandchildPid)) {
+    while (Date.now() < deadline && isProcessAlive(receipt.grandchildPid)) {
       await sleep(25)
     }
   }
-  // The receipts are removed only after the owned processes are reaped.
-  if (existsSync(fixture.receiptPath)) rmSync(fixture.receiptPath, { force: true })
-  rmSync(fixture.directory, { recursive: true, force: true })
-  return { grandchild, ownedChild, receiptsRemoved: !existsSync(fixture.receiptPath) }
+  const uncertain = problems.length > 0
+  // The receipts are removed only when every owned process was confirmed gone.
+  if (!uncertain) {
+    if (existsSync(fixture.receiptPath)) rmSync(fixture.receiptPath, { force: true })
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+  return {
+    success: !uncertain,
+    grandchild,
+    ownedChild,
+    problems,
+    // What survives the cleanup: the receipt and the directory are kept
+    // whenever the reaping could not be confirmed.
+    receiptPresent: existsSync(fixture.receiptPath),
+    directoryPreserved: existsSync(fixture.directory),
+  }
 }

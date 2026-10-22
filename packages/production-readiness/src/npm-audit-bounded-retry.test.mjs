@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
   cleanupOwnedTimeoutFixture,
   isProcessAlive,
+  reapOwnedProcess,
   startOwnedTimeoutFixture,
 } from './npm-audit-timeout.fixture.mjs'
 import {
@@ -371,6 +372,64 @@ describe('the bounded cleanup of an attempt that runs out of budget', () => {
     }
   })
 
+  test('a reap that cannot confirm the exit keeps the receipt and reports the failure', async () => {
+    const fixture = startOwnedTimeoutFixture()
+    fixture.spawn('bun', ['audit'], { cwd: fixture.directory, env: process.env })
+    const receipt = await fixture.readReceipt()
+
+    const outcome = await cleanupOwnedTimeoutFixture(fixture, { reap: async () => 'still-alive' })
+
+    // The cleanup reports the failure and never claims success.
+    expect(outcome.success).toBe(false)
+    expect(outcome.problems).toContain('grandchild-still-alive')
+    expect(outcome.problems).toContain('owned-child-still-alive')
+    expect(outcome.receiptPresent).toBe(true)
+    expect(outcome.directoryPreserved).toBe(true)
+    expect(existsSync(fixture.receiptPath)).toBe(true)
+
+    // A reap that refuses to touch the process is the same uncertainty: the
+    // cleanup keeps the receipt and the directory and reports it.
+    const refused = await cleanupOwnedTimeoutFixture(fixture, { reap: async () => 'not-ours' })
+    expect(refused.success).toBe(false)
+    expect(refused.problems).toContain('grandchild-not-ours')
+    expect(refused.problems).toContain('owned-child-not-ours')
+    expect(refused.receiptPresent).toBe(true)
+    expect(refused.directoryPreserved).toBe(true)
+
+    // The preserved receipt still names the process, so a later cleanup with
+    // the real reap reclaims both the processes and the artifacts.
+    const second = await cleanupOwnedTimeoutFixture(fixture)
+    expect(second.success).toBe(true)
+    expect(second.receiptPresent).toBe(false)
+    expect(second.directoryPreserved).toBe(false)
+    expect(isProcessAlive(receipt.grandchildPid)).toBe(false)
+    expect(isProcessAlive(fixture.ownedPid)).toBe(false)
+  })
+
+  test('a missing receipt is not proof that no grandchild was started', async () => {
+    const fixture = startOwnedTimeoutFixture()
+    fixture.spawn('bun', ['audit'], { cwd: fixture.directory, env: process.env })
+    const receipt = await fixture.readReceipt()
+    rmSync(fixture.receiptPath, { force: true })
+
+    const outcome = await cleanupOwnedTimeoutFixture(fixture)
+
+    // The identity of a running process would be lost with the receipt, so the
+    // cleanup fails closed and keeps the directory.
+    expect(outcome.success).toBe(false)
+    expect(outcome.problems).toContain('receipt-missing')
+    expect(outcome.grandchild).toBe('unknown')
+    expect(outcome.directoryPreserved).toBe(true)
+
+    // The grandchild could not be identified from a receipt, so the test reaps
+    // the process it recorded itself and then removes the preserved directory.
+    expect(await reapOwnedProcess(receipt.grandchildPid, fixture.nonce)).not.toBe('still-alive')
+    expect(await reapOwnedProcess(fixture.ownedPid, fixture.nonce)).not.toBe('still-alive')
+    rmSync(fixture.directory, { recursive: true, force: true })
+    expect(isProcessAlive(receipt.grandchildPid)).toBe(false)
+    expect(isProcessAlive(fixture.ownedPid)).toBe(false)
+  })
+
   test('the fixture reaps its owned processes and removes its receipts when an assertion fails', async () => {
     const fixture = startOwnedTimeoutFixture()
     // The fixture owns the child from the moment it starts, so the cleanup can
@@ -389,9 +448,12 @@ describe('the bounded cleanup of an attempt that runs out of budget', () => {
 
     // The cleanup ran on the failure path, not on the success path.
     expect(failure).toBeDefined()
+    expect(outcome.success).toBe(true)
+    expect(outcome.problems).toEqual([])
     expect(outcome.grandchild).toBe('reaped')
     expect(outcome.ownedChild).toBe('reaped')
-    expect(outcome.receiptsRemoved).toBe(true)
+    expect(outcome.receiptPresent).toBe(false)
+    expect(outcome.directoryPreserved).toBe(false)
 
     // Neither owned process is left behind, and the receipt that named them
     // is gone only after they were reaped.
