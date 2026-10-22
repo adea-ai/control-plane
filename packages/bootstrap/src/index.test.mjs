@@ -34,7 +34,7 @@ const productionEnvironment = {
 }
 
 describe('bootstrapService', () => {
-  test('provides validated managed-cloud dependencies to staging startup', async () => {
+  test('provides validated managed-cloud dependencies to production startup', async () => {
     const logs = []
     let startupConfiguration
     const runtime = await bootstrapService({
@@ -43,7 +43,7 @@ describe('bootstrapService', () => {
         APP_ENV: 'production',
         SERVICE_VERSION: '1.2.3',
         COMMIT_SHA: 'abc123',
-        INSTANCE_ID: 'staging-1',
+        INSTANCE_ID: 'production-1',
         DATABASE_URL:
           'postgresql://app:database-secret@postgres.example.invalid/control_plane?sslmode=require',
         CONTROL_PLANE_SECRET_ENCRYPTION_KEY:
@@ -94,7 +94,7 @@ describe('bootstrapService', () => {
     await runtime.shutdown('test-complete')
   })
 
-  test('fails closed for a staging service without managed-cloud dependencies', async () => {
+  test('fails closed for a production service without managed-cloud dependencies', async () => {
     const processAdapter = new FakeProcessAdapter()
     await expect(
       bootstrapService({
@@ -103,7 +103,7 @@ describe('bootstrapService', () => {
           APP_ENV: 'production',
           SERVICE_VERSION: '1.2.3',
           COMMIT_SHA: 'abc123',
-          INSTANCE_ID: 'staging-1',
+          INSTANCE_ID: 'production-1',
         },
         processAdapter,
         start: async () => undefined,
