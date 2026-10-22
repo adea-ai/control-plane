@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.106.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.1...workspace-v1.106.2) (2026-10-22)
+
+
+### Tests
+
+* **deployment:** qualify retention scheduler cadence ([#194](https://github.com/adea-ai/control-plane/issues/194)) ([#1242](https://github.com/adea-ai/control-plane/issues/1242)) ([dc66373](https://github.com/adea-ai/control-plane/commit/dc66373d50b64af2182425533ca1dc9f9e437f6b))
+* **local:** stabilize operations measurement lifecycle ([#1217](https://github.com/adea-ai/control-plane/issues/1217)) ([7f42d34](https://github.com/adea-ai/control-plane/commit/7f42d347800f1a83b9bddcf8bb7f5cccf9486bd6))
+
 ## [1.106.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.0...workspace-v1.106.1) (2026-10-22)
 
 
