@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.106.9](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.8...workspace-v1.106.9) (2026-10-22)
+
+
+### Tests
+
+* **#1018:** prove the concurrent retry and a client reconnect on PostgreSQL ([#1252](https://github.com/adea-ai/control-plane/issues/1252)) ([9789445](https://github.com/adea-ai/control-plane/commit/9789445e7f73dbe5ad3d06bee5873be54ad750fc))
+
 ## [1.106.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.7...workspace-v1.106.8) (2026-10-22)
 
 
