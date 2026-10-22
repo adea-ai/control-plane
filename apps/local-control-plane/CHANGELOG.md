@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.4](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.3...local-control-plane-v1.36.4) (2026-10-22)
+
+
+### Maintenance
+
+* pin Bun 1.4.4 and use native SDK consumer checking ([#1255](https://github.com/adea-ai/control-plane/issues/1255)) ([176d2d6](https://github.com/adea-ai/control-plane/commit/176d2d61571ef89263e017ddb911b4315aa07234))
+
 ## [1.36.3](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.2...local-control-plane-v1.36.3) (2026-10-22)
 
 
