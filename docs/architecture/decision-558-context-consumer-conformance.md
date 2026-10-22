@@ -256,6 +256,8 @@ DATABASE_ADMIN_URL=… DATABASE_MIGRATION_URL=… DATABASE_URL=… \
   the recorded PostgreSQL run predates the three cases this record adds after
   it — the store-order case, the revoked-skill case and the plan-integrity
   case; the PostgreSQL legs were not re-run for them
+  superseded: the PostgreSQL legs were re-run for every case at this head, and
+  that receipt is recorded below
 
 bun --cwd apps/control-api test src
   710 pass, 15 skip, 1 fail
@@ -351,6 +353,102 @@ bun --cwd apps/control-api test src/decision-context-consumer-conformance.test.m
   src/executions/execution-validation-graph.test.mjs --timeout 60000
   84 pass, 0 fail
 ```
+
+The PostgreSQL legs were re-run for **every** case at this head, against a
+disposable PostgreSQL 16.15 with a migration principal that owns the isolated
+database and an application principal that cannot create or alter anything:
+
+```
+DATABASE_ADMIN_URL=… DATABASE_MIGRATION_URL=… DATABASE_URL=… \
+  RUN_M10_POSTGRES_CONFORMANCE=true \
+  bun test src/decision-context-consumer-conformance.test.mjs --timeout 120000
+  20 pass, 0 fail (SQLite and PostgreSQL legs)
+
+# the same run with the application principal's password replaced
+  16 pass, 4 fail
+  "password authentication failed for user \"appuser\""
+```
+
+The two `hosted-server` and `cloud` profiles are the PostgreSQL ones, and the
+case that resolves the same objective in every composition asserts that every
+profile produced a projection, so the PostgreSQL legs are part of the passing
+run rather than a skipped branch. The falsification run is the proof of that:
+with the application principal's password replaced, the run fails against the
+real server, so the passing run really talked to PostgreSQL. The disposable
+server, the isolated databases and the credentials were local to that run and
+are not part of the repository.
+
+### The replay contract, aligned in the consumer that asserted the older one
+
+`apps/local-control-plane/src/validation-replay.test.mjs` asserted that a
+replay reads **nothing**: the project state, the context package and the
+catalog approval gate were all stubbed to fail. The contract this record
+proves is narrower. A replay re-evaluates the **current authorization** — the
+catalog approval gate applies to a replay as it does to the first pass, so a
+version that is no longer approved is not resolved again — while the durable
+evidence the plan pins is still never re-read, because it was resolved once and
+is immutable. That test now stubs the approval gate with an approving decision
+and asserts the replay consulted it exactly once, for the profile version it
+consumes; the project-state and context-package reads are still refused on the
+replay path, and the replay still reads no clock.
+`apps/control-api/src/validation-replay.integration.test.mjs` already keeps the
+real approval gate on the replay path, so the two consumers now agree.
+
+### The qualification for this head
+
+```
+bun test src/decision-context-consumer-conformance.test.mjs --timeout 30000
+  20 pass, 0 fail (SQLite legs)
+
+DATABASE_ADMIN_URL=… DATABASE_MIGRATION_URL=… DATABASE_URL=… \
+  RUN_M10_POSTGRES_CONFORMANCE=true \
+  bun test src/decision-context-consumer-conformance.test.mjs --timeout 120000
+  20 pass, 0 fail (SQLite and PostgreSQL legs)
+
+bun --cwd apps/control-api test src
+  720 pass, 0 fail (735 tests / 88 files)
+
+bun --cwd apps/local-control-plane test src
+  355 pass, 0 fail (355 tests / 46 files)
+
+bun --cwd packages/context test
+  74 pass, 0 fail
+bun --cwd packages/execution-plan test
+  52 pass, 0 fail
+
+bun --cwd apps/control-api test src/decision-context-consumer-conformance.test.mjs \
+  src/application.test.mjs src/queries/profile-resolution.service.test.mjs \
+  src/executions/execution-validation-graph.test.mjs --timeout 60000
+  84 pass, 0 fail
+
+bun run format:check
+  All matched files use the correct format
+bun run lint
+  0 boundary violations; canonical ordering and digest-writer checks passed
+bun scripts/workspace-boundaries.mjs
+  1231 files in 45 packages, 0 boundary violations
+bun run architecture:check
+  Validated 45 packages, 54 operations, and 4 profiles
+bun run db:check
+  Everything's fine
+bun run compatibility:check
+  passed
+bun run infra:typecheck
+  No type errors in 208 files
+bun run openapi:check
+  passed
+bun scripts/run-bun-test-group.mjs unit --timeout 30000
+  4343 pass, 1 fail (4355 tests / 465 files)
+  the one failure is apps/runtime-gateway/src/index.test.mjs → "forwards the
+  host credential authority in an isolated subprocess", which reads a test name
+  out of a `bun test` subprocess summary that this Bun build does not print. It
+  fails identically on a pristine base commit and this change touches no file
+  under apps/runtime-gateway
+```
+
+`bun run openapi:check` passes in this environment, so the "OpenAPI artifact
+drifted" failure recorded above is not reproduced here; it is a property of the
+environment that recorded it, and the artifact is unchanged by this change.
 
 Three repository checks fail in this environment for reasons outside this
 change, and all of them are preserved rather than worked around:
