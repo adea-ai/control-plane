@@ -6,9 +6,15 @@ unchanged. The new guard looks for locale-dependent ordering that reaches a
 digest or a persisted digest field; it does not prohibit locale sorting used
 only to present data.
 
-The analyzer reads production TypeScript and JavaScript under `apps/`,
-`packages/`, and `scripts/`; only the guard's own implementation is excluded.
-It skips `.test.` files. It scans direct and computed `localeCompare` calls
+The analyzer expects a repository root containing both `apps/` and
+`packages/`. It also scans the top-level `scripts/` directory when present;
+that directory alone may be absent. An empty or invalid root, a missing
+required directory, or any error while traversing an existing scan directory
+fails the check with the affected path. In particular, a recursive `ENOENT`
+is an error rather than an omitted subtree. The scanner reads production
+TypeScript and JavaScript under those roots; only the guard's own
+implementation is excluded. It skips `.test.` files. It scans direct and
+computed `localeCompare` calls
 plus `Intl.Collator` comparators, and follows statically imported comparator,
 serializer, and digest helpers through relative imports and
 `@control-plane/<package>` source barrels. It recognizes named aliases,
@@ -26,7 +32,7 @@ are included to inspect their hash boundary. It tracks simple identifier
 aliases and function return values. It does not resolve dynamic imports,
 CommonJS `require`, runtime path aliases outside the workspace package
 convention, reflection, or arbitrary function-pointer dispatch. Analysis and
-parse failures stop the check with an error. The CLI accepts
+parse failures stop the check with an error. The CLI accepts a non-empty
 `--root=/absolute/path` to inspect another checkout; exact exceptions are
 always loaded from the guard script's own
 `scripts/digest-writer-exceptions.json`.

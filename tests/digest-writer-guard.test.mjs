@@ -1,6 +1,6 @@
 import { test } from 'bun:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -17,12 +17,166 @@ function flows(files) {
 test('rejects a scan root with no production source files', async () => {
   const emptyRoot = await mkdtemp(join(tmpdir(), 'digest-writer-guard-empty-'))
   try {
+    await mkdir(join(emptyRoot, 'apps'))
+    await mkdir(join(emptyRoot, 'packages'))
     await assert.rejects(
       collectDigestWriterFlows(emptyRoot),
       /no production source files found under apps\/ or packages\//
     )
   } finally {
     await rm(emptyRoot, { recursive: true, force: true })
+  }
+})
+
+test('rejects missing, empty, and non-directory scan roots', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'digest-writer-guard-invalid-root-'))
+  const fileRoot = join(root, 'not-a-directory')
+  try {
+    await writeFile(fileRoot, 'not a directory')
+    await assert.rejects(collectDigestWriterFlows(''), /scan root must be a non-empty path/)
+    await assert.rejects(collectDigestWriterFlows(' \t'), /scan root must be a non-empty path/)
+    await assert.rejects(collectDigestWriterFlows(null), /scan root must be a non-empty path/)
+    await assert.rejects(
+      collectDigestWriterFlows(join(root, 'missing')),
+      /could not inspect digest writer scan root/
+    )
+    await assert.rejects(
+      collectDigestWriterFlows(fileRoot),
+      /digest writer scan root must be a directory/
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('allows the optional scripts scan root to be absent', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'digest-writer-guard-optional-scripts-'))
+  try {
+    await mkdir(join(root, 'apps'))
+    await mkdir(join(root, 'packages'))
+    await writeFile(join(root, 'apps', 'app.ts'), 'export const app = true')
+    await writeFile(join(root, 'packages', 'package.ts'), 'export const pkg = true')
+
+    const results = await collectDigestWriterFlows(root)
+
+    assert.equal(results.length, 0)
+    assert.equal(results.scanStats.sourceFiles, 2)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('rejects a present scripts scan root that is not a directory', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'digest-writer-guard-invalid-scripts-root-'))
+  try {
+    await mkdir(join(root, 'apps'))
+    await mkdir(join(root, 'packages'))
+    await writeFile(join(root, 'apps', 'app.ts'), 'export const app = true')
+    await writeFile(join(root, 'packages', 'package.ts'), 'export const pkg = true')
+    await writeFile(join(root, 'scripts'), 'unexpected file')
+
+    await assert.rejects(
+      collectDigestWriterFlows(root),
+      /digest writer scan root must be a directory/
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('requires both production scan roots', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'digest-writer-guard-missing-production-root-'))
+  try {
+    await mkdir(join(root, 'packages'))
+    await writeFile(join(root, 'packages', 'package.ts'), 'export const pkg = true')
+
+    await assert.rejects(collectDigestWriterFlows(root), /required scan root .*apps/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('does not silently ignore EACCES or EIO from an existing subtree', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'digest-writer-guard-subtree-errors-'))
+  const blocked = join(root, 'packages', 'blocked')
+  try {
+    await mkdir(blocked, { recursive: true })
+    await mkdir(join(root, 'apps'))
+    await writeFile(join(root, 'apps', 'app.ts'), 'export const app = true')
+    await writeFile(join(root, 'packages', 'package.ts'), 'export const pkg = true')
+
+    for (const code of ['EACCES', 'EIO']) {
+      const io = {
+        readdir: async (path, options) => {
+          if (path === blocked) {
+            throw Object.assign(new Error(`injected ${code}`), { code })
+          }
+          return readdir(path, options)
+        },
+        readFile,
+        stat,
+      }
+
+      await assert.rejects(collectDigestWriterFlows(root, io), (error) => {
+        assert.ok(error.message.includes(blocked))
+        assert.equal(error.cause?.code, code)
+        return true
+      })
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('fails closed on unreadable roots and traversal errors without chmod', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'digest-writer-guard-traversal-errors-'))
+  const disappeared = join(root, 'packages', 'disappeared')
+  try {
+    await mkdir(disappeared, { recursive: true })
+    // The fixture writes into apps/, so that root has to exist first: without
+    // it the case failed on its own ENOENT instead of the injected failure.
+    await mkdir(join(root, 'apps'), { recursive: true })
+    await writeFile(join(root, 'apps', 'app.ts'), 'export const app = true')
+    await writeFile(join(root, 'packages', 'package.ts'), 'export const pkg = true')
+
+    const cases = [
+      { path: root, code: 'EACCES', operation: 'stat' },
+      { path: root, code: 'EACCES', operation: 'readdir' },
+      { path: join(root, 'apps'), code: 'EACCES', operation: 'readdir' },
+      { path: disappeared, code: 'ENOENT', operation: 'readdir' },
+      { path: join(root, 'apps', 'app.ts'), code: 'EACCES', operation: 'readFile' },
+    ]
+    for (const failure of cases) {
+      const io = {
+        stat: async (path) => {
+          if (failure.operation === 'stat' && path === failure.path) {
+            throw Object.assign(new Error(`injected ${failure.code}`), { code: failure.code })
+          }
+          return stat(path)
+        },
+        readdir: async (path, options) => {
+          if (failure.operation === 'readdir' && path === failure.path) {
+            throw Object.assign(new Error(`injected ${failure.code}`), { code: failure.code })
+          }
+          return readdir(path, options)
+        },
+        readFile: async (path, encoding) => {
+          if (failure.operation === 'readFile' && path === failure.path) {
+            throw Object.assign(new Error(`injected ${failure.code}`), { code: failure.code })
+          }
+          return readFile(path, encoding)
+        },
+      }
+
+      await assert.rejects(collectDigestWriterFlows(root, io), (error) => {
+        assert.match(error.message, /digest writer scan|source directory|source file/)
+        assert.ok(error.message.includes(failure.path))
+        assert.equal(error.cause?.code, failure.code)
+        return true
+      })
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
   }
 })
 
