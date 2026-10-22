@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.5](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.4...control-api-v1.34.5) (2026-10-22)
+
+
+### Bug Fixes
+
+* **railway:** verify production PostgreSQL identity and scoped migrations ([#1256](https://github.com/adea-ai/control-plane/issues/1256)) ([86b7515](https://github.com/adea-ai/control-plane/commit/86b751520c569106644c518dd5fd0819056cd169))
+
 ## [1.34.4](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.3...control-api-v1.34.4) (2026-10-22)
 
 

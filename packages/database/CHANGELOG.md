@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.52.2](https://github.com/adea-ai/control-plane/compare/database-v1.52.1...database-v1.52.2) (2026-10-22)
+
+
+### Bug Fixes
+
+* **railway:** verify production PostgreSQL identity and scoped migrations ([#1256](https://github.com/adea-ai/control-plane/issues/1256)) ([86b7515](https://github.com/adea-ai/control-plane/commit/86b751520c569106644c518dd5fd0819056cd169))
+
 ## [1.52.1](https://github.com/adea-ai/control-plane/compare/database-v1.52.0...database-v1.52.1) (2026-10-20)
 
 
