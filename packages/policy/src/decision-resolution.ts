@@ -121,15 +121,8 @@ function resolveRuntime(
   if (eligible.length === 0) throw new DecisionResolutionDeniedError('NO_COMPATIBLE_RUNTIME')
   // The configured per-model map (M12/#678) is a hard candidate filter as
   // well, and it is applied before ranking: a runtime that cannot serve the
-  // mapped harness is not a candidate, however it would have ranked. A denied
-  // model has no id, and the caller denies that request right after this
-  // step, so there is nothing here for the map to select on.
-  const mappedHarnessId =
-    model.denial === undefined ? resolveMappedHarnessId(request, policyDefaults, model) : undefined
-  const ranked =
-    mappedHarnessId === undefined
-      ? eligible
-      : eligible.filter((candidate) => candidate.harnessIds.includes(mappedHarnessId))
+  // mapped harness is not a candidate, however it would have ranked.
+  const ranked = filterByMappedHarness(eligible, request, policyDefaults, model)
   if (ranked.length === 0) throw new DecisionResolutionDeniedError('NO_COMPATIBLE_RUNTIME')
   const preferred =
     ranked.find((candidate) => candidate.kind === 'local') ??
@@ -161,60 +154,6 @@ export function resolveRuntimeHarness(
     throw new DecisionResolutionDeniedError('HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME')
   }
   return { harnessId, source: 'policy-default' }
-}
-
-/**
- * The model a request resolves to, before any denial is raised.
- *
- * A model the caller is not entitled to is denied rather than resolved: it has
- * no id, so the configured per-model map has nothing to select on. The denial
- * is raised by the caller at the point in the sequence where it was raised
- * before, so the resolution order — and the diagnostic a request earns — is
- * unchanged.
- */
-type ModelSelection = {
-  readonly value: ResolutionValue<'model'>
-  readonly source: ResolutionSource
-  readonly denial: DecisionResolutionDiagnostic | undefined
-}
-
-/**
- * The arguments the configured per-model map is consulted with: the map, the
- * resolved model id, and the harness pin the map has to agree with.
- */
-function harnessMapArguments(
-  request: DecisionResolutionRequest,
-  policyDefaults: DecisionLayerPolicyDefaults,
-  model: ModelSelection
-): {
-  readonly harnessByModel?: Readonly<Record<string, string>>
-  readonly modelId?: string
-  readonly pinnedHarnessId?: string
-} {
-  const modelId = 'modelId' in model.value ? model.value.modelId : undefined
-  const harnessPin = pickPin('harness', request, policyDefaults).pin?.harnessId
-  return {
-    ...(policyDefaults.harnessByModel === undefined
-      ? {}
-      : { harnessByModel: policyDefaults.harnessByModel }),
-    ...(modelId === undefined ? {} : { modelId }),
-    ...(harnessPin === undefined ? {} : { pinnedHarnessId: harnessPin }),
-  }
-}
-
-/**
- * The harness the configured per-model map names for the resolved model, or
- * undefined when no map is configured. The map's own denials — a model the map
- * does not name, a pin the map contradicts — are raised here.
- */
-function resolveMappedHarnessId(
-  request: DecisionResolutionRequest,
-  policyDefaults: DecisionLayerPolicyDefaults,
-  model: ModelSelection
-): string | undefined {
-  if (policyDefaults.harnessByModel === undefined) return undefined
-  const mapped = resolveMappedHarness(harnessMapArguments(request, policyDefaults, model))
-  return mapped.mapped ? mapped.harnessId : undefined
 }
 
 /**
@@ -258,19 +197,102 @@ function resolveHarness(
   request: DecisionResolutionRequest,
   policyDefaults: DecisionLayerPolicyDefaults,
   runtime: AvailableRuntime,
-  model: ModelSelection
+  model: ResolutionValue<'model'>
 ): { value: ResolutionValue<'harness'>; source: ResolutionSource } {
   const { source, pin } = pickPin('harness', request, policyDefaults)
   // A configured per-model map (M12/#678) decides the harness for the
   // resolved model. The explicit pin stays independent: it may agree with the
   // map, and a disagreement is denied instead of silently substituting either
   // side.
-  const mapped = resolveMappedHarness(harnessMapArguments(request, policyDefaults, model))
+  const mapped = resolveMappedHarness({
+    ...(policyDefaults.harnessByModel === undefined
+      ? {}
+      : { harnessByModel: policyDefaults.harnessByModel }),
+    ...('modelId' in model ? { modelId: model.modelId } : {}),
+    ...(pin?.harnessId === undefined ? {} : { pinnedHarnessId: pin.harnessId }),
+  })
   const resolved = resolveRuntimeHarness(runtime, mapped.harnessId)
   return {
     value: { harnessId: resolved.harnessId },
     source: pin === undefined ? resolved.source : source,
   }
+}
+
+/**
+ * The model a request resolves to, before any denial is raised.
+ *
+ * A model the caller is not entitled to is denied rather than resolved: it has
+ * no id, so the configured per-model map has nothing to select on. The denial
+ * is raised by the caller at the point in the sequence where it was raised
+ * before, so the resolution order — and the diagnostic a request earns — is
+ * unchanged.
+ */
+type ModelSelection = {
+  readonly value: ResolutionValue<'model'>
+  readonly source: ResolutionSource
+  readonly denial: DecisionResolutionDiagnostic | undefined
+}
+
+/**
+ * The arguments the configured per-model map is consulted with: the map, the
+ * resolved model id, and the harness pin the map has to agree with.
+ *
+ * The harness resolution builds the same arguments inline. That block is
+ * reserved for Fleet2 F2W1, so it is left exactly as it is and the arguments
+ * are built again here, for the candidate filter that runs before ranking.
+ */
+function harnessMapArguments(
+  request: DecisionResolutionRequest,
+  policyDefaults: DecisionLayerPolicyDefaults,
+  model: ResolutionValue<'model'>
+): {
+  readonly harnessByModel?: Readonly<Record<string, string>>
+  readonly modelId?: string
+  readonly pinnedHarnessId?: string
+} {
+  const modelId = 'modelId' in model ? model.modelId : undefined
+  const harnessPin = pickPin('harness', request, policyDefaults).pin?.harnessId
+  return {
+    ...(policyDefaults.harnessByModel === undefined
+      ? {}
+      : { harnessByModel: policyDefaults.harnessByModel }),
+    ...(modelId === undefined ? {} : { modelId }),
+    ...(harnessPin === undefined ? {} : { pinnedHarnessId: harnessPin }),
+  }
+}
+
+/**
+ * The harness the configured per-model map names for the resolved model, or
+ * undefined when no map is configured. The map's own denials — a model the map
+ * does not name, a pin the map contradicts — are raised here.
+ */
+function resolveMappedHarnessId(
+  request: DecisionResolutionRequest,
+  policyDefaults: DecisionLayerPolicyDefaults,
+  model: ModelSelection
+): string | undefined {
+  if (policyDefaults.harnessByModel === undefined) return undefined
+  const mapped = resolveMappedHarness(harnessMapArguments(request, policyDefaults, model.value))
+  return mapped.mapped ? mapped.harnessId : undefined
+}
+
+/**
+ * The candidates that can serve the mapped harness, applied before ranking.
+ *
+ * A request whose model was denied has no model id, and the caller denies
+ * that request right after the runtime is selected, so there is nothing here
+ * for the map to select on and the candidates pass through unchanged.
+ */
+function filterByMappedHarness(
+  candidates: readonly AvailableRuntime[],
+  request: DecisionResolutionRequest,
+  policyDefaults: DecisionLayerPolicyDefaults,
+  model: ModelSelection
+): AvailableRuntime[] {
+  if (model.denial !== undefined) return [...candidates]
+  const mappedHarnessId = resolveMappedHarnessId(request, policyDefaults, model)
+  if (mappedHarnessId === undefined) return [...candidates]
+  return candidates.filter((candidate) => candidate.harnessIds.includes(mappedHarnessId))
 }
 
 function selectModel(
@@ -391,7 +413,7 @@ export function resolveDecisionLayer(
   if (model.denial !== undefined) {
     throw new DecisionResolutionDeniedError(model.denial)
   }
-  const harness = resolveHarness(parsed, policyDefaults, runtimeSelection.runtime, model)
+  const harness = resolveHarness(parsed, policyDefaults, runtimeSelection.runtime, model.value)
   const sandbox = resolveSandbox(parsed, policyDefaults, capabilities.value.capabilityNames)
   const contextPackage = resolveContextPackage(parsed, policyDefaults)
   const delegation = pickPin('delegation', parsed, policyDefaults)
