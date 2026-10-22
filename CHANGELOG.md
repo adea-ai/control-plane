@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.106.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.3...workspace-v1.106.4) (2026-10-22)
+
+
+### Tests
+
+* **release:** prove the unchanged-ready-release validation policy locally (CP [#916](https://github.com/adea-ai/control-plane/issues/916)) ([#1232](https://github.com/adea-ai/control-plane/issues/1232)) ([98ecb7c](https://github.com/adea-ai/control-plane/commit/98ecb7cbf3e6c99ff1a9f8bb288aec810edf89f9))
+
 ## [1.106.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.2...workspace-v1.106.3) (2026-10-22)
 
 
