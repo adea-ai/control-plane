@@ -1292,6 +1292,21 @@ const typeScriptSources = (directory) => {
 }
 
 /**
+ * The declaration a workspace publishes for its consumers: the `types` entry, the
+ * `exports["."].types` entry, or the `.d.ts` beside its `main`. This is the file a
+ * consumer's checker resolves, so it is the file the build has to produce.
+ */
+const publishedDeclaration = (manifest) => {
+  const exported = manifest.exports?.['.']
+  if (typeof manifest.types === 'string') return manifest.types
+  if (typeof exported?.types === 'string') return exported.types
+  if (typeof manifest.main === 'string' && manifest.main.endsWith('.js')) {
+    return `${manifest.main.slice(0, -3)}.d.ts`
+  }
+  return undefined
+}
+
+/**
  * The workspaces that are excluded from the check, and why that exclusion is not
  * honest. A workspace may only be excluded while it really carries no TypeScript
  * project, so the exclusion list cannot be used to hide one.
@@ -1485,6 +1500,77 @@ test('the Bun type checker covers every TypeScript project, and it is not vacuou
     await rm(disposable, { recursive: true, force: true })
   }
   assert.equal(existsSync(disposable), false, 'the disposable check must leave nothing behind')
+})
+
+test('the generated declarations the checker resolves are the ones the build produces', async () => {
+  const root = fileURLToPath(new URL('..', import.meta.url))
+  const tasks = buildTasks(root, expectedId(root))
+  const workspacePackages = workspaces(root)
+
+  for (const entry of workspacePackages) {
+    const short = entry.manifest.name.replace('@control-plane/', '')
+    const declaration = publishedDeclaration(entry.manifest)
+    assert.ok(
+      declaration,
+      `${short} must publish a declaration for its consumers, or name no types at all`
+    )
+    // The declaration has to be a build output, not a source: a declaration that
+    // pointed into src/ would be checked as if it were the built shape, and a
+    // consumer would resolve a shape the build never produced.
+    const project = await readJson(join(relative(root, entry.dir), 'tsconfig.json'))
+    const outDir = project.compilerOptions?.outDir
+    assert.ok(outDir, `${short}'s project must declare the directory its build writes to`)
+    const published = relative(entry.dir, join(entry.dir, declaration)).replaceAll('\\', '/')
+    assert.ok(
+      published.startsWith(`${outDir}/`),
+      `${short} publishes ${published}, which is outside the ${outDir} its build writes to`
+    )
+    // The build task has to produce that directory, and the check has to wait for
+    // it, or the checker resolves a declaration that is absent or stale.
+    const build = tasks[`orch:${short}:build`]
+    assert.ok(build, `${short} must have a build task in the check graph`)
+    assert.ok(
+      (build.cache?.output ?? []).includes(
+        `${relative(root, entry.dir).replaceAll('\\', '/')}/${outDir}/**`
+      ),
+      `${short}'s build task must produce the ${outDir} its declaration is published from`
+    )
+  }
+
+  // The consumers resolve those declarations through the workspace links, so every
+  // workspace dependency has to be resolvable from the consumer that declares it.
+  // Node resolution walks the consumer's own node_modules and then each ancestor's,
+  // so a link anywhere on that path is enough.
+  const byName = new Map(workspacePackages.map((entry) => [entry.manifest.name, entry]))
+  const resolvable = (consumer, dependency) => {
+    let directory = consumer.dir
+    for (;;) {
+      if (existsSync(join(directory, 'node_modules', dependency))) return true
+      const parent = join(directory, '..')
+      if (parent === directory) return false
+      directory = parent
+    }
+  }
+  for (const entry of workspacePackages) {
+    const short = entry.manifest.name.replace('@control-plane/', '')
+    const dependencies = new Set()
+    for (const field of [
+      'dependencies',
+      'devDependencies',
+      'peerDependencies',
+      'optionalDependencies',
+    ]) {
+      for (const name of Object.keys(entry.manifest[field] ?? {})) {
+        if (byName.has(name)) dependencies.add(name)
+      }
+    }
+    for (const dependency of dependencies) {
+      assert.ok(
+        resolvable(entry, dependency),
+        `${short} must resolve ${dependency} from its own node_modules or an ancestor's, or it cannot read its declaration`
+      )
+    }
+  }
 })
 
 test('a project that loses, renames, or neuters its typecheck script fails the checker contract', async () => {
