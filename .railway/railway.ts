@@ -71,6 +71,7 @@ export default defineRailway((context) => {
       MARKETPLACE_REGISTRY_TOKEN: preserve(),
       RAILWAY_DOCKERFILE_PATH: preserve(),
       DATABASE_URL: preserve(),
+      NODE_EXTRA_CA_CERTS: '/workspace/packages/database/certs/railway-production-ca.crt',
       CONTROL_PLANE_SECRET_ENCRYPTION_KEY: preserve(),
       CONTROL_PLANE_SERVICE_AUTH_ISSUER: preserve(),
       CONTROL_PLANE_SERVICE_AUTH_TRUSTED_KEYS: preserve(),
