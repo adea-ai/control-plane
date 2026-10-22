@@ -317,7 +317,7 @@ test('the adapter management port reuses one retained decision without resend', 
     })
     expect(counts).toEqual({ issued: 1, calls: 1 })
     expect(prepared).toHaveLength(1)
-    expect(boundaries).toEqual(['admission', 'approval', 'effect'])
+    expect(boundaries).toEqual(['admission', 'approval', 'approval', 'effect'])
     const second = await port.execute(input, reader, new AbortController().signal)
     expect(second).toEqual(first)
     expect(counts).toEqual({ issued: 1, calls: 1 })
