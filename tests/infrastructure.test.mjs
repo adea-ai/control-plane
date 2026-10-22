@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
+import { runInNewContext } from 'node:vm'
 import { URL } from 'node:url'
 import { test } from 'bun:test'
 
@@ -91,31 +92,29 @@ test('owns the active Railway project graph as code without committed secrets', 
   )
 })
 
-test('maps Railway staging and production to isolated Neon branches', async () => {
+test('maps only production to the reviewed Railway PostgreSQL contract and rejects implicit staging', async () => {
   const environment = JSON.parse(
     await readRepositoryFile('infrastructure/railway/environment.json')
   )
   const source = await readRepositoryFile('.railway/railway.ts')
-
   assert.deepEqual(environment.environments, {
-    staging: {
-      railwayEnvironment: 'staging',
-      applicationEnvironment: 'staging',
-      sourceBranch: 'main',
-      neon: { provider: 'neon', project: 'control-plane', branch: 'staging' },
-    },
     production: {
       railwayEnvironment: 'production',
       applicationEnvironment: 'production',
       sourceBranch: 'main',
-      neon: { provider: 'neon', project: 'control-plane', branch: 'production' },
+      database: { provider: 'railway-postgres', targetContract: 'production-database.json' },
     },
   })
+  assert.equal(environment.database.provider, 'railway-postgres')
+  assert.match(source, /if \(!context\.isEnvironment\('production'\)\)/)
+  assert.ok(
+    source.indexOf("if (!context.isEnvironment('production'))") <
+      source.indexOf("service('@control-plane/control-api'")
+  )
   assert.match(source, /const sourceBranch = 'main'/)
-  assert.equal((source.match(/branch: sourceBranch/g) ?? []).length, 2)
 })
 
-test('keeps production down to the MVP dependency set and staging on-demand', async () => {
+test('keeps the production MVP posture without a persistent staging policy', async () => {
   const policy = JSON.parse(await readRepositoryFile('infrastructure/railway/cost-policy.json'))
   const source = await readRepositoryFile('.railway/railway.ts')
 
@@ -140,27 +139,7 @@ test('keeps production down to the MVP dependency set and staging on-demand', as
       restate: { configuredReplicas: 1, runningReplicas: 0, serverless: false },
     }
   )
-  assert.equal(policy.environments.staging.availability, 'configured-on-demand-reference')
-  assert.equal(policy.environments.staging.sourceConnected, false)
-  assert.equal(policy.environments.staging.activationBranch, 'main')
-  assert.equal(policy.environments.staging.standbyAction, 'remove-active-deployment')
-  assert.deepEqual(
-    Object.fromEntries(
-      Object.entries(policy.environments.staging.services).map(([name, value]) => [
-        name,
-        {
-          configuredReplicas: value.configuredReplicas,
-          runningReplicas: value.runningReplicas,
-          serverless: value.serverless,
-        },
-      ])
-    ),
-    {
-      'control-api': { configuredReplicas: 1, runningReplicas: 0, serverless: false },
-      'workflow-worker': { configuredReplicas: 1, runningReplicas: 0, serverless: false },
-      restate: { configuredReplicas: 1, runningReplicas: 0, serverless: false },
-    }
-  )
+  assert.deepEqual(Object.keys(policy.environments), ['production'])
   assert.match(source, /const desiredReplicas = 1/)
   assert.equal((source.match(/numReplicas: desiredReplicas/g) ?? []).length, 3)
   assert.equal((source.match(/sleepApplication: false/g) ?? []).length, 3)
@@ -535,4 +514,49 @@ test('does not retain the former AWS deployment tree', async () => {
   await assert.rejects(
     readRepositoryFile('infrastructure/terraform/environments/production/main.tf')
   )
+})
+
+test('retired provider workflow cannot run while portable PostgreSQL qualification stays required', async () => {
+  await assert.rejects(access(new URL('../.github/workflows/neon_workflow.yml', import.meta.url)), {
+    code: 'ENOENT',
+  })
+  const workflow = await readRepositoryFile('.github/workflows/postgres-pull-request.yml')
+  for (const command of [
+    'bun run db:check',
+    'fresh-schema-bootstrap.integration.test.mjs',
+    'pool-teardown.integration.test.mjs',
+    'cp1-embedded-durable-execution.test.mjs',
+    'run-hosted-graph-qualification.sh',
+    'docker compose down --volumes',
+  ])
+    assert.ok(workflow.includes(command), command)
+  assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./)
+  const validation = await readRepositoryFile('.github/workflows/validation.yml')
+  assert.match(validation, /uses: \.\/\.github\/workflows\/postgres-pull-request\.yml/)
+  assert.match(validation, /needs: \[mode, validation_runtime, postgres_qualification\]/)
+})
+
+test('production IaC refuses every other environment before constructing any resource', async () => {
+  const source = (await readRepositoryFile('.railway/railway.ts'))
+    .replace(/^import .*\n/gm, '')
+    .replace('export default defineRailway', 'globalThis.author = defineRailway')
+  const context = {
+    defineRailway: (author) => author,
+    service() {
+      assert.fail('no resource construction is allowed')
+    },
+    volume() {
+      assert.fail('no volume construction is allowed')
+    },
+    github() {
+      assert.fail('no source construction is allowed')
+    },
+  }
+  runInNewContext(source, context)
+  for (const environment of ['staging', 'development', 'preview-123', '', undefined]) {
+    assert.throws(
+      () => context.author({ isEnvironment: (name) => name === environment }),
+      /persistent staging is retired/
+    )
+  }
 })

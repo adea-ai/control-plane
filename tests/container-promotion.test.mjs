@@ -1,3 +1,4 @@
+import { resolveProductionDatabaseTarget } from '../scripts/production-database-target.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { describe, test } from 'node:test'
@@ -9,20 +10,40 @@ import {
 } from '../scripts/promote-railway-images.mjs'
 import {
   assertAppliedHistoryPrefix,
-  assertProductionMigrationUrl,
+  assertProductionMigrationUrl as assertProductionMigrationUrlRecorded,
   assertRetentionReferenceColumns,
-  assertRuntimeCapabilities,
-  assertRuntimeDatabaseUrl,
+  assertRuntimeCapabilities as assertRuntimeCapabilitiesRecorded,
+  assertRuntimeDatabaseUrl as assertRuntimeDatabaseUrlRecorded,
   createRailwayVariableReader,
   createPostgresSession,
   loadCanonicalMigrationHistory,
-  migrateProductionSchema,
+  migrateProductionSchema as migrateProductionSchemaRecorded,
 } from '../scripts/migrate-production-schema.mjs'
 
+const productionDatabaseContract = {
+  schemaVersion: 1,
+  provider: 'railway-postgres',
+  status: 'verified',
+  identity: {
+    serviceId: '11111111-1111-4111-8111-111111111111',
+    database: 'control_plane_fixture',
+    migration: { hostname: 'migration.example.invalid', port: 6432 },
+    runtime: { hostname: 'runtime.example.invalid', port: 5432 },
+  },
+}
+const assertProductionMigrationUrl = (value) =>
+  assertProductionMigrationUrlRecorded(value, productionDatabaseContract)
+const assertRuntimeDatabaseUrl = (value) =>
+  assertRuntimeDatabaseUrlRecorded(value, productionDatabaseContract)
+const assertRuntimeCapabilities = (capabilities, privileges) =>
+  assertRuntimeCapabilitiesRecorded(capabilities, privileges, productionDatabaseContract)
+const migrateProductionSchema = (options) =>
+  migrateProductionSchemaRecorded({ ...options, productionDatabaseContract })
+
 const migrationUrl =
-  'postgresql://control_plane_migrator:placeholder@ep-crimson-bird-ay77m275.c-5.us-east-2.aws.neon.tech/neondb?sslmode=verify-full'
+  'postgresql://control_plane_migrator:placeholder@migration.example.invalid:6432/control_plane_fixture?sslmode=verify-full'
 const runtimeUrl =
-  'postgresql://control_plane_app:placeholder@ep-crimson-bird-ay77m275-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require'
+  'postgresql://control_plane_app:placeholder@runtime.example.invalid/control_plane_fixture?sslmode=require'
 const canonicalHistory = [
   { idx: 0, when: 1000, tag: '0000_first_migration', hash: 'a'.repeat(64) },
   { idx: 1, when: 2000, tag: '0001_second_migration', hash: 'b'.repeat(64) },
@@ -40,7 +61,7 @@ function productionRuntimeVariables() {
 function runtimeCapabilities(overrides = {}) {
   return {
     application_role: true,
-    database_name: 'neondb',
+    database_name: 'control_plane_fixture',
     superuser: false,
     create_database: false,
     create_role: false,
@@ -151,7 +172,7 @@ function createFakeSession({
         connectedRoleReads += 1
         return {
           role_name: connectedRoleReads === 1 ? 'control_plane_migrator' : 'control_plane_app',
-          database_name: 'neondb',
+          database_name: 'control_plane_fixture',
         }
       },
       async readRuntimeRoleCapabilities() {
@@ -461,7 +482,9 @@ describe('container promotion', () => {
 describe('production schema migration gate', () => {
   test('constructs and closes the installed postgres client without opening a remote connection', async () => {
     const session = createPostgresSession(
-      new URL('postgresql://local_test:placeholder@127.0.0.1:1/neondb?sslmode=verify-full')
+      new URL(
+        'postgresql://local_test:placeholder@127.0.0.1:1/control_plane_fixture?sslmode=verify-full'
+      )
     )
     await session.close()
   })
@@ -522,7 +545,7 @@ describe('production schema migration gate', () => {
 
     await assert.rejects(
       migrateProductionSchema({
-        environment: { NEON_PRODUCTION_MIGRATION_URL: migrationUrl },
+        environment: { DATABASE_MIGRATION_URL: migrationUrl },
         railway: fakeRailway(variables),
         canonicalHistory,
         openMigrationSession: async () => {
@@ -543,15 +566,15 @@ describe('production schema migration gate', () => {
     const railway = fakeRailway(productionRuntimeVariables(), calls)
 
     await migrateProductionSchema({
-      environment: { NEON_PRODUCTION_MIGRATION_URL: migrationUrl },
+      environment: { DATABASE_MIGRATION_URL: migrationUrl },
       railway,
       canonicalHistory,
       openMigrationSession: async (url, timeouts) => {
         assert.equal(
           url.hostname,
           url.username === 'control_plane_migrator'
-            ? 'ep-crimson-bird-ay77m275.c-5.us-east-2.aws.neon.tech'
-            : 'ep-crimson-bird-ay77m275-pooler.c-5.us-east-2.aws.neon.tech'
+            ? 'migration.example.invalid'
+            : 'runtime.example.invalid'
         )
         assert.deepEqual(timeouts, {
           connectTimeoutSeconds: 10,
@@ -638,7 +661,7 @@ describe('production schema migration gate', () => {
 
     await assert.rejects(
       migrateProductionSchema({
-        environment: { NEON_PRODUCTION_MIGRATION_URL: migrationUrl },
+        environment: { DATABASE_MIGRATION_URL: migrationUrl },
         railway: fakeRailway(),
         canonicalHistory,
         openMigrationSession: async () => session.session,
@@ -658,7 +681,7 @@ describe('production schema migration gate', () => {
 
     await assert.rejects(
       migrateProductionSchema({
-        environment: { NEON_PRODUCTION_MIGRATION_URL: migrationUrl },
+        environment: { DATABASE_MIGRATION_URL: migrationUrl },
         railway: fakeRailway(),
         canonicalHistory,
         openMigrationSession: async () => session.session,
@@ -914,10 +937,7 @@ describe('production schema migration gate', () => {
     assert.ok(gateIndex < deployIndex)
     assert.match(workflow, /group: control-plane-production-deployment/)
     assert.match(workflow, /cancel-in-progress: false/)
-    assert.match(
-      workflow,
-      /NEON_PRODUCTION_MIGRATION_URL: \$\{\{ secrets\.NEON_PRODUCTION_MIGRATION_URL \}\}/
-    )
+    assert.match(workflow, /DATABASE_MIGRATION_URL: \$\{\{ secrets\.DATABASE_MIGRATION_URL \}\}/)
     // Production promotes control-api only while the cloud execution runtime
     // is disabled, and because the platform healthcheck is liveness-only the
     // deploy must still prove database readiness once.
@@ -926,4 +946,124 @@ describe('production schema migration gate', () => {
     assert.match(readyProbe, /control-planecontrol-api-production\.up\.railway\.app\/ready/)
     assert.ok(deployIndex < workflow.indexOf('- name: Verify production readiness after deploy'))
   })
+})
+
+const productionTargetFixture = () => ({
+  schemaVersion: 1,
+  provider: 'railway-postgres',
+  status: 'verified',
+  identity: {
+    serviceId: '11111111-1111-4111-8111-111111111111',
+    database: 'control_plane_fixture',
+    migration: { hostname: 'migration.example.invalid', port: 6432 },
+    runtime: { hostname: 'runtime.example.invalid', port: 5432 },
+  },
+})
+
+test('unverified target metadata refuses migration before any provider or database I/O', async () => {
+  await assert.rejects(
+    migrateProductionSchemaRecorded({
+      productionDatabaseContract: {
+        schemaVersion: 1,
+        provider: 'railway-postgres',
+        status: 'pending-verification',
+        identity: null,
+      },
+      environment: {
+        DATABASE_MIGRATION_URL: 'postgresql://untrusted:placeholder@untrusted.invalid/database',
+      },
+      railway: {
+        getServiceVariables() {
+          assert.fail('provider must not be queried')
+        },
+      },
+      openMigrationSession() {
+        assert.fail('database must not open')
+      },
+    }),
+    /not verified/
+  )
+})
+
+test('URL roles, exact endpoint ports, database identity and verified TLS are enforced', () => {
+  const contract = productionTargetFixture()
+  const migration =
+    'postgresql://control_plane_migrator:placeholder@migration.example.invalid:6432/control_plane_fixture?sslmode=verify-full'
+  const runtime =
+    'postgresql://control_plane_app:placeholder@runtime.example.invalid/control_plane_fixture?sslmode=require'
+  assert.equal(assertProductionMigrationUrlRecorded(migration, contract).port, '6432')
+  assert.equal(
+    assertRuntimeDatabaseUrlRecorded(runtime, contract).hostname,
+    'runtime.example.invalid'
+  )
+  for (const value of [
+    migration.replace('migration.example.invalid', 'untrusted.example.invalid'),
+    migration.replace(':6432/', ':5432/'),
+    migration.replace('control_plane_fixture', 'other_database'),
+    migration.replace('control_plane_migrator', 'control_plane_app'),
+    migration.replace('verify-full', 'require'),
+    migration.replace('verify-full', 'disable'),
+    `${migration}&sslmode=disable`,
+    `${migration}&options=-c%20role%3Dpostgres`,
+  ])
+    assert.throws(
+      () => assertProductionMigrationUrlRecorded(value, contract),
+      /role, database, host, or TLS policy/
+    )
+  assert.throws(
+    () =>
+      assertRuntimeDatabaseUrlRecorded(runtime.replace('control_plane_app', 'postgres'), contract),
+    /role, database, host, or TLS policy/
+  )
+})
+
+test('only the reviewed provider identity supplies endpoint and database policy', () => {
+  const target = resolveProductionDatabaseTarget(productionTargetFixture())
+  assert.deepEqual(target.migration, {
+    hostname: 'migration.example.invalid',
+    port: 6432,
+    database: 'control_plane_fixture',
+    username: 'control_plane_migrator',
+  })
+  assert.equal(target.runtime.username, 'control_plane_app')
+  assert.equal(target.runtime.database, target.database)
+})
+
+test('missing, malformed, unverified and credential-bearing metadata is rejected', () => {
+  for (const mutate of [
+    (value) => {
+      value.status = 'pending-verification'
+    },
+    (value) => {
+      value.provider = 'neon'
+    },
+    (value) => {
+      value.identity = null
+    },
+    (value) => {
+      value.identity.serviceId = 'unverified-service'
+    },
+    (value) => {
+      value.identity.database = 'database/other'
+    },
+    (value) => {
+      value.identity.migration.hostname = 'user:secret@database.invalid'
+    },
+    (value) => {
+      value.identity.migration.port = 0
+    },
+    (value) => {
+      value.identity.runtime.port = 65536
+    },
+    (value) => {
+      value.identity.runtime.password = 'must-not-be-source-metadata'
+    },
+    (value) => {
+      value.identity.unexpected = true
+    },
+  ]) {
+    const value = productionTargetFixture()
+    mutate(value)
+    assert.throws(() => resolveProductionDatabaseTarget(value), /not verified|invalid/)
+  }
 })

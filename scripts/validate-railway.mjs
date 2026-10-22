@@ -67,7 +67,7 @@ if (
   environment.provider !== 'railway' ||
   environment.profile !== 'cloud' ||
   environment.applicationEnvironment !== 'managed-cloud' ||
-  environment.database?.provider !== 'neon' ||
+  environment.database?.provider !== 'railway-postgres' ||
   environment.database?.project !== 'control-plane' ||
   environment.database?.runtimeVariable !== 'DATABASE_URL' ||
   environment.database?.migrationVariable !== 'DATABASE_MIGRATION_URL' ||
@@ -80,37 +80,17 @@ if (
   throw new Error('Railway environment manifest is incomplete or contains committed secrets.')
 }
 
-const expectedEnvironments = {
-  staging: {
-    railwayEnvironment: 'staging',
-    applicationEnvironment: 'staging',
-    sourceBranch: 'main',
-    neonBranch: 'staging',
-  },
-  production: {
-    railwayEnvironment: 'production',
-    applicationEnvironment: 'production',
-    sourceBranch: 'main',
-    neonBranch: 'production',
-  },
-}
-for (const [name, expectedEnvironment] of Object.entries(expectedEnvironments)) {
-  const configuredEnvironment = environment.environments?.[name]
-  if (
-    configuredEnvironment?.railwayEnvironment !== expectedEnvironment.railwayEnvironment ||
-    configuredEnvironment?.applicationEnvironment !== expectedEnvironment.applicationEnvironment ||
-    configuredEnvironment?.sourceBranch !== expectedEnvironment.sourceBranch ||
-    configuredEnvironment?.neon?.provider !== 'neon' ||
-    configuredEnvironment?.neon?.project !== 'control-plane' ||
-    configuredEnvironment?.neon?.branch !== expectedEnvironment.neonBranch
-  ) {
-    throw new Error(`Railway environment mapping is incomplete or crosses Neon branches: ${name}.`)
-  }
-}
+const productionEnvironment = environment.environments?.production
 if (
-  environment.environments.staging.neon.branch === environment.environments.production.neon.branch
+  JSON.stringify(Object.keys(environment.environments ?? {})) !== JSON.stringify(['production']) ||
+  productionEnvironment?.railwayEnvironment !== 'production' ||
+  productionEnvironment?.applicationEnvironment !== 'production' ||
+  productionEnvironment?.sourceBranch !== 'main' ||
+  productionEnvironment?.database?.provider !== 'railway-postgres' ||
+  productionEnvironment?.database?.targetContract !== 'production-database.json' ||
+  !railwayIac.includes("if (!context.isEnvironment('production'))")
 ) {
-  throw new Error('Railway staging and production must use distinct Neon branches.')
+  throw new Error('Railway authoring must manage production only; persistent staging is retired.')
 }
 
 if (
@@ -158,22 +138,19 @@ if (
 if (
   costPolicy.schemaVersion !== 1 ||
   costPolicy.provider !== 'railway' ||
-  costPolicy.profile !== 'cloud-prelaunch'
+  costPolicy.profile !== 'cloud-prelaunch' ||
+  JSON.stringify(Object.keys(costPolicy.environments ?? {})) !== JSON.stringify(['production'])
 ) {
   throw new Error('Railway cost policy must define the versioned cloud-prelaunch profile.')
 }
 // Production stays online only where the local-first MVP depends on it:
 // control-api serves the web/mobile marketplace catalog while the production
 // cloud execution runtime is disabled, so workflow-worker and restate hold no
-// production resources. Staging is the on-demand qualification reference.
+// production resources. Persistent staging is retired; optional qualification is independently isolated.
 const expectedCostPosture = {
   production: {
     availability: 'control-api-online-runtime-on-demand',
     runningReplicas: { 'control-api': 1, 'workflow-worker': 0, restate: 0 },
-  },
-  staging: {
-    availability: 'configured-on-demand-reference',
-    runningReplicas: { 'control-api': 0, 'workflow-worker': 0, restate: 0 },
   },
 }
 for (const [environmentName, posture] of Object.entries(expectedCostPosture)) {

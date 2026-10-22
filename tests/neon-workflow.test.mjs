@@ -1,3 +1,5 @@
+// Historical provider-contract regressions use an immutable retired fixture.
+// Active database qualification is covered by infrastructure.test.mjs.
 import { describe, expect, test } from 'bun:test'
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
@@ -18,7 +20,7 @@ import { isNeonProofRelevantPath } from '../.github/scripts/neon-migration-gate.
 import { verifyNeonMigratorDdl } from '../packages/database/scripts/neon-ddl-probe.mjs'
 
 const workflow = readFileSync(
-  new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
+  new URL('./fixtures/retired-neon-workflow.yml', import.meta.url),
   'utf8'
 )
 const pullRequestWorkflow = readFileSync(

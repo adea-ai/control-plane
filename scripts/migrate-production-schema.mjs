@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveProductionDatabaseTarget } from './production-database-target.mjs'
 
 const API_URL = 'https://backboard.railway.com/graphql/v2'
 const PROJECT_ID = '18c6a1fd-6b4b-421e-9ec9-fd1550ce9a3f'
@@ -13,17 +14,6 @@ const SERVICES = Object.freeze([
   // reactivation.
   { name: 'control-api', id: '9167a33b-af0f-4780-8614-a5a161697c9c' },
 ])
-const MIGRATION_TARGET = Object.freeze({
-  hostname: 'ep-crimson-bird-ay77m275.c-5.us-east-2.aws.neon.tech',
-  username: 'control_plane_migrator',
-  database: 'neondb',
-  sslmode: 'verify-full',
-})
-const RUNTIME_TARGET = Object.freeze({
-  hostname: 'ep-crimson-bird-ay77m275-pooler.c-5.us-east-2.aws.neon.tech',
-  username: 'control_plane_app',
-  database: 'neondb',
-})
 const RUNTIME_CRUD_TABLES = Object.freeze(['catalog_approvals', 'retired_execution_event_ids'])
 const RUNTIME_READ_ONLY_TABLES = Object.freeze(['admission_rollout_gate'])
 const RUNTIME_INSERT_ONLY_TABLES = Object.freeze(['retired_command_keys'])
@@ -83,7 +73,7 @@ function parseDatabaseUrl(value, expected, { migration = false } = {}) {
   if (
     !['postgres:', 'postgresql:'].includes(url.protocol) ||
     url.hostname.toLowerCase() !== expected.hostname ||
-    (url.port !== '' && url.port !== '5432') ||
+    Number(url.port || '5432') !== expected.port ||
     decodeUrlPart(url.username) !== expected.username ||
     decodeUrlPart(url.pathname.slice(1)) !== expected.database ||
     url.password.length === 0 ||
@@ -103,12 +93,19 @@ function parseDatabaseUrl(value, expected, { migration = false } = {}) {
   return url
 }
 
-export function assertProductionMigrationUrl(value) {
-  return parseDatabaseUrl(value, MIGRATION_TARGET, { migration: true })
+export function assertProductionMigrationUrl(value, productionDatabaseContract) {
+  return parseDatabaseUrl(
+    value,
+    resolveProductionDatabaseTarget(productionDatabaseContract).migration,
+    { migration: true }
+  )
 }
 
-export function assertRuntimeDatabaseUrl(value) {
-  return parseDatabaseUrl(value, RUNTIME_TARGET)
+export function assertRuntimeDatabaseUrl(value, productionDatabaseContract) {
+  return parseDatabaseUrl(
+    value,
+    resolveProductionDatabaseTarget(productionDatabaseContract).runtime
+  )
 }
 
 function assertCanonicalHistory(history) {
@@ -194,12 +191,12 @@ export function assertAppliedHistoryPrefix(applied, canonical, { requireFull = f
   return expected.slice(actual.length)
 }
 
-function assertRuntimeVariables(variables) {
+function assertRuntimeVariables(variables, productionDatabaseContract) {
   if (!variables || typeof variables !== 'object' || Array.isArray(variables)) {
     throw gateError('Railway runtime variables are unavailable')
   }
   const value = variables.DATABASE_URL
-  assertRuntimeDatabaseUrl(value)
+  assertRuntimeDatabaseUrl(value, productionDatabaseContract)
   return value
 }
 
@@ -374,11 +371,12 @@ export function createPostgresSession(url, timeouts = MIGRATION_TIMEOUTS) {
   }
 }
 
-export function assertRuntimeCapabilities(capabilities, privileges) {
+export function assertRuntimeCapabilities(capabilities, privileges, productionDatabaseContract) {
+  const target = resolveProductionDatabaseTarget(productionDatabaseContract)
   if (
     !capabilities ||
     capabilities.application_role !== true ||
-    capabilities.database_name !== MIGRATION_TARGET.database ||
+    capabilities.database_name !== target.database ||
     capabilities.superuser !== false ||
     capabilities.create_database !== false ||
     capabilities.create_role !== false ||
@@ -405,7 +403,7 @@ export function assertRuntimeCapabilities(capabilities, privileges) {
     const privilege = rows[0]
     if (
       rows.length !== 1 ||
-      privilege.table_owner !== MIGRATION_TARGET.username ||
+      privilege.table_owner !== target.migration.username ||
       privilege.can_select !== true ||
       privilege.can_insert !== true ||
       privilege.can_update !== true ||
@@ -420,7 +418,7 @@ export function assertRuntimeCapabilities(capabilities, privileges) {
     const privilege = rows[0]
     if (
       rows.length !== 1 ||
-      privilege.table_owner !== MIGRATION_TARGET.username ||
+      privilege.table_owner !== target.migration.username ||
       privilege.can_select !== true ||
       privilege.can_insert !== false ||
       privilege.can_update !== false ||
@@ -438,7 +436,7 @@ export function assertRuntimeCapabilities(capabilities, privileges) {
     const privilege = rows[0]
     if (
       rows.length !== 1 ||
-      privilege.table_owner !== MIGRATION_TARGET.username ||
+      privilege.table_owner !== target.migration.username ||
       privilege.can_select !== true ||
       privilege.can_insert !== true ||
       privilege.can_update !== false ||
@@ -471,24 +469,23 @@ export function assertRetentionReferenceColumns(columns) {
   }
 }
 
-function assertConnectedRole(identity, expectedRole) {
-  if (
-    identity?.role_name !== expectedRole ||
-    identity?.database_name !== MIGRATION_TARGET.database
-  ) {
+function assertConnectedRole(identity, expectedRole, database) {
+  if (identity?.role_name !== expectedRole || identity?.database_name !== database) {
     throw gateError('database connection role or database does not match production')
   }
 }
 
-async function verifyRuntimeDatabase(url, openMigrationSession) {
+async function verifyRuntimeDatabase(url, openMigrationSession, productionDatabaseContract) {
+  const target = resolveProductionDatabaseTarget(productionDatabaseContract)
   let session
   let failure
   try {
     session = await openMigrationSession(url, MIGRATION_TIMEOUTS)
-    assertConnectedRole(await session.readConnectedRole(), RUNTIME_TARGET.username)
+    assertConnectedRole(await session.readConnectedRole(), target.runtime.username, target.database)
     assertRuntimeCapabilities(
       await session.readRuntimeRoleCapabilities(),
-      await session.readRuntimeTablePrivileges()
+      await session.readRuntimeTablePrivileges(),
+      productionDatabaseContract
     )
     assertRetentionReferenceColumns(await session.readRetentionReferenceColumns())
   } catch {
@@ -519,8 +516,13 @@ export async function migrateProductionSchema({
   openMigrationSession = createPostgresSession,
   migrate = migrateWithRepository,
   canonicalHistory,
+  productionDatabaseContract,
 }) {
-  const migrationUrl = assertProductionMigrationUrl(environment.NEON_PRODUCTION_MIGRATION_URL)
+  const target = resolveProductionDatabaseTarget(productionDatabaseContract)
+  const migrationUrl = assertProductionMigrationUrl(
+    environment.DATABASE_MIGRATION_URL,
+    productionDatabaseContract
+  )
   const canonical = assertCanonicalHistory(
     canonicalHistory ?? (await loadCanonicalMigrationHistory())
   )
@@ -534,7 +536,10 @@ export async function migrateProductionSchema({
     runtimeVariables = await Promise.all(
       SERVICES.map(async ({ id }) => ({
         id,
-        url: assertRuntimeVariables(await railway.getServiceVariables(id)),
+        url: assertRuntimeVariables(
+          await railway.getServiceVariables(id),
+          productionDatabaseContract
+        ),
       }))
     )
   } catch {
@@ -555,7 +560,11 @@ export async function migrateProductionSchema({
   let lockAcquired = false
   let failure
   try {
-    assertConnectedRole(await session.readConnectedRole(), MIGRATION_TARGET.username)
+    assertConnectedRole(
+      await session.readConnectedRole(),
+      target.migration.username,
+      target.database
+    )
     const beforeLock = await session.readAppliedHistory()
     assertAppliedHistoryPrefix(beforeLock, canonical)
 
@@ -570,7 +579,11 @@ export async function migrateProductionSchema({
     const afterMigration = await session.readAppliedHistory()
     assertAppliedHistoryPrefix(afterMigration, canonical, { requireFull: true })
     for (const binding of runtimeVariables) {
-      await verifyRuntimeDatabase(assertRuntimeDatabaseUrl(binding.url), openMigrationSession)
+      await verifyRuntimeDatabase(
+        assertRuntimeDatabaseUrl(binding.url, productionDatabaseContract),
+        openMigrationSession,
+        productionDatabaseContract
+      )
     }
   } catch {
     failure = gateError('migration, history, or runtime privilege verification failed')

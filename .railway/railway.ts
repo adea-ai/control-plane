@@ -6,12 +6,15 @@ const restateImage =
   'docker.restate.dev/restatedev/restate:1.7.7@sha256:dd1695b61c9de877d24bf9afe8a0ac5fb0f66d175c1bc397975d2252bd784eb2'
 
 export default defineRailway((context) => {
+  if (!context.isEnvironment('production')) {
+    throw new Error(
+      'Only the production environment is managed here; persistent staging is retired.'
+    )
+  }
   const production = context.isEnvironment('production')
   const applicationEnvironment = production ? 'production' : 'staging'
-  // Both environments deploy from main: the staging environment is an
-  // on-demand reference that is activated against main (or a tag) for
-  // cloud-substrate debugging, then stood back down. There is no staging
-  // branch; see infrastructure/railway/environment.json.
+  // This authoring entry point targets production only. Optional hosted
+  // qualification needs a separately reviewed isolated ephemeral environment.
   const sourceBranch = 'main'
   const desiredReplicas = 1
   // Production promotes control-api only. The planning helper supplies the

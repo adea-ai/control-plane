@@ -9,34 +9,24 @@
     "explicitOverrides": ["COMMIT_SHA", "SERVICE_VERSION"]
   },
   "database": {
-    "provider": "neon",
+    "provider": "railway-postgres",
     "project": "control-plane",
     "runtimeVariable": "DATABASE_URL",
     "migrationVariable": "DATABASE_MIGRATION_URL",
     "administrationVariable": "DATABASE_ADMIN_URL",
     "runtimeRole": "control_plane_app",
     "migrationRole": "control_plane_migrator",
-    "administrationRole": "control_plane_admin"
+    "administrationRole": "control_plane_admin",
+    "targetContract": "production-database.json"
   },
   "environments": {
-    "staging": {
-      "railwayEnvironment": "staging",
-      "applicationEnvironment": "staging",
-      "sourceBranch": "main",
-      "neon": {
-        "provider": "neon",
-        "project": "control-plane",
-        "branch": "staging"
-      }
-    },
     "production": {
       "railwayEnvironment": "production",
       "applicationEnvironment": "production",
       "sourceBranch": "main",
-      "neon": {
-        "provider": "neon",
-        "project": "control-plane",
-        "branch": "production"
+      "database": {
+        "provider": "railway-postgres",
+        "targetContract": "production-database.json"
       }
     }
   },
@@ -93,8 +83,8 @@
     "cors": "not configured; no browser-direct upload path is part of the M9 baseline",
     "lifecycle": "abort incomplete multipart uploads after 7 days",
     "environmentSeparation": {
-      "staging": "R2_PREFIX=staging/ in the staging environment; production stays unprefixed",
-      "requirement": "Preview/staging and production credentials remain distinct operator-provisioned variables; cross-environment reads must stay denied."
+      "ephemeral": "Optional isolated qualification must use its own credentials and unique per-run prefix; never production credentials.",
+      "requirement": "No persistent staging environment exists. Production stays unprefixed; cross-environment access must remain denied."
     }
   },
   "restate": {
@@ -105,6 +95,6 @@
   },
   "secrets": {
     "valuesCommitted": false,
-    "dynamicCredentialProvider": "NeonEncryptedSecretProvider backed by credential_secrets; encryption key remains a Railway secret"
+    "dynamicCredentialProvider": "PostgreSQL-backed credential_secrets; encryption key remains a Railway secret"
   }
 }

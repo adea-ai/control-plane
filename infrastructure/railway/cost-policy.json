@@ -27,39 +27,7 @@
           "configuredReplicas": 1,
           "runningReplicas": 0,
           "serverless": false,
-          "reason": "Removed from production IaC resources together with workflow-worker; production never ran durable executions (runtime disabled). Reactivation re-provisions the request identity keypair via scripts/provision-restate-identity.mjs."
-        }
-      }
-    },
-    "staging": {
-      "availability": "configured-on-demand-reference",
-      "sourceConnected": false,
-      "activationBranch": "main",
-      "standbyAction": "remove-active-deployment",
-      "services": {
-        "control-api": {
-          "configuredReplicas": 1,
-          "runningReplicas": 0,
-          "serverless": false,
-          "cpuLimit": 0.25,
-          "memoryLimitBytes": 268435456,
-          "reason": "Local-first MVP baseline has no active deployment. Activate one replica for Cloud integration; Serverless remains off because cold-start and first-request 502 behavior are not accepted without a separate sleep certification."
-        },
-        "workflow-worker": {
-          "configuredReplicas": 1,
-          "runningReplicas": 0,
-          "serverless": false,
-          "cpuLimit": 0.25,
-          "memoryLimitBytes": 268435456,
-          "reason": "Local-first MVP baseline has no active deployment. Activate one replica with Restate for Cloud integration because the endpoint must remain registered and reachable while a Cloud test is active."
-        },
-        "restate": {
-          "configuredReplicas": 1,
-          "runningReplicas": 0,
-          "serverless": false,
-          "cpuLimit": 0.25,
-          "memoryLimitBytes": 1073741824,
-          "reason": "Local-first MVP baseline has no active deployment. The IaC definition and standby procedure preserve a Restate volume when one exists, but the current live inventory has no staging volume or mount; provision the configured 500 MB volume and a matching request identity keypair before activation if either is absent. Activate one replica for Cloud integration; sleeping during an active test would invalidate restart and registration semantics."
+          "reason": "Removed from production IaC resources while the production cloud execution runtime is disabled. Any optional ephemeral qualification requires a separately reviewed isolated graph, database, object-store credentials and request identity; persistent staging is retired."
         }
       }
     }

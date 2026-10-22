@@ -1,5 +1,11 @@
 # Production operations runbook
 
+> Current policy (2026-10-22): persistent Railway staging and Neon are retired
+> following the user's deletion report. Earlier staging/Neon activation and
+> certification records below are historical, not current deployment instructions.
+> Do not recreate them. Production target verification and optional isolated
+> qualification are governed by [the cutover contract](railway-production-database-cutover.md).
+
 This runbook covers the accepted Control Plane deployment sequence and must distinguish **managed cloud (M9)** from **Local/Hosted portability (M10)**. A release is not complete because infrastructure files exist; live environment evidence is required.
 
 ## Milestone sequence

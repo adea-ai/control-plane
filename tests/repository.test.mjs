@@ -893,9 +893,9 @@ test('provides a documented isolated integration-test runner', async () => {
   assert.match(documentation, /parallel/i)
 })
 
-test('Neon provider proof is bounded and cleanup precedes its budget check', async () => {
+test('the retired Neon provider fixture is bounded and cleanup precedes its budget check', async () => {
   const workflow = await readFile(
-    new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
+    new URL('./fixtures/retired-neon-workflow.yml', import.meta.url),
     'utf8'
   )
   const proof = workflow
@@ -934,9 +934,9 @@ test('Neon provider proof is bounded and cleanup precedes its budget check', asy
   assert.match(workflow, /if: always\(\) && steps\.preview_branch\.outputs\.name != ''/)
 })
 
-test('isolates credentialed Neon validation from pull-request source', async () => {
+test('the retired provider fixture isolated credentialed validation from pull-request source', async () => {
   const neonWorkflow = await readFile(
-    new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
+    new URL('./fixtures/retired-neon-workflow.yml', import.meta.url),
     'utf8'
   )
   const pullRequestWorkflow = await readFile(
