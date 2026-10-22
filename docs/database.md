@@ -172,15 +172,17 @@ scheduler-issued database access: the scheduler adds no idle poll, heartbeat que
 check of its own. A pass whose candidates are all unexpired still issues both assessments, because
 expiry cannot be known without reading.
 
-The schedule is in-memory and per-process; there is no persisted last-run cursor. A restart, or a
-`start()` after shutdown, discards any pending interval and arms a fresh full interval. Intervals
-that elapsed while the process was stopped are not replayed. This does not lose assessment work:
-each pass samples the clock and selects rows whose retention deadline precedes that instant, so
-the next pass covers the same due set plus anything newly expired; only how promptly a pass
-reports changes. Each pass samples that instant once and hands the same one to every assessment, so
-the classes are assessed against one consistent deadline boundary. Scheduled passes wait for the previous pass to settle before the next interval is
-armed, so a slow pass never overlaps the next and the effective period is never shorter than the
-configured interval. Shutdown cancels future passes and drains the active scheduled pass before
+The schedule is in-memory and per-process; there is no persisted last-run cursor. A closed
+scheduler is not re-armed: once `close()` has been called, `start()` on that instance throws
+`RETENTION_SWEEP_CLOSED`, so re-arming requires a new scheduler instance, which a process restart
+provides. A new instance discards any pending interval and arms a fresh full interval; intervals
+that elapsed while the previous instance was closed are not replayed. This does not lose assessment
+work: each pass samples the clock and selects rows whose retention deadline precedes that
+instant, so the next pass covers the same due set plus anything newly expired; only how promptly a
+pass reports changes. Each pass samples that instant once and hands the same one to every
+assessment, so the classes are assessed against one consistent deadline boundary. Scheduled passes
+wait for the previous pass to settle before the next interval is armed, so a slow pass never
+overlaps the next and the effective period is never shorter than the configured interval. Shutdown cancels future passes and drains the active scheduled pass before
 closing storage. Local and managed cloud use the same scheduler lifecycle. Failures emit the fixed
 diagnostic `RETENTION_SWEEP_FAILED` by default, without raw storage details.
 
