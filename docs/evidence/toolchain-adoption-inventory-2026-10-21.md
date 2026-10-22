@@ -5,11 +5,12 @@ titled "Finish cross-repository Bun and Vite+ toolchain adoption". The issue
 approves the full Bun and Vite+ adoption scope, and it no longer approves Bunly.
 
 Status: **the inventory and the reconciliation are complete for every repository
-that is reachable, and one adoption check is added to this repository; no version
-is changed here.** The one failing check in this repository's unit lane is
-pre-existing on `main` and is recorded below with the local branch that carries
-its fix. What this increment completes, and what the issue's adoption still
-requires, are separated under "Completed here, and what remains" below.
+that is reachable, and two adoption checks are added to this repository; no
+version is changed here.** The failing checks in this repository's unit lane are
+pre-existing, are not caused by this increment, and are recorded below with the
+evidence that shows it. What this increment completes, and what the issue's
+adoption still requires, are separated under "Completed here, and what remains"
+below.
 
 This repository: `adea-ai/control-plane`, branch
 `chore/toolchain-adoption-inventory-1233`, base `main` at
@@ -140,6 +141,10 @@ The check is proven to bite: with `.node-version` moved to `24.22.0` the file
 reports 31 passes and 1 failure on exactly the new assertion, and with the
 declared value restored it reports 32 passes and 0 failures.
 
+The same file gains the Bun checker's guard, described under "The gaps this
+found, and the guard that now prevents them" below. It is a check over the
+repository's own project graph, and it too changes no version and no dependency.
+
 ### The comparator defect that this check carried
 
 The first revision of the check compared two versions with a closure that found
@@ -180,7 +185,10 @@ repository's dependency surface. The corrected comparison is dependency-free.
   limits retained rather than presented as passes.
 - The Bun TypeScript checker's project graph, its generated-type coverage and its
   non-vacuity, qualified with a disposable intentional type error, and the guard
-  that now keeps them true.
+  that now keeps them true. The guard enumerates the expected checked projects
+  from the workspace layout rather than from the manifests' own scripts, requires
+  each one to invoke the pinned checker over its own project, and carries the
+  mutation regression that proves it.
 
 **Not completed here, and still required by the issue.**
 
@@ -210,6 +218,10 @@ repository's dependency surface. The corrected comparison is dependency-free.
 - **The pre-existing runtime-gateway authority-marker failure** in this
   repository's unit lane, which is fixed on a separate local branch that is not
   published.
+- **The pre-existing LiteLLM lease-closing failure** in this repository's unit
+  lane, a timing-sensitive test with a 10 ms request budget that fails under
+  load. It is recorded below with the control run that shows it is not caused by
+  this increment, and it is not fixed here because it is a separate scope.
 - **The checker qualification of the repositories that were not measured.**
   `adea-ai/agent-sim` and `adea-ai/assets` are not anonymously reachable, so
   their checker graphs, generated types and failing-fixture exit codes are not
@@ -232,7 +244,7 @@ name. Nothing was substituted and no version was changed.
 
 ### The checker project graph
 
-The repository holds 47 `tsconfig` projects, and they are not all the same kind of
+The repository holds 48 `tsconfig` projects, and they are not all the same kind of
 thing:
 
 | Kind                                              | Count | Reached by                                                        |
@@ -241,6 +253,13 @@ thing:
 | The shared base, `tsconfig.base.json`             | 1     | extended by all 45 checked projects                               |
 | The infrastructure project, `tsconfig.infra.json` | 1     | `bun run infra:typecheck`                                         |
 | The repository root project, `tsconfig.json`      | 1     | **nothing**: no project extends it and no command checks it       |
+
+The count is **45 + 1 + 1 + 1 = 48**, and the earlier revision of this record
+said 47. The count was wrong, not the table: 45 projects carry their own
+`tsconfig.json` under `apps/` and `packages/`, and the repository root holds
+exactly three more, `tsconfig.base.json`, `tsconfig.infra.json` and
+`tsconfig.json`. A walk of the tracked tree names all 48 and no others, and every
+one of the 45 workspace projects is reachable by the checker as described above.
 
 The root project is worth naming, because it is the one that would mislead a
 reader: it extends the shared base, it declares the two decorator options, and it
@@ -294,7 +313,8 @@ cannot leave a file in the tree.
 
 ### The gaps this found, and the guard that now prevents them
 
-Two real gaps were found, and neither was guarded by anything in the repository:
+Three real gaps were found, and none of them was guarded by anything in the
+repository:
 
 1. **Nothing asserted that the check graph still covers the workspace.** A package
    whose `typecheck` script was renamed, or a workspace dependency that dropped
@@ -304,14 +324,26 @@ Two real gaps were found, and neither was guarded by anything in the repository:
    still cover their own sources.** A project whose `include` was emptied, or
    narrowed past the sources, would still have reported "no type errors" for every
    package, and the whole lane would have stayed green.
+3. **The first revision of the guard inferred the checked projects from the
+   presence of the `typecheck` script it was checking.** A package whose script
+   was removed or renamed dropped out of the expectation along with the script, so
+   the guard reported success for a package it had stopped checking, and the
+   script it did find was never shown to reach the checker at all.
 
-`tests/repository.test.mjs` now carries one guard that closes both, and it is
+`tests/repository.test.mjs` now carries two tests that close these, and they are
 proven to bite:
 
-- it asserts that every workspace package with a `typecheck` script has a
-  typecheck task in the graph, that the task runs that package's own checker, that
-  it waits for the build of every workspace dependency, and that the aggregate
-  depends on the build, the type checks and the openapi check;
+- the guard enumerates the expected checked projects **from the workspace layout,
+  not from the manifests' own scripts**: every workspace is expected to be
+  checked, except those named in an explicit exclusion list. The list is empty,
+  because every workspace in this repository holds TypeScript sources and a
+  tsconfig project, and an exclusion is only accepted while the workspace really
+  holds no TypeScript project, so the list cannot become a way to hide one;
+- it requires each expected project to declare a `typecheck` script, requires
+  that script to invoke the pinned checker over that project's own project
+  exactly (`bun check -p tsconfig.json`), requires the check graph to carry a
+  task for it that runs that project's own script, that waits for the pinned
+  toolchain identity, and that waits for the build of every workspace dependency;
 - it asserts that every checked project inherits the shared base rather than a
   project that names no files;
 - it proves that every checked project still names at least one of its own
@@ -319,35 +351,49 @@ proven to bite:
 - it proves the checker is not vacuous with an isolated disposable project: a clean
   project must typecheck, the same project with an intentional type error must
   exit nonzero and name the file, and the temporary directory is removed
-  afterwards, so no file in the repository is ever written.
+  afterwards, so no file in the repository is ever written;
+- a second test is the mutation regression: it copies the workspace manifests to a
+  disposable directory, mutates one real project's script there, rebuilds the
+  check graph from the mutated manifests, and requires the same contract to
+  report it. A removed script, a renamed script, a no-op script, a script that
+  checks with another compiler and a script that checks another project are each
+  rejected, and an exclusion that names a project holding TypeScript is rejected
+  as well. The repository's own tree is never written by it.
 
-The mutations that make the guard fail, each applied and then reverted: narrowing
-a package's `include` past its own sources fails "tool-sdk's checked project must
-name at least one of its own sources"; a disposable project that includes nothing
-fails "the checker must fail on an intentional type error"; removing the dependency
-builds from the graph fails "runtime-gateway's check must wait for bootstrap's
-build"; and making a checked project inherit the root project fails "tool-sdk must
-extend the shared base".
+The mutations that make the guard fail, each applied to the real tree and then
+reverted: removing a required package's `typecheck` script fails "tool-sdk must
+declare a typecheck script" and "tool-sdk must have a typecheck task in the check
+graph"; renaming that script fails the same two assertions for the same package;
+replacing it with a no-op fails "tool-sdk's typecheck script must invoke the
+pinned checker"; adding a workspace with no `typecheck` script at all fails the
+same two assertions for the new workspace; naming a project that holds TypeScript
+in the exclusion list fails "is excluded from the type checker but holds a
+tsconfig project"; narrowing a package's `include` past its own sources fails
+"tool-sdk's checked project must name at least one of its own sources"; a
+disposable project that includes nothing fails "the checker must fail on an
+intentional type error"; removing the dependency builds from the graph fails
+"runtime-gateway's check must wait for bootstrap's build"; and making a checked
+project inherit the root project fails "tool-sdk must extend the shared base".
 
 ## The checks that were run, and their results
 
 ### This repository, `adea-ai/control-plane`
 
-| Check                                  | Exit | Result                                                                                                                                                                                                                                                                                                                                                                                       |
-| -------------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bun install --frozen-lockfile`        | 0    | 374 packages installed                                                                                                                                                                                                                                                                                                                                                                       |
-| `bun run build`                        | 0    | vp run 47/47 successful                                                                                                                                                                                                                                                                                                                                                                      |
-| `vp run orch:check`                    | 0    | vp run 97/97 successful                                                                                                                                                                                                                                                                                                                                                                      |
-| `bun run db:check`                     | 0    | `Everything's fine`                                                                                                                                                                                                                                                                                                                                                                          |
-| `bun run compatibility:check`          | 0    | passed                                                                                                                                                                                                                                                                                                                                                                                       |
-| `bun run architecture:check`           | 0    | 45 packages, 54 operations, 4 profiles validated                                                                                                                                                                                                                                                                                                                                             |
-| `bun run infra:typecheck`              | 0    | no type errors in 208 files                                                                                                                                                                                                                                                                                                                                                                  |
-| `bun run requirements:check`           | 1    | `Unable to query GitHub issues through authenticated GitHub CLI (exit 4)` — **environmental limit**: the check queries the live issues through an authenticated GitHub CLI, and no such route exists here                                                                                                                                                                                    |
-| `bun run format:check`                 | 0    | clean, 1938 files                                                                                                                                                                                                                                                                                                                                                                            |
-| `bun run lint`                         | 0    | 1230 files in 45 packages, 0 boundary violations; canonical ordering passed; 39 digest flows matched                                                                                                                                                                                                                                                                                         |
-| `bun test ./tests/repository.test.mjs` | 0    | 32 passes, 0 failures                                                                                                                                                                                                                                                                                                                                                                        |
-| seeded unit lane with coverage         | 1    | 4351 pass, 11 skip, **1 fail**, 4363 tests over 465 files, 168s. The failure is `Runtime Gateway production startup > forwards the host credential authority in an isolated subprocess`, and it is **pre-existing on `main`**: the fixture's only marker is the name of a passing test, and the reporter prints the name of a failing test. The fix is the separate local branch named above |
-| seeded smoke lane                      | 0    | 662 pass, 5 skip, 0 fail, 667 tests over 44 files, 148s                                                                                                                                                                                                                                                                                                                                      |
+| Check                                  | Exit | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bun install --frozen-lockfile`        | 0    | 374 packages installed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `bun run build`                        | 0    | vp run 47/47 successful                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `vp run orch:check`                    | 0    | vp run 97/97 successful                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `bun run db:check`                     | 0    | `Everything's fine`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `bun run compatibility:check`          | 0    | passed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `bun run architecture:check`           | 0    | 45 packages, 54 operations, 4 profiles validated                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `bun run infra:typecheck`              | 0    | no type errors in 208 files                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `bun run requirements:check`           | 1    | `Unable to query GitHub issues through authenticated GitHub CLI (exit 4)` — **environmental limit**: the check queries the live issues through an authenticated GitHub CLI, and no such route exists here                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `bun run format:check`                 | 0    | clean, 1939 files                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `bun run lint`                         | 0    | 1230 files in 45 packages, 0 boundary violations; canonical ordering passed; 39 digest flows matched                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `bun test ./tests/repository.test.mjs` | 0    | 34 passes, 0 failures                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| seeded unit lane with coverage         | 1    | 4350 pass, 11 skip, **2 fail**, 4363 tests over 465 files, 444s. The failures are `Runtime Gateway production startup > forwards the host credential authority in an isolated subprocess` and `ledger LiteLLM physical HTTP sends > bounds a stalled authorization and closes a lease that arrives after abort`. Both are **pre-existing and not caused by this increment**: the same lane, run in a separate worktree at the parent commit `69019b971` with this change absent, fails the same two and reports 4349 pass, 11 skip, 3 fail. The first is the failure this record already carried: the fixture's only marker is the name of a passing test, and the reporter prints the name of a failing test, and its fix is the separate local branch named above. The second is a timing-sensitive test with a 10 ms request budget and a 60 ms bound, which passes in isolation and fails under load; the machine carried a load average of 130 while the lane ran. The third failure in the control run, `reconcile confirms a safe verdict under the claimed epoch of a dead owner`, is the same kind of load-induced timeout and appears only in that run |
+| seeded smoke lane                      | 0    | 664 pass, 5 skip, 0 fail, 669 tests over 44 files, 269s                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ### The other repositories
 
@@ -382,6 +428,6 @@ every other worktree was left exactly as it was.
 
 ## Publication
 
-The increment is one documentation file and one test, with the checks above. It
-is a draft with auto-merge off, and it is not ready, not merged, and closes
+The increment is one documentation file and one test file, with the checks above.
+It is a draft with auto-merge off, and it is not ready, not merged, and closes
 nothing.

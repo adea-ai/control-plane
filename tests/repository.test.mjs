@@ -1267,19 +1267,144 @@ test('uses Renovate with grouped draft batches and sync-managed holds', async ()
   )
 })
 
-test('the Bun type checker covers every package, and it is not vacuous', async () => {
+// The workspaces that carry no TypeScript project, and so are not checked by the
+// pinned checker. Every entry has to say why, and the guard verifies each reason
+// against the workspace itself, so a project cannot be taken out of the check by
+// listing it here. The list is empty: every workspace in this repository holds
+// TypeScript sources and a tsconfig project.
+const nonTypeScriptWorkspaces = new Map()
+
+// The invocation a checked project's typecheck script must be: the pinned Bun
+// checker over that project's own tsconfig project, and nothing else. The `bun` in
+// it is the pinned binary because every check task waits for the toolchain identity
+// task, which verifies the node and bun bytes the tasks actually run. The form is
+// exact so that a script which reaches the checker by another route, or reaches it
+// over another project, is reported rather than accepted.
+const pinnedCheckerInvocation = 'bun check -p tsconfig.json'
+
+/** The TypeScript sources a workspace holds, relative to the workspace. */
+const typeScriptSources = (directory) => {
+  const source = join(directory, 'src')
+  if (!existsSync(source)) return []
+  return readdirSync(source, { withFileTypes: true, recursive: true })
+    .filter((item) => item.isFile() && item.name.endsWith('.ts'))
+    .map((item) => relative(directory, join(item.parentPath, item.name)))
+}
+
+/**
+ * The workspaces that are excluded from the check, and why that exclusion is not
+ * honest. A workspace may only be excluded while it really carries no TypeScript
+ * project, so the exclusion list cannot be used to hide one.
+ */
+const exclusionViolations = (workspacePackages, exclusions) => {
+  const violations = []
+  const byName = new Map(workspacePackages.map((entry) => [entry.manifest.name, entry]))
+  for (const [name, reason] of exclusions) {
+    const entry = byName.get(name)
+    if (!entry) {
+      violations.push(`${name} is excluded from the type checker but is not a workspace`)
+      continue
+    }
+    if (typeof reason !== 'string' || reason.trim() === '') {
+      violations.push(`${name} is excluded from the type checker without a reason`)
+    }
+    if (existsSync(join(entry.dir, 'tsconfig.json'))) {
+      violations.push(`${name} is excluded from the type checker but holds a tsconfig project`)
+    }
+    if (typeScriptSources(entry.dir).length > 0) {
+      violations.push(`${name} is excluded from the type checker but holds TypeScript sources`)
+    }
+  }
+  return violations
+}
+
+/**
+ * The contract every checked project must satisfy: the project declares a
+ * typecheck script, that script really invokes the pinned checker, and the check
+ * graph runs it, under the pinned toolchain, after the builds its workspace
+ * dependencies need.
+ *
+ * The expected projects are enumerated from the workspace layout and the explicit
+ * exclusion list, never from the manifests' own scripts, so a project whose script
+ * was removed or renamed is still expected and this reports it.
+ */
+const checkerContractViolations = (root, workspacePackages, tasks, exclusions) => {
+  const violations = []
+  const byName = new Map(workspacePackages.map((entry) => [entry.manifest.name, entry]))
+  for (const entry of workspacePackages) {
+    const name = entry.manifest.name
+    const short = name.replace('@control-plane/', '')
+    if (exclusions.has(name)) continue
+    const script = entry.manifest.scripts?.typecheck
+    if (typeof script !== 'string') {
+      violations.push(`${short} must declare a typecheck script`)
+    } else if (script.trim() !== pinnedCheckerInvocation) {
+      violations.push(
+        `${short}'s typecheck script must invoke the pinned checker as "${pinnedCheckerInvocation}", not "${script}"`
+      )
+    }
+    const task = tasks[`orch:${short}:typecheck`]
+    if (!task) {
+      violations.push(`${short} must have a typecheck task in the check graph`)
+      continue
+    }
+    const directory = relative(root, entry.dir).replaceAll('\\', '/')
+    if (!task.command.endsWith(`bun run --cwd ${directory} typecheck`)) {
+      violations.push(`${short}'s typecheck task must run that project's own typecheck script`)
+    }
+    if (!task.dependsOn.includes('orch:toolchain')) {
+      violations.push(`${short}'s check must wait for the pinned toolchain identity`)
+    }
+    const dependencies = Object.keys({
+      ...entry.manifest.dependencies,
+      ...entry.manifest.devDependencies,
+      ...entry.manifest.peerDependencies,
+      ...entry.manifest.optionalDependencies,
+    }).filter((dependency) => byName.has(dependency))
+    for (const dependency of dependencies) {
+      const dependencyShort = byName.get(dependency).manifest.name.replace('@control-plane/', '')
+      if (!task.dependsOn.includes(`orch:${dependencyShort}:build`)) {
+        violations.push(
+          `${short}'s check must wait for ${dependencyShort}'s build, so its generated declarations exist`
+        )
+      }
+    }
+  }
+  return violations
+}
+
+test('the Bun type checker covers every TypeScript project, and it is not vacuous', async () => {
   const root = fileURLToPath(new URL('..', import.meta.url))
   const workspacePackages = workspaces(root)
   const tasks = buildTasks(root, expectedId(root))
-  const byName = new Map(workspacePackages.map((entry) => [entry.manifest.name, entry]))
-  const typechecked = workspacePackages.filter((entry) => entry.manifest.scripts?.typecheck)
-  assert.ok(typechecked.length > 0, 'the workspace must hold packages under the type checker')
 
-  for (const entry of typechecked) {
+  // The expected checked projects are enumerated from the workspace layout and
+  // the explicit exclusion list, not from the manifests' own typecheck scripts, so
+  // a project that loses or renames its script is still expected to be checked.
+  assert.deepEqual(
+    exclusionViolations(workspacePackages, nonTypeScriptWorkspaces),
+    [],
+    'every workspace excluded from the type checker must really hold no TypeScript project'
+  )
+  const violations = checkerContractViolations(
+    root,
+    workspacePackages,
+    tasks,
+    nonTypeScriptWorkspaces
+  )
+  assert.deepEqual(violations, [], violations.join('; '))
+
+  for (const entry of workspacePackages) {
+    if (nonTypeScriptWorkspaces.has(entry.manifest.name)) continue
     const short = entry.manifest.name.replace('@control-plane/', '')
-    const task = tasks[`orch:${short}:typecheck`]
-    assert.ok(task, `${short} must have a typecheck task in the check graph`)
-    assert.match(task.command, /bun run --cwd .* typecheck$/)
+    // The project must be a TypeScript project in fact, or it has to be declared
+    // as an exclusion with its reason.
+    assert.ok(
+      existsSync(join(entry.dir, 'tsconfig.json')),
+      `${short} must hold a tsconfig project, or be declared an exclusion with its reason`
+    )
+    const sources = typeScriptSources(entry.dir)
+    assert.ok(sources.length > 0, `${short} must hold TypeScript sources`)
     // The project must inherit the shared base, whose file set each package names
     // in its own include. The repository's root project names no files, so a
     // package that inherited it would pull its whole directory into the check
@@ -1294,33 +1419,20 @@ test('the Bun type checker covers every package, and it is not vacuous', async (
     // the package's own sources, or the checker would have nothing to read and would
     // report success for a package it never looked at.
     const include = Array.isArray(project.include) ? project.include : []
-    const sources = readdirSync(join(entry.dir, 'src'), {
-      withFileTypes: true,
-      recursive: true,
-    })
-      .filter((item) => item.isFile() && item.name.endsWith('.ts'))
-      .map((item) => relative(entry.dir, join(item.parentPath, item.name)))
     assert.ok(
       sources.some((source) => include.some((pattern) => new Glob(pattern).match(source))),
       `${short}'s checked project must name at least one of its own sources`
     )
-    // The generated declarations of every workspace dependency have to exist before
-    // this package is checked, or the cross-package types the checker resolves are
-    // stale or missing and the check passes against the wrong shapes.
-    const dependencies = Object.keys({
-      ...entry.manifest.dependencies,
-      ...entry.manifest.devDependencies,
-      ...entry.manifest.peerDependencies,
-      ...entry.manifest.optionalDependencies,
-    }).filter((name) => byName.has(name))
-    for (const dependency of dependencies) {
-      const dependencyShort = byName.get(dependency).manifest.name.replace('@control-plane/', '')
-      assert.ok(
-        task.dependsOn.includes(`orch:${dependencyShort}:build`),
-        `${short}'s check must wait for ${dependencyShort}'s build, so its generated declarations exist`
-      )
-    }
   }
+
+  // The infrastructure project is checked by the root manifest rather than by a
+  // workspace, so its invocation is asserted here.
+  const rootManifest = await readJson('package.json')
+  assert.equal(
+    rootManifest.scripts['infra:typecheck'],
+    'bun check -p tsconfig.infra.json',
+    'the infrastructure project must be checked by the pinned checker'
+  )
 
   // The aggregate the repository's own type check runs must build first, so the
   // declarations exist, and must include the openapi check.
@@ -1373,4 +1485,120 @@ test('the Bun type checker covers every package, and it is not vacuous', async (
     await rm(disposable, { recursive: true, force: true })
   }
   assert.equal(existsSync(disposable), false, 'the disposable check must leave nothing behind')
+})
+
+test('a project that loses, renames, or neuters its typecheck script fails the checker contract', async () => {
+  const root = fileURLToPath(new URL('..', import.meta.url))
+  const workspacePackages = workspaces(root)
+
+  // The contract is applied to a disposable copy of the workspace, so the mutation
+  // is made on real manifests and the real check graph is built from them, while
+  // the repository's own tree is never written.
+  const fixture = await mkdtemp(join(tmpdir(), 'control-plane-typecheck-contract-'))
+  try {
+    for (const entry of workspacePackages) {
+      const directory = join(fixture, relative(root, entry.dir))
+      await mkdir(directory, { recursive: true })
+      await writeFile(join(directory, 'package.json'), JSON.stringify(entry.manifest, null, 2))
+    }
+    const required = '@control-plane/tool-sdk'
+    const short = 'tool-sdk'
+    const original = workspacePackages.find((entry) => entry.manifest.name === required)
+    assert.ok(original, 'the regression needs a project the repository checks')
+    const originalScript = original.manifest.scripts.typecheck
+    assert.equal(
+      originalScript,
+      pinnedCheckerInvocation,
+      'the regression needs a project whose typecheck script invokes the pinned checker'
+    )
+
+    const contractFor = async (mutate) => {
+      const manifestPath = join(fixture, relative(root, original.dir), 'package.json')
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+      mutate(manifest.scripts)
+      await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
+      const entries = workspaces(fixture)
+      const tasks = buildTasks(fixture, 'fixture-toolchain')
+      return checkerContractViolations(fixture, entries, tasks, new Map())
+    }
+
+    // The control: the copy of the workspace satisfies the contract as it stands.
+    assert.deepEqual(
+      await contractFor(() => {}),
+      [],
+      'the workspace must satisfy the checker contract'
+    )
+
+    // The script removed: the project is still expected, so the contract must say so.
+    assert.deepEqual(
+      await contractFor((scripts) => delete scripts.typecheck),
+      [
+        `${short} must declare a typecheck script`,
+        `${short} must have a typecheck task in the check graph`,
+      ],
+      'a project that loses its typecheck script must fail the contract'
+    )
+
+    // The script renamed: the project is still expected under its own name.
+    assert.deepEqual(
+      await contractFor((scripts) => {
+        scripts.typechecks = scripts.typecheck
+        delete scripts.typecheck
+      }),
+      [
+        `${short} must declare a typecheck script`,
+        `${short} must have a typecheck task in the check graph`,
+      ],
+      'a project that renames its typecheck script must fail the contract'
+    )
+
+    // A script that does nothing: the task exists, but the checker does not run.
+    assert.deepEqual(
+      await contractFor((scripts) => {
+        scripts.typecheck = 'node -e 0'
+      }),
+      [
+        `${short}'s typecheck script must invoke the pinned checker as "${pinnedCheckerInvocation}", not "node -e 0"`,
+      ],
+      'a project whose typecheck script does nothing must fail the contract'
+    )
+
+    // A script that checks with another compiler.
+    assert.deepEqual(
+      await contractFor((scripts) => {
+        scripts.typecheck = 'tsc -p tsconfig.json'
+      }),
+      [
+        `${short}'s typecheck script must invoke the pinned checker as "${pinnedCheckerInvocation}", not "tsc -p tsconfig.json"`,
+      ],
+      'a project that checks with another compiler must fail the contract'
+    )
+
+    // A script that checks the wrong project: the checker runs, but not over this
+    // project's own sources.
+    assert.deepEqual(
+      await contractFor((scripts) => {
+        scripts.typecheck = 'bun check -p tsconfig.base.json'
+      }),
+      [
+        `${short}'s typecheck script must invoke the pinned checker as "${pinnedCheckerInvocation}", not "bun check -p tsconfig.base.json"`,
+      ],
+      'a project that checks another project must fail the contract'
+    )
+
+    // The exclusion list is the one way a project could leave the check, so it is
+    // held to the same standard: a project that holds TypeScript cannot be
+    // excluded from the check by naming it.
+    assert.deepEqual(
+      exclusionViolations(workspacePackages, new Map([[required, 'not a TypeScript project']])),
+      [
+        `${required} is excluded from the type checker but holds a tsconfig project`,
+        `${required} is excluded from the type checker but holds TypeScript sources`,
+      ],
+      'an exclusion cannot hide a project that holds TypeScript'
+    )
+  } finally {
+    await rm(fixture, { recursive: true, force: true })
+  }
+  assert.equal(existsSync(fixture), false, 'the disposable fixture must leave nothing behind')
 })
