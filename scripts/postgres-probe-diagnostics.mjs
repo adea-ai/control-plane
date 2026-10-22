@@ -159,20 +159,47 @@ function createUriSearch(source) {
 }
 
 /**
- * The first `character` at or after `from`, or -1 when there is none.
+ * The first `text` at or after `from`, or -1 when there is none.
  */
-function nextUriCharacter(search, character, from) {
-  let cached = search.cached.get(character)
+function nextUriText(search, text, from) {
+  let cached = search.cached.get(text)
   if (cached === undefined) {
     cached = { from: -1, found: -1 }
-    search.cached.set(character, cached)
+    search.cached.set(text, cached)
   }
   if (cached.from >= 0 && (cached.found === -1 ? from >= cached.from : from <= cached.found)) {
     return cached.found
   }
-  cached.found = search.source.indexOf(character, from)
+  cached.found = search.source.indexOf(text, from)
   cached.from = from
   return cached.found
+}
+
+/**
+ * The first `text` at or after `from` and before `limit`, or -1 when there is
+ * none.
+ */
+function nextUriTextWithin(search, text, from, limit) {
+  const found = nextUriText(search, text, from)
+  return found === -1 || found >= limit ? -1 : found
+}
+
+/**
+ * The start of the next connection URI at or after `from`, or the end of the
+ * source when there is none.
+ *
+ * A URI in diagnostic text ends where the next one begins. libpq's own parser
+ * reads a whole connection string as one URI, but the redactor reads every URI
+ * in the text on its own, and a URI whose searches ran past its own end would
+ * take the next URI's password and the text between the two with it.
+ */
+function nextUriStart(source, search, from) {
+  let start = -1
+  for (const scheme of URI_SCHEMES) {
+    const found = nextUriText(search, `${scheme}://`, from)
+    if (found !== -1 && (start === -1 || found < start)) start = found
+  }
+  return start === -1 ? source.length : start
 }
 
 /**
@@ -236,17 +263,24 @@ function decodeUriKey(key) {
  * authority with no `:` holds a user and no password. Either way the URI holds
  * no password, and the text is left to be read as ordinary text.
  *
+ * A URI ends where the next one begins, and every search this reader makes is
+ * bounded by that end. A search that ran into the next URI would read that
+ * URI's password as this one's, and the text between the two would be taken
+ * with it and never examined.
+ *
  * Every span is read once and the scans move forward, so a long query costs
  * one pass over the text and not one pass per parameter.
  */
 function readUriCredential(source, search, start) {
   const spans = []
-  const at = nextUriCharacter(search, '@', start)
-  const slash = nextUriCharacter(search, '/', start)
+  // The end of this URI: the next URI in the text, or the end of the source.
+  const limit = nextUriStart(source, search, start + 1)
+  const at = nextUriTextWithin(search, '@', start, limit)
+  const slash = nextUriTextWithin(search, '/', start, limit)
   // The userinfo is the part of the authority before the first `@`.
   const userinfoEnd = at !== -1 && (slash === -1 || slash > at) ? at : -1
   if (userinfoEnd !== -1) {
-    const colon = nextUriCharacter(search, ':', start)
+    const colon = nextUriTextWithin(search, ':', start, limit)
     if (colon !== -1 && colon < userinfoEnd) {
       spans.push({ start, end: userinfoEnd, resume: userinfoEnd + 1 })
     }
@@ -254,20 +288,25 @@ function readUriCredential(source, search, start) {
   // The query starts at the first `?` that follows the userinfo: a `?` inside
   // the userinfo is an ordinary character of the password, and a URI with no
   // userinfo starts its query at the first `?` of the authority.
-  const question = nextUriCharacter(search, '?', userinfoEnd === -1 ? start : userinfoEnd + 1)
+  const question = nextUriTextWithin(
+    search,
+    '?',
+    userinfoEnd === -1 ? start : userinfoEnd + 1,
+    limit
+  )
   if (question !== -1) {
     let parameterStart = question + 1
-    while (parameterStart <= source.length) {
-      const ampersand = nextUriCharacter(search, '&', parameterStart)
-      const parameterEnd = ampersand === -1 ? source.length : ampersand
-      const equals = nextUriCharacter(search, '=', parameterStart)
+    while (parameterStart < limit) {
+      const ampersand = nextUriTextWithin(search, '&', parameterStart, limit)
+      const parameterEnd = ampersand === -1 ? limit : ampersand
+      const equals = nextUriTextWithin(search, '=', parameterStart, limit)
       if (equals !== -1 && equals < parameterEnd) {
         const key = decodeUriKey(source.slice(parameterStart, equals))
         if (isCredentialKey(key)) {
           spans.push({ start: equals + 1, end: parameterEnd, resume: parameterEnd })
         }
       }
-      if (parameterEnd >= source.length) break
+      if (parameterEnd >= limit) break
       parameterStart = parameterEnd + 1
     }
   }
@@ -311,9 +350,10 @@ function redactSpans(source, start, end, spans) {
  * and no other. The query of a URI is read as libpq reads it too: the
  * parameters are separated by `&`, the key of each one is decoded before it
  * is compared with a credential word, and the value of a credential parameter
- * runs to the next `&` or to the end of the source. A URI that holds no
- * password is ordinary text, so the scan continues inside it and a credential
- * that follows it is still found.
+ * runs to the next `&` or to the end of the source. A URI ends where the next
+ * one begins, so a URI in a line of diagnostic text never reaches into the one
+ * after it. A URI that holds no password is ordinary text, so the scan
+ * continues inside it and a credential that follows it is still found.
  *
  * The redaction runs before the excerpt is cut, so a secret can never be
  * split by the cut, and a value is consumed whole so its tail cannot survive

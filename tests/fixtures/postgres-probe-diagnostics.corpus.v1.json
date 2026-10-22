@@ -1,5 +1,5 @@
 {
-  "note": "A differential corpus for the probe redactor. Every entry is a synthetic diagnostic string, the pure form that was handed to libpq's own parse-only interface, and the credentials libpq recognised in that form. A recognised credential must not survive the redaction, and a form libpq recognises no credential in must come back unchanged.",
+  "note": "A differential corpus for the probe redactor. Every entry is a synthetic diagnostic string, the pure form that was handed to libpq's own parse-only interface, and the credentials libpq recognised in that form. A recognised credential must not survive the redaction, and a form libpq recognises no credential in must come back unchanged. A secret is what must not survive: a credential libpq recognised, the raw form of an encoded one, or a credential the redactor reads in a URI of its own, because a URI in diagnostic text ends where the next one begins.",
   "oracle": "PQconninfoParse (libpq 16.15 and 18.6), parse-only, no connection",
   "cases": [
     {
@@ -361,6 +361,33 @@
       "libpqRejected": false,
       "libpqRecognisedCredentials": ["0ther"],
       "secrets": ["0ther"]
+    },
+    {
+      "name": "mixed: two URIs, the second one with a query",
+      "kind": "libpq",
+      "text": "postgresql://u:first-secret@host/db postgresql://u:second-secret@host/db?password=third-secret",
+      "libpq": "postgresql://u:first-secret@host/db postgresql://u:second-secret@host/db?password=third-secret",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["third-secret"],
+      "secrets": ["third-secret", "first-secret", "second-secret"]
+    },
+    {
+      "name": "mixed: two URIs and an assignment between them",
+      "kind": "libpq",
+      "text": "postgresql://u:first-secret@host/db password=plain-secret postgresql://u:second-secret@host/db?password=third-secret",
+      "libpq": "postgresql://u:first-secret@host/db password=plain-secret postgresql://u:second-secret@host/db?password=third-secret",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["third-secret"],
+      "secrets": ["third-secret", "first-secret", "second-secret", "plain-secret"]
+    },
+    {
+      "name": "mixed: two plain URIs",
+      "kind": "libpq",
+      "text": "postgresql://u:first-secret@host/db postgresql://u:second-secret@host/db",
+      "libpq": "postgresql://u:first-secret@host/db postgresql://u:second-secret@host/db",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["first-secret"],
+      "secrets": ["first-secret", "second-secret"]
     },
     {
       "name": "mixed: a failed URI candidate then an assignment",

@@ -383,6 +383,37 @@ test('a query with no credential is left alone', () => {
   )
 })
 
+// Two URIs in one diagnostic line, and text between them. A URI ends where the
+// next one begins: a search that ran into the next URI would read that URI's
+// password as this one's, and it would take the text between the two with it
+// and never examine it.
+const COMPOSED_URI_CASES = [
+  [
+    'two URIs, the second one with a query',
+    'postgresql://u:first-secret@host/db postgresql://u:second-secret@host/db?password=third-secret',
+    ['first-secret', 'second-secret', 'third-secret'],
+    'postgresql://<redacted>@host/db postgresql://<redacted>@host/db?password=<redacted>',
+  ],
+  [
+    'two URIs and an assignment between them',
+    'postgresql://u:first-secret@host/db password=plain-secret postgresql://u:second-secret@host/db?password=third-secret',
+    ['first-secret', 'second-secret', 'third-secret', 'plain-secret'],
+    'postgresql://<redacted>@host/db password=<redacted> postgresql://<redacted>@host/db?password=<redacted>',
+  ],
+  [
+    'two plain URIs',
+    'postgresql://u:first-secret@host/db postgresql://u:second-secret@host/db',
+    ['first-secret', 'second-secret'],
+    'postgresql://<redacted>@host/db postgresql://<redacted>@host/db',
+  ],
+]
+
+test.each(COMPOSED_URI_CASES)('%s keeps every credential out', (_case, text, secrets, expected) => {
+  const sanitized = sanitizeProbeOutput(text)
+  for (const secret of secrets) expect(sanitized).not.toContain(secret)
+  expect(sanitized).toBe(expected)
+})
+
 // The redaction is one pass over the text: a long plain token may not cost a
 // pass per position, and the excerpt is still cut to the limit.
 test('a long plain token is read once and the excerpt is still bounded', () => {
