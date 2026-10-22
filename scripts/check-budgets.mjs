@@ -112,25 +112,67 @@ export function countExternalPackages(lsOutput) {
 }
 
 /**
- * The attribution of the measured closure: the external identities the
- * lockfile's graph reaches from the declared roots, and how much each root
- * contributes.
+ * The install layout of a `bun pm ls --all` listing: every entry with the
+ * install path it sits at and the entry that holds it.
  *
- * The attribution answers "which dependency brings this package in", so a
- * breach can be routed to the slice that owns the manifest instead of being
- * an unattributed count. It never changes the measurement: the counted
- * identities come from the listing, and this only explains them.
+ * The listing is a tree — an entry is printed under the entry that installs
+ * it — so the depth of a line is the depth of its install path. `bun pm ls`
+ * prints the package name under its parent, so the path is the chain of the
+ * parents' identities, not a path in the listing's text.
  *
- * @param {string} lockfileText the contents of `bun.lock`
- * @returns {{ identities: Set<string>, perRoot: Record<string, number>, unresolvedRoots: string[] }}
+ * This is the layout of the **measured** input: the paths it reports are the
+ * ones the installation actually uses.
+ *
+ * @param {string} lsOutput the output of `bun pm ls --all`
+ * @returns {{ entries: Array<{identity: string, name: string, version: string, depth: number, parent: string|undefined, path: string[], installRoot: string|undefined}>, byIdentity: Map<string, object> }}
  */
-export function attributeExternalPackages(lockfileText) {
+export function parseListingLayout(lsOutput) {
+  const entries = []
+  const stack = []
+  for (const line of lsOutput.split('\n')) {
+    const match = line.match(/^((?:[│ ]   )*)(?:├── |└── )(.*)$/)
+    if (match === null) continue
+    const identity = match[2].trim()
+    if (identity === '') continue
+    const at = identity.lastIndexOf('@')
+    if (at <= 0) continue
+    const depth = match[1].length / 4 + 1
+    stack.length = depth - 1
+    const parent = depth >= 2 ? stack[depth - 2] : undefined
+    stack[depth - 1] = identity
+    const path = stack.slice(0, depth)
+    entries.push({
+      identity,
+      name: identity.slice(0, at),
+      version: identity.slice(at + 1),
+      depth,
+      parent,
+      path,
+      installRoot: path[0],
+    })
+  }
+  return {
+    entries,
+    byIdentity: new Map(entries.map((entry) => [entry.identity, entry])),
+  }
+}
+
+/**
+ * The lockfile's dependency graph: its entries, the declared roots, the
+ * manifest that owns each declaration, and the walk that reaches the external
+ * identities from those roots.
+ *
+ * The walk is the one the attribution and the reduction plan share, so the
+ * per-root numbers, the savings and the plan are measured on the same graph.
+ */
+function lockfileGraph(lockfileText) {
   const lock = JSONC.parse(lockfileText)
   const entries = new Map()
   for (const [key, value] of Object.entries(lock.packages ?? {})) {
     entries.set(key, {
       spec: Array.isArray(value) ? value[0] : value,
-      meta: Array.isArray(value) ? (value[2] ?? {}) : {},
+      meta:
+        Array.isArray(value) && typeof value[2] === 'object' && value[2] !== null ? value[2] : {},
     })
   }
   const byBaseName = new Map()
@@ -140,11 +182,39 @@ export function attributeExternalPackages(lockfileText) {
     byBaseName.get(base).push(key)
   }
   const declaredRoots = []
-  for (const workspace of Object.values(lock.workspaces ?? {})) {
+  const owners = new Map()
+  for (const [path, workspace] of Object.entries(lock.workspaces ?? {})) {
     for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) {
-      for (const name of Object.keys(workspace[section] ?? {})) declaredRoots.push(name)
+      for (const name of Object.keys(workspace[section] ?? {})) {
+        declaredRoots.push(name)
+        // The manifest that declares the root: the owner of the declaration,
+        // and so of the identities removing it would shed.
+        const list = owners.get(name) ?? []
+        list.push(path === '' ? 'package.json (root)' : `${path}/package.json`)
+        owners.set(name, list)
+      }
     }
   }
+  const roots = [...new Set(declaredRoots)]
+  // The entry that provides a dependency for a given parent: the copy
+  // installed under that parent when the lockfile nests one, the hoisted copy
+  // otherwise.
+  const providerOf = (parentKey, name) => {
+    if (parentKey !== '') {
+      const nested = `${parentKey}/${name}`
+      if (entries.has(nested)) return nested
+    }
+    const candidates = byBaseName.get(name) ?? []
+    return candidates.find((key) => key === name) ?? candidates[0]
+  }
+  const identityOf = (key) => {
+    const { spec } = entries.get(key)
+    const at = spec.lastIndexOf('@')
+    return `${normalizePackageName(key)}@${spec.slice(at + 1)}`
+  }
+  // The external identities the declared roots reach. A root resolves to the
+  // hoisted copy of its name — the copy its manifest's range selects — and
+  // every edge resolves to the entry that provides it.
   const closureOf = (rootNames) => {
     const identities = new Set()
     const resolutions = new Map()
@@ -152,85 +222,292 @@ export function attributeExternalPackages(lockfileText) {
     const queue = []
     const unresolved = []
     for (const root of new Set(rootNames)) {
-      const keys = byBaseName.get(root)
-      if (!keys?.length) {
+      const keys = byBaseName.get(root) ?? []
+      if (keys.length === 0) {
         unresolved.push(root)
         continue
       }
-      queue.push(...keys)
+      queue.push(keys.find((key) => key === root) ?? keys[0])
     }
     while (queue.length > 0) {
       const key = queue.pop()
       if (visited.has(key)) continue
       visited.add(key)
       const { spec, meta } = entries.get(key)
-      const at = spec.lastIndexOf('@')
-      const identity = `${normalizePackageName(key)}@${spec.slice(at + 1)}`
+      const identity = identityOf(key)
       if (!identity.startsWith('@control-plane/')) {
         identities.add(identity)
         // An alias entry names the package it resolves to, so the measured
         // identity can be traced to the package that is actually installed.
         resolutions.set(identity, spec)
       }
+      const optionalPeers = new Set(meta.optionalPeers ?? [])
       for (const section of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
         for (const name of Object.keys(meta[section] ?? {})) {
-          for (const child of byBaseName.get(name) ?? []) queue.push(child)
+          if (section === 'peerDependencies' && optionalPeers.has(name)) continue
+          const child = providerOf(key, name)
+          if (child !== undefined) queue.push(child)
         }
       }
     }
     return { identities, resolutions, unresolved }
   }
+  return { entries, byBaseName, roots, owners, providerOf, identityOf, closureOf }
+}
+
+/**
+ * The attribution of the measured closure: the external identities the
+ * lockfile's graph reaches from the declared roots, how much each root
+ * contributes, and what removing a root would actually shed.
+ *
+ * The attribution answers "which dependency brings this package in", so a
+ * breach can be routed to the slice that owns the manifest instead of being
+ * an unattributed count. It never changes the measurement: the counted
+ * identities come from the listing, and this only explains them.
+ *
+ * Two rules make the attribution mean what it says:
+ *
+ * - **An edge resolves to the entry that provides it.** A dependency is
+ *   satisfied by the copy installed under the requiring package, or by the
+ *   hoisted copy when there is none. Resolving a dependency name to *every*
+ *   entry that carries it would attribute a package's whole closure — every
+ *   version of it — to each root that names it, and would report the same
+ *   number for roots that share their dependencies.
+ * - **An optional peer is not an edge that keeps a package installed.** A peer
+ *   listed in `optionalPeers` is satisfied only when something else provides
+ *   it, so it cannot hold a package in the tree on its own. It is still
+ *   recorded as a consumer.
+ *
+ * @param {string} lockfileText the contents of `bun.lock`
+ * @returns {{ identities: Set<string>, perRoot: Record<string, number>, owners: Map<string, string[]>, removalSavings: Record<string, number>, exclusivePerRoot: Record<string, number>, consumers: Map<string, string[]>, resolutions: Map<string, string>, unresolvedRoots: string[] }}
+ */
+export function attributeExternalPackages(lockfileText) {
+  const { entries, roots, owners, providerOf, identityOf, closureOf } = lockfileGraph(lockfileText)
   const perRoot = {}
   const closures = new Map()
-  for (const root of new Set(declaredRoots)) {
+  for (const root of roots) {
     const { identities: rootIdentities } = closureOf([root])
     closures.set(root, rootIdentities)
     if (rootIdentities.size > 0) perRoot[root] = rootIdentities.size
   }
   // The exact offenders: the identities only one declared root brings in. A
-  // dependency that several roots share cannot be shed by dropping one of them,
-  // so the exclusive part is what an owner could actually remove.
-  const owners = new Map()
+  // dependency several roots share cannot be shed by dropping one of them, so
+  // the exclusive part is what an owner could actually remove.
+  const identityOwners = new Map()
   for (const [root, rootIdentities] of closures) {
     for (const identity of rootIdentities) {
-      if (!owners.has(identity)) owners.set(identity, [])
-      owners.get(identity).push(root)
+      if (!identityOwners.has(identity)) identityOwners.set(identity, [])
+      identityOwners.get(identity).push(root)
     }
   }
   const exclusivePerRoot = {}
   for (const [root, rootIdentities] of closures) {
-    const exclusive = [...rootIdentities].filter((identity) => owners.get(identity).length === 1)
+    const exclusive = [...rootIdentities].filter(
+      (identity) => identityOwners.get(identity).length === 1
+    )
     if (exclusive.length > 0) exclusivePerRoot[root] = exclusive.length
   }
-  const { identities, resolutions, unresolved } = closureOf(declaredRoots)
-  return { identities, perRoot, exclusivePerRoot, resolutions, unresolvedRoots: unresolved }
+  // What removing a root would shed: the identities the remaining roots no
+  // longer reach. This is the saving an owner can count on, and it is the
+  // measure the reduction plan is built from.
+  const all = closureOf(roots)
+  const removalSavings = {}
+  for (const root of roots) {
+    if (all.identities.size === 0) break
+    const remaining = closureOf(roots.filter((name) => name !== root))
+    const saving = all.identities.size - remaining.identities.size
+    if (saving > 0) removalSavings[root] = saving
+  }
+  // The consumers of every identity: the entries that name it, and the
+  // section they name it in. An optional peer is a consumer too, but it is
+  // not an edge, so it never keeps a package in the tree.
+  const consumers = new Map()
+  for (const [key, { meta }] of entries) {
+    for (const section of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+      for (const name of Object.keys(meta[section] ?? {})) {
+        const consumer = identityOf(key)
+        if (consumer.startsWith('@control-plane/')) continue
+        const required = !(
+          section === 'peerDependencies' && (meta.optionalPeers ?? []).includes(name)
+        )
+        const provider = providerOf(key, name)
+        if (provider === undefined) continue
+        const identity = identityOf(provider)
+        if (identity.startsWith('@control-plane/')) continue
+        const list = consumers.get(identity) ?? []
+        list.push(required ? `${consumer} (${section})` : `${consumer} (optional peer)`)
+        consumers.set(identity, list)
+      }
+    }
+  }
+  return {
+    identities: all.identities,
+    perRoot,
+    owners,
+    removalSavings,
+    exclusivePerRoot,
+    consumers,
+    resolutions: all.resolutions,
+    unresolvedRoots: all.unresolved,
+  }
+}
+
+/**
+ * The measured reduction plan: the declared roots whose removal brings the
+ * measured closure down to the ceiling, and what each removal saves.
+ *
+ * The plan is **measured, not argued**: every step's saving is the number of
+ * identities the remaining roots no longer reach once that root is gone, so
+ * the plan accounts for the identities several roots share instead of
+ * counting them once per root.
+ *
+ * The minimum is proved, not asserted: removing a set of roots sheds only
+ * what the single removals shed, so the sum of the largest single removals is
+ * an upper bound for any set of that size. When that bound is below the
+ * overage, no set of that size can reach the ceiling.
+ *
+ * The plan is a *measurement of a possible reduction*. It changes nothing:
+ * the ceiling, the count and the verdict are computed before it, and the
+ * plan is only reported.
+ *
+ * @param {string} lockfileText the contents of `bun.lock`
+ * @param {number} ceiling the committed ceiling the plan is measured against
+ * @returns {{ steps: Array<{root: string, saving: number, closure: number}>, residual: number, reachable: boolean, minimumRemovals: number|null, overageUpperBound: number }}
+ */
+export function planDependencyReduction(lockfileText, ceiling) {
+  const { roots, owners, closureOf } = lockfileGraph(lockfileText)
+  const measured = closureOf(roots).identities.size
+  const singleSavings = []
+  for (const root of roots) {
+    const remaining = closureOf(roots.filter((name) => name !== root)).identities.size
+    const saving = measured - remaining
+    if (saving > 0) singleSavings.push({ root, saving })
+  }
+  singleSavings.sort((left, right) => right.saving - left.saving)
+  // The upper bound for any set of `n` removals: the n largest single
+  // removals. A set sheds only what one of its members sheds alone.
+  const upperBoundFor = (n) =>
+    singleSavings.slice(0, n).reduce((sum, entry) => sum + entry.saving, 0)
+  const overage = measured - ceiling
+  // The fewest removals that can reach the ceiling: the first `n` for which
+  // the bound allows it.
+  let minimumRemovals = null
+  for (let n = 1; n <= singleSavings.length; n += 1) {
+    if (upperBoundFor(n) >= overage) {
+      minimumRemovals = n
+      break
+    }
+  }
+  // The plan itself: remove the root with the largest marginal saving until
+  // the closure is at or below the ceiling.
+  const steps = []
+  let remainingRoots = [...roots]
+  let closure = measured
+  while (closure > ceiling && steps.length < roots.length) {
+    let best = null
+    for (const root of remainingRoots) {
+      const size = closureOf(remainingRoots.filter((name) => name !== root)).identities.size
+      if (best === null || size < best.size) best = { root, size }
+    }
+    if (best === null) break
+    const saving = closure - best.size
+    if (saving <= 0) break
+    steps.push({
+      root: best.root,
+      saving,
+      closure: best.size,
+      owner: owners.get(best.root) ?? [],
+    })
+    remainingRoots = remainingRoots.filter((name) => name !== best.root)
+    closure = best.size
+  }
+  return {
+    steps,
+    residual: closure,
+    reachable: closure <= ceiling,
+    minimumRemovals,
+    overageUpperBound: overage,
+  }
+}
+
+/**
+ * The install layout of the measured listing, reduced to what a report
+ * carries: how the measured identities are installed, and the consumers each
+ * one has.
+ *
+ * The layout is the **measured** input's own layout, so the paths it reports
+ * are the ones the installation uses. The consumers come from the lockfile:
+ * they are the entries that name an identity, which is the only place the
+ * requirement edges are recorded.
+ */
+export function summarizeInstallLayout(listingText, consumers) {
+  const { entries, byIdentity } = parseListingLayout(listingText)
+  const external = entries.filter((entry) => !entry.name.startsWith('@control-plane/'))
+  const nested = external.filter((entry) => entry.depth > 1)
+  const roots = new Map()
+  for (const entry of external) {
+    const root = entry.installRoot ?? entry.identity
+    roots.set(root, (roots.get(root) ?? 0) + 1)
+  }
+  const samples = nested.slice(0, 5).map((entry) => ({
+    identity: entry.identity,
+    installPath: entry.path.join(' > '),
+    consumers: (consumers?.get(entry.identity) ?? []).slice(0, 3),
+  }))
+  return {
+    entries: external.length,
+    nestedEntries: nested.length,
+    installRoots: roots.size,
+    largestInstallRoots: Object.fromEntries(
+      [...roots].toSorted((left, right) => right[1] - left[1]).slice(0, 5)
+    ),
+    nestedSamples: samples,
+    byIdentity,
+  }
 }
 
 /**
  * The attribution of a measured closure, reduced to what a report carries:
- * the reachable identities and the roots that contribute the most. A
- * lockfile that cannot be read is reported as an absent attribution, never as
- * an empty one.
+ * the reachable identities, the roots that contribute the most, what removing
+ * a root would shed, and the measured residual. A lockfile that cannot be
+ * read is reported as an absent attribution, never as an empty one.
  */
-export function summarizeAttribution(lockfileText) {
+export function summarizeAttribution(lockfileText, listingText, ceiling) {
   try {
-    const { identities, perRoot, exclusivePerRoot, resolutions, unresolvedRoots } =
-      attributeExternalPackages(lockfileText)
+    const {
+      identities,
+      perRoot,
+      removalSavings,
+      exclusivePerRoot,
+      consumers,
+      resolutions,
+      unresolvedRoots,
+    } = attributeExternalPackages(lockfileText)
     const roots = Object.entries(perRoot).toSorted((left, right) => right[1] - left[1])
-    const offenders = Object.entries(exclusivePerRoot).toSorted((left, right) => right[1] - left[1])
+    const offenders = Object.entries(removalSavings).toSorted((left, right) => right[1] - left[1])
     const aliases = Object.fromEntries(
       [...resolutions].filter(([identity, resolved]) => resolved !== identity)
     )
+    const plan = ceiling === undefined ? undefined : planDependencyReduction(lockfileText, ceiling)
     return {
       reachableIdentities: identities.size,
       declaredRootCount: Object.keys(perRoot).length,
       largestContributors: Object.fromEntries(roots.slice(0, 10)),
-      // The exact offenders: what each declared root brings in alone, so an
-      // owner can see what dropping that dependency would actually shed.
+      // The exact offenders: what removing each declared root would shed, so an
+      // owner can see what dropping that dependency would actually save.
       largestOffenders: Object.fromEntries(offenders.slice(0, 10)),
+      // The exclusive share of every root, for comparison with the saving:
+      // the two agree when the attribution resolves every edge to the entry
+      // that provides it.
+      exclusiveShareTotal: Object.values(exclusivePerRoot).reduce((sum, count) => sum + count, 0),
+      removalSavingTotal: Object.values(removalSavings).reduce((sum, count) => sum + count, 0),
       aliasedIdentities: Object.keys(aliases).length,
       aliases,
       unresolvedRoots,
+      ...(plan === undefined ? {} : { reductionPlan: plan }),
+      ...(listingText === undefined
+        ? {}
+        : { installLayout: summarizeInstallLayout(listingText, consumers) }),
     }
   } catch (error) {
     return { unavailable: error instanceof Error ? error.message : String(error) }
@@ -300,12 +577,15 @@ if (import.meta.main) {
       const pairs = [...externalPackagePairs(listing)].toSorted()
       const check = checkDependencyBudget(budgets, pairs.length)
       // The attribution explains the measured count: which declared root pulls
-      // in how much of the closure. It is read from the lockfile and never
-      // changes the measurement or the verdict.
+      // in how much of the closure, and what removing a root would shed. It is
+      // read from the lockfile and never changes the measurement or the
+      // verdict.
       let attribution
       try {
         attribution = summarizeAttribution(
-          await readFile(new URL('../bun.lock', import.meta.url), 'utf8')
+          await readFile(new URL('../bun.lock', import.meta.url), 'utf8'),
+          listing,
+          budgets.dependencies.externalPackageCeiling
         )
       } catch (error) {
         attribution = { unavailable: error instanceof Error ? error.message : String(error) }

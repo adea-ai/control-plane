@@ -489,16 +489,17 @@ test('every installed external package is covered by the measured closure', asyn
   assert.deepEqual(uncovered, [], 'an installed external package is not covered by the measurement')
 })
 
-test('the exact offenders are attributed per root, and their removal cannot close the gap alone', async () => {
-  // The actionable attribution: what each declared root brings in **alone**. A
-  // dependency several roots share cannot be shed by dropping one of them, so
-  // the exclusive share is what an owner could actually remove. The exclusive
-  // shares partition the measured closure, and while the breach stands they
-  // are smaller than the overage: the gap cannot be closed by removing
-  // declarations alone and needs a product decision.
+test('the exact offenders are attributed per root, and their removal is what an owner could shed', async () => {
+  // The actionable attribution: what removing each declared root would shed.
+  // A dependency several roots share cannot be shed by dropping one of them,
+  // so the saving of a root is what the remaining roots no longer reach once it
+  // is gone — and that is the same set as the identities only that root
+  // brings in. The two agree only when every edge resolves to the entry that
+  // provides it; when they disagree, the attribution is attributing a shared
+  // dependency to a root that does not own it.
   const { attributeExternalPackages, externalPackagePairs } = await loadChecker()
   const counted = new Set(externalPackagePairs(realListing()))
-  const { identities, exclusivePerRoot } = attributeExternalPackages(
+  const { identities, exclusivePerRoot, removalSavings } = attributeExternalPackages(
     readFileSync(join(repositoryRoot, 'bun.lock'), 'utf8')
   )
   assert.deepEqual(
@@ -510,9 +511,121 @@ test('the exact offenders are attributed per root, and their removal cannot clos
   const total = exclusive.reduce((sum, count) => sum + count, 0)
   assert.ok(total > 0, 'no root has an exclusive share')
   assert.ok(total <= identities.size, 'the exclusive shares exceed the closure')
+  // The exclusive share of a root and the saving of removing it are the same
+  // set: an identity only that root reaches is exactly an identity the other
+  // roots stop reaching when it is removed.
+  for (const [root, saving] of Object.entries(removalSavings)) {
+    assert.equal(
+      exclusivePerRoot[root],
+      saving,
+      `${root}: the exclusive share and the removal saving disagree`
+    )
+  }
   const overage = counted.size - budgets.dependencies.externalPackageCeiling
   assert.ok(
-    total < overage,
-    `the exclusive shares (${total}) now cover the overage (${overage}); the residual analysis must be revisited`
+    total >= overage,
+    `the removal savings (${total}) no longer cover the overage (${overage}); the residual analysis must be revisited`
+  )
+})
+
+test('the per-root attribution reproduces the published dependency-path attribution', async () => {
+  // The attribution is pinned against the numbers the audit publishes, so the
+  // two cannot drift apart: a root that resolves to the wrong entry — every
+  // version of a name instead of the copy that provides it — changes these
+  // numbers without changing the measured total.
+  const { attributeExternalPackages } = await loadChecker()
+  const { perRoot, owners } = attributeExternalPackages(
+    readFileSync(join(repositoryRoot, 'bun.lock'), 'utf8')
+  )
+  const expected = {
+    'vite-plus': 168,
+    '@earendil-works/pi-durable': 117,
+    '@earendil-works/pi-ai': 87,
+    '@nestjs/platform-fastify': 76,
+    miniflare: 56,
+    fastify: 49,
+    '@sentry/node': 42,
+    'drizzle-kit': 38,
+  }
+  for (const [root, identities] of Object.entries(expected)) {
+    assert.equal(perRoot[root], identities, `${root}: the attributed closure changed`)
+  }
+  // The owner of each declaration: the manifest that would have to change for
+  // the saving to be realized.
+  assert.deepEqual(owners.get('miniflare'), ['packages/pi-cloudflare-host/package.json'])
+  assert.deepEqual(owners.get('@sentry/node'), ['packages/telemetry/package.json'])
+  assert.deepEqual(owners.get('drizzle-kit'), ['packages/database/package.json'])
+  assert.deepEqual(owners.get('vite-plus'), ['package.json (root)'])
+})
+
+test('the reduction plan is measured, and six removals reach the unchanged ceiling', async () => {
+  // The plan is measured, not argued: every step's saving is the number of
+  // identities the remaining roots no longer reach. The minimum is proved by
+  // the upper bound — a set of removals sheds only what its members shed
+  // alone, so the five largest single removals bound any set of five.
+  const { planDependencyReduction, externalPackagePairs } = await loadChecker()
+  const measured = externalPackagePairs(realListing()).size
+  const ceiling = budgets.dependencies.externalPackageCeiling
+  const plan = planDependencyReduction(
+    readFileSync(join(repositoryRoot, 'bun.lock'), 'utf8'),
+    ceiling
+  )
+  assert.equal(plan.residual <= ceiling, true, 'the plan does not reach the ceiling')
+  assert.equal(plan.reachable, true)
+  assert.equal(plan.minimumRemovals, 6)
+  // The measured steps, in order, with the saving each one is worth.
+  assert.deepEqual(
+    plan.steps.map((step) => [step.root, step.saving, step.closure]),
+    [
+      ['vite-plus', 160, 431],
+      ['miniflare', 52, 379],
+      ['@sentry/node', 41, 338],
+      ['oxfmt', 21, 317],
+      ['typescript', 21, 296],
+      ['oxlint', 20, 276],
+    ]
+  )
+  // Every step names the manifest that owns the declaration it would remove.
+  for (const step of plan.steps) {
+    assert.ok(step.owner.length > 0, `${step.root}: no owning manifest is named`)
+  }
+  // The plan is a measurement of a possible reduction: it changes neither the
+  // count nor the ceiling.
+  assert.equal(measured, 591)
+  assert.equal(ceiling, 285)
+})
+
+test('every attributed path names the install path and the consumers of the package', async () => {
+  // The path attribution is taken from the measured listing's own layout: the
+  // install path a package sits at, and the entries that require it. A nested
+  // copy of a package is a different install of the same identity, and the
+  // consumers say which package asked for it.
+  const { attributeExternalPackages, externalPackagePairs, parseListingLayout } =
+    await loadChecker()
+  const listing = realListing()
+  const counted = externalPackagePairs(listing)
+  const { consumers } = attributeExternalPackages(
+    readFileSync(join(repositoryRoot, 'bun.lock'), 'utf8')
+  )
+  const { entries } = parseListingLayout(listing)
+  // The layout covers the measured listing: every counted identity is
+  // installed at a path the listing names.
+  const installed = new Set(entries.map((entry) => entry.identity))
+  for (const identity of counted) {
+    assert.ok(installed.has(identity), `${identity} is counted but not installed`)
+  }
+  // A nested install: the copy of the formatter the Vite+ toolchain brings
+  // with it is installed under the toolchain, not at the top level.
+  const nested = entries.find((entry) => entry.identity === '@oxfmt/binding-darwin-arm64@0.73.0')
+  assert.ok(nested !== undefined, 'the nested formatter binding is not in the listing')
+  assert.equal(nested.depth, 3)
+  assert.equal(nested.installRoot, 'vite-plus@1.3.0')
+  assert.ok(nested.path.length > 1, 'the nested install has no install path')
+  // Its consumer: the entry that requires it, with the section it requires it
+  // in.
+  const required = consumers.get('@oxfmt/binding-darwin-arm64@0.73.0') ?? []
+  assert.ok(
+    required.some((consumer) => consumer.startsWith('oxfmt@0.73.0 (optionalDependencies)')),
+    `the nested binding has no consumer: ${required.join(', ')}`
   )
 })
