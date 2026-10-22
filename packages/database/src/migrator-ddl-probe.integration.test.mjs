@@ -81,7 +81,7 @@ describe.skipIf(!enabled)('PostgreSQL migrator DDL probe', () => {
         await migration.unsafe('create schema app')
         const applicationRole = new URL(credentials.application.url).username
         await migration`grant usage on schema app to ${migration(applicationRole)}`
-        const table = `cp_neon_application_denied_${randomUUID().replaceAll('-', '')}`
+        const table = `cp_postgres_application_denied_${randomUUID().replaceAll('-', '')}`
         await assertDdlDenied(application, `create table app.${table} (id integer)`)
       } catch (error) {
         testFailed = true
@@ -104,12 +104,12 @@ describe.skipIf(!enabled)('PostgreSQL migrator DDL probe', () => {
       if (testFailed && cleanupErrors.length > 0)
         throw new AggregateError(
           [testError, ...cleanupErrors],
-          'NEON_DDL_PROBE_TEST_AND_CLEANUP_FAILED',
+          'POSTGRES_DDL_PROBE_TEST_AND_CLEANUP_FAILED',
           { cause: testError }
         )
       if (testFailed) throw testError
       if (cleanupErrors.length > 0)
-        throw new AggregateError(cleanupErrors, 'NEON_DDL_PROBE_TEST_CLEANUP_FAILED')
+        throw new AggregateError(cleanupErrors, 'POSTGRES_DDL_PROBE_TEST_CLEANUP_FAILED')
     },
     integrationTestTimeout(60_000)
   )

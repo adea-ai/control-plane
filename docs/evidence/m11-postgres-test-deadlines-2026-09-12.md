@@ -30,7 +30,7 @@ The full repository database integration file passed against a disposable Postgr
 preview using pooled application credentials and direct migration/admin
 credentials: **31 tests, 390 assertions, zero failures, 242.547 seconds**. The
 repository harness created and disposed its own isolated test database. No
-production or staging database settings, credentials, or data were changed.
+production database settings, credentials, or data were changed.
 
 Local validation on base `6742d16` passed 1,276 tests plus build, type checks,
 lint, and formatting. This is database integration evidence, not completion of
