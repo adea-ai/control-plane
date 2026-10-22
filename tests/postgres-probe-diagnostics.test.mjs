@@ -148,6 +148,90 @@ test('a value that starts after the separator whitespace is consumed whole', () 
   }
 })
 
+// The six ASCII whitespace characters, which are the ones libpq's own parser
+// treats as whitespace: the space, the tab, the line feed, the carriage
+// return, the vertical tab and the form feed. A scanner that knows only four
+// of them reads a value that libpq would read quite differently, and a value
+// that libpq accepts can then be published.
+const ASCII_WHITESPACE = [
+  ['space', ' '],
+  ['tab', '\t'],
+  ['line feed', '\n'],
+  ['carriage return', '\r'],
+  ['vertical tab', '\v'],
+  ['form feed', '\f'],
+]
+
+// The values the matrix pairs with each of those characters: an unquoted one,
+// a quoted one and an escaped one. The text that must not survive is the
+// part of the value that a rule that stopped early would have left behind.
+const SEPARATOR_WHITESPACE_VALUES = [
+  ['an unquoted value', 'hunter2', 'hunter2'],
+  ['a single quoted value', "'two words'", 'words'],
+  ['a double quoted value', '"two words"', 'words'],
+  ['an escaped value', 'two\\ words', 'words'],
+]
+
+// The matrix: every ASCII whitespace character, before and after the `=`, with
+// a quoted, an unquoted and an escaped value. The whitespace before the `=` is
+// part of the text and is kept; the whitespace after it belongs to the value
+// and is consumed with it.
+const SEPARATOR_WHITESPACE_CASES = []
+for (const [name, whitespace] of ASCII_WHITESPACE) {
+  for (const [kind, value, secret] of SEPARATOR_WHITESPACE_VALUES) {
+    SEPARATOR_WHITESPACE_CASES.push([
+      `${name} before the = with ${kind}`,
+      `password${whitespace}=${value} dbname=postgres`,
+      secret,
+      `password${whitespace}=<redacted> dbname=postgres`,
+    ])
+    SEPARATOR_WHITESPACE_CASES.push([
+      `${name} after the = with ${kind}`,
+      `password=${whitespace}${value} dbname=postgres`,
+      secret,
+      'password=<redacted> dbname=postgres',
+    ])
+  }
+}
+
+test.each(SEPARATOR_WHITESPACE_CASES)('%s is redacted whole', (_case, input, secret, expected) => {
+  const sanitized = sanitizeProbeOutput(input)
+  expect(sanitized).not.toContain(secret)
+  expect(sanitized).toBe(expected)
+})
+
+// The same six characters around the `:` of a connection URI, whose password
+// runs to the `@`. The user part is one token, but the `:` that introduces the
+// password may follow whitespace, and the password may start after it.
+const URI_WHITESPACE_CASES = []
+for (const [name, whitespace] of ASCII_WHITESPACE) {
+  for (const [kind, value, secret] of SEPARATOR_WHITESPACE_VALUES) {
+    URI_WHITESPACE_CASES.push([
+      `${name} before the : of a URI with ${kind}`,
+      `postgresql://user${whitespace}:${value}@localhost/db`,
+      secret,
+    ])
+    URI_WHITESPACE_CASES.push([
+      `${name} after the : of a URI with ${kind}`,
+      `postgresql://:${whitespace}${value}@localhost/db`,
+      secret,
+    ])
+  }
+}
+
+test.each(URI_WHITESPACE_CASES)('%s is redacted whole', (_case, uri, secret) => {
+  const sanitized = sanitizeProbeOutput(uri)
+  expect(sanitized).not.toContain(secret)
+  expect(sanitized).toBe('postgresql://<redacted>@localhost/db')
+})
+
+// A URI-like text whose user part holds a space is not a URI credential, and
+// redacting it would take the diagnostic apart.
+test('a URI-like text that is not a credential is left alone', () => {
+  const text = 'see https://example.com and note: retry later'
+  expect(sanitizeProbeOutput(text)).toBe(text)
+})
+
 // A connection URI may carry no user, only a password.
 test('a connection URI with an empty user is redacted', () => {
   const sanitized = sanitizeProbeOutput('postgresql://:hunter2@localhost/db')

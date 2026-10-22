@@ -49,9 +49,24 @@ const CREDENTIAL_KEY_ENDS = [
 /** The characters that end the password of a connection URI. */
 const URI_BREAK = new Set(['@', '/'])
 
-/** Whether a character is whitespace. */
+/**
+ * Whether a character is whitespace.
+ *
+ * These are the six ASCII whitespace characters, and they are the ones
+ * libpq's own parser treats as whitespace: the space, the tab, the line feed,
+ * the carriage return, the vertical tab and the form feed. A scanner that
+ * knows only four of them reads a value that libpq would read quite
+ * differently, and a value that libpq accepts can then be published.
+ */
 function isWhitespace(character) {
-  return character === ' ' || character === '\t' || character === '\n' || character === '\r'
+  return (
+    character === ' ' ||
+    character === '\t' ||
+    character === '\n' ||
+    character === '\r' ||
+    character === '\v' ||
+    character === '\f'
+  )
 }
 
 /** Whether a key ends with a credential word. */
@@ -68,15 +83,15 @@ function readKeyEnd(source, start) {
 }
 
 /**
- * The start of the value of a credential key, which is the character after the
- * `=`.
+ * The end of the run of whitespace that starts at `start`.
  *
- * libpq permits whitespace around the `=`, so the value may start after it.
- * That whitespace belongs to the value: a value read from the whitespace
- * would be empty, and the scan would then walk on and expose the value that
- * follows it.
+ * libpq permits whitespace around the `=`, so the value of a credential key
+ * may start after it. That whitespace belongs to the value: a value read from
+ * the whitespace would be empty, and the scan would then walk on and expose
+ * the value that follows it. The same tolerance is given to the `:` that
+ * introduces the password of a connection URI.
  */
-function readValueStart(source, start) {
+function skipWhitespace(source, start) {
   let index = start
   while (index < source.length && isWhitespace(source[index])) index += 1
   return index
@@ -91,8 +106,12 @@ function readValueStart(source, start) {
  * whitespace, except that a backslash escapes the next character: that is how
  * libpq writes an unquoted value that holds a space, so `password=two\ words`
  * is one value and not two.
+ *
+ * A connection URI is the exception: a URI holds no whitespace, so its
+ * password runs to the `@` or the `/` and the whitespace that libpq's own URI
+ * parser would put inside it is part of the password.
  */
-function readValueEnd(source, start, stopCharacters) {
+function readValueEnd(source, start, stopCharacters, stopsAtWhitespace = true) {
   const quote = source[start]
   if (quote === '"' || quote === "'") {
     let index = start + 1
@@ -114,7 +133,7 @@ function readValueEnd(source, start, stopCharacters) {
       index += 2
       continue
     }
-    if (isWhitespace(character)) break
+    if (stopsAtWhitespace && isWhitespace(character)) break
     if (stopCharacters !== undefined && stopCharacters.has(character)) break
     index += 1
   }
@@ -129,6 +148,12 @@ function readValueEnd(source, start, stopCharacters) {
  * too. The password is read with the same quoting rules as any other value.
  * The scan that failed is reported with the place it reached, so the text it
  * covered is not scanned again.
+ *
+ * The user part is one token, but the `:` that introduces the password may
+ * follow whitespace, as it may in a connection string. A scan that stopped at
+ * that whitespace would never reach the `:` and would leave the password
+ * unredacted, so a whitespace run that is followed by the `:` is that
+ * separator and not the end of the user part.
  */
 function readUriCredential(source, start) {
   let index = start
@@ -141,8 +166,12 @@ function readUriCredential(source, start) {
   ) {
     index += 1
   }
-  if (source[index] !== ':') return { matched: false, end: index }
-  const valueEnd = readValueEnd(source, index + 1, URI_BREAK)
+  if (source[index] !== ':') {
+    const separator = skipWhitespace(source, index)
+    if (source[separator] !== ':') return { matched: false, end: index }
+    index = separator
+  }
+  const valueEnd = readValueEnd(source, index + 1, URI_BREAK, false)
   if (source[valueEnd] !== '@') return { matched: false, end: valueEnd }
   return { matched: true, end: valueEnd + 1 }
 }
@@ -182,7 +211,7 @@ export function sanitizeProbeOutput(text, limit = PROBE_EXCERPT_LIMIT) {
       let afterKey = keyEnd
       while (afterKey < source.length && isWhitespace(source[afterKey])) afterKey += 1
       if (isCredentialKey(key) && source[afterKey] === '=') {
-        const valueStart = readValueStart(source, afterKey + 1)
+        const valueStart = skipWhitespace(source, afterKey + 1)
         const valueEnd = readValueEnd(source, valueStart)
         pieces.push(`${key}${source.slice(keyEnd, afterKey)}=<redacted>`)
         index = valueEnd
