@@ -435,6 +435,10 @@ bun run compatibility:check
   passed
 bun run infra:typecheck
   No type errors in 208 files
+bun run type-check
+  Validated 200 requirements and 103 issue audits
+  Validated 45 packages, 54 operations, and 4 profiles
+  No type errors in 208 files
 bun run openapi:check
   passed
 bun scripts/run-bun-test-group.mjs unit --timeout 30000
