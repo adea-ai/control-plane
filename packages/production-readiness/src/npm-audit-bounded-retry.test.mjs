@@ -328,7 +328,7 @@ async function withOwnedFixture(fixture, body) {
 describe('the bounded cleanup of an attempt that runs out of budget', () => {
   test('a TERM-resistant child is ended with a bounded escalation and only the owned child is cleaned up', async () => {
     const fixture = startOwnedTimeoutFixture()
-    try {
+    await withOwnedFixture(fixture, async (state) => {
       const started = Date.now()
       const result = await runRealAuditAttempt({
         cwd: fixture.directory,
@@ -353,16 +353,14 @@ describe('the bounded cleanup of an attempt that runs out of budget', () => {
 
       // Only the owned child was cleaned up: its own descendant was not
       // signalled. Its identity comes from the receipt the child published.
-      const receipt = await fixture.readReceipt()
-      expect(isProcessAlive(receipt.grandchildPid)).toBe(true)
-    } finally {
-      await cleanupOwnedTimeoutFixture(fixture)
-    }
+      state.receipt = await fixture.readReceipt()
+      expect(isProcessAlive(state.receipt.grandchildPid)).toBe(true)
+    })
   })
 
   test('the attempt resolves when the owned child is reaped, even when a descendant holds the pipe', async () => {
     const fixture = startOwnedTimeoutFixture({ holdsPipe: true })
-    try {
+    await withOwnedFixture(fixture, async (state) => {
       const started = Date.now()
       const result = await runRealAuditAttempt({
         cwd: fixture.directory,
@@ -379,16 +377,14 @@ describe('the bounded cleanup of an attempt that runs out of budget', () => {
       expect(elapsed).toBeLessThan(5_000)
 
       // Only the owned child was cleaned up.
-      const receipt = await fixture.readReceipt()
-      expect(isProcessAlive(receipt.grandchildPid)).toBe(true)
-    } finally {
-      await cleanupOwnedTimeoutFixture(fixture)
-    }
+      state.receipt = await fixture.readReceipt()
+      expect(isProcessAlive(state.receipt.grandchildPid)).toBe(true)
+    })
   })
 
   test('a child that exits on SIGTERM is cleaned up without the escalation', async () => {
     const fixture = startOwnedTimeoutFixture({ exitsOnTerm: true })
-    try {
+    await withOwnedFixture(fixture, async (_state) => {
       const result = await runRealAuditAttempt({
         cwd: fixture.directory,
         timeoutMs: 200,
@@ -397,9 +393,7 @@ describe('the bounded cleanup of an attempt that runs out of budget', () => {
       })
       expect(result.timedOut).toBe(true)
       expect(result.exitCode).toBe(0)
-    } finally {
-      await cleanupOwnedTimeoutFixture(fixture)
-    }
+    })
   })
 
   test('a reap that cannot confirm the exit keeps the receipt and reports the failure', async () => {
@@ -498,6 +492,8 @@ describe('the bounded cleanup of an attempt that runs out of budget', () => {
     const fixture = startOwnedTimeoutFixture()
     let receipt
     let failure
+    let preservedDirectory = false
+    let preservedReceipt = false
     try {
       await withOwnedFixture(fixture, async (state) => {
         fixture.spawn('bun', ['audit'], { cwd: fixture.directory, env: process.env })
@@ -509,16 +505,62 @@ describe('the bounded cleanup of an attempt that runs out of budget', () => {
       })
     } catch (error) {
       failure = error
+      // The disposal failed, so this is the moment at which the receipts were
+      // still on disk: they are read here, before the cleanup below reclaims
+      // them.
+      preservedDirectory = existsSync(fixture.directory)
+      preservedReceipt = existsSync(fixture.receiptPath)
+    } finally {
+      // The receipt is gone, so the retained identity is the only way to reach
+      // the grandchild. The artifacts are removed only when the reaping was
+      // confirmed; otherwise they stay, because they name the process.
+      const grandchild = receipt?.grandchildPid
+        ? await reapOwnedProcess(receipt.grandchildPid, fixture.nonce)
+        : 'not-started'
+      const ownedChild = fixture.ownedPid
+        ? await reapOwnedProcess(fixture.ownedPid, fixture.nonce)
+        : 'not-started'
+      const confirmed =
+        ['reaped', 'already-gone'].includes(grandchild) &&
+        ['reaped', 'already-gone'].includes(ownedChild)
+      if (confirmed) {
+        if (existsSync(fixture.receiptPath)) rmSync(fixture.receiptPath, { force: true })
+        rmSync(fixture.directory, { recursive: true, force: true })
+      } else {
+        console.error(`fixture disposal failed: ${grandchild}/${ownedChild}`)
+      }
     }
     // A real cleanup that cannot confirm the reaping surfaces as a test
     // failure instead of passing silently.
     expect(failure).toBeDefined()
     expect(String(failure)).toContain('fixture disposal failed')
+    // The receipts were preserved when the reaping could not be confirmed.
+    expect(preservedDirectory).toBe(true)
+    expect(preservedReceipt).toBe(false)
+  })
+
+  test('a disposal that cannot confirm the reaping fails the test and keeps the receipts, without starting a process', async () => {
+    const fixture = startOwnedTimeoutFixture()
+    let failure
+    try {
+      await withOwnedFixture(fixture, async (state) => {
+        // No process is started here. The recorded identity belongs to a
+        // process this fixture does not own, and the reap refuses to signal a
+        // process whose own command line does not carry the nonce, so the
+        // disposal cannot confirm the reaping.
+        state.receipt = { grandchildPid: 1, nonce: fixture.nonce }
+      })
+    } catch (error) {
+      failure = error
+    }
+    // A real disposal that cannot confirm the reaping surfaces as a test
+    // failure instead of passing silently.
+    expect(failure).toBeDefined()
+    expect(String(failure)).toContain('fixture disposal failed')
     // The receipts are preserved when the reaping could not be confirmed.
     expect(existsSync(fixture.directory)).toBe(true)
-    // The test still reaps the process it recorded, so nothing is left behind.
-    expect(await reapOwnedProcess(receipt.grandchildPid, fixture.nonce)).not.toBe('still-alive')
-    expect(await reapOwnedProcess(fixture.ownedPid, fixture.nonce)).not.toBe('still-alive')
+    // Nothing was started, so there is no process to reap; the fixture's own
+    // empty directory is reclaimed here.
     rmSync(fixture.directory, { recursive: true, force: true })
   })
 
