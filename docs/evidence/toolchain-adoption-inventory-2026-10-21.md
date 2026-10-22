@@ -262,25 +262,35 @@ checker resolves against them.
 
 ### The disposable intentional type error
 
-A disposable file carrying an intentional type error was written into a package's
-source directory, the package's own checker was run, and the file was removed
-again:
+The type error is written into an **isolated disposable project outside the
+repository**: a temporary directory carrying its own `package.json`
+(`{"type": "module"}`), a `tsconfig.json` that extends this repository's
+`tsconfig.base.json` and names the probe file, and the probe itself:
 
 ```
-export const cp190Probe: number = 'not a number'
+export const cp1233TypecheckProbe: number = 'not a number'
 ```
 
-- with the error in place, `bun check -p packages/tool-sdk/tsconfig.json` exits
-  **1** and reports the error where it was written:
-  `<error file="packages/tool-sdk/src/__cp190_typecheck_probe.ts" line="1" column="14" code="TS2322">`,
+The check is run with the repository's pinned Bun against that project, so the
+failure means the pinned checker rejects a type error under this repository's own
+strict configuration — and the repository's tree is never written at all. The
+measured result:
+
+- a **clean** disposable project exits **0** with
+  `✓ No type errors in 1 file`, so the failure below is not an artefact of the
+  disposable project;
+- the same project with the intentional error exits **1** and reports it where it
+  was written:
+  `<error file=".../probe.ts" line="1" column="14" code="TS2322">`,
   `Type 'string' is not assignable to type 'number'.`, and
-  `Found 1 error in 1 file, checked 2 files`;
-- after the file was removed, the same command exits **0** with
-  `No type errors in 1 file`, and the source tree is exactly as it was
-  (`git status` clean, and the package's source directory holds only its own two
-  files again).
+  `Found 1 error in 1 file, checked 1 file`;
+- the temporary directory is removed afterwards, and the repository's tree is
+  exactly as it was.
 
-So the checker is not vacuous, and the cleanup restores the tree.
+So the checker is not vacuous, and nothing is left behind. An earlier revision of
+this proof wrote the probe into a package's own source directory and removed it
+afterwards; the isolated project is used instead, so a run that is interrupted
+cannot leave a file in the tree.
 
 ### The gaps this found, and the guard that now prevents them
 
@@ -290,9 +300,10 @@ Two real gaps were found, and neither was guarded by anything in the repository:
    whose `typecheck` script was renamed, or a workspace dependency that dropped
    out of the graph's dependency set, would have left the check running against
    stale or missing declarations with nothing to notice.
-2. **Nothing proved the checker can still fail.** A project whose `include` was
-   emptied, or narrowed past the sources, would still have reported "no type
-   errors" for every package, and the whole lane would have stayed green.
+2. **Nothing proved the checker can still fail, or that the checked projects
+   still cover their own sources.** A project whose `include` was emptied, or
+   narrowed past the sources, would still have reported "no type errors" for every
+   package, and the whole lane would have stayed green.
 
 `tests/repository.test.mjs` now carries one guard that closes both, and it is
 proven to bite:
@@ -303,16 +314,20 @@ proven to bite:
   depends on the build, the type checks and the openapi check;
 - it asserts that every checked project inherits the shared base rather than a
   project that names no files;
-- it proves the checker is not vacuous by writing a disposable intentional type
-  error, requiring the command to exit nonzero and to name the file, removing it,
-  and requiring the command to be green again with no file left behind.
+- it proves that every checked project still names at least one of its own
+  sources, so a project that covers nothing cannot pass;
+- it proves the checker is not vacuous with an isolated disposable project: a clean
+  project must typecheck, the same project with an intentional type error must
+  exit nonzero and name the file, and the temporary directory is removed
+  afterwards, so no file in the repository is ever written.
 
-The mutations that make the guard fail, each applied and then reverted: emptying
-a package's `include` fails the baseline; narrowing an `include` past the
-sources fails "the checker must fail on an intentional type error"; removing the
-dependency builds from the graph fails "runtime-gateway's check must wait for
-bootstrap's build"; and making a checked project inherit the root project fails
-"tool-sdk must extend the shared base".
+The mutations that make the guard fail, each applied and then reverted: narrowing
+a package's `include` past its own sources fails "tool-sdk's checked project must
+name at least one of its own sources"; a disposable project that includes nothing
+fails "the checker must fail on an intentional type error"; removing the dependency
+builds from the graph fails "runtime-gateway's check must wait for bootstrap's
+build"; and making a checked project inherit the root project fails "tool-sdk must
+extend the shared base".
 
 ## The checks that were run, and their results
 

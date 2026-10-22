@@ -1290,6 +1290,20 @@ test('the Bun type checker covers every package, and it is not vacuous', async (
       /tsconfig\.base\.json$/,
       `${short} must extend the shared base, not a project that names no files`
     )
+    // The project must not be vacuous either: the files its include names have to be
+    // the package's own sources, or the checker would have nothing to read and would
+    // report success for a package it never looked at.
+    const include = Array.isArray(project.include) ? project.include : []
+    const sources = readdirSync(join(entry.dir, 'src'), {
+      withFileTypes: true,
+      recursive: true,
+    })
+      .filter((item) => item.isFile() && item.name.endsWith('.ts'))
+      .map((item) => relative(entry.dir, join(item.parentPath, item.name)))
+    assert.ok(
+      sources.some((source) => include.some((pattern) => new Glob(pattern).match(source))),
+      `${short}'s checked project must name at least one of its own sources`
+    )
     // The generated declarations of every workspace dependency have to exist before
     // this package is checked, or the cross-package types the checker resolves are
     // stale or missing and the check passes against the wrong shapes.
@@ -1316,33 +1330,47 @@ test('the Bun type checker covers every package, and it is not vacuous', async (
     'orch:typecheck',
   ])
 
-  // The checker must not be vacuous: a disposable intentional type error has to
-  // fail the command, and removing it has to restore both the command and the
-  // source tree.
-  const probePackage = 'packages/tool-sdk'
-  const probeFile = join(root, probePackage, 'src', '__cp1233_typecheck_probe.ts')
-  const runCheck = () =>
-    spawnSync(process.execPath, ['check', '-p', 'tsconfig.json'], {
-      cwd: join(root, probePackage),
-      encoding: 'utf8',
-    })
-
-  const before = runCheck()
-  assert.equal(before.status, 0, 'the package must typecheck before the probe is added')
+  // The checker must not be vacuous: an intentional type error in an isolated
+  // disposable project, checked under this repository's own base configuration, has
+  // to fail the command, and a clean project has to pass it, so the failure below
+  // means something. The disposable project lives outside the repository and is
+  // removed afterwards, so no file in the tree is ever written.
+  const disposable = await mkdtemp(join(tmpdir(), 'control-plane-typecheck-probe-'))
+  const probeFile = join(disposable, 'probe.ts')
+  const probeProject = join(disposable, 'tsconfig.json')
   try {
+    await writeFile(join(disposable, 'package.json'), JSON.stringify({ type: 'module' }))
+    await writeFile(
+      probeProject,
+      JSON.stringify({
+        extends: join(root, 'tsconfig.base.json'),
+        compilerOptions: {
+          noEmit: true,
+          typeRoots: [join(root, 'node_modules', '@types')],
+        },
+        include: ['probe.ts'],
+      })
+    )
+    const runCheck = () =>
+      spawnSync(process.execPath, ['check', '-p', probeProject], {
+        cwd: disposable,
+        encoding: 'utf8',
+      })
+
+    await writeFile(probeFile, 'export const cp1233TypecheckProbe: number = 1\n')
+    const clean = runCheck()
+    assert.equal(clean.status, 0, 'the clean disposable project must typecheck')
+
     await writeFile(probeFile, "export const cp1233TypecheckProbe: number = 'not a number'\n")
     const failed = runCheck()
     assert.notEqual(failed.status, 0, 'the checker must fail on an intentional type error')
     assert.match(
       `${failed.stdout}\n${failed.stderr}`,
-      /__cp1233_typecheck_probe\.ts/,
+      /probe\.ts/,
       'the failure must name the file that carries the intentional error'
     )
   } finally {
-    await rm(probeFile, { force: true })
+    await rm(disposable, { recursive: true, force: true })
   }
-
-  const after = runCheck()
-  assert.equal(after.status, 0, 'the checker must be green again once the probe is removed')
-  assert.equal(existsSync(probeFile), false, 'the disposable probe must leave no file behind')
+  assert.equal(existsSync(disposable), false, 'the disposable check must leave nothing behind')
 })
