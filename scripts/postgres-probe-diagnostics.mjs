@@ -46,9 +46,6 @@ const CREDENTIAL_KEY_ENDS = [
   'api-key',
 ]
 
-/** The characters that end the password of a connection URI. */
-const URI_BREAK = new Set(['@', '/'])
-
 /**
  * Whether a character is whitespace.
  *
@@ -106,12 +103,8 @@ function skipWhitespace(source, start) {
  * whitespace, except that a backslash escapes the next character: that is how
  * libpq writes an unquoted value that holds a space, so `password=two\ words`
  * is one value and not two.
- *
- * A connection URI is the exception: a URI holds no whitespace, so its
- * password runs to the `@` or the `/` and the whitespace that libpq's own URI
- * parser would put inside it is part of the password.
  */
-function readValueEnd(source, start, stopCharacters, stopsAtWhitespace = true) {
+function readValueEnd(source, start, stopCharacters) {
   const quote = source[start]
   if (quote === '"' || quote === "'") {
     let index = start + 1
@@ -133,7 +126,7 @@ function readValueEnd(source, start, stopCharacters, stopsAtWhitespace = true) {
       index += 2
       continue
     }
-    if (stopsAtWhitespace && isWhitespace(character)) break
+    if (isWhitespace(character)) break
     if (stopCharacters !== undefined && stopCharacters.has(character)) break
     index += 1
   }
@@ -144,36 +137,34 @@ function readValueEnd(source, start, stopCharacters, stopsAtWhitespace = true) {
  * The credential of a connection URI that starts at `start`, which is the first
  * character after `://`.
  *
- * The user may be empty, so `postgresql://:password@host` is a credential
- * too. The password is read with the same quoting rules as any other value.
+ * A URI is not a connection string, and libpq parses the two differently. Its
+ * own URI parser reads the authority raw: the authority ends at the first `/`
+ * or `?`, the userinfo is the part of the authority before the first `@`, and
+ * the password is the raw text that follows the first `:` of the userinfo. A
+ * quote and a backslash have no meaning in a URI, so `user:'abc'def` is a
+ * password of `'abc'def` and a backslash before the `@` does not escape it.
+ * An authority with no `@` is a host and a port and holds no password, and an
+ * authority with no `:` holds a user and no password.
+ *
  * The scan that failed is reported with the place it reached, so the text it
  * covered is not scanned again.
- *
- * The user part is one token, but the `:` that introduces the password may
- * follow whitespace, as it may in a connection string. A scan that stopped at
- * that whitespace would never reach the `:` and would leave the password
- * unredacted, so a whitespace run that is followed by the `:` is that
- * separator and not the end of the user part.
  */
 function readUriCredential(source, start) {
-  let index = start
+  let authorityEnd = start
   while (
-    index < source.length &&
-    !isWhitespace(source[index]) &&
-    source[index] !== ':' &&
-    source[index] !== '@' &&
-    source[index] !== '/'
+    authorityEnd < source.length &&
+    source[authorityEnd] !== '/' &&
+    source[authorityEnd] !== '?'
   ) {
-    index += 1
+    authorityEnd += 1
   }
-  if (source[index] !== ':') {
-    const separator = skipWhitespace(source, index)
-    if (source[separator] !== ':') return { matched: false, end: index }
-    index = separator
-  }
-  const valueEnd = readValueEnd(source, index + 1, URI_BREAK, false)
-  if (source[valueEnd] !== '@') return { matched: false, end: valueEnd }
-  return { matched: true, end: valueEnd + 1 }
+  let userinfoEnd = start
+  while (userinfoEnd < authorityEnd && source[userinfoEnd] !== '@') userinfoEnd += 1
+  if (userinfoEnd >= authorityEnd) return { matched: false, end: authorityEnd }
+  let separator = start
+  while (separator < userinfoEnd && source[separator] !== ':') separator += 1
+  if (separator >= userinfoEnd) return { matched: false, end: userinfoEnd }
+  return { matched: true, end: userinfoEnd + 1 }
 }
 
 /**

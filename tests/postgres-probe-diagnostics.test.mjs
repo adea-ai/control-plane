@@ -232,6 +232,62 @@ test('a URI-like text that is not a credential is left alone', () => {
   expect(sanitizeProbeOutput(text)).toBe(text)
 })
 
+// A URI is not a connection string, and libpq parses the two differently. Its
+// own URI parser reads the authority raw: the authority ends at the first `/`
+// or `?`, the userinfo is the part of the authority before the first `@`, and
+// the password is the raw text that follows the first `:` of the userinfo. A
+// quote and a backslash have no meaning in a URI, and an authority with no `@`
+// is a host and a port rather than a user and a password.
+const URI_CREDENTIAL_CASES = [
+  // a literal quote is an ordinary character of the password
+  ['a quote at the start of the password', "postgresql://user:'abc'def@localhost/db", "'abc'def"],
+  ['a double quote in the password', 'postgresql://user:a"b"c@localhost/db', 'a"b"c'],
+  ['a quote in the middle of the password', "postgresql://user:ab'cd@localhost/db", "ab'cd"],
+  // a backslash is an ordinary character of the password, and it does not
+  // escape the `@` that ends the userinfo
+  ['a backslash before the @', 'postgresql://user:pa\\@ss@localhost/db', 'pa\\'],
+  ['a backslash in the middle of the password', 'postgresql://user:pa\\ss@localhost/db', 'pa\\ss'],
+  // a percent-encoded `@` is not the `@` that ends the userinfo
+  ['a percent-encoded @', 'postgresql://user:pa%40ss@localhost/db', 'pa%40ss'],
+  ['a percent-encoded colon', 'postgresql://user:pa%3Ass@localhost/db', 'pa%3Ass'],
+  ['a percent-encoded quote', 'postgresql://user:pa%27ss@localhost/db', 'pa%27ss'],
+  // the ordinary forms
+  ['an ordinary password', 'postgresql://user:pass@localhost/db', 'pass'],
+  ['an ordinary password and an empty user', 'postgresql://:pass@localhost/db', 'pass'],
+  ['an ordinary password with a port', 'postgresql://user:pass@localhost:5432/db', 'pass'],
+  [
+    'an ordinary password with a query',
+    'postgresql://user:pass@localhost/db?sslmode=disable',
+    'pass',
+  ],
+  ['a password that holds a space', 'postgresql://user:two words@localhost/db', 'two words'],
+  // the boundaries libpq uses
+  ['the first @ ends the userinfo', 'postgresql://user:pa@ss@localhost/db', 'pa'],
+  [
+    'the first : splits the user from the password',
+    'postgresql://user:pa:ss@localhost/db',
+    'pa:ss',
+  ],
+]
+
+test.each(URI_CREDENTIAL_CASES)('%s is redacted whole', (_case, uri, secret) => {
+  const sanitized = sanitizeProbeOutput(uri)
+  expect(sanitized).not.toContain(secret)
+  expect(sanitized).toContain('<redacted>')
+})
+
+// The URI grammar is libpq's, so the parts of a URI that hold no password are
+// left as they are: a user and no password, and a host and a port.
+test('the parts of a URI that hold no password are left alone', () => {
+  expect(sanitizeProbeOutput('postgresql://user@localhost/db')).toBe(
+    'postgresql://user@localhost/db'
+  )
+  expect(sanitizeProbeOutput('postgresql://localhost:5432/db')).toBe(
+    'postgresql://localhost:5432/db'
+  )
+  expect(sanitizeProbeOutput('postgresql://localhost/db')).toBe('postgresql://localhost/db')
+})
+
 // A connection URI may carry no user, only a password.
 test('a connection URI with an empty user is redacted', () => {
   const sanitized = sanitizeProbeOutput('postgresql://:hunter2@localhost/db')
