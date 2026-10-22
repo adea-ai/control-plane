@@ -28,6 +28,7 @@ import {
   createPostgresSession,
   runtimeVerificationUrl,
   loadCanonicalMigrationHistory,
+  productionSchemaGateFailure,
   migrateProductionSchema as migrateProductionSchemaRecorded,
 } from '../scripts/migrate-production-schema.mjs'
 
@@ -1416,4 +1417,28 @@ test('database clients reject permissive TLS options before creating a connectio
       /PostgreSQL connection configuration is invalid/
     )
   }
+})
+
+test('schema gate CI diagnostics reject arbitrary exception properties and credential-bearing messages', () => {
+  const secret = 'postgresql://account:password-fixture@database.invalid/private'
+  for (const error of [
+    new Error(secret),
+    { message: secret, code: secret },
+    new Error('Production schema gate failed: ' + secret),
+    null,
+    secret,
+  ]) {
+    assert.equal(productionSchemaGateFailure(error), 'unclassified failure')
+  }
+  assert.throws(
+    () => assertProductionMigrationUrl(secret),
+    (error) => {
+      assert.equal(
+        productionSchemaGateFailure(error),
+        'database target does not match the required role, database, host, or TLS policy'
+      )
+      assert.ok(!productionSchemaGateFailure(error).includes('password-fixture'))
+      return true
+    }
+  )
 })
