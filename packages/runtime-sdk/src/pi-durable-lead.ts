@@ -12,6 +12,7 @@ import {
   RuntimeExecutionProgressSchema,
   RuntimeExecutionStatusSchema,
   RuntimeExecutionStateSchema,
+  RuntimeObservedGenerationSchema,
 } from './adapter.js'
 
 const IntentId = z.uuid()
@@ -43,18 +44,52 @@ export const PiDurableLeadRequestedTargetSchema = z
   .readonly()
 export type PiDurableLeadRequestedTarget = z.output<typeof PiDurableLeadRequestedTargetSchema>
 /** Server-owned execution observation: the session the runtime assigned
- *  this execution plus the authority-resolved plan task. Both facts come
- *  from server-held records (adapter handle + admitted plan), never from
- *  caller claims. Generation is deliberately absent: no current read
- *  reports the target's live generation, and emitting a caller value here
- *  would launder it as observed. */
+ *  this execution, the authority-resolved plan task, and the generation the
+ *  runtime observed for the attempt that owns it. All three come from
+ *  server-held records (adapter handle + admitted plan + the runtime's own
+ *  observed generation), never from caller claims. A caller-claimed
+ *  generation is retained on the request and echoed back as a claim; it can
+ *  never appear here, because a claimed value laundered as an observation is
+ *  not an observation. */
 export const PiDurableLeadObservedTargetSchema = z
   .strictObject({
     sessionId: z.string().trim().min(1).max(256),
     taskId: z.string().trim().min(1).max(256),
+    /** The runtime-observed generation, when the runtime has observed one. */
+    generation: RuntimeObservedGenerationSchema.optional(),
   })
   .readonly()
 export type PiDurableLeadObservedTarget = z.output<typeof PiDurableLeadObservedTargetSchema>
+
+/** Every published observed generation must belong to the attempt the receipt
+ *  owns. A generation observed for another attempt is a late old-attempt
+ *  event: publishing it would fence the wrong attempt, so it is refused
+ *  instead. The fence covers both places a generation is published — the
+ *  observed target and the embedded runtime status — so no publication path
+ *  can carry a foreign generation. */
+function fenceForeignGeneration(
+  receipt: {
+    attemptId: string
+    observedTarget?: { generation?: { attemptId: string } | undefined } | undefined
+    status?: { observedGeneration?: { attemptId: string } | undefined } | undefined
+  },
+  context: z.RefinementCtx
+): void {
+  const foreign = (generation: { attemptId: string } | undefined): boolean =>
+    generation !== undefined && generation.attemptId !== receipt.attemptId
+  if (foreign(receipt.observedTarget?.generation))
+    context.addIssue({
+      code: 'custom',
+      path: ['observedTarget', 'generation'],
+      message: 'Observed generation must belong to the receipt attempt',
+    })
+  if (foreign(receipt.status?.observedGeneration))
+    context.addIssue({
+      code: 'custom',
+      path: ['status', 'observedGeneration'],
+      message: 'Observed generation must belong to the receipt attempt',
+    })
+}
 
 export const PiDurableLeadPrepareRequestSchema = PiDurableLeadCommandEnvelopeSchema.extend({
   operation: z.literal('pi-durable.lead.prepare'),
@@ -123,6 +158,9 @@ export const PiDurableLeadReceiptResponseSchema = z
     observedTarget: PiDurableLeadObservedTargetSchema.optional(),
   })
   .strict()
+  .superRefine((receipt, context) => {
+    fenceForeignGeneration(receipt, context)
+  })
 const response = SuccessResponseEnvelopeSchema.extend({ correlation: Correlation }).strict()
 const PlanDigest = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 const ChildAllowanceBinding = {
@@ -208,6 +246,11 @@ export const PiDurableLeadLookupResponseSchema = response.extend({
           observedTarget: PiDurableLeadObservedTargetSchema.optional(),
         })
         .strict()
+        .superRefine((receipt, context) => {
+          // Same fence as the live receipt: an observed generation belongs to
+          // the attempt that owns it.
+          fenceForeignGeneration(receipt, context)
+        })
         .nullable(),
     })
     .strict(),

@@ -24,7 +24,7 @@ const requestedTarget = {
   generation: 3,
 }
 
-function harness() {
+function harness(options = {}) {
   const plan = createExecutionPlanTestFixture({
     profileCapabilityRequirements: [],
     skillRequiredCapabilities: [],
@@ -92,11 +92,18 @@ function harness() {
       handle,
       state: calls.cancels > 0 ? (confirmed ? 'cancelled' : 'cancelling') : 'running',
       observedAt: at,
+      ...(options.observedGeneration ? { observedGeneration: options.observedGeneration } : {}),
     }),
     progress: async function* () {},
     cancel: async () => {
       calls.cancels += 1
-      return { handle, state: confirmed ? 'cancelled' : 'cancelling', observedAt: at }
+      const generation = options.cancelGeneration ?? options.observedGeneration
+      return {
+        handle,
+        state: confirmed ? 'cancelled' : 'cancelling',
+        observedAt: at,
+        ...(generation ? { observedGeneration: generation } : {}),
+      }
     },
   }
   const service = new DurablePiDurableLeadService({
@@ -296,6 +303,74 @@ test('935: observedTarget binds server-owned session and plan task', async () =>
   expect(dispatched.data.observedTarget).toBeDefined()
   expect(dispatched.data.observedTarget.taskId).not.toBe(claimed.taskId)
   expect(dispatched.data.observedTarget.sessionId).toBe(dispatched.data.runtimeSessionId)
+})
+
+test('935: the receipt carries the runtime-observed generation, never the claimed one', async () => {
+  // The claim stays a claim: the caller's number is echoed on the receipt as
+  // the request's target and never becomes an observation. The observation is
+  // the runtime's own identity for the attempt that owns the receipt.
+  const observedGeneration = {
+    schemaVersion: 'runtime-observed-generation/v1',
+    attemptId: id('att'),
+    turnKey: `pi-turn:${id('att')}:initial`,
+    inferenceId: 'pi-generation:1',
+    inferenceKey: `pi-turn:${id('att')}:initial:pi-generation:1`,
+  }
+  const { service, envelope, principal } = harness({ observedGeneration })
+  const claimed = {
+    sessionId: 'ses_02JABCDEF0123456789ABCDEH',
+    taskId: '11111111-2222-4333-8444-555555555555',
+    generation: 7,
+  }
+  const dispatched = await service.dispatch(
+    envelope('pi-durable.lead.dispatch', { intentId, requestedTarget: claimed }),
+    principal
+  )
+  expect(dispatched.data.requestedTarget).toEqual(claimed)
+  expect(dispatched.data.observedTarget.generation).toEqual(observedGeneration)
+  // The claimed number is not the observation, and never becomes one.
+  expect(dispatched.data.observedTarget.generation).not.toEqual(claimed.generation)
+})
+
+test('935: a generation observed for another attempt is fenced at the control boundary', async () => {
+  // A runtime that reports a generation observed for another attempt is
+  // reporting a late old-attempt event. The control is refused instead of
+  // publishing an outcome for the wrong attempt.
+  const foreignGeneration = {
+    schemaVersion: 'runtime-observed-generation/v1',
+    attemptId: 'att_01JABCDEF0123456789ABCDEFH',
+    turnKey: `pi-turn:att_01JABCDEF0123456789ABCDEFH:initial`,
+    inferenceId: 'pi-generation:late',
+    inferenceKey: `pi-turn:att_01JABCDEF0123456789ABCDEFH:initial:pi-generation:late`,
+  }
+  const { service, envelope, principal, calls } = harness({
+    observedGeneration: {
+      schemaVersion: 'runtime-observed-generation/v1',
+      attemptId: id('att'),
+      turnKey: `pi-turn:${id('att')}:initial`,
+      inferenceId: 'pi-generation:1',
+      inferenceKey: `pi-turn:${id('att')}:initial:pi-generation:1`,
+    },
+    cancelGeneration: foreignGeneration,
+  })
+  const dispatched = await service.dispatch(
+    envelope('pi-durable.lead.dispatch', { intentId, requestedTarget }),
+    principal
+  )
+  expect(
+    await codeOf(() =>
+      service.cancel(
+        envelope(
+          'pi-durable.lead.cancel',
+          { dispatchId: dispatched.data.dispatchId },
+          'target-cancel:late-generation'
+        ),
+        principal
+      )
+    )
+  ).toBe('PI_LEAD_AUTHORITY_CONFLICT')
+  // The lead-stop itself never cascaded to children.
+  expect(calls.childStops).toHaveLength(0)
 })
 
 test('935: ordinary lead-stop performs zero child-cancel calls', async () => {

@@ -18,6 +18,8 @@ import {
   RuntimeStartRequestSchema,
   type RuntimeAdapter,
   type RuntimeExecutionHandle,
+  type RuntimeExecutionStatus,
+  type RuntimeObservedGeneration,
   type RuntimeStartRequest,
 } from '@control-plane/runtime-sdk'
 
@@ -534,11 +536,12 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       await this.options.adapter.status(requireHandle(receipt))
     )
     verifyRuntimeHandle(receipt, status.handle)
+    verifyObservedGeneration(receipt, status)
     await this.options.authority.assertCurrent(admission, principal, 'dispatch')
     return PiDurableLeadDispatchResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
-        ...observedTarget(receipt, admission),
+        ...observedTarget(receipt, admission, status),
         state: status.state,
         replayed,
       })
@@ -562,11 +565,12 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       await this.options.adapter.status(requireHandle(receipt))
     )
     verifyRuntimeHandle(receipt, status.handle)
+    verifyObservedGeneration(receipt, status)
     await this.options.authority.assertCurrent(admission, principal, 'status')
     return PiDurableLeadStatusResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
-        ...observedTarget(receipt, admission),
+        ...observedTarget(receipt, admission, status),
         state: status.state,
         status,
       })
@@ -658,11 +662,14 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     // (delegationService.cancelChildren, invoked directly with its own
     // authorization), never a lead-stop side effect — so independent
     // child work survives a normal parent stop by construction.
+    // The cancel is bound to the observed target: a generation observed for
+    // another attempt is a late event and is refused here.
+    verifyObservedGeneration(receipt, status)
     await this.options.authority.assertCurrent(admission, principal, 'cancel')
     return PiDurableLeadCancelResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
-        ...observedTarget(receipt, admission),
+        ...observedTarget(receipt, admission, status),
         state: status.state,
         status,
       })
@@ -774,6 +781,10 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       await this.options.adapter.status(requireHandle(receipt))
     )
     verifyRuntimeHandle(receipt, status.handle)
+    // The retained fence proves the receipt, never the runtime's report: a
+    // generation observed for another attempt is still a late event and is
+    // refused here rather than published against the wrong attempt.
+    verifyObservedGeneration(receipt, status)
     await this.#fencedGuard(request.workspaceId, receipt, fenced, principal, 'status')
     return PiDurableLeadStatusResponseSchema.parse(
       success(request, { ...publicReceipt(receipt), state: status.state, status })
@@ -815,6 +826,9 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       })
     )
     verifyRuntimeHandle(receipt, status.handle)
+    // The same fence as the ordinary path: a late old-attempt generation is
+    // never published, fenced or not.
+    verifyObservedGeneration(receipt, status)
     await this.#fencedGuard(request.workspaceId, receipt, fenced, principal, 'cancel')
     return PiDurableLeadCancelResponseSchema.parse(
       success(request, { ...publicReceipt(receipt), state: status.state, status })
@@ -998,15 +1012,26 @@ function publicReceipt(receipt: PiDurableLeadReceipt) {
   }
 }
 /** Server-owned execution observation for one verified receipt: the
- *  adapter-observed execution session plus the authority-resolved plan
- *  task. Both facts come from server-held records already pinned by the
- *  surrounding verifyReceipt/verifyRuntimeHandle checks — never from
- *  caller claims. Absent unless a handle with an observed session exists;
- *  generation is deliberately not emitted (no current read reports it). */
+ *  adapter-observed execution session, the authority-resolved plan task, and
+ *  the generation the runtime observed for the attempt that owns them. All
+ *  three come from server-held records already pinned by the surrounding
+ *  verifyReceipt/verifyRuntimeHandle checks — never from caller claims. A
+ *  caller-claimed generation is retained on the receipt as a claim; it is
+ *  never emitted here. Absent unless a handle with an observed session
+ *  exists. */
 function observedTarget(
   receipt: PiDurableLeadReceipt,
-  admission: PiDurableLeadAdmission
-): { observedTarget: { sessionId: string; taskId: string } } | Record<string, never> {
+  admission: PiDurableLeadAdmission,
+  status?: RuntimeExecutionStatus
+):
+  | {
+      observedTarget: {
+        sessionId: string
+        taskId: string
+        generation?: RuntimeObservedGeneration
+      }
+    }
+  | Record<string, never> {
   const sessionId = receipt.handle?.externalSessionId
   // The admission type leaves the plan loosely typed; read the correlation
   // defensively — anything but a string taskId means no observation.
@@ -1015,7 +1040,27 @@ function observedTarget(
     | undefined
   const taskId = plan?.correlation?.taskId
   if (typeof sessionId !== 'string' || typeof taskId !== 'string') return {}
-  return { observedTarget: { sessionId, taskId } }
+  // The generation is the runtime's own observation for this attempt. A
+  // generation observed for another attempt is a late event: it is fenced at
+  // the control boundary, and it is never published as this target's.
+  const generation = status?.observedGeneration
+  return {
+    observedTarget: {
+      sessionId,
+      taskId,
+      ...(generation && generation.attemptId === receipt.attemptId ? { generation } : {}),
+    },
+  }
+}
+/** The control boundary fence: a runtime that reports a generation observed
+ *  for another attempt is a late old-attempt event, and the request is
+ *  refused rather than published against the wrong attempt. */
+function verifyObservedGeneration(
+  receipt: PiDurableLeadReceipt,
+  status: RuntimeExecutionStatus
+): void {
+  const generation = status.observedGeneration
+  if (generation && generation.attemptId !== receipt.attemptId) fail('PI_LEAD_AUTHORITY_CONFLICT')
 }
 /** What the admitted, integrity-verified lead plan holds back for children, read from the plan the
  *  attempt runs under and never from a caller claim. The profile pin is the one the plan was compiled
