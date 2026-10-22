@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -29,6 +30,7 @@ const ids = {
   attempt: 'att_01JABCDEF0123456789ABCDEFG',
   otherAttempt: 'att_01JABCDEF0123456789ABCDEFH',
   request: 'req_01JABCDEF0123456789ABCDEFG',
+  otherRequest: 'req_01JABCDEF0123456789ABCDEFH',
   trace: 'trc_01JABCDEF0123456789ABCDEFG',
   definition: 'tld_01JABCDEF0123456789ABCDEFG',
   otherDefinition: 'tld_01JABCDEF0123456789ABCDEFH',
@@ -40,8 +42,15 @@ const ids = {
 
 const requestedAt = '2026-08-25T09:00:00.000Z'
 const historicalSwedishToolReceipt = {
+  inputBytes: '{"z":"zee","å":"a-ring","ä":"a-diaeresis"}',
+  requestBytes:
+    '{"attemptId":"att_01JABCDEF0123456789ABCDEFG","executionId":"exe_01JABCDEF0123456789ABCDEFG","idempotencyKey":"tool-effect-0001","input":{"z":"zee","å":"a-ring","ä":"a-diaeresis"},"operation":"write","policySnapshotRef":"policy://workspace/v7","principalRef":"service:runtime-worker","profileId":"prf_01JABCDEF0123456789ABCDEFG","toolCallId":"tlc_01JABCDEF0123456789ABCDEFG","toolDefinitionId":"tld_01JABCDEF0123456789ABCDEFG","toolVersionId":"tlv_01JABCDEF0123456789ABCDEFG","workspaceId":"wsp_01JABCDEF0123456789ABCDEFG"}',
   requestDigest: 'sha256:1e6549b772d8214f37fd72b131a86a979e3147f2d21b63ea28b4825eaeaf6770',
   inputDigest: 'sha256:13df5d9701ee0f10b54eda343f77b053bf317cf5a8628c41638ae5216993f312',
+}
+
+function digestReceiptBytes(bytes) {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`
 }
 
 function definition(workspaceId = ids.workspace, toolDefinitionId = ids.definition) {
@@ -624,6 +633,29 @@ describe('SQLite tool repositories', () => {
       })
       expect(firstExecutor.requests).toHaveLength(1)
 
+      expect(digestReceiptBytes(historicalSwedishToolReceipt.requestBytes)).toBe(
+        historicalSwedishToolReceipt.requestDigest
+      )
+      expect(digestReceiptBytes(historicalSwedishToolReceipt.inputBytes)).toBe(
+        historicalSwedishToolReceipt.inputDigest
+      )
+      const taggedRequest = executionRequest({
+        toolCallId: ids.otherCall,
+        idempotencyKey: 'tool-effect-tagged-v2-0002',
+        requestId: ids.otherRequest,
+        executionId: ids.otherExecution,
+        attemptId: ids.otherAttempt,
+        input: request.input,
+      })
+      const taggedExecutor = new FakeToolExecutor(() => ({ saved: true }))
+      const taggedCompleted = await service(persistence, taggedExecutor).execute(taggedRequest)
+      expect(taggedCompleted.call).toMatchObject({
+        status: 'succeeded',
+        requestDigestVersion: 2,
+        inputDigestVersion: 2,
+      })
+      expect(taggedExecutor.requests).toHaveLength(1)
+
       const reopened = await reopen()
       const afterRestartExecutor = new FakeToolExecutor(() => ({ saved: false }))
       const replay = await service(reopened, afterRestartExecutor).execute(request)
@@ -664,9 +696,37 @@ describe('SQLite tool repositories', () => {
       expect(legacyReplay.call.requestDigestVersion).toBeUndefined()
       expect(legacyReplay.call.inputDigestVersion).toBeUndefined()
       expect(afterRestartExecutor.requests).toHaveLength(0)
+
+      const taggedReplay = await service(reopened, afterRestartExecutor).execute(taggedRequest)
+      expect(taggedReplay).toEqual(taggedCompleted)
+      expect(taggedReplay.call).toMatchObject({ requestDigestVersion: 2, inputDigestVersion: 2 })
+      expect(afterRestartExecutor.requests).toHaveLength(0)
       expect(
         await new SqliteToolCallRepository(reopened, ids.workspace).listByExecution(ids.execution)
       ).toEqual([legacyReplay.call])
+      expect(
+        await new SqliteToolCallRepository(reopened, ids.workspace).listByExecution(
+          ids.otherExecution
+        )
+      ).toEqual([taggedReplay.call])
+
+      await expect(
+        service(reopened, afterRestartExecutor).execute(
+          executionRequest({
+            ...request,
+            input: { ...request.input, z: 'changed' },
+          })
+        )
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+      await expect(
+        service(reopened, afterRestartExecutor).execute(
+          executionRequest({
+            ...taggedRequest,
+            input: { ...taggedRequest.input, z: 'changed' },
+          })
+        )
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+      expect(afterRestartExecutor.requests).toHaveLength(0)
 
       await reopened.transaction(async (transaction) => {
         const record = await transaction.get(persisted.namespace, persisted.id)

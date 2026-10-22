@@ -11,6 +11,8 @@ import {
   StaticToolPolicyAuthorizer,
   ToolGateway,
   ToolRegistry,
+  toolInputDigest,
+  toolRequestDigestLegacy,
 } from '@control-plane/tool-execution'
 import { InMemoryInteractionRepository, InteractionService } from '@control-plane/domain'
 import { drizzle } from 'drizzle-orm/postgres-js'
@@ -47,7 +49,23 @@ const ids = {
   ambiguousCall: 'tlc_01JABCDEF0123456789ABCDEFC',
   pendingCall: 'tlc_01JABCDEF0123456789ABCDEFE',
   historicalCall: 'tlc_01JABCDEF0123456789ABCDEFJ',
+  localeCall: 'tlc_01JABCDEF0123456789ABCDEFK',
+  taggedLocaleCall: 'tlc_01JABCDEF0123456789ABCDEFM',
+  localeDefinition: 'tld_01JABCDEF0123456789ABCDEFK',
+  localeVersion: 'tlv_01JABCDEF0123456789ABCDEFK',
+  localeExecution: 'exe_01JABCDEF0123456789ABCDEFK',
+  taggedLocaleExecution: 'exe_01JABCDEF0123456789ABCDEFM',
+  localeAttempt: 'att_01JABCDEF0123456789ABCDEFK',
+  taggedLocaleAttempt: 'att_01JABCDEF0123456789ABCDEFM',
   pendingRequest: 'req_01JABCDEF0123456789ABCDEFC',
+}
+
+const historicalPostgresSwedishReceipt = {
+  inputBytes: '{"z":"zee","å":"a-ring","ä":"a-diaeresis"}',
+  requestBytes:
+    '{"attemptId":"att_01JABCDEF0123456789ABCDEFK","executionId":"exe_01JABCDEF0123456789ABCDEFK","idempotencyKey":"tool-effect-pg-historical-locale","input":{"z":"zee","å":"a-ring","ä":"a-diaeresis"},"operation":"write","policySnapshotRef":"policy://workspace/v7","principalRef":"service:runtime-worker","profileId":"prf_01JABCDEF0123456789ABCDEFG","toolCallId":"tlc_01JABCDEF0123456789ABCDEFK","toolDefinitionId":"tld_01JABCDEF0123456789ABCDEFK","toolVersionId":"tlv_01JABCDEF0123456789ABCDEFK","workspaceId":"wsp_01JABCDEF0123456789ABCDEFG"}',
+  requestDigest: 'sha256:593deccf194da6a40310ee6543f30915ddc0d282d1e2e4143dcae38309776d25',
+  inputDigest: 'sha256:13df5d9701ee0f10b54eda343f77b053bf317cf5a8628c41638ae5216993f312',
 }
 
 function definition(ownerWorkspaceId = workspaceId, toolDefinitionId = ids.definition) {
@@ -212,6 +230,24 @@ function digestValue(value) {
   return `sha256:${createHash('sha256')
     .update(canonicalJsonStringify(value) ?? 'null')
     .digest('hex')}`
+}
+
+function digestReceiptBytes(bytes) {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`
+}
+
+async function withDefaultLocaleCompare(locale, callback) {
+  const originalLocaleCompare = String.prototype.localeCompare
+  Reflect.set(String.prototype, 'localeCompare', function (...args) {
+    return args.length === 1
+      ? originalLocaleCompare.call(this, args[0], locale)
+      : originalLocaleCompare.apply(this, args)
+  })
+  try {
+    return await callback()
+  } finally {
+    Reflect.set(String.prototype, 'localeCompare', originalLocaleCompare)
+  }
 }
 
 describe.skipIf(!integrationEnabled)('PostgreSQL tool storage', () => {
@@ -479,6 +515,143 @@ describe.skipIf(!integrationEnabled)('PostgreSQL tool storage', () => {
       expect(persisted).toEqual(historicalCall)
       expect(persisted.requestDigestVersion).toBeUndefined()
       expect(persisted.inputDigestVersion).toBeUndefined()
+    } finally {
+      await connection.close()
+    }
+  })
+
+  test('coexisting tagged and Swedish legacy tool receipts replay without repeating effects after reconnect', async () => {
+    const connection = await openIndependentConnection()
+    try {
+      const repository = new PostgresToolRegistryRepository(connection.database, workspaceId)
+      const registry = new ToolRegistry(repository)
+      await registry.createDefinition(definition(workspaceId, ids.localeDefinition))
+      const draft = version(ids.localeVersion, '1.0.0', ids.localeDefinition)
+      delete draft.revision
+      delete draft.lifecycle
+      delete draft.contentDigest
+      draft.inputSchema = { type: 'object', additionalProperties: true }
+      await registry.publishVersion(draft)
+
+      const input = { ä: 'a-diaeresis', å: 'a-ring', z: 'zee' }
+      const historicalRequest = executionRequest({
+        toolCallId: ids.localeCall,
+        idempotencyKey: 'tool-effect-pg-historical-locale',
+        executionId: ids.localeExecution,
+        attemptId: ids.localeAttempt,
+        toolDefinitionId: ids.localeDefinition,
+        toolVersionId: ids.localeVersion,
+        input,
+      })
+      const taggedRequest = executionRequest({
+        toolCallId: ids.taggedLocaleCall,
+        idempotencyKey: 'tool-effect-pg-tagged-v2-row',
+        requestId: 'req_01JABCDEF0123456789ABCDEFM',
+        executionId: ids.taggedLocaleExecution,
+        attemptId: ids.taggedLocaleAttempt,
+        toolDefinitionId: ids.localeDefinition,
+        toolVersionId: ids.localeVersion,
+        input,
+      })
+      expect(digestReceiptBytes(historicalPostgresSwedishReceipt.requestBytes)).toBe(
+        historicalPostgresSwedishReceipt.requestDigest
+      )
+      expect(digestReceiptBytes(historicalPostgresSwedishReceipt.inputBytes)).toBe(
+        historicalPostgresSwedishReceipt.inputDigest
+      )
+
+      const initialExecutor = new FakeToolExecutor(() => ({ saved: true }))
+      const historicalCompleted = await service(connection.database, initialExecutor).execute(
+        historicalRequest
+      )
+      const taggedCompleted = await service(connection.database, initialExecutor).execute(
+        taggedRequest
+      )
+      expect(historicalCompleted.call).toMatchObject({
+        status: 'succeeded',
+        requestDigestVersion: 2,
+        inputDigestVersion: 2,
+      })
+      expect(taggedCompleted.call).toMatchObject({
+        status: 'succeeded',
+        requestDigestVersion: 2,
+        inputDigestVersion: 2,
+      })
+      expect(initialExecutor.requests).toHaveLength(2)
+
+      const historicalCall = { ...historicalCompleted.call }
+      historicalCall.requestDigest = historicalPostgresSwedishReceipt.requestDigest
+      historicalCall.inputDigest = historicalPostgresSwedishReceipt.inputDigest
+      delete historicalCall.requestDigestVersion
+      delete historicalCall.inputDigestVersion
+      await connection.database.execute(sql`
+        update tool_calls
+        set call = ${JSON.stringify(historicalCall)}::jsonb
+        where workspace_id = ${workspaceId} and tool_call_id = ${ids.localeCall}
+      `)
+      const reopenedCallRepository = new PostgresToolCallRepository(
+        connection.database,
+        workspaceId
+      )
+      expect(await reopenedCallRepository.get(ids.localeCall)).toEqual(historicalCall)
+      expect(await reopenedCallRepository.get(ids.taggedLocaleCall)).toMatchObject({
+        requestDigestVersion: 2,
+        inputDigestVersion: 2,
+      })
+
+      await connection.close()
+      const reopened = await openIndependentConnection()
+      try {
+        const persistedCalls = new PostgresToolCallRepository(reopened.database, workspaceId)
+        const persistedHistorical = await persistedCalls.get(ids.localeCall)
+        expect(persistedHistorical).toEqual(historicalCall)
+        expect(persistedHistorical.requestDigestVersion).toBeUndefined()
+        expect(persistedHistorical.inputDigestVersion).toBeUndefined()
+        expect(await persistedCalls.get(ids.taggedLocaleCall)).toMatchObject({
+          requestDigestVersion: 2,
+          inputDigestVersion: 2,
+        })
+
+        const replayExecutor = new FakeToolExecutor(() => ({ saved: false }))
+        await withDefaultLocaleCompare('en-US', async () => {
+          expect(toolInputDigest(input)).not.toBe(historicalPostgresSwedishReceipt.inputDigest)
+          expect(toolRequestDigestLegacy(historicalRequest)).not.toBe(
+            historicalPostgresSwedishReceipt.requestDigest
+          )
+          const historicalReplay = await service(reopened.database, replayExecutor).execute(
+            historicalRequest
+          )
+          expect(historicalReplay).toMatchObject({
+            state: 'succeeded',
+            call: {
+              status: 'succeeded',
+              requestDigest: historicalPostgresSwedishReceipt.requestDigest,
+              inputDigest: historicalPostgresSwedishReceipt.inputDigest,
+            },
+          })
+          expect(historicalReplay.call.requestDigestVersion).toBeUndefined()
+          expect(historicalReplay.call.inputDigestVersion).toBeUndefined()
+
+          expect(await service(reopened.database, replayExecutor).execute(taggedRequest)).toEqual(
+            taggedCompleted
+          )
+          await expect(
+            service(reopened.database, replayExecutor).execute({
+              ...historicalRequest,
+              input: { ...input, z: 'changed' },
+            })
+          ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+          await expect(
+            service(reopened.database, replayExecutor).execute({
+              ...taggedRequest,
+              input: { ...input, z: 'changed' },
+            })
+          ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+        })
+        expect(replayExecutor.requests).toHaveLength(0)
+      } finally {
+        await reopened.close()
+      }
     } finally {
       await connection.close()
     }

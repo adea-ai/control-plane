@@ -698,7 +698,13 @@ describe('policy-controlled durable tool execution', () => {
         calls: historicalCalls,
         versionOverrides: { ...looseSchema, ...noApproval },
       })
-      const outcome = await replay.service.execute(retryRequest)
+      const outcome = await withDefaultLocaleCompare('en-US', async () => {
+        if (receipt === historicalLocaleDigests.svSE) {
+          expect(toolInputDigest(retryInput)).not.toBe(receipt.input)
+          expect(toolRequestDigestLegacy(retryRequest)).not.toBe(receipt.request)
+        }
+        return replay.service.execute(retryRequest)
+      })
 
       expect(outcome).toMatchObject({ state: 'succeeded', call: { status: 'succeeded' } })
       expect(replay.executor.requests).toHaveLength(0)
@@ -771,8 +777,10 @@ describe('policy-controlled durable tool execution', () => {
     expect(toolInputMatchesDigest(input, mixedReceipt.legacyInputDigest, 2)).toBe(false)
     expect(mixedReceipt.legacyInputBytes).not.toBe(mixedReceipt.codePointInputBytes)
 
+    const permissiveSchema = { inputSchema: { type: 'object', additionalProperties: true } }
     const first = await fixture({
       versionOverrides: {
+        ...permissiveSchema,
         operations: [{ ...version().operations[0], approvalMode: 'never' }],
       },
     })
@@ -794,12 +802,22 @@ describe('policy-controlled durable tool execution', () => {
     const replayFixture = await fixture({
       calls: historicalCalls,
       versionOverrides: {
+        ...permissiveSchema,
         operations: [{ ...version().operations[0], approvalMode: 'never' }],
       },
     })
     const replay = await replayFixture.service.execute(retryRequest)
 
     expect(replay).toMatchObject({ state: 'succeeded', call: { status: 'succeeded' } })
+    expect(replayFixture.executor.requests).toHaveLength(0)
+    await expect(
+      replayFixture.service.execute(
+        request({
+          approval: undefined,
+          input: { z: 'changed', å: 'a-ring', ä: 'a-diaeresis' },
+        })
+      )
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
     expect(replayFixture.executor.requests).toHaveLength(0)
   })
 
