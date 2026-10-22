@@ -1,6 +1,35 @@
 import { describe, expect, spyOn, test } from 'bun:test'
 import { RetentionSweep } from './retention-sweep.ts'
 
+function emptySummary(classId, now) {
+  return {
+    classId,
+    assessedAt: now.toISOString(),
+    scanned: 0,
+    truncated: false,
+    eligible: 0,
+    retainedByReason: {},
+  }
+}
+
+/**
+ * Fake assessment source that records the class of every read, in order, and
+ * signals `onPass` once the second class of a pass has been read.
+ */
+function gatedAssessments(calls, onPass) {
+  return {
+    assessCommandInbox: async (now) => {
+      calls.push('command-inbox')
+      return emptySummary('command-inbox', now)
+    },
+    assessExecutionEvents: async (now) => {
+      calls.push('execution-events')
+      onPass?.()
+      return emptySummary('execution-events', now)
+    },
+  }
+}
+
 function assessments({ inboxEligible = 0, eventEligible = 0, delayInbox } = {}) {
   return {
     assessCommandInbox: async (now) => {
@@ -128,6 +157,65 @@ describe('retention sweep', () => {
     await sweep.close()
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(calls).toBe(0)
+  })
+
+  test('start arms the first pass only after one interval; each pass reads one assessment per class', async () => {
+    const calls = []
+    let firstPass
+    const passed = new Promise((resolve) => {
+      firstPass = resolve
+    })
+    const sweep = new RetentionSweep({
+      ...gatedAssessments(calls, firstPass),
+      intervalMs: 40,
+    })
+    const startedAt = Date.now()
+    sweep.start()
+    // Startup arms a timer only: no assessment read happens synchronously.
+    expect(calls).toEqual([])
+    await passed
+    expect(calls).toEqual(['command-inbox', 'execution-events'])
+    // The first read waited a full interval, so this is not an immediate startup pass.
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(40)
+    await sweep.close()
+  })
+
+  test('a restart has no catch-up: a fresh start arms a full interval and replays nothing', async () => {
+    const calls = []
+    const pendingPasses = []
+    const nextPass = () =>
+      new Promise((resolve) => {
+        pendingPasses.push(resolve)
+      })
+    const create = () =>
+      new RetentionSweep({
+        ...gatedAssessments(calls, () => pendingPasses.shift()?.()),
+        intervalMs: 40,
+      })
+
+    const first = create()
+    const firstPass = nextPass()
+    first.start()
+    await firstPass
+    expect(calls).toEqual(['command-inbox', 'execution-events'])
+    await first.close()
+
+    // The schedule is in-memory and per-process: the replacement instance does
+    // not replay the interval that elapsed while the previous one was stopped.
+    const restartedAt = Date.now()
+    const second = create()
+    const secondPass = nextPass()
+    second.start()
+    expect(calls).toEqual(['command-inbox', 'execution-events'])
+    await secondPass
+    expect(Date.now() - restartedAt).toBeGreaterThanOrEqual(40)
+    expect(calls).toEqual([
+      'command-inbox',
+      'execution-events',
+      'command-inbox',
+      'execution-events',
+    ])
+    await second.close()
   })
 
   test('assessment failures surface through a fixed diagnostic without storage details', async () => {
