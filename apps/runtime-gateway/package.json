@@ -30,6 +30,7 @@
     "@control-plane/telemetry": "workspace:*"
   },
   "devDependencies": {
+    "@control-plane/acp-adapter": "workspace:*",
     "@control-plane/object-store": "workspace:*"
   },
   "engines": {

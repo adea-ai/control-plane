@@ -283,6 +283,14 @@ test('a retried carrier is ONE durable command in the real SQLite command reposi
       delivery.enqueue(carrier({ commandId: command.commandId, sequence: command.sequence + 1 }))
     ).rejects.toMatchObject({ code: 'RUNTIME_COMMAND_PAYLOAD_MISMATCH' })
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    // The provider holds the open database handle: it is closed BEFORE the directory is
+    // removed, so the store is not deleted from under a live connection and the WAL
+    // sidecars are not recreated after the cleanup. A close failure must not skip the
+    // directory removal.
+    try {
+      provider.close()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   }
 })
