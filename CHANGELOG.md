@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.106.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.2...workspace-v1.106.3) (2026-10-22)
+
+
+### Tests
+
+* **toolchain:** record per-repository adoption evidence ([#1233](https://github.com/adea-ai/control-plane/issues/1233)) ([#1234](https://github.com/adea-ai/control-plane/issues/1234)) ([8f6c921](https://github.com/adea-ai/control-plane/commit/8f6c921dba2cee0dd97cb200880f1e15e1e265ee))
+
 ## [1.106.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.1...workspace-v1.106.2) (2026-10-22)
 
 
