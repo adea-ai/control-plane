@@ -41,9 +41,9 @@ const VARIABLES_QUERY = `query($projectId:String!,$environmentId:String!,$servic
 
 const safeGateFailures = new WeakMap()
 
-function gateError(code) {
+function gateError(code, cause) {
   const error = new Error(`Production schema gate failed: ${code}`)
-  safeGateFailures.set(error, code)
+  safeGateFailures.set(error, safeGateFailures.get(cause) ?? code)
   return error
 }
 
@@ -590,8 +590,8 @@ export async function migrateProductionSchema({
         ),
       }))
     )
-  } catch {
-    throw gateError('Railway runtime database bindings do not match production')
+  } catch (error) {
+    throw gateError('Railway runtime database bindings do not match production', error)
   }
   if (runtimeVariables.length !== SERVICES.length) {
     throw gateError('Railway runtime database bindings do not match production')
@@ -634,8 +634,8 @@ export async function migrateProductionSchema({
         tls
       )
     }
-  } catch {
-    failure = gateError('migration, history, or runtime privilege verification failed')
+  } catch (error) {
+    failure = gateError('migration, history, or runtime privilege verification failed', error)
   } finally {
     if (lockAcquired) {
       try {

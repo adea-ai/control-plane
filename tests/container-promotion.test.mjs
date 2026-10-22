@@ -550,6 +550,31 @@ describe('production schema migration gate', () => {
     )
   })
 
+  test('preserves a safe provider failure label through the binding guard without provider response text', async () => {
+    const secret = 'provider-response-secret-fixture'
+    const railway = createRailwayVariableReader({
+      token: 'token-fixture',
+      fetchImpl: async () => ({ ok: false, json: async () => ({ errors: [{ message: secret }] }) }),
+    })
+    await assert.rejects(
+      migrateProductionSchema({
+        environment: { DATABASE_MIGRATION_URL: migrationUrl },
+        railway,
+        canonicalHistory,
+        openMigrationSession: () => assert.fail('database must not open'),
+      }),
+      (error) => {
+        assert.match(error.message, /runtime database bindings do not match production/)
+        assert.equal(
+          productionSchemaGateFailure(error),
+          'Railway runtime configuration lookup failed'
+        )
+        assert.ok(!productionSchemaGateFailure(error).includes(secret))
+        return true
+      }
+    )
+  })
+
   test('validates the pooled runtime binding before opening the migration connection', async () => {
     const session = createFakeSession()
     const variables = productionRuntimeVariables()
