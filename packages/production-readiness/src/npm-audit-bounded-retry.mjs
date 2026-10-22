@@ -13,18 +13,20 @@
 //     --audit-level, no --ignore and no registry override);
 //   - it never retries a real audit finding: a vulnerability report is a
 //     failure, not a transient condition;
-//   - it never retries an exit code it does not understand.
+//   - it never retries an outcome it does not understand: an unknown exit, a
+//     signalled attempt, a stalled attempt or any exit code other than the
+//     failed-audit code fails closed.
 //
 // The audit output is reproduced verbatim so the CI log keeps the evidence of
 // what the audit reported.
 //
-// Observed bun 1.4.x behaviour, measured against a local registry stub that
+// Observed bun 1.4.3 behaviour, measured against a local registry stub that
 // answers 503 for the bulk advisory endpoint: bun posts to
-// /-/npm/v1/security/advisories/bulk, retries that endpoint internally for
-// about six minutes and then fails with `error: POST <registry>/-/npm/v1/
-// security/advisories/bulk - Timeout` and exit code 1. The per-attempt budget
-// below is therefore larger than that internal retry, so this helper never
-// truncates bun's own recovery; it only bounds how long one attempt may run.
+// /-/npm/v1/security/advisories/bulk and reports
+// `error: POST <registry>/-/npm/v1/security/advisories/bulk - 503` with exit
+// code 1. A registry that also asks for a retry makes bun retry the endpoint
+// internally for about six minutes and then report `... - Timeout` instead;
+// that is not a confirmed HTTP 503, so it fails closed here.
 
 import { spawn as spawnProcess } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -34,6 +36,25 @@ export const BULK_ADVISORY_PATH = '/-/npm/v1/security/advisories/bulk'
 
 /** The only HTTP status this helper retries. */
 export const TRANSIENT_STATUS = 503
+
+/**
+ * The exit code the pinned Bun uses for a failed audit. It is the only exit
+ * code this helper understands, so it is the only one a transient condition may
+ * carry.
+ */
+export const FAILED_AUDIT_EXIT_CODE = 1
+
+/**
+ * The pinned Bun diagnostic for the bulk advisory endpoint answering HTTP 503:
+ * `error: POST <registry>/-/npm/v1/security/advisories/bulk - 503`.
+ *
+ * The diagnostic is matched whole: the request method, the bulk advisory
+ * endpoint and the status are all required. A bare "503" somewhere in the
+ * output, or the word "advisor" anywhere in it, is not this condition.
+ */
+export const BUN_BULK_ADVISORY_503 = new RegExp(
+  `error: POST https?://\\S*${BULK_ADVISORY_PATH.replace('/', '\\/')} - ${TRANSIENT_STATUS}\\b`
+)
 
 /** Default number of audit attempts, including the first one. */
 export const DEFAULT_ATTEMPTS = 2
@@ -49,31 +70,17 @@ export const DEFAULT_DELAY_MS = 5_000
 export const DEFAULT_ATTEMPT_TIMEOUT_MS = 420_000
 
 /**
- * A confirmed transient bulk-advisory 503. The output must show an HTTP 503
- * *and* tie it to the npm advisory fetch: a 503 from anywhere else (a
- * registry metadata read, a proxy, a different service) is not this condition.
- *
- * The same line is preferred; when the failure is reported over two lines the
- * whole output is considered, which still requires both the status and the
- * advisory service to be present.
+ * Default grace window between the SIGTERM and the SIGKILL of an attempt that
+ * ran out of budget.
  */
-const HTTP_503 = new RegExp(`\\b${TRANSIENT_STATUS}\\b`, 'i')
-const ADVISORY_SERVICE = new RegExp(`${BULK_ADVISORY_PATH.replace('/', '\\/')}|advisor`, 'i')
-const TRANSIENT_BULK_ADVISORY_503 = new RegExp(
-  `\\b${TRANSIENT_STATUS}\\b[^\\n]*(?:${BULK_ADVISORY_PATH.replace('/', '\\/')}|advisor)`,
-  'i'
-)
-const TRANSIENT_BULK_ADVISORY_503_REVERSED = new RegExp(
-  `(?:${BULK_ADVISORY_PATH.replace('/', '\\/')}|advisor)[^\\n]*\\b${TRANSIENT_STATUS}\\b`,
-  'i'
-)
+export const DEFAULT_TERM_GRACE_MS = 10_000
 
 /** The successful audit verdict bun prints. */
 const SUCCESS_MARKER = /no vulnerabilities found/i
 
 /**
- * An audit that reported findings. The shapes below are the ones bun 1.4.x
- * prints for a real report: a `N vulnerabilities (...)` summary and the
+ * An audit that reported findings. The shapes below are the ones the pinned
+ * Bun prints for a real report: a `N vulnerabilities (...)` summary and the
  * per-advisory `GHSA-` lines.
  */
 const FINDINGS_MARKER =
@@ -82,10 +89,14 @@ const FINDINGS_MARKER =
 /**
  * Classify one audit attempt.
  *
+ * Findings are recognised before any success verdict, so an output that
+ * carries both is a finding and never a pass.
+ *
  * @param {object} attempt
- * @param {number} attempt.exitCode the audit process exit code, or null when it was killed
+ * @param {number | null} attempt.exitCode the audit process exit code, or null when it was killed
  * @param {string} attempt.output the combined stdout and stderr of the attempt
  * @param {boolean} [attempt.timedOut] whether the attempt exceeded its budget
+ * @param {boolean} [attempt.signalled] whether the attempt was ended by a signal
  * @returns {{ kind: 'success' | 'findings' | 'transient-bulk-advisory-503' | 'failure', exitCode: number | null }}
  */
 export function classifyAuditAttempt(attempt) {
@@ -96,21 +107,29 @@ export function classifyAuditAttempt(attempt) {
     // advisory service, so it is not retried as one.
     return { kind: 'failure', exitCode }
   }
-  if (exitCode === 0 && SUCCESS_MARKER.test(output)) return { kind: 'success', exitCode }
-  if (exitCode === 0) {
-    // A zero exit without the success verdict is not an audit pass either.
+  if (attempt.signalled || exitCode === null) {
+    // An unknown or signalled outcome is not understood, so it fails closed.
     return { kind: 'failure', exitCode }
   }
-  if (FINDINGS_MARKER.test(output) && !SUCCESS_MARKER.test(output)) {
-    // A reported finding is a real result of the audit, never a transient one.
+  if (FINDINGS_MARKER.test(output)) {
+    // A reported finding is a real result of the audit, never a transient one,
+    // and it takes precedence over any success substring in the same output.
     return { kind: 'findings', exitCode }
   }
-  if (
-    TRANSIENT_BULK_ADVISORY_503.test(output) ||
-    TRANSIENT_BULK_ADVISORY_503_REVERSED.test(output) ||
-    (HTTP_503.test(output) && ADVISORY_SERVICE.test(output))
-  ) {
-    return { kind: 'transient-bulk-advisory-503', exitCode }
+  if (BUN_BULK_ADVISORY_503.test(output)) {
+    // The pinned bulk advisory diagnostic, carried by the failed-audit exit
+    // code this helper understands. Any other exit code with the same
+    // diagnostic is not understood and fails closed.
+    if (exitCode === FAILED_AUDIT_EXIT_CODE) {
+      return { kind: 'transient-bulk-advisory-503', exitCode }
+    }
+    return { kind: 'failure', exitCode }
+  }
+  if (exitCode === 0) {
+    // A zero exit is a pass only with the success verdict.
+    return SUCCESS_MARKER.test(output)
+      ? { kind: 'success', exitCode }
+      : { kind: 'failure', exitCode }
   }
   return { kind: 'failure', exitCode }
 }
@@ -119,7 +138,7 @@ export function classifyAuditAttempt(attempt) {
  * Run the audit with a bounded retry for the one confirmed transient condition.
  *
  * @param {object} options
- * @param {(attempt: number) => Promise<{ exitCode: number | null, output: string, timedOut?: boolean }>} options.runAudit
+ * @param {(attempt: number) => Promise<{ exitCode: number | null, output: string, timedOut?: boolean, signalled?: boolean }>} options.runAudit
  *   runs one audit attempt; injected so the policy is testable without a registry
  * @param {number} [options.attempts] total attempts, including the first
  * @param {number} [options.delayMs] pause between attempts
@@ -156,8 +175,18 @@ export async function runAuditWithBoundedRetry(options) {
  *
  * The invocation is exactly `bun audit`: no flag weakens the audit and no
  * registry override redirects it.
+ *
+ * When the attempt runs out of budget the owned child is ended with a bounded
+ * escalation: SIGTERM, then SIGKILL after the grace window. Only that child
+ * is signalled - its own descendants are left to it - and the attempt is
+ * resolved only after the child's exit and cleanup have been observed.
  */
-export async function runRealAuditAttempt({ cwd, timeoutMs, spawn = spawnProcess }) {
+export async function runRealAuditAttempt({
+  cwd,
+  timeoutMs,
+  termGraceMs = DEFAULT_TERM_GRACE_MS,
+  spawn = spawnProcess,
+}) {
   const child = spawn('bun', ['audit'], { cwd, env: process.env })
   let output = ''
   child.stdout?.on('data', (chunk) => {
@@ -168,22 +197,30 @@ export async function runRealAuditAttempt({ cwd, timeoutMs, spawn = spawnProcess
   })
   const result = await new Promise((resolve) => {
     let settled = false
+    let timedOut = false
+    let killTimer
     const finish = (value) => {
       if (settled) return
       settled = true
+      clearTimeout(budgetTimer)
+      clearTimeout(killTimer)
       resolve(value)
     }
-    const timer = setTimeout(() => {
+    const budgetTimer = setTimeout(() => {
+      timedOut = true
+      // Bounded escalation, and only for the child this helper owns.
       child.kill('SIGTERM')
-      finish({ exitCode: null, output, timedOut: true })
+      killTimer = setTimeout(() => {
+        child.kill('SIGKILL')
+      }, termGraceMs)
     }, timeoutMs)
     child.on('error', (error) => {
-      clearTimeout(timer)
       finish({ exitCode: null, output: `${output}${error.message}` })
     })
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      finish({ exitCode: code, output })
+    child.on('close', (code, signal) => {
+      // The attempt resolves on the child's exit, so its cleanup is observed
+      // before the next attempt can start.
+      finish({ exitCode: code, output, timedOut, signalled: signal !== null })
     })
   })
   return result
