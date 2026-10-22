@@ -98,6 +98,50 @@ test('a credential key with a prefix is redacted too', () => {
   )
 })
 
+// libpq writes an unquoted value that holds a space with a backslash before
+// the space, so `password=two\ words` is one value. A rule that stops at the
+// first whitespace leaves "words" behind.
+test('a libpq value with a backslash-escaped space is redacted whole', () => {
+  const sanitized = sanitizeProbeOutput('password=two\\ words dbname=postgres')
+  expect(sanitized).not.toContain('words')
+  expect(sanitized).toBe('password=<redacted> dbname=postgres')
+})
+
+// A connection URI may carry no user, only a password.
+test('a connection URI with an empty user is redacted', () => {
+  const sanitized = sanitizeProbeOutput('postgresql://:hunter2@localhost/db')
+  expect(sanitized).not.toContain('hunter2')
+  expect(sanitized).toBe('postgresql://<redacted>@localhost/db')
+})
+
+// The redaction is one pass over the text: a long plain token may not cost a
+// pass per position, and the excerpt is still cut to the limit.
+test('a long plain token is read once and the excerpt is still bounded', () => {
+  const token = 'z'.repeat(1_000_000)
+  const startedAt = performance.now()
+  const sanitized = sanitizeProbeOutput(token)
+  const elapsedMs = performance.now() - startedAt
+  expect(sanitized).toHaveLength(PROBE_EXCERPT_LIMIT)
+  expect(sanitized).toBe(token.slice(0, PROBE_EXCERPT_LIMIT))
+  expect(elapsedMs).toBeLessThan(10_000)
+})
+
+// A long run of hexadecimal characters is an opaque token and is redacted
+// whole, so it cannot reach the excerpt in pieces either.
+test('a long opaque token is redacted whole', () => {
+  const sanitized = sanitizeProbeOutput('a'.repeat(1_000))
+  expect(sanitized).toBe('<redacted>')
+})
+
+// A secret that is cut by the excerpt limit is redacted first, so the cut can
+// never split it into a part that is kept.
+test('a secret longer than the excerpt is redacted before the cut', () => {
+  const secret = `password=${'b'.repeat(1_000)}`
+  const sanitized = sanitizeProbeOutput(secret)
+  expect(sanitized).not.toContain('bbbb')
+  expect(sanitized).toBe('password=<redacted>')
+})
+
 test('a message that only names a credential is not redacted', () => {
   const message =
     'psql: error: FATAL:  password authentication failed for user "control_plane_admin"'

@@ -24,26 +24,113 @@ export const POSTGRES_RECOVERY_CEILING_SECONDS = 30
 export const PROBE_EXCERPT_LIMIT = 400
 
 /**
- * The key of a credential. A key may carry a prefix, so `my_password` is a
- * credential key too.
+ * The characters a credential key is made of.
  */
-const CREDENTIAL_KEY = '[A-Za-z0-9_.-]*(?:PGPASSWORD|password|passwd|pwd|secret|token|api[_-]?key)'
+const KEY_CHARACTER = /[A-Za-z0-9_.-]/
 
 /**
- * The value of a credential.
+ * The ends of a credential key.
  *
- * A value is a quoted string, which may carry escaped characters, or a run of
- * non-space characters. The closing quote of a quoted value is optional, so a
- * value whose quote is never closed is consumed to the end of its line and
- * nothing after it survives. A quoted value is otherwise consumed whole, so a
- * password that contains a space cannot leave its tail behind.
+ * A key may carry a prefix, so `my_password` is a credential key too, and the
+ * check is on the end of the key.
  */
-const CREDENTIAL_VALUE = String.raw`(?:"(?:\\.|[^"\\])*"?|'(?:\\.|[^'\\])*'?|[^\s]*)`
+const CREDENTIAL_KEY_ENDS = [
+  'pgpassword',
+  'password',
+  'passwd',
+  'pwd',
+  'secret',
+  'token',
+  'apikey',
+  'api_key',
+  'api-key',
+]
+
+/** The characters that end the password of a connection URI. */
+const URI_BREAK = new Set(['@', '/'])
+
+/** Whether a character is whitespace. */
+function isWhitespace(character) {
+  return character === ' ' || character === '\t' || character === '\n' || character === '\r'
+}
+
+/** Whether a key ends with a credential word. */
+function isCredentialKey(key) {
+  const lower = key.toLowerCase()
+  return CREDENTIAL_KEY_ENDS.some((end) => lower.endsWith(end))
+}
+
+/** The end of the maximal run of key characters that starts at `start`. */
+function readKeyEnd(source, start) {
+  let index = start
+  while (index < source.length && KEY_CHARACTER.test(source[index])) index += 1
+  return index
+}
 
 /**
- * The password inside a connection URI, with the same quoting rules.
+ * The end of a credential value that starts at `start`.
+ *
+ * A quoted value is consumed whole, with its escapes, so a password that holds
+ * a space cannot leave its tail behind. A value whose closing quote is never
+ * there takes the rest of the source. An unquoted value runs to the next
+ * whitespace, except that a backslash escapes the next character: that is how
+ * libpq writes an unquoted value that holds a space, so `password=two\ words`
+ * is one value and not two.
  */
-const URI_PASSWORD = String.raw`(?:"(?:\\.|[^"\\])*"?|'(?:\\.|[^'\\])*'?|[^\s/@]*)`
+function readValueEnd(source, start, stopCharacters) {
+  const quote = source[start]
+  if (quote === '"' || quote === "'") {
+    let index = start + 1
+    while (index < source.length) {
+      const character = source[index]
+      if (character === '\\') {
+        index += 2
+        continue
+      }
+      if (character === quote) return index + 1
+      index += 1
+    }
+    return source.length
+  }
+  let index = start
+  while (index < source.length) {
+    const character = source[index]
+    if (character === '\\') {
+      index += 2
+      continue
+    }
+    if (isWhitespace(character)) break
+    if (stopCharacters !== undefined && stopCharacters.has(character)) break
+    index += 1
+  }
+  return Math.min(index, source.length)
+}
+
+/**
+ * The credential of a connection URI that starts at `start`, which is the first
+ * character after `://`.
+ *
+ * The user may be empty, so `postgresql://:password@host` is a credential
+ * too. The password is read with the same quoting rules as any other value.
+ * The scan that failed is reported with the place it reached, so the text it
+ * covered is not scanned again.
+ */
+function readUriCredential(source, start) {
+  let index = start
+  while (
+    index < source.length &&
+    !isWhitespace(source[index]) &&
+    source[index] !== ':' &&
+    source[index] !== '@' &&
+    source[index] !== '/'
+  ) {
+    index += 1
+  }
+  if (source[index] !== ':') return { matched: false, end: index }
+  const valueEnd = readValueEnd(source, index + 1, URI_BREAK)
+  if (source[valueEnd] !== '@') return { matched: false, end: valueEnd }
+  return { matched: true, end: valueEnd + 1 }
+}
 
 /**
  * Redacts credentials from probe output and caps its length.
@@ -53,17 +140,52 @@ const URI_PASSWORD = String.raw`(?:"(?:\\.|[^"\\])*"?|'(?:\\.|[^'\\])*'?|[^\s/@]
  * `PGPASSWORD` assignment, a quoted password with a space in it, or a long
  * opaque token, so those are redacted before the text is kept.
  *
+ * The text is read once, from left to right, and every character is looked at
+ * a bounded number of times: a key is read as one run, a value is read as one
+ * run, and a scan that covered text is not repeated. A long plain token
+ * therefore costs one pass and not one pass per position.
+ *
  * The redaction runs before the excerpt is cut, so a secret can never be
- * split by the cut, and a quoted value is consumed whole so its tail cannot
- * survive the redaction.
+ * split by the cut, and a value is consumed whole so its tail cannot survive
+ * the redaction.
  */
 export function sanitizeProbeOutput(text, limit = PROBE_EXCERPT_LIMIT) {
   if (text === undefined || text === null) return ''
-  const redacted = String(text)
-    .replace(new RegExp(String.raw`://[^/\s:@]+:${URI_PASSWORD}@`, 'g'), '://<redacted>@')
-    .replace(new RegExp(`(${CREDENTIAL_KEY})\\s*=\\s*${CREDENTIAL_VALUE}`, 'gi'), '$1=<redacted>')
+  const source = String(text)
+  const pieces = []
+  let index = 0
+  while (index < source.length) {
+    if (source.startsWith('://', index)) {
+      const credential = readUriCredential(source, index + 3)
+      pieces.push(credential.matched ? '://<redacted>@' : source.slice(index, credential.end))
+      index = credential.end
+      continue
+    }
+    if (KEY_CHARACTER.test(source[index])) {
+      const keyEnd = readKeyEnd(source, index)
+      const key = source.slice(index, keyEnd)
+      let afterKey = keyEnd
+      while (afterKey < source.length && isWhitespace(source[afterKey])) afterKey += 1
+      if (isCredentialKey(key) && source[afterKey] === '=') {
+        const valueEnd = readValueEnd(source, afterKey + 1)
+        pieces.push(`${key}${source.slice(keyEnd, afterKey)}=<redacted>`)
+        index = valueEnd
+        continue
+      }
+      pieces.push(key)
+      index = keyEnd
+      continue
+    }
+    pieces.push(source[index])
+    index += 1
+  }
+  // A long opaque token is redacted too: it is a single run of characters, so
+  // the rule costs one pass.
+  return pieces
+    .join('')
     .replace(/\b[a-f0-9]{32,}\b/gi, '<redacted>')
-  return redacted.trim().slice(0, limit)
+    .trim()
+    .slice(0, limit)
 }
 
 /**
