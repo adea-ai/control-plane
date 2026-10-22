@@ -10,6 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { URL } from 'node:url'
 import { AcpAdapter, AcpDriver } from './index.ts'
 import { AcpGatewayClient, ReferenceAcpDriver, ReferenceAcpGatewayTransport } from './gateway.ts'
+import { qualifiedAcpCapabilities, qualifiedNativeRouteFixture } from './native-route-fixtures.ts'
 
 const now = '2026-08-25T12:00:00.000Z'
 const digest = (character) => `sha256:${character.repeat(64)}`
@@ -82,6 +83,9 @@ function fixture(options = {}) {
     transport,
     ...ids,
     localProjectGrantRef: 'grant:project-0001',
+    // The route's claims come from deployment evidence, never from the native
+    // driver's own advertisement.
+    nativeRoute: 'nativeRoute' in options ? options.nativeRoute : qualifiedNativeRouteFixture(),
     now: () => new Date(now),
     commandId: (identity) => {
       if (!commandIds.has(identity)) {
@@ -355,8 +359,65 @@ describe('non-co-located ACP through Runtime Gateway', () => {
     expect(denied.transport.commands()).toHaveLength(1)
   })
 
+  test('advertises exactly the qualified capability set, never the native driver claim', async () => {
+    const qualified = fixture()
+    const initialize = await qualified.client.request('initialize', {})
+    expect(initialize.capabilities._meta.controlPlane.capabilities).toEqual(
+      [...qualifiedAcpCapabilities].toSorted()
+    )
+
+    // A route whose evidence allows fewer claims advertises exactly those and
+    // nothing more: a claim absent from the allow-list stays disabled.
+    const narrowed = fixture({
+      nativeRoute: qualifiedNativeRouteFixture({
+        evidence: { capabilities: ['session.create', 'stream.events', 'stream.output'] },
+      }),
+    })
+    const narrowedInitialize = await narrowed.client.request('initialize', {})
+    expect(narrowedInitialize.capabilities._meta.controlPlane.capabilities).toEqual([
+      'session.create',
+      'stream.events',
+      'stream.output',
+    ])
+  })
+
+  test('refuses an unqualified resume claim locally and never reroutes it', async () => {
+    const sessionId = 'nses_01JABCDEF0123456789ABCDEFG'
+    const unqualified = fixture({ nativeRoute: undefined })
+    let denial
+    try {
+      await unqualified.client.request('session/resume', { sessionId })
+    } catch (error) {
+      denial = error
+    }
+    expect(denial).toMatchObject({ code: 'ACP_NATIVE_ROUTE_UNQUALIFIED' })
+    expect(denial).toMatchObject({ details: { fallback: 'none' } })
+    // The refusal is local: no command reached the gateway, and no other
+    // route was offered in its place.
+    expect(unqualified.transport.commands()).toHaveLength(0)
+
+    const narrowed = fixture({
+      nativeRoute: qualifiedNativeRouteFixture({
+        evidence: { capabilities: ['session.create', 'stream.events', 'stream.output'] },
+      }),
+    })
+    await expect(narrowed.client.request('session/resume', { sessionId })).rejects.toMatchObject({
+      code: 'ACP_NATIVE_CAPABILITY_NOT_ALLOWED',
+    })
+    expect(narrowed.transport.commands()).toHaveLength(0)
+  })
+
   test('makes the runtime ineligible when a required capability is not reported', async () => {
     const unsupported = fixture({
+      // The deployment evidence does not allow the required capability, so the
+      // qualified route never claims it and the runtime stays ineligible.
+      nativeRoute: qualifiedNativeRouteFixture({
+        evidence: {
+          capabilities: qualifiedAcpCapabilities.filter(
+            (capability) => capability !== 'stream.output'
+          ),
+        },
+      }),
       capabilities: [
         'stream.events',
         'tool.call',

@@ -80,6 +80,33 @@ neither the `usage_update` progress nor the observed terminal usage is passed th
 | Canonical ordering     | `bun run check:canonical-ordering`                                   | pass                                                |
 | Workspace boundaries   | `bun run check:boundaries`                                           | pass — 1232 files in 45 packages, 0 violations      |
 
+## Reconciliation of the complementary qualification half — 2026-10-22
+
+The CP #1021 slice had two halves. This branch carried the **route gate** (the pure seam that turns
+the qualification evaluator into the three runtime decisions). The complementary half — the gateway
+client/types, the remote fixtures, the `native-route-qualification.ts` qualification module, its
+fixtures and its test, and the acceptance-support wiring — was **staged but uncommitted in the
+primary checkout** (`/Users/amf/Developer/Adea/control-plane`, branch
+`feat/1021-native-route-pre-effect-controls`).
+
+That staged content was unique: none of its nine files existed, in any form, on `main` or on this
+branch's published head. It was carried into this branch byte-for-byte from the primary checkout's
+index (every blob re-verified with `git hash-object` after extraction), and the only overlapping
+file — `packages/acp-adapter/src/index.ts` — was resolved as the union of the two export blocks, so
+the branch now exports the gate **and** the qualification module and fixtures.
+
+The two halves are independent in code: the qualification half imports only `qualification.js`,
+`acp-gateway-types.js` and the runtime SDK, and the gate half imports only `qualification.js`. The
+union is therefore additive; neither side's behavior changes.
+
+**Coordination point:** the same bytes still sit staged in the primary checkout's index. That index
+was not touched by this reconciliation. Its owner should drop the staged copy once this branch's
+draft PR carries it, so the same delta is not published twice.
+
+Checks after the reconciliation: `packages/acp-adapter` 286 pass / 0 fail across 16 files (the
+qualification half's own suite 15 pass, the gate half's suite 14 pass), and format, lint, type-check,
+OpenAPI, migration, runtime compatibility, architecture and secret scan all pass.
+
 ## Not claimed
 
 - No runtime acceptance of any production native route is claimed. Evidence supply from deployment
