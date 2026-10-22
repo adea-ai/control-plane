@@ -250,6 +250,9 @@ export const RuntimeExecutionStatusSchema = z
     state: RuntimeExecutionStateSchema,
     observedAt: TimestampSchema,
     // The generation the runtime observed for this attempt, when it has one.
+    // Additive in contract 3.1: a consumer that advertised an earlier version
+    // parses with the pre-3.1 strict status shape, so a producer publishes it
+    // only to a consumer whose negotiated version includes it.
     observedGeneration: RuntimeObservedGenerationSchema.optional(),
     result: RuntimeExecutionResultSchema.optional(),
     // Observed usage survives unsuccessful termination without fabricating a result.

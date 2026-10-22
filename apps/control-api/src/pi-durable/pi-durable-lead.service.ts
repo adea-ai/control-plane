@@ -41,6 +41,7 @@ import {
   PiDurableLeadStatusResponseSchema,
   PiDurableLeadProgressResponseSchema,
   PiDurableLeadCancelResponseSchema,
+  supportsPiDurableObservedGeneration,
   type PiDurableLeadChild,
   PiDurableLeadCommandEnvelopeSchema as command,
   PiDurableLeadReadEnvelopeSchema as read,
@@ -541,7 +542,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     return PiDurableLeadDispatchResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
-        ...observedTarget(receipt, admission, status),
+        ...observedTarget(receipt, admission, status, request),
         state: status.state,
         replayed,
       })
@@ -570,9 +571,9 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     return PiDurableLeadStatusResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
-        ...observedTarget(receipt, admission, status),
+        ...observedTarget(receipt, admission, status, request),
         state: status.state,
-        status,
+        status: publishedStatus(status, request),
       })
     )
   }
@@ -662,16 +663,18 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     // (delegationService.cancelChildren, invoked directly with its own
     // authorization), never a lead-stop side effect — so independent
     // child work survives a normal parent stop by construction.
-    // The cancel is bound to the observed target: a generation observed for
-    // another attempt is a late event and is refused here.
+    // The generation check runs on the status the adapter returned from
+    // `cancel`, so it is after the cancellation effect, not before it: it
+    // fences the publication of this response and it is not a pre-effect
+    // cancellation or retry guarantee.
     verifyObservedGeneration(receipt, status)
     await this.options.authority.assertCurrent(admission, principal, 'cancel')
     return PiDurableLeadCancelResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
-        ...observedTarget(receipt, admission, status),
+        ...observedTarget(receipt, admission, status, request),
         state: status.state,
-        status,
+        status: publishedStatus(status, request),
       })
     )
   }
@@ -787,7 +790,11 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     verifyObservedGeneration(receipt, status)
     await this.#fencedGuard(request.workspaceId, receipt, fenced, principal, 'status')
     return PiDurableLeadStatusResponseSchema.parse(
-      success(request, { ...publicReceipt(receipt), state: status.state, status })
+      success(request, {
+        ...publicReceipt(receipt),
+        state: status.state,
+        status: publishedStatus(status, request),
+      })
     )
   }
 
@@ -831,7 +838,11 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     verifyObservedGeneration(receipt, status)
     await this.#fencedGuard(request.workspaceId, receipt, fenced, principal, 'cancel')
     return PiDurableLeadCancelResponseSchema.parse(
-      success(request, { ...publicReceipt(receipt), state: status.state, status })
+      success(request, {
+        ...publicReceipt(receipt),
+        state: status.state,
+        status: publishedStatus(status, request),
+      })
     )
   }
 
@@ -1022,7 +1033,8 @@ function publicReceipt(receipt: PiDurableLeadReceipt) {
 function observedTarget(
   receipt: PiDurableLeadReceipt,
   admission: PiDurableLeadAdmission,
-  status?: RuntimeExecutionStatus
+  status?: RuntimeExecutionStatus,
+  request?: { readonly contractVersion: unknown }
 ):
   | {
       observedTarget: {
@@ -1043,7 +1055,13 @@ function observedTarget(
   // The generation is the runtime's own observation for this attempt. A
   // generation observed for another attempt is a late event: it is fenced at
   // the control boundary, and it is never published as this target's.
-  const generation = status?.observedGeneration
+  // It is published only to a consumer that negotiated contract 3.1: an
+  // earlier same-major consumer parses with the strict pre-3.1 target shape
+  // and would reject the response as invalid.
+  const generation =
+    request !== undefined && !supportsPiDurableObservedGeneration(request.contractVersion)
+      ? undefined
+      : status?.observedGeneration
   return {
     observedTarget: {
       sessionId,
@@ -1051,6 +1069,18 @@ function observedTarget(
       ...(generation && generation.attemptId === receipt.attemptId ? { generation } : {}),
     },
   }
+}
+/** The runtime status as published to this consumer. The observed generation
+ *  is additive in contract 3.1, so it is published only to a consumer that
+ *  negotiated it; every other field is unchanged. */
+function publishedStatus(
+  status: RuntimeExecutionStatus,
+  request: { readonly contractVersion: unknown }
+): RuntimeExecutionStatus {
+  if (status.observedGeneration === undefined) return status
+  if (supportsPiDurableObservedGeneration(request.contractVersion)) return status
+  const { observedGeneration: _withheld, ...rest } = status
+  return rest
 }
 /** The control boundary fence: a runtime that reports a generation observed
  *  for another attempt is a late old-attempt event, and the request is

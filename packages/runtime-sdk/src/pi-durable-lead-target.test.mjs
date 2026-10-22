@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test'
+import { z } from 'zod'
 import { PublicContractManifest } from '@control-plane/contracts'
 import {
+  PI_DURABLE_OBSERVED_GENERATION_CONTRACT_VERSION,
   PiDurableLeadDispatchRequestSchema,
   PiDurableLeadLookupResponseSchema,
   PiDurableLeadObservedTargetSchema,
@@ -8,6 +10,7 @@ import {
   PiDurableLeadReceiptResponseSchema,
   PiDurableLeadRequestedTargetSchema,
   PiDurableLeadStatusResponseSchema,
+  supportsPiDurableObservedGeneration,
 } from './pi-durable-lead.ts'
 
 const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
@@ -232,6 +235,50 @@ test('935: an observed generation whose key does not bind to its turn is refused
       generation,
     })
   ).toMatchObject({ generation })
+})
+
+test('935: the observed generation is published only to a negotiated consumer', () => {
+  // The generation is additive in contract 3.1. A consumer that advertised an
+  // earlier same-major version parses with the strict pre-3.1 shape, so the
+  // producer withholds the field from it.
+  expect(supportsPiDurableObservedGeneration({ major: 3, minor: 1 })).toBe(true)
+  expect(supportsPiDurableObservedGeneration({ major: 3, minor: 2 })).toBe(true)
+  expect(supportsPiDurableObservedGeneration({ major: 3, minor: 0 })).toBe(false)
+  expect(supportsPiDurableObservedGeneration({ major: 2, minor: 0 })).toBe(false)
+  expect(supportsPiDurableObservedGeneration({ major: 1, minor: 0 })).toBe(false)
+  expect(supportsPiDurableObservedGeneration(undefined)).toBe(false)
+  expect(supportsPiDurableObservedGeneration({ major: 3 })).toBe(false)
+  // The contract version that introduces the field is the one the gate names.
+  expect(PI_DURABLE_OBSERVED_GENERATION_CONTRACT_VERSION).toEqual({ major: 3, minor: 1 })
+})
+
+test('935: the pre-3.1 strict observed target rejects the generation', () => {
+  // The pre-change shape, copied from the pre-3.1 contract: strict, so an
+  // unknown key is a parse failure for the installed consumer. This is why
+  // the field is negotiated rather than published unconditionally.
+  const preChangeObservedTarget = z
+    .strictObject({
+      sessionId: z.string().trim().min(1).max(256),
+      taskId: z.string().trim().min(1).max(256),
+    })
+    .readonly()
+  expect(preChangeObservedTarget.parse({ sessionId: id('ses'), taskId: id('tsk') })).toEqual({
+    sessionId: id('ses'),
+    taskId: id('tsk'),
+  })
+  expect(() =>
+    preChangeObservedTarget.parse({
+      sessionId: id('ses'),
+      taskId: id('tsk'),
+      generation: {
+        schemaVersion: 'runtime-observed-generation/v1',
+        attemptId: id('att'),
+        turnKey: `pi-turn:${id('att')}:initial`,
+        inferenceId: 'pi-generation:1',
+        inferenceKey: `pi-turn:${id('att')}:initial:pi-generation:1`,
+      },
+    })
+  ).toThrow()
 })
 
 test('935: receipts echo the retained target when present', () => {

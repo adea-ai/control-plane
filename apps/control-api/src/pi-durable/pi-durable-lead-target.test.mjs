@@ -4,10 +4,18 @@ import { DatabaseSync } from 'node:sqlite'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import {
+  PiDurableLeadDispatchResponseSchema,
+  PiDurableLeadStatusResponseSchema,
+} from '@control-plane/runtime-sdk'
+import {
   DurablePiDurableLeadService,
   PiDurableLeadError,
   SqlitePiDurableLeadReceiptStore,
 } from './pi-durable-lead.service.ts'
+import {
+  PreChangeDispatchResponseSchema,
+  PreChangeStatusResponseSchema,
+} from './lead-pre-change-client.fixture.mjs'
 
 const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
 const at = '2026-10-08T09:00:00.000Z'
@@ -127,7 +135,7 @@ function harness(options = {}) {
   })
   const envelope = (operation, payload, key = 'target-command:one') => ({
     caller: { servicePrincipalId: principalId },
-    contractVersion: { major: 1, minor: 0 },
+    contractVersion: options.contractVersion ?? { major: 3, minor: 1 },
     requestId: id('req'),
     commandId: id('cmd'),
     workspaceId,
@@ -141,7 +149,7 @@ function harness(options = {}) {
   })
   const read = (operation, parameters) => ({
     caller: { servicePrincipalId: principalId },
-    contractVersion: { major: 1, minor: 0 },
+    contractVersion: options.contractVersion ?? { major: 3, minor: 1 },
     requestId: id('req'),
     workspaceId,
     ...(projectId ? { projectId } : {}),
@@ -394,4 +402,74 @@ test('935: ordinary lead-stop performs zero child-cancel calls', async () => {
   )
   expect(calls.cancels).toBe(1)
   expect(calls.childStops).toHaveLength(0)
+})
+
+test('935: an old consumer parses the new server response with the pre-3.1 strict shapes', async () => {
+  // Rollout compatibility: the installed Adea SDK validates a lead response
+  // with the pre-3.1 strict target and runtime-status shapes and maps a parse
+  // failure to an invalid response. A consumer that advertised 3.0 must
+  // therefore receive a response those shapes accept.
+  const observedGeneration = {
+    schemaVersion: 'runtime-observed-generation/v1',
+    attemptId: id('att'),
+    turnKey: `pi-turn:${id('att')}:initial`,
+    inferenceId: 'pi-generation:1',
+    inferenceKey: `pi-turn:${id('att')}:initial:pi-generation:1`,
+  }
+  const { service, envelope, read, principal } = harness({
+    observedGeneration,
+    contractVersion: { major: 3, minor: 0 },
+  })
+  const dispatched = await service.dispatch(
+    envelope('pi-durable.lead.dispatch', { intentId, requestedTarget }),
+    principal
+  )
+  const status = await service.status(
+    read('pi-durable.lead.status', { dispatchId: dispatched.data.dispatchId }),
+    principal
+  )
+  // The installed consumer's own validation accepts the response.
+  expect(() => PreChangeDispatchResponseSchema.parse(dispatched)).not.toThrow()
+  expect(() => PreChangeStatusResponseSchema.parse(status)).not.toThrow()
+  // The observed generation is not published to a consumer that cannot parse
+  // it: it is absent from the observed target and from the runtime status.
+  expect(dispatched.data.observedTarget).not.toHaveProperty('generation')
+  expect(status.data.observedTarget).not.toHaveProperty('generation')
+  expect(status.data.status).not.toHaveProperty('observedGeneration')
+  // The gate is required, not cosmetic: the same response with the
+  // generation published is rejected by the installed consumer's shapes.
+  expect(() =>
+    PreChangeStatusResponseSchema.parse({
+      ...status,
+      data: {
+        ...status.data,
+        observedTarget: { ...status.data.observedTarget, generation: observedGeneration },
+        status: { ...status.data.status, observedGeneration },
+      },
+    })
+  ).toThrow()
+})
+
+test('935: an updated consumer receives and parses the observed generation', async () => {
+  const observedGeneration = {
+    schemaVersion: 'runtime-observed-generation/v1',
+    attemptId: id('att'),
+    turnKey: `pi-turn:${id('att')}:initial`,
+    inferenceId: 'pi-generation:1',
+    inferenceKey: `pi-turn:${id('att')}:initial:pi-generation:1`,
+  }
+  const { service, envelope, read, principal } = harness({ observedGeneration })
+  const dispatched = await service.dispatch(
+    envelope('pi-durable.lead.dispatch', { intentId, requestedTarget }),
+    principal
+  )
+  const status = await service.status(
+    read('pi-durable.lead.status', { dispatchId: dispatched.data.dispatchId }),
+    principal
+  )
+  expect(dispatched.data.observedTarget.generation).toEqual(observedGeneration)
+  expect(status.data.status.observedGeneration).toEqual(observedGeneration)
+  // The current consumer's own validation accepts the response.
+  expect(() => PiDurableLeadDispatchResponseSchema.parse(dispatched)).not.toThrow()
+  expect(() => PiDurableLeadStatusResponseSchema.parse(status)).not.toThrow()
 })

@@ -160,7 +160,7 @@ const withBinding = (operation) => fenced(operation, { admissionBinding: true })
 
 const envelope = (operation, payload) => ({
   caller: { servicePrincipalId: 'svc_adea' },
-  contractVersion: { major: 1, minor: 0 },
+  contractVersion: { major: 3, minor: 1 },
   requestId: id('req'),
   workspaceId,
   correlation: { traceId: id('trc') },
@@ -173,7 +173,7 @@ const envelope = (operation, payload) => ({
 })
 const readRequest = (operation, parameters) => ({
   caller: { servicePrincipalId: 'svc_adea' },
-  contractVersion: { major: 1, minor: 0 },
+  contractVersion: { major: 3, minor: 1 },
   requestId: id('req'),
   workspaceId,
   correlation: { traceId: id('trc') },

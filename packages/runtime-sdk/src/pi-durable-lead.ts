@@ -1,11 +1,14 @@
 import { z } from 'zod'
 import {
+  ContractVersionSchema,
   IdentifierSchemas,
   ModelSelectionFundingViewSchema,
   ModelSelectionRefSchema,
+  PublicContractManifest,
   ReadRequestEnvelopeSchema,
   StateChangingCommandEnvelopeSchema,
   SuccessResponseEnvelopeSchema,
+  negotiateContractVersion,
 } from '@control-plane/contracts'
 import {
   RuntimeExecutionHandleSchema,
@@ -50,7 +53,9 @@ export type PiDurableLeadRequestedTarget = z.output<typeof PiDurableLeadRequeste
  *  observed generation), never from caller claims. A caller-claimed
  *  generation is retained on the request and echoed back as a claim; it can
  *  never appear here, because a claimed value laundered as an observation is
- *  not an observation. */
+ *  not an observation. The generation is additive in contract 3.1: a consumer
+ *  that advertised an earlier version parses with the strict pre-3.1 shape, so
+ *  a producer publishes it only to a negotiated consumer. */
 export const PiDurableLeadObservedTargetSchema = z
   .strictObject({
     sessionId: z.string().trim().min(1).max(256),
@@ -60,6 +65,30 @@ export const PiDurableLeadObservedTargetSchema = z
   })
   .readonly()
 export type PiDurableLeadObservedTarget = z.output<typeof PiDurableLeadObservedTargetSchema>
+
+/** The contract version that introduced the runtime-observed generation on the
+ *  lead receipt and on the runtime execution status. The field is optional and
+ *  additive within the major, but the pre-3.1 target and runtime-status shapes
+ *  are strict: a consumer that predates this version rejects an unknown key and
+ *  reports an invalid response. */
+export const PI_DURABLE_OBSERVED_GENERATION_CONTRACT_VERSION = { major: 3, minor: 1 } as const
+
+/** Whether a consumer that advertised `consumerVersion` negotiated a contract
+ *  that includes the runtime-observed generation. The producer and the consumer
+ *  negotiate the highest common major and the lower of the two minors, so an
+ *  earlier same-major consumer (or a consumer of another major) never receives
+ *  the field it cannot parse. A consumer that advertised a newer minor already
+ *  understands it. */
+export function supportsPiDurableObservedGeneration(consumerVersion: unknown): boolean {
+  const consumer = ContractVersionSchema.safeParse(consumerVersion)
+  if (!consumer.success) return false
+  const negotiated = negotiateContractVersion([PublicContractManifest.current], [consumer.data])
+  if (negotiated === undefined) return false
+  return (
+    negotiated.major === PI_DURABLE_OBSERVED_GENERATION_CONTRACT_VERSION.major &&
+    negotiated.minor >= PI_DURABLE_OBSERVED_GENERATION_CONTRACT_VERSION.minor
+  )
+}
 
 /** Every published observed generation must belong to the attempt the receipt
  *  owns. A generation observed for another attempt is a late old-attempt

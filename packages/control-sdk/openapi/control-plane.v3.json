@@ -1,6 +1,6 @@
 {
   "openapi": "3.1.0",
-  "info": { "title": "Agent HQ Control Plane API", "version": "3.0.0" },
+  "info": { "title": "Agent HQ Control Plane API", "version": "3.1.0" },
   "paths": {
     "/v1/authentication/verify": {
       "post": {
