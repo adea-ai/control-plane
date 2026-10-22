@@ -11,9 +11,11 @@ offline report and existing emitter are unchanged.
 - Construct `createLocalRuntimeMeasurements` with the composition's SQLite path,
   adapter, cadence and the existing operations-report bounds. It supports Local
   and Hosted Simple SQLite, not Hosted PostgreSQL.
-- Start after migrations and successful runtime startup. Close on startup failure
-  and before persistence shutdown; close drains an active scan for at most
-  `closeTimeoutMs`, then aborts it (see Cancellation and deadlines).
+- Start after migrations. A composition that wires the measurement starts it before the
+  rest of runtime startup completes and drains it when a later startup step fails, so
+  the measurement observes the migrated store and never outlives a failed start.
+  Close on startup failure and before persistence shutdown; close drains an active
+  scan for at most `closeTimeoutMs`, then aborts it (see Cancellation and deadlines).
 - The shared `OperationsMeasurementLifecycle` also accepts an asynchronous scoped
   producer. An unavailable producer returns `undefined`, never synthetic zeros.
 - The cadence is an integer between 1 second and 24 hours. The lifecycle emits at
@@ -80,9 +82,11 @@ Producer behavior on abort:
 
 ## Remaining dependencies and limitations
 
-Local composition startup/cleanup wiring is coordinated with #1047; Hosted
-composition wiring is coordinated with #1048. Those integrations need composed
-startup, rollback and shutdown tests against their exact final heads.
+Local composition startup/cleanup wiring for this measurement is implemented in #1217,
+with composed startup, rollback and shutdown tests against its exact head; the Local
+runtime-ownership baseline remains coordinated with #1047, and Hosted composition
+wiring with #1048, and those still need composed startup, rollback and shutdown tests
+against their exact final heads.
 
 Hosted PostgreSQL has its own producer (below); the SQLite record reader is
 not reused because PostgreSQL does not carry the same record layout. Conversation
