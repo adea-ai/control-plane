@@ -60,7 +60,7 @@
         }
       ],
       "figureBytesRefreshed": false,
-      "lineageRegisterSourceSha256": "6bdda251a6890d28bdb044ccb9061ef92ab19569c3e91d9927f547187ff6992b"
+      "lineageRegisterSourceSha256": "953aa9932cda1930dfce4ac52eec372e7c8dfc65c191f5917dfb339a24b1ca8a"
     },
     {
       "sourceId": "control-plane-prd",
@@ -86,7 +86,7 @@
         }
       ],
       "figureBytesRefreshed": false,
-      "lineageRegisterSourceSha256": "cbcf5dac0b18a7d2f647f1663f802caced5552d0f591d527c161bfa0a2c6c864"
+      "lineageRegisterSourceSha256": "e0a83718a9e36a4eb46b6718814ad8ef50e587ed26c62b551ca5e0466cc4c58a"
     },
     {
       "sourceId": "cortana-prd",
@@ -138,7 +138,7 @@
         }
       ],
       "figureBytesRefreshed": false,
-      "lineageRegisterSourceSha256": "1f99605b3277c098ee281d2d449ea73efc2d5aef3d9f1c7cb56c01a7b8484ab2"
+      "lineageRegisterSourceSha256": "fbc7dfd842f70bac8a0d86a365e5a9f256017a6dcde30929d6c1804bc3ac7d0e"
     },
     {
       "sourceId": "control-plane-tdd",
@@ -164,7 +164,7 @@
         }
       ],
       "figureBytesRefreshed": false,
-      "lineageRegisterSourceSha256": "ed683f7d6d95fc3d7ffb5b7efab1c9dcbb1d654596d42ec59a3e001b1f35138b"
+      "lineageRegisterSourceSha256": "67253c5f63c9360910c9db3df61500ec3b8c2dce4391749ac972d9e0b20f9264"
     },
     {
       "sourceId": "agent-skill-spec",
@@ -216,7 +216,7 @@
         }
       ],
       "figureBytesRefreshed": false,
-      "lineageRegisterSourceSha256": "fc5a7a5b58149d18a4188f5e1b4e4f4dec790c48e1bd23fb0e18a0aeb6655702"
+      "lineageRegisterSourceSha256": "479e9c7482995907ffc52b35e2740c3dd472dd05ef95872549c31fb7e03ae411"
     },
     {
       "sourceId": "runtime-node-spec",
@@ -268,7 +268,7 @@
         }
       ],
       "figureBytesRefreshed": false,
-      "lineageRegisterSourceSha256": "77601bae1f9fd09a1eb97f02af852826209422c7fbb893984ec388b931cf464d"
+      "lineageRegisterSourceSha256": "aeb30e54810126aaf19893b586f90c62acd1c28142a74cfc56f431d930bd684c"
     },
     {
       "sourceId": "artifact-storage-spec",
@@ -325,7 +325,7 @@
         }
       ],
       "figureBytesRefreshed": false,
-      "lineageRegisterSourceSha256": "aba7a4b6c49edf42bc2015f22381edffeacb4aa770f8fa8dd3b574498eb0a739"
+      "lineageRegisterSourceSha256": "e786fc7e3b7cdb406d280be55d35d92cd6999b2f147de48eb5a71f0c6fed93ac"
     },
     {
       "sourceId": "evaluation-plan",
@@ -351,7 +351,7 @@
         }
       ],
       "figureBytesRefreshed": false,
-      "lineageRegisterSourceSha256": "3e0b9407f0730842b298cad7fdf5649def16940cf58030eb4a997922b9dede2c"
+      "lineageRegisterSourceSha256": "dde15092a48d83e4a95050e8a06bc16a5913533d9753c1b274f0696511a5f47c"
     },
     {
       "sourceId": "runtime-compatibility",
@@ -377,7 +377,7 @@
         }
       ],
       "figureBytesRefreshed": false,
-      "lineageRegisterSourceSha256": "d26c8d8ff5bb67787a69512df5e9abfdcf835bbcee75723302190c5800e43ac7"
+      "lineageRegisterSourceSha256": "4f4722eb64b39192c442fb2d45d28e620ffc932d46c845ff1b6a8646aa8b32e9"
     },
     {
       "sourceId": "architecture-decisions",
@@ -403,7 +403,7 @@
         }
       ],
       "figureBytesRefreshed": false,
-      "lineageRegisterSourceSha256": "0af50d4c36f5c42baa8fe3bc9ffd0e6ed0dea499fb9ed5f907dc769c24ae0088"
+      "lineageRegisterSourceSha256": "dc4675b5ca93a4d3ab9c773ba36475b5eb6f0f7d73e5b78a1eab33cf6543c828"
     }
   ]
 }

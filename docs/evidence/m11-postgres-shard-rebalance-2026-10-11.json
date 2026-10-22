@@ -92,5 +92,5 @@
     "shard3SecondsBeforeWorkspaceFile": 1192.819
   },
   "completeHostedRunRequired": true,
-  "scope": "Ownership-only rebalance. Preserves all integration files and assertions, existing case filters, serial execution, three Neon branches, cleanup, and 45-minute job limits. The separate runner correction removes automatic integration-file reruns and keeps bounded diagnostics while streaming full output. No timeout increase or broad retry is introduced."
+  "scope": "Ownership-only rebalance. Preserves all integration files and assertions, existing case filters, serial execution, three database sandboxes, cleanup, and 45-minute job limits. The separate runner correction removes automatic integration-file reruns and keeps bounded diagnostics while streaming full output. No timeout increase or broad retry is introduced."
 }

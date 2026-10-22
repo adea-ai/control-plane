@@ -1,5 +1,16 @@
+import {
+  resolveProductionDatabaseTarget,
+  resolveProductionDatabaseTls,
+} from '../scripts/production-database-target.mjs'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createHash, X509Certificate } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { execFile as execFileCallback } from 'node:child_process'
+import { promisify } from 'node:util'
+import { createServer } from 'node:net'
+import { createSecureContext, TLSSocket } from 'node:tls'
 import { describe, test } from 'node:test'
 
 import {
@@ -9,20 +20,44 @@ import {
 } from '../scripts/promote-railway-images.mjs'
 import {
   assertAppliedHistoryPrefix,
-  assertProductionMigrationUrl,
+  assertProductionMigrationUrl as assertProductionMigrationUrlRecorded,
   assertRetentionReferenceColumns,
-  assertRuntimeCapabilities,
-  assertRuntimeDatabaseUrl,
+  assertRuntimeCapabilities as assertRuntimeCapabilitiesRecorded,
+  assertRuntimeDatabaseUrl as assertRuntimeDatabaseUrlRecorded,
   createRailwayVariableReader,
   createPostgresSession,
+  runtimeVerificationUrl,
   loadCanonicalMigrationHistory,
-  migrateProductionSchema,
+  migrateProductionSchema as migrateProductionSchemaRecorded,
 } from '../scripts/migrate-production-schema.mjs'
 
+const productionDatabaseContract = {
+  schemaVersion: 1,
+  provider: 'railway-postgres',
+  status: 'verified',
+  identity: {
+    serviceId: '11111111-1111-4111-8111-111111111111',
+    environmentId: '52f5b0ac-2af0-4792-aa56-30d80e5db31e',
+    runtimeVerification: { hostname: 'migration.example.invalid', port: 6432 },
+    tls: { serverName: 'migration.example.invalid', caSha256: null },
+    database: 'control_plane_fixture',
+    migration: { hostname: 'migration.example.invalid', port: 6432 },
+    runtime: { hostname: 'runtime.example.invalid', port: 5432 },
+  },
+}
+const assertProductionMigrationUrl = (value) =>
+  assertProductionMigrationUrlRecorded(value, productionDatabaseContract)
+const assertRuntimeDatabaseUrl = (value) =>
+  assertRuntimeDatabaseUrlRecorded(value, productionDatabaseContract)
+const assertRuntimeCapabilities = (capabilities, privileges) =>
+  assertRuntimeCapabilitiesRecorded(capabilities, privileges, productionDatabaseContract)
+const migrateProductionSchema = (options) =>
+  migrateProductionSchemaRecorded({ ...options, productionDatabaseContract })
+
 const migrationUrl =
-  'postgresql://control_plane_migrator:placeholder@ep-crimson-bird-ay77m275.c-5.us-east-2.aws.neon.tech/neondb?sslmode=verify-full'
+  'postgresql://control_plane_migrator:placeholder@migration.example.invalid:6432/control_plane_fixture?sslmode=verify-full'
 const runtimeUrl =
-  'postgresql://control_plane_app:placeholder@ep-crimson-bird-ay77m275-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require'
+  'postgresql://control_plane_app:placeholder@runtime.example.invalid/control_plane_fixture?sslmode=require'
 const canonicalHistory = [
   { idx: 0, when: 1000, tag: '0000_first_migration', hash: 'a'.repeat(64) },
   { idx: 1, when: 2000, tag: '0001_second_migration', hash: 'b'.repeat(64) },
@@ -40,7 +75,7 @@ function productionRuntimeVariables() {
 function runtimeCapabilities(overrides = {}) {
   return {
     application_role: true,
-    database_name: 'neondb',
+    database_name: 'control_plane_fixture',
     superuser: false,
     create_database: false,
     create_role: false,
@@ -151,7 +186,7 @@ function createFakeSession({
         connectedRoleReads += 1
         return {
           role_name: connectedRoleReads === 1 ? 'control_plane_migrator' : 'control_plane_app',
-          database_name: 'neondb',
+          database_name: 'control_plane_fixture',
         }
       },
       async readRuntimeRoleCapabilities() {
@@ -461,7 +496,9 @@ describe('container promotion', () => {
 describe('production schema migration gate', () => {
   test('constructs and closes the installed postgres client without opening a remote connection', async () => {
     const session = createPostgresSession(
-      new URL('postgresql://local_test:placeholder@127.0.0.1:1/neondb?sslmode=verify-full')
+      new URL(
+        'postgresql://local_test:placeholder@127.0.0.1:1/control_plane_fixture?sslmode=verify-full'
+      )
     )
     await session.close()
   })
@@ -522,7 +559,7 @@ describe('production schema migration gate', () => {
 
     await assert.rejects(
       migrateProductionSchema({
-        environment: { NEON_PRODUCTION_MIGRATION_URL: migrationUrl },
+        environment: { DATABASE_MIGRATION_URL: migrationUrl },
         railway: fakeRailway(variables),
         canonicalHistory,
         openMigrationSession: async () => {
@@ -543,16 +580,13 @@ describe('production schema migration gate', () => {
     const railway = fakeRailway(productionRuntimeVariables(), calls)
 
     await migrateProductionSchema({
-      environment: { NEON_PRODUCTION_MIGRATION_URL: migrationUrl },
+      environment: { DATABASE_MIGRATION_URL: migrationUrl },
       railway,
       canonicalHistory,
-      openMigrationSession: async (url, timeouts) => {
-        assert.equal(
-          url.hostname,
-          url.username === 'control_plane_migrator'
-            ? 'ep-crimson-bird-ay77m275.c-5.us-east-2.aws.neon.tech'
-            : 'ep-crimson-bird-ay77m275-pooler.c-5.us-east-2.aws.neon.tech'
-        )
+      openMigrationSession: async (url, timeouts, tls) => {
+        assert.deepEqual(tls, { rejectUnauthorized: true, servername: 'migration.example.invalid' })
+        assert.equal(url.hostname, 'migration.example.invalid')
+        assert.equal(url.port, '6432')
         assert.deepEqual(timeouts, {
           connectTimeoutSeconds: 10,
           statementTimeoutMs: 120_000,
@@ -561,7 +595,8 @@ describe('production schema migration gate', () => {
         calls.push(url.username === 'control_plane_migrator' ? 'open-migrator' : 'open-runtime')
         return session.session
       },
-      migrate: async (credentials) => {
+      migrate: async (credentials, tls) => {
+        assert.deepEqual(tls, { rejectUnauthorized: true, servername: 'migration.example.invalid' })
         calls.push('migrate')
         assert.equal(credentials.role, 'migration')
         assert.equal(credentials.url, new URL(migrationUrl).href)
@@ -638,7 +673,7 @@ describe('production schema migration gate', () => {
 
     await assert.rejects(
       migrateProductionSchema({
-        environment: { NEON_PRODUCTION_MIGRATION_URL: migrationUrl },
+        environment: { DATABASE_MIGRATION_URL: migrationUrl },
         railway: fakeRailway(),
         canonicalHistory,
         openMigrationSession: async () => session.session,
@@ -658,7 +693,7 @@ describe('production schema migration gate', () => {
 
     await assert.rejects(
       migrateProductionSchema({
-        environment: { NEON_PRODUCTION_MIGRATION_URL: migrationUrl },
+        environment: { DATABASE_MIGRATION_URL: migrationUrl },
         railway: fakeRailway(),
         canonicalHistory,
         openMigrationSession: async () => session.session,
@@ -914,10 +949,7 @@ describe('production schema migration gate', () => {
     assert.ok(gateIndex < deployIndex)
     assert.match(workflow, /group: control-plane-production-deployment/)
     assert.match(workflow, /cancel-in-progress: false/)
-    assert.match(
-      workflow,
-      /NEON_PRODUCTION_MIGRATION_URL: \$\{\{ secrets\.NEON_PRODUCTION_MIGRATION_URL \}\}/
-    )
+    assert.match(workflow, /DATABASE_MIGRATION_URL: \$\{\{ secrets\.DATABASE_MIGRATION_URL \}\}/)
     // Production promotes control-api only while the cloud execution runtime
     // is disabled, and because the platform healthcheck is liveness-only the
     // deploy must still prove database readiness once.
@@ -926,4 +958,462 @@ describe('production schema migration gate', () => {
     assert.match(readyProbe, /control-planecontrol-api-production\.up\.railway\.app\/ready/)
     assert.ok(deployIndex < workflow.indexOf('- name: Verify production readiness after deploy'))
   })
+})
+
+const productionTargetFixture = () => ({
+  schemaVersion: 1,
+  provider: 'railway-postgres',
+  status: 'verified',
+  identity: {
+    serviceId: '11111111-1111-4111-8111-111111111111',
+    environmentId: '52f5b0ac-2af0-4792-aa56-30d80e5db31e',
+    runtimeVerification: { hostname: 'migration.example.invalid', port: 6432 },
+    tls: { serverName: 'migration.example.invalid', caSha256: null },
+    database: 'control_plane_fixture',
+    migration: { hostname: 'migration.example.invalid', port: 6432 },
+    runtime: { hostname: 'runtime.example.invalid', port: 5432 },
+  },
+})
+
+test('unverified target metadata refuses migration before any provider or database I/O', async () => {
+  await assert.rejects(
+    migrateProductionSchemaRecorded({
+      productionDatabaseContract: {
+        schemaVersion: 1,
+        provider: 'railway-postgres',
+        status: 'pending-verification',
+        identity: null,
+      },
+      environment: {
+        DATABASE_MIGRATION_URL: 'postgresql://untrusted:placeholder@untrusted.invalid/database',
+      },
+      railway: {
+        getServiceVariables() {
+          assert.fail('provider must not be queried')
+        },
+      },
+      openMigrationSession() {
+        assert.fail('database must not open')
+      },
+    }),
+    /not verified/
+  )
+})
+
+test('URL roles, exact endpoint ports, database identity and verified TLS are enforced', () => {
+  const contract = productionTargetFixture()
+  const migration =
+    'postgresql://control_plane_migrator:placeholder@migration.example.invalid:6432/control_plane_fixture?sslmode=verify-full'
+  const runtime =
+    'postgresql://control_plane_app:placeholder@runtime.example.invalid/control_plane_fixture?sslmode=require'
+  assert.equal(assertProductionMigrationUrlRecorded(migration, contract).port, '6432')
+  assert.equal(
+    assertRuntimeDatabaseUrlRecorded(runtime, contract).hostname,
+    'runtime.example.invalid'
+  )
+  for (const value of [
+    migration.replace('migration.example.invalid', 'untrusted.example.invalid'),
+    migration.replace(':6432/', ':5432/'),
+    migration.replace('control_plane_fixture', 'other_database'),
+    migration.replace('control_plane_migrator', 'control_plane_app'),
+    migration.replace('verify-full', 'require'),
+    migration.replace('verify-full', 'disable'),
+    `${migration}&sslmode=disable`,
+    `${migration}&options=-c%20role%3Dpostgres`,
+  ])
+    assert.throws(
+      () => assertProductionMigrationUrlRecorded(value, contract),
+      /role, database, host, or TLS policy/
+    )
+  assert.throws(
+    () =>
+      assertRuntimeDatabaseUrlRecorded(runtime.replace('control_plane_app', 'postgres'), contract),
+    /role, database, host, or TLS policy/
+  )
+})
+
+test('only the reviewed provider identity supplies endpoint and database policy', () => {
+  const target = resolveProductionDatabaseTarget(productionTargetFixture())
+  assert.deepEqual(target.migration, {
+    hostname: 'migration.example.invalid',
+    port: 6432,
+    database: 'control_plane_fixture',
+    username: 'control_plane_migrator',
+  })
+  assert.equal(target.runtime.username, 'control_plane_app')
+  assert.equal(target.runtime.database, target.database)
+})
+
+test('missing, malformed, unverified and credential-bearing metadata is rejected', () => {
+  for (const mutate of [
+    (value) => {
+      value.status = 'pending-verification'
+    },
+    (value) => {
+      value.provider = 'postgres'
+    },
+    (value) => {
+      value.identity = null
+    },
+    (value) => {
+      value.identity.serviceId = 'unverified-service'
+    },
+    (value) => {
+      value.identity.database = 'database/other'
+    },
+    (value) => {
+      value.identity.migration.hostname = 'user:secret@database.invalid'
+    },
+    (value) => {
+      value.identity.migration.port = 0
+    },
+    (value) => {
+      value.identity.runtime.port = 65536
+    },
+    (value) => {
+      value.identity.runtime.password = 'must-not-be-source-metadata'
+    },
+    (value) => {
+      value.identity.unexpected = true
+    },
+  ]) {
+    const value = productionTargetFixture()
+    mutate(value)
+    assert.throws(() => resolveProductionDatabaseTarget(value), /not verified|invalid/)
+  }
+})
+
+test('runtime verification maps only the reviewed host and port and preserves runtime credentials', () => {
+  const value = runtimeUrl.replace('placeholder', 'synthetic%40password%3Avalue')
+  const mapped = runtimeVerificationUrl(value, productionDatabaseContract)
+  const original = new URL(value)
+  const expected = new URL(value)
+  expected.hostname = 'migration.example.invalid'
+  expected.port = '6432'
+  assert.equal(mapped.href, expected.href)
+  assert.equal(mapped.username, original.username)
+  assert.equal(mapped.password, original.password)
+  assert.equal(mapped.pathname, original.pathname)
+  for (const mutation of [
+    (contract) => {
+      contract.identity.environmentId = '11111111-1111-4111-8111-111111111111'
+    },
+    (contract) => {
+      contract.identity.runtimeVerification.hostname = 'untrusted.invalid'
+    },
+    (contract) => {
+      contract.identity.runtimeVerification.port = 5432
+    },
+    (contract) => {
+      contract.identity.runtimeVerification.password = 'forbidden'
+    },
+  ]) {
+    const contract = structuredClone(productionDatabaseContract)
+    mutation(contract)
+    assert.throws(() => runtimeVerificationUrl(value, contract), /not verified|invalid/)
+  }
+  for (const invalidUrl of [
+    runtimeUrl.replace('runtime.example.invalid', 'other.invalid'),
+    runtimeUrl.replace('control_plane_app', 'postgres'),
+    runtimeUrl.replace('control_plane_fixture', 'other_database'),
+    runtimeUrl.replace('/control_plane_fixture', ':6432/control_plane_fixture'),
+  ])
+    assert.throws(
+      () => runtimeVerificationUrl(invalidUrl, productionDatabaseContract),
+      /TLS policy/
+    )
+})
+
+// These are real postgres.js SSLRequest/TLS handshakes on loopback, including
+// the actual migration executor. No database, credential or external route is used.
+test(
+  'inspection, runtime verification and migration enforce certificate chain, expiry and hostname',
+  { timeout: 60000 },
+  async () => {
+    const execFile = promisify(execFileCallback)
+    const directory = await mkdtemp(join(tmpdir(), 'cp-schema-tls-'))
+    try {
+      for (const scenario of [
+        'trusted',
+        'untrusted',
+        'expired',
+        'wrong-host',
+        'pinned-peer',
+        'pinned-wrong-peer',
+      ]) {
+        const key = join(directory, `${scenario}.key`)
+        const cert = join(directory, `${scenario}.crt`)
+        await execFile('openssl', [
+          'req',
+          '-x509',
+          '-newkey',
+          'rsa:2048',
+          '-nodes',
+          '-keyout',
+          key,
+          '-out',
+          cert,
+          '-days',
+          '1',
+          '-subj',
+          '/CN=synthetic-local-test',
+          '-addext',
+          `subjectAltName=DNS:${scenario.startsWith('pinned-') ? 'synthetic-peer.invalid' : scenario === 'wrong-host' ? 'other.invalid' : 'localhost'}`,
+        ])
+        if (scenario === 'expired') {
+          const request = join(directory, 'expired.csr')
+          const config = join(directory, 'ca.cnf')
+          await writeFile(join(directory, 'index'), '')
+          await writeFile(join(directory, 'serial'), '01\n')
+          await writeFile(
+            config,
+            `[ca]\ndefault_ca=local\n[local]\ndatabase=${directory}/index\nserial=${directory}/serial\nnew_certs_dir=${directory}\ndefault_md=sha256\npolicy=policy\nx509_extensions=extensions\n[policy]\ncommonName=supplied\n[extensions]\nsubjectAltName=DNS:localhost\n`
+          )
+          await execFile('openssl', [
+            'req',
+            '-new',
+            '-key',
+            key,
+            '-out',
+            request,
+            '-subj',
+            '/CN=synthetic-local-test',
+          ])
+          await execFile('openssl', [
+            'ca',
+            '-batch',
+            '-selfsign',
+            '-config',
+            config,
+            '-cert',
+            cert,
+            '-keyfile',
+            key,
+            '-in',
+            request,
+            '-out',
+            cert,
+            '-startdate',
+            '20000101000000Z',
+            '-enddate',
+            '20010101000000Z',
+          ])
+        }
+        if (scenario === 'pinned-peer') {
+          const pem = await readFile(cert, 'utf8')
+          const contract = structuredClone(productionDatabaseContract)
+          contract.identity.tls = { serverName: 'synthetic-peer.invalid', caSha256: '0'.repeat(64) }
+          assert.throws(() => resolveProductionDatabaseTls(contract, pem), /CA does not match/)
+          contract.identity.tls.caSha256 = createHash('sha256')
+            .update(new X509Certificate(pem).raw)
+            .digest('hex')
+          assert.throws(
+            () => resolveProductionDatabaseTls(contract, pem + pem),
+            /CA does not match/
+          )
+          const tlsPolicy = resolveProductionDatabaseTls(contract, pem)
+          const session = createFakeSession()
+          let calls = 0
+          await migrateProductionSchemaRecorded({
+            productionDatabaseContract: contract,
+            canonicalHistory,
+            environment: {
+              DATABASE_MIGRATION_URL: migrationUrl,
+              DATABASE_MIGRATION_CA_CERTIFICATE: pem,
+            },
+            railway: fakeRailway(),
+            openMigrationSession: async (url, _timeouts, tls) => {
+              assert.equal(url.hostname, 'migration.example.invalid')
+              assert.deepEqual(tls, tlsPolicy)
+              calls += 1
+              return session.session
+            },
+            migrate: async (_credentials, tls) => {
+              assert.deepEqual(tls, tlsPolicy)
+              calls += 1
+            },
+          })
+          assert.equal(calls, 3)
+        }
+        const context = createSecureContext({
+          key: await readFile(key),
+          cert: await readFile(cert),
+        })
+        const sockets = new Set()
+        const server = createServer((socket) => {
+          sockets.add(socket)
+          socket.on('error', () => {})
+          socket.once('close', () => sockets.delete(socket))
+          let request = Buffer.alloc(0)
+          const receive = (chunk) => {
+            request = Buffer.concat([request, chunk])
+            if (request.length < 8) return
+            socket.off('data', receive)
+            assert.deepEqual([...request.subarray(0, 8)], [0, 0, 0, 8, 4, 210, 22, 47])
+            socket.write('S')
+            const secure = new TLSSocket(socket, { isServer: true, secureContext: context })
+            secure.on('error', () => {})
+            secure.once('data', () => {
+              // A trusted handshake reaches PostgreSQL startup. This synthetic
+              // error proves that success was beyond TLS, without executing SQL.
+              const fields = Buffer.from('SERROR\0CXX999\0Msynthetic TLS accepted\0\0')
+              const header = Buffer.alloc(5)
+              header[0] = 69
+              header.writeInt32BE(fields.length + 4, 1)
+              secure.end(Buffer.concat([header, fields]))
+            })
+          }
+          socket.on('data', receive)
+        })
+        await new Promise((resolve, reject) => {
+          server.once('error', reject)
+          server.listen(0, '127.0.0.1', resolve)
+        })
+        try {
+          for (const operation of ['inspection', 'runtime-verification', 'migration']) {
+            const script = `
+            import { resolveProductionDatabaseTls } from './scripts/production-database-target.mjs';
+            import { createPostgresSession, runtimeVerificationUrl } from './scripts/migrate-production-schema.mjs';
+            import { migrateDatabase } from './packages/database/dist/migration.js';
+            const url = 'postgresql://synthetic:synthetic@localhost:${server.address().port}/synthetic?sslmode=require';
+            const contract = ${JSON.stringify(productionDatabaseContract)};
+            contract.identity.migration = {hostname:'localhost', port:${server.address().port}};
+            contract.identity.runtimeVerification = {...contract.identity.migration};
+            contract.identity.tls = ${JSON.stringify(
+              scenario.startsWith('pinned-')
+                ? {
+                    serverName:
+                      scenario === 'pinned-peer' ? 'synthetic-peer.invalid' : 'wrong-peer.invalid',
+                    caSha256: createHash('sha256')
+                      .update(new X509Certificate(await readFile(cert)).raw)
+                      .digest('hex'),
+                  }
+                : { serverName: 'localhost', caSha256: null }
+            )};
+            const tls = resolveProductionDatabaseTls(contract, ${JSON.stringify(scenario.startsWith('pinned-') ? await readFile(cert, 'utf8') : undefined)});
+            let session;
+            try {
+              if (${JSON.stringify(operation)} !== 'migration') {
+                let target = new URL(url);
+                if (${JSON.stringify(operation)} === 'runtime-verification') {
+                  target = runtimeVerificationUrl(${JSON.stringify(runtimeUrl)}, contract);
+                }
+                session = createPostgresSession(target, {connectTimeoutSeconds:2, statementTimeoutMs:1000, lockTimeoutMs:1000}, tls);
+                await session.readConnectedRole();
+              } else {
+                await migrateDatabase({role:'migration',url}, {verifyTls:true,connectTimeoutSeconds:2,...(typeof tls === 'object' ? {tls} : {})});
+              }
+              process.exitCode = 1;
+            } catch (error) {
+              console.log(JSON.stringify({code:error.code ?? error.cause?.code, message:error.cause?.message ?? error.message}));
+            } finally { if (session) await session.close(); }
+          `
+            const env = { ...process.env }
+            delete env.NODE_TLS_REJECT_UNAUTHORIZED
+            delete env.NODE_EXTRA_CA_CERTS
+            if (!scenario.startsWith('pinned-') && scenario !== 'untrusted')
+              env.NODE_EXTRA_CA_CERTS = cert
+            for (const runtime of scenario.startsWith('pinned-') || scenario === 'trusted'
+              ? ['node', process.execPath]
+              : ['node']) {
+              const { stdout } = await execFile(
+                runtime,
+                runtime === 'node'
+                  ? ['--dns-result-order=ipv4first', '--input-type=module', '-e', script]
+                  : ['--eval', script],
+                { env, timeout: 10000 }
+              )
+              const result = JSON.parse(stdout.trim())
+              if (scenario === 'trusted' || scenario === 'pinned-peer')
+                assert.equal(result.code, 'XX999', operation)
+              else {
+                assert.equal(
+                  result.code,
+                  {
+                    untrusted: 'DEPTH_ZERO_SELF_SIGNED_CERT',
+                    expired: 'CERT_HAS_EXPIRED',
+                    'wrong-host': 'ERR_TLS_CERT_ALTNAME_INVALID',
+                    'pinned-wrong-peer': 'ERR_TLS_CERT_ALTNAME_INVALID',
+                  }[scenario],
+                  `${operation}: ${scenario}`
+                )
+                assert.match(
+                  `${result.code} ${result.message}`,
+                  /certificate|CERT|self.signed|hostname|altname/i
+                )
+              }
+            }
+          }
+        } finally {
+          for (const socket of sockets) socket.destroy()
+          await new Promise((resolve) => server.close(resolve))
+        }
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
+
+test('pinned TLS identity fails before provider or database I/O without the exact reviewed CA', async () => {
+  const contract = structuredClone(productionDatabaseContract)
+  contract.identity.tls = { serverName: 'synthetic-peer.invalid', caSha256: '0'.repeat(64) }
+  for (const certificate of [undefined, '', 'not a certificate']) {
+    assert.throws(() => resolveProductionDatabaseTls(contract, certificate), /CA does not match/)
+    await assert.rejects(
+      migrateProductionSchemaRecorded({
+        productionDatabaseContract: contract,
+        environment: {
+          DATABASE_MIGRATION_CA_CERTIFICATE: certificate,
+          DATABASE_MIGRATION_URL: migrationUrl,
+        },
+        railway: {
+          getServiceVariables() {
+            assert.fail('provider must not be queried')
+          },
+        },
+        openMigrationSession() {
+          assert.fail('database must not open')
+        },
+      }),
+      /CA does not match/
+    )
+  }
+  for (const mutate of [
+    (value) => {
+      value.identity.tls.caSha256 = 'invalid'
+    },
+    (value) => {
+      value.identity.tls.serverName = 'user:password@invalid'
+    },
+    (value) => {
+      value.identity.tls.rejectUnauthorized = false
+    },
+  ]) {
+    const value = structuredClone(contract)
+    mutate(value)
+    assert.throws(() => resolveProductionDatabaseTls(value, ''), /TLS identity is invalid/)
+  }
+  assert.throws(
+    () => resolveProductionDatabaseTls(productionDatabaseContract, 'arbitrary CA'),
+    /CA does not match/
+  )
+})
+
+test('database clients reject permissive TLS options before creating a connection', async () => {
+  const { migrateDatabase } = await import('../packages/database/dist/migration.js')
+  for (const tls of [
+    { rejectUnauthorized: false },
+    { rejectUnauthorized: true, servername: 'peer.invalid', checkServerIdentity: () => undefined },
+    { rejectUnauthorized: true, servername: 'peer.invalid', ca: 42 },
+  ]) {
+    assert.throws(
+      () => createPostgresSession(new URL(migrationUrl), undefined, tls),
+      /strict database TLS policy/
+    )
+    await assert.rejects(
+      migrateDatabase({ role: 'migration', url: migrationUrl }, { verifyTls: true, tls }),
+      /PostgreSQL connection configuration is invalid/
+    )
+  }
 })

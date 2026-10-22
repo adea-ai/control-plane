@@ -1,4 +1,4 @@
-# Neon integration shard balance — 2026-10-07
+# PostgreSQL integration shard balance — 2026-10-07
 
 Run [37575729589](https://github.com/adea-ai/control-plane/actions/runs/37575729589)
 at main `2ea5039de73fc182c5116de864a69bcc6e3f6ae3` completed shards 1 and 2.

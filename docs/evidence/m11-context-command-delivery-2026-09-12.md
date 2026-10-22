@@ -177,13 +177,13 @@ table, with a database constraint bounding the next counter (including the exhau
 sentinel). Apply the additive migration before configuring this repository. Rollback
 disables its use and preserves counters; dropping or resetting counters is not a safe
 rollback while a channel can still send. Scope identity includes workspace, node,
-gateway instance, connection and generation. A focused isolated Neon test passes
+gateway instance, connection and generation. A focused isolated PostgreSQL test passes
 nine assertions for eight concurrent allocations, lost commit acknowledgement,
 repository reconstruction, minimum advancement, generation isolation and exhaustion.
 The full isolated PostgreSQL suite passes 33 tests and 416 assertions in 258.6 seconds.
 The local suite passes 1,346 tests (1,136 unit, 130 E2E, 80 smoke), with 87.20% line
 and 84.69% function coverage. Build, types and migration-schema checks pass.
-No staging or production database was migrated, and production composition remains
+No production database was migrated, and production composition remains
 unactivated. Migration-generated JSON is normalized by the repository formatter.
 
 ## Lifecycle-driven context recovery
@@ -230,7 +230,7 @@ PostgresContextCommandGrantRepository adds the same create-once and permanently
 revocable contract with a composite workspace/reference primary key and row-locked
 revocation. Migration 0043 creates the additive grant table; apply it and the
 deployment's normal application-role table permissions before activation. Repository
-reads validate the stored scope against projected lookup keys. The isolated Neon
+reads validate the stored scope against projected lookup keys. The isolated PostgreSQL
 focused test passes nine assertions for concurrent creation, concurrent revocation,
 repository reconstruction, cross-workspace separation and denied reactivation.
 The full isolated PostgreSQL suite passes 34 tests / 425 assertions in 253.1 seconds.
@@ -312,13 +312,13 @@ instances. Updates preserve identity, reject stale versions and backwards health
 and retain irreversible revocation. Stored JSON is checked against projected scope
 columns on reads and updates. No existing table or production data is rewritten.
 
-Live Neon verification on a disposable staging child passed the focused registry
+Live PostgreSQL verification on a disposable sandbox child passed the focused registry
 test (14 assertions), including 33 concurrent attempts with exactly 32 accepted,
 concurrent first creation, stale updates, scoped reads, repository reconstruction
 and permanent revocation. The complete PostgreSQL suite passed 35 tests / 439
 assertions in 292.88 seconds, including migrations and the existing transaction,
 execution, interaction, usage and recovery checks. The temporary branch was deleted
-and its absence verified; staging and production were not modified. Credentials
+and its absence verified; sandbox and production were not modified. Credentials
 were injected in memory, with no local environment-file changes.
 
 Local validation passed 1,354 tests (1,143 unit, 131 E2E, 80 smoke), all 41 package
@@ -468,8 +468,8 @@ startup; it now boots through the injected channel server per the fail-closed co
 
 ## Live PostgreSQL CLI validation
 
-The operator administration CLI was executed against a disposable Neon PostgreSQL 18
-branch (child of staging, --no-secrets, expiry set, deleted and verified absent after
+The operator administration CLI was executed against a disposable Railway PostgreSQL 18
+branch (child of sandbox, --no-secrets, expiry set, deleted and verified absent after
 the run). Migrations 0042 through 0044 were applied to the live branch; operator
 privilege configuration granted the application role access to exactly the grant and
 registration tables; role membership replicated the preview workflow's ownership
@@ -479,32 +479,32 @@ CLI then provisioned a scoped grant (and accepted its exact idempotent replay), 
 closed on a wrong expected host, registered a matching snapshot through expected-version
 CAS, revoked the grant, and the revoked status was read back durably through the
 application-role connection. No connection strings, passwords or branch names beyond
-the disposable branch were recorded; staging and production branches were untouched.
+the disposable branch were recorded; sandbox and production branches were untouched.
 Live PostgreSQL CLI evidence now exists; the separate external gates — deployed-profile
 acceptance and independent review — remain open.
 
-## Managed-cloud staging certification from the merged candidate
+## Managed-cloud sandbox certification from the merged candidate
 
 Candidate `05ea20d` (main; contains the merged PR #476 squash `d8d8074` plus the
-1.17.0 release chore). The staging Railway environment was activated through the
+1.17.0 release chore). The sandbox Railway environment was activated through the
 repository-owned IaC (`railway config plan`/`apply`): application sources reconnected
-to GitHub `main`, one-replica topology, Restate always-on. The staging Neon branch
+to GitHub `main`, one-replica topology, Restate always-on. The sandbox database sandbox
 schema was brought current with migrations 0042 through 0044, applied through a
 session-scoped `SET ROLE control_plane_migrator` switch (no role credentials mutated),
-with explicit grants of the new tables to the staging application role. A fresh
+with explicit grants of the new tables to the sandbox application role. A fresh
 Ed25519 service-certification keypair was generated for the run; its public half
-replaced the staging trust set entry and its private half was destroyed after the run.
+replaced the sandbox trust set entry and its private half was destroyed after the run.
 
-`certify-m9-cloud.mjs` passed against the activated staging stack: authenticated
+`certify-m9-cloud.mjs` passed against the activated sandbox stack: authenticated
 execution acceptance through the public control API, Restate-driven execution reaching
-`completed` terminal state in Neon staging with one attempt, an integrity-matched
+`completed` terminal state in PostgreSQL sandbox with one attempt, an integrity-matched
 Artifact retained in the product R2 bucket, and idempotent replay returning the
 original execution and artifact (`status: passed`, `attemptCount: 1`, `replayed: true`,
-execution `exe_0ZR2WCX8A9X3JN4M346NA6HYNM`). The staging environment was then stood
+execution `exe_0ZR2WCX8A9X3JN4M346NA6HYNM`). The sandbox environment was then stood
 back down through the guarded standby transition with zero running replicas, the
-staging application-role password was rotated (Railway variables updated, new
+sandbox application-role password was rotated (Railway variables updated, new
 credential verified), and the workspace cost soft/hard limits ($5/$10) were configured
-per the operations documentation. One transient staging failure occurred when the
+per the operations documentation. One transient sandbox failure occurred when the
 trusted-keys variable was first set as a JSON object rather than the required array;
 the corrected value deployed successfully. Production remains on its prior deployment;
 production activation is a separate release operation.

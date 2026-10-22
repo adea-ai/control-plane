@@ -24,7 +24,7 @@ cookie headers, prompts, file contents, model inputs, tool inputs, arbitrary req
 or full third-party payloads. Known secret fields and `key=value` diagnostics are redacted before a
 log, span, or Sentry adapter receives them. Sentry 11 is initialized with explicit `dataCollection` restrictions: user information, cookies, HTTP bodies, generative AI inputs/outputs, database query data, queue data, and GraphQL documents/variables are disabled; identifying request/response headers and query parameters are filtered. The removed `sendDefaultPii` option is not used.
 
-Development uses correlated console span events. Staging and production use the OpenTelemetry API
+Development uses correlated console span events. Production use the OpenTelemetry API
 adapter, which remains a no-op until a deployment registers an SDK/exporter. Tests can inject a
 recording adapter and must not require a live telemetry vendor or DSN.
 

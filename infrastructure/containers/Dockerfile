@@ -41,7 +41,8 @@ ARG COMMIT_SHA
 ENV APP_NAME=${APP_NAME} \
     COMMIT_SHA=${COMMIT_SHA} \
     APP_ENV=production \
-    NODE_ENV=production
+    NODE_ENV=production \
+    NODE_EXTRA_CA_CERTS=/workspace/packages/database/certs/railway-production-ca.crt
 
 WORKDIR /workspace
 

@@ -200,7 +200,7 @@ test('manifests that carry secret material or status for a credential are reject
     { secret: canary },
     { secretRevisions: [] },
     { status: 'active' },
-    { locator: 'neon://credential-secrets/crd' },
+    { locator: 'postgres://credential-secrets/crd' },
   ]) {
     const records = manifest.records.map(({ contentDigest: _recordDigest, ...record }) =>
       createPortableRecord(

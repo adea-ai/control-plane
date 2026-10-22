@@ -56,7 +56,7 @@ describe('loadServiceConfiguration', () => {
 
   test('uses Railway deployment metadata when application aliases are absent', async () => {
     const configuration = await loadServiceConfiguration('runtime-gateway', {
-      APP_ENV: 'staging',
+      APP_ENV: 'production',
       RAILWAY_DEPLOYMENT_ID: 'railway-deployment-123',
       RAILWAY_GIT_COMMIT_SHA: '0123456789abcdef',
     })
@@ -71,7 +71,7 @@ describe('loadServiceConfiguration', () => {
 
   test('keeps explicit application metadata authoritative on Railway', async () => {
     const configuration = await loadServiceConfiguration('runtime-gateway', {
-      APP_ENV: 'staging',
+      APP_ENV: 'production',
       COMMIT_SHA: 'explicit-commit',
       SERVICE_VERSION: 'explicit-version',
       RAILWAY_DEPLOYMENT_ID: 'railway-deployment-123',
@@ -145,7 +145,7 @@ describe('loadEnvironment', () => {
     expect(developmentBase).toEqual({ APP_ENV: 'development', CONTROL_API_PORT: '4999' })
   })
 
-  test('never loads dotenv files in staging or production', async () => {
+  test('never loads dotenv files in production', async () => {
     const cwd = await temporaryDirectory()
     await writeFile(join(cwd, '.env'), 'COMMIT_SHA=from-file\nDATABASE_URL=secret-from-file\n')
 

@@ -1,4 +1,4 @@
-# Neon budget-admission shard balance — 2026-10-07
+# PostgreSQL budget-admission shard balance — 2026-10-07
 
 Run [37684246003](https://github.com/adea-ai/control-plane/actions/runs/37684246003)
 at `7f8d3010c2b3e3c84cd3536cc734ea1006713f7f` ended cancelled when shard 1

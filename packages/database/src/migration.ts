@@ -1,6 +1,5 @@
 import type { DatabaseCredentials } from '@control-plane/config'
-import { drizzle } from 'drizzle-orm/postgres-js'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
+import { migrateOwnedSchema } from './scoped-migrations.js'
 import { fileURLToPath } from 'node:url'
 import postgres from 'postgres'
 import { assertPostgresUrl, DatabaseConnectionError } from './connection.js'
@@ -11,6 +10,11 @@ export interface MigrationOptions {
   readonly statementTimeoutMs?: number
   readonly lockTimeoutMs?: number
   readonly verifyTls?: boolean
+  readonly tls?: {
+    readonly rejectUnauthorized: true
+    readonly servername: string
+    readonly ca?: string
+  }
 }
 
 function assertBoundedTimeout(name: string, value: number | undefined, maximum: number): void {
@@ -28,6 +32,20 @@ export async function migrateDatabase(
   assertBoundedTimeout('connection', options.connectTimeoutSeconds, 60)
   assertBoundedTimeout('statement', options.statementTimeoutMs, 300_000)
   assertBoundedTimeout('lock', options.lockTimeoutMs, 30_000)
+  if (
+    options.tls !== undefined &&
+    (options.verifyTls !== true ||
+      Object.keys(options.tls).some(
+        (key) => !['ca', 'rejectUnauthorized', 'servername'].includes(key)
+      ) ||
+      options.tls.rejectUnauthorized !== true ||
+      typeof options.tls.servername !== 'string' ||
+      !/^[a-z0-9.-]+$/.test(options.tls.servername) ||
+      (options.tls.ca !== undefined &&
+        (typeof options.tls.ca !== 'string' ||
+          !options.tls.ca.includes('-----BEGIN CERTIFICATE-----'))))
+  )
+    throw new DatabaseConnectionError('INVALID_DATABASE_TLS')
   const client = postgres(credentials.url, {
     max: 1,
     onnotice: () => undefined,
@@ -35,7 +53,7 @@ export async function migrateDatabase(
     ...(options.connectTimeoutSeconds === undefined
       ? {}
       : { connect_timeout: options.connectTimeoutSeconds }),
-    ...(options.verifyTls === true ? { ssl: 'verify-full' as const } : {}),
+    ...(options.verifyTls === true ? { ssl: options.tls ?? { rejectUnauthorized: true } } : {}),
     connection: {
       ...(options.statementTimeoutMs === undefined
         ? {}
@@ -44,10 +62,12 @@ export async function migrateDatabase(
     },
   })
   try {
-    await migrate(drizzle(client), {
-      migrationsFolder:
-        options.migrationsFolder ?? fileURLToPath(new URL('../drizzle', import.meta.url)),
-    })
+    await migrateOwnedSchema(
+      client,
+      options.migrationsFolder ?? fileURLToPath(new URL('../drizzle', import.meta.url)),
+      'drizzle',
+      options.verifyTls === true
+    )
   } finally {
     await client.end({ timeout: 5 })
   }

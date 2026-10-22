@@ -21,8 +21,8 @@ none may be closed from the historical table's passing fixture results.
 ## Candidate and pinned components
 
 - Implementation candidate: `57a7fe4c9529ba56fbeb183d1ce6567c8800b79a`
-- Merged `staging` candidate: `d429b311b26a6eb03b0aebbcea4013c04432f5f7`
-- Pull request: #325 (`feat/m11-standalone-e2e` -> `staging`)
+- Merged `sandbox` candidate: `d429b311b26a6eb03b0aebbcea4013c04432f5f7`
+- Pull request: #325 (`feat/m11-standalone-e2e` -> `sandbox`)
 - Bun CLI: `1.4.1` (`bun test` identifies the bundled runner as `1.4.1-canary.1`)
 - Node: `v22.23.1`; package engines remain Node `>=24 <25`, so Node is not the
   certifying package runner in this evidence
@@ -75,7 +75,7 @@ a semantic assertion failure.
 A fresh macOS Docker run of the `server` Compose profile did not certify the profile:
 PostgreSQL 18 bind-mounted initialization exceeded the Compose health retry window, so
 the application never reached a representative execution. The isolated stack was
-removed. The supported Linux Compose workflow and live staging deployment remain the
+removed. The supported Linux Compose workflow and live sandbox deployment remain the
 authoritative certification environments.
 
 The repository-owned Linux Hosted Compose workflow passed for the merged candidate in
@@ -85,20 +85,20 @@ checks. That workflow does not execute a representative remote runtime through t
 Runtime Gateway, so it proves the deployment substrate rather than the complete Hosted
 Server execution path.
 
-## Managed-cloud staging certification
+## Managed-cloud sandbox certification
 
-Railway staging was first corrected from stale `main` source configuration to the
-documented `staging` branch. Both application services then deployed the exact merged
+Railway sandbox was first corrected from stale `main` source configuration to the
+documented `sandbox` branch. Both application services then deployed the exact merged
 candidate:
 
 - Control API deployment `b8755e97-e301-47db-9919-f63160c14ad8`;
 - workflow worker deployment `ec210884-8f3a-4db0-87a9-e7cb8e744101`.
 
 Both `/health` and `/ready` reported commit
-`d429b311b26a6eb03b0aebbcea4013c04432f5f7` and environment `staging`. A short-lived
-Ed25519 certification key was added to staging only, and the Control API was redeployed
+`d429b311b26a6eb03b0aebbcea4013c04432f5f7` and environment `sandbox`. A short-lived
+Ed25519 certification key was added to sandbox only, and the Control API was redeployed
 as `701d0ab4-3864-4441-8e34-f35b40be52b6`. `bun run certify:m9-cloud` then passed
-against the live Railway, Neon, R2, and Restate services:
+against the live Railway, PostgreSQL, R2, and Restate services:
 
 ```json
 {
@@ -119,7 +119,7 @@ against the live Railway, Neon, R2, and Restate services:
 ```
 
 The original trusted-key JSON was restored byte-for-byte and verified after Control API
-deployment `b949a8bf-7d93-455d-9664-be5d8eeda8df`. Staging was then returned to the
+deployment `b949a8bf-7d93-455d-9664-be5d8eeda8df`. sandbox was then returned to the
 repository's guarded standby state: all three active deployments were removed, source
 triggers were disconnected, the retained volume was not destroyed, and a second standby
 preview returned no actions. Production was never selected for apply and was not
@@ -140,7 +140,7 @@ modified.
 | PostgreSQL repository semantics                                                     | `@control-plane/database` integration suite                                                                               | Passed with extended local timeout                                              |
 | Self-hosted Simple clean start/restart                                              | fresh Compose run described above                                                                                         | Passed on local Docker                                                          |
 | Self-hosted Server clean start/recovery                                             | Linux Hosted Compose run `33354286908`                                                                                    | Substrate passed; remote runtime execution remains open                         |
-| Managed-cloud frozen candidate                                                      | `bun run certify:m9-cloud` against live Railway staging                                                                   | Passed at merged `staging` commit                                               |
+| Managed-cloud frozen candidate                                                      | `bun run certify:m9-cloud` against live Railway sandbox                                                                   | Passed at merged `sandbox` commit                                               |
 
 ## Honest remaining gates
 
@@ -158,7 +158,7 @@ The following gates remain before M11.3 or final M11 approval can be claimed:
    test volume after the destructive-command safety hook blocked their cleanup.
 6. remove the short-lived private certification key directory after the same safety
    hook permits that exact temporary path to be deleted; the public key has already
-   been removed from Railway staging.
+   been removed from Railway sandbox.
 
-No production environment was modified by these checks. Railway staging was modified
+No production environment was modified by these checks. Railway sandbox was modified
 only for the bounded certification above and was returned to verified standby.

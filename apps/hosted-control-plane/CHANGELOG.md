@@ -67,7 +67,7 @@
 
 ### Bug Fixes
 
-* **ci:** scale explicit integration test budgets for the remote Neon lane ([#847](https://github.com/adea-ai/control-plane/issues/847)) ([887db8a](https://github.com/adea-ai/control-plane/commit/887db8a518800246465a1ebd801d222af45386f2))
+* **ci:** scale explicit integration test budgets for the remote PostgreSQL lane ([#847](https://github.com/adea-ai/control-plane/issues/847)) ([887db8a](https://github.com/adea-ai/control-plane/commit/887db8a518800246465a1ebd801d222af45386f2))
 
 ## [1.16.0](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.15.0...hosted-control-plane-v1.16.0) (2026-10-02)
 

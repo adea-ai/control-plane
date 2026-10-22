@@ -4,7 +4,7 @@ import {
   CredentialVault,
   CredentialVaultError,
   InMemorySecretProvider,
-  NeonEncryptedSecretProvider,
+  PostgresEncryptedSecretProvider,
 } from './index.ts'
 
 const ids = {
@@ -265,7 +265,7 @@ describe('connector credential vault', () => {
     ).resolves.toBe(true)
   })
 
-  test('encrypts Neon-backed secrets without leaking plaintext or provider types into vault contracts', async () => {
+  test('encrypts PostgreSQL-backed secrets without leaking plaintext or provider types into vault contracts', async () => {
     const records = new Map()
     const store = {
       async put(input) {
@@ -278,7 +278,7 @@ describe('connector credential vault', () => {
         records.delete(`${input.locator}:${input.version}`)
       },
     }
-    const provider = new NeonEncryptedSecretProvider({
+    const provider = new PostgresEncryptedSecretProvider({
       store,
       encryptionKey: 'a'.repeat(64),
       keyReference: 'control-plane-secret-key-v1',
@@ -313,7 +313,7 @@ describe('connector credential vault', () => {
         records.delete(`${input.locator}:${input.version}`)
       },
     }
-    const provider = new NeonEncryptedSecretProvider({
+    const provider = new PostgresEncryptedSecretProvider({
       store,
       encryptionKey: 'a'.repeat(64),
       keyReference: 'control-plane-secret-key-v1',

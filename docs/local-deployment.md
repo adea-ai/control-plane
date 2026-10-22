@@ -3,7 +3,7 @@
 Local is the developer-MVP default. Adea Desktop owns one Control Plane process. The composition
 uses embedded SQLite, filesystem Artifacts, local secret handles, content-redacted telemetry, and a
 direct co-located RuntimeTransport. It does not require Docker, PostgreSQL, Redis/Valkey, Temporal,
-Railway, Neon, R2, Runtime Gateway, or a Restate process: durable execution runs in-process on the
+Railway, PostgreSQL, R2, Runtime Gateway, or a Restate process: durable execution runs in-process on the
 embedded SQLite queue (`WorkflowJobStore` + `EmbeddedWorkflowRuntime`), which serves the same
 workflow contracts as the Restate path. Restate remains the durable-execution backbone for the
 hosted and user-controlled self-hosted profiles (`hosted-simple` keeps the bundled Restate child

@@ -4,7 +4,7 @@ import {
   CredentialVault,
   InMemoryCredentialVaultRepository,
   InMemorySecretProvider,
-  NeonEncryptedSecretProvider,
+  PostgresEncryptedSecretProvider,
   VaultToolCredentialBroker,
   createCredentialId,
   createCredentialLeaseId,
@@ -252,7 +252,7 @@ describe('durable credential vault', () => {
       secret: canary,
     })
     const records = new Map()
-    const neon = new NeonEncryptedSecretProvider({
+    const postgres = new PostgresEncryptedSecretProvider({
       store: {
         async put(input) {
           records.set(`${input.locator}:${input.version}`, input)
@@ -267,10 +267,10 @@ describe('durable credential vault', () => {
       encryptionKey: 'a'.repeat(64),
       keyReference: 'control-plane-secret-key-v1',
     })
-    const encrypted = await neon.store({ credentialId, revision: 1, secret: canary })
+    const encrypted = await postgres.store({ credentialId, revision: 1, secret: canary })
     const plaintextDigest = `sha256:${new Bun.CryptoHasher('sha256').update(canary).digest('hex')}`
     expect(memory.ciphertextDigest).not.toBe(plaintextDigest)
     expect(encrypted.ciphertextDigest).not.toBe(plaintextDigest)
-    expect(await neon.resolve(encrypted)).toBe(canary)
+    expect(await postgres.resolve(encrypted)).toBe(canary)
   })
 })

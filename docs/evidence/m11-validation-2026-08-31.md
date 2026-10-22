@@ -12,9 +12,9 @@
 - Repository policy: `staging_validation_mode: audit`
 - Stable aggregate: `Validation / Gate`
 - Default behavior for other Code Foundry consumers remains `fast`; only this
-  repository opts staging pull requests into the complete audit graph.
+  repository opts sandbox pull requests into the complete audit graph.
 
-The mode classifier rejects unknown staging policy values. Audit mode requires
+The mode classifier rejects unknown sandbox policy values. Audit mode requires
 CI, the complete Test workflow, Security, and CodeQL to report `success`; a
 failed, cancelled, skipped, missing, or unknown required result fails the
 aggregate. Release Please pull requests retain their separate release-policy

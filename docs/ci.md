@@ -1,8 +1,7 @@
 # Continuous integration
 
 Code Foundry v1.48.4 is the CI runtime pinned by the generated callers under
-`.github/workflows/`. Feature branches target `main`; Railway staging is an
-on-demand reference environment, not a Git promotion branch.
+`.github/workflows/`. Feature branches target `main`; production is the only persistent Railway environment. Production promotion remains protected and explicitly targeted.
 
 ## Required pull-request gate
 
@@ -108,41 +107,32 @@ Gate`, and `M9 Production Readiness / Gate` checks as required and merge only
 through pull requests. Repository rules should require these stable gates without
 enumerating their internal parallel jobs.
 
-## Neon preview lifecycle
+## Database qualification
 
-Pull requests run the full general PostgreSQL integration suite in the required
-Code Foundry `Validation / Gate` against one runner-owned disposable local
-Compose PostgreSQL project. `postgres-pull-request.yml` keeps a separate local
-lane for migration and cross-profile conformance; it does not repeat that full
-integration suite. Both use synthetic local-only credentials and contain no
-Neon connection or credential references.
+Production runs on Railway PostgreSQL; qualification uses disposable sandboxes. Pull requests keep the required
+`Validation / Gate`, including the secretless local PostgreSQL qualification in
+`postgres-pull-request.yml`: migrations, fresh bootstrap, pool teardown, profile
+conformance and Hosted PostgreSQL/Restate qualification remain required.
 
-This is a source-level guard, not repository-wide secret access control:
-repository secrets can be referenced by any workflow in the repository. If the
-threat model includes untrusted contributors with branch-write access, keep the
-Neon credentials only in a GitHub environment restricted to `main` and remove
-the repository-scoped copies. See GitHub's
-[secret security guidance](https://docs.github.com/en/actions/reference/security/secrets).
+The former PostgreSQL workflow is archived byte-for-byte at
+`tests/fixtures/retired-postgres-workflow.yml` for historical contract regressions. It
+is not an executable Actions workflow and no longer creates or deletes provider
+branches. It is not a substitute for the current PostgreSQL lanes.
 
-The credentialed Neon workflow runs only on pushes to main, after the PR
-source has been merged and when all required Neon inputs are configured. It
-creates a run-scoped preview from the staging branch, sets a one-day expiry as
-a fallback, and deletes the exact temporary branch after validation. The
-pinned delete action only receives an ID found by
-a read-only, paginated exact-name lookup using the
-[Neon branch-list API](https://api-docs.neon.tech/reference/listprojectbranches).
-A verified absent branch is a no-op; HTTP failures, malformed or incomplete
-listings, pagination loops and unsafe targets fail closed.
+Production promotion uses `DATABASE_MIGRATION_URL` and the reviewed exact identity
+in `infrastructure/railway/production-database.json`. The identity is currently
+pending verified metadata from the live cutover owner; the gate refuses before
+provider/database I/O until it is filled and reviewed. Never derive an allowed
+host from the supplied URL or accept an arbitrary environment-selected target.
+TLS verification, least-privilege roles, exact migration history, advisory
+locking, post-migration grants and runtime readiness remain required.
 
-After migrations, shard 1 checks the pooled runtime URL, direct runtime URL,
-and direct migrator URL against Neon. It verifies TLS configuration, role
-identity, and a transaction round trip through each endpoint before the broad
-integration shards run. Pull requests never receive these Neon credentials.
-
-This moves real-Neon migration/conformance verification to post-merge; the
-secretless local PostgreSQL workflow remains the pre-merge database gate.
-Local workflow tests use synthetic responses and do not prove that a hosted
-Neon run or cleanup completed successfully.
+Optional hosted qualification must be explicitly provisioned as isolated,
+run-scoped infrastructure with synthetic data, independent database/credentials,
+object-store prefix and request identity, bounded lifetime and verified cleanup.
+It must never inherit production database access or enable certification on
+production. This repository entry point refuses non-production IaC targets;
+it must not be used to recreate persistent sandbox.
 
 ## Reversible billing pause
 

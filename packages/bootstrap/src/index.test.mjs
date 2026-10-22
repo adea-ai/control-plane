@@ -40,12 +40,12 @@ describe('bootstrapService', () => {
     const runtime = await bootstrapService({
       serviceName: 'control-api',
       environment: {
-        APP_ENV: 'staging',
+        APP_ENV: 'production',
         SERVICE_VERSION: '1.2.3',
         COMMIT_SHA: 'abc123',
         INSTANCE_ID: 'staging-1',
         DATABASE_URL:
-          'postgresql://app:database-secret@example.neon.tech/control_plane?sslmode=require',
+          'postgresql://app:database-secret@postgres.example.invalid/control_plane?sslmode=require',
         CONTROL_PLANE_SECRET_ENCRYPTION_KEY:
           '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
         CONTROL_PLANE_SERVICE_AUTH_ISSUER: 'https://agent-hq.example',
@@ -100,7 +100,7 @@ describe('bootstrapService', () => {
       bootstrapService({
         serviceName: 'control-api',
         environment: {
-          APP_ENV: 'staging',
+          APP_ENV: 'production',
           SERVICE_VERSION: '1.2.3',
           COMMIT_SHA: 'abc123',
           INSTANCE_ID: 'staging-1',
