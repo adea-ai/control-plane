@@ -1,12 +1,15 @@
 # Cross-repository Node and Bun toolchain adoption inventory — 2026-10-21
 
-Scope: issue [#1233](https://github.com/adea-ai/control-plane/issues/1233), "Track
-cross-repository Bun and Node toolchain adoption".
+Scope: issue [#1233](https://github.com/adea-ai/control-plane/issues/1233), now
+titled "Finish cross-repository Bun and Vite+ toolchain adoption". The issue
+approves the full Bun and Vite+ adoption scope, and it no longer approves Bunly.
 
-Status: **inventory and reconciliation complete for every repository that is
-reachable; no version is changed here; one adoption check is added to this
-repository.** The one failing check in this repository's unit lane is pre-existing
-on `main` and is recorded below with the local branch that carries its fix.
+Status: **the inventory and the reconciliation are complete for every repository
+that is reachable, and one adoption check is added to this repository; no version
+is changed here.** The one failing check in this repository's unit lane is
+pre-existing on `main` and is recorded below with the local branch that carries
+its fix. What this increment completes, and what the issue's adoption still
+requires, are separated under "Completed here, and what remains" below.
 
 This repository: `adea-ai/control-plane`, branch
 `chore/toolchain-adoption-inventory-1233`, base `main` at
@@ -24,10 +27,12 @@ adea-ai/themes  adea-ai/plugins  adea-ai/agent-sim  adea-ai/assets
 adea-ai/.github   (the ninth; remote exists, no local checkout)
 ```
 
-`0xPlayerOne/bunly` is a separate repository, not one of the nine. The issue
-names it directly, so it is inventoried and reconciled here as well. The index
-records it as a separate fleet repository with an active assignment, so nothing
-in it was edited.
+`0xPlayerOne/bunly` is a separate repository, not one of the nine, and **the
+current issue no longer approves it**: its text names no Bunly scope. The rows
+about Bunly below are therefore retained as prior evidence and as out-of-scope
+context, and they are not part of this increment's qualification. Nothing in
+Bunly was edited or read as a target; the shared index records it as a separate
+fleet repository with an active assignment and an artifact-custody hold.
 
 ## The inventory
 
@@ -37,18 +42,18 @@ declaration, the mise tool pin, the version file the continuous integration
 installs from, and the declared engine must name one toolchain, the node engine
 must be one exact version, and a bounded bun engine must admit the pinned bun.
 
-| Repository              | Head        | `.mise.toml`                         | `.bun-version` | `.node-version` | `packageManager` | `engines`                         | Contract          |
-| ----------------------- | ----------- | ------------------------------------ | -------------- | --------------- | ---------------- | --------------------------------- | ----------------- |
-| `adea-ai/control-plane` | `f1bd75c58` | node 24.21.0, bun 1.4.3              | 1.4.3          | 24.21.0         | `bun@1.4.3`      | bun `>=1.4.0 <2`, node 24.21.0    | holds             |
-| `adea-ai/adea`          | `d3c24c1c1` | node 24.21.0, bun 1.4.3, java 21.0.2 | absent         | absent          | `bun@1.4.3`      | node 24.21.0                      | holds             |
-| `adea-ai/themes`        | `02dbb62b6` | bun 1.4.3 (no node pin)              | absent         | absent          | `bun@1.4.3`      | node 24.22.0                      | holds             |
-| `adea-ai/ui`            | `822827e`   | node 24.18.0, bun 1.4.3              | absent         | absent          | `bun@1.4.3`      | node 24.18.0                      | holds             |
-| `adea-ai/cortana`       | `19a4031`   | node 24.21.0, bun 1.4.3, rust 1.99.0 | absent         | absent          | `bun@1.4.3`      | node 24.21.0                      | holds             |
-| `adea-ai/plugins`       | `e7d9bea`   | bun 1.4.3 (no node pin)              | absent         | absent          | `bun@1.4.3`      | bun `>=1.4.0 <2`, node `>=24 <25` | **does not hold** |
-| `adea-ai/agent-sim`     | —           | not anonymously reachable            | —              | —               | —                | —                                 | not measured      |
-| `adea-ai/assets`        | —           | not anonymously reachable            | —              | —               | —                | —                                 | not measured      |
-| `adea-ai/.github`       | `b32a045`   | no package manifest and no pin files | absent         | absent          | absent           | absent                            | nothing to hold   |
-| `0xPlayerOne/bunly`     | `531b47f5`  | absent                               | 1.4.3          | absent          | `bun@1.4.3`      | bun 1.4.3                         | holds             |
+| Repository              | Head        | `.mise.toml`                         | `.bun-version` | `.node-version` | `packageManager` | `engines`                         | Contract            |
+| ----------------------- | ----------- | ------------------------------------ | -------------- | --------------- | ---------------- | --------------------------------- | ------------------- |
+| `adea-ai/control-plane` | `f1bd75c58` | node 24.21.0, bun 1.4.3              | 1.4.3          | 24.21.0         | `bun@1.4.3`      | bun `>=1.4.0 <2`, node 24.21.0    | holds               |
+| `adea-ai/adea`          | `d3c24c1c1` | node 24.21.0, bun 1.4.3, java 21.0.2 | absent         | absent          | `bun@1.4.3`      | node 24.21.0                      | holds               |
+| `adea-ai/themes`        | `02dbb62b6` | bun 1.4.3 (no node pin)              | absent         | absent          | `bun@1.4.3`      | node 24.22.0                      | holds               |
+| `adea-ai/ui`            | `822827e`   | node 24.18.0, bun 1.4.3              | absent         | absent          | `bun@1.4.3`      | node 24.18.0                      | holds               |
+| `adea-ai/cortana`       | `19a4031`   | node 24.21.0, bun 1.4.3, rust 1.99.0 | absent         | absent          | `bun@1.4.3`      | node 24.21.0                      | holds               |
+| `adea-ai/plugins`       | `e7d9bea`   | bun 1.4.3 (no node pin)              | absent         | absent          | `bun@1.4.3`      | bun `>=1.4.0 <2`, node `>=24 <25` | **does not hold**   |
+| `adea-ai/agent-sim`     | —           | not anonymously reachable            | —              | —               | —                | —                                 | not measured        |
+| `adea-ai/assets`        | —           | not anonymously reachable            | —              | —               | —                | —                                 | not measured        |
+| `adea-ai/.github`       | `b32a045`   | no package manifest and no pin files | absent         | absent          | absent           | absent                            | nothing to hold     |
+| `0xPlayerOne/bunly`     | `531b47f5`  | absent                               | 1.4.3          | absent          | `bun@1.4.3`      | bun 1.4.3                         | holds, out of scope |
 
 ### What is not uniform
 
@@ -79,20 +84,29 @@ must be one exact version, and a bounded bun engine must admit the pinned bun.
 
 ## Related pull requests and local work, by exact head and scope
 
-| Item        | Head                                       | State                                                                          | Scope                                                                                                    |
-| ----------- | ------------------------------------------ | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| Themes #106 | `f1e6a2621c6c243ae2667df4a424c95a8eb117b7` | open draft                                                                     | `package.json` only: `engines.node` 24.22.0 to 24.22.1                                                   |
-| Themes #107 | `7f04d2be76801aa73699d73fd5e90e8b5834ac22` | open draft                                                                     | the same `package.json` change **plus** a new `tests/toolchain-compatibility.test.ts`                    |
-| Bunly #85   | `531b47f5e9338afcab40505dc8183a944eedc9a8` | open draft, "perf: adopt Bun-native tooling and enforce repository formatting" | Bun-native tooling, a formatting baseline, TypeScript 7.0.2 for editor tooling; base `main` at `11d98e2` |
+| Item        | Head                                       | State                                                                          | Scope                                                                                                                                                                |
+| ----------- | ------------------------------------------ | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Themes #106 | `f1e6a2621c6c243ae2667df4a424c95a8eb117b7` | open draft                                                                     | `package.json` only: `engines.node` 24.22.0 to 24.22.1; source branch `renovate/external-dependencies`                                                               |
+| Themes #107 | `7f04d2be76801aa73699d73fd5e90e8b5834ac22` | open draft                                                                     | the same `package.json` change **plus** a new `tests/toolchain-compatibility.test.ts`; source branch `recovery/pr106-toolchain-w3-20261021`                          |
+| Bunly #85   | `531b47f5e9338afcab40505dc8183a944eedc9a8` | open draft, "perf: adopt Bun-native tooling and enforce repository formatting" | Bun-native tooling, a formatting baseline, TypeScript 7.0.2 for editor tooling; base `main` at `11d98e2`; **out of scope**, the current issue does not approve Bunly |
 
-- Both Themes drafts share the base `02dbb62b6`, which is Themes' current
-  `main`, and both carry the same `engines.node` change. **#107 supersedes
-  #106**: it contains #106's change and adds the contract test. #107's own test
-  passes at its head (2 passes, 0 failures).
+- **#107 is stacked on #106, and it is not a main-base replacement.** #107
+  descends from #106's own commit: the merge base of the two heads is #106's head
+  `f1e6a2621c6c243ae2667df4a424c95a8eb117b7`, #106's source branch is
+  `renovate/external-dependencies` and #107's is
+  `recovery/pr106-toolchain-w3-20261021`. Both drafts share the merge base
+  `02dbb62b6` with Themes' `main`, and both carry the same `engines.node` change:
+  #107's `package.json` is byte-identical to #106's, and #107 adds only
+  `tests/toolchain-compatibility.test.ts` on top of #106's content. #106 remains
+  open with that change alone. #107's own test passes at its head (2 passes, 0
+  failures), and the draft was qualified at that exact head under Node 24.22.1 and
+  Bun 1.4.3 with the repository's own `verify` chain green.
 - The Themes contract test asserts that the package manager declaration matches
   the `.mise.toml` bun pin and that the node engine is one exact version. It
   cannot assert a node pin, because Themes' `.mise.toml` pins no node.
-- **Bunly #37 and #52 are local work and are not published.** `adea-ai/bunly`
+- **Bunly is outside the scope the current issue approves**, so the following is
+  retained as prior evidence and not as this increment's qualification: **#37
+  and #52 are local work and are not published.** `adea-ai/bunly`
   issues #37 ("[M7] Add engine-neutral browser actions and secure developer
   diagnostics") and #52 ("[M10] Add independent browser build profiles and
   shared backend conformance") are open, and the preserved branches
@@ -150,6 +164,50 @@ workspace only as an undeclared transitive dependency that no repository code
 imports, and taking a dependency for one comparison would change the
 repository's dependency surface. The corrected comparison is dependency-free.
 
+## Completed here, and what remains
+
+**Completed by this increment.**
+
+- The inventory of the approved repository set and of the divergences it names,
+  read from each repository's own tracked declaration files at the head named.
+- The reconciliation of the related drafts and preserved local work by exact head
+  and scope, including the Themes stacking.
+- One adoption check in this repository that binds the mise tool pin, the version
+  files the continuous integration installs from, the package manager declaration
+  and the declared engine, with the same-major boundary regressions, and the
+  comparator correction that the check carried.
+- The qualification runs recorded below, with their failures and environmental
+  limits retained rather than presented as passes.
+
+**Not completed here, and still required by the issue.**
+
+- **The adoption itself.** No repository's toolchain is changed by this
+  increment, and the repositories still do not agree: node is 24.18.0, 24.21.0
+  and 24.22.0 across them, one repository declares only a range, and two of the
+  nine could not be measured at all because they are not anonymously reachable.
+- **The wider adoption scope the issue now approves**, none of which this
+  increment performs: removing remaining Turbo usage where the migration is
+  approved, consolidating Vite+ configuration across the scoped repositories, and
+  qualifying Bun TypeScript and applicable Bun APIs with supported pinned
+  behaviour rather than version-only bumps.
+- **The per-repository evidence checklist** the issue now requires, for the two
+  repositories that were not measured and for the Bun, Vite+ and published-version
+  qualifications the issue names. The published-dependency ordering also still
+  governs: the UI, Plugins and Themes changes and their normal releases must
+  exist before any consumer version upgrade is qualified.
+- **The `adea-ai/plugins` contract divergence**, which needs its owner to decide
+  the exact node engine its range should name; choosing one here would be a
+  guess.
+- **The node version the lanes install.** In this repository the version file is
+  the source of truth and the new check binds it to the manifest. In
+  `adea-ai/themes` the node version is declared in `engines.node` while the
+  repository's `.mise.toml` pins no node, so the declared version is not the
+  version the toolchain resolution reads; the Themes #107 test asserts the
+  declaration, and the tool pin is that draft's owner's decision.
+- **The pre-existing runtime-gateway authority-marker failure** in this
+  repository's unit lane, which is fixed on a separate local branch that is not
+  published.
+
 ## The checks that were run, and their results
 
 ### This repository, `adea-ai/control-plane`
@@ -172,16 +230,16 @@ repository's dependency surface. The corrected comparison is dependency-free.
 
 ### The other repositories
 
-| Repository                            | Checks                                                   | Result                                                                                                                                              |
-| ------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `adea-ai/themes`                      | the contract test from its own draft #107, at that head  | 2 pass, 0 fail                                                                                                                                      |
-| `adea-ai/adea`                        | `format:check`, `oxlint`, `typecheck`                    | clean over 2963 files; no findings; vp run 33/33 successful                                                                                         |
-| `adea-ai/ui`                          | install, `typecheck`                                     | install passed; vp run 4/4 successful                                                                                                               |
-| `adea-ai/cortana`                     | install, `typecheck`                                     | installed; vp run 3/3 successful                                                                                                                    |
-| `adea-ai/plugins`                     | install, `lint`, `type-check`, `format:check`, unit lane | install, lint (no findings), type-check (no type errors in 37 files) and format (113 files) pass; the unit lane reports **3 failures** in 237 tests |
-| `adea-ai/agent-sim`, `adea-ai/assets` | —                                                        | not anonymously reachable, so not measured; no local checkout                                                                                       |
-| `adea-ai/.github`                     | —                                                        | no toolchain surface to check                                                                                                                       |
-| `0xPlayerOne/bunly`                   | inventory only                                           | read only; under an artifact-custody hold, so no check was run and nothing was edited                                                               |
+| Repository                            | Checks                                                                                    | Result                                                                                                                                                                                |
+| ------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `adea-ai/themes`                      | the contract test from its own draft #107, at that head, under Node 24.22.1 and Bun 1.4.3 | 2 pass, 0 fail; the repository's own `verify` chain (format, typecheck, lint, catalogue, test, build) exits 0, with the test lane at 142 pass, 0 fail, 15,415 assertions over 6 files |
+| `adea-ai/adea`                        | `format:check`, `oxlint`, `typecheck`                                                     | clean over 2963 files; no findings; vp run 33/33 successful                                                                                                                           |
+| `adea-ai/ui`                          | install, `typecheck`                                                                      | install passed; vp run 4/4 successful                                                                                                                                                 |
+| `adea-ai/cortana`                     | install, `typecheck`                                                                      | installed; vp run 3/3 successful                                                                                                                                                      |
+| `adea-ai/plugins`                     | install, `lint`, `type-check`, `format:check`, unit lane                                  | install, lint (no findings), type-check (no type errors in 37 files) and format (113 files) pass; the unit lane reports **3 failures** in 237 tests                                   |
+| `adea-ai/agent-sim`, `adea-ai/assets` | —                                                                                         | not anonymously reachable, so not measured; no local checkout                                                                                                                         |
+| `adea-ai/.github`                     | —                                                                                         | no toolchain surface to check                                                                                                                                                         |
+| `0xPlayerOne/bunly`                   | inventory only, out of scope                                                              | read only; under an artifact-custody hold and outside the current issue's approved scope, so no check was run and nothing was edited                                                  |
 
 The three `adea-ai/plugins` failures are one environmental limit, not three
 defects: `selectPinnedNode` refuses any runtime that is not Node 24, because an
