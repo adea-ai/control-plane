@@ -12,6 +12,7 @@ import { deriveExecutionPlan, ExecutionPlanCompiler } from '@control-plane/execu
 import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import { eq } from 'drizzle-orm'
+import postgres from 'postgres'
 import { PostgresDelegationRepository } from './delegation-repository.ts'
 import { PostgresContextPackageRepository } from './context-package-repository.ts'
 import { createPostgresConnection } from './connection.ts'
@@ -19,7 +20,7 @@ import { PostgresExecutionPlanRepository } from './execution-plan-repository.ts'
 import { PostgresExecutionRepository } from './execution-repository.ts'
 import { PostgresToolCallRepository } from './tool-repositories.ts'
 import { usageBudgetStates } from './schema/usage-budget-state.ts'
-import { createIsolatedTestDatabase } from './testing.ts'
+import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
 import { PostgresDurableUsageStore } from './usage-store.ts'
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
@@ -318,6 +319,37 @@ function ownedApplicationConnection(credentials, databaseName) {
   url.pathname = `/${databaseName}`
   return createPostgresConnection({ role: 'application', url: url.toString() })
 }
+/**
+ * The acknowledged half of a transaction barrier: poll the named database
+ * until at least `minimum` backends are blocked on a lock. A contender that
+ * has not reached its blocking statement cannot appear here, so observing the
+ * count proves the contenders were genuinely in flight against the parked
+ * transaction before the race was released. Mirrors the fixture's own
+ * `waitForBlockedTransaction()` query with a count.
+ */
+async function waitForBlockedTransactions(credentials, databaseName, minimum) {
+  const administration = postgres(credentials.administration.url, { max: 1, prepare: false })
+  const budgetMs = integrationTestTimeout(10_000)
+  const intervalMs = 10
+  const attempts = Math.max(1, Math.ceil(budgetMs / intervalMs))
+  try {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const [row] = await administration`
+        select count(*)::int as blocked
+        from pg_stat_activity
+        where datname = ${databaseName}
+          and wait_event_type = 'Lock'
+          and cardinality(pg_blocking_pids(pid)) > 0
+      `
+      if ((row?.blocked ?? 0) >= minimum) return
+      await new Promise((resolve) => setTimeout(resolve, intervalMs))
+    }
+    throw new Error(`expected at least ${minimum} transactions blocked behind the parent lock`)
+  } finally {
+    await administration.end({ timeout: 5 })
+  }
+}
+
 describe.skipIf(!enabled)('PostgreSQL child budget admission', () => {
   test('denials leave no allocation and concurrent requests serialize the parallel limit', async () => {
     await withAdmissionFixture(
@@ -584,39 +616,105 @@ describe.skipIf(!enabled)('PostgreSQL child budget admission', () => {
 
   test('a concurrent retry of one identity allocates once and a recreated client observes the same parent reservation', async () => {
     await withAdmissionFixture(
-      async ({ delegations, candidate, name, credentials }) => {
+      async ({ delegations, executions, usageStore, candidate, name, credentials }) => {
         const admitted = await candidate()
-        const admit = (repository) =>
-          repository.allocate({ ...admitted, assertCurrent: async () => undefined })
+        const sibling = await candidate()
+        const admit = (repository, input = admitted) =>
+          repository.allocate({ ...input, assertCurrent: async () => undefined })
 
-        // The retry race: one identity submitted twice at once. The parent lock
-        // serializes them, so exactly one allocates and the other observes the
-        // committed identity instead of allocating it again.
-        const raced = await Promise.allSettled([admit(delegations), admit(delegations)])
-        expect(raced.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled'])
-        expect(
-          raced.filter((result) => result.status === 'fulfilled' && result.value)
-        ).toHaveLength(1)
-        expect(
-          raced.filter((result) => result.status === 'fulfilled' && !result.value)
-        ).toHaveLength(1)
+        // Deterministic acknowledged barrier: the first submission of the
+        // admitted identity enters its allocation transaction, takes the
+        // parent lock, and parks inside the authority callback until the test
+        // releases it. The parked callback is the acknowledgement that the
+        // transaction is open and holding that lock.
+        let acknowledgeEntry
+        const entered = new Promise((resolve) => {
+          acknowledgeEntry = resolve
+        })
+        let releaseBarrier
+        const barrier = new Promise((resolve) => {
+          releaseBarrier = resolve
+        })
+        const allocation = delegations.allocate({
+          ...admitted,
+          assertCurrent: async () => {
+            acknowledgeEntry()
+            await barrier
+          },
+        })
+        await entered
 
-        // A client that reconnects to the same database observes the same
-        // committed allocation and refuses to allocate the identity again.
+        // Both race orderings submit while the allocation transaction is
+        // provably open, and the database itself acknowledges each contender
+        // blocked behind the parent lock before anything is released: a
+        // duplicate of the same identity, and a sibling competing for the one
+        // parallel slot. This is contention, not promise scheduling.
+        const retry = admit(delegations)
+        const siblingAdmission = admit(delegations, sibling)
+        let barrierError
+        try {
+          await waitForBlockedTransactions(credentials, name, 2)
+        } catch (error) {
+          barrierError = error
+        }
+        releaseBarrier()
+        const [allocationOutcome, retryOutcome, siblingOutcome] = await Promise.allSettled([
+          allocation,
+          retry,
+          siblingAdmission,
+        ])
+        if (barrierError !== undefined) throw barrierError
+
+        // The in-flight allocation commits; the duplicate observes the
+        // committed identity instead of allocating it again; the sibling is
+        // refused the parallel slot the committed child now holds.
+        expect(allocationOutcome).toEqual({ status: 'fulfilled', value: true })
+        expect(retryOutcome).toEqual({ status: 'fulfilled', value: false })
+        expect(siblingOutcome.status).toBe('rejected')
+        if (siblingOutcome.status === 'rejected') {
+          expect(siblingOutcome.reason).toMatchObject({
+            code: 'DELEGATION_CONCURRENCY_LIMIT_EXCEEDED',
+          })
+        }
+
+        // The race left exactly one allocation — the admitted identity — and
+        // the sibling left no rows behind.
+        expect(await delegations.listByParent(parentExecutionId)).toHaveLength(1)
+        expect(await executions.getExecution(sibling.childExecutionId)).toBeUndefined()
+        expect(await executions.getAttempt(sibling.childAttemptId)).toBeUndefined()
+        expect(await delegations.get(sibling.delegationId)).toBeUndefined()
+        await expect(
+          usageStore.transaction(workspaceId, (transaction) =>
+            transaction.getBudget(sibling.childExecutionId)
+          )
+        ).resolves.toBeUndefined()
+
+        // The committed allocation is the database's, not a connection's: a
+        // client this test owns observes it and is closed, and a recreated
+        // client observes the same committed state and refuses the identity
+        // again.
         const owned = ownedApplicationConnection(credentials.application, name)
         try {
-          const reconnected = new PostgresDelegationRepository(owned.database)
-          expect(await admit(reconnected)).toBe(false)
-          expect(await reconnected.listByParent(parentExecutionId)).toHaveLength(1)
-          expect(await reconnected.get(admitted.delegationId)).toMatchObject({
+          const throughOwned = new PostgresDelegationRepository(owned.database)
+          expect(await admit(throughOwned)).toBe(false)
+          expect(await throughOwned.listByParent(parentExecutionId)).toHaveLength(1)
+        } finally {
+          await owned.close()
+        }
+        const recreated = ownedApplicationConnection(credentials.application, name)
+        try {
+          const throughRecreated = new PostgresDelegationRepository(recreated.database)
+          expect(await admit(throughRecreated)).toBe(false)
+          expect(await throughRecreated.listByParent(parentExecutionId)).toHaveLength(1)
+          expect(await throughRecreated.get(admitted.delegationId)).toMatchObject({
             delegationId: admitted.delegationId,
           })
           expect(
-            await new PostgresExecutionRepository(owned.database).getExecution(
+            await new PostgresExecutionRepository(recreated.database).getExecution(
               admitted.childExecutionId
             )
           ).toMatchObject({ executionId: admitted.childExecutionId })
-          const reconnectedStore = new PostgresDurableUsageStore(owned.database)
+          const reconnectedStore = new PostgresDurableUsageStore(recreated.database)
           expect(
             await reconnectedStore.transaction(workspaceId, (transaction) =>
               transaction.getBudget(admitted.childExecutionId)
@@ -630,7 +728,7 @@ describe.skipIf(!enabled)('PostgreSQL child budget admission', () => {
           // The broader CP #1030 hosted operations measurement producer reads
           // this exact reservation array: a non-array is malformed, and every
           // element must carry an integral, non-negative charged amount.
-          const [row] = await owned.database
+          const [row] = await recreated.database
             .select({ state: usageBudgetStates.state })
             .from(usageBudgetStates)
             .where(eq(usageBudgetStates.executionId, parentExecutionId))
@@ -643,7 +741,7 @@ describe.skipIf(!enabled)('PostgreSQL child budget admission', () => {
           expect(Number.isInteger(reservation?.chargedMicrounits)).toBe(true)
           expect(reservation?.chargedMicrounits).toBeGreaterThanOrEqual(0)
         } finally {
-          await owned.close()
+          await recreated.close()
         }
       },
       { maximumTotal: 2, maximumParallel: 1 }

@@ -96,7 +96,7 @@ toolchain (bun 1.4.3, node 24.21.0).
 `bun test src/child-budget-admission.integration.test.mjs` in
 `packages/database`, with `RUN_DATABASE_INTEGRATION=true` and the three
 credential roles, against a disposable isolated database →
-**6 passed, 0 failed, 77 assertions**.
+**6 passed, 0 failed, 85 assertions**.
 
 | State                    | Exact test name                                                                                                 |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------- |
@@ -116,11 +116,22 @@ authority case proves the **rollback and the absence of an allocation**; the
 denial code it surfaces is the caller's own authority error, which the
 repository propagates unchanged.
 
-Case 6 proves the retry state against the two shapes case 5 does not reach. It
-submits **one identity twice at once**, so the parent lock has to serialize
-two in-flight allocations of the same child rather than a retry that follows a
-committed one, and it then reaches the same database through a **client it
-owns, closed and recreated**, so the committed allocation has to be the
+Case 6 proves the retry state against the two shapes case 5 does not reach,
+with a **deterministic acknowledged barrier** instead of racing promises. The
+first submission of one identity enters its allocation transaction, takes the
+parent lock, and parks inside the authority callback until the test releases
+it — the parked callback acknowledges that the transaction is open and holding
+that lock. While it is open the test submits **both race orderings**: a second
+submission of the **same identity**, and a **sibling** competing for the one
+parallel slot. Before anything is released the database itself is polled for
+**both contenders blocked behind the parent lock**, so the race is proven
+contended rather than merely concurrent. After the release the in-flight
+allocation commits, the duplicate observes the committed identity and
+allocates nothing more, and the sibling is refused the parallel slot the
+committed child now holds — one delegation, one child execution, one child
+budget and one parent reservation, and no rows at all for the sibling. The
+case then reaches the same database through a **client it owns, closes that
+client, and recreates it**, so the committed allocation has to be the
 database's and not a connection's. The recreated client observes the same one
 delegation, one child execution, one child budget and one parent reservation,
 and the retry through it is refused. It also asserts the parent reservation in
@@ -243,14 +254,27 @@ A later increment adds one more PostgreSQL regression, `a concurrent retry of
 one identity allocates once and a recreated client observes the same parent
 reservation`, which proves the two shapes the earlier retry case cannot
 reach: two allocations of **one** identity in flight at once, and the same
-database reached through a **closed and recreated** client. It is
-mutation-verified the same way: expecting the race to allocate twice, expecting
-the recreated client's retry to allocate again, and expecting a different
-parent reservation key each fail the new case alone, and the other five cases
-still pass. The shared `withAdmissionFixture` helper gained the isolated
-database's name and the application credential so a case can own a client; the
-helper still disposes the isolated database on every path, and the five
-earlier cases are unchanged. The implementation file was not touched.
+database reached through a **closed and recreated** client. The race does not
+rely on promise timing: the first submission parks inside its allocation
+transaction at the authority callback, acknowledging that it holds the parent
+lock, and the test then polls `pg_stat_activity` until the database itself
+reports **both** contenders — a duplicate of the same identity and a sibling
+competing for the one parallel slot — blocked behind that lock before the
+race is released. After the release exactly one allocation commits, the
+duplicate observes the committed identity, the sibling is refused the
+parallel slot and leaves no rows, and the owned client is closed and a
+recreated client re-observes the one delegation, child execution, child
+budget and parent reservation, refusing the identity again. The case is
+mutation-verified against the real implementation at this head, with each
+implementation file restored afterwards and not part of the change:
+removing the parallel-limit denial fails the concurrent, retried-slot and
+this case (3 passed, 3 failed); changing the child reservation key fails
+this case and the three others that assert the key (2 passed, 4 failed);
+making the duplicate-identity fence report success fails the retried-slot
+case and this case (4 passed, 2 failed). The shared `withAdmissionFixture`
+helper gained the isolated database's name and the application credential so
+a case can own a client; the helper still disposes the isolated database on
+every path, and the five earlier cases are unchanged.
 
 ## 4. Qualification boundary
 
