@@ -2213,13 +2213,28 @@
           "kind": "test",
           "path": "tests/m10-operability.test.mjs",
           "scope": "'publishes checkpoint, incident, rollback, and host-loss operator contracts' — operator-facing incident contract documentation."
+        },
+        {
+          "kind": "document",
+          "path": "docs/evidence/m19-09-reliability-observability-audit-2026-10-21.md",
+          "scope": "The M19.09 audit record for #194: the recovered ledger scope, the 11 implemented / 4 reference-governed / 6 remaining retention classes, and the explicit operational blockers."
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/execution-reconciliation.test.mjs",
+          "name": "records a terminal-state disagreement as a first-class incident' and 'keeps one incident identity for the same disagreement and a separate one per attempt' and 'records no incident for a healthy observation / a disconnected runtime' - the execution-incident/v1 record, its stable identity, and its absence when there is no disagreement."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-retention-class-registry.test.mjs",
+          "name": "every class the policy gives a finite duration either has a path or is a stated remaining gap' - the remaining #194 retention scope is an explicit, owner-attributed, machine-checked list."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Adjudicated 2026-09-20: partial. The authoritative-resolution half is proven: the Control Plane record wins, runtime terminal claims without recorded references are never adopted, lost-ACK outcomes are recovered exactly once, and disagreements park in reconciliation_required with manual-intervention metrics and operator incident contracts. Remaining: no first-class incident record type for terminal-state disagreement and no explicit administrative override path exist in the candidate — override semantics are currently operator-runbook level (docs/operations.md). Owner durable-execution."
+        "disposition": "Adjudicated 2026-09-20: partial. The authoritative-resolution half is proven: the Control Plane record wins, runtime terminal claims without recorded references are never adopted, lost-ACK outcomes are recovered exactly once, and disagreements park in reconciliation_required with manual-intervention metrics and operator incident contracts. Updated 2026-10-21: the first-class incident record half is now closed - packages/domain/src/execution-incident.ts defines the execution-incident/v1 record (stable incident identity, kind, severity, owner, bounded evidence, authoritativeResolution control_plane_execution) and the reconciliation service produces it for every terminal-state disagreement, so a disagreement is no longer only a metric and a runbook. Remaining: no explicit administrative override path exists, and persisting the incident record in the Control Plane store needs a column on the column-typed reconciliation_checkpoints table, so the record is a value the host may persist in its own store. Override semantics remain operator-runbook level (docs/operations.md). Owner durable-execution."
       }
     },
     {

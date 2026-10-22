@@ -133,6 +133,84 @@ describe('execution reconciliation', () => {
     })
   })
 
+  test('records a terminal-state disagreement as a first-class incident', async () => {
+    const current = observation({
+      runtime: {
+        status: 'completed',
+        observedAt: checkedAt,
+        resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      },
+    })
+    const { service } = harness(current)
+
+    const { checkpoint, incident } = await service.reconcileWithIncident(executionId)
+
+    expect(checkpoint).toMatchObject({
+      reason: 'runtime_terminal_unrecorded',
+      state: 'remediated',
+      action: 'apply_runtime_terminal',
+    })
+    expect(incident).toMatchObject({
+      schemaVersion: 'execution-incident/v1',
+      kind: 'terminal_state_disagreement',
+      severity: 'high',
+      owner: 'durable-execution',
+      executionId,
+      attemptId,
+      reason: 'runtime_terminal_unrecorded',
+      detectedAt: checkedAt,
+      // The Control Plane record wins; no administrative override path exists yet.
+      authoritativeResolution: 'control_plane_execution',
+      administrativeOverride: 'unavailable',
+    })
+    expect(incident?.incidentId).toMatch(/^inc_[a-f0-9]{32}$/)
+    // The incident carries only the bounded diagnostic facts, never a payload.
+    expect(incident?.evidence).toEqual([
+      'runtime_status=completed',
+      `runtime_observed_at=${checkedAt}`,
+    ])
+    expect(JSON.stringify(incident)).not.toContain('art_01ARZ3NDEKTSV4RRFFQ69G5FAV')
+  })
+
+  test('keeps one incident identity for the same disagreement and a separate one per attempt', async () => {
+    const current = observation({
+      runtime: {
+        status: 'completed',
+        observedAt: checkedAt,
+        resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      },
+    })
+    const { service } = harness(current)
+
+    const first = await service.reconcileWithIncident(executionId)
+    const replay = await service.reconcileWithIncident(executionId)
+    expect(replay.incident?.incidentId).toBe(first.incident?.incidentId)
+
+    const other = harness(
+      observation({
+        attempt: { ...observation().attempt, attemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+        runtime: {
+          status: 'completed',
+          observedAt: checkedAt,
+          resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        },
+      })
+    )
+    const otherResult = await other.service.reconcileWithIncident(executionId)
+    expect(otherResult.incident?.incidentId).not.toBe(first.incident?.incidentId)
+  })
+
+  test.each([
+    ['a healthy observation', {}],
+    ['a disconnected runtime', { runtime: { status: 'disconnected', observedAt: checkedAt } }],
+  ])('records no incident for %s', async (_label, overrides) => {
+    const { service } = harness(observation(overrides))
+
+    const { incident } = await service.reconcileWithIncident(executionId)
+
+    expect(incident).toBeUndefined()
+  })
+
   test('replays terminal-but-undelivered events without reapplying the terminal outcome', async () => {
     const { effects, service } = harness(
       observation({
