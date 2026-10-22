@@ -1,9 +1,13 @@
 import { expect, test } from 'bun:test'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   GatewayCommandEnvelopeSchema,
   GatewayProtocolManifest,
 } from '@control-plane/runtime-gateway-protocol'
 import { InMemoryRuntimeCommandRepository } from '@control-plane/domain'
+import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
 import {
   ACP_REMOTE_GATEWAY_CHANNEL_OFFLINE,
   acpRemoteReplyArtifactKey,
@@ -232,4 +236,53 @@ test('the durable command repository identifies one carrier command by its full 
   await expect(
     delivery.enqueue(carrier({ commandId: command.commandId, sequence: command.sequence + 1 }))
   ).rejects.toMatchObject({ code: 'RUNTIME_COMMAND_PAYLOAD_MISMATCH' })
+})
+
+test('a retried carrier is ONE durable command in the real SQLite command repository', async () => {
+  // The production repository, not a double: the durable command identity is
+  // what the gateway enforces, so the retry has to hold against the real store.
+  const directory = await mkdtemp(join(tmpdir(), 'acp-remote-carrier-retry-'))
+  const provider = new SqlitePersistenceProvider({ path: join(directory, 'gateway.sqlite') })
+  try {
+    await provider.migrate()
+    const { SqliteRuntimeCommandRepository } = await import('@control-plane/sqlite-persistence')
+    const repository = new SqliteRuntimeCommandRepository(provider)
+    const sent = []
+    const delivery = new RuntimeCommandDeliveryService({
+      repository,
+      sender: {
+        async send(envelope) {
+          sent.push(envelope)
+        },
+      },
+      metrics: new RecordingGatewayMetrics(),
+      now: () => new Date('2026-10-21T00:00:00.000Z'),
+    })
+    const command = carrier({ commandId: 'cmd_01JABCDEF0123456789ABCDEFG' })
+
+    // The controller side retries the same inner command with the SAME carrier
+    // envelope, because the gateway identifies a command by its full envelope.
+    await delivery.enqueue(command)
+    const replay = await delivery.enqueue(command)
+    expect(replay.replayed).toBe(true)
+
+    // The redelivery is per delivery: the attempt counter advances and the
+    // command stays ONE durable command.
+    await delivery.deliver(command.commandId, { channelGeneration: 3, sequence: 7 })
+    await delivery.deliver(command.commandId, { channelGeneration: 3, sequence: 8 })
+    const record = await delivery.get(command.commandId)
+    expect(record).toMatchObject({
+      commandId: command.commandId,
+      deliveryAttempts: 2,
+      lastSequence: 8,
+    })
+
+    // A carrier REBUILT under the same command id is a DIFFERENT command, and
+    // the real repository refuses it as a payload mismatch.
+    await expect(
+      delivery.enqueue(carrier({ commandId: command.commandId, sequence: command.sequence + 1 }))
+    ).rejects.toMatchObject({ code: 'RUNTIME_COMMAND_PAYLOAD_MISMATCH' })
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })

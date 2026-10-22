@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto'
 import { expect, test } from 'bun:test'
+import {
+  createQueuedRuntimeCommandRecord,
+  runtimeCommandRecordsShareIdentity,
+} from '@control-plane/domain'
 import { GatewayCommandEnvelopeSchema } from '@control-plane/runtime-gateway-protocol'
 import {
   GRANT_REF,
@@ -241,7 +245,30 @@ test('a retried command keeps one carrier identity so the relay deduplicates it'
   expect(carriers[0].commandId).toBe(carriers[1].commandId)
   expect(carriers[0].attemptId).toBe(carriers[1].attemptId)
   expect(carriers[0].idempotencyKey).toBe(carriers[1].idempotencyKey)
-  expect(carriers[0].sequence).not.toBe(carriers[1].sequence)
+
+  // The carrier is the gateway's command identity, and the gateway's durable command
+  // repository compares the FULL envelope. A retry that rebuilt the carrier -- a new
+  // sequence, new timestamps, a newly sealed payload -- would be recorded as a DIFFERENT
+  // command and refused as a payload mismatch, so the retry has to carry the same envelope.
+  expect(carriers[0].sequence).toBe(carriers[1].sequence)
+  expect(carriers[0].issuedAt).toBe(carriers[1].issuedAt)
+  expect(carriers[0].expiresAt).toBe(carriers[1].expiresAt)
+  expect(carriers[0].payloadHash).toBe(carriers[1].payloadHash)
+  expect(carriers[0]).toEqual(carriers[1])
+
+  // The inner effect is NOT repeated: the device's replay ledger answers the retry from
+  // its recorded outcome, so the executor ran once for the two deliveries.
+  expect(fixture.dispatches()).toBe(1)
+
+  // The return-key binding is NOT weakened: the reply the retry opened is sealed to the
+  // return key of the command, and the controller opened it with that key.
+  expect(carriers[0].payload.parameters).toEqual(carriers[1].payload.parameters)
+
+  // The retried carrier is ONE command to the gateway's durable command identity rule,
+  // which is the rule the real repository enforces.
+  const first = createQueuedRuntimeCommandRecord(carriers[0], NOW)
+  const second = createQueuedRuntimeCommandRecord(carriers[1], NOW)
+  expect(runtimeCommandRecordsShareIdentity(first, second)).toBe(true)
 })
 
 test('an unreachable device is a typed offline denial and never a reroute', async () => {

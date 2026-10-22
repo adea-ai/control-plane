@@ -2,6 +2,7 @@ import {
   GatewayCommandEnvelopeSchema,
   GatewayProtocolManifest,
   type AcpRemoteSealedCarrierChannel,
+  type GatewayCommandEnvelope,
 } from '@control-plane/runtime-gateway-protocol'
 import { digest, gatewayIdempotencyKey } from './acp-gateway-protocol.ts'
 import {
@@ -88,12 +89,77 @@ export function createGatewayOwnedAcpRemoteWire(
     throw new Error('ACP_REMOTE_REQUIRED_CAPABILITIES_INVALID')
   }
   let sequence = 1
+  // The carrier command is stable for one inner command. The gateway's durable command
+  // repository identifies a command by its FULL envelope, so a retry that rebuilt the
+  // carrier -- a new sequence, new timestamps, a newly sealed payload -- would be refused
+  // as a different command instead of being recognized as the same one.
+  //
+  // The DELIVERY stays per delivery: the gateway assigns the transport sequence, counts the
+  // delivery attempts and owns the single reply artifact.
+  const carriers = new Map<string, GatewayCommandEnvelope>()
 
   const currentGeneration = (): number | undefined => {
     const generation = options.channel.currentChannelGeneration()
     if (generation === undefined) return undefined
     if (!Number.isSafeInteger(generation) || generation < 1) return undefined
     return generation
+  }
+
+  /**
+   * The carrier command for one inner command, built once and reused by every delivery
+   * attempt of that command.
+   *
+   * The carrier IS the gateway's command identity: the repository compares the whole
+   * envelope, so the sequence, the timestamps and the sealed payload have to be the same on
+   * a retry. The sealed payload is stable because the controller seals the inner command
+   * once, so this cache never has to choose between two different sealed frames.
+   */
+  const carrierFor = (
+    identity: string,
+    payload: unknown,
+    generation: number
+  ): GatewayCommandEnvelope => {
+    // The cache key is the carrier PAYLOAD, so one carrier command is one envelope: a retry
+    // reuses the carrier it already built, and a different payload under the same command id
+    // is a different command rather than a silently reused carrier.
+    const key = digest(payload)
+    const existing = carriers.get(key)
+    if (existing !== undefined) return existing
+    const issuedAt = now()
+    const carrier = GatewayCommandEnvelopeSchema.parse({
+      type: 'command',
+      schemaVersion: 1,
+      protocolVersion: GatewayProtocolManifest.current,
+      sequence: sequence++,
+      nodeId: route.nodeId,
+      workspaceId: route.workspaceId,
+      traceId: options.traceId,
+      sentAt: issuedAt.toISOString(),
+      channelGeneration: generation,
+      commandId: options.commandId(identity),
+      idempotencyKey: gatewayIdempotencyKey(identity),
+      payloadHash: digest(payload),
+      issuedAt: issuedAt.toISOString(),
+      expiresAt: new Date(issuedAt.getTime() + ttlMs).toISOString(),
+      family: 'runtime',
+      operation: ACP_REMOTE_SEALED_OPERATION,
+      driver: { family: 'acp', version: '1.0.0' },
+      runtimeConnectionId: route.runtimeConnectionId,
+      executionId: options.executionId,
+      attemptId: options.attemptId(identity),
+      requiredCapabilities,
+      payload,
+    })
+    carriers.set(key, carrier)
+    // Only the carriers whose window is still open are kept, so the cache cannot grow
+    // without bound.
+    const at = issuedAt.getTime()
+    for (const [cached, entry] of carriers) {
+      if (cached !== key && Date.parse(entry.expiresAt) <= at) {
+        carriers.delete(cached)
+      }
+    }
+    return carrier
   }
 
   return {
@@ -145,31 +211,14 @@ export function createGatewayOwnedAcpRemoteWire(
 
       const payload = buildSealedCarrierPayload(command)
       const identity = carrierIdentity(header.commandId)
-      const issuedAt = now()
-      const carrier = GatewayCommandEnvelopeSchema.parse({
-        type: 'command',
-        schemaVersion: 1,
-        protocolVersion: GatewayProtocolManifest.current,
-        sequence: sequence++,
-        nodeId: route.nodeId,
-        workspaceId: route.workspaceId,
-        traceId: options.traceId,
-        sentAt: issuedAt.toISOString(),
-        channelGeneration: generation,
-        commandId: options.commandId(identity),
-        idempotencyKey: gatewayIdempotencyKey(identity),
-        payloadHash: digest(payload),
-        issuedAt: issuedAt.toISOString(),
-        expiresAt: new Date(issuedAt.getTime() + ttlMs).toISOString(),
-        family: 'runtime',
-        operation: ACP_REMOTE_SEALED_OPERATION,
-        driver: { family: 'acp', version: '1.0.0' },
-        runtimeConnectionId: route.runtimeConnectionId,
-        executionId: options.executionId,
-        attemptId: options.attemptId(identity),
-        requiredCapabilities,
-        payload,
-      })
+      // The carrier command is stable for one inner command. The gateway's durable command
+      // repository identifies a command by its FULL envelope, so a retry that rebuilt the
+      // carrier -- a new sequence, new timestamps, a newly sealed payload -- would be
+      // refused as a different command instead of recognized as the same one.
+      //
+      // The DELIVERY stays per delivery: the gateway assigns the transport sequence and
+      // counts the attempts, and the carrier attempt owns the single reply artifact.
+      const carrier = carrierFor(identity, payload, generation)
       // The dispatch may have executed before it failed, and a channel that is gone
       // afterwards does not prove the command was never delivered. The original
       // error is preserved, so the caller reads an unknown outcome and retries the

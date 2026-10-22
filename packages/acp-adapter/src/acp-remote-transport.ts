@@ -223,6 +223,17 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
   readonly #grantState: (grantRef: string) => AcpLocalProjectGrantState
   readonly #now: () => Date
   #revokedAt: string | undefined
+  /**
+   * The sealed command per inner command identity, reused by every retry of that command.
+   */
+  readonly #sealedCommands = new Map<
+    string,
+    {
+      readonly returnKey: RecipientKeyPair
+      readonly header: AcpRemoteCommandHeader
+      readonly message: AcpRemoteSealedCommand
+    }
+  >()
 
   constructor(options: SecureAcpRemoteTransportOptions) {
     this.#route = AcpRemoteDeviceRouteSchema.parse(options.route)
@@ -361,33 +372,29 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
     return envelope.data
   }
 
-  async dispatch(
-    commandInput: GatewayCommandEnvelope,
-    signal?: AbortSignal
-  ): Promise<AcpGatewayExchange> {
-    this.#assertFenced()
-    const command = GatewayCommandEnvelopeSchema.parse(commandInput)
-    if (
-      command.nodeId !== this.#route.nodeId ||
-      command.workspaceId !== this.#route.workspaceId ||
-      command.runtimeConnectionId !== this.#route.runtimeConnectionId
-    ) {
-      throw remoteDenialError(denyRemote('binding_mismatch'))
-    }
-    const commandWindow = evaluateCommandWindow({
-      issuedAt: command.issuedAt,
-      expiresAt: command.expiresAt,
-      now: this.#now(),
-      clockSkewMs: ACP_REMOTE_CLOCK_SKEW_MS,
-      maxLifetimeMs: ACP_REMOTE_MAX_COMMAND_LIFETIME_MS,
-    })
-    if (commandWindow.outcome === 'denied') throw remoteDenialError(commandWindow)
-    if (signalAborted(signal)) throw timeoutError()
-
-    const plaintext = utf8(canonicalJson(command))
-    if (plaintext.byteLength > ACP_REMOTE_MAX_PLAINTEXT_BYTES) {
-      throw remoteDenialError(denyRemote('payload_too_large'))
-    }
+  /**
+   * The sealed command for one inner command, sealed once and reused by every retry of it.
+   *
+   * The seal is stable because the command IDENTITY is stable: the gateway identifies a
+   * command by its full envelope, and the device seals its reply to the return key in the
+   * command header. A retry therefore re-sends the same bytes and opens the reply the device
+   * recorded for the first attempt, instead of looking like a second, different command.
+   */
+  async #sealedCommand(
+    command: GatewayCommandEnvelope,
+    plaintext: Uint8Array
+  ): Promise<{
+    readonly returnKey: RecipientKeyPair
+    readonly header: AcpRemoteCommandHeader
+    readonly message: AcpRemoteSealedCommand
+  }> {
+    // The key is the WHOLE inner command: the seal covers the command's plaintext AND its
+    // header, which carries the validity window and the channel generation. A retry that
+    // re-dispatches the same command therefore reuses its seal, while a command that moved
+    // to a new generation or a new window is sealed again -- the device fences both.
+    const identity = sha256Digest(canonicalJson(command))
+    const existing = this.#sealedCommands.get(identity)
+    if (existing !== undefined) return existing
     const returnKey = await generateRecipientKeyPair()
     const header: AcpRemoteCommandHeader = {
       suite: ACP_REMOTE_SUITE,
@@ -415,6 +422,54 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
       ...body,
       signature: signCanonical(DOMAIN.commandSignature, body, this.#signingKey),
     }
+    const record = { returnKey, header, message }
+    this.#sealedCommands.set(identity, record)
+    // Only the commands whose window is still open are kept, so the cache cannot grow
+    // without bound.
+    const at = Date.parse(command.expiresAt)
+    for (const [key, entry] of this.#sealedCommands) {
+      if (key !== identity && Date.parse(entry.header.expiresAt) <= at) {
+        this.#sealedCommands.delete(key)
+      }
+    }
+    return record
+  }
+
+  async dispatch(
+    commandInput: GatewayCommandEnvelope,
+    signal?: AbortSignal
+  ): Promise<AcpGatewayExchange> {
+    this.#assertFenced()
+    const command = GatewayCommandEnvelopeSchema.parse(commandInput)
+    if (
+      command.nodeId !== this.#route.nodeId ||
+      command.workspaceId !== this.#route.workspaceId ||
+      command.runtimeConnectionId !== this.#route.runtimeConnectionId
+    ) {
+      throw remoteDenialError(denyRemote('binding_mismatch'))
+    }
+    const commandWindow = evaluateCommandWindow({
+      issuedAt: command.issuedAt,
+      expiresAt: command.expiresAt,
+      now: this.#now(),
+      clockSkewMs: ACP_REMOTE_CLOCK_SKEW_MS,
+      maxLifetimeMs: ACP_REMOTE_MAX_COMMAND_LIFETIME_MS,
+    })
+    if (commandWindow.outcome === 'denied') throw remoteDenialError(commandWindow)
+    if (signalAborted(signal)) throw timeoutError()
+
+    const plaintext = utf8(canonicalJson(command))
+    if (plaintext.byteLength > ACP_REMOTE_MAX_PLAINTEXT_BYTES) {
+      throw remoteDenialError(denyRemote('payload_too_large'))
+    }
+    // The sealed command is stable for one inner command. Both ends depend on that: the
+    // gateway identifies a command by its FULL envelope, so a retry that re-sealed would be
+    // refused as a different command, and the reply is sealed to this return key, so a retry
+    // that re-keyed could not open the reply the device recorded for the first attempt.
+    const sealedCommand = await this.#sealedCommand(command, plaintext)
+    const returnKey = sealedCommand.returnKey
+    const header = sealedCommand.header
+    const message = sealedCommand.message
     // Authority can change while keys are generated and the payload is sealed: re-fence
     // immediately before send so no sealed command leaves after revocation, an offline wire, or an
     // abort, and so an already-expired window is never sealed.
