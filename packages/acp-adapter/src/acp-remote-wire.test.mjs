@@ -269,7 +269,7 @@ test('an unreachable device is a typed offline denial and never a reroute', asyn
   expect(fixture.dispatches()).toBe(0)
 })
 
-test('a channel that disappears mid-flight is an offline denial, not an unknown outcome', async () => {
+test('a dispatch error is an unknown outcome, never a proof of non-delivery', async () => {
   const fixture = await countingFixture()
   let generation = 1
   const wire = wireFor({
@@ -288,10 +288,49 @@ test('a channel that disappears mid-flight is an offline denial, not an unknown 
     wire,
     signingKey: fixture.keys.controllerSigning,
   })
+  // The dispatch failed and the channel is gone, but a failed dispatch does not
+  // prove the command was never delivered: the write may have landed before the
+  // channel went away. The caller must read an unknown outcome and retry the
+  // SAME command identity, not an offline denial.
   await expect(controller.dispatch(runtimeCommand())).rejects.toMatchObject({
-    code: 'RUNTIME_NODE_OFFLINE',
-    details: { reason: 'device_offline', fallback: 'none' },
+    code: 'RUNTIME_NODE_RESPONSE_UNKNOWN',
+    details: { reason: 'response_unknown', fallback: 'none' },
   })
+})
+
+test('a command that executed before the channel disconnected is an unknown outcome', async () => {
+  const fixture = await countingFixture()
+  const artifacts = artifactStore()
+  let generation = 1
+  const wire = wireFor({
+    route: fixture.route,
+    channel: {
+      currentChannelGeneration: () => generation,
+      pushedInventory: async () => ({ inventory: {}, channelGeneration: 1 }),
+      dispatchSealed: async ({ command }) => {
+        // The command EXECUTED on the device...
+        await handleAcpRemoteCarrierCommand(
+          { device: fixture.device, artifacts: { put: artifacts.put } },
+          command
+        )
+        // ...and only then did the channel disconnect.
+        generation = undefined
+        throw new Error('ACP_REMOTE_GATEWAY_CHANNEL_OFFLINE')
+      },
+    },
+  })
+  const controller = controllerFor({
+    route: fixture.route,
+    wire,
+    signingKey: fixture.keys.controllerSigning,
+  })
+  await expect(controller.dispatch(runtimeCommand())).rejects.toMatchObject({
+    code: 'RUNTIME_NODE_RESPONSE_UNKNOWN',
+    details: { reason: 'response_unknown', fallback: 'none' },
+  })
+  // The effect ran: the device recorded the reply artifact for the carrier's
+  // attempt, so the outcome is genuinely unknown rather than never delivered.
+  expect(artifacts.stored.size).toBe(1)
 })
 
 test('a revoked route never reaches the relay', async () => {

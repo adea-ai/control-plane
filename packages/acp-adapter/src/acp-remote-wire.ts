@@ -170,20 +170,14 @@ export function createGatewayOwnedAcpRemoteWire(
         requiredCapabilities,
         payload,
       })
-      try {
-        return await options.channel.dispatchSealed({
-          command: carrier,
-          ...(signal ? { signal } : {}),
-        })
-      } catch (error) {
-        // The node channel can disappear between the pre-send check and the write. A channel that
-        // is gone means the command was definitely NOT delivered, so the caller must see
-        // `device_offline` — the typed denial no upstream path turns into a reroute — and not an
-        // unknown outcome. A channel that is still up keeps the original error, because the
-        // command may have reached the device.
-        if (currentGeneration() === undefined) throw new AcpRemoteUndeliveredError()
-        throw error
-      }
+      // The dispatch may have executed before it failed, and a channel that is gone
+      // afterwards does not prove the command was never delivered. The original
+      // error is preserved, so the caller reads an unknown outcome and retries the
+      // SAME command identity instead of treating the command as never delivered.
+      return await options.channel.dispatchSealed({
+        command: carrier,
+        ...(signal ? { signal } : {}),
+      })
     },
   }
 }

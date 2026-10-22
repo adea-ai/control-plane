@@ -3,11 +3,14 @@ import {
   GatewayCommandEnvelopeSchema,
   GatewayProtocolManifest,
 } from '@control-plane/runtime-gateway-protocol'
+import { InMemoryRuntimeCommandRepository } from '@control-plane/domain'
 import {
   ACP_REMOTE_GATEWAY_CHANNEL_OFFLINE,
   acpRemoteReplyArtifactKey,
   createAcpRemoteGatewayChannel,
 } from './acp-remote-gateway-channel.ts'
+import { RuntimeCommandDeliveryService } from './runtime-command-delivery.ts'
+import { RecordingGatewayMetrics } from './websocket-lifecycle.ts'
 
 /**
  * The gateway-owned channel that carries one opaque sealed ACP command through the gateway's
@@ -194,4 +197,39 @@ test('surfaces the inventory the gateway pushed with the generation it was pushe
   })
   expect(await channel.pushedInventory()).toEqual(pushed)
   expect(channel.currentChannelGeneration()).toBe(3)
+})
+
+test('the durable command repository identifies one carrier command by its full envelope', async () => {
+  const repository = new InMemoryRuntimeCommandRepository()
+  const sent = []
+  const delivery = new RuntimeCommandDeliveryService({
+    repository,
+    sender: {
+      async send(envelope) {
+        sent.push(envelope)
+      },
+    },
+    metrics: new RecordingGatewayMetrics(),
+    now: () => new Date('2026-10-21T00:00:00.000Z'),
+  })
+  const command = carrier({ commandId: 'cmd_01JABCDEF0123456789ABCDEFG' })
+
+  // The same carrier enqueued twice is ONE durable command: the repository
+  // identifies a command by its full envelope, so an identical envelope is a
+  // replay of the same command and not a second one.
+  await delivery.enqueue(command)
+  const replay = await delivery.enqueue(command)
+  expect(replay.replayed).toBe(true)
+  expect(await delivery.get(command.commandId)).toMatchObject({
+    commandId: command.commandId,
+    deliveryAttempts: 0,
+  })
+
+  // A carrier REBUILT under the same command id differs in its sequence, so it
+  // is a different command and the repository refuses it. This is the identity
+  // the controller side has to hold: a retry that rebuilds the envelope is not a
+  // retry, and the gateway answers it with a payload mismatch.
+  await expect(
+    delivery.enqueue(carrier({ commandId: command.commandId, sequence: command.sequence + 1 }))
+  ).rejects.toMatchObject({ code: 'RUNTIME_COMMAND_PAYLOAD_MISMATCH' })
 })
