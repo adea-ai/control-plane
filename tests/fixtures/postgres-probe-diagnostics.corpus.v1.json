@@ -1,0 +1,377 @@
+{
+  "note": "A differential corpus for the probe redactor. Every entry is a synthetic diagnostic string, the pure form that was handed to libpq's own parse-only interface, and the credentials libpq recognised in that form. A recognised credential must not survive the redaction, and a form libpq recognises no credential in must come back unchanged.",
+  "oracle": "PQconninfoParse (libpq 16.15 and 18.6), parse-only, no connection",
+  "cases": [
+    {
+      "name": "conninfo: a plain password",
+      "kind": "libpq",
+      "text": "password=s3cret dbname=postgres",
+      "libpq": "password=s3cret dbname=postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["s3cret"],
+      "secrets": ["s3cret"]
+    },
+    {
+      "name": "conninfo: a space after the separator",
+      "kind": "libpq",
+      "text": "password= h0unter2 dbname=postgres",
+      "libpq": "password= h0unter2 dbname=postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["h0unter2"],
+      "secrets": ["h0unter2"]
+    },
+    {
+      "name": "conninfo: a space before the separator",
+      "kind": "libpq",
+      "text": "password = h0unter2 dbname=postgres",
+      "libpq": "password = h0unter2 dbname=postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["h0unter2"],
+      "secrets": ["h0unter2"]
+    },
+    {
+      "name": "conninfo: a tab after the separator",
+      "kind": "libpq",
+      "text": "password=\th0unter2 dbname=postgres",
+      "libpq": "password=\th0unter2 dbname=postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["h0unter2"],
+      "secrets": ["h0unter2"]
+    },
+    {
+      "name": "conninfo: a line feed after the separator",
+      "kind": "libpq",
+      "text": "password=\nh0unter2 dbname=postgres",
+      "libpq": "password=\nh0unter2 dbname=postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["h0unter2"],
+      "secrets": ["h0unter2"]
+    },
+    {
+      "name": "conninfo: a carriage return after the separator",
+      "kind": "libpq",
+      "text": "password=\rh0unter2 dbname=postgres",
+      "libpq": "password=\rh0unter2 dbname=postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["h0unter2"],
+      "secrets": ["h0unter2"]
+    },
+    {
+      "name": "conninfo: a vertical tab after the separator",
+      "kind": "libpq",
+      "text": "password=\u000bh0unter2 dbname=postgres",
+      "libpq": "password=\u000bh0unter2 dbname=postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["h0unter2"],
+      "secrets": ["h0unter2"]
+    },
+    {
+      "name": "conninfo: a form feed after the separator",
+      "kind": "libpq",
+      "text": "password=\fh0unter2 dbname=postgres",
+      "libpq": "password=\fh0unter2 dbname=postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["h0unter2"],
+      "secrets": ["h0unter2"]
+    },
+    {
+      "name": "conninfo: a single quoted value",
+      "kind": "libpq",
+      "text": "password='two w0rds' dbname=postgres",
+      "libpq": "password='two w0rds' dbname=postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["two w0rds"],
+      "secrets": ["two w0rds"]
+    },
+    {
+      "name": "conninfo: a double quote is an ordinary byte",
+      "kind": "libpq",
+      "text": "password=\"abc\"d3f dbname=postgres",
+      "libpq": "password=\"abc\"d3f dbname=postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["\"abc\"d3f"],
+      "secrets": ["\"abc\"d3f"]
+    },
+    {
+      "name": "conninfo: a backslash escapes a space",
+      "kind": "libpq",
+      "text": "password=two\\ words dbname=postgres",
+      "libpq": "password=two\\ words dbname=postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["two words"],
+      "secrets": ["two words"]
+    },
+    {
+      "name": "conninfo: a backslash escapes the next byte",
+      "kind": "libpq",
+      "text": "password=pa\\s3cret dbname=postgres",
+      "libpq": "password=pa\\s3cret dbname=postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["pas3cret"],
+      "secrets": ["pas3cret"]
+    },
+    {
+      "name": "conninfo: a password and nothing else",
+      "kind": "libpq",
+      "text": "password=s3cret",
+      "libpq": "password=s3cret",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["s3cret"],
+      "secrets": ["s3cret"]
+    },
+    {
+      "name": "conninfo: no credential at all",
+      "kind": "libpq",
+      "text": "dbname=postgres user=admin",
+      "libpq": "dbname=postgres user=admin",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": [],
+      "secrets": []
+    },
+    {
+      "name": "conninfo: an empty password",
+      "kind": "libpq",
+      "text": "password= dbname=p0stgres",
+      "libpq": "password= dbname=p0stgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["dbname=p0stgres"],
+      "secrets": ["dbname=p0stgres"]
+    },
+    {
+      "name": "conninfo: the ssl password",
+      "kind": "libpq",
+      "text": "sslpassword=fr0mdisk dbname=postgres",
+      "libpq": "sslpassword=fr0mdisk dbname=postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["fr0mdisk"],
+      "secrets": ["fr0mdisk"]
+    },
+    {
+      "name": "uri: an ordinary password",
+      "kind": "libpq",
+      "text": "postgresql://user:psw0rd@localhost/db",
+      "libpq": "postgresql://user:psw0rd@localhost/db",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["psw0rd"],
+      "secrets": ["psw0rd"]
+    },
+    {
+      "name": "uri: an empty user",
+      "kind": "libpq",
+      "text": "postgresql://:h0unter2@localhost/db",
+      "libpq": "postgresql://:h0unter2@localhost/db",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["h0unter2"],
+      "secrets": ["h0unter2"]
+    },
+    {
+      "name": "uri: a question mark inside the userinfo",
+      "kind": "libpq",
+      "text": "postgresql://user:ab?c0de@localhost/db",
+      "libpq": "postgresql://user:ab?c0de@localhost/db",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["ab?c0de"],
+      "secrets": ["ab?c0de"]
+    },
+    {
+      "name": "uri: a backslash before the at sign",
+      "kind": "libpq",
+      "text": "postgresql://user:pa\\@ssw0rd@localhost/db",
+      "libpq": "postgresql://user:pa\\@ssw0rd@localhost/db",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["pa\\"],
+      "secrets": ["pa\\"]
+    },
+    {
+      "name": "uri: a percent-encoded at sign",
+      "kind": "libpq",
+      "text": "postgresql://user:pa%40ssw0rd@localhost/db",
+      "libpq": "postgresql://user:pa%40ssw0rd@localhost/db",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["pa@ssw0rd"],
+      "secrets": ["pa@ssw0rd"]
+    },
+    {
+      "name": "uri: a single quoted password",
+      "kind": "libpq",
+      "text": "postgresql://control_plane_admin:'two w0rds'@127.0.0.1/postgres",
+      "libpq": "postgresql://control_plane_admin:'two w0rds'@127.0.0.1/postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["'two w0rds'"],
+      "secrets": ["'two w0rds'"]
+    },
+    {
+      "name": "uri: the first at sign ends the userinfo",
+      "kind": "libpq",
+      "text": "postgresql://user:pw0rd@ss@localhost/db",
+      "libpq": "postgresql://user:pw0rd@ss@localhost/db",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["pw0rd"],
+      "secrets": ["pw0rd"]
+    },
+    {
+      "name": "uri: a password with a port and a query",
+      "kind": "libpq",
+      "text": "postgresql://user:psw0rd@localhost:5432/db?sslmode=disable",
+      "libpq": "postgresql://user:psw0rd@localhost:5432/db?sslmode=disable",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["psw0rd"],
+      "secrets": ["psw0rd"]
+    },
+    {
+      "name": "uri: the short scheme",
+      "kind": "libpq",
+      "text": "postgres://u:psw0rd@h/db",
+      "libpq": "postgres://u:psw0rd@h/db",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["psw0rd"],
+      "secrets": ["psw0rd"]
+    },
+    {
+      "name": "uri: a user and no password",
+      "kind": "libpq",
+      "text": "postgresql://user@localhost/db",
+      "libpq": "postgresql://user@localhost/db",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": [],
+      "secrets": []
+    },
+    {
+      "name": "uri: a host and a port",
+      "kind": "libpq",
+      "text": "postgresql://localhost:5432/db",
+      "libpq": "postgresql://localhost:5432/db",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": [],
+      "secrets": []
+    },
+    {
+      "name": "uri: a scheme in upper case",
+      "kind": "libpq",
+      "text": "POSTGRES://user:pass@localhost/db",
+      "libpq": "POSTGRES://user:pass@localhost/db",
+      "libpqRejected": true,
+      "libpqRecognisedCredentials": [],
+      "secrets": []
+    },
+    {
+      "name": "uri: a scheme that is not a database scheme",
+      "kind": "libpq",
+      "text": "https://user:pass@localhost/db",
+      "libpq": "https://user:pass@localhost/db",
+      "libpqRejected": true,
+      "libpqRecognisedCredentials": [],
+      "secrets": []
+    },
+    {
+      "name": "mixed: text before a failed URI candidate",
+      "kind": "libpq",
+      "text": "see https://example.com password=s3cret",
+      "libpq": "password=s3cret",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["s3cret"],
+      "secrets": ["s3cret"]
+    },
+    {
+      "name": "mixed: text around a URI",
+      "kind": "libpq",
+      "text": "FATAL: could not connect to postgresql://user:psw0rd@localhost/db",
+      "libpq": "postgresql://user:psw0rd@localhost/db",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["psw0rd"],
+      "secrets": ["psw0rd"]
+    },
+    {
+      "name": "mixed: a URI and a connection string",
+      "kind": "libpq",
+      "text": "postgresql://user:psw0rd@localhost/db failed: password=0ther",
+      "libpq": "password=0ther",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["0ther"],
+      "secrets": ["0ther"]
+    },
+    {
+      "name": "mixed: a failed URI candidate then an assignment",
+      "kind": "libpq",
+      "text": "postgresql://host:5432 password=s3cret",
+      "libpq": "password=s3cret",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["s3cret"],
+      "secrets": ["s3cret"]
+    },
+    {
+      "name": "mixed: an assignment before a URI",
+      "kind": "libpq",
+      "text": "password=s3cret and postgresql://user:psw0rd@localhost/db",
+      "libpq": "password=s3cret",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["s3cret"],
+      "secrets": ["s3cret"]
+    },
+    {
+      "name": "mixed: two credentials in one line",
+      "kind": "libpq",
+      "text": "password=0ne sslpassword=tw0",
+      "libpq": "password=0ne sslpassword=tw0",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["0ne", "tw0"],
+      "secrets": ["0ne", "tw0"]
+    },
+    {
+      "name": "mixed: text that names no credential",
+      "kind": "libpq",
+      "text": "psql: error: FATAL:  the database system is shutting down",
+      "libpq": "dbname=postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": [],
+      "secrets": []
+    },
+    {
+      "name": "mixed: a message that only names a credential",
+      "kind": "libpq",
+      "text": "psql: error: FATAL:  password authentication failed for user \"control_plane_admin\"",
+      "libpq": "dbname=postgres",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": [],
+      "secrets": []
+    },
+    {
+      "name": "redactor: a prefixed key",
+      "kind": "redactor",
+      "text": "my_password=h0unter2 dbname=postgres",
+      "libpq": "my_password=h0unter2 dbname=postgres",
+      "libpqRejected": true,
+      "libpqRecognisedCredentials": [],
+      "secrets": ["h0unter2"]
+    },
+    {
+      "name": "redactor: an upper-case key",
+      "kind": "redactor",
+      "text": "PGPASSWORD=h0unter2 dbname=postgres",
+      "libpq": "PGPASSWORD=h0unter2 dbname=postgres",
+      "libpqRejected": true,
+      "libpqRecognisedCredentials": [],
+      "secrets": ["h0unter2"]
+    },
+    {
+      "name": "redactor: a token key",
+      "kind": "redactor",
+      "text": "token=abcd3f123456",
+      "libpq": "token=abcd3f123456",
+      "libpqRejected": true,
+      "libpqRecognisedCredentials": [],
+      "secrets": ["abcdef123456"]
+    },
+    {
+      "name": "redactor: a long opaque token",
+      "kind": "redactor",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "libpq": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "libpqRejected": true,
+      "libpqRecognisedCredentials": [],
+      "secrets": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
 import {
   describePostgresProbeFailure,
   isProbeTimeout,
@@ -6,6 +7,18 @@ import {
   PROBE_EXCERPT_LIMIT,
   sanitizeProbeOutput,
 } from '../scripts/postgres-probe-diagnostics.mjs'
+
+// The differential corpus. Every entry is a synthetic diagnostic string, the
+// pure form that was handed to libpq's own parse-only interface, and the
+// credentials libpq recognised in that form. The corpus was built against
+// PQconninfoParse, which never opens a connection, so it says what libpq
+// itself would treat as a password and what it would not.
+const corpus = JSON.parse(
+  readFileSync(
+    new URL('./fixtures/postgres-probe-diagnostics.corpus.v1.json', import.meta.url),
+    'utf8'
+  )
+)
 
 // The disruption drill's readiness probe asks the compose service whether
 // PostgreSQL accepts connections again after the service is restarted. While the
@@ -63,24 +76,34 @@ test('probe output is bounded and carries no credential', () => {
 
 // A quoted password holds a space, so a rule that stops at the first
 // whitespace leaves the tail of the secret behind: `password='two words'`
-// became `password=<redacted> words'`. Every quoted and escaped form has to
-// be consumed whole, and a value whose quote is never closed has to take the
-// rest of its line with it.
+// became `password=<redacted> words'`. A value that opens with a single
+// quote has to be consumed whole, and a value whose quote is never closed has
+// to take the rest of its line with it.
+//
+// libpq's own parser honours the single quote and no other: a double quote is
+// an ordinary byte of a value, so `password="two words"` is the value `"two`
+// and the text after the space is a separate token that libpq rejects. The
+// redactor reads it the same way, and the corpus records what libpq makes of
+// every form.
 test('a quoted password leaves no tail behind', () => {
-  const forms = [
-    "password='two words'",
-    'password="two words"',
-    "password='two\\' words'",
-    'password="two\\" words"',
-    "password='two words",
-    'password="two words',
-  ]
+  const forms = ["password='two words'", "password='two\\' words'", "password='two words"]
   for (const form of forms) {
     const sanitized = sanitizeProbeOutput(form)
     expect(sanitized).not.toContain('two')
     expect(sanitized).not.toContain('words')
     expect(sanitized).toContain('<redacted>')
   }
+})
+
+// A double quote is an ordinary byte of a value, so the value runs to the
+// next whitespace and what follows is a separate token, not the tail of a
+// secret. libpq reads `password="two words"` as the value `"two` and rejects
+// the rest of the string.
+test('a double quote is an ordinary byte of the value', () => {
+  expect(sanitizeProbeOutput('password="two words" dbname=postgres')).toBe(
+    'password=<redacted> words" dbname=postgres'
+  )
+  expect(sanitizeProbeOutput('password="two words"')).toBe('password=<redacted> words"')
 })
 
 test('a quoted password in a connection URI leaves no tail behind', () => {
@@ -117,7 +140,6 @@ test('a value that starts after the separator whitespace is redacted whole', () 
     ['password= hunter2 dbname=postgres', 'hunter2', 'password=<redacted> dbname=postgres'],
     ['password=  hunter2 dbname=postgres', 'hunter2', 'password=<redacted> dbname=postgres'],
     ["password = 'two words' dbname=postgres", 'words', 'password =<redacted> dbname=postgres'],
-    ['password= "two words" dbname=postgres', 'words', 'password=<redacted> dbname=postgres'],
     ['password= two\\ words dbname=postgres', 'words', 'password=<redacted> dbname=postgres'],
     ['PGPASSWORD= hunter2', 'hunter2', 'PGPASSWORD=<redacted>'],
     ['my_password= hunter2 db=postgres', 'hunter2', 'my_password=<redacted> db=postgres'],
@@ -137,15 +159,13 @@ test('the separator whitespace is whitespace of any kind, and an empty value sta
   expect(sanitizeProbeOutput('password=\n')).toBe('password=<redacted>')
 })
 
-// A quoted value whose quote is never closed takes the rest of the source with
-// it, and the separator whitespace does not change that.
+// A single-quoted value whose quote is never closed takes the rest of the
+// source with it, and the separator whitespace does not change that. A
+// double quote opens nothing, so the value runs to the next whitespace and
+// what follows is a separate token, which is what libpq reads.
 test('a value that starts after the separator whitespace is consumed whole', () => {
-  for (const form of ["password= 'two words", 'password= "two words']) {
-    const sanitized = sanitizeProbeOutput(form)
-    expect(sanitized).not.toContain('two')
-    expect(sanitized).not.toContain('words')
-    expect(sanitized).toBe('password=<redacted>')
-  }
+  expect(sanitizeProbeOutput("password= 'two words")).toBe('password=<redacted>')
+  expect(sanitizeProbeOutput('password= "two words')).toBe('password=<redacted> words')
 })
 
 // The six ASCII whitespace characters, which are the ones libpq's own parser
@@ -162,14 +182,26 @@ const ASCII_WHITESPACE = [
   ['form feed', '\f'],
 ]
 
-// The values the matrix pairs with each of those characters: an unquoted one,
-// a quoted one and an escaped one. The text that must not survive is the
-// part of the value that a rule that stopped early would have left behind.
-const SEPARATOR_WHITESPACE_VALUES = [
-  ['an unquoted value', 'hunter2', 'hunter2'],
-  ['a single quoted value', "'two words'", 'words'],
-  ['a double quoted value', '"two words"', 'words'],
-  ['an escaped value', 'two\\ words', 'words'],
+// The values the matrix pairs with each of those characters, and what libpq
+// makes of them. The secret is the part of the value libpq reads as the
+// credential and the tail is the text it leaves after it: a double quote
+// opens nothing, so a value that starts with one runs to the next whitespace
+// and the rest of it is a separate token.
+const CONNINFO_WHITESPACE_VALUES = [
+  ['an unquoted value', 'h0unter2', 'h0unter2', ''],
+  ['a single quoted value', "'two w0rds'", 'two w0rds', ''],
+  ['a double quoted value', '"two w0rds"', '"two', ' w0rds"'],
+  ['an escaped value', 'two\\ w0rds', 'two w0rds', ''],
+]
+
+// A connection URI has no quote rule and no escape rule at all: the password
+// is the raw text after the first `:` of the userinfo, so every one of those
+// values is one password and none of them leaves a tail.
+const URI_WHITESPACE_VALUES = [
+  ['an unquoted value', 'h0unter2', 'h0unter2'],
+  ['a single quoted value', "'two w0rds'", "'two w0rds'"],
+  ['a double quoted value', '"two w0rds"', '"two w0rds"'],
+  ['an escaped value', 'two\\ w0rds', 'two\\ w0rds'],
 ]
 
 // The matrix: every ASCII whitespace character, before and after the `=`, with
@@ -178,18 +210,18 @@ const SEPARATOR_WHITESPACE_VALUES = [
 // and is consumed with it.
 const SEPARATOR_WHITESPACE_CASES = []
 for (const [name, whitespace] of ASCII_WHITESPACE) {
-  for (const [kind, value, secret] of SEPARATOR_WHITESPACE_VALUES) {
+  for (const [kind, value, secret, tail] of CONNINFO_WHITESPACE_VALUES) {
     SEPARATOR_WHITESPACE_CASES.push([
       `${name} before the = with ${kind}`,
       `password${whitespace}=${value} dbname=postgres`,
       secret,
-      `password${whitespace}=<redacted> dbname=postgres`,
+      `password${whitespace}=<redacted>${tail} dbname=postgres`,
     ])
     SEPARATOR_WHITESPACE_CASES.push([
       `${name} after the = with ${kind}`,
       `password=${whitespace}${value} dbname=postgres`,
       secret,
-      'password=<redacted> dbname=postgres',
+      `password=<redacted>${tail} dbname=postgres`,
     ])
   }
 }
@@ -205,7 +237,7 @@ test.each(SEPARATOR_WHITESPACE_CASES)('%s is redacted whole', (_case, input, sec
 // password may follow whitespace, and the password may start after it.
 const URI_WHITESPACE_CASES = []
 for (const [name, whitespace] of ASCII_WHITESPACE) {
-  for (const [kind, value, secret] of SEPARATOR_WHITESPACE_VALUES) {
+  for (const [kind, value, secret] of URI_WHITESPACE_VALUES) {
     URI_WHITESPACE_CASES.push([
       `${name} before the : of a URI with ${kind}`,
       `postgresql://user${whitespace}:${value}@localhost/db`,
@@ -337,4 +369,37 @@ test('a probe that timed out is a service that is not ready, and a missing execu
 
 test('the recovery ceiling the drill keeps is unchanged', () => {
   expect(POSTGRES_RECOVERY_CEILING_SECONDS).toBe(30)
+})
+
+// The differential comparison. Every credential libpq recognises in the pure
+// form of a corpus entry must not survive in the diagnostic text, and a form
+// libpq recognises no credential in must come back unchanged, so the redactor
+// neither publishes a secret nor takes a diagnostic apart.
+test('the redaction matches what libpq recognises in the differential corpus', () => {
+  const leaks = []
+  const falseRedactions = []
+  for (const entry of corpus.cases) {
+    const sanitized = sanitizeProbeOutput(entry.text)
+    for (const secret of entry.secrets) {
+      if (sanitized.includes(secret)) leaks.push(`${entry.name}: ${secret}`)
+    }
+    if (entry.libpqRecognisedCredentials.length === 0 && !entry.libpqRejected) {
+      if (sanitized !== entry.text) falseRedactions.push(entry.name)
+    }
+  }
+  expect(leaks).toEqual([])
+  expect(falseRedactions).toEqual([])
+})
+
+// The corpus itself, so a change to it is a change to what libpq was asked.
+test('the differential corpus is the one that was built against libpq', () => {
+  expect(corpus.cases.length).toBeGreaterThan(30)
+  expect(corpus.oracle).toContain('PQconninfoParse')
+  expect(corpus.cases.some((entry) => entry.libpqRejected)).toBe(true)
+  expect(corpus.cases.some((entry) => entry.libpqRecognisedCredentials.length > 0)).toBe(true)
+  expect(
+    corpus.cases.some(
+      (entry) => entry.libpqRecognisedCredentials.length === 0 && !entry.libpqRejected
+    )
+  ).toBe(true)
 })

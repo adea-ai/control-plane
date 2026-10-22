@@ -97,16 +97,20 @@ function skipWhitespace(source, start) {
 /**
  * The end of a credential value that starts at `start`.
  *
- * A quoted value is consumed whole, with its escapes, so a password that holds
- * a space cannot leave its tail behind. A value whose closing quote is never
- * there takes the rest of the source. An unquoted value runs to the next
- * whitespace, except that a backslash escapes the next character: that is how
- * libpq writes an unquoted value that holds a space, so `password=two\ words`
- * is one value and not two.
+ * libpq's own connection-string parser honours one quote and one escape: a
+ * value that starts with a single quote runs to the closing single quote, and
+ * a backslash escapes the next character in a value of either kind. A double
+ * quote is an ordinary byte of a value, so `password="abc"def` is the value
+ * `"abc"def` and not the value `"abc"` with `def` left behind.
+ *
+ * An unquoted value runs to the next of the six ASCII whitespace characters,
+ * except that a backslash escapes the next character: that is how libpq writes
+ * an unquoted value that holds a space, so `password=two\ words` is one value
+ * and not two. A value whose closing quote is never there takes the rest of
+ * the source.
  */
-function readValueEnd(source, start, stopCharacters) {
-  const quote = source[start]
-  if (quote === '"' || quote === "'") {
+function readValueEnd(source, start) {
+  if (source[start] === "'") {
     let index = start + 1
     while (index < source.length) {
       const character = source[index]
@@ -114,7 +118,7 @@ function readValueEnd(source, start, stopCharacters) {
         index += 2
         continue
       }
-      if (character === quote) return index + 1
+      if (character === "'") return index + 1
       index += 1
     }
     return source.length
@@ -127,44 +131,79 @@ function readValueEnd(source, start, stopCharacters) {
       continue
     }
     if (isWhitespace(character)) break
-    if (stopCharacters !== undefined && stopCharacters.has(character)) break
     index += 1
   }
   return Math.min(index, source.length)
 }
 
 /**
- * The credential of a connection URI that starts at `start`, which is the first
- * character after `://`.
+ * The schemes libpq's own parser accepts for a connection URI. It accepts
+ * these two and nothing else, and it accepts them in lower case only.
+ */
+const URI_SCHEMES = ['postgres', 'postgresql']
+
+/**
+ * The searches the URI reader needs, kept between the candidates of one
+ * redaction. The first `@`, the first `/` and the first `:` at or after a
+ * position are each found once and reused while they are still ahead of the
+ * next candidate, so a long authority costs one search and not one search per
+ * candidate.
+ */
+function createUriSearch(source) {
+  return { source, cached: new Map() }
+}
+
+/**
+ * The first `character` at or after `from`, or -1 when there is none.
+ */
+function nextUriCharacter(search, character, from) {
+  let cached = search.cached.get(character)
+  if (cached === undefined) {
+    cached = { from: -1, found: -1 }
+    search.cached.set(character, cached)
+  }
+  if (cached.from >= 0 && (cached.found === -1 ? from >= cached.from : from <= cached.found)) {
+    return cached.found
+  }
+  cached.found = search.source.indexOf(character, from)
+  cached.from = from
+  return cached.found
+}
+
+/**
+ * The scheme of the connection URI that starts at `start`, or null when the
+ * text there is not a URI libpq would read.
+ */
+function uriSchemeAt(source, start) {
+  for (const scheme of URI_SCHEMES) {
+    if (source.startsWith(`${scheme}://`, start)) return scheme
+  }
+  return null
+}
+
+/**
+ * The credential of a connection URI whose authority starts at `start`.
  *
  * A URI is not a connection string, and libpq parses the two differently. Its
- * own URI parser reads the authority raw: the authority ends at the first `/`
- * or `?`, the userinfo is the part of the authority before the first `@`, and
- * the password is the raw text that follows the first `:` of the userinfo. A
- * quote and a backslash have no meaning in a URI, so `user:'abc'def` is a
- * password of `'abc'def` and a backslash before the `@` does not escape it.
- * An authority with no `@` is a host and a port and holds no password, and an
- * authority with no `:` holds a user and no password.
+ * own URI parser reads the authority raw: the authority ends at the first `/`,
+ * the userinfo is the part of the authority before the first `@`, and the
+ * password is the raw text that follows the first `:` of the userinfo. A quote
+ * and a backslash have no meaning in a URI, so `user:'abc'def` is a password
+ * of `'abc'def` and a backslash before the `@` does not escape it. A `?` is
+ * an ordinary character of the userinfo, so `user:ab?cd` is a password of
+ * `ab?cd`.
  *
- * The scan that failed is reported with the place it reached, so the text it
- * covered is not scanned again.
+ * An authority with no `@` is a host and a port and holds no password, and an
+ * authority with no `:` holds a user and no password. Either way the URI holds
+ * no password, and the text is left to be read as ordinary text.
  */
-function readUriCredential(source, start) {
-  let authorityEnd = start
-  while (
-    authorityEnd < source.length &&
-    source[authorityEnd] !== '/' &&
-    source[authorityEnd] !== '?'
-  ) {
-    authorityEnd += 1
-  }
-  let userinfoEnd = start
-  while (userinfoEnd < authorityEnd && source[userinfoEnd] !== '@') userinfoEnd += 1
-  if (userinfoEnd >= authorityEnd) return { matched: false, end: authorityEnd }
-  let separator = start
-  while (separator < userinfoEnd && source[separator] !== ':') separator += 1
-  if (separator >= userinfoEnd) return { matched: false, end: userinfoEnd }
-  return { matched: true, end: userinfoEnd + 1 }
+function readUriCredential(source, search, start) {
+  const at = nextUriCharacter(search, '@', start)
+  const slash = nextUriCharacter(search, '/', start)
+  if (at === -1 || (slash !== -1 && slash < at)) return { matched: false }
+  const colon = nextUriCharacter(search, ':', start)
+  if (colon === -1 || colon > at) return { matched: false }
+  return { matched: true, end: at + 1 }
 }
 
 /**
@@ -180,6 +219,13 @@ function readUriCredential(source, start) {
  * run, and a scan that covered text is not repeated. A long plain token
  * therefore costs one pass and not one pass per position.
  *
+ * A connection URI and a connection string are two different grammars and are
+ * read by two different scanners. A URI is recognised only at the scheme
+ * libpq accepts, and its password is the raw text after the first `:` of the
+ * userinfo; a connection string honours the single quote and the backslash
+ * and no other. A URI that holds no password is ordinary text, so the scan
+ * continues inside it and a credential that follows it is still found.
+ *
  * The redaction runs before the excerpt is cut, so a secret can never be
  * split by the cut, and a value is consumed whole so its tail cannot survive
  * the redaction.
@@ -188,13 +234,19 @@ export function sanitizeProbeOutput(text, limit = PROBE_EXCERPT_LIMIT) {
   if (text === undefined || text === null) return ''
   const source = String(text)
   const pieces = []
+  const uriSearch = createUriSearch(source)
   let index = 0
   while (index < source.length) {
-    if (source.startsWith('://', index)) {
-      const credential = readUriCredential(source, index + 3)
-      pieces.push(credential.matched ? '://<redacted>@' : source.slice(index, credential.end))
-      index = credential.end
-      continue
+    const scheme = uriSchemeAt(source, index)
+    if (scheme !== null) {
+      const credential = readUriCredential(source, uriSearch, index + scheme.length + 3)
+      if (credential.matched) {
+        pieces.push(`${scheme}://<redacted>@`)
+        index = credential.end
+        continue
+      }
+      // The URI holds no password, so it is ordinary text and the scan
+      // continues inside it: a credential that follows it is still found.
     }
     if (KEY_CHARACTER.test(source[index])) {
       const keyEnd = readKeyEnd(source, index)
