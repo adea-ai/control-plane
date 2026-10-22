@@ -108,6 +108,21 @@ emit({
   delegation: child.delegation,
 })
 
+// Deterministic faults the test injects to prove that a failure before the
+// barrier still ends the owned child and cleans its disposable state.
+const fault = process.env.CRASH_FIXTURE_FAULT ?? ''
+if (fault === 'exit') {
+  process.stderr.write('the crashing admission failed before its barrier\n')
+  process.exit(70)
+}
+if (fault === 'malformed') {
+  process.stdout.write('this line is not json\n')
+}
+if (fault === 'hang') {
+  // The barrier is never reported: the parent's bounded wait has to end this child.
+  await new Promise(() => {})
+}
+
 await allocator.allocate({
   request: child.request,
   receipt: child.receipt,
