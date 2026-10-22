@@ -12,8 +12,13 @@ that exact identity is recorded and reviewed. No supplied URL can select its own
 allowlist, and the retired Neon target is not a fallback.
 
 The live owner must provide non-secret metadata: the database service ID,
-database name, migration and runtime endpoint hostnames and ports, plus evidence
-that both endpoints identify that same production database. The existing role
+production environment ID, database name, and three endpoints: the private
+runtime binding, public migration endpoint, and public runtime-verification
+endpoint. The two public endpoints must have identical host/port metadata,
+reviewed as the proxy for that same service and environment. The gate first
+validates the private runtime binding, then clones its URL and replaces only
+that reviewed host/port. Role, password, database and query policy are preserved;
+no private hostname is opened from the GitHub-hosted runner. The existing role
 contract remains `control_plane_migrator` for migration and `control_plane_app`
 for runtime. Credentials are never stored in this file or the target contract.
 Endpoint metadata must also establish the supported TLS trust and connection
@@ -42,3 +47,33 @@ production. Do not inherit production database credentials or network access.
 
 This source repair does not deploy, bootstrap a database, create credentials,
 remove provider variables, recreate staging, or change protected merge controls.
+
+Inspection, migration execution and runtime-role verification all explicitly use
+postgres.js `verify-full`, even when the runtime binding declares `sslmode=require`.
+This verifies both certificate chain and hostname using the process trust store.
+There is no permissive TLS callback or unverified fallback. A reviewed TLS peer
+name can differ from the proxy transport hostname only with an explicitly pinned CA.
+For system trust, the public proxy DNS name must be covered by the server
+certificate. For a verified private peer behind a public TCP proxy, record
+`identity.tls.serverName` and the lowercase SHA-256 digest of the CA certificate
+DER bytes in `identity.tls.caSha256`. Supply exactly that PEM certificate through
+the GitHub production-environment secret `DATABASE_MIGRATION_CA_CERTIFICATE`.
+The contract stores no PEM or credentials. The gate rejects absent, malformed,
+multiple or mismatched CA certificates before provider or database I/O and passes
+`{rejectUnauthorized: true, servername: reviewedPeer, ca: verifiedPem}` explicitly
+to inspection, migration execution and runtime-role verification. System trust
+uses `caSha256: null` and requires the peer name to equal the public endpoint.
+The private application route must independently trust its certificate chain. If that cannot be established, this gate remains blocked: do not
+substitute an unverified URL or weaken TLS. A separately authorized private-network
+execution design would require its own review.
+
+The application's shared PostgreSQL connection resolver also selects strict
+`verify-full` for accepted TLS modes. That source behavior is separate from live
+acceptance: the runtime private hostname, certificate SAN/chain, process trust,
+role/database and connectivity must still be independently verified. A passing
+public CI connection does not prove the application's private connection works.
+The committed live identity remains null until that evidence is supplied.
+
+Local TLS qualification uses OpenSSL-generated temporary synthetic certificates and
+loopback PostgreSQL SSLRequest handshakes. It covers trusted, untrusted, expired,
+wrong-host and explicit pinned-CA/peer cases, without contacting production.

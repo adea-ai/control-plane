@@ -3,7 +3,10 @@ import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolveProductionDatabaseTarget } from './production-database-target.mjs'
+import {
+  resolveProductionDatabaseTarget,
+  resolveProductionDatabaseTls,
+} from './production-database-target.mjs'
 
 const API_URL = 'https://backboard.railway.com/graphql/v2'
 const PROJECT_ID = '18c6a1fd-6b4b-421e-9ec9-fd1550ce9a3f'
@@ -106,6 +109,17 @@ export function assertRuntimeDatabaseUrl(value, productionDatabaseContract) {
     value,
     resolveProductionDatabaseTarget(productionDatabaseContract).runtime
   )
+}
+
+// Validate the exact private binding before deriving the public verification
+// route. Preserve the role, password, database and URL policy byte-for-byte;
+// the only substitutions are the reviewed proxy host and port.
+export function runtimeVerificationUrl(value, productionDatabaseContract) {
+  const url = assertRuntimeDatabaseUrl(value, productionDatabaseContract)
+  const target = resolveProductionDatabaseTarget(productionDatabaseContract)
+  url.hostname = target.runtimeVerification.hostname
+  url.port = String(target.runtimeVerification.port)
+  return parseDatabaseUrl(url.href, target.runtimeVerification)
 }
 
 function assertCanonicalHistory(history) {
@@ -240,7 +254,21 @@ export function createRailwayVariableReader({ token, fetchImpl = fetch }) {
   }
 }
 
-export function createPostgresSession(url, timeouts = MIGRATION_TIMEOUTS) {
+export function createPostgresSession(
+  url,
+  timeouts = MIGRATION_TIMEOUTS,
+  tls = { rejectUnauthorized: true }
+) {
+  if (
+    !tls ||
+    tls.rejectUnauthorized !== true ||
+    Object.keys(tls).some((key) => !['rejectUnauthorized', 'servername', 'ca'].includes(key)) ||
+    (tls.servername !== undefined &&
+      (typeof tls.servername !== 'string' || !/^[a-z0-9.-]+$/.test(tls.servername))) ||
+    (tls.ca !== undefined &&
+      (typeof tls.ca !== 'string' || !tls.ca.includes('-----BEGIN CERTIFICATE-----')))
+  )
+    throw gateError('strict database TLS policy is required')
   const postgresModule = requireFromDatabase('postgres')
   const postgres = typeof postgresModule === 'function' ? postgresModule : postgresModule?.default
   if (typeof postgres !== 'function') throw gateError('postgres database driver is unavailable')
@@ -250,7 +278,7 @@ export function createPostgresSession(url, timeouts = MIGRATION_TIMEOUTS) {
     max_lifetime: null,
     connect_timeout: timeouts.connectTimeoutSeconds,
     prepare: false,
-    ssl: 'verify-full',
+    ssl: tls,
     connection: {
       application_name: 'control-plane-production-schema-gate',
       statement_timeout: timeouts.statementTimeoutMs,
@@ -475,12 +503,12 @@ function assertConnectedRole(identity, expectedRole, database) {
   }
 }
 
-async function verifyRuntimeDatabase(url, openMigrationSession, productionDatabaseContract) {
+async function verifyRuntimeDatabase(url, openMigrationSession, productionDatabaseContract, tls) {
   const target = resolveProductionDatabaseTarget(productionDatabaseContract)
   let session
   let failure
   try {
-    session = await openMigrationSession(url, MIGRATION_TIMEOUTS)
+    session = await openMigrationSession(url, MIGRATION_TIMEOUTS, tls)
     assertConnectedRole(await session.readConnectedRole(), target.runtime.username, target.database)
     assertRuntimeCapabilities(
       await session.readRuntimeRoleCapabilities(),
@@ -502,11 +530,12 @@ async function verifyRuntimeDatabase(url, openMigrationSession, productionDataba
   if (failure) throw failure
 }
 
-async function migrateWithRepository(credentials) {
+async function migrateWithRepository(credentials, tls) {
   const { migrateDatabase } = await import('@control-plane/database/migration')
   await migrateDatabase(credentials, {
     ...MIGRATION_TIMEOUTS,
     verifyTls: true,
+    ...(typeof tls === 'object' ? { tls } : {}),
   })
 }
 
@@ -519,6 +548,10 @@ export async function migrateProductionSchema({
   productionDatabaseContract,
 }) {
   const target = resolveProductionDatabaseTarget(productionDatabaseContract)
+  const tls = resolveProductionDatabaseTls(
+    productionDatabaseContract,
+    environment.DATABASE_MIGRATION_CA_CERTIFICATE
+  )
   const migrationUrl = assertProductionMigrationUrl(
     environment.DATABASE_MIGRATION_URL,
     productionDatabaseContract
@@ -551,7 +584,7 @@ export async function migrateProductionSchema({
 
   let session
   try {
-    session = await openMigrationSession(migrationUrl, MIGRATION_TIMEOUTS)
+    session = await openMigrationSession(migrationUrl, MIGRATION_TIMEOUTS, tls)
   } catch {
     throw gateError('production migration database connection failed')
   }
@@ -574,15 +607,16 @@ export async function migrateProductionSchema({
     const afterLock = await session.readAppliedHistory()
     assertAppliedHistoryPrefix(afterLock, canonical)
 
-    await migrate({ role: 'migration', url: migrationUrl.href })
+    await migrate({ role: 'migration', url: migrationUrl.href }, tls)
 
     const afterMigration = await session.readAppliedHistory()
     assertAppliedHistoryPrefix(afterMigration, canonical, { requireFull: true })
     for (const binding of runtimeVariables) {
       await verifyRuntimeDatabase(
-        assertRuntimeDatabaseUrl(binding.url, productionDatabaseContract),
+        runtimeVerificationUrl(binding.url, productionDatabaseContract),
         openMigrationSession,
-        productionDatabaseContract
+        productionDatabaseContract,
+        tls
       )
     }
   } catch {
