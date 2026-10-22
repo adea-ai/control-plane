@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.5](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.4...local-control-plane-v1.36.5) (2026-10-22)
+
+
+### Tests
+
+* **#1018:** prove the concurrent retry and a client reconnect on PostgreSQL ([#1252](https://github.com/adea-ai/control-plane/issues/1252)) ([9789445](https://github.com/adea-ai/control-plane/commit/9789445e7f73dbe5ad3d06bee5873be54ad750fc))
+
 ## [1.36.4](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.3...local-control-plane-v1.36.4) (2026-10-22)
 
 
