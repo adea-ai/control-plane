@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.5](https://github.com/adea-ai/control-plane/compare/contracts-v1.21.4...contracts-v1.21.5) (2026-10-22)
+
+
+### Bug Fixes
+
+* **pi-durable:** fence cancellation retries and uncertain effects ([#935](https://github.com/adea-ai/control-plane/issues/935)) ([#1246](https://github.com/adea-ai/control-plane/issues/1246)) ([62d530f](https://github.com/adea-ai/control-plane/commit/62d530f5a4c012e978f38e6880181b8f5fbfebe5))
+
 ## [1.21.4](https://github.com/adea-ai/control-plane/compare/contracts-v1.21.3...contracts-v1.21.4) (2026-10-17)
 
 
