@@ -210,6 +210,62 @@ setInterval(() => {}, 1000)
 }
 
 /**
+ * Dispose of a fixture independently of any assertion that ran before it.
+ *
+ * This is the cleanup a caller runs in a `finally`, so a failing assertion can
+ * never leave a test-owned process behind. It works from the retained identity
+ * of the grandchild as well as from the receipt file, so it still reaches the
+ * process when the receipt is gone. It fails closed like the cleanup itself:
+ * when the reaping cannot be confirmed, the receipt and the directory are
+ * kept, because they name the process that is still running.
+ *
+ * @param {object} fixture the fixture to dispose of
+ * @param {object} [retainedReceipt] the receipt the caller recorded before it
+ *   removed or lost it
+ * @returns {Promise<{ success: boolean, grandchild: string, ownedChild: string, problems: string[], receiptPresent: boolean, directoryPreserved: boolean }>}
+ */
+export async function disposeOwnedTimeoutFixture(fixture, retainedReceipt = undefined) {
+  const receipt = retainedReceipt ?? readReceiptFile(fixture.receiptPath)
+  const problems = []
+  const grandchildPid = receipt?.grandchildPid
+  const startedSomething = fixture.ownedPid !== undefined || receipt !== undefined
+  let grandchild = 'not-started'
+  if (typeof grandchildPid === 'number') {
+    grandchild = await reapOwnedProcess(grandchildPid, fixture.nonce)
+    if (grandchild !== 'reaped' && grandchild !== 'already-gone') {
+      problems.push(`grandchild-${grandchild}`)
+    }
+  } else if (startedSomething) {
+    // A process was started but its identity is gone, so nothing can be
+    // signalled and the cleanup cannot claim that nothing is running.
+    problems.push('grandchild-identity-unknown')
+  }
+  let ownedChild = 'not-started'
+  if (fixture.ownedPid) {
+    ownedChild = await reapOwnedProcess(fixture.ownedPid, fixture.nonce)
+    if (ownedChild !== 'reaped' && ownedChild !== 'already-gone') {
+      problems.push(`owned-child-${ownedChild}`)
+    }
+  }
+  const confirmed = problems.length === 0
+  if (confirmed) {
+    // The artifacts are removed only when every owned process was confirmed
+    // gone. This deletes the fixture's own receipt and directory and nothing
+    // else.
+    if (existsSync(fixture.receiptPath)) rmSync(fixture.receiptPath, { force: true })
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+  return {
+    success: confirmed,
+    grandchild,
+    ownedChild,
+    problems,
+    receiptPresent: existsSync(fixture.receiptPath),
+    directoryPreserved: existsSync(fixture.directory),
+  }
+}
+
+/**
  * Reap every process this fixture owns and only then remove its receipts.
  *
  * The cleanup is independent of the success path: it works when the fixture
