@@ -96,15 +96,16 @@ toolchain (bun 1.4.3, node 24.21.0).
 `bun test src/child-budget-admission.integration.test.mjs` in
 `packages/database`, with `RUN_DATABASE_INTEGRATION=true` and the three
 credential roles, against a disposable isolated database →
-**5 passed, 0 failed, 60 assertions**.
+**6 passed, 0 failed, 77 assertions**.
 
-| State                  | Exact test name                                                                             |
-| ---------------------- | ------------------------------------------------------------------------------------------- |
-| authority + concurrent | `denials leave no allocation and concurrent requests serialize the parallel limit`          |
-| total                  | `the total child limit denies the admission and leaves no allocation on PostgreSQL`         |
-| depth                  | `the depth limit denies the admission and leaves no allocation on PostgreSQL`               |
-| budget                 | `the child budget limit denies the admission and leaves no allocation on PostgreSQL`        |
-| retry                  | `a retried child keeps its parallel slot and cannot mint a second allocation on PostgreSQL` |
+| State                    | Exact test name                                                                                                 |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| authority + concurrent   | `denials leave no allocation and concurrent requests serialize the parallel limit`                              |
+| total                    | `the total child limit denies the admission and leaves no allocation on PostgreSQL`                             |
+| depth                    | `the depth limit denies the admission and leaves no allocation on PostgreSQL`                                   |
+| budget                   | `the child budget limit denies the admission and leaves no allocation on PostgreSQL`                            |
+| retry                    | `a retried child keeps its parallel slot and cannot mint a second allocation on PostgreSQL`                     |
+| retry (race + reconnect) | `a concurrent retry of one identity allocates once and a recreated client observes the same parent reservation` |
 
 All five bounded limits are now proved on the production (hosted) store as
 well as on SQLite: the authority fence (case 1) rolls the admission back and
@@ -115,8 +116,20 @@ authority case proves the **rollback and the absence of an allocation**; the
 denial code it surfaces is the caller's own authority error, which the
 repository propagates unchanged.
 
+Case 6 proves the retry state against the two shapes case 5 does not reach. It
+submits **one identity twice at once**, so the parent lock has to serialize
+two in-flight allocations of the same child rather than a retry that follows a
+committed one, and it then reaches the same database through a **client it
+owns, closed and recreated**, so the committed allocation has to be the
+database's and not a connection's. The recreated client observes the same one
+delegation, one child execution, one child budget and one parent reservation,
+and the retry through it is refused. It also asserts the parent reservation in
+the shape the broader CP #1030 hosted operations measurement producer reads: a
+reservation array whose every element carries an integral, non-negative
+charged amount.
+
 Without `RUN_DATABASE_INTEGRATION=true` this suite is **skipped**, not passed:
-`0 passed, 5 skipped, 0 failed`. A green run of the offline suites never
+`0 passed, 6 skipped, 0 failed`. A green run of the offline suites never
 qualifies this gate.
 
 ### 2.5 The production reservation and the worker-side allowance
@@ -225,6 +238,19 @@ the admission, **only the budget regression fails** (4 passed, 1 failed) and
 the other four cases still pass, so the case is load-bearing and duplicates
 none of them. The implementation file was restored after each check and is not
 part of this change.
+
+A later increment adds one more PostgreSQL regression, `a concurrent retry of
+one identity allocates once and a recreated client observes the same parent
+reservation`, which proves the two shapes the earlier retry case cannot
+reach: two allocations of **one** identity in flight at once, and the same
+database reached through a **closed and recreated** client. It is
+mutation-verified the same way: expecting the race to allocate twice, expecting
+the recreated client's retry to allocate again, and expecting a different
+parent reservation key each fail the new case alone, and the other five cases
+still pass. The shared `withAdmissionFixture` helper gained the isolated
+database's name and the application credential so a case can own a client; the
+helper still disposes the isolated database on every path, and the five
+earlier cases are unchanged. The implementation file was not touched.
 
 ## 4. Qualification boundary
 

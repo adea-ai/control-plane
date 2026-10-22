@@ -11,11 +11,14 @@ import {
 import { deriveExecutionPlan, ExecutionPlanCompiler } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
+import { eq } from 'drizzle-orm'
 import { PostgresDelegationRepository } from './delegation-repository.ts'
 import { PostgresContextPackageRepository } from './context-package-repository.ts'
+import { createPostgresConnection } from './connection.ts'
 import { PostgresExecutionPlanRepository } from './execution-plan-repository.ts'
 import { PostgresExecutionRepository } from './execution-repository.ts'
 import { PostgresToolCallRepository } from './tool-repositories.ts'
+import { usageBudgetStates } from './schema/usage-budget-state.ts'
 import { createIsolatedTestDatabase } from './testing.ts'
 import { PostgresDurableUsageStore } from './usage-store.ts'
 
@@ -287,10 +290,33 @@ async function withAdmissionFixture(
       }
     }
 
-    await run({ delegations, executions, toolCalls, usageStore, ledger, candidate, parentToolCall })
+    await run({
+      delegations,
+      executions,
+      toolCalls,
+      usageStore,
+      ledger,
+      candidate,
+      parentToolCall,
+      // The isolated database's own name and the application credential, so a
+      // case can reach the same database through a client it owns.
+      name: isolated.name,
+      credentials,
+    })
   } finally {
     await isolated.dispose()
   }
+}
+
+/**
+ * The same database, reached through a client this test owns. The client is
+ * separate from the fixture's, so closing and recreating it proves the
+ * committed state is the database's and not a connection's.
+ */
+function ownedApplicationConnection(credentials, databaseName) {
+  const url = new URL(credentials.url)
+  url.pathname = `/${databaseName}`
+  return createPostgresConnection({ role: 'application', url: url.toString() })
 }
 describe.skipIf(!enabled)('PostgreSQL child budget admission', () => {
   test('denials leave no allocation and concurrent requests serialize the parallel limit', async () => {
@@ -554,5 +580,73 @@ describe.skipIf(!enabled)('PostgreSQL child budget admission', () => {
       ).toStrictEqual(parentBudgetBefore)
       expect(parentBudgetBefore?.reservations).toHaveLength(1)
     })
+  }, 60_000)
+
+  test('a concurrent retry of one identity allocates once and a recreated client observes the same parent reservation', async () => {
+    await withAdmissionFixture(
+      async ({ delegations, candidate, name, credentials }) => {
+        const admitted = await candidate()
+        const admit = (repository) =>
+          repository.allocate({ ...admitted, assertCurrent: async () => undefined })
+
+        // The retry race: one identity submitted twice at once. The parent lock
+        // serializes them, so exactly one allocates and the other observes the
+        // committed identity instead of allocating it again.
+        const raced = await Promise.allSettled([admit(delegations), admit(delegations)])
+        expect(raced.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled'])
+        expect(
+          raced.filter((result) => result.status === 'fulfilled' && result.value)
+        ).toHaveLength(1)
+        expect(
+          raced.filter((result) => result.status === 'fulfilled' && !result.value)
+        ).toHaveLength(1)
+
+        // A client that reconnects to the same database observes the same
+        // committed allocation and refuses to allocate the identity again.
+        const owned = ownedApplicationConnection(credentials.application, name)
+        try {
+          const reconnected = new PostgresDelegationRepository(owned.database)
+          expect(await admit(reconnected)).toBe(false)
+          expect(await reconnected.listByParent(parentExecutionId)).toHaveLength(1)
+          expect(await reconnected.get(admitted.delegationId)).toMatchObject({
+            delegationId: admitted.delegationId,
+          })
+          expect(
+            await new PostgresExecutionRepository(owned.database).getExecution(
+              admitted.childExecutionId
+            )
+          ).toMatchObject({ executionId: admitted.childExecutionId })
+          const reconnectedStore = new PostgresDurableUsageStore(owned.database)
+          expect(
+            await reconnectedStore.transaction(workspaceId, (transaction) =>
+              transaction.getBudget(admitted.childExecutionId)
+            )
+          ).toMatchObject({ maximumMicrounits: 4_000_000, maximumTokens: 40_000 })
+          const parentBudget = await reconnectedStore.transaction(workspaceId, (transaction) =>
+            transaction.getBudget(parentExecutionId)
+          )
+          expect(parentBudget?.reservations).toHaveLength(1)
+
+          // The broader CP #1030 hosted operations measurement producer reads
+          // this exact reservation array: a non-array is malformed, and every
+          // element must carry an integral, non-negative charged amount.
+          const [row] = await owned.database
+            .select({ state: usageBudgetStates.state })
+            .from(usageBudgetStates)
+            .where(eq(usageBudgetStates.executionId, parentExecutionId))
+          expect(Array.isArray(row?.state?.reservations)).toBe(true)
+          expect(row?.state?.reservations).toHaveLength(1)
+          const [reservation] = row?.state?.reservations ?? []
+          expect(reservation?.reservationKey).toBe(`child:${admitted.childExecutionId}`)
+          expect(reservation?.childExecutionId).toBe(admitted.childExecutionId)
+          expect(reservation?.status).toBe('open')
+          expect(Number.isInteger(reservation?.chargedMicrounits)).toBe(true)
+          expect(reservation?.chargedMicrounits).toBeGreaterThanOrEqual(0)
+        } finally {
+          await owned.close()
+        }
+      },
+      { maximumTotal: 2, maximumParallel: 1 }
+    )
   }, 60_000)
 })
