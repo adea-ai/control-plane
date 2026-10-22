@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.106.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.7...workspace-v1.106.8) (2026-10-22)
+
+
+### Bug Fixes
+
+* **ci:** build migration dependencies without obsolete filter forwarding ([bd77f7d](https://github.com/adea-ai/control-plane/commit/bd77f7d8b20801439a25abfd8f43bf69681c0ff3))
+* **ci:** build promotion migration dependencies without obsolete filter ([#1261](https://github.com/adea-ai/control-plane/issues/1261)) ([bd77f7d](https://github.com/adea-ai/control-plane/commit/bd77f7d8b20801439a25abfd8f43bf69681c0ff3))
+
 ## [1.106.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.6...workspace-v1.106.7) (2026-10-22)
 
 
