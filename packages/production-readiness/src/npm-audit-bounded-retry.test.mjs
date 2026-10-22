@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import {
+  cleanupOwnedTimeoutFixture,
+  isProcessAlive,
+  startOwnedTimeoutFixture,
+} from './npm-audit-timeout.fixture.mjs'
 import {
   BULK_ADVISORY_PATH,
   DEFAULT_ATTEMPTS,
@@ -294,38 +296,14 @@ describe('the audit invocation', () => {
 
 describe('the bounded cleanup of an attempt that runs out of budget', () => {
   test('a TERM-resistant child is ended with a bounded escalation and only the owned child is cleaned up', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'npm-audit-timeout-'))
-    const signalLog = join(directory, 'signals')
-    const grandchildPidFile = join(directory, 'grandchild.pid')
-    const script = join(directory, 'term-resistant.mjs')
-    writeFileSync(
-      script,
-      `import { spawn } from 'node:child_process'
-import { appendFileSync, writeFileSync } from 'node:fs'
-process.on('SIGTERM', () => {
-  appendFileSync(${JSON.stringify(signalLog)}, 'TERM\\n')
-})
-const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
-writeFileSync(${JSON.stringify(grandchildPidFile)}, String(grandchild.pid))
-setInterval(() => {}, 1000)
-`
-    )
-    let ownedPid
-    let grandchildPid
+    const fixture = startOwnedTimeoutFixture()
     try {
       const started = Date.now()
       const result = await runRealAuditAttempt({
-        cwd: directory,
+        cwd: fixture.directory,
         timeoutMs: 300,
         termGraceMs: 400,
-        spawn: (command, args, options) => {
-          const child = spawn(process.execPath, [script], {
-            ...options,
-            stdio: ['ignore', 'pipe', 'pipe'],
-          })
-          ownedPid = child.pid
-          return child
-        },
+        spawn: fixture.spawn,
       })
       const elapsed = Date.now() - started
 
@@ -336,55 +314,31 @@ setInterval(() => {}, 1000)
 
       // SIGTERM was delivered first, and the grace window was honoured before
       // the escalation.
-      expect(readFileSync(signalLog, 'utf8')).toContain('TERM')
+      expect(readFileSync(fixture.signalLogPath, 'utf8')).toContain('TERM')
       expect(elapsed).toBeGreaterThanOrEqual(600)
 
       // The owned child is gone: the attempt resolved only after its exit.
-      expect(() => process.kill(ownedPid, 0)).toThrow()
+      expect(isProcessAlive(fixture.ownedPid)).toBe(false)
 
       // Only the owned child was cleaned up: its own descendant was not
-      // signalled.
-      grandchildPid = Number(readFileSync(grandchildPidFile, 'utf8'))
-      expect(() => process.kill(grandchildPid, 0)).not.toThrow()
+      // signalled. Its identity comes from the receipt the child published.
+      const receipt = await fixture.readReceipt()
+      expect(isProcessAlive(receipt.grandchildPid)).toBe(true)
     } finally {
-      if (grandchildPid) {
-        try {
-          process.kill(grandchildPid, 'SIGKILL')
-        } catch {
-          /* already gone */
-        }
-      }
-      rmSync(directory, { recursive: true, force: true })
+      await cleanupOwnedTimeoutFixture(fixture)
     }
   })
 
   test('the attempt resolves when the owned child is reaped, even when a descendant holds the pipe', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'npm-audit-reap-'))
-    const grandchildPidFile = join(directory, 'grandchild.pid')
-    const script = join(directory, 'pipe-holding.mjs')
-    writeFileSync(
-      script,
-      `import { spawn } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
-process.on('SIGTERM', () => {})
-// The descendant inherits the pipes, so they stay open after the child is gone.
-const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-  stdio: ['ignore', 1, 2],
-})
-writeFileSync(${JSON.stringify(grandchildPidFile)}, String(grandchild.pid))
-setInterval(() => {}, 1000)
-`
-    )
-    let grandchildPid
+    const fixture = startOwnedTimeoutFixture({ holdsPipe: true })
     try {
       const started = Date.now()
       const result = await runRealAuditAttempt({
-        cwd: directory,
+        cwd: fixture.directory,
         timeoutMs: 300,
         termGraceMs: 300,
         drainMs: 250,
-        spawn: (command, args, options) =>
-          spawn(process.execPath, [script], { ...options, stdio: ['ignore', 'pipe', 'pipe'] }),
+        spawn: fixture.spawn,
       })
       const elapsed = Date.now() - started
 
@@ -394,40 +348,56 @@ setInterval(() => {}, 1000)
       expect(elapsed).toBeLessThan(5_000)
 
       // Only the owned child was cleaned up.
-      grandchildPid = Number(readFileSync(grandchildPidFile, 'utf8'))
-      expect(() => process.kill(grandchildPid, 0)).not.toThrow()
+      const receipt = await fixture.readReceipt()
+      expect(isProcessAlive(receipt.grandchildPid)).toBe(true)
     } finally {
-      if (grandchildPid) {
-        try {
-          process.kill(grandchildPid, 'SIGKILL')
-        } catch {
-          /* already gone */
-        }
-      }
-      rmSync(directory, { recursive: true, force: true })
+      await cleanupOwnedTimeoutFixture(fixture)
     }
   })
 
   test('a child that exits on SIGTERM is cleaned up without the escalation', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'npm-audit-term-'))
-    const script = join(directory, 'term-responsive.mjs')
-    writeFileSync(
-      script,
-      "process.on('SIGTERM', () => process.exit(0))\nsetInterval(() => {}, 1000)\n"
-    )
+    const fixture = startOwnedTimeoutFixture({ exitsOnTerm: true })
     try {
       const result = await runRealAuditAttempt({
-        cwd: directory,
+        cwd: fixture.directory,
         timeoutMs: 200,
         termGraceMs: 5_000,
-        spawn: (command, args, options) =>
-          spawn(process.execPath, [script], { ...options, stdio: ['ignore', 'pipe', 'pipe'] }),
+        spawn: fixture.spawn,
       })
       expect(result.timedOut).toBe(true)
       expect(result.exitCode).toBe(0)
     } finally {
-      rmSync(directory, { recursive: true, force: true })
+      await cleanupOwnedTimeoutFixture(fixture)
     }
+  })
+
+  test('the fixture reaps its owned processes and removes its receipts when an assertion fails', async () => {
+    const fixture = startOwnedTimeoutFixture()
+    // The fixture owns the child from the moment it starts, so the cleanup can
+    // recover both identities without any success-path assertion.
+    fixture.spawn('bun', ['audit'], { cwd: fixture.directory, env: process.env })
+    const receipt = await fixture.readReceipt()
+    let failure
+    try {
+      // A forced assertion failure, before any success-path assertion could
+      // have recorded a process identity.
+      expect(receipt.grandchildPid).toBe(-1)
+    } catch (error) {
+      failure = error
+    }
+    const outcome = await cleanupOwnedTimeoutFixture(fixture)
+
+    // The cleanup ran on the failure path, not on the success path.
+    expect(failure).toBeDefined()
+    expect(outcome.grandchild).toBe('reaped')
+    expect(outcome.ownedChild).toBe('reaped')
+    expect(outcome.receiptsRemoved).toBe(true)
+
+    // Neither owned process is left behind, and the receipt that named them
+    // is gone only after they were reaped.
+    expect(isProcessAlive(fixture.ownedPid)).toBe(false)
+    expect(isProcessAlive(receipt.grandchildPid)).toBe(false)
+    expect(existsSync(fixture.receiptPath)).toBe(false)
   })
 })
 
