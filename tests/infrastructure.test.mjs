@@ -468,7 +468,7 @@ test('packages the hosted simple profile as one hardened user-owned composition'
   assert.match(compose, /APP_NAME:\s*hosted-control-plane/)
   assert.doesNotMatch(postgresBlock, /\n\s+ports:/)
   assert.doesNotMatch(restateBlock, /\n\s+ports:/)
-  assert.match(dockerfile, /^FROM oven\/bun:1\.4\.3@sha256:[a-f0-9]{64}/m)
+  assert.match(dockerfile, /^FROM oven\/bun:1\.4\.4@sha256:[a-f0-9]{64}/m)
   assert.match(dockerfile, /ARG APP_NAME=local-control-plane/)
   assert.match(dockerfile, /bun install --frozen-lockfile --production --ignore-scripts/)
   assert.doesNotMatch(dockerfile, /COPY --from=build --chown=bun:bun \/workspace \/workspace/)

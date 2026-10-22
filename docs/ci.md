@@ -1,6 +1,6 @@
 # Continuous integration
 
-Code Foundry v1.48.1 is the CI runtime pinned by the generated callers under
+Code Foundry v1.48.4 is the CI runtime pinned by the generated callers under
 `.github/workflows/`. Feature branches target `main`; production is the only persistent Railway environment. Production promotion remains protected and explicitly targeted.
 
 ## Required pull-request gate

@@ -15,7 +15,7 @@ The original M9 managed-cloud and M10 portability work remains historical implem
 ## Prerequisites
 
 - Node.js 24.21.0 (`.node-version`)
-- Bun 1.4.3 (`.bun-version` and `packageManager`)
+- Bun 1.4.4 (`.bun-version` and `packageManager`)
 
 Newer compatible Bun 1.x patch releases may run the workspace, but the pinned version is the reproducible baseline.
 

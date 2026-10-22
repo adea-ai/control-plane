@@ -152,11 +152,12 @@ describe('contract version compatibility', () => {
   test('publishes the supported boundary and rejects an inverted deprecation window', () => {
     expect(PublicContractManifest).toEqual({
       name: 'agent-hq-control-plane',
-      current: { major: 3, minor: 0 },
+      current: { major: 3, minor: 1 },
       supported: [
         { major: 1, minor: 0 },
         { major: 2, minor: 0 },
         { major: 3, minor: 0 },
+        { major: 3, minor: 1 },
       ],
     })
     expect(
