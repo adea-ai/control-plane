@@ -54,7 +54,7 @@
     },
     "apps/control-api": {
       "name": "@control-plane/control-api",
-      "version": "1.34.2",
+      "version": "1.34.1",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -218,7 +218,7 @@
     },
     "apps/workflow-worker": {
       "name": "@control-plane/workflow-worker",
-      "version": "1.18.2",
+      "version": "1.18.1",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -626,7 +626,7 @@
     },
     "packages/telemetry": {
       "name": "@control-plane/telemetry",
-      "version": "1.8.2",
+      "version": "1.8.1",
       "devDependencies": {
         "@opentelemetry/api": "1.10.0",
         "@opentelemetry/sdk-metrics": "3.0.0",
@@ -643,7 +643,7 @@
     },
     "packages/testing": {
       "name": "@control-plane/testing",
-      "version": "1.2.5",
+      "version": "1.2.4",
       "dependencies": {
         "@control-plane/config": "workspace:*",
         "@control-plane/database": "workspace:*",
