@@ -24,21 +24,44 @@ export const POSTGRES_RECOVERY_CEILING_SECONDS = 30
 export const PROBE_EXCERPT_LIMIT = 400
 
 /**
+ * The key of a credential. A key may carry a prefix, so `my_password` is a
+ * credential key too.
+ */
+const CREDENTIAL_KEY = '[A-Za-z0-9_.-]*(?:PGPASSWORD|password|passwd|pwd|secret|token|api[_-]?key)'
+
+/**
+ * The value of a credential.
+ *
+ * A value is a quoted string, which may carry escaped characters, or a run of
+ * non-space characters. The closing quote of a quoted value is optional, so a
+ * value whose quote is never closed is consumed to the end of its line and
+ * nothing after it survives. A quoted value is otherwise consumed whole, so a
+ * password that contains a space cannot leave its tail behind.
+ */
+const CREDENTIAL_VALUE = String.raw`(?:"(?:\\.|[^"\\])*"?|'(?:\\.|[^'\\])*'?|[^\s]*)`
+
+/**
+ * The password inside a connection URI, with the same quoting rules.
+ */
+const URI_PASSWORD = String.raw`(?:"(?:\\.|[^"\\])*"?|'(?:\\.|[^'\\])*'?|[^\s/@]*)`
+
+/**
  * Redacts credentials from probe output and caps its length.
  *
  * The probe runs inside the compose service, so its output normally holds a
  * socket path and a database name. It can also hold a connection string, a
- * `PGPASSWORD` assignment, or a long opaque token, so those are redacted
- * before the text is kept.
+ * `PGPASSWORD` assignment, a quoted password with a space in it, or a long
+ * opaque token, so those are redacted before the text is kept.
+ *
+ * The redaction runs before the excerpt is cut, so a secret can never be
+ * split by the cut, and a quoted value is consumed whole so its tail cannot
+ * survive the redaction.
  */
 export function sanitizeProbeOutput(text, limit = PROBE_EXCERPT_LIMIT) {
   if (text === undefined || text === null) return ''
   const redacted = String(text)
-    .replace(/:\/\/[^/\s:@]+:[^/\s@]+@/g, '://<redacted>@')
-    .replace(
-      /\b(PGPASSWORD|password|passwd|pwd|secret|token|api[_-]?key)\s*=\s*\S+/gi,
-      '$1=<redacted>'
-    )
+    .replace(new RegExp(String.raw`://[^/\s:@]+:${URI_PASSWORD}@`, 'g'), '://<redacted>@')
+    .replace(new RegExp(`(${CREDENTIAL_KEY})\\s*=\\s*${CREDENTIAL_VALUE}`, 'gi'), '$1=<redacted>')
     .replace(/\b[a-f0-9]{32,}\b/gi, '<redacted>')
   return redacted.trim().slice(0, limit)
 }

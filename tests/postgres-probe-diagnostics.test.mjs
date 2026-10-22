@@ -61,6 +61,49 @@ test('probe output is bounded and carries no credential', () => {
   expect(sanitizeProbeOutput('x'.repeat(5_000)).length).toBe(PROBE_EXCERPT_LIMIT)
 })
 
+// A quoted password holds a space, so a rule that stops at the first
+// whitespace leaves the tail of the secret behind: `password='two words'`
+// became `password=<redacted> words'`. Every quoted and escaped form has to
+// be consumed whole, and a value whose quote is never closed has to take the
+// rest of its line with it.
+test('a quoted password leaves no tail behind', () => {
+  const forms = [
+    "password='two words'",
+    'password="two words"',
+    "password='two\\' words'",
+    'password="two\\" words"',
+    "password='two words",
+    'password="two words',
+  ]
+  for (const form of forms) {
+    const sanitized = sanitizeProbeOutput(form)
+    expect(sanitized).not.toContain('two')
+    expect(sanitized).not.toContain('words')
+    expect(sanitized).toContain('<redacted>')
+  }
+})
+
+test('a quoted password in a connection URI leaves no tail behind', () => {
+  const sanitized = sanitizeProbeOutput(
+    "postgresql://control_plane_admin:'two words'@127.0.0.1/postgres"
+  )
+  expect(sanitized).not.toContain('two')
+  expect(sanitized).not.toContain('words')
+  expect(sanitized).toContain('<redacted>')
+})
+
+test('a credential key with a prefix is redacted too', () => {
+  expect(sanitizeProbeOutput('my_password=hunter2 db=postgres')).toBe(
+    'my_password=<redacted> db=postgres'
+  )
+})
+
+test('a message that only names a credential is not redacted', () => {
+  const message =
+    'psql: error: FATAL:  password authentication failed for user "control_plane_admin"'
+  expect(sanitizeProbeOutput(message)).toBe(message)
+})
+
 test('a probe that timed out is a service that is not ready, and a missing executable is not', () => {
   expect(isProbeTimeout({ code: 'ETIMEDOUT' })).toBe(true)
   expect(isProbeTimeout({ code: 'ENOENT' })).toBe(false)
