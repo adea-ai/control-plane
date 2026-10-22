@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.9.1](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.9.0...runtime-gateway-v1.9.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* runtime-gateway-start-authority-marker ([#1245](https://github.com/adea-ai/control-plane/issues/1245)) ([f6e012b](https://github.com/adea-ai/control-plane/commit/f6e012b4906cafe515d086ace93c8956acb143bc))
+* **testing:** print the authority marker the startup test looks for ([f6e012b](https://github.com/adea-ai/control-plane/commit/f6e012b4906cafe515d086ace93c8956acb143bc))
+
 ## [1.9.0](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.8.1...runtime-gateway-v1.9.0) (2026-10-17)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.3](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.2...local-control-plane-v1.36.3) (2026-10-22)
+
+
+### Tests
+
+* **local:** stabilize operations measurement lifecycle ([#1217](https://github.com/adea-ai/control-plane/issues/1217)) ([7f42d34](https://github.com/adea-ai/control-plane/commit/7f42d347800f1a83b9bddcf8bb7f5cccf9486bd6))
+
 ## [1.36.2](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.1...local-control-plane-v1.36.2) (2026-10-17)
 
 
