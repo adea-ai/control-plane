@@ -91,7 +91,7 @@ This core verification does not change the repository's CI runtime pin.
 ## Control Plane commands
 
 Run from the repository root unless a package directory is specified.
-`package.json` and `.bun-version` pin Bun 1.4.3; `.node-version` pins Node 24.21.0.
+`package.json` and `.bun-version` pin Bun 1.4.4; `.node-version` pins Node 24.21.0.
 
 | Task                        | Command                                                                                      |
 | --------------------------- | -------------------------------------------------------------------------------------------- |

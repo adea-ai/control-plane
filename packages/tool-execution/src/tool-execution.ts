@@ -28,6 +28,7 @@ const QUALIFIED_LEGACY_LOCALE_RUNTIMES = [
   { bun: '1.4.2', icu: '78.1' },
   { bun: '1.4.3', icu: '78.1' },
   { bun: '1.4.3', icu: '78.3' },
+  { bun: '1.4.4', icu: '78.3' },
 ] as const
 
 export interface ToolCallRepository {

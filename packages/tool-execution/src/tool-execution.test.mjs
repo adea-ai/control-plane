@@ -213,6 +213,7 @@ test('qualified readers reproduce the independently pinned historical bytes with
     { bun: '1.4.2', icu: '78.1' },
     { bun: '1.4.3', icu: '78.1' },
     { bun: '1.4.3', icu: '78.3' },
+    { bun: '1.4.4', icu: '78.3' },
   ]).toContainEqual({ bun: process.versions.bun, icu: process.versions.icu })
   for (const [locale, receipts] of [
     ['en-US', historicalLocaleReceiptBytes.enUS],
@@ -233,6 +234,51 @@ test('qualified readers reproduce the independently pinned historical bytes with
       return JSON.stringify(value)
     }
     for (const bytes of Object.values(receipts)) expect(serialize(JSON.parse(bytes))).toBe(bytes)
+  }
+})
+
+test('unknown Bun and ICU tuples reject legacy receipts while preserving code-point verification', () => {
+  const input = { é: 'accent', Z: 'upper', a: 'lower' }
+  const legacy = 'sha256:97b3d39635013bc582dab7b3677c2d28f4ee1cf5cc6b7c254344c68f983cf8e5'
+  const codePoint = digestWithSharedCanonicalJson(input)
+  for (const runtime of [
+    { bun: '1.4.5', icu: '78.3' },
+    { bun: '1.4.4', icu: '78.4' },
+    { bun: '1.4.4', icu: '78.1' },
+    { bun: '1.4.3', icu: '79.0' },
+    { bun: undefined, icu: '78.3' },
+  ]) {
+    // Spoof only negative controls in separate processes; the positive byte and
+    // persistence qualifications use the real, unmodified executable identity.
+    const result = Bun.spawnSync(
+      [
+        process.execPath,
+        '-e',
+        `
+          Object.defineProperty(process.versions, 'bun', { value: ${JSON.stringify(runtime.bun)} })
+          Object.defineProperty(process.versions, 'icu', { value: ${JSON.stringify(runtime.icu)} })
+          const { toolInputMatchesDigest } = await import(${JSON.stringify(new URL('./tool-execution.ts', import.meta.url).href)})
+          console.log(JSON.stringify({
+            legacy: toolInputMatchesDigest(${JSON.stringify(input)}, ${JSON.stringify(legacy)}),
+            codePoint: toolInputMatchesDigest(${JSON.stringify(input)}, ${JSON.stringify(codePoint)}),
+            taggedLegacy: toolInputMatchesDigest(${JSON.stringify(input)}, ${JSON.stringify(legacy)}, 2),
+            unknownVersion: toolInputMatchesDigest(${JSON.stringify(input)}, ${JSON.stringify(codePoint)}, 3),
+          }))
+        `,
+      ],
+      { stdout: 'pipe', stderr: 'pipe', timeout: 10_000 }
+    )
+    expect({ runtime, exitCode: result.exitCode, stderr: result.stderr.toString() }).toEqual({
+      runtime,
+      exitCode: 0,
+      stderr: '',
+    })
+    expect(JSON.parse(result.stdout.toString())).toEqual({
+      legacy: false,
+      codePoint: true,
+      taggedLegacy: false,
+      unknownVersion: false,
+    })
   }
 })
 
