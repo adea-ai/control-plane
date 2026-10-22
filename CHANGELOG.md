@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.106.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.8...workspace-v1.106.0) (2026-10-22)
+
+
+### Features
+
+* **child-progress:** recover authorized reference and cost evidence ([#1019](https://github.com/adea-ai/control-plane/issues/1019)) ([#1236](https://github.com/adea-ai/control-plane/issues/1236)) ([a996dc1](https://github.com/adea-ai/control-plane/commit/a996dc19d588610757ba270ad7b9876e406d1f8b))
+
+## [1.105.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.7...workspace-v1.105.8) (2026-10-21)
+
+
+### Bug Fixes
+
+* **control-api:** refuse the funding disclosure when the funding host is absent ([019b5fe](https://github.com/adea-ai/control-plane/commit/019b5fec91525a9adc152ea8bc605113c34865cf))
+* **control-api:** refuse the funding disclosure when the funding host is absent (CP [#931](https://github.com/adea-ai/control-plane/issues/931)) ([#1229](https://github.com/adea-ai/control-plane/issues/1229)) ([019b5fe](https://github.com/adea-ai/control-plane/commit/019b5fec91525a9adc152ea8bc605113c34865cf))
+
+
+### Tests
+
+* **model-gateway:** prove the BYO eligibility rules independently ([f1bd75c](https://github.com/adea-ai/control-plane/commit/f1bd75c5877f31b809c42b8aa43e2d5b08e3ad14))
+* **model-gateway:** prove the BYO eligibility rules independently (CP [#931](https://github.com/adea-ai/control-plane/issues/931)) ([#1225](https://github.com/adea-ai/control-plane/issues/1225)) ([f1bd75c](https://github.com/adea-ai/control-plane/commit/f1bd75c5877f31b809c42b8aa43e2d5b08e3ad14))
+* **sqlite-persistence:** prove the three delivery kinds deduplicate independently (CP [#1024](https://github.com/adea-ai/control-plane/issues/1024)) ([#1231](https://github.com/adea-ai/control-plane/issues/1231)) ([f2e5cce](https://github.com/adea-ai/control-plane/commit/f2e5ccebf01732c7643ce06f21212da8f6f880bb))
+
+## [1.105.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.6...workspace-v1.105.7) (2026-10-21)
+
+
+### Bug Fixes
+
+* **testing:** load the isolated postgres fixture from an owned temporary file ([#1212](https://github.com/adea-ai/control-plane/issues/1212)) ([df37ca8](https://github.com/adea-ai/control-plane/commit/df37ca85a616d04e8fc9dfd3d68094f6d19ddf67))
+
+## [1.105.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.5...workspace-v1.105.6) (2026-10-21)
+
+
+### Tests
+
+* **railway:** qualify the production source plan offline ([#1211](https://github.com/adea-ai/control-plane/issues/1211)) ([2e68492](https://github.com/adea-ai/control-plane/commit/2e68492edbace6414cd7e6903d89e43848996163))
+
 ## [1.105.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.4...workspace-v1.105.5) (2026-10-21)
 
 
