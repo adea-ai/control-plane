@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.106.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.6...workspace-v1.106.7) (2026-10-22)
+
+
+### Maintenance
+
+* **railway:** finish production PostgreSQL reference cleanup ([#1259](https://github.com/adea-ai/control-plane/issues/1259)) ([bc15dfb](https://github.com/adea-ai/control-plane/commit/bc15dfbe7ef59723acb3d0da438515f7ea30417d))
+
 ## [1.106.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.5...workspace-v1.106.6) (2026-10-22)
 
 
