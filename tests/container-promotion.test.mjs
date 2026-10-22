@@ -28,6 +28,7 @@ import {
   createPostgresSession,
   runtimeVerificationUrl,
   loadCanonicalMigrationHistory,
+  productionSchemaGateFailure,
   migrateProductionSchema as migrateProductionSchemaRecorded,
 } from '../scripts/migrate-production-schema.mjs'
 
@@ -546,6 +547,31 @@ describe('production schema migration gate', () => {
     assert.throws(
       () => assertProductionMigrationUrl(`${migrationUrl}&sslmode=disable`),
       /role, database, host, or TLS policy/
+    )
+  })
+
+  test('preserves a safe provider failure label through the binding guard without provider response text', async () => {
+    const secret = 'provider-response-secret-fixture'
+    const railway = createRailwayVariableReader({
+      token: 'token-fixture',
+      fetchImpl: async () => ({ ok: false, json: async () => ({ errors: [{ message: secret }] }) }),
+    })
+    await assert.rejects(
+      migrateProductionSchema({
+        environment: { DATABASE_MIGRATION_URL: migrationUrl },
+        railway,
+        canonicalHistory,
+        openMigrationSession: () => assert.fail('database must not open'),
+      }),
+      (error) => {
+        assert.match(error.message, /runtime database bindings do not match production/)
+        assert.equal(
+          productionSchemaGateFailure(error),
+          'Railway runtime configuration lookup failed'
+        )
+        assert.ok(!productionSchemaGateFailure(error).includes(secret))
+        return true
+      }
     )
   })
 
@@ -1416,4 +1442,28 @@ test('database clients reject permissive TLS options before creating a connectio
       /PostgreSQL connection configuration is invalid/
     )
   }
+})
+
+test('schema gate CI diagnostics reject arbitrary exception properties and credential-bearing messages', () => {
+  const secret = 'postgresql://account:password-fixture@database.invalid/private'
+  for (const error of [
+    new Error(secret),
+    { message: secret, code: secret },
+    new Error('Production schema gate failed: ' + secret),
+    null,
+    secret,
+  ]) {
+    assert.equal(productionSchemaGateFailure(error), 'unclassified failure')
+  }
+  assert.throws(
+    () => assertProductionMigrationUrl(secret),
+    (error) => {
+      assert.equal(
+        productionSchemaGateFailure(error),
+        'database target does not match the required role, database, host, or TLS policy'
+      )
+      assert.ok(!productionSchemaGateFailure(error).includes('password-fixture'))
+      return true
+    }
+  )
 })

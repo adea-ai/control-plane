@@ -39,8 +39,18 @@ const VARIABLES_QUERY = `query($projectId:String!,$environmentId:String!,$servic
   variablesForServiceDeployment(projectId:$projectId,environmentId:$environmentId,serviceId:$serviceId)
 }`
 
-function gateError(code) {
-  return new Error(`Production schema gate failed: ${code}`)
+const safeGateFailures = new WeakMap()
+
+function gateError(code, cause) {
+  const error = new Error(`Production schema gate failed: ${code}`)
+  safeGateFailures.set(error, safeGateFailures.get(cause) ?? code)
+  return error
+}
+
+// Only labels created by this module may enter CI output. Never trust an
+// exception's message/code properties, including driver and provider errors.
+export function productionSchemaGateFailure(error) {
+  return safeGateFailures.get(error) ?? 'unclassified failure'
 }
 
 function decodeUrlPart(value) {
@@ -548,10 +558,15 @@ export async function migrateProductionSchema({
   productionDatabaseContract,
 }) {
   const target = resolveProductionDatabaseTarget(productionDatabaseContract)
-  const tls = resolveProductionDatabaseTls(
-    productionDatabaseContract,
-    environment.DATABASE_MIGRATION_CA_CERTIFICATE
-  )
+  let tls
+  try {
+    tls = resolveProductionDatabaseTls(
+      productionDatabaseContract,
+      environment.DATABASE_MIGRATION_CA_CERTIFICATE
+    )
+  } catch {
+    throw gateError('production database CA does not match reviewed TLS policy')
+  }
   const migrationUrl = assertProductionMigrationUrl(
     environment.DATABASE_MIGRATION_URL,
     productionDatabaseContract
@@ -575,8 +590,8 @@ export async function migrateProductionSchema({
         ),
       }))
     )
-  } catch {
-    throw gateError('Railway runtime database bindings do not match production')
+  } catch (error) {
+    throw gateError('Railway runtime database bindings do not match production', error)
   }
   if (runtimeVariables.length !== SERVICES.length) {
     throw gateError('Railway runtime database bindings do not match production')
@@ -619,8 +634,8 @@ export async function migrateProductionSchema({
         tls
       )
     }
-  } catch {
-    failure = gateError('migration, history, or runtime privilege verification failed')
+  } catch (error) {
+    failure = gateError('migration, history, or runtime privilege verification failed', error)
   } finally {
     if (lockAcquired) {
       try {
@@ -650,9 +665,9 @@ async function main() {
 if (import.meta.main) {
   try {
     await main()
-  } catch {
+  } catch (error) {
     process.stderr.write(
-      'Production database schema gate failed; Railway promotion was not started.\n'
+      `Production database schema gate failed (${productionSchemaGateFailure(error)}); Railway promotion was not started.\n`
     )
     process.exitCode = 1
   }
