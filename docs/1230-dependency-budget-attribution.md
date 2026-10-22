@@ -318,10 +318,12 @@ and the owner of each removal named.
 ## 9. Receipts
 
 - Real measurement, seam unset: `BUDGET EXCEEDED: {"ok":false,"ceiling":285,"measured":591,"scope":"lockfile tree"}`, exit 1.
+- Re-verified after the reconciliation with current `main` (`019604a11`, release 1.106.0): the measured closure is still **591** against the unchanged **285** ceiling, the per-root attribution is unchanged (168/117/87/76/56/49/42/38), the reduction plan is still six removals reaching 276, and the gate still exits 1. The reconciliation brought main's own manifests and lockfile; it changed no number in this document.
+- The counting rule was audited independently of the checker on the real listing: 644 non-empty lines = 1 header + 45 workspace links + 598 external entries, with **0** unparsed lines, **0** entries the identity rule drops, **0** counted identities that no listing line names, **0** malformed identities and **0** workspace packages counted. The 591 is the exact size of the lockfile's external closure, and there is no counting defect to repair.
 - Installed graph: 374 distinct external identities on this host (376 store entries walked).
 - Focused regression: `bun test src/dependency-budget-scope.test.mjs` (packages/production-readiness) — 21 pass / 0 fail.
 - Reproduced attribution: the lockfile walk reaches exactly the 591 counted identities (591 = 591, no difference in either direction, no unresolved root), the per-root attribution reproduces the table `docs/405-runtime-audit.md` §3.3 publishes, and the gate's own report carries it.
-- The measured plan: six removals reach 276 against the unchanged 285 ceiling, and the five largest single removals (295) prove that no smaller set can.
+- The measured plan: six removals reach 276 against the unchanged 285 ceiling, and the five largest single removals (160 + 50 + 40 + 21 + 20 = 291) prove that no smaller set can.
 - The ceiling is unchanged: `budgets.json` → `dependencies.externalPackageCeiling = 285`.
 - No manifest, lockfile or threshold was edited, and no dependency was removed.
 - No release and no deployment were performed or requested.
