@@ -107,6 +107,47 @@ test('a libpq value with a backslash-escaped space is redacted whole', () => {
   expect(sanitized).toBe('password=<redacted> dbname=postgres')
 })
 
+// libpq permits whitespace around the `=`, so a value may start after it.
+// A rule that reads the value from the whitespace reads an empty value, and
+// the scan then walks on and publishes the password that follows:
+// `password= hunter2` became `password=<redacted> hunter2`. The separator
+// whitespace belongs to the value, so it is consumed with it.
+test('a value that starts after the separator whitespace is redacted whole', () => {
+  const cases = [
+    ['password= hunter2 dbname=postgres', 'hunter2', 'password=<redacted> dbname=postgres'],
+    ['password=  hunter2 dbname=postgres', 'hunter2', 'password=<redacted> dbname=postgres'],
+    ["password = 'two words' dbname=postgres", 'words', 'password =<redacted> dbname=postgres'],
+    ['password= "two words" dbname=postgres', 'words', 'password=<redacted> dbname=postgres'],
+    ['password= two\\ words dbname=postgres', 'words', 'password=<redacted> dbname=postgres'],
+    ['PGPASSWORD= hunter2', 'hunter2', 'PGPASSWORD=<redacted>'],
+    ['my_password= hunter2 db=postgres', 'hunter2', 'my_password=<redacted> db=postgres'],
+  ]
+  for (const [input, secret, expected] of cases) {
+    const sanitized = sanitizeProbeOutput(input)
+    expect(sanitized).not.toContain(secret)
+    expect(sanitized).toBe(expected)
+  }
+})
+
+// A tab is whitespace too, and a value that is only the separator whitespace
+// is an empty value: nothing of it survives.
+test('the separator whitespace is whitespace of any kind, and an empty value stays empty', () => {
+  expect(sanitizeProbeOutput('password=\thunter2')).toBe('password=<redacted>')
+  expect(sanitizeProbeOutput('password= ')).toBe('password=<redacted>')
+  expect(sanitizeProbeOutput('password=\n')).toBe('password=<redacted>')
+})
+
+// A quoted value whose quote is never closed takes the rest of the source with
+// it, and the separator whitespace does not change that.
+test('a value that starts after the separator whitespace is consumed whole', () => {
+  for (const form of ["password= 'two words", 'password= "two words']) {
+    const sanitized = sanitizeProbeOutput(form)
+    expect(sanitized).not.toContain('two')
+    expect(sanitized).not.toContain('words')
+    expect(sanitized).toBe('password=<redacted>')
+  }
+})
+
 // A connection URI may carry no user, only a password.
 test('a connection URI with an empty user is redacted', () => {
   const sanitized = sanitizeProbeOutput('postgresql://:hunter2@localhost/db')

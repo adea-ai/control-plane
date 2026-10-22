@@ -68,6 +68,21 @@ function readKeyEnd(source, start) {
 }
 
 /**
+ * The start of the value of a credential key, which is the character after the
+ * `=`.
+ *
+ * libpq permits whitespace around the `=`, so the value may start after it.
+ * That whitespace belongs to the value: a value read from the whitespace
+ * would be empty, and the scan would then walk on and expose the value that
+ * follows it.
+ */
+function readValueStart(source, start) {
+  let index = start
+  while (index < source.length && isWhitespace(source[index])) index += 1
+  return index
+}
+
+/**
  * The end of a credential value that starts at `start`.
  *
  * A quoted value is consumed whole, with its escapes, so a password that holds
@@ -167,7 +182,8 @@ export function sanitizeProbeOutput(text, limit = PROBE_EXCERPT_LIMIT) {
       let afterKey = keyEnd
       while (afterKey < source.length && isWhitespace(source[afterKey])) afterKey += 1
       if (isCredentialKey(key) && source[afterKey] === '=') {
-        const valueEnd = readValueEnd(source, afterKey + 1)
+        const valueStart = readValueStart(source, afterKey + 1)
+        const valueEnd = readValueEnd(source, valueStart)
         pieces.push(`${key}${source.slice(keyEnd, afterKey)}=<redacted>`)
         index = valueEnd
         continue
