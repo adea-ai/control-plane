@@ -107,7 +107,7 @@
     "@langchain/langgraph": "1.4.20",
     "@types/node": "^26.6.4",
     "acorn": "8.19.0",
-    "code-foundry": "1.48.1",
+    "code-foundry": "1.48.4",
     "oxfmt": "^0.72.0",
     "oxlint": "^1.86.0",
     "railway": "3.13.0",
