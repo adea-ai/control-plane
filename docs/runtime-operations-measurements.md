@@ -12,22 +12,37 @@ offline report and existing emitter are unchanged.
   adapter, cadence and the existing operations-report bounds. It supports Local
   and Hosted Simple SQLite, not Hosted PostgreSQL.
 - Start after migrations. A composition that wires the measurement starts it before the
-  rest of runtime startup completes and drains it when a later startup step fails, so
-  the measurement observes the migrated store and never outlives a failed start.
-  Close on startup failure and before persistence shutdown; close drains an active
-  scan for at most `closeTimeoutMs`, then aborts it (see Cancellation and deadlines).
+  rest of runtime startup completes and closes it when a later startup step fails, so
+  the measurement observes the migrated store. Close on startup failure and before
+  persistence shutdown; the close waits for an active scan for at most `closeTimeoutMs`
+  and then aborts it (see Cancellation and deadlines).
 - The shared `OperationsMeasurementLifecycle` also accepts an asynchronous scoped
   producer. An unavailable producer returns `undefined`, never synthetic zeros.
 - The cadence is an integer between 1 second and 24 hours. The lifecycle emits at
   most 512 points per pass by default (configurable from 1 to 1024). Concurrent
   passes coalesce instead of queueing unbounded scans.
 
+### Shutdown boundary
+
+The close is bounded. It waits for an active pass for at most `closeTimeoutMs`,
+then aborts that pass and resolves; the worker thread's exit is not awaited by
+that close. So the close does not prove that nothing is still running, and it
+does not prove that a last pass completed before the store it reads was closed.
+What it guarantees is narrower: no further observation is emitted once the close
+resolves, and a composition closes the measurement before it closes the store
+that the measurement reads. The deadline, abort and late-result behaviour is held
+by the lifecycle's own regressions in
+`packages/telemetry/src/operations-lifecycle.test.mjs`.
+
 The SQLite adapter opens a separate read-only handle in a worker for each pass
 and measures inside one read transaction. The pass resolves only after the
-worker exits, so Bun's retained native statements cannot keep a read snapshot
-alive during checkpointed shutdown. Bun source runs select the source worker
-even when a concurrent build has produced a compiled worker. Installed Node
-execution uses the compiled worker. It retains only the last complete storage baseline.
+worker exits, so a completed pass releases Bun's retained native statements
+before its result is emitted. An aborted pass is abandoned by the close at its
+deadline, so that thread's exit is not awaited before shutdown, and this does
+not claim that no read snapshot is alive during a checkpointed shutdown.
+Bun source runs select the source worker even when a concurrent build has
+produced a compiled worker. Installed Node execution uses the compiled worker.
+It retains only the last complete storage baseline.
 The first pass has no growth point; later complete snapshots may emit signed
 growth through the existing gauge path. The report still suppresses points from
 partial or unsafe sources. Neither correlations nor errors become metric labels.

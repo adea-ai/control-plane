@@ -955,7 +955,7 @@ describe('Local Control Plane composition', () => {
  * The measurement is the workspace-scoped operations report sampled from the composition's own
  * SQLite store and recorded through the injected metric adapter. These tests hold the wiring
  * itself: that it starts with the composition, that it emits only bounded, scoped points, that a
- * partial startup failure drains it, and that nothing is emitted or left running after the stop.
+ * partial startup failure closes it, and that nothing is emitted after the stop.
  */
 const OPERATIONS_WORKSPACE_ID = 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV'
 
@@ -1073,13 +1073,13 @@ describe('Local operations measurement wiring', () => {
     }
   }, 60_000)
 
-  test('a partial startup failure drains the measurement and emits nothing afterwards', async () => {
+  test('a partial startup failure closes the measurement and emits nothing afterwards', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-operations-startup-failure-'))
     const recorded = recordingAdapter()
     const composition = new LocalControlPlaneComposition({
       dataDirectory: directory,
       metricAdapter: recorded.adapter,
-      // The lifecycle's own cadence bound is one second: an undrained measurement would keep
+      // The lifecycle's own cadence bound is one second: an unclosed measurement would keep
       // sampling and emitting after the failure.
       operationsMeasurements: { workspaceId: OPERATIONS_WORKSPACE_ID, intervalMs: 1000 },
       endpointFactory: {
@@ -1090,12 +1090,12 @@ describe('Local operations measurement wiring', () => {
     })
     try {
       await expect(composition.start()).rejects.toThrow('LOCAL_TEST_ENDPOINT_UNAVAILABLE')
-      // The measurement was drained by the failed startup: nothing is emitted afterwards.
+      // The measurement was closed by the failed startup: nothing is emitted afterwards.
       const afterFailure = recorded.all().length
       await new Promise((done) => setTimeout(done, 1500))
       expect(recorded.all().length).toBe(afterFailure)
     } finally {
-      // The failed startup already drained it; the close is still called, so an assertion
+      // The failed startup already closed it; the close is still called, so an assertion
       // failure cannot leave anything running.
       await composition.close().catch(() => undefined)
       await rm(directory, { recursive: true, force: true })
@@ -1149,10 +1149,10 @@ describe('Local operations measurement wiring', () => {
     })
     try {
       await expect(composition.start()).rejects.toThrow('LOCAL_TEST_ENDPOINT_UNAVAILABLE')
-      // The failed startup drained the measurement, so the points it recorded are all it will
-      // ever record: the drained lifecycle refuses to start.
+      // The failed startup closed the measurement, so the points it recorded are all it will
+      // ever record: the closed lifecycle refuses to start.
       const afterFailure = recorded.all().length
-      // The retry is permitted, and it has to measure. Reusing the drained lifecycle would
+      // The retry is permitted, and it has to measure. Reusing the closed lifecycle would
       // report a configured measurement that can never sample, so the retry builds a fresh one.
       await composition.start()
       expect(composition.operationsMeasurementConfigured).toBe(true)
@@ -1163,7 +1163,7 @@ describe('Local operations measurement wiring', () => {
     }
   }, 60_000)
 
-  test('a rejected earlier close still drains the measurement', async () => {
+  test('a rejected earlier close still closes the measurement', async () => {
     for (const [name, options] of [
       [
         'reconciliationScheduler',
@@ -1188,7 +1188,7 @@ describe('Local operations measurement wiring', () => {
             ? 'LOCAL_TEST_SCHEDULER_CLOSE_FAILED'
             : 'LOCAL_TEST_SWEEP_CLOSE_FAILED'
         )
-        // And the measurement is still drained: nothing is emitted afterwards.
+        // And the measurement is still closed: nothing is emitted afterwards.
         const afterRejection = recorded.all().length
         await new Promise((done) => setTimeout(done, 1500))
         expect(recorded.all().length).toBe(afterRejection)
@@ -1229,13 +1229,13 @@ describe('Local operations measurement wiring', () => {
     }
   }, 60_000)
 
-  test('a repeated close is safe, and nothing is emitted or left running after the stop', async () => {
+  test('a repeated close is safe, and nothing is emitted after the stop', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-operations-repeat-close-'))
     const recorded = recordingAdapter()
     const composition = new LocalControlPlaneComposition({
       dataDirectory: directory,
       metricAdapter: recorded.adapter,
-      // The lifecycle's own cadence bound is one second: without the drain the timer would keep
+      // The lifecycle's own cadence bound is one second: without the close the timer would keep
       // sampling and emitting after the stop.
       operationsMeasurements: { workspaceId: OPERATIONS_WORKSPACE_ID, intervalMs: 1000 },
     })
@@ -1254,6 +1254,50 @@ describe('Local operations measurement wiring', () => {
     } finally {
       // The close above already stopped the measurement; the finally closes it again, so an
       // assertion failure cannot leave it running.
+      await composition.close().catch(() => undefined)
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  test('the close is bounded, and the store is closed only after the measurement close resolved', async () => {
+    // The measurement's own close is bounded by the lifecycle's close deadline: a pass that is
+    // still running is abandoned rather than awaited to completion, and the worker thread's
+    // exit is not awaited either. So the boundary this holds is the one the composition can
+    // actually observe: the close resolves, the store close is attempted only after the
+    // measurement close resolved, and no observation is emitted after that. Physical drainage
+    // of the worker thread is not claimed here; the deadline, abort and late-result boundary
+    // belongs to the lifecycle's own regressions in
+    // packages/telemetry/src/operations-lifecycle.test.mjs.
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-operations-bounded-close-'))
+    const recorded = recordingAdapter()
+    const composition = new LocalControlPlaneComposition({
+      dataDirectory: directory,
+      metricAdapter: recorded.adapter,
+      operationsMeasurements: { workspaceId: OPERATIONS_WORKSPACE_ID, intervalMs: 1000 },
+    })
+    try {
+      await composition.start()
+      expect(await untilRecorded(recorded)).toBe(true)
+      // The store close is observed, so its position against the measurement close is visible.
+      const storeClose = { called: false, points: 0 }
+      const provider = composition.persistence
+      const originalClose = provider.close.bind(provider)
+      provider.close = (options) => {
+        storeClose.called = true
+        storeClose.points = recorded.all().length
+        return originalClose(options)
+      }
+      const closedAt = Date.now()
+      await composition.close()
+      // The close is bounded: it returns instead of waiting for a pass to finish.
+      expect(Date.now() - closedAt).toBeLessThan(10_000)
+      expect(storeClose.called).toBe(true)
+      // The measurement was already closed when the store was closed: nothing was emitted
+      // between the two, and nothing is emitted afterwards either.
+      expect(storeClose.points).toBe(recorded.all().length)
+      await new Promise((done) => setTimeout(done, 1500))
+      expect(recorded.all().length).toBe(storeClose.points)
+    } finally {
       await composition.close().catch(() => undefined)
       await rm(directory, { recursive: true, force: true })
     }

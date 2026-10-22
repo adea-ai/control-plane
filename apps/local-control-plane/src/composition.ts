@@ -356,7 +356,7 @@ export class LocalControlPlaneComposition {
    * Whether the operations measurement exists. It needs BOTH a workspace scope and a metric
    * adapter, so this is the construction seam: without an adapter no measurement exists and no
    * sample can run. It reads the inputs the measurement is built from, so it cannot drift from
-   * the construction, and it stays true while the current attempt's lifecycle is drained.
+   * the construction, and it stays true while the current attempt's lifecycle is open.
    * Exposed so the wiring is externally verifiable.
    */
   get operationsMeasurementConfigured(): boolean {
@@ -483,9 +483,9 @@ export class LocalControlPlaneComposition {
         : createConsistencyMetricEmitter(options.metricAdapter, 'local-control-plane')
     // The operations measurement observes this composition's own store read-only and records the
     // workspace-scoped points through the same adapter. It exists only when both a scope and an
-    // adapter are configured, and it is started with the composition and drained with it: an
+    // adapter are configured, and it is started with the composition and closed with it: an
     // operations measurement is never a side effect of a missing adapter. The inputs are kept so
-    // that a later start attempt can build a fresh lifecycle, because a drained one refuses to
+    // that a later start attempt can build a fresh lifecycle, because a closed one refuses to
     // start.
     this.#operationsMeasurementsInputs =
       options.operationsMeasurements === undefined || options.metricAdapter === undefined
@@ -515,7 +515,7 @@ export class LocalControlPlaneComposition {
           }
     // The lifecycle is built here, so an invalid measurement configuration is refused when the
     // composition is built and not when it is started. A later start attempt builds a fresh one
-    // from these inputs, because a drained lifecycle refuses to start.
+    // from these inputs, because a closed lifecycle refuses to start.
     this.#operationsMeasurements =
       this.#operationsMeasurementsInputs === undefined
         ? undefined
@@ -802,8 +802,8 @@ export class LocalControlPlaneComposition {
     await this.persistence.migrate()
     try {
       // The operations measurement observes the migrated store, so it starts first and a later
-      // failure has it to drain. It is started with the composition and drained with it. A start
-      // attempt after a failed startup builds a fresh lifecycle, because the drained one refuses
+      // failure closes it. It is started with the composition and closed with it. A start
+      // attempt after a failed startup builds a fresh lifecycle, because a closed one refuses
       // to start: reusing it would report a running measurement that can never sample.
       if (this.#operationsMeasurementsInputs !== undefined) {
         this.#operationsMeasurements ??= createLocalRuntimeMeasurements(
@@ -823,7 +823,9 @@ export class LocalControlPlaneComposition {
       this.#reconciliationScheduler?.start()
       this.#retentionSweep?.start()
     } catch (error) {
-      // Drain the measurement before anything it observes is torn down.
+      // Close the measurement before anything it observes is torn down. Its close is bounded by
+      // the lifecycle's own deadline and abandons an in-flight pass, so this orders the store
+      // rather than a drained pass.
       await this.#drainOperationsMeasurements()
       await this.#reconciliationScheduler?.close().catch(() => undefined)
       await Promise.resolve()
@@ -844,15 +846,19 @@ export class LocalControlPlaneComposition {
   }
 
   /**
-   * Stops the operations measurement and waits for its last pass. It is idempotent: a measurement
-   * that never started is not stopped, and a stopped one is not stopped twice. A measurement that
-   * fails to drain is not authoritative and never fails the composition's own shutdown.
+   * Closes the operations measurement. Its close is bounded by the lifecycle's own close
+   * deadline: a pass that is still running is abandoned rather than awaited to completion, and the
+   * worker thread's exit is not awaited either. What is guaranteed is that no further observation
+   * is emitted once the close resolves, not that the thread has already exited. It is idempotent: a
+   * measurement that never started is not closed, and a closed one is not closed twice. A
+   * measurement that fails to close is not authoritative and never fails the composition's own
+   * shutdown.
    */
   async #drainOperationsMeasurements(): Promise<void> {
     if (!this.#operationsMeasurementsStarted) return
     this.#operationsMeasurementsStarted = false
     const lifecycle = this.#operationsMeasurements
-    // The drained lifecycle is single-use: its start() is refused in the closed state, so it is
+    // The closed lifecycle is single-use: its start() is refused in the closed state, so it is
     // dropped. A later start attempt builds a fresh one from the inputs instead of reporting a
     // measurement that can never sample.
     this.#operationsMeasurements = undefined
@@ -860,7 +866,7 @@ export class LocalControlPlaneComposition {
   }
 
   /**
-   * Closes the resources that precede the operations measurement. The measurement is drained
+   * Closes the resources that precede the operations measurement. The measurement is closed
    * whatever happens here, so a rejected earlier close cannot leave its timer running, and the
    * first error is rethrown unchanged: the teardown order and the error semantics are the ones
    * that were already there.
@@ -904,13 +910,14 @@ export class LocalControlPlaneComposition {
     if (!this.#started && this.#endpoint === undefined) return
     this.#started = false
     // Drain the scheduler first: a clean close never abandons an in-flight pass. The operations
-    // measurement is drained on this path too, even when one of these closes rejects: a rejected
+    // measurement is closed on this path too, even when one of these closes rejects: a rejected
     // close must not leave the measurement's timer running.
     await this.#closeBeforeOperationsDrain(async () => {
       await this.#reconciliationScheduler?.close()
       await this.#retentionSweep?.close()
     })
-    // The operations measurement drains its own last pass before the store it reads is closed.
+    // The operations measurement is closed before the store it reads is closed. That orders the
+    // store, not a drained pass: the close is bounded and abandons an in-flight pass.
     await this.#drainOperationsMeasurements()
     try {
       await this.remoteControl?.stop()
