@@ -38,6 +38,28 @@ const program = basename(process.argv[1])
 const args = process.argv.slice(2)
 appendFileSync(process.env.COMMAND_RECEIPT, JSON.stringify({ program, args, project: process.env.COMPOSE_PROJECT_NAME ?? null }) + '\\n')
 if (process.env.FAKE_DOCKER_HANG_ON && args.includes(process.env.FAKE_DOCKER_HANG_ON)) await new Promise(() => {})
+if (process.env.FAKE_BUN_SPAWN_DESCENDANT === 'true' && args.includes('test')) {
+  // A nested build descendant that inherits the runner's pipes. It stays alive
+  // when the direct child is killed, so the inherited pipes stay open and the
+  // runner's completion cannot settle on the child's own exit.
+  const { spawn } = await import('node:child_process')
+  const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    stdio: ['ignore', 'inherit', 'inherit'],
+  })
+  appendFileSync(process.env.DESCENDANT_RECEIPT, String(descendant.pid) + '\\n')
+  await new Promise(() => {})
+}
+if (process.env.FAKE_BUN_SPAWN_DETACHED_DESCENDANT === 'true' && args.includes('test')) {
+  // A descendant that is re-parented to init before the runner terminates the
+  // direct child, so the runner can no longer attribute it to its own tree. It
+  // still holds the inherited pipes.
+  const { spawn } = await import('node:child_process')
+  spawn(process.execPath, [
+    '-e',
+    "const { spawn } = require('node:child_process'); const { appendFileSync } = require('node:fs'); const holder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] }); appendFileSync(process.env.DESCENDANT_RECEIPT, String(holder.pid) + '\\\\n'); process.exit(0)",
+  ], { stdio: ['ignore', 'inherit', 'inherit'] })
+  await new Promise(() => {})
+}
 if (program === 'docker') {
   if (process.env.FAKE_DOCKER_DISABLED === 'true') process.exit(90)
   if (args.includes('ps') && process.env.FAKE_POSTGRES_RUNNING === 'true') console.log('postgres')
@@ -75,6 +97,7 @@ function readCommandReceipts(commands) {
 function createRunnerHarness(overrides = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'cp-integration-lifecycle-'))
   const commands = join(directory, 'commands.jsonl')
+  const descendants = join(directory, 'descendants.pid')
   for (const name of ['docker', 'bun']) {
     writeFileSync(join(directory, name), runnerDoubleSource, { mode: 0o700 })
   }
@@ -91,10 +114,12 @@ function createRunnerHarness(overrides = {}) {
   return {
     directory,
     commands,
+    descendants,
     environment: {
       ...environment,
       PATH: `${directory}${delimiter}${process.env.PATH}`,
       COMMAND_RECEIPT: commands,
+      DESCENDANT_RECEIPT: descendants,
       ...overrides,
     },
   }
@@ -173,15 +198,47 @@ async function waitForReceipt(commands, predicate, description) {
   }
 }
 
+/** The PIDs of the descendants the command double spawned. */
+function readDescendantPids(descendants) {
+  return existsSync(descendants)
+    ? readFileSync(descendants, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => Number.parseInt(line.trim(), 10))
+    : []
+}
+
+/** Waits until the command double has recorded its spawned descendant. */
+async function waitForDescendant(descendants) {
+  const deadline = Date.now() + 10_000
+  for (;;) {
+    if (readDescendantPids(descendants).length > 0) return
+    if (Date.now() > deadline) throw new Error('Timed out waiting for the spawned descendant')
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}
+
+/** Whether a PID still names a live process. */
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if (error.code === 'ESRCH') return false
+    return true
+  }
+}
+
 // Spawn the real runner asynchronously, wait until its receipt records the
 // injected command, deliver a real signal, and report how it exited. A runner
 // without an installed handler dies from the signal (status null, signal name);
 // a handled interruption exits with 128 + signal number.
 async function executeRunnerInterrupted(
   overrides,
-  { signal, predicate, description, settleMs = 15_000 }
+  { signal, predicate, description, settleMs = 15_000, waitFor = 'close' }
 ) {
-  const { directory, commands, environment } = createRunnerHarness(overrides)
+  const { directory, commands, descendants, environment } = createRunnerHarness(overrides)
   let child
   try {
     child = spawn(process.execPath, [runner], {
@@ -199,10 +256,19 @@ async function executeRunnerInterrupted(
     child.stderr.on('data', (chunk) => {
       stderr += chunk
     })
+    // `exit` reports that the runner PROCESS is gone; `close` additionally
+    // waits for its pipes. A survivor that holds an inherited pipe keeps
+    // `close` from arriving, so a case that exercises the runner's own
+    // completion bound waits for `exit`.
     const exited = new Promise((resolve) =>
-      child.once('close', (status, closeSignal) => resolve({ status, signal: closeSignal }))
+      child.once(waitFor, (status, closeSignal) => resolve({ status, signal: closeSignal }))
     )
     await waitForReceipt(commands, predicate, description)
+    if (
+      overrides.FAKE_BUN_SPAWN_DESCENDANT === 'true' ||
+      overrides.FAKE_BUN_SPAWN_DETACHED_DESCENDANT === 'true'
+    )
+      await waitForDescendant(descendants)
     child.kill(signal)
     const outcome = await Promise.race([
       exited,
@@ -219,7 +285,13 @@ async function executeRunnerInterrupted(
       await exited
       throw new Error(`Runner did not exit within ${settleMs}ms after ${signal}`)
     }
-    return { ...outcome, stdout, stderr, calls: readCommandReceipts(commands) }
+    return {
+      ...outcome,
+      stdout,
+      stderr,
+      calls: readCommandReceipts(commands),
+      descendants: readDescendantPids(descendants),
+    }
   } finally {
     reapHarnessChild(child)
     rmSync(directory, { recursive: true, force: true })
@@ -802,6 +874,7 @@ test('an interrupted runner spends no new owned command beyond cleanup', async (
     setTimeout,
     trackRunnerChild: (child) => child,
     terminateChild: (child) => child.kill(),
+    bindChildCompletion: () => {},
     spawn: (command, arguments_) => {
       spawnCalls.push([command, arguments_])
       return {
@@ -869,3 +942,80 @@ for (const [script, name] of [
     expect(options[0].timeout).toBe(90_000)
   })
 }
+
+describe('integration runner owned process tree', () => {
+  test(
+    'an interruption reaps the owned descendant that holds the inherited pipes',
+    async () => {
+      // The nested descendant keeps the runner's inherited pipes open, so the
+      // direct child's exit is NOT proof that the owned tree was reaped: the
+      // runner has to terminate the owned descendants, and its completion has to
+      // stay bounded while it does.
+      const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        stdio: 'ignore',
+      })
+      try {
+        const result = await executeRunnerInterrupted(
+          { FAKE_BUN_SPAWN_DESCENDANT: 'true' },
+          {
+            signal: 'SIGINT',
+            predicate: ({ program, args }) => program === 'bun' && args.includes('test'),
+            description: 'the owned test execution',
+          }
+        )
+        // The runner settled on the interruption and kept the signal's status.
+        expect(result.status).toBe(130)
+        // The OWNED descendants are gone: the tree was reaped, not only the
+        // direct child.
+        expect(result.descendants.length).toBeGreaterThan(0)
+        for (const pid of result.descendants) expect(isProcessAlive(pid)).toBe(false)
+        // The runner verified its own tree, so it reported no survivor.
+        expect(result.stderr).not.toMatch(/owned descendant survived/u)
+        // An UNRELATED process was never signalled.
+        expect(isProcessAlive(unrelated.pid)).toBe(true)
+      } finally {
+        try {
+          unrelated.kill('SIGKILL')
+        } catch {
+          // The unrelated process is already gone.
+        }
+      }
+    },
+    runnerTestBudgetMs
+  )
+
+  test('a stalled pipe is bounded when the survivor can no longer be attributed to the owned tree', async () => {
+    // The descendant is re-parented to init before the runner terminates the
+    // direct child, so the runner can no longer attribute it to its own tree
+    // and must not kill what it cannot prove it owns. The inherited pipe
+    // stays open, so the runner's completion has to be BOUNDED rather than
+    // waited on forever.
+    const result = await executeRunnerInterrupted(
+      { FAKE_BUN_SPAWN_DETACHED_DESCENDANT: 'true' },
+      {
+        signal: 'SIGTERM',
+        predicate: ({ program, args }) => program === 'bun' && args.includes('test'),
+        description: 'the owned test execution',
+        // The survivor holds the runner's pipe, so `close` cannot arrive; the
+        // case waits for the runner PROCESS to be gone.
+        waitFor: 'exit',
+        settleMs: 25_000,
+      }
+    )
+    expect(result.status).toBe(143)
+    // The completion was bounded and reported instead of hanging.
+    expect(result.stderr).toMatch(/did not complete within \d+ ms after it was terminated/u)
+    // The un-attributable survivor was not killed: it was never proven to be
+    // the runner's own.
+    expect(result.descendants.length).toBeGreaterThan(0)
+    for (const pid of result.descendants) expect(isProcessAlive(pid)).toBe(true)
+    // The case owns the cleanup of what it spawned.
+    for (const pid of result.descendants) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        // The survivor is already gone.
+      }
+    }
+  }, 40_000)
+})

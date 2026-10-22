@@ -26,6 +26,19 @@ if (integrationShard !== null) {
 }
 
 const CHILD_COMMAND_TIMEOUT_MS = 90_000
+// How long an owned child's COMPLETION may take once it has been terminated.
+//
+// A terminated child can leave a nested build descendant alive, and that
+// descendant keeps the inherited pipes open, so the child's `close` event —
+// which waits for those pipes — never arrives. The completion is therefore
+// bounded after termination: the run fails closed with the bound instead of
+// waiting forever for a pipe nobody owns.
+const CHILD_COMPLETION_TIMEOUT_MS = 10_000
+// How long the owned descendants are given to disappear after they were
+// signalled, before a survivor is reported. A signal is delivered
+// asynchronously, so this is the window in which a killed process is still
+// visible.
+const OWNED_TREE_EXIT_WAIT_MS = 2_000
 
 // Runner-owned children stay in the runner's own process group. They are
 // recorded here so an interruption signals only them, and they also share the
@@ -33,27 +46,204 @@ const CHILD_COMMAND_TIMEOUT_MS = 90_000
 // leaving orphans. The runner never looks up or kills processes by name.
 const activeChildren = new Set()
 
-function trackRunnerChild(child) {
+// Per-child state: the command it runs, whether it has been terminated, and
+// the bound that makes its completion settle.
+const childStates = new WeakMap()
+
+function trackRunnerChild(child, command) {
   activeChildren.add(child)
+  childStates.set(child, {
+    command,
+    terminated: false,
+    completionTimer: undefined,
+    failWith: undefined,
+    abandon: undefined,
+  })
   const release = () => activeChildren.delete(child)
   child.once('close', release)
   child.once('error', release)
   return child
 }
 
+/**
+ * Releases the pipes of an abandoned child.
+ *
+ * A child that was terminated but whose descendant still holds the inherited
+ * pipes keeps the runner's own stdout/stderr readers open, and an open reader
+ * keeps the event loop alive — so the runner would never exit even though its
+ * work is finished. Abandoning the child closes the runner's ends of those
+ * pipes, which is what lets the runner settle.
+ */
+function abandonChildPipes(child) {
+  try {
+    child.stdout?.destroy()
+  } catch {
+    // The stream is already gone.
+  }
+  try {
+    child.stderr?.destroy()
+  } catch {
+    // The stream is already gone.
+  }
+  try {
+    child.unref?.()
+  } catch {
+    // The child handle does not support unref.
+  }
+}
+
+/**
+ * The descendants of an owned child, from one process-tree snapshot.
+ *
+ * The runner walks the parent links of the PIDs it already owns; it never
+ * looks a process up by name, and it never walks upwards, so the caller's own
+ * process and process group are outside the result by construction.
+ */
+function ownedDescendants(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 1) return []
+  // `-A` is required: without it the listing covers only the current terminal's
+  // processes, which would silently omit a descendant that was started with a
+  // different session.
+  const result = spawnSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' })
+  if (result.error !== undefined && result.error !== null) return []
+  if (result.status !== 0) return []
+  const childrenByParent = new Map()
+  for (const line of String(result.stdout ?? '').split('\n')) {
+    const match = line.trim().match(/^(\d+)\s+(\d+)$/u)
+    if (match === null) continue
+    const child = Number.parseInt(match[1], 10)
+    const parent = Number.parseInt(match[2], 10)
+    if (!Number.isSafeInteger(child) || !Number.isSafeInteger(parent)) continue
+    if (child <= 1 || child === process.pid) continue
+    if (!childrenByParent.has(parent)) childrenByParent.set(parent, [])
+    childrenByParent.get(parent).push(child)
+  }
+  const descendants = []
+  const stack = [pid]
+  const seen = new Set([pid])
+  while (stack.length > 0) {
+    const current = stack.pop()
+    for (const child of childrenByParent.get(current) ?? []) {
+      if (seen.has(child)) continue
+      seen.add(child)
+      descendants.push(child)
+      stack.push(child)
+    }
+  }
+  return descendants
+}
+
+/** Whether a PID still names a live process. */
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if (error.code === 'ESRCH') return false
+    // A permission error still means the process exists.
+    return true
+  }
+}
+
+/** Waits without yielding the event loop, for a bounded time. */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * The owned descendants that are still alive after the termination.
+ *
+ * A signal is delivered asynchronously, so a process that was just killed is
+ * still visible for a moment. The survivors are therefore the ones that are
+ * still alive AFTER a bounded wait: a process that is on its way out is not a
+ * survivor, and a process that is still there when the wait is over is.
+ */
+function survivingOwnedPids(pids) {
+  const deadline = Date.now() + OWNED_TREE_EXIT_WAIT_MS
+  let alive = pids.filter((pid) => isProcessAlive(pid))
+  while (alive.length > 0 && Date.now() < deadline) {
+    sleepSync(25)
+    alive = alive.filter((pid) => isProcessAlive(pid))
+  }
+  return alive
+}
+
+/**
+ * Binds a child's completion to the promise that waits for it.
+ *
+ * The completion of a terminated child is bounded: the inherited pipes may be
+ * held by a descendant, so `close` is not guaranteed to arrive. The bound
+ * settles the promise, and the abandonment releases the pipes the runner still
+ * holds, so the runner can finish.
+ */
+function bindChildCompletion(child, { failWith, abandon }) {
+  const state = childStates.get(child)
+  if (state === undefined) return
+  state.failWith = failWith
+  state.abandon = abandon
+}
+
+/**
+ * Terminates the OWNED process tree of a child and reports what survived.
+ *
+ * Killing the direct child alone is not cleanup: a nested build descendant
+ * survives it, keeps the inherited pipes open and can keep the runner's
+ * completion from ever settling. The descendants are therefore terminated
+ * first, and the direct child after them.
+ *
+ * Only the owned tree is touched: the descendants of the owned child and the
+ * child itself. No process is looked up by name, and the caller's own process
+ * and process group are never signalled.
+ */
 function terminateChild(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return
+  const state = childStates.get(child)
+  if (state !== undefined) {
+    state.terminated = true
+    // The completion of a terminated child is bounded: the inherited pipes may
+    // be held by a descendant, so `close` is not guaranteed to arrive.
+    if (state.completionTimer === undefined) {
+      state.completionTimer = setTimeout(() => {
+        // The child is abandoned: its pipes are released so the runner can
+        // settle, and the run fails with the bound that was exceeded.
+        state.abandon?.()
+        state.failWith?.(
+          `${state.command} did not complete within ${CHILD_COMPLETION_TIMEOUT_MS} ms after it was terminated; an owned descendant may still hold the inherited pipes`
+        )
+      }, CHILD_COMPLETION_TIMEOUT_MS)
+      state.completionTimer.unref?.()
+    }
+  }
+  if (child.exitCode !== null || child.signalCode !== null) return []
+  const descendants = ownedDescendants(child.pid)
+  for (const pid of descendants) {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error
+    }
+  }
   try {
     child.kill('SIGKILL')
   } catch (error) {
     if (error.code !== 'ESRCH') throw error
   }
+  return descendants
 }
 
+/**
+ * Terminates every tracked owned child and verifies the owned trees are gone.
+ *
+ * The report names the descendants that survived: the direct child's exit is
+ * not proof that its tree was reaped.
+ */
 function terminateActiveChildren() {
   // process.kill is synchronous and releases children only on a later event-loop
   // turn, so the live set is safe to iterate here.
-  for (const child of activeChildren) terminateChild(child)
+  const descendants = []
+  for (const child of activeChildren) descendants.push(...terminateChild(child))
+  // The owned trees are VERIFIED, not assumed: the direct child's exit is not
+  // proof that its descendants were reaped.
+  return survivingOwnedPids(descendants)
 }
 
 function run(command, arguments_, options = {}) {
@@ -71,7 +261,8 @@ function run(command, arguments_, options = {}) {
         cwd: options.cwd ?? process.cwd(),
         env: options.environment ?? runnerEnvironment,
         stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
-      })
+      }),
+      command
     )
     let stdout = ''
     let stderr = ''
@@ -96,6 +287,12 @@ function run(command, arguments_, options = {}) {
       if (timer !== undefined) clearTimeout(timer)
       complete(value)
     }
+    // The completion of a terminated child is bounded, so the runner can settle
+    // even when a surviving descendant keeps the inherited pipes open.
+    bindChildCompletion(child, {
+      failWith: (reason) => settle(reject, new Error(reason)),
+      abandon: () => abandonChildPipes(child),
+    })
     child.once('error', (error) => settle(reject, error))
     child.once('close', (status) => {
       if (status === 0) {
@@ -147,8 +344,21 @@ function runStreaming(command, arguments_, options = {}) {
         cwd: options.cwd ?? process.cwd(),
         env: options.environment ?? runnerEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
-      })
+      }),
+      command
     )
+    let settled = false
+    const settle = (complete, value) => {
+      if (settled) return
+      settled = true
+      complete(value)
+    }
+    // The completion of a terminated child is bounded, so the shard can settle
+    // even when a surviving descendant keeps the inherited pipes open.
+    bindChildCompletion(child, {
+      failWith: (reason) => settle(reject, new Error(reason)),
+      abandon: () => abandonChildPipes(child),
+    })
     let stdoutTail = ''
     let stderrTail = ''
     child.stdout.setEncoding('utf8')
@@ -161,8 +371,10 @@ function runStreaming(command, arguments_, options = {}) {
       stderrTail = appendBoundedOutputTail(stderrTail, chunk)
       process.stderr.write(chunk)
     })
-    child.once('error', reject)
-    child.once('close', (status, signal) => resolve({ status, signal, stdoutTail, stderrTail }))
+    child.once('error', (error) => settle(reject, error))
+    child.once('close', (status, signal) =>
+      settle(resolve, { status, signal, stdoutTail, stderrTail })
+    )
   })
 }
 
@@ -352,7 +564,11 @@ function handleInterruption(signal) {
   }
   interruptedSignal = signal
   console.error(`Received ${signal}; stopping runner-owned commands and cleaning up.`)
-  terminateActiveChildren()
+  // The owned trees are verified, not assumed: the direct child's exit is not
+  // proof that its descendants were reaped, so a survivor is reported.
+  const survivors = terminateActiveChildren()
+  if (survivors.length > 0)
+    console.error(`An owned descendant survived the termination: ${survivors.join(', ')}.`)
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

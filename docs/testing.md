@@ -299,11 +299,17 @@ before the process exits with `128 + signal`; a recorded verification failure st
 observable instead of being masked by the signal or by cleanup. A second signal
 stops immediately with the signal's status, and the bounded readiness probe
 observes a signal delivered during its blocking wait instead of surfacing it as a
-probe timeout. The command-double lifecycle suite injects a frozen startup,
-readiness, test and cleanup command and delivers a real signal to prove those
-paths. `SIGKILL`, daemon loss and machine shutdown cannot execute JavaScript
-`finally`, so an interrupted run may still leave the owner-recorded project
-identity behind. Once the
+probe timeout. The recorded child's whole owned tree is terminated — a nested
+build descendant that keeps the inherited pipes open is reaped with it, and a
+descendant that is still alive after the termination is reported as a survivor,
+because the direct child's exit is not proof that its tree was reaped. The
+completion of a terminated child is bounded, so a pipe that a survivor still
+holds can no longer keep the runner from finishing. The command-double lifecycle
+suite injects a frozen startup, readiness, test and cleanup command, spawns an
+owned descendant that holds the inherited pipes, and delivers a real signal to
+prove those paths. `SIGKILL`, daemon loss and machine shutdown cannot execute
+JavaScript `finally`, so an interrupted run may still leave the owner-recorded
+project identity behind. Once the
 engine is available, the owning operator can use that exact `COMPOSE_PROJECT_NAME`
 with `docker compose down --volumes --remove-orphans --timeout 60` from this
 repository; never substitute a shared project or global prune. No disk reclamation

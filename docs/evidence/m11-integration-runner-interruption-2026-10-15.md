@@ -69,13 +69,43 @@ termination as well.
 - A recorded verification failure is still printed when an interruption owns the
   exit status, so the original failure is not masked by the signal or cleanup. A
   second signal stops immediately with the signal's status.
+- **The owned PROCESS TREE is terminated, not only the direct child.** Killing
+  the wrapper PID left a nested build/`vp` descendant alive; that descendant kept
+  the inherited pipes open, so the child's `close` event never arrived and the
+  interruption cleanup hung with the owned child still running. The runner now
+  walks the parent links of the PIDs it already owns (never a lookup by name, and
+  never upwards, so the caller's own process and process group are outside the
+  result), terminates those descendants first and the direct child after them,
+  and then VERIFIES the tree: a descendant that is still alive after a bounded
+  wait is reported as a survivor, because the direct child's exit is not proof
+  that its tree was reaped.
+- **The completion of a terminated child is BOUNDED.** A descendant that cannot
+  be attributed to the owned tree any more (it was re-parented to init) can
+  still hold the pipes, so `close` is not guaranteed to arrive. The runner then
+  fails the run with the exceeded bound, releases the pipes it still holds —
+  an open reader would keep the event loop alive and the runner would never
+  exit — and finishes. A survivor is never killed, because the runner cannot
+  prove it owns it.
 
 ## Verification
 
-- `bun test tests/integration-runner-lifecycle.test.mjs`: 32 passed, 0 failed,
-  130 assertions, 68.79 seconds on the rebased candidate. The suite now covers
-  startup, readiness-probe, test-execution and cleanup interruption, caller-owned
+- `bun test tests/integration-runner-lifecycle.test.mjs`: 34 passed, 0 failed,
+  143 assertions on the reviewed head. The suite now covers startup,
+  readiness-probe, test-execution and cleanup interruption, caller-owned
   project preservation, and the no-new-command guard.
+- The two owned-tree regressions, run against the reviewed head's runner
+  (`237ff5e41`, before this repair) and against the repaired one:
+  - `an interruption reaps the owned descendant that holds the inherited pipes`:
+    against the reviewed head the runner did not exit within 15 000 ms of
+    `SIGINT`; against the repaired runner it exits `130`, the owned descendant is
+    gone, the runner reports no survivor, and an unrelated process is untouched.
+  - `a stalled pipe is bounded when the survivor can no longer be attributed to
+    the owned tree`: against the reviewed head the runner did not exit within
+    25 000 ms of `SIGTERM`; against the repaired runner it exits `143` with the
+    bound reported, and the un-attributable survivor is left alive because the
+    runner cannot prove it owns it.
+    Both cases spawn the descendant deterministically through the command double,
+    so the regression does not depend on a race.
 - Isolated new cases
   (`--test-name-pattern 'readiness probe|spends no new owned command'`):
   2 passed, 9 assertions, 5.34 seconds; the readiness case spends its real
