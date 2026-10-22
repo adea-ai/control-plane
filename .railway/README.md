@@ -27,9 +27,9 @@ wrong targets, any source diff, and changes observed during planning. Link the C
 applies. A missing image, connected Git source, mutable tag, pending promotion, or concurrent change
 fails closed.
 
-Persistent staging is retired. This authoring entry point rejects every
+Persistent sandbox is retired. This authoring entry point rejects every
 non-production environment before constructing resources; do not link it to a
-preview or recreate staging. Optional hosted qualification requires a separately
+preview or recreate sandbox. Optional hosted qualification requires a separately
 reviewed isolated ephemeral graph. Production database cutover is gated by the
 verified target contract in `infrastructure/railway/production-database.json`;
 see `docs/railway-production-database-cutover.md`.
@@ -69,7 +69,7 @@ has two consequences this file must respect:
   it. Apply only a separately reviewed and approved change.
 
 The retained Restate contract describes optional cloud qualification capabilities,
-not an existing staging deployment or permission to provision one. Production
+not permission to provision a persistent test deployment. Production
 continues to run control-api only. Any hosted qualification needs independent
 synthetic data, credentials, request identity and bounded cleanup.
 

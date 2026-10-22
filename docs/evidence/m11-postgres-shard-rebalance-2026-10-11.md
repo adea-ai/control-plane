@@ -1,4 +1,4 @@
-# Neon integration shard rebalance — 2026-10-11
+# PostgreSQL integration shard rebalance — 2026-10-11
 
 Run [38178336814](https://github.com/adea-ai/control-plane/actions/runs/38178336814)
 used head `7d61c6c5551348fa172bfc8998f8b6406329ea1b`. The candidate is reconciled
@@ -10,7 +10,7 @@ Shard 2 completed its foundation slice and the reference-window, hold-activation
 and ancestry files. The runner reached `usage-store` after 2,065.381s. The job
 was cancelled 594.492s later with 9 of 12 usage-store tests complete. The three
 following files did not start. No shard log contains retry messages; every
-started shard verified its Neon branch cleanup and absence.
+started shard verified its database sandbox cleanup and absence.
 
 The exact same `usage-store` source was also run in [38112415657](https://github.com/adea-ai/control-plane/actions/runs/38112415657):
 it reached 619.319s, with 10 of 12 tests complete, before cancellation. This is
@@ -31,7 +31,7 @@ to qualify the new ownership.
 
 The shard map changes file ownership only. It preserves all integration files
 and assertions, foundation filters, per-file serial execution, three existing
-Neon branches, the 45-minute limit, cleanup, and branch absence checks. The
+database sandboxes, the 45-minute limit, cleanup, and branch absence checks. The
 separate runner correction removes automatic integration-file reruns and keeps
 bounded diagnostics while streaming complete output. Neither change claims
 reduced cost.

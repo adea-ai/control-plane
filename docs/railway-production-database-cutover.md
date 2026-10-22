@@ -1,79 +1,25 @@
-# Production PostgreSQL target after provider retirement
+# Railway production database contract
 
-Persistent Railway staging and Neon are retired following the user's deletion
-report on 2026-10-22. This document records source requirements; it does not
-independently verify provider state or authorize resource changes.
+Production runs on the existing Railway PostgreSQL service. Tests use disposable local or CI sandboxes with synthetic identities and independent credentials.
 
-The production schema gate reads `DATABASE_MIGRATION_URL` and the reviewed
-`infrastructure/railway/production-database.json` contract. The contract is
-deliberately pending verified metadata from the exclusive live cutover owner.
-Promotion refuses before querying provider variables or opening a database until
-that exact identity is recorded and reviewed. No supplied URL can select its own
-allowlist, and the retired Neon target is not a fallback.
+The protected production schema gate consumes `DATABASE_MIGRATION_URL`, `DATABASE_MIGRATION_CA_CERTIFICATE`, and `infrastructure/railway/production-database.json`. Pending identity refuses promotion before provider or database I/O.
 
-The live owner must provide non-secret metadata: the database service ID,
-production environment ID, database name, and three endpoints: the private
-runtime binding, public migration endpoint, and public runtime-verification
-endpoint. The two public endpoints must have identical host/port metadata,
-reviewed as the proxy for that same service and environment. The gate first
-validates the private runtime binding, then clones its URL and replaces only
-that reviewed host/port. Role, password, database and query policy are preserved;
-no private hostname is opened from the GitHub-hosted runner. The existing role
-contract remains `control_plane_migrator` for migration and `control_plane_app`
-for runtime. Credentials are never stored in this file or the target contract.
-Endpoint metadata must also establish the supported TLS trust and connection
-route; a GitHub-hosted runner cannot assume access to a Railway-private hostname.
-Do not mark the contract verified from an intended service name or guessed host.
+The reviewed contract distinguishes the private runtime endpoint, reachable migration endpoint, and reachable runtime-role verification endpoint. The public routes must be the exact proxy for the same database service and production environment. The gate validates the private binding first, then changes only host/port for runtime-role verification; username, password, database, and URL policy are preserved.
 
-Once the verified contract is supplied, qualify the exact target with the live
-owner's authorized procedure. Keep certificate verification, role identity,
-canonical migration-history prefix checks, advisory locking and rechecks,
-post-migration exact history, least-privilege table grants, retention-reference
-columns and runtime readiness. Source tests use explicit synthetic identities;
-their success does not prove the live target has been provisioned or migrated.
+The fixed identities are `control_plane_migrator` for public-schema migrations and `control_plane_app` for runtime DML. Runtime cannot own database/schema objects, CREATE, TRUNCATE, REFERENCES, or TRIGGER, inherit roles, or hold elevated role flags. Selective grants, including immutable and read-only tables, remain enforced by the migrations and live capability gate. Adea owns separate `app`/`auth` schemas and is outside these grants.
 
-Routine pull-request proof remains the required secretless disposable local
-PostgreSQL lane, including fresh schema, profile conformance and Hosted Restate
-qualification. The retired Neon Actions workflow is preserved unchanged only as
-a historical test fixture, outside `.github/workflows`.
+The authenticated CA certificate is supplied separately from credentials and its DER SHA-256 must match source metadata. The migration, inspection, and runtime-verification connections all use certificate and hostname verification. A transport proxy hostname is not assumed to identify the certificate peer.
 
-The production IaC entry point rejects non-production environments before resource
-construction. Optional hosted qualification requires separately reviewed isolated
-ephemeral infrastructure, its own database and credentials, synthetic data,
-per-run object-store namespace and request identity, bounded lifetime and verified
-cleanup. A logical `APP_ENV=staging` inside such a fixture does not require a
-persistent Railway staging environment. Certification must remain forbidden on
-production. Do not inherit production database credentials or network access.
+Service images package the public CA at `packages/database/certs/railway-production-ca.crt` and configure `NODE_EXTRA_CA_CERTS` before the runtime starts. This adds the reviewed trust anchor while retaining ordinary chain and hostname verification for the private database endpoint. No private key is included.
 
-This source repair does not deploy, bootstrap a database, create credentials,
-remove provider variables, recreate staging, or change protected merge controls.
+Apply only the canonical migration history, under the existing advisory lock and bounded timeouts, then verify history and runtime grants. A successful liveness check does not prove schema readiness, private connectivity, representative execution, or fresh-account acceptance. Production promotion remains through the protected release workflow.
 
-Inspection, migration execution and runtime-role verification all explicitly use
-postgres.js `verify-full`, even when the runtime binding declares `sslmode=require`.
-This verifies both certificate chain and hostname using the process trust store.
-There is no permissive TLS callback or unverified fallback. A reviewed TLS peer
-name can differ from the proxy transport hostname only with an explicitly pinned CA.
-For system trust, the public proxy DNS name must be covered by the server
-certificate. For a verified private peer behind a public TCP proxy, record
-`identity.tls.serverName` and the lowercase SHA-256 digest of the CA certificate
-DER bytes in `identity.tls.caSha256`. Supply exactly that PEM certificate through
-the GitHub production-environment secret `DATABASE_MIGRATION_CA_CERTIFICATE`.
-The contract stores no PEM or credentials. The gate rejects absent, malformed,
-multiple or mismatched CA certificates before provider or database I/O and passes
-`{rejectUnauthorized: true, servername: reviewedPeer, ca: verifiedPem}` explicitly
-to inspection, migration execution and runtime-role verification. System trust
-uses `caSha256: null` and requires the peer name to equal the public endpoint.
-The private application route must independently trust its certificate chain. If that cannot be established, this gate remains blocked: do not
-substitute an unverified URL or weaken TLS. A separately authorized private-network
-execution design would require its own review.
+## Verified production bootstrap, 2026-10-22
 
-The application's shared PostgreSQL connection resolver also selects strict
-`verify-full` for accepted TLS modes. That source behavior is separate from live
-acceptance: the runtime private hostname, certificate SAN/chain, process trust,
-role/database and connectivity must still be independently verified. A passing
-public CI connection does not prove the application's private connection works.
-The committed live identity remains null until that evidence is supplied.
+The verified service is `67fdd979-8a5b-4c02-b4c5-799a2e5cb3f0` in production environment `52f5b0ac-2af0-4792-aa56-30d80e5db31e`, database `railway`. Runtime uses `postgres.railway.internal:5432`; migration and runtime-role CI verification use `altaria.proxy.rlwy.net:44407` with authenticated CA and peer `postgres.railway.internal`.
 
-Local TLS qualification uses OpenSSL-generated temporary synthetic certificates and
-loopback PostgreSQL SSLRequest handshakes. It covers trusted, untrusted, expired,
-wrong-host and explicit pinned-CA/peer cases, without contacting production.
+The CA DER SHA-256 is `3022dc74d0ca3f397259f884ae46f49ce41a51b6208a71a6a30d7fcf142f9c90`. Leaf SHA-256 is `b3bfc0c18336f8a27bf11a99f7a0a4dc05b5e8736cb144a6f31a0908a1f20b68`; both private and public endpoint identities verified over the existing public proxy. Private keys stayed on the PostgreSQL volume.
+
+All 74 canonical Control Plane migrations applied and replayed without history changes. The actual `control_plane_app` connection passed the repository capability/retention-column gate, including restricted table grants, no memberships, ownership, DDL or database CREATE. Catalog readback confirmed that Control Plane roles cannot use Adea's schemas and Adea roles cannot use Control Plane's public schema. Migration URL and public CA were stored in repository secrets; the private scoped runtime URL and startup trust-file path are configured in Railway without requesting a deployment. The existing successful deployment remains the previous image until protected promotion runs.
+
+These receipts establish database identity, TLS, history and capabilities. Effective image trust packaging, private runtime connectivity, readiness and representative production behavior still require deployment verification.

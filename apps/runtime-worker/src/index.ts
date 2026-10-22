@@ -21,10 +21,7 @@ export const start = (options: RuntimeWorkerStartOptions = {}) => {
     ...serviceOptions,
     serviceName,
     start: async ({ markReady, metadata, registerResource }) => {
-      if (
-        hostedManagedPiWorker === undefined &&
-        (metadata.environment === 'staging' || metadata.environment === 'production')
-      ) {
+      if (hostedManagedPiWorker === undefined && metadata.environment === 'production') {
         throw new Error('HOSTED_MANAGED_PI_WORKER_REQUIRED')
       }
       if (contextNode !== undefined) {

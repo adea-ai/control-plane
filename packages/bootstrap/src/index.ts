@@ -53,7 +53,9 @@ export async function bootstrapService<Service extends ServiceName>(
       options.cwd === undefined ? {} : { cwd: options.cwd }
     )
     if (
-      (config.metadata.environment === 'staging' || config.metadata.environment === 'production') &&
+      (config.metadata.environment === 'production' ||
+        (config.metadata.environment === 'test' &&
+          environment['CONTROL_PLANE_CLOUD_RUNTIME'] === 'certification')) &&
       isManagedCloudService(options.serviceName)
     ) {
       managedCloud = loadManagedCloudConfiguration(environment, options.serviceName)

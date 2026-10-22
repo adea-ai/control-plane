@@ -7,7 +7,7 @@ hand-off and the PR description.
 
 It maps what the PR owns to the tests that prove it, what the audit pass corrected, and what stays
 open. A passing test qualifies the named behavior only. No row claims a physical device, a live
-provider, hosted CI, hosted PostgreSQL/Restate or Neon.
+provider, hosted CI, hosted PostgreSQL/Restate or PostgreSQL.
 
 ## 1. Scope by slice
 
@@ -94,5 +94,5 @@ provider, hosted CI, hosted PostgreSQL/Restate or Neon.
 9. **PostgreSQL record details.** A NUL character in a recorded outcome cannot be stored in `jsonb`
    (the outcome stays pending and replays as `outcome_uncertain`), and the provider does not apply
    SQLite's record-size limit or ordering. The 0073 constraints take a full-table lock.
-10. **Not run anywhere:** hosted CI, hosted PostgreSQL/Restate, Neon DDL probe, native device, live
+10. **Not run anywhere:** hosted CI, hosted PostgreSQL/Restate, PostgreSQL DDL probe, native device, live
     provider, active cancellation stop, usage settlement.

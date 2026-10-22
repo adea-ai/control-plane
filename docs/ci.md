@@ -1,8 +1,7 @@
 # Continuous integration
 
 Code Foundry v1.48.1 is the CI runtime pinned by the generated callers under
-`.github/workflows/`. Feature branches target `main`; persistent Railway staging
-and Neon are retired. Production promotion remains protected and explicitly targeted.
+`.github/workflows/`. Feature branches target `main`; production is the only persistent Railway environment. Production promotion remains protected and explicitly targeted.
 
 ## Required pull-request gate
 
@@ -108,15 +107,15 @@ Gate`, and `M9 Production Readiness / Gate` checks as required and merge only
 through pull requests. Repository rules should require these stable gates without
 enumerating their internal parallel jobs.
 
-## Database qualification after provider retirement
+## Database qualification
 
-Persistent Railway staging and Neon are retired. Pull requests keep the required
+Production runs on Railway PostgreSQL; qualification uses disposable sandboxes. Pull requests keep the required
 `Validation / Gate`, including the secretless local PostgreSQL qualification in
 `postgres-pull-request.yml`: migrations, fresh bootstrap, pool teardown, profile
 conformance and Hosted PostgreSQL/Restate qualification remain required.
 
-The former Neon workflow is archived byte-for-byte at
-`tests/fixtures/retired-neon-workflow.yml` for historical contract regressions. It
+The former PostgreSQL workflow is archived byte-for-byte at
+`tests/fixtures/retired-postgres-workflow.yml` for historical contract regressions. It
 is not an executable Actions workflow and no longer creates or deletes provider
 branches. It is not a substitute for the current PostgreSQL lanes.
 
@@ -133,7 +132,7 @@ run-scoped infrastructure with synthetic data, independent database/credentials,
 object-store prefix and request identity, bounded lifetime and verified cleanup.
 It must never inherit production database access or enable certification on
 production. This repository entry point refuses non-production IaC targets;
-it must not be used to recreate persistent staging.
+it must not be used to recreate persistent sandbox.
 
 ## Reversible billing pause
 

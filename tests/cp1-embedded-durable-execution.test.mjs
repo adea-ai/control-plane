@@ -731,8 +731,8 @@ describe('CP1 persistence-profile conformance', () => {
   // ports path). The hosted HTTP/Restate ingress itself is exercised by the
   // hosted composition suites. Skipped locally unless
   // RUN_M10_POSTGRES_CONFORMANCE=true. Pull requests run it against local
-  // Compose PostgreSQL; trusted-main CI repeats it against an ephemeral Neon
-  // preview when the required Neon inputs are configured.
+  // Compose PostgreSQL; trusted-main CI repeats it against an ephemeral PostgreSQL
+  // preview when the required PostgreSQL inputs are configured.
   const conformanceMatrix = postgresConfigured ? test : test.skip
   conformanceMatrix(
     'disposes a partially seeded PostgreSQL world when setup fails',
@@ -799,7 +799,7 @@ describe('CP1 persistence-profile conformance', () => {
         )
         expect(result.conforms).toBe(true)
       }),
-    // Remote Postgres (Neon preview branches) adds per-database migration
+    // Remote Postgres (PostgreSQL preview branches) adds per-database migration
     // latency; three cases open six PostgreSQL worlds, so allow ten minutes.
     600_000
   )

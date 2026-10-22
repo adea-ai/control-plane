@@ -1,6 +1,5 @@
 import type { DatabaseCredentials } from '@control-plane/config'
-import { drizzle } from 'drizzle-orm/postgres-js'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
+import { migrateOwnedSchema } from './scoped-migrations.js'
 import { fileURLToPath } from 'node:url'
 import postgres from 'postgres'
 import { assertPostgresUrl, DatabaseConnectionError } from './connection.js'
@@ -63,10 +62,12 @@ export async function migrateDatabase(
     },
   })
   try {
-    await migrate(drizzle(client), {
-      migrationsFolder:
-        options.migrationsFolder ?? fileURLToPath(new URL('../drizzle', import.meta.url)),
-    })
+    await migrateOwnedSchema(
+      client,
+      options.migrationsFolder ?? fileURLToPath(new URL('../drizzle', import.meta.url)),
+      'drizzle',
+      options.verifyTls === true
+    )
   } finally {
     await client.end({ timeout: 5 })
   }

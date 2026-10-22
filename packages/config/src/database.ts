@@ -35,13 +35,7 @@ export function databaseSessionCredentials(
   if (application.role !== 'application' || !isPostgresUrl(application.url))
     throw databaseConfigurationError('application', ['DATABASE_URL'], [])
   const applicationUrl = new URL(application.url)
-  if (unpooledUrl === undefined) {
-    // A pooled route cannot carry session notifications; the operator supplies
-    // the explicit direct endpoint instead of having one inferred here.
-    if (isPooledRoute(applicationUrl))
-      throw databaseConfigurationError('application', [], ['DATABASE_URL_UNPOOLED'])
-    return application
-  }
+  if (unpooledUrl === undefined) return application
   if (!isPostgresUrl(unpooledUrl))
     throw databaseConfigurationError('application', ['DATABASE_URL_UNPOOLED'], [])
   if (!isValidSessionEndpoint(applicationUrl, new URL(unpooledUrl)))
@@ -49,25 +43,19 @@ export function databaseSessionCredentials(
   return { role: 'application', url: unpooledUrl }
 }
 
-/**
- * A session endpoint must keep the application principal and logical database,
- * never be a pooled route itself, and preserve the application endpoint's
- * effective TLS verification strength (see `effectiveTlsRank`). When the application endpoint is pooled, its direct
- * route is the same endpoint with the shared pooler label removed, so the
- * session connection cannot be redirected to another server.
- */
+/** Session connections preserve the exact direct endpoint and application principal. */
 function isValidSessionEndpoint(applicationUrl: URL, sessionUrl: URL): boolean {
-  if (isPooledRoute(sessionUrl)) return false
-  if (sessionUrl.username !== applicationUrl.username) return false
-  if (sessionUrl.pathname !== applicationUrl.pathname) return false
   const sessionTls = effectiveTlsRank(sessionUrl)
   const applicationTls = effectiveTlsRank(applicationUrl)
-  if (sessionTls === undefined || applicationTls === undefined || sessionTls < applicationTls)
-    return false
-  if (!isPooledRoute(applicationUrl)) return true
   return (
-    sessionUrl.hostname === directRouteHostname(applicationUrl.hostname) &&
-    sessionUrl.port === applicationUrl.port
+    sessionUrl.username === applicationUrl.username &&
+    sessionUrl.password === applicationUrl.password &&
+    sessionUrl.pathname === applicationUrl.pathname &&
+    sessionUrl.hostname === applicationUrl.hostname &&
+    (sessionUrl.port || '5432') === (applicationUrl.port || '5432') &&
+    sessionTls !== undefined &&
+    applicationTls !== undefined &&
+    sessionTls >= applicationTls
   )
 }
 
@@ -78,33 +66,6 @@ export function loadDatabaseSessionCredentials(
     loadDatabaseCredentials(environment, 'application'),
     environment['DATABASE_URL_UNPOOLED']
   )
-}
-
-const pooledRouteLabelSuffix = '-pooler'
-
-/**
- * A pooled route follows the shared `<endpoint>-pooler` label convention used by
- * transaction poolers. The check is provider-neutral and never trusts a
- * provider hostname suffix such as `.neon.tech`, so a generic pooler is treated
- * the same way as a hosted one.
- */
-function isPooledRoute(url: URL): boolean {
-  return isPooledEndpointLabel(url.hostname.split('.')[0])
-}
-
-function isPooledEndpointLabel(endpoint: string | undefined): endpoint is string {
-  return (
-    endpoint !== undefined &&
-    endpoint.endsWith(pooledRouteLabelSuffix) &&
-    endpoint.length > pooledRouteLabelSuffix.length
-  )
-}
-
-/** The direct route of a pooled endpoint: the same endpoint without its pooler label. */
-function directRouteHostname(hostname: string): string {
-  const [endpoint, ...rest] = hostname.split('.')
-  if (!isPooledEndpointLabel(endpoint)) return hostname
-  return [endpoint.slice(0, -pooledRouteLabelSuffix.length), ...rest].join('.')
 }
 
 /** What a PostgreSQL URL's TLS parameters resolve to: no TLS requested, encrypted, or verified. */

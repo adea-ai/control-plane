@@ -33,11 +33,11 @@ One class cannot substitute for another.
 
 ### Managed-cloud bootstrap configuration
 
-M9 uses Railway service/shared variables for service/bootstrap configuration such as Neon connection references, service credentials, Restate configuration, R2 credentials, and bootstrap/master-secret references. Values never belong in source, images, issue bodies, public schemas, or ordinary logs.
+M9 uses Railway service/shared variables for service/bootstrap configuration such as PostgreSQL connection references, service credentials, Restate configuration, R2 credentials, and bootstrap/master-secret references. Values never belong in source, images, issue bodies, public schemas, or ordinary logs.
 
 ### Dynamic connector/provider credentials
 
-Arbitrary user-scoped OAuth refresh tokens, API keys, and connector credentials remain behind the audited credential-vault/secret-provider boundary. They are **not** modeled as one Railway environment variable per user credential. Managed Cloud uses `NeonEncryptedSecretProvider` with the repo-owned `credential_secrets` table and an externally supplied AES-256-GCM key. AWS Secrets Manager is not a supported dependency.
+Arbitrary user-scoped OAuth refresh tokens, API keys, and connector credentials remain behind the audited credential-vault/secret-provider boundary. They are **not** modeled as one Railway environment variable per user credential. Managed Cloud uses `PostgresEncryptedSecretProvider` with the repo-owned `credential_secrets` table and an externally supplied AES-256-GCM key. AWS Secrets Manager is not a supported dependency.
 
 M10 adds Local/Hosted secret-provider adapters while preserving credential identity, lease, scope, rotation, revocation, and audit semantics.
 
@@ -54,7 +54,7 @@ single Railway secret without in-band key rotation.
 
 ## Persistence and workflow security
 
-- M9 managed cloud uses separate Control Plane Neon PostgreSQL; Adea uses a different database.
+- M9 managed cloud uses separate Control Plane Railway PostgreSQL; Adea uses a different database.
 - M10 Local and Hosted `simple` use SQLite; Hosted `server` uses PostgreSQL.
 - Restate workflow state is separate from Control Plane domain persistence.
 - LangGraph checkpoint state is separate from Restate and ProjectState.
@@ -76,7 +76,7 @@ single Railway secret without in-band key rotation.
 ## M9 security evidence
 
 Existing M9 isolation, secret-canary, production-readiness, dependency, and CodeQL evidence remains
-useful. M9.6 reran the applicable controls against the actual Railway + Neon + R2 + Restate staging
+useful. M9.6 reran the applicable controls against the actual Railway + PostgreSQL + R2 + Restate sandbox
 candidate and recorded the results in the certification evidence.
 
 Required cloud checks include:
@@ -85,7 +85,7 @@ Required cloud checks include:
 - `apps/control-api/src/application.test.mjs`;
 - `apps/runtime-gateway/src/authentication.test.mjs`;
 - Railway public/private ingress and service identity;
-- Neon runtime versus migration authority;
+- PostgreSQL runtime versus migration authority;
 - Restate endpoint/access/logging boundaries;
 - R2 bucket/credential scope;
 
@@ -126,7 +126,7 @@ M10 adds tests for:
 Canaries must cover at least:
 
 - Railway builds/deploy logs and service diagnostics;
-- Neon migration/runtime errors;
+- PostgreSQL migration/runtime errors;
 - Restate inputs/state/logs;
 - R2 metadata/errors;
 - SQLite/PostgreSQL databases and backups;

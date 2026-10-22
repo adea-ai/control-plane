@@ -1050,7 +1050,7 @@ test('missing, malformed, unverified and credential-bearing metadata is rejected
       value.status = 'pending-verification'
     },
     (value) => {
-      value.provider = 'neon'
+      value.provider = 'postgres'
     },
     (value) => {
       value.identity = null
@@ -1313,7 +1313,7 @@ test(
             delete env.NODE_EXTRA_CA_CERTS
             if (!scenario.startsWith('pinned-') && scenario !== 'untrusted')
               env.NODE_EXTRA_CA_CERTS = cert
-            for (const runtime of scenario.startsWith('pinned-')
+            for (const runtime of scenario.startsWith('pinned-') || scenario === 'trusted'
               ? ['node', process.execPath]
               : ['node']) {
               const { stdout } = await execFile(

@@ -89,7 +89,7 @@ The worker package integration command and exact repository inventory now includ
 the new test. No new external dependency, database schema or acceptance waiver.
 All isolated databases were disposed; the owned local PostgreSQL container was
 stopped and its listener verified closed. Worktrees and its volume remain for the
-unfinished milestone. No Railway staging wake, production deployment or merge.
+unfinished milestone. No Railway sandbox wake, production deployment or merge.
 
 ## Later release-lane audit
 
@@ -187,7 +187,7 @@ Hosted HTTP cases and the earlier actual Cloud admission case. Final database
 inventory contained only the fixture database and PostgreSQL administration
 database, with no generated test database. The explicitly owned local container
 was stopped and its host listener verified closed; its volume and both worktrees
-are retained for the unfinished milestone. No Railway/Neon deployment occurred.
+are retained for the unfinished milestone. No Railway/PostgreSQL deployment occurred.
 Required current-head CI and release/rollout acceptance remain unproven.
 
 After this integration run, final current-head type-check, full lint, full
@@ -250,7 +250,7 @@ Root verification on this frozen candidate:
   secret-scan command failed to start; the canonical `bun run security:scan`
   then passed across 1,291 repository files.
 - Configured distribution, dependency, unit, E2E and smoke budgets passed.
-  No Railway/Neon deployment, PR readiness transition or issue closure occurred.
+  No Railway/PostgreSQL deployment, PR readiness transition or issue closure occurred.
 
 All test sessions completed; final PostgreSQL inventory contained only the
 fixture and administration databases. The owned local container was stopped

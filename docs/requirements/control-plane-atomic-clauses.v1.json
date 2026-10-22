@@ -18,7 +18,7 @@
       "capturedLogicalLines": 77,
       "extractionScope": "captured-text",
       "inventoryPath": "docs/requirements/project-index-atomic-inventory.md",
-      "inventorySha256": "66ac642a516dc8faa6116b803093754452db940e2e362af5e78b19655e467e6b",
+      "inventorySha256": "d174954b7d373d06beaa1750ccbeec090da7b169b7771ba9db4a775baaea961f",
       "requirementMapping": "incomplete",
       "implementationMapping": "bounded-path-inspection",
       "candidateAcceptance": "not-established",
@@ -712,7 +712,7 @@
           "columns": {
             "Source": "Canonical Documents / Technical, L26",
             "Clause kind": "Normative clause / stated product boundary",
-            "Independently checkable clause / recorded field": "Control Plane TDD: implementation of one portable TypeScript Control Plane core across Local, Self-hosted `simple`, Self-hosted `server`, and the managed-cloud profile (the M9 Railway/Neon/R2/Restate reference, already implemented and certified): deterministic AgentProfile/Skill and ContextProvider resolution, immutable ExecutionPlans, ProjectState/ContextPackages, Restate lifecycle, SQLite/PostgreSQL PersistenceProvider, DirectLocalRuntimeTransport and Runtime Gateway only for non-co-located runtimes, SecretsProvider/ObjectStore ports, managed Pi/ACP, tools/models/sandboxes, LangGraph orchestration, usage, and evals.",
+            "Independently checkable clause / recorded field": "Control Plane TDD: implementation of one portable TypeScript Control Plane core across Local, Self-hosted `simple`, Self-hosted `server`, and the managed-cloud profile (the M9 Railway/PostgreSQL/R2/Restate reference, already implemented and certified): deterministic AgentProfile/Skill and ContextProvider resolution, immutable ExecutionPlans, ProjectState/ContextPackages, Restate lifecycle, SQLite/PostgreSQL PersistenceProvider, DirectLocalRuntimeTransport and Runtime Gateway only for non-co-located runtimes, SecretsProvider/ObjectStore ports, managed Pi/ACP, tools/models/sandboxes, LangGraph orchestration, usage, and evals.",
             "Owner and bounded current mapping": "`CP-CATALOG`, `CP-CONTEXT`, `CP-WORKFLOW`, `CP-DEPLOY`, `CP-RUNTIME`, `CP-ARTIFACT`, `CP-MODEL`"
           }
         },
@@ -1526,7 +1526,7 @@
       "capturedLogicalLines": 125,
       "extractionScope": "captured-text",
       "inventoryPath": "docs/requirements/agent-hq-prd-atomic-inventory.md",
-      "inventorySha256": "4d844837b15f437b16285ca7e4db41225a40d45f64529dc822ed0ed599de0ffb",
+      "inventorySha256": "9d7eb6b45560c786e91b36df4e71fc6b22a8fdc89aa791dbd1247cd16bebbd6b",
       "requirementMapping": "incomplete",
       "implementationMapping": "bounded-path-inspection",
       "candidateAcceptance": "not-established",
@@ -4673,7 +4673,7 @@
           "columns": {
             "Source": "Roadmap / Phase 1: Developer MVP, L96",
             "Clause kind": "Product roadmap scope; not a current milestone/status assertion",
-            "Independently checkable clause / recorded field": "M3 adds the Railway-hosted Event Gateway backed by Agent HQ Neon.",
+            "Independently checkable clause / recorded field": "M3 adds the Railway-hosted Event Gateway backed by Agent HQ PostgreSQL.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -6114,7 +6114,7 @@
       "capturedLogicalLines": 231,
       "extractionScope": "captured-text",
       "inventoryPath": "docs/requirements/control-plane-prd-atomic-inventory.md",
-      "inventorySha256": "aa30424c45dc4ba545f2339db2e6761b227eda5fe19d4909d4af495a4f342088",
+      "inventorySha256": "d579eb6638f0ad54302192fd7395ed999ede6484ed3debfa5403f4df90338b83",
       "requirementMapping": "incomplete",
       "implementationMapping": "bounded-path-inspection",
       "candidateAcceptance": "not-established",
@@ -6235,7 +6235,7 @@
           "heading": "Source identity, executive summary, three-product model and promise",
           "columns": {
             "Source": "§1 L11",
-            "Atomic clause or explicit disposition": "Named deployment options are Cloud (Railway/Neon/Cloudflare R2), Hosted (user-controlled VPS) and Local (desktop/all-in-one).",
+            "Atomic clause or explicit disposition": "Named deployment options are Cloud (Railway/PostgreSQL/Cloudflare R2), Hosted (user-controlled VPS) and Local (desktop/all-in-one).",
             "Current mapping / evidence limit": "DEPLOY paths exist; profile semantics/Hosted naming require owner-level clarity."
           }
         },
@@ -6245,8 +6245,8 @@
           "heading": "Source identity, executive summary, three-product model and promise",
           "columns": {
             "Source": "§1 L11",
-            "Atomic clause or explicit disposition": "Establish managed-cloud reference first on Railway with Neon PostgreSQL, R2 and Restate.",
-            "Current mapping / evidence limit": "Partial: DEPLOY/WF; real staging and recovery evidence remain required."
+            "Atomic clause or explicit disposition": "Establish managed-cloud reference first on Railway with Railway PostgreSQL, R2 and Restate.",
+            "Current mapping / evidence limit": "Partial: DEPLOY/WF; real sandbox and recovery evidence remain required."
           }
         },
         {
@@ -8916,7 +8916,7 @@
           "columns": {
             "Source": "§13 L180",
             "Atomic clause or disposition": "M9 completes the Railway managed-cloud deployment profile.",
-            "Current mapping / evidence limit": "DEPLOY/WF/CONTRACT/CTX partial; live exact-candidate staging proof required."
+            "Current mapping / evidence limit": "DEPLOY/WF/CONTRACT/CTX partial; live exact-candidate sandbox proof required."
           }
         },
         {
@@ -9106,7 +9106,7 @@
           "columns": {
             "Source": "§15 L191",
             "Atomic clause / explicit disposition": "Same workflow/domain implementation proven in managed-cloud Railway.",
-            "Current mapping / evidence limit": "DEPLOY/WF partial; real staging gate open."
+            "Current mapping / evidence limit": "DEPLOY/WF partial; real sandbox gate open."
           }
         },
         {
@@ -9276,7 +9276,7 @@
           "columns": {
             "Source": "§16 L202",
             "Atomic clause / explicit disposition": "Independently implement and certify managed-cloud CP on Railway before consumer rollout.",
-            "Current mapping / evidence limit": "DEPLOY partial; staging certification open."
+            "Current mapping / evidence limit": "DEPLOY partial; sandbox certification open."
           }
         },
         {
@@ -9485,7 +9485,7 @@
           "heading": "Success criteria, packaging, roadmap and decisions",
           "columns": {
             "Source": "§13 L180",
-            "Atomic clause / explicit disposition": "M9 wires Neon into the managed-cloud profile.",
+            "Atomic clause / explicit disposition": "M9 wires PostgreSQL into the managed-cloud profile.",
             "Current mapping / evidence limit": "DEPLOY partial; current-profile database qualification open."
           }
         },
@@ -9585,8 +9585,8 @@
           "heading": "Success criteria, packaging, roadmap and decisions",
           "columns": {
             "Source": "§13 L180",
-            "Atomic clause / explicit disposition": "M9 certifies the real Railway staging environment.",
-            "Current mapping / evidence limit": "DEPLOY partial; live exact-candidate staging certification required."
+            "Atomic clause / explicit disposition": "M9 certifies the real Railway sandbox environment.",
+            "Current mapping / evidence limit": "DEPLOY partial; live exact-candidate sandbox certification required."
           }
         }
       ]
@@ -13656,7 +13656,7 @@
       "capturedLogicalLines": 111,
       "extractionScope": "captured-text",
       "inventoryPath": "docs/requirements/system-architecture-atomic-inventory.md",
-      "inventorySha256": "d20fb879fbe8716e43c1074a3a3225e6a236eaf72290d598971870dd1bee6a1d",
+      "inventorySha256": "d0baf2a43372208aeca98106eb7d6ccf5b860389c118604db13edfff4047d1c6",
       "requirementMapping": "incomplete",
       "implementationMapping": "bounded-path-inspection",
       "candidateAcceptance": "not-established",
@@ -17160,7 +17160,7 @@
           "columns": {
             "Source": "L065",
             "Section": "10. Security Boundary",
-            "Independent obligation, field, metric, or preserved decision": "Neon Auth is provided behind @agent-hq/auth.",
+            "Independent obligation, field, metric, or preserved decision": "Authentication is provided behind @agent-hq/auth.",
             "Owner boundary": "Control Plane + named product/security owner",
             "Current mapping": "`SA-SECURITY`"
           }
@@ -17520,7 +17520,7 @@
           "columns": {
             "Source": "L068",
             "Section": "11. Deployment Shape",
-            "Independent obligation, field, metric, or preserved decision": "The M9 managed-cloud reference uses a separate Neon PostgreSQL database.",
+            "Independent obligation, field, metric, or preserved decision": "The M9 managed-cloud reference uses a separate Railway PostgreSQL database.",
             "Owner boundary": "Control Plane deployment profile",
             "Current mapping": "`SA-DEPLOY`"
           }
@@ -17844,7 +17844,7 @@
           "columns": {
             "Source": "L068",
             "Section": "11. Deployment Shape",
-            "Independent obligation, field, metric, or preserved decision": "Neon is not required for ordinary Local execution.",
+            "Independent obligation, field, metric, or preserved decision": "PostgreSQL is not required for ordinary Local execution.",
             "Owner boundary": "Control Plane deployment profile",
             "Current mapping": "`SA-DEPLOY`"
           }
@@ -18852,7 +18852,7 @@
           "columns": {
             "Source": "L096",
             "Section": "14. Reliability, Identity, and Local Trust",
-            "Independent obligation, field, metric, or preserved decision": "Neon Auth remains behind @agent-hq/auth",
+            "Independent obligation, field, metric, or preserved decision": "Authentication remains behind @agent-hq/auth",
             "Owner boundary": "Agent HQ (external product owner)",
             "Current mapping": "`SA-AGENT-HQ`"
           }
@@ -19032,7 +19032,7 @@
           "columns": {
             "Source": "L098",
             "Section": "14. Reliability, Identity, and Local Trust",
-            "Independent obligation, field, metric, or preserved decision": "WorkspaceEvents are ordered by workspace_sequence in Agent HQ Neon and delivered through Railway Event Gateway over SSE.",
+            "Independent obligation, field, metric, or preserved decision": "WorkspaceEvents are ordered by workspace_sequence in Agent HQ PostgreSQL and delivered through Railway Event Gateway over SSE.",
             "Owner boundary": "Agent HQ (external product owner)",
             "Current mapping": "`SA-AGENT-HQ`"
           }
@@ -19104,7 +19104,7 @@
           "columns": {
             "Source": "L098",
             "Section": "14. Reliability, Identity, and Local Trust",
-            "Independent obligation, field, metric, or preserved decision": "Reconnect and scale-out correctness always come from Neon replay.",
+            "Independent obligation, field, metric, or preserved decision": "Reconnect and scale-out correctness always come from PostgreSQL replay.",
             "Owner boundary": "Agent HQ (external product owner)",
             "Current mapping": "`SA-AGENT-HQ`"
           }
@@ -20231,7 +20231,7 @@
       "capturedLogicalLines": 303,
       "extractionScope": "captured-text",
       "inventoryPath": "docs/requirements/control-plane-tdd-atomic-inventory.md",
-      "inventorySha256": "5fb4c12b60c5b086311f3fb68d4d90e2f5ddfd656d4f451b21e365aa451270cb",
+      "inventorySha256": "9c16c6dbda4086de06003abb0f1b28a2ba3348d1522fa1d1b3864abd47acdc0d",
       "requirementMapping": "incomplete",
       "implementationMapping": "bounded-path-inspection",
       "candidateAcceptance": "not-established",
@@ -22792,8 +22792,8 @@
           "heading": "§20 Deployment topology",
           "columns": {
             "Source": "§20 L175",
-            "Independently testable obligation": "Use Railway + Restate + a separate Neon PostgreSQL database + Cloudflare R2 for the M9 managed-cloud reference.",
-            "Current mapping / missing evidence": "`E-DEPLOY`, `E-WORKFLOW`, `E-ARTIFACT`; definitions/config exist. Live Railway/Neon/R2 certification is a separate #190/M9 gate."
+            "Independently testable obligation": "Use Railway + Restate + a separate Railway PostgreSQL database + Cloudflare R2 for the M9 managed-cloud reference.",
+            "Current mapping / missing evidence": "`E-DEPLOY`, `E-WORKFLOW`, `E-ARTIFACT`; definitions/config exist. Live Railway/PostgreSQL/R2 certification is a separate #190/M9 gate."
           }
         },
         {
@@ -22862,7 +22862,7 @@
           "heading": "§20 Deployment topology",
           "columns": {
             "Source": "§20 L175",
-            "Independently testable obligation": "Ordinary Local execution must not require Docker, PostgreSQL, Redis/Valkey, Neon, R2, or cloud Runtime Gateway.",
+            "Independently testable obligation": "Ordinary Local execution must not require Docker, PostgreSQL, Redis/Valkey, PostgreSQL, R2, or cloud Runtime Gateway.",
             "Current mapping / missing evidence": "`E-DEPLOY`; Local offline/embedded test suites exist. Negative dependency assertion for every ordinary task on a clean machine remains a packaging acceptance gate."
           }
         },
@@ -24382,8 +24382,8 @@
           "heading": "Appendix C: implementation stack and repository boundary",
           "columns": {
             "Source": "App. C L286",
-            "Independently testable obligation": "Use separate Neon PostgreSQL and Cloudflare R2 for managed cloud, with Railway initial compute and M9 production-shaped dependency/security/recovery/cost validation.",
-            "Current mapping / missing evidence": "`E-DEPLOY`, `E-WORKFLOW`, `E-ARTIFACT`; service configs/tests exist. Live M9 staging certification is not established here."
+            "Independently testable obligation": "Use separate Railway PostgreSQL and Cloudflare R2 for managed cloud, with Railway initial compute and M9 production-shaped dependency/security/recovery/cost validation.",
+            "Current mapping / missing evidence": "`E-DEPLOY`, `E-WORKFLOW`, `E-ARTIFACT`; service configs/tests exist. Live M9 sandbox certification is not established here."
           }
         },
         {
@@ -24392,7 +24392,7 @@
           "heading": "Appendix C: implementation stack and repository boundary",
           "columns": {
             "Source": "App. C L286",
-            "Independently testable obligation": "Preserve accepted M9 Railway/Neon/R2/Restate semantics when M10 substitutes Local/Self-hosted adapters.",
+            "Independently testable obligation": "Preserve accepted M9 Railway/PostgreSQL/R2/Restate semantics when M10 substitutes Local/Self-hosted adapters.",
             "Current mapping / missing evidence": "`E-DEPLOY`; portability tests exist. Full semantic-reference comparison remains open."
           }
         },
@@ -27094,7 +27094,7 @@
       "capturedLogicalLines": 234,
       "extractionScope": "captured-text",
       "inventoryPath": "docs/requirements/data-api-atomic-inventory.md",
-      "inventorySha256": "8475a27b099991ecb969ac68709ec5f6d9aed8b52eda42a74c1ebaf4370f205f",
+      "inventorySha256": "c4d1ad880923c6703ba23f97d8726d68a38d08be87b207b580dc83220991ea2d",
       "requirementMapping": "incomplete",
       "implementationMapping": "bounded-path-inspection",
       "candidateAcceptance": "not-established",
@@ -28042,7 +28042,7 @@
           "columns": {
             "Source": "L015",
             "Section": "4. Agent HQ Core Entities",
-            "Independent obligation, field, metric, or preserved decision": "Authentication is initially managed by Neon Auth behind `@agent-hq/auth`.",
+            "Independent obligation, field, metric, or preserved decision": "Authentication is initially managed by Authentication behind `@agent-hq/auth`.",
             "Owner boundary": "Agent HQ (external product owner)",
             "Current mapping": "`DA-AGENT-HQ`"
           }
@@ -28054,7 +28054,7 @@
           "columns": {
             "Source": "L015",
             "Section": "4. Agent HQ Core Entities",
-            "Independent obligation, field, metric, or preserved decision": "Verification is initially managed by Neon Auth behind `@agent-hq/auth`.",
+            "Independent obligation, field, metric, or preserved decision": "Verification is initially managed by Authentication behind `@agent-hq/auth`.",
             "Owner boundary": "Agent HQ (external product owner)",
             "Current mapping": "`DA-AGENT-HQ`"
           }
@@ -28066,7 +28066,7 @@
           "columns": {
             "Source": "L015",
             "Section": "4. Agent HQ Core Entities",
-            "Independent obligation, field, metric, or preserved decision": "Session mechanics are initially managed by Neon Auth behind `@agent-hq/auth`.",
+            "Independent obligation, field, metric, or preserved decision": "Session mechanics are initially managed by Authentication behind `@agent-hq/auth`.",
             "Owner boundary": "Agent HQ (external product owner)",
             "Current mapping": "`DA-AGENT-HQ`"
           }
@@ -28078,7 +28078,7 @@
           "columns": {
             "Source": "L015",
             "Section": "4. Agent HQ Core Entities",
-            "Independent obligation, field, metric, or preserved decision": "Product-domain records never depend on Neon Auth’s physical user row.",
+            "Independent obligation, field, metric, or preserved decision": "Product-domain records never depend on Authentication’s physical user row.",
             "Owner boundary": "Agent HQ (external product owner) + Control Plane contract owner",
             "Current mapping": "`DA-CONTRACT`"
           }
@@ -34114,7 +34114,7 @@
           "columns": {
             "Source": "L192",
             "Section": "13. Event Requirements",
-            "Independent obligation, field, metric, or preserved decision": "The Railway Event Gateway replays from authoritative Agent HQ Neon WorkspaceEvents.",
+            "Independent obligation, field, metric, or preserved decision": "The Railway Event Gateway replays from authoritative Agent HQ PostgreSQL WorkspaceEvents.",
             "Owner boundary": "Agent HQ (external product event owner)",
             "Current mapping": "`DA-AGENT-HQ`"
           }
@@ -34222,7 +34222,7 @@
           "columns": {
             "Source": "L192",
             "Section": "13. Event Requirements",
-            "Independent obligation, field, metric, or preserved decision": "A 2-second-bounded Neon polling fallback is provided.",
+            "Independent obligation, field, metric, or preserved decision": "A 2-second-bounded PostgreSQL polling fallback is provided.",
             "Owner boundary": "Agent HQ (external product event owner)",
             "Current mapping": "`DA-AGENT-HQ`"
           }
@@ -37426,7 +37426,7 @@
           "columns": {
             "Source": "L213",
             "Section": "15. Contract Baseline v1",
-            "Independent obligation, field, metric, or preserved decision": "Agent HQ Cloud owns its Neon PostgreSQL product-metadata boundary; Agent HQ Desktop owns a separate encrypted local-content SQLite store behind Tauri/Rust.",
+            "Independent obligation, field, metric, or preserved decision": "Agent HQ Cloud owns its Railway PostgreSQL product-metadata boundary; Agent HQ Desktop owns a separate encrypted local-content SQLite store behind Tauri/Rust.",
             "Owner boundary": "Agent HQ Cloud and Agent HQ Desktop product owners",
             "Current mapping": "`DA-AGENT-HQ`"
           }
@@ -37438,7 +37438,7 @@
           "columns": {
             "Source": "L213",
             "Section": "15. Contract Baseline v1",
-            "Independent obligation, field, metric, or preserved decision": "The Agent HQ Desktop local-content SQLite store is neither a Neon replica nor Control Plane persistence.",
+            "Independent obligation, field, metric, or preserved decision": "The Agent HQ Desktop local-content SQLite store is neither a PostgreSQL replica nor Control Plane persistence.",
             "Owner boundary": "Agent HQ Desktop owner + Control Plane persistence owner",
             "Current mapping": "`DA-PERSIST`"
           }
@@ -37462,7 +37462,7 @@
           "columns": {
             "Source": "L213",
             "Section": "15. Contract Baseline v1",
-            "Independent obligation, field, metric, or preserved decision": "Persistence/ownership boundary: Self-hosted `server` and Agent HQ-managed cloud use PostgreSQL, with Neon selected for first-party managed cloud.",
+            "Independent obligation, field, metric, or preserved decision": "Persistence/ownership boundary: Self-hosted `server` and Agent HQ-managed cloud use PostgreSQL, with PostgreSQL selected for first-party managed cloud.",
             "Owner boundary": "Control Plane persistence owner",
             "Current mapping": "`DA-PERSIST`"
           }
@@ -37570,7 +37570,7 @@
           "columns": {
             "Source": "L220",
             "Section": "16. Remaining Technical Decisions",
-            "Independent obligation, field, metric, or preserved decision": "Open technical decision (unresolved; no decision is inferred): managed-cloud Railway Event Gateway and relay autoscaling thresholds after production-shaped load evidence; Railway/Neon architecture and Event Gateway correctness defaults are accepted",
+            "Independent obligation, field, metric, or preserved decision": "Open technical decision (unresolved; no decision is inferred): managed-cloud Railway Event Gateway and relay autoscaling thresholds after production-shaped load evidence; Railway/PostgreSQL architecture and Event Gateway correctness defaults are accepted",
             "Owner boundary": "Agent HQ relay + Control Plane command owner",
             "Current mapping": "`DA-RELAY`"
           }
@@ -38337,7 +38337,7 @@
       "capturedLogicalLines": 149,
       "extractionScope": "captured-text",
       "inventoryPath": "docs/requirements/runtime-node-atomic-inventory.md",
-      "inventorySha256": "2d6227557c78186f70b5b222ea3eef1718bd54c10cf957e6cea6b2f6d8ca5d14",
+      "inventorySha256": "5030a8f89cd29de17747bc72649b0fe823cac3990dfc540eee8504c8522de77b",
       "requirementMapping": "incomplete",
       "implementationMapping": "bounded-path-inspection",
       "candidateAcceptance": "not-established",
@@ -41638,7 +41638,7 @@
           "columns": {
             "Source section / line": "§19 Cross-Repo Milestone Ownership, L147",
             "Disposition": "ownership/planning boundary",
-            "Extracted independently checkable clause": "Agent HQ M6 owns execution-location UX, HPKE remote-command client/key lifecycle (#189), durable Railway/Neon web/mobile relay behavior (#187), and Self-hosted registration UX (#188).",
+            "Extracted independently checkable clause": "Agent HQ M6 owns execution-location UX, HPKE remote-command client/key lifecycle (#189), durable Railway/PostgreSQL web/mobile relay behavior (#187), and Self-hosted registration UX (#188).",
             "Current mapping key(s)": "`RN-NONE`"
           }
         },
@@ -41759,7 +41759,7 @@
       "capturedLogicalLines": 169,
       "extractionScope": "captured-text",
       "inventoryPath": "docs/requirements/execution-consistency-atomic-inventory.md",
-      "inventorySha256": "42215cc93e42ce97efcbbbe037ed6afc7f8557c4f7337336354079e8c1db665f",
+      "inventorySha256": "fb465c1f3a105443dfe133011e1360259cb95f4430ec22d678177e810a04d46b",
       "requirementMapping": "incomplete",
       "implementationMapping": "bounded-path-inspection",
       "candidateAcceptance": "not-established",
@@ -44092,7 +44092,7 @@
           "columns": {
             "Source section / line": "§11 Event Gateway and SSE Scale-Out, L94",
             "Disposition": "normative clause / definition",
-            "Extracted independently checkable clause": "Railway instances are disposable because Agent HQ Neon WorkspaceEvents remain authoritative.",
+            "Extracted independently checkable clause": "Railway instances are disposable because Agent HQ PostgreSQL WorkspaceEvents remain authoritative.",
             "Current mapping key(s)": "`EC-AHQ`"
           }
         },
@@ -44103,7 +44103,7 @@
           "columns": {
             "Source section / line": "§11 Event Gateway and SSE Scale-Out, L95",
             "Disposition": "normative clause / definition",
-            "Extracted independently checkable clause": "Agent HQ Neon PostgreSQL WorkspaceEvent rows are the source of truth.",
+            "Extracted independently checkable clause": "Agent HQ Railway PostgreSQL WorkspaceEvent rows are the source of truth.",
             "Current mapping key(s)": "`EC-AHQ`"
           }
         },
@@ -44147,7 +44147,7 @@
           "columns": {
             "Source section / line": "§11 Event Gateway and SSE Scale-Out, L96",
             "Disposition": "normative clause / definition",
-            "Extracted independently checkable clause": "If LISTEN/NOTIFY is unavailable or disconnected, the gateway falls back to bounded 2-second Neon polling/catch-up until notification capability recovers.",
+            "Extracted independently checkable clause": "If LISTEN/NOTIFY is unavailable or disconnected, the gateway falls back to bounded 2-second PostgreSQL polling/catch-up until notification capability recovers.",
             "Current mapping key(s)": "`EC-AHQ`"
           }
         },
@@ -45445,7 +45445,7 @@
           "columns": {
             "Source section / line": "§18 Acceptance Baseline, L147",
             "Disposition": "acceptance scenario (unverified here)",
-            "Extracted independently checkable clause": "A lost LISTEN/NOTIFY wake-up does not lose an SSE update because the Railway gateway falls back to Neon catch-up/polling and replay from the signed cursor.",
+            "Extracted independently checkable clause": "A lost LISTEN/NOTIFY wake-up does not lose an SSE update because the Railway gateway falls back to PostgreSQL catch-up/polling and replay from the signed cursor.",
             "Current mapping key(s)": "`EC-ACCEPT`"
           }
         },
@@ -45874,7 +45874,7 @@
       "capturedLogicalLines": 146,
       "extractionScope": "captured-text",
       "inventoryPath": "docs/requirements/artifact-storage-atomic-inventory.md",
-      "inventorySha256": "073f6c3f7ccc46b38e8886222a809940762e39c1c1b5aa78dd6eced2b2de4ae9",
+      "inventorySha256": "6e96d6e207b5318886a4b6038744b1c27d886c740f6eac8201aa1ac443b26bfe",
       "requirementMapping": "incomplete",
       "implementationMapping": "bounded-path-inspection",
       "candidateAcceptance": "not-established",
@@ -47987,7 +47987,7 @@
           "columns": {
             "Source section / line": "§14 Encryption and Secret Handling, L111",
             "Disposition": "normative clause / definition",
-            "Extracted independently checkable clause": "Preview and staging environments use separate stores or strictly separate prefixes and credentials and cannot read production artifacts.",
+            "Extracted independently checkable clause": "Preview and sandbox environments use separate stores or strictly separate prefixes and credentials and cannot read production artifacts.",
             "Current mapping key(s)": "`ART-STORE`, `ART-AHQ`"
           }
         },
@@ -48504,7 +48504,7 @@
       "capturedLogicalLines": 92,
       "extractionScope": "captured-text",
       "inventoryPath": "docs/requirements/security-trust-atomic-inventory.md",
-      "inventorySha256": "156000cfa5a6e5c58a753cda49fb0c8fbf7d38e5a634f8cbfd05cd4c045603f0",
+      "inventorySha256": "bb48683c1b0b21b84621da063aab554b61ae5d7bb0f486f5676a3c8ade25677e",
       "requirementMapping": "incomplete",
       "implementationMapping": "bounded-path-inspection",
       "candidateAcceptance": "not-established",
@@ -48669,7 +48669,7 @@
           "heading": "2. Trust boundaries",
           "columns": {
             "Source": "§2 L22",
-            "Independent obligation and acceptance criterion": "Agent HQ Neon operation does not require plaintext Local/Self-hosted prompts, bodies, inputs, ContextPackages, repositories, provider memory, reusable credentials, or unwrapped E2E keys.",
+            "Independent obligation and acceptance criterion": "Agent HQ PostgreSQL operation does not require plaintext Local/Self-hosted prompts, bodies, inputs, ContextPackages, repositories, provider memory, reusable credentials, or unwrapped E2E keys.",
             "Owner boundary": "Agent HQ",
             "Current mapping": "NONE-AHQ; no product DB review in this repository"
           }
@@ -48691,7 +48691,7 @@
           "heading": "2. Trust boundaries",
           "columns": {
             "Source": "§2 L22",
-            "Independent obligation and acceptance criterion": "Agent HQ Desktop's encrypted local-content SQLite store is behind the Tauri Rust boundary and is neither a Neon replica nor Control Plane persistence.",
+            "Independent obligation and acceptance criterion": "Agent HQ Desktop's encrypted local-content SQLite store is behind the Tauri Rust boundary and is neither a PostgreSQL replica nor Control Plane persistence.",
             "Owner boundary": "Agent HQ desktop",
             "Current mapping": "NONE-AHQ; packaged desktop proof open"
           }
@@ -49010,7 +49010,7 @@
           "heading": "2. Trust boundaries",
           "columns": {
             "Source": "§2 L30",
-            "Independent obligation and acceptance criterion": "Agent HQ Neon WorkspaceEvents are authoritative; PostgreSQL LISTEN/NOTIFY is advisory only.",
+            "Independent obligation and acceptance criterion": "Agent HQ PostgreSQL WorkspaceEvents are authoritative; PostgreSQL LISTEN/NOTIFY is advisory only.",
             "Owner boundary": "Agent HQ",
             "Current mapping": "NONE-AHQ"
           }
@@ -49021,7 +49021,7 @@
           "heading": "2. Trust boundaries",
           "columns": {
             "Source": "§2 L30",
-            "Independent obligation and acceptance criterion": "A bounded 2-second Neon poll preserves Event Gateway correctness when advisory notifications are missed.",
+            "Independent obligation and acceptance criterion": "A bounded 2-second PostgreSQL poll preserves Event Gateway correctness when advisory notifications are missed.",
             "Owner boundary": "Agent HQ",
             "Current mapping": "NONE-AHQ; measured production fallback evidence open"
           }
@@ -49197,7 +49197,7 @@
           "heading": "3. Workspace isolation",
           "columns": {
             "Source": "§3 L38",
-            "Independent obligation and acceptance criterion": "Neon Auth subject/session is established behind Agent HQ auth and resolves through AuthIdentity to a stable Agent HQ user_id before authorization.",
+            "Independent obligation and acceptance criterion": "Authentication subject/session is established behind Agent HQ auth and resolves through AuthIdentity to a stable Agent HQ user_id before authorization.",
             "Owner boundary": "Agent HQ",
             "Current mapping": "NONE-AHQ"
           }
@@ -51398,7 +51398,7 @@
       "capturedLogicalLines": 114,
       "extractionScope": "captured-text",
       "inventoryPath": "docs/requirements/evaluation-plan-atomic-inventory.md",
-      "inventorySha256": "2ac350206c855412fe5223c6c48658cfd8bafb002f4d17a75258707bf51dc8f5",
+      "inventorySha256": "0fcc5d54510faabf0a09d067433b154121b210c1bc50d81448b1cf95fa1f3827",
       "requirementMapping": "incomplete",
       "implementationMapping": "bounded-path-inspection",
       "candidateAcceptance": "not-established",
@@ -54302,7 +54302,7 @@
           "columns": {
             "Source": "L069",
             "Section": "13. Initial Evaluation Harness",
-            "Independent obligation, field, metric, or preserved decision": "Required baseline configuration: Managed-cloud reference: Railway-hosted Control Plane services + Neon PostgreSQL + Cloudflare R2 + Restate using the repository-owned M9 deployment/configuration baseline",
+            "Independent obligation, field, metric, or preserved decision": "Required baseline configuration: Managed-cloud reference: Railway-hosted Control Plane services + Railway PostgreSQL + Cloudflare R2 + Restate using the repository-owned M9 deployment/configuration baseline",
             "Owner boundary": "artifact/storage owners",
             "Current mapping": "`EV-ARTIFACT`"
           }
@@ -56270,7 +56270,7 @@
           "columns": {
             "Source": "L107",
             "Section": "15. MVP Runtime-Location Evaluation",
-            "Independent obligation, field, metric, or preserved decision": "Control Plane managed-cloud comparisons begin in M9 and establish the Railway/Neon/R2/Restate semantic and operational reference before Local/Self-hosted portability is added.",
+            "Independent obligation, field, metric, or preserved decision": "Control Plane managed-cloud comparisons begin in M9 and establish the Railway/PostgreSQL/R2/Restate semantic and operational reference before Local/Self-hosted portability is added.",
             "Owner boundary": "artifact/storage owners",
             "Current mapping": "`EV-ARTIFACT`"
           }
@@ -56402,7 +56402,7 @@
           "columns": {
             "Source": "L113",
             "Section": "16. Milestone Ownership and Release Gates",
-            "Independent obligation, field, metric, or preserved decision": "M9 makes the Railway/Neon/R2 profile deployable.",
+            "Independent obligation, field, metric, or preserved decision": "M9 makes the Railway/PostgreSQL/R2 profile deployable.",
             "Owner boundary": "artifact/storage owners",
             "Current mapping": "`EV-ARTIFACT`"
           }
@@ -56474,7 +56474,7 @@
           "columns": {
             "Source": "L113",
             "Section": "16. Milestone Ownership and Release Gates",
-            "Independent obligation, field, metric, or preserved decision": "M9 certifies real staging.",
+            "Independent obligation, field, metric, or preserved decision": "M9 certifies real sandbox.",
             "Owner boundary": "Control Plane evaluation owner",
             "Current mapping": "`EV-EVAL`"
           }
@@ -57013,7 +57013,7 @@
       "capturedLogicalLines": 172,
       "extractionScope": "captured-text",
       "inventoryPath": "docs/requirements/runtime-compatibility-atomic-inventory.md",
-      "inventorySha256": "702b7f558a42da340552d366290921ee98b8ee4a896183f5ceb102280658adae",
+      "inventorySha256": "58a6cc5f21e40ec017db06f3d15a05f9ca9313af02bf228c87d7b2e8f6232052",
       "requirementMapping": "incomplete",
       "implementationMapping": "bounded-path-inspection",
       "candidateAcceptance": "not-established",
@@ -60181,7 +60181,7 @@
           "columns": {
             "Source": "L156",
             "Section": "11. Production Readiness Checklist",
-            "Independent obligation, field, metric, or preserved decision": "M9 managed-cloud certification proves the Railway/Neon/R2/Restate reference.",
+            "Independent obligation, field, metric, or preserved decision": "M9 managed-cloud certification proves the Railway/PostgreSQL/R2/Restate reference.",
             "Owner boundary": "Control Plane compatibility owner",
             "Current mapping": "`RC-REGISTRY`"
           }
@@ -60948,7 +60948,7 @@
       "capturedLogicalLines": 286,
       "extractionScope": "captured-text",
       "inventoryPath": "docs/requirements/architecture-decisions-atomic-inventory.md",
-      "inventorySha256": "d6252d77d18dbc84255dc35362ded3fffc7158482315b25d43169fdafc13eefd",
+      "inventorySha256": "6e2870a0c728e1dadb3c8a9951ba0bd02c2ab29101e4eeed471d555e5bdc3ef1",
       "requirementMapping": "incomplete",
       "implementationMapping": "bounded-path-inspection",
       "candidateAcceptance": "not-established",
@@ -61785,7 +61785,7 @@
           "columns": {
             "Source": "ADR-012: PostgreSQL + Drizzle for Agent HQ Application Persistence, L87",
             "Clause kind": "Current consequence / local-content boundary",
-            "Independently checkable clause / recorded field": "Sensitive Task/Message/execution content that is explicitly Local/Self-hosted remains outside Neon under ADR-036 rather than making the cloud database a plaintext replica of local content.",
+            "Independently checkable clause / recorded field": "Sensitive Task/Message/execution content that is explicitly Local/Self-hosted remains outside PostgreSQL under ADR-036 rather than making the cloud database a plaintext replica of local content.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -61895,7 +61895,7 @@
           "columns": {
             "Source": "ADR-012: PostgreSQL + Drizzle for Agent HQ Application Persistence, L90",
             "Clause kind": "Current consequence / managed database host",
-            "Independently checkable clause / recorded field": "Neon is the initial Agent HQ production/staging PostgreSQL host.",
+            "Independently checkable clause / recorded field": "PostgreSQL is the initial Agent HQ production/sandbox PostgreSQL host.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -61906,7 +61906,7 @@
           "columns": {
             "Source": "ADR-012: PostgreSQL + Drizzle for Agent HQ Application Persistence, L90",
             "Clause kind": "Current consequence / authentication boundary",
-            "Independently checkable clause / recorded field": "Neon Auth remains behind @agent-hq/auth.",
+            "Independently checkable clause / recorded field": "Authentication remains behind @agent-hq/auth.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -62157,9 +62157,9 @@
           "inventoryLine": 160,
           "heading": "Atomic clauses and current mapping",
           "columns": {
-            "Source": "ADR-013: Neon Auth + Workspace-Scoped Authorization, L94",
+            "Source": "ADR-013: Authentication + Workspace-Scoped Authorization, L94",
             "Clause kind": "Current decision",
-            "Independently checkable clause / recorded field": "Use Neon Auth, Neon’s managed Better Auth implementation, as the initial Agent HQ authentication service while keeping it behind the @agent-hq/auth package boundary.",
+            "Independently checkable clause / recorded field": "Use Authentication, PostgreSQL’s managed Better Auth implementation, as the initial Agent HQ authentication service while keeping it behind the @agent-hq/auth package boundary.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -62168,7 +62168,7 @@
           "inventoryLine": 161,
           "heading": "Atomic clauses and current mapping",
           "columns": {
-            "Source": "ADR-013: Neon Auth + Workspace-Scoped Authorization, L94",
+            "Source": "ADR-013: Authentication + Workspace-Scoped Authorization, L94",
             "Clause kind": "Current consequence / implementation obligation",
             "Independently checkable clause / recorded field": "Authorization remains Agent HQ-owned and is enforced server-side using workspace-scoped roles composed from explicit permissions rather than role-name checks scattered through application code.",
             "Owner and bounded current mapping": "`EXT-HQ`"
@@ -62179,7 +62179,7 @@
           "inventoryLine": 162,
           "heading": "Atomic clauses and current mapping",
           "columns": {
-            "Source": "ADR-013: Neon Auth + Workspace-Scoped Authorization, L94",
+            "Source": "ADR-013: Authentication + Workspace-Scoped Authorization, L94",
             "Clause kind": "Current consequence / implementation obligation",
             "Independently checkable clause / recorded field": "Workspace-owned domain records carry a workspace identifier, and user-facing Agents and internal services are treated as authorization principals where applicable.",
             "Owner and bounded current mapping": "`EXT-HQ`"
@@ -62190,7 +62190,7 @@
           "inventoryLine": 163,
           "heading": "Atomic clauses and current mapping",
           "columns": {
-            "Source": "ADR-013: Neon Auth + Workspace-Scoped Authorization, L97",
+            "Source": "ADR-013: Authentication + Workspace-Scoped Authorization, L97",
             "Clause kind": "Current consequence / implementation obligation; independently extracted obligation with subject, action, and qualifiers repeated",
             "Independently checkable clause / recorded field": "Every workspace-scoped server read/write validates the authenticated principal.",
             "Owner and bounded current mapping": "`EXT-HQ`"
@@ -62201,7 +62201,7 @@
           "inventoryLine": 164,
           "heading": "Atomic clauses and current mapping",
           "columns": {
-            "Source": "ADR-013: Neon Auth + Workspace-Scoped Authorization, L97",
+            "Source": "ADR-013: Authentication + Workspace-Scoped Authorization, L97",
             "Clause kind": "Current consequence / implementation obligation; independently extracted obligation with subject, action, and qualifiers repeated",
             "Independently checkable clause / recorded field": "Every workspace-scoped server read/write validates workspace membership.",
             "Owner and bounded current mapping": "`EXT-HQ`"
@@ -62212,7 +62212,7 @@
           "inventoryLine": 165,
           "heading": "Atomic clauses and current mapping",
           "columns": {
-            "Source": "ADR-013: Neon Auth + Workspace-Scoped Authorization, L97",
+            "Source": "ADR-013: Authentication + Workspace-Scoped Authorization, L97",
             "Clause kind": "Current consequence / implementation obligation; independently extracted obligation with subject, action, and qualifiers repeated",
             "Independently checkable clause / recorded field": "Every workspace-scoped server read/write validates required permission.",
             "Owner and bounded current mapping": "`EXT-HQ`"
@@ -62223,7 +62223,7 @@
           "inventoryLine": 166,
           "heading": "Atomic clauses and current mapping",
           "columns": {
-            "Source": "ADR-013: Neon Auth + Workspace-Scoped Authorization, L97",
+            "Source": "ADR-013: Authentication + Workspace-Scoped Authorization, L97",
             "Clause kind": "Current consequence / implementation obligation",
             "Independently checkable clause / recorded field": "Roles are permission bundles; application services check named permissions rather than relying on frontend visibility or hardcoded role equality.",
             "Owner and bounded current mapping": "`EXT-HQ`"
@@ -62234,7 +62234,7 @@
           "inventoryLine": 167,
           "heading": "Atomic clauses and current mapping",
           "columns": {
-            "Source": "ADR-013: Neon Auth + Workspace-Scoped Authorization, L97",
+            "Source": "ADR-013: Authentication + Workspace-Scoped Authorization, L97",
             "Clause kind": "Current consequence / implementation obligation",
             "Independently checkable clause / recorded field": "Frontend permission checks are UX only.",
             "Owner and bounded current mapping": "`EXT-HQ`"
@@ -62245,9 +62245,9 @@
           "inventoryLine": 168,
           "heading": "Atomic clauses and current mapping",
           "columns": {
-            "Source": "ADR-013: Neon Auth + Workspace-Scoped Authorization, L97",
+            "Source": "ADR-013: Authentication + Workspace-Scoped Authorization, L97",
             "Clause kind": "Current consequence / implementation obligation",
-            "Independently checkable clause / recorded field": "Neon Auth manages authentication state in the Neon PostgreSQL environment, while Agent HQ domain tables and Drizzle migrations remain owned by @agent-hq/db.",
+            "Independently checkable clause / recorded field": "Authentication manages authentication state in the Railway PostgreSQL environment, while Agent HQ domain tables and Drizzle migrations remain owned by @agent-hq/db.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -62256,9 +62256,9 @@
           "inventoryLine": 169,
           "heading": "Atomic clauses and current mapping",
           "columns": {
-            "Source": "ADR-013: Neon Auth + Workspace-Scoped Authorization, L97",
+            "Source": "ADR-013: Authentication + Workspace-Scoped Authorization, L97",
             "Clause kind": "Current consequence / implementation obligation",
-            "Independently checkable clause / recorded field": "Application code consumes authentication through @agent-hq/auth rather than importing Neon Auth throughout the product.",
+            "Independently checkable clause / recorded field": "Application code consumes authentication through @agent-hq/auth rather than importing Authentication throughout the product.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -62267,7 +62267,7 @@
           "inventoryLine": 170,
           "heading": "Atomic clauses and current mapping",
           "columns": {
-            "Source": "ADR-013: Neon Auth + Workspace-Scoped Authorization, L97",
+            "Source": "ADR-013: Authentication + Workspace-Scoped Authorization, L97",
             "Clause kind": "Current consequence / implementation obligation",
             "Independently checkable clause / recorded field": "PostgreSQL RLS may be added later as an additional isolation control but is not the primary authorization mechanism.",
             "Owner and bounded current mapping": "`EXT-HQ`"
@@ -62278,7 +62278,7 @@
           "inventoryLine": 171,
           "heading": "Atomic clauses and current mapping",
           "columns": {
-            "Source": "ADR-013: Neon Auth + Workspace-Scoped Authorization, L97",
+            "Source": "ADR-013: Authentication + Workspace-Scoped Authorization, L97",
             "Clause kind": "Current consequence / implementation obligation",
             "Independently checkable clause / recorded field": "If Agent HQ later requires unsupported Better Auth plugins or custom server-side auth behavior, the managed implementation may be replaced behind @agent-hq/auth without changing workspace authorization semantics.",
             "Owner and bounded current mapping": "`EXT-HQ`"
@@ -62289,7 +62289,7 @@
           "inventoryLine": 172,
           "heading": "Atomic clauses and current mapping",
           "columns": {
-            "Source": "ADR-013: Neon Auth + Workspace-Scoped Authorization, L97",
+            "Source": "ADR-013: Authentication + Workspace-Scoped Authorization, L97",
             "Clause kind": "Current consequence / implementation obligation",
             "Independently checkable clause / recorded field": "Desktop RuntimeNode/device credentials and Control Plane service-to-service authentication remain separate scoped credential designs.",
             "Owner and bounded current mapping": "`EXT-HQ`"
@@ -63248,7 +63248,7 @@
           "columns": {
             "Source": "ADR-019: Provider-Independent Agent HQ Principal Identity, L138",
             "Clause kind": "Current decision",
-            "Independently checkable clause / recorded field": "Agent HQ owns a stable canonical user_id independent from Neon Auth or any future identity provider.",
+            "Independently checkable clause / recorded field": "Agent HQ owns a stable canonical user_id independent from Authentication or any future identity provider.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -64007,7 +64007,7 @@
           "columns": {
             "Source": "ADR-024: Scalable SSE Gateway and WorkspaceEvent Replay, L173",
             "Clause kind": "Current decision",
-            "Independently checkable clause / recorded field": "Agent HQ Neon PostgreSQL WorkspaceEvents remain the source of truth for product event delivery.",
+            "Independently checkable clause / recorded field": "Agent HQ Railway PostgreSQL WorkspaceEvents remain the source of truth for product event delivery.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -64029,7 +64029,7 @@
           "columns": {
             "Source": "ADR-024: Scalable SSE Gateway and WorkspaceEvent Replay, L173",
             "Clause kind": "Current consequence / implementation obligation",
-            "Independently checkable clause / recorded field": "The initial long-lived Event Gateway runs on Railway and authorizes subscriptions, replays retained WorkspaceEvents from Neon, then streams committed events over SSE.",
+            "Independently checkable clause / recorded field": "The initial long-lived Event Gateway runs on Railway and authorizes subscriptions, replays retained WorkspaceEvents from PostgreSQL, then streams committed events over SSE.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -64095,7 +64095,7 @@
           "columns": {
             "Source": "ADR-024: Scalable SSE Gateway and WorkspaceEvent Replay, L176",
             "Clause kind": "Current consequence / implementation obligation",
-            "Independently checkable clause / recorded field": "SSE heartbeats are emitted every 15 seconds, replay pages are bounded at 500 events, and notification failure falls back to 2-second bounded Neon polling until LISTEN/NOTIFY recovers.",
+            "Independently checkable clause / recorded field": "SSE heartbeats are emitted every 15 seconds, replay pages are bounded at 500 events, and notification failure falls back to 2-second bounded PostgreSQL polling until LISTEN/NOTIFY recovers.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -64139,7 +64139,7 @@
           "columns": {
             "Source": "ADR-024: Scalable SSE Gateway and WorkspaceEvent Replay, L176",
             "Clause kind": "Current consequence / implementation obligation",
-            "Independently checkable clause / recorded field": "Railway instances remain disposable because Neon is authoritative.",
+            "Independently checkable clause / recorded field": "Railway instances remain disposable because PostgreSQL is authoritative.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -64436,7 +64436,7 @@
           "columns": {
             "Source": "ADR-026: Separate Control Plane Repository and Logical Database, L195",
             "Clause kind": "Current consequence / implementation obligation",
-            "Independently checkable clause / recorded field": "Agent HQ-managed Control Plane Cloud uses a separate Neon PostgreSQL project/database.",
+            "Independently checkable clause / recorded field": "Agent HQ-managed Control Plane Cloud uses a separate Railway PostgreSQL project/database.",
             "Owner and bounded current mapping": "`CP-DEPLOY`"
           }
         },
@@ -64447,7 +64447,7 @@
           "columns": {
             "Source": "ADR-026: Separate Control Plane Repository and Logical Database, L198",
             "Clause kind": "Current consequence / Agent HQ database boundary",
-            "Independently checkable clause / recorded field": "Agent HQ uses its own Neon PostgreSQL project/database for cloud product state.",
+            "Independently checkable clause / recorded field": "Agent HQ uses its own Railway PostgreSQL project/database for cloud product state.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -64513,7 +64513,7 @@
           "columns": {
             "Source": "ADR-026: Separate Control Plane Repository and Logical Database, L198",
             "Clause kind": "Current consequence / managed-cloud persistence profile",
-            "Independently checkable clause / recorded field": "Control Plane Agent HQ-managed cloud uses a separate Neon PostgreSQL project/database.",
+            "Independently checkable clause / recorded field": "Control Plane Agent HQ-managed cloud uses a separate Railway PostgreSQL project/database.",
             "Owner and bounded current mapping": "`CP-DEPLOY`"
           }
         },
@@ -64799,7 +64799,7 @@
           "columns": {
             "Source": "ADR-027: TypeScript Control Plane Stack and Provider-Portable Deployment, L204",
             "Clause kind": "Current consequence / initial managed data services",
-            "Independently checkable clause / recorded field": "The initial Control Plane managed data services include a dedicated Neon PostgreSQL project/database.",
+            "Independently checkable clause / recorded field": "The initial Control Plane managed data services include a dedicated Railway PostgreSQL project/database.",
             "Owner and bounded current mapping": "`CP-DEPLOY`"
           }
         },
@@ -64898,7 +64898,7 @@
           "columns": {
             "Source": "ADR-027: TypeScript Control Plane Stack and Provider-Portable Deployment, L204",
             "Clause kind": "Current consequence / M9 acceptance gate",
-            "Independently checkable clause / recorded field": "Control Plane M9 owns staging validation required before the managed-cloud reference is accepted.",
+            "Independently checkable clause / recorded field": "Control Plane M9 owns sandbox validation required before the managed-cloud reference is accepted.",
             "Owner and bounded current mapping": "`CP-DEPLOY`"
           }
         },
@@ -66625,7 +66625,7 @@
           "columns": {
             "Source": "ADR-035: Portable Local, Self-Hosted, and Managed-Cloud Deployment Profiles, L268",
             "Clause kind": "Current consequence / implementation obligation; independently extracted managed-cloud profile obligation",
-            "Independently checkable clause / recorded field": "The M9 managed-cloud reference uses a separate Neon PostgreSQL database.",
+            "Independently checkable clause / recorded field": "The M9 managed-cloud reference uses a separate Railway PostgreSQL database.",
             "Owner and bounded current mapping": "`CP-DEPLOY`"
           }
         },
@@ -67098,7 +67098,7 @@
           "columns": {
             "Source": "ADR-035: Portable Local, Self-Hosted, and Managed-Cloud Deployment Profiles, L271",
             "Clause kind": "Current consequence / implementation obligation",
-            "Independently checkable clause / recorded field": "M9 owns every change required to make the first-party managed-cloud profile correct and operable, including Railway build/service configuration, managed-cloud Restate migration, Neon/R2 wiring, service authentication, bootstrap configuration, dynamic credential-vault provider selection/verification, networking, health/readiness, migrations, recovery, cloud security, and production-shaped cost/performance evidence.",
+            "Independently checkable clause / recorded field": "M9 owns every change required to make the first-party managed-cloud profile correct and operable, including Railway build/service configuration, managed-cloud Restate migration, PostgreSQL/R2 wiring, service authentication, bootstrap configuration, dynamic credential-vault provider selection/verification, networking, health/readiness, migrations, recovery, cloud security, and production-shaped cost/performance evidence.",
             "Owner and bounded current mapping": "`CP-SECURITY`, `CP-DEPLOY`"
           }
         },
@@ -67131,7 +67131,7 @@
           "columns": {
             "Source": "ADR-035: Portable Local, Self-Hosted, and Managed-Cloud Deployment Profiles, L271",
             "Clause kind": "Current consequence / implementation obligation; independently extracted M9 change criterion with the complete owner and profile predicate retained",
-            "Independently checkable clause / recorded field": "M9 owns every change required to make the first-party managed-cloud profile correct and operable, including Neon/R2 wiring.",
+            "Independently checkable clause / recorded field": "M9 owns every change required to make the first-party managed-cloud profile correct and operable, including PostgreSQL/R2 wiring.",
             "Owner and bounded current mapping": "`CP-DEPLOY`"
           }
         },
@@ -67549,7 +67549,7 @@
           "columns": {
             "Source": "ADR-035: Portable Local, Self-Hosted, and Managed-Cloud Deployment Profiles, L271",
             "Clause kind": "Current consequence / implementation obligation",
-            "Independently checkable clause / recorded field": "Self-hosted `server` and managed cloud use PostgreSQL, with Neon selected for the first-party cloud profile.",
+            "Independently checkable clause / recorded field": "Self-hosted `server` and managed cloud use PostgreSQL, with PostgreSQL selected for the first-party cloud profile.",
             "Owner and bounded current mapping": "`CP-STATE`, `CP-DEPLOY`"
           }
         },
@@ -67692,7 +67692,7 @@
           "columns": {
             "Source": "ADR-036: Private Local Content and End-to-End Remote Content Transport, L275",
             "Clause kind": "Current decision / content location",
-            "Independently checkable clause / recorded field": "Keep sensitive Agent HQ Task content on the selected user-controlled execution location by default rather than storing plaintext bodies in Agent HQ Neon.",
+            "Independently checkable clause / recorded field": "Keep sensitive Agent HQ Task content on the selected user-controlled execution location by default rather than storing plaintext bodies in Agent HQ PostgreSQL.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -67703,7 +67703,7 @@
           "columns": {
             "Source": "ADR-036: Private Local Content and End-to-End Remote Content Transport, L275",
             "Clause kind": "Current decision / content location",
-            "Independently checkable clause / recorded field": "Keep sensitive Agent HQ Message content on the selected user-controlled execution location by default rather than storing plaintext bodies in Agent HQ Neon.",
+            "Independently checkable clause / recorded field": "Keep sensitive Agent HQ Message content on the selected user-controlled execution location by default rather than storing plaintext bodies in Agent HQ PostgreSQL.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -67714,7 +67714,7 @@
           "columns": {
             "Source": "ADR-036: Private Local Content and End-to-End Remote Content Transport, L275",
             "Clause kind": "Current decision / content location",
-            "Independently checkable clause / recorded field": "Keep sensitive Agent HQ execution-input content on the selected user-controlled execution location by default rather than storing plaintext bodies in Agent HQ Neon.",
+            "Independently checkable clause / recorded field": "Keep sensitive Agent HQ execution-input content on the selected user-controlled execution location by default rather than storing plaintext bodies in Agent HQ PostgreSQL.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -67736,7 +67736,7 @@
           "columns": {
             "Source": "ADR-036: Private Local Content and End-to-End Remote Content Transport, L275",
             "Clause kind": "Current consequence / database separation",
-            "Independently checkable clause / recorded field": "The encrypted local-content SQLite database is not a replica of Agent HQ Neon.",
+            "Independently checkable clause / recorded field": "The encrypted local-content SQLite database is not a replica of Agent HQ PostgreSQL.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },
@@ -67956,7 +67956,7 @@
           "columns": {
             "Source": "ADR-036: Private Local Content and End-to-End Remote Content Transport, L275",
             "Clause kind": "Current consequence / relay plaintext boundary",
-            "Independently checkable clause / recorded field": "Agent HQ Cloud may persist and reroute ciphertext plus bounded routing/idempotency/expiry metadata in Neon.",
+            "Independently checkable clause / recorded field": "Agent HQ Cloud may persist and reroute ciphertext plus bounded routing/idempotency/expiry metadata in PostgreSQL.",
             "Owner and bounded current mapping": "`EXT-HQ`"
           }
         },

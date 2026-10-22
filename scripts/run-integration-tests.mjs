@@ -15,7 +15,7 @@ const COMPOSE_COMMAND = 'docker compose'
 
 // `--shard=<n>` (or INTEGRATION_SHARD) runs one explicit slice of the suite.
 // The local PR lane runs all three inventory-checked slices concurrently
-// against one runner-owned disposable PostgreSQL service. Trusted-main Neon
+// against one runner-owned disposable PostgreSQL service. Trusted-main PostgreSQL
 // verification does not invoke this full portable integration suite.
 const integrationShard = parseIntegrationShard(
   process.argv.find((argument) => argument.startsWith('--shard='))?.slice('--shard='.length) ??
@@ -183,7 +183,7 @@ async function waitForPostgres() {
   throw new Error('PostgreSQL did not accept SQL connections within 30 seconds')
 }
 
-// A remote target (Neon preview branch or similar) replaces the local Docker
+// A remote target (PostgreSQL preview branch or similar) replaces the local Docker
 // Postgres lane entirely: no container to boot or probe, and the
 // Docker-lifecycle drills below do not apply to it. Loopback URLs still take
 // the local lane: the recovery matrix drives its own Postgres on an

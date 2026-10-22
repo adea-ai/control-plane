@@ -7,12 +7,10 @@ const restateImage =
 
 export default defineRailway((context) => {
   if (!context.isEnvironment('production')) {
-    throw new Error(
-      'Only the production environment is managed here; persistent staging is retired.'
-    )
+    throw new Error('Only the production environment is managed here.')
   }
   const production = context.isEnvironment('production')
-  const applicationEnvironment = production ? 'production' : 'staging'
+  const applicationEnvironment = 'production'
   // This authoring entry point targets production only. Optional hosted
   // qualification needs a separately reviewed isolated ephemeral environment.
   const sourceBranch = 'main'
@@ -41,14 +39,9 @@ export default defineRailway((context) => {
       startCommand: 'bun run --filter=@control-plane/control-api start',
       numReplicas: desiredReplicas,
       sleepApplication: false,
-      // Production gates continuous liveness on `/health` (build metadata
-      // only). `/ready` additionally probes PostgreSQL with a bounded
-      // `SELECT 1`; polling it as the platform healthcheck kept the Neon
-      // production compute awake around the clock for a database with almost
-      // no traffic. `/ready` is still verified once per promotion after the
-      // deploy. Staging keeps `/ready` so an activated reference environment
-      // fails its deployment when the database binding is broken.
-      healthcheckPath: production ? '/health' : '/ready',
+      // Liveness checks build metadata. Readiness additionally probes the
+      // production database and is verified during protected promotion.
+      healthcheckPath: '/health',
       healthcheckTimeout: 60,
       restartPolicyType: 'ON_FAILURE',
       restartPolicyMaxRetries: 5,
@@ -85,17 +78,13 @@ export default defineRailway((context) => {
       R2_ENDPOINT: preserve(),
       R2_BUCKET: 'ctrl-plane',
       R2_REGION: 'auto',
-      // Staging and preview object keys live under an environment prefix so a shared
-      // bucket cannot be addressed with production keys; production stays unprefixed.
-      ...(production ? {} : { R2_PREFIX: 'staging/' }),
       R2_ACCESS_KEY_ID: preserve(),
       R2_SECRET_ACCESS_KEY: preserve(),
       RESTATE_INGRESS_URL: 'http://control-planerestate.railway.internal:8080',
       // Catalog approval gate (#188, ratified 2026-09-24): versions published
       // at or after the cutover need a recorded approval decision before they
       // resolve; earlier versions are grandfathered, so enabling with a
-      // cutover never blocks the existing catalog. Staging stays off so
-      // reference-environment debugging is not gated by approvals.
+      // cutover never blocks the existing catalog.
       CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED: production ? 'true' : 'false',
       ...(production
         ? { CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED_SINCE: '2026-09-25T00:00:00.000Z' }
@@ -137,7 +126,6 @@ export default defineRailway((context) => {
       R2_BUCKET: 'ctrl-plane',
       R2_REGION: 'auto',
       // Matches the control-api separation prefix for the same environment.
-      ...(production ? {} : { R2_PREFIX: 'staging/' }),
       R2_ACCESS_KEY_ID: preserve(),
       R2_SECRET_ACCESS_KEY: preserve(),
       CONTROL_PLANE_CLOUD_RUNTIME: production ? 'disabled' : 'certification',
@@ -173,7 +161,7 @@ export default defineRailway((context) => {
   // local workflow plus web/mobile remote control, whose only cloud
   // dependency is this API (marketplace catalog) — and the production cloud
   // execution runtime is `disabled` anyway, so workflow-worker and restate
-  // ran as health-passing placeholders. They stay defined for staging
+  // ran as health-passing placeholders.
   // qualification runs; restoring them to production is a reviewed IaC change
   // plus a fresh Restate identity provisioning (the production restate-data
   // volume is deleted with the service, and scripts/provision-restate-identity.mjs

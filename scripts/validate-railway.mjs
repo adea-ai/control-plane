@@ -90,7 +90,7 @@ if (
   productionEnvironment?.database?.targetContract !== 'production-database.json' ||
   !railwayIac.includes("if (!context.isEnvironment('production'))")
 ) {
-  throw new Error('Railway authoring must manage production only; persistent staging is retired.')
+  throw new Error('Railway authoring must manage production only.')
 }
 
 if (
@@ -146,7 +146,7 @@ if (
 // Production stays online only where the local-first MVP depends on it:
 // control-api serves the web/mobile marketplace catalog while the production
 // cloud execution runtime is disabled, so workflow-worker and restate hold no
-// production resources. Persistent staging is retired; optional qualification is independently isolated.
+// production resources. Optional qualification is independently isolated.
 const expectedCostPosture = {
   production: {
     availability: 'control-api-online-runtime-on-demand',

@@ -1,6 +1,6 @@
-# M11 Neon replay test timing
+# M11 PostgreSQL replay test timing
 
-PR #417's Neon run `34169217802` failed the HTTP validation replay test at
+PR #417's PostgreSQL run `34169217802` failed the HTTP validation replay test at
 30 seconds after 21 assertions. A diagnostic reproduction against its isolated
 preview branch reached database-ready at 22,239 ms, application-ready at
 24,688 ms, and concurrent-validation-complete at 28,911 ms before timing out

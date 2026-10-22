@@ -1217,7 +1217,7 @@ describe('deployment profile conformance reporting', () => {
   test('compares every required profile and attributes divergence to the exact port', async () => {
     const output = { logicalState: 'completed', executionId: 'exe_1' }
     const adapters = [
-      ['cloud', ports('postgresql-neon', 'r2', 'remote-gateway')],
+      ['cloud', ports('postgresql-postgres', 'r2', 'remote-gateway')],
       ['local', ports('sqlite', 'filesystem', 'direct-local')],
       ['hosted-simple', ports('sqlite', 'filesystem', 'direct-local')],
       ['hosted-server', ports('postgresql', 's3-compatible', 'remote-gateway')],
@@ -1232,7 +1232,7 @@ describe('deployment profile conformance reporting', () => {
     ])
     expect(report.conforms).toBe(true)
     expect(report.cases[0].profiles.map(({ adapter }) => adapter)).toEqual([
-      'postgresql-neon',
+      'postgresql-postgres',
       'sqlite',
       'sqlite',
       'postgresql',

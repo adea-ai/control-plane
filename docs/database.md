@@ -1,56 +1,10 @@
-# Control Plane persistence
+# Database operations
 
-> Current policy (2026-10-22): persistent Railway staging and Neon are retired
-> following the user's deletion report. Earlier staging/Neon activation and
-> certification records below are historical, not current deployment instructions.
-> Do not recreate them. Production target verification and optional isolated
-> qualification are governed by [the cutover contract](railway-production-database-cutover.md).
+Railway hosts the production PostgreSQL database `railway`. Control Plane uses the `public` application schema and `drizzle` migration history; Adea uses separate `app` and `auth` schemas. Dedicated roles isolate each application. Production runtime uses the private Railway endpoint; external migration verification uses the existing TCP proxy with verified CA and peer identity.
 
-Control Plane domain persistence is deployment-profile aware behind `PersistenceProvider`. PostgreSQL remains the server-grade/cloud relational implementation; embedded SQLite is the accepted Local and Hosted `simple` implementation. Durable correctness must not depend on Valkey/Redis.
+The fixed Control Plane identities are `control_plane_app` for selective runtime DML and `control_plane_migrator` for schema migrations. Neither has elevated role flags or database-wide CREATE. Operators precreate owned schemas; the migration runner validates their ownership, locks migration application, verifies exact canonical file hashes, and applies unapplied files transactionally. See [the production contract](railway-production-database-cutover.md).
 
-## Accepted profiles
-
-| Profile         | Persistence                                      | Milestone ownership |
-| --------------- | ------------------------------------------------ | ------------------- |
-| Managed cloud   | Separate Control Plane Neon PostgreSQL + Drizzle | M9                  |
-| Local desktop   | Node 24 `node:sqlite` + Drizzle                  | M10.3               |
-| Hosted `simple` | SQLite + Drizzle                                 | M10                 |
-| Hosted `server` | PostgreSQL + Drizzle                             | M10                 |
-
-Physical schema/index choices may differ by adapter. Logical IDs, revision behavior, idempotency, lifecycle transitions, ordering, provenance, and public contracts must remain equivalent.
-
-Restate durable workflow state is separate from Control Plane domain persistence. LangGraph graph/checkpoint state is also separate. Neither is ProjectState.
-
-## Current managed-cloud Neon state
-
-A separate Neon project named `control-plane` exists. It is distinct from the Adea Neon project.
-The repository-owned managed-cloud compositions now connect both `control-api` and
-`workflow-worker` to PostgreSQL using application-role credentials. The Control API persists plans,
-commands, executions, ProjectState, and ContextPackages; the workflow worker persists execution and
-attempt lifecycle transitions and loads the exact accepted plan before runtime dispatch.
-
-- the dedicated Control Plane Neon project has separate `staging` and
-  `production` branches named after the Railway environments they serve:
-  `staging` is the Railway staging database and `production` is the Railway
-  production database. Git deploys from `main`; only the Neon branch names
-  differ from the environment flow, and the explicit
-  mapping below is the authority for the join;
-- Railway's `staging` and `production` environments must each supply their own
-  `DATABASE_URL`, `DATABASE_MIGRATION_URL`, and `DATABASE_ADMIN_URL` values;
-- the Control Plane Drizzle/domain schema is applied to the staging branch by an
-  explicit migration job before staging traffic is accepted, while production
-  remains separately migrated through the release process;
-- any unrelated `neon_auth` schema is outside the Control Plane domain contract;
-- Control Plane application code must not depend on that `neon_auth` schema because Adea owns product user authentication.
-
-Configuration shape alone is not live-environment evidence. M9.6 #73 completed the explicit staging
-migration, deployed-service connectivity, least-privilege verification, and bounded reconnect/
-recovery checks recorded in the certification evidence. Production migration and promotion remain
-separate release operations. Any unrelated `neon_auth` schema remains non-authoritative and unused
-by Control Plane application code.
-
-Production/staging tables must be created from repository-owned Drizzle migrations, not manual
-console SQL.
+Persistent preproduction environments do not exist. Tests use independent disposable local/CI PostgreSQL databases with synthetic identities. Never route tests or unreviewed code to production. The Local profile uses SQLite; Hosted servers can use PostgreSQL or SQLite according to their profile.
 
 ## PostgreSQL development and integration fixtures
 
@@ -76,25 +30,7 @@ The PostgreSQL roles remain deliberately separate:
 | migrator            | `DATABASE_MIGRATION_URL` | Schema migrations and owned-object grants                            |
 | admin/test/recovery | `DATABASE_ADMIN_URL`     | Provisioning, isolated tests, backup/restore and recovery operations |
 
-Managed-cloud values are injected through the M9 Railway/Neon configuration boundary. Application services receive only the authority they need; migration/admin credentials are never sprayed across all Railway services.
-
-The environment mapping is intentionally explicit and credential-free in source:
-
-| Railway environment | Git source branch | Neon branch  | Application environment |
-| ------------------- | ----------------- | ------------ | ----------------------- |
-| `staging`           | `main`            | `staging`    | `staging`               |
-| `production`        | `main`            | `production` | `production`            |
-
-Naming convention: Neon branches and Railway environments share the environment
-name (`staging`, `production`); Git deploys from `main`. This matches the Adea Neon project, which also names
-its durable branches after environments (`development`, `staging`,
-`production`). Control Plane has no shared `development` Neon branch by policy:
-local development uses the pinned Compose PostgreSQL fixture and tests use
-disposable isolated databases.
-
-Only the runtime URL is provided to application services. The migration URL is
-used by the explicit database migration job, and the admin URL is reserved for
-provisioning/recovery operations.
+Managed-cloud values are injected through the M9 Railway/PostgreSQL configuration boundary. Application services receive only the authority they need; migration/admin credentials are never sprayed across all Railway services.
 
 ## SQLite Local persistence
 
@@ -281,7 +217,7 @@ Integration tests may continue to create isolated PostgreSQL databases for Postg
 
 Recovery is profile-specific:
 
-- **Managed cloud:** Neon backup/PITR or equivalent provider recovery plus logical/export procedures validated in M9/M11.
+- **Managed cloud:** PostgreSQL backup/PITR or equivalent provider recovery plus logical/export procedures validated in M9/M11.
 - **Local/Hosted `simple`:** SQLite backup/restore validated in M10/M11.
 - **Hosted `server`:** PostgreSQL backup/restore owned by the operator/reference deployment and validated in M10/M11.
 

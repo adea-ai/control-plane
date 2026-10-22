@@ -32,7 +32,7 @@ Applications may select concrete adapters. Stable packages must not import appli
 
 The accepted implementation sequence is:
 
-1. **M9: Managed Cloud Deployment, Hardening & Evals.** Establish a working Railway + Neon + R2 + Restate managed-cloud reference and freeze deployment-independent contracts and behavior.
+1. **M9: Managed Cloud Deployment, Hardening & Evals.** Establish a working Railway + PostgreSQL + R2 + Restate managed-cloud reference and freeze deployment-independent contracts and behavior.
 2. **M10: Local & Hosted Portability.** Extract and consume infrastructure ports, then add Local/Hosted adapters while preserving the M9 semantic baseline.
 3. **M11: Feature Completion & Production Audit.** Independently audit managed cloud, Local, and Hosted as one portable product.
 4. **M12: Cross-Product Integration & Release.** Connect independently approved Adea and optional Cortana release candidates. Per the [2026-09-24 owner decision in #195](https://github.com/adea-ai/control-plane/issues/195#issuecomment-5822863459), CP-M12 also includes the Local/Hosted deployment-profile substrate and the cross-product certification/release built on it.
@@ -42,7 +42,7 @@ This implementation order is distinct from Adea product rollout. The Control Pla
 ### Managed cloud (M9 reference)
 
 - Railway compute/service lifecycle.
-- Separate Control Plane Neon PostgreSQL.
+- Separate Control Plane Railway PostgreSQL.
 - Cloudflare R2 through the S3-compatible `ObjectStore` boundary. The current Control Plane resource is bucket `ctrl-plane` with Wrangler binding `ctrl_plane`; these identifiers are deployment configuration, not domain identity.
 - Restate as the canonical durable workflow runtime for cloud and hosted profiles.
 - Railway private networking for internal service calls where applicable.
@@ -87,7 +87,7 @@ Control Plane R2 storage and Adea Artifact storage are separate authorities even
 | TypeScript        | accepted                                   | Primary application and package language under strict workspace settings.                                                                             |
 | NestJS            | accepted                                   | HTTP/service composition and dependency-injection framework where server composition requires it.                                                     |
 | Fastify           | accepted                                   | HTTP adapter beneath NestJS and for lightweight transport boundaries.                                                                                 |
-| PostgreSQL        | accepted server/cloud adapter              | Neon for the M9 managed-cloud profile; recommended for Hosted `server`.                                                                               |
+| PostgreSQL        | accepted server/cloud adapter              | PostgreSQL for the M9 managed-cloud profile; recommended for Hosted `server`.                                                                         |
 | SQLite            | accepted Local/simple adapter              | Node 24 `node:sqlite` + Drizzle for M10 Local and Hosted `simple`.                                                                                    |
 | Drizzle           | accepted                                   | Persistence schema/migration layer behind deployment-specific adapters.                                                                               |
 | Restate           | accepted canonical workflow runtime        | Cloud and hosted profiles; M9.8 establishes the Railway implementation. Local runs the same workflow contracts on the embedded SQLite queue (#548).   |
@@ -99,7 +99,7 @@ Control Plane R2 storage and Adea Artifact storage are separate authorities even
 | LiteLLM           | adapter-bound                              | Initial managed model-gateway adapter where required.                                                                                                 |
 | E2B               | adapter-bound                              | Initial hosted isolated-compute adapter.                                                                                                              |
 | Railway           | accepted initial managed-cloud compute     | M9 first-party cloud target; provider-specific details remain outside domain contracts.                                                               |
-| Neon              | accepted managed-cloud PostgreSQL provider | Separate Control Plane project/database; explicit migrations and least-privilege runtime authority.                                                   |
+| PostgreSQL        | accepted managed-cloud PostgreSQL provider | Separate Control Plane project/database; explicit migrations and least-privilege runtime authority.                                                   |
 | Cloudflare R2     | accepted managed-cloud object store        | Control Plane current bucket `ctrl-plane`; explicit cloud storage only, behind `ObjectStore`, with product/environment credentials separately scoped. |
 | AWS/ECS/Terraform | removed migration provenance               | No longer present in the active deployment path or supported as a provider option.                                                                    |
 
@@ -107,7 +107,7 @@ Control Plane R2 storage and Adea Artifact storage are separate authorities even
 
 The Control Plane owns a separate persistence boundary from Adea and Cortana.
 
-- Managed cloud: Neon PostgreSQL.
+- Managed cloud: Railway PostgreSQL.
 - Local: embedded SQLite.
 - Hosted `simple`: SQLite.
 - Hosted `server`: PostgreSQL.
@@ -159,6 +159,6 @@ M10 must preserve the M9 Railway cloud implementation behind these ports while a
 ## Current implementation versus accepted target
 
 M9.7 removed the former AWS/ECS/Terraform deployment path, M9.8 removed the former Temporal runtime
-from active code/configuration, and M9.9 established the live Neon/R2/Railway dependency wiring.
+from active code/configuration, and M9.9 established the live PostgreSQL/R2/Railway dependency wiring.
 Historical ADRs, changelogs, and issue records retain migration provenance; they are not supported
 deployment options or active runtime dependencies.

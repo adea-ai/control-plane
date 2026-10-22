@@ -170,7 +170,7 @@ function createCloudRuntime(
   if (configuration.runtime?.mode === 'disabled') return new DisabledCloudRuntime()
   if (configuration.runtime?.mode !== 'certification')
     throw new Error('MANAGED_CLOUD_RUNTIME_NOT_CONFIGURED')
-  if (environment !== 'staging') throw new Error('CLOUD_CERTIFICATION_RUNTIME_STAGING_ONLY')
+  if (environment !== 'test') throw new Error('CLOUD_CERTIFICATION_RUNTIME_TEST_ONLY')
   if (configuration.objectStore === undefined) throw new Error('MANAGED_CLOUD_R2_NOT_CONFIGURED')
   const objectStore: ObjectStore = objectStoreFactory(configuration.objectStore, {
     maxObjectBytes: managedCloudOperationalPolicy.payload.encryptedContentBytes,

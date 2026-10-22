@@ -49,8 +49,8 @@ When instructions conflict: system/user instructions > this file and explicit ta
 
 Normal work branches from `main` and opens a pull request targeting `main`.
 Feature pull requests merge with squash after required checks pass. Railway
-production uses the protected promotion and database-schema gates. Persistent
-Railway staging and Neon are retired; never recreate or synchronize them.
+production uses the protected promotion and database-schema gates. Railway hosts the production PostgreSQL database. Persistent preproduction
+environments are absent; use disposable test sandboxes.
 Tests use disposable local/CI databases. Optional hosted qualification requires
 a separately reviewed isolated ephemeral environment, never production data or
 credentials. See `docs/railway-production-database-cutover.md`.

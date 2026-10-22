@@ -84,7 +84,7 @@
     "lifecycle": "abort incomplete multipart uploads after 7 days",
     "environmentSeparation": {
       "ephemeral": "Optional isolated qualification must use its own credentials and unique per-run prefix; never production credentials.",
-      "requirement": "No persistent staging environment exists. Production stays unprefixed; cross-environment access must remain denied."
+      "requirement": "Production is the only persistent environment. Production stays unprefixed; cross-environment access must remain denied."
     }
   },
   "restate": {

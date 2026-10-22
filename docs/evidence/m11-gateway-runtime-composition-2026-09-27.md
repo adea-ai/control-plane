@@ -95,7 +95,7 @@ unbound legacy objects fail closed rather than receiving automatic repair.
 
 ## Validation so far
 
-Host toolchain: Bun 1.4.0, Node 24.18.0. No production or staging service,
+Host toolchain: Bun 1.4.0, Node 24.18.0. No production or sandbox service,
 credential or database was changed.
 
 - Initial focused artifact + existing Hosted suite: **29 passed / 0 failed /
