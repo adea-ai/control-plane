@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.106.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.8...workspace-v1.106.0) (2026-10-22)
+
+
+### Features
+
+* **child-progress:** recover authorized reference and cost evidence ([#1019](https://github.com/adea-ai/control-plane/issues/1019)) ([#1236](https://github.com/adea-ai/control-plane/issues/1236)) ([a996dc1](https://github.com/adea-ai/control-plane/commit/a996dc19d588610757ba270ad7b9876e406d1f8b))
+
 ## [1.105.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.7...workspace-v1.105.8) (2026-10-21)
 
 
