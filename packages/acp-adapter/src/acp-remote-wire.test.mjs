@@ -271,6 +271,92 @@ test('a retried command keeps one carrier identity so the relay deduplicates it'
   expect(runtimeCommandRecordsShareIdentity(first, second)).toBe(true)
 })
 
+test('a still-valid command keeps its seal when a later command is dispatched', async () => {
+  // The seal cache evicts CLOSED commands. Dispatching A, then B with a later expiry, must not
+  // evict A while A is still live: the retry of A would be resealed into a different carrier,
+  // which the durable command repository refuses as a different command.
+  const fixture = await countingFixture()
+  const artifacts = artifactStore()
+  const carriers = []
+  const wire = wireFor({
+    route: fixture.route,
+    channel: relayChannel({
+      device: fixture.device,
+      artifacts,
+      generation: () => 1,
+      inventory: async () => ({ inventory: {}, channelGeneration: 1 }),
+      onDispatch: (command) => carriers.push(command),
+    }),
+  })
+  const controller = controllerFor({
+    route: fixture.route,
+    wire,
+    signingKey: fixture.keys.controllerSigning,
+  })
+
+  const first = runtimeCommand({ commandId: commandIds.first })
+  const second = runtimeCommand({ commandId: commandIds.second })
+  await controller.dispatch(first)
+  await controller.dispatch(second)
+  // The retry of the FIRST command reuses its carrier: the same durable identity and the
+  // same envelope, so the gateway records it as one command.
+  await controller.dispatch(first)
+
+  const firstCarriers = carriers.filter((carrier) => carrier.commandId === carriers[0].commandId)
+  expect(firstCarriers).toHaveLength(2)
+  expect(firstCarriers[0]).toEqual(firstCarriers[1])
+  expect(
+    runtimeCommandRecordsShareIdentity(
+      createQueuedRuntimeCommandRecord(firstCarriers[0], NOW),
+      createQueuedRuntimeCommandRecord(firstCarriers[1], NOW)
+    )
+  ).toBe(true)
+})
+
+test('concurrent identical dispatches seal once and carry one carrier', async () => {
+  // Two concurrent dispatches of the same command must not both miss the seal cache and seal
+  // it twice: two seals of one command are two different carriers, and the durable command
+  // repository refuses the second as a different command.
+  const fixture = await countingFixture()
+  const artifacts = artifactStore()
+  const carriers = []
+  const wire = wireFor({
+    route: fixture.route,
+    channel: relayChannel({
+      device: fixture.device,
+      artifacts,
+      generation: () => 1,
+      inventory: async () => ({ inventory: {}, channelGeneration: 1 }),
+      onDispatch: (command) => carriers.push(command),
+    }),
+  })
+  const controller = controllerFor({
+    route: fixture.route,
+    wire,
+    signingKey: fixture.keys.controllerSigning,
+  })
+
+  const command = runtimeCommand({ commandId: commandIds.first })
+  const [first, second] = await Promise.all([
+    controller.dispatch(command),
+    controller.dispatch(command),
+  ])
+  expect(first.ack.disposition).toBe('accepted')
+  expect(second.ack.disposition).toBe('accepted')
+  // The concurrent duplicates converged on ONE carrier: both attempts present the same
+  // durable identity and the same envelope, so the gateway records one command.
+  expect(carriers).toHaveLength(2)
+  expect(carriers[0]).toEqual(carriers[1])
+  expect(
+    runtimeCommandRecordsShareIdentity(
+      createQueuedRuntimeCommandRecord(carriers[0], NOW),
+      createQueuedRuntimeCommandRecord(carriers[1], NOW)
+    )
+  ).toBe(true)
+  // ONE effect: the device's replay ledger answered the duplicate.
+  expect(fixture.dispatches()).toBe(1)
+})
+
 test('an unreachable device is a typed offline denial and never a reroute', async () => {
   const fixture = await countingFixture()
   const wire = wireFor({

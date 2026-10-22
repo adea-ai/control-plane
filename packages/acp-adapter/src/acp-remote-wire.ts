@@ -68,10 +68,26 @@ export interface GatewayOwnedAcpRemoteWireOptions {
 }
 
 const DEFAULT_COMMAND_TTL_MS = 60_000
+
+/** The most carriers kept for reuse, bounding a burst of live commands. */
+const CARRIER_CACHE_CAPACITY = 1024
 const DEFAULT_REQUIRED_CAPABILITIES = ['stream.output'] as const
 
-/** Identity of one carrier command: the inner ACP command it carries. */
-const carrierIdentity = (innerCommandId: string): string => `acp-remote-sealed:${innerCommandId}`
+/**
+ * The DURABLE carrier identity: the identity the gateway records one carrier command under.
+ *
+ * The gateway's durable command repository identifies a command by its FULL envelope, so the
+ * durable identity has to name the exact sealed command the carrier carries. A carrier that
+ * carried one sealed command and then carried another -- because the command was re-sealed --
+ * is a DIFFERENT durable command, and giving it the same durable identity would make the
+ * repository refuse the second as a changed envelope of the first.
+ *
+ * This is deliberately NOT the device's semantic identity. The device deduplicates the EFFECT on
+ * the inner command's semantic identity, so a repeated semantic request still runs one effect and
+ * replays the recorded outcome, while each sealed command is its own durable carrier command.
+ */
+const carrierIdentity = (innerCommandId: string, sealedDigest: string): string =>
+  `acp-remote-sealed:${innerCommandId}:${sealedDigest}`
 
 export function createGatewayOwnedAcpRemoteWire(
   options: GatewayOwnedAcpRemoteWireOptions
@@ -151,13 +167,23 @@ export function createGatewayOwnedAcpRemoteWire(
       payload,
     })
     carriers.set(key, carrier)
-    // Only the carriers whose window is still open are kept, so the cache cannot grow
-    // without bound.
-    const at = issuedAt.getTime()
+    // Only the carriers whose window has CLOSED are evicted, measured against the CURRENT time.
+    // Comparing against the NEW carrier's issue time would drop a carrier that is still live,
+    // and the retry of that carrier would be rebuilt with a new sequence and new timestamps --
+    // a changed envelope under the same durable identity, which the repository refuses.
+    //
+    // Retention is bounded by the command window and by the cache capacity, so a burst of live
+    // carriers cannot grow the cache without bound.
+    const at = now().getTime()
     for (const [cached, entry] of carriers) {
       if (cached !== key && Date.parse(entry.expiresAt) <= at) {
         carriers.delete(cached)
       }
+    }
+    while (carriers.size > CARRIER_CACHE_CAPACITY) {
+      const oldest = carriers.keys().next().value
+      if (oldest === undefined) break
+      carriers.delete(oldest)
     }
     return carrier
   }
@@ -210,11 +236,14 @@ export function createGatewayOwnedAcpRemoteWire(
       if (signal?.aborted === true) throw new AcpRemoteUndeliveredError()
 
       const payload = buildSealedCarrierPayload(command)
-      const identity = carrierIdentity(header.commandId)
-      // The carrier command is stable for one inner command. The gateway's durable command
-      // repository identifies a command by its FULL envelope, so a retry that rebuilt the
-      // carrier -- a new sequence, new timestamps, a newly sealed payload -- would be
-      // refused as a different command instead of recognized as the same one.
+      // The durable carrier identity names the SEALED command, so a re-sealed command is its own
+      // durable carrier command. The device still deduplicates the effect on the inner command's
+      // semantic identity, so repeated semantic requests run one effect.
+      const identity = carrierIdentity(header.commandId, digest(payload))
+      // The carrier is stable for one SEALED command: a retry that re-dispatches the same seal
+      // reuses the carrier it already built, so the gateway's durable command repository -- which
+      // identifies a command by its FULL envelope -- recognizes the retry as the same command
+      // instead of refusing a changed envelope.
       //
       // The DELIVERY stays per delivery: the gateway assigns the transport sequence and
       // counts the attempts, and the carrier attempt owns the single reply artifact.

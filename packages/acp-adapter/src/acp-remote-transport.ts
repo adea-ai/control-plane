@@ -68,6 +68,12 @@ import {
 const AEAD_TAG_BYTES = 16
 const DEFAULT_REPLAY_LEDGER_CAPACITY = 1024
 
+/**
+ * The most sealed commands kept for reuse. The cache holds one entry per live command, so this
+ * bounds the memory a burst of live commands can cost while leaving the reuse window intact.
+ */
+const SEALED_COMMAND_CACHE_CAPACITY = 1024
+
 const DOMAIN = Object.freeze({
   commandInfo: 'control-plane.acp-remote.command-info.v1',
   commandAad: 'control-plane.acp-remote.command-aad.v1',
@@ -234,6 +240,18 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
       readonly message: AcpRemoteSealedCommand
     }
   >()
+  /**
+   * The seal in flight per command identity, so concurrent duplicates of one command share ONE
+   * seal instead of racing to seal it twice.
+   */
+  readonly #sealingCommands = new Map<
+    string,
+    Promise<{
+      readonly returnKey: RecipientKeyPair
+      readonly header: AcpRemoteCommandHeader
+      readonly message: AcpRemoteSealedCommand
+    }>
+  >()
 
   constructor(options: SecureAcpRemoteTransportOptions) {
     this.#route = AcpRemoteDeviceRouteSchema.parse(options.route)
@@ -395,6 +413,33 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
     const identity = sha256Digest(canonicalJson(command))
     const existing = this.#sealedCommands.get(identity)
     if (existing !== undefined) return existing
+    // Two concurrent dispatches of the same command must not both miss the cache and then seal
+    // it twice: two seals of one command are two different carriers, and the durable command
+    // repository refuses the second as a different command. The in-flight seal is shared, so
+    // concurrent duplicates converge on ONE carrier.
+    const inFlight = this.#sealingCommands.get(identity)
+    if (inFlight !== undefined) return await inFlight
+    const sealing = this.#seal(command, plaintext)
+    this.#sealingCommands.set(identity, sealing)
+    try {
+      return await sealing
+    } finally {
+      this.#sealingCommands.delete(identity)
+    }
+  }
+
+  /**
+   * Seals one command and records the seal. The caller holds the in-flight slot, so only one
+   * seal of a command exists at a time.
+   */
+  async #seal(
+    command: GatewayCommandEnvelope,
+    plaintext: Uint8Array
+  ): Promise<{
+    readonly returnKey: RecipientKeyPair
+    readonly header: AcpRemoteCommandHeader
+    readonly message: AcpRemoteSealedCommand
+  }> {
     const returnKey = await generateRecipientKeyPair()
     const header: AcpRemoteCommandHeader = {
       suite: ACP_REMOTE_SUITE,
@@ -423,14 +468,26 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
       signature: signCanonical(DOMAIN.commandSignature, body, this.#signingKey),
     }
     const record = { returnKey, header, message }
+    const identity = sha256Digest(canonicalJson(command))
     this.#sealedCommands.set(identity, record)
-    // Only the commands whose window is still open are kept, so the cache cannot grow
-    // without bound.
-    const at = Date.parse(command.expiresAt)
+    // Only the commands whose own window has CLOSED are evicted. Comparing against the NEW
+    // command's expiry would drop a still-valid command: dispatching A, then B with a later
+    // expiry, would evict A while A is still live, and the retry of A would be resealed into a
+    // different carrier, which the durable command repository refuses as a different command.
+    //
+    // The eviction is by the CURRENT time, so a live command keeps its return key. Retention is
+    // bounded twice over: by the command window, so a closed command's seal is dropped, and by
+    // the cache capacity, so a burst of live commands cannot grow the cache without bound.
+    const now = this.#now().getTime()
     for (const [key, entry] of this.#sealedCommands) {
-      if (key !== identity && Date.parse(entry.header.expiresAt) <= at) {
+      if (key !== identity && Date.parse(entry.header.expiresAt) <= now) {
         this.#sealedCommands.delete(key)
       }
+    }
+    while (this.#sealedCommands.size > SEALED_COMMAND_CACHE_CAPACITY) {
+      const oldest = this.#sealedCommands.keys().next().value
+      if (oldest === undefined) break
+      this.#sealedCommands.delete(oldest)
     }
     return record
   }
