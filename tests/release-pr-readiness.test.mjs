@@ -17,6 +17,13 @@ const BRANCH = 'release-please--branches--main--components-adea'
 const REPOSITORY = 'adea-ai/control-plane'
 const VALIDATION_PATH = '.github/workflows/validation.yml'
 
+// The specification names the runtime and the floor as literal text. A pattern
+// built from either would read the version's dots as wildcards, so a document
+// naming a near-miss version would satisfy it.
+const namesRuntime = (specification, version) =>
+  specification.includes(`Code Foundry ${version} is the CI runtime`)
+const namesFloor = (specification) => specification.includes(`\`${RELEASE_READINESS_FIX_MINIMUM}\``)
+
 function run(overrides = {}) {
   return {
     id: 1,
@@ -264,7 +271,10 @@ test('the CI specification records the readiness policy and the floor it enforce
   const { readFile } = await import('node:fs/promises')
   const ci = await readFile(new URL('../docs/ci.md', import.meta.url), 'utf8')
   // The specification must name the floor the guard enforces...
-  assert.match(ci, new RegExp(`\`${RELEASE_READINESS_FIX_MINIMUM}\``))
+  assert.ok(
+    namesFloor(ci),
+    `the CI specification must name the enforced floor ${RELEASE_READINESS_FIX_MINIMUM}`
+  )
   // ...and point at the repository-owned policy and the regressions that prove it.
   assert.match(ci, /scripts\/release-pr-readiness\.mjs/)
   assert.match(ci, /tests\/release-pr-readiness\.test\.mjs/)
@@ -275,12 +285,26 @@ test('the CI specification records the readiness policy and the floor it enforce
   // name one, so the check refuses rather than passing vacuously.
   assert.ok(versions.length > 0, 'the release wiring must name a shared runtime')
   for (const version of versions) {
-    assert.match(
-      ci,
-      new RegExp(`Code Foundry ${version.replace(/\./g, '\\.')} is the CI runtime`),
+    assert.ok(
+      namesRuntime(ci, version),
       `the CI specification must name the pinned runtime ${version}`
     )
   }
+})
+
+test('the specification checks name the runtime and the floor literally', () => {
+  // The runtime check read the version as a pattern whose dots were escaped, so
+  // every other character in the version stayed a metacharacter: a version with a
+  // `+` matched a document naming a different one. The floor check escaped
+  // nothing, so its dots were wildcards. Both now require the literal text.
+  assert.equal(namesRuntime('Code Foundry v1.48.1 is the CI runtime', 'v1.48.1'), true)
+  assert.equal(namesRuntime('Code Foundry v1.48.1b is the CI runtime', 'v1.48.1+b'), false)
+  assert.equal(namesRuntime('Code Foundry v1.48.1+b is the CI runtime', 'v1.48.1+b'), true)
+  assert.equal(namesRuntime('Code Foundry v1X48Y1 is the CI runtime', 'v1.48.1'), false)
+  assert.equal(namesRuntime('Code Foundry v1.48.10 is the CI runtime', 'v1.48.1'), false)
+  assert.equal(namesFloor('The fix first appears in Code Foundry `v1.46.4`.'), true)
+  assert.equal(namesFloor('The fix first appears in Code Foundry `v1X46Y4`.'), false)
+  assert.equal(namesFloor('The fix first appears in Code Foundry `v1.46.40`.'), false)
 })
 
 test('the release workflow keeps the serialized, non-cancelling release flow', async () => {
