@@ -260,6 +260,29 @@ test('this repository release wiring uses a shared runtime that carries the fix'
   assert.deepEqual(assertReleaseRuntimeCarriesReadinessFix(versions), versions)
 })
 
+test('the CI specification records the readiness policy and the floor it enforces', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const ci = await readFile(new URL('../docs/ci.md', import.meta.url), 'utf8')
+  // The specification must name the floor the guard enforces...
+  assert.match(ci, new RegExp(`\`${RELEASE_READINESS_FIX_MINIMUM}\``))
+  // ...and point at the repository-owned policy and the regressions that prove it.
+  assert.match(ci, /scripts\/release-pr-readiness\.mjs/)
+  assert.match(ci, /tests\/release-pr-readiness\.test\.mjs/)
+  // The runtime the specification names must be the one the repository pins.
+  const versions = await effectiveReleaseRuntime(root)
+  // An empty detected set proves nothing: the loop below would never run, and the
+  // specification would be free to name no runtime at all. The release wiring must
+  // name one, so the check refuses rather than passing vacuously.
+  assert.ok(versions.length > 0, 'the release wiring must name a shared runtime')
+  for (const version of versions) {
+    assert.match(
+      ci,
+      new RegExp(`Code Foundry ${version.replace(/\./g, '\\.')} is the CI runtime`),
+      `the CI specification must name the pinned runtime ${version}`
+    )
+  }
+})
+
 test('the release workflow keeps the serialized, non-cancelling release flow', async () => {
   const { readFile } = await import('node:fs/promises')
   const release = await readFile(
