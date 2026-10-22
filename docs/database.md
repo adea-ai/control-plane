@@ -160,11 +160,41 @@ acceptance check alone does not prove cleanup policy or physical retention acros
 
 Hosted Server starts its command-inbox and execution-event retention scheduler independently of
 optional execution reconciliation. Its default interval is one hour; the composition option
-`retentionSweepIntervalMs` accepts positive integer milliseconds up to one day. Scheduled
-passes wait for the previous pass to settle before the next interval begins. Shutdown cancels
-future passes and drains the active scheduled pass before closing storage. Local and managed
-cloud use the same scheduler lifecycle. Failures emit the fixed diagnostic
+`retentionSweepIntervalMs` accepts positive integer milliseconds up to one day. Managed cloud
+reads the same bound from `RETENTION_SWEEP_INTERVAL_MS`, defaulting to one hour, and fails closed
+at composition when the value is not a positive safe integer.
+
+Constructing a scheduler arms nothing. `start()` arms the first pass, and the first assessment
+runs only after one full interval has elapsed, so there is no immediate pass at startup and a
+freshly started process emits no `retention.sweep` record before its first interval. Each pass
+issues exactly one assessment per class — command inbox and execution events — and no other
+scheduler-issued database access: the scheduler adds no idle poll, heartbeat query, or connection
+check of its own. A pass whose candidates are all unexpired still issues both assessments, because
+expiry cannot be known without reading.
+
+The schedule is in-memory and per-process; there is no persisted last-run cursor. A closed
+scheduler is not re-armed: once `close()` has been called, `start()` on that instance throws
+`RETENTION_SWEEP_CLOSED`, so re-arming requires a new scheduler instance, which a process restart
+provides. A new instance discards any pending interval and arms a fresh full interval; intervals
+that elapsed while the previous instance was closed are not replayed. This does not lose assessment
+work: each pass samples the clock and selects rows whose retention deadline precedes that
+instant, so the next pass covers the same due set plus anything newly expired; only how promptly a
+pass reports changes. Each pass samples that instant once and hands the same one to every
+assessment, so the classes are assessed against one consistent deadline boundary. Scheduled passes
+wait for the previous pass to settle before the next interval is armed, so a slow pass never
+overlaps the next and the effective period is never shorter than the configured interval. Shutdown
+cancels future passes and drains the active scheduled pass before closing storage. Local and
+managed cloud use the same scheduler lifecycle. Failures emit the fixed diagnostic
 `RETENTION_SWEEP_FAILED` by default, without raw storage details.
+
+The read cost of a pass lives in the assessment implementations rather than the scheduler. Both
+repository assessments select their candidates by the v2 `retentionExpiresAt` column, in ascending
+order and in bounded batches (`limit(bound + 1)`, default bound 256), and each validates the
+retention hold policy once per pass, in a single transaction before it inspects any candidate, so a
+pass pays that validation even when it has no candidates. Neither the bounded read nor the
+hold-policy validation is removable from the scheduler without changing assessment semantics, so
+idle-read reductions belong with those readers, not here. The per-class coverage record is the
+[M11.9 coverage matrix](./evidence/m11-retention-coverage-2026-09-22.md).
 
 Scheduled inbox/event passes are structurally read-only: they assess expiry and report candidates,
 but the scheduler has no physical-deletion port. Physical retention deletion remains an explicit
