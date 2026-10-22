@@ -218,6 +218,29 @@ describe('retention sweep', () => {
     await second.close()
   })
 
+  test('each pass samples the clock once and assesses every class against that instant', async () => {
+    const instants = []
+    const sweep = new RetentionSweep({
+      assessCommandInbox: async (now) => {
+        instants.push(now.getTime())
+        return emptySummary('command-inbox', now)
+      },
+      assessExecutionEvents: async (now) => {
+        instants.push(now.getTime())
+        return emptySummary('execution-events', now)
+      },
+      intervalMs: 40,
+    })
+    const report = await sweep.run()
+    // One instant per pass: every class is assessed against the same deadline
+    // boundary, so a pass cannot straddle two clock readings.
+    expect(instants).toHaveLength(2)
+    expect(new Set(instants).size).toBe(1)
+    const [sampled] = instants
+    expect(new Date(report.at).getTime()).toBe(sampled)
+    await sweep.close()
+  })
+
   test('assessment failures surface through a fixed diagnostic without storage details', async () => {
     let reported
     const report = new Promise((resolve) => {

@@ -177,7 +177,8 @@ The schedule is in-memory and per-process; there is no persisted last-run cursor
 that elapsed while the process was stopped are not replayed. This does not lose assessment work:
 each pass samples the clock and selects rows whose retention deadline precedes that instant, so
 the next pass covers the same due set plus anything newly expired; only how promptly a pass
-reports changes. Scheduled passes wait for the previous pass to settle before the next interval is
+reports changes. Each pass samples that instant once and hands the same one to every assessment, so
+the classes are assessed against one consistent deadline boundary. Scheduled passes wait for the previous pass to settle before the next interval is
 armed, so a slow pass never overlaps the next and the effective period is never shorter than the
 configured interval. Shutdown cancels future passes and drains the active scheduled pass before
 closing storage. Local and managed cloud use the same scheduler lifecycle. Failures emit the fixed
