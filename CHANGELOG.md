@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.106.10](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.9...workspace-v1.106.10) (2026-10-22)
+
+
+### Bug Fixes
+
+* **ci:** report sanitized production schema gate failures ([#1264](https://github.com/adea-ai/control-plane/issues/1264)) ([91a014e](https://github.com/adea-ai/control-plane/commit/91a014e578d869eb80a9e9628e95958198a363df))
+
 ## [1.106.9](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.8...workspace-v1.106.9) (2026-10-22)
 
 
