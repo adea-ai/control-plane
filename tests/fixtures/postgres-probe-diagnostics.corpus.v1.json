@@ -264,6 +264,78 @@
       "secrets": []
     },
     {
+      "name": "uri: a percent-encoded query key",
+      "kind": "libpq",
+      "text": "postgresql://localhost/db?%70assword=secret",
+      "libpq": "postgresql://localhost/db?%70assword=secret",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["secret"],
+      "secrets": ["secret"]
+    },
+    {
+      "name": "uri: a percent-encoded query value",
+      "kind": "libpq",
+      "text": "postgresql://localhost/db?password=%73ecret",
+      "libpq": "postgresql://localhost/db?password=%73ecret",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["secret"],
+      "secrets": ["secret", "%73ecret"]
+    },
+    {
+      "name": "uri: a query key among other parameters",
+      "kind": "libpq",
+      "text": "postgresql://localhost/db?sslmode=require&%70assword=secret&connect_timeout=5",
+      "libpq": "postgresql://localhost/db?sslmode=require&%70assword=secret&connect_timeout=5",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["secret"],
+      "secrets": ["secret"]
+    },
+    {
+      "name": "uri: a percent-encoded separator inside a value",
+      "kind": "libpq",
+      "text": "postgresql://localhost/db?password=a%26b",
+      "libpq": "postgresql://localhost/db?password=a%26b",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["a&b"],
+      "secrets": ["a&b", "a%26b"]
+    },
+    {
+      "name": "uri: a percent-encoded query key and a password in the userinfo",
+      "kind": "libpq",
+      "text": "postgresql://user:psw0rd@localhost/db?%70assword=secret",
+      "libpq": "postgresql://user:psw0rd@localhost/db?%70assword=secret",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": ["secret"],
+      "secrets": ["secret", "psw0rd"]
+    },
+    {
+      "name": "uri: a query with no credential",
+      "kind": "libpq",
+      "text": "postgresql://localhost/db?sslmode=disable",
+      "libpq": "postgresql://localhost/db?sslmode=disable",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": [],
+      "secrets": []
+    },
+    {
+      "name": "uri: a percent-encoded key that is not a credential",
+      "kind": "libpq",
+      "text": "postgresql://localhost/db?%73slmode=disable",
+      "libpq": "postgresql://localhost/db?%73slmode=disable",
+      "libpqRejected": false,
+      "libpqRecognisedCredentials": [],
+      "secrets": []
+    },
+    {
+      "name": "uri: a query parameter with no value",
+      "kind": "libpq",
+      "text": "postgresql://localhost/db?password",
+      "libpq": "postgresql://localhost/db?password",
+      "libpqRejected": true,
+      "libpqRecognisedCredentials": [],
+      "secrets": []
+    },
+    {
       "name": "mixed: text before a failed URI candidate",
       "kind": "libpq",
       "text": "see https://example.com password=s3cret",
@@ -356,8 +428,8 @@
     {
       "name": "redactor: a token key",
       "kind": "redactor",
-      "text": "token=abcd3f123456",
-      "libpq": "token=abcd3f123456",
+      "text": "token=abcdef123456",
+      "libpq": "token=abcdef123456",
       "libpqRejected": true,
       "libpqRecognisedCredentials": [],
       "secrets": ["abcdef123456"]

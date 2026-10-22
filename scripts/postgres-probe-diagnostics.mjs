@@ -29,6 +29,11 @@ export const PROBE_EXCERPT_LIMIT = 400
 const KEY_CHARACTER = /[A-Za-z0-9_.-]/
 
 /**
+ * The two characters of a percent-encoded byte.
+ */
+const HEX_BYTE = /^[0-9A-Fa-f]{2}$/
+
+/**
  * The ends of a credential key.
  *
  * A key may carry a prefix, so `my_password` is a credential key too, and the
@@ -182,7 +187,35 @@ function uriSchemeAt(source, start) {
 }
 
 /**
- * The credential of a connection URI whose authority starts at `start`.
+ * The percent-decoded form of a URI query key, or the key itself when it is
+ * not a valid encoding.
+ *
+ * libpq decodes the key of a query parameter before it reads it, so the
+ * parameter `%70assword=secret` is the option `password` with the value
+ * `secret`, and a key that is left encoded would miss the credential. A key
+ * that is not a valid encoding is one libpq rejects outright, and such a key
+ * is kept as it is.
+ */
+function decodeUriKey(key) {
+  if (!key.includes('%')) return key
+  let decoded = ''
+  for (let index = 0; index < key.length; index += 1) {
+    const character = key[index]
+    if (character !== '%') {
+      decoded += character
+      continue
+    }
+    const hex = key.slice(index + 1, index + 3)
+    if (!HEX_BYTE.test(hex)) return key
+    decoded += String.fromCharCode(Number.parseInt(hex, 16))
+    index += 2
+  }
+  return decoded
+}
+
+/**
+ * The credentials of a connection URI whose authority starts at `start`, and
+ * the end of the URI.
  *
  * A URI is not a connection string, and libpq parses the two differently. Its
  * own URI parser reads the authority raw: the authority ends at the first `/`,
@@ -193,17 +226,69 @@ function uriSchemeAt(source, start) {
  * an ordinary character of the userinfo, so `user:ab?cd` is a password of
  * `ab?cd`.
  *
+ * The query starts at the first `?` that follows the userinfo and is a list of
+ * `key=value` parameters separated by `&`. libpq decodes the key of every
+ * parameter before it reads it, so a key that decodes to a credential word
+ * carries a credential, and the value of that parameter runs to the next `&`
+ * or to the end of the source, exactly as libpq reads it.
+ *
  * An authority with no `@` is a host and a port and holds no password, and an
  * authority with no `:` holds a user and no password. Either way the URI holds
  * no password, and the text is left to be read as ordinary text.
+ *
+ * Every span is read once and the scans move forward, so a long query costs
+ * one pass over the text and not one pass per parameter.
  */
 function readUriCredential(source, search, start) {
+  const spans = []
   const at = nextUriCharacter(search, '@', start)
   const slash = nextUriCharacter(search, '/', start)
-  if (at === -1 || (slash !== -1 && slash < at)) return { matched: false }
-  const colon = nextUriCharacter(search, ':', start)
-  if (colon === -1 || colon > at) return { matched: false }
-  return { matched: true, end: at + 1 }
+  // The userinfo is the part of the authority before the first `@`.
+  const userinfoEnd = at !== -1 && (slash === -1 || slash > at) ? at : -1
+  if (userinfoEnd !== -1) {
+    const colon = nextUriCharacter(search, ':', start)
+    if (colon !== -1 && colon < userinfoEnd) {
+      spans.push({ start, end: userinfoEnd, resume: userinfoEnd + 1 })
+    }
+  }
+  // The query starts at the first `?` that follows the userinfo: a `?` inside
+  // the userinfo is an ordinary character of the password, and a URI with no
+  // userinfo starts its query at the first `?` of the authority.
+  const question = nextUriCharacter(search, '?', userinfoEnd === -1 ? start : userinfoEnd + 1)
+  if (question !== -1) {
+    let parameterStart = question + 1
+    while (parameterStart <= source.length) {
+      const ampersand = nextUriCharacter(search, '&', parameterStart)
+      const parameterEnd = ampersand === -1 ? source.length : ampersand
+      const equals = nextUriCharacter(search, '=', parameterStart)
+      if (equals !== -1 && equals < parameterEnd) {
+        const key = decodeUriKey(source.slice(parameterStart, equals))
+        if (isCredentialKey(key)) {
+          spans.push({ start: equals + 1, end: parameterEnd, resume: parameterEnd })
+        }
+      }
+      if (parameterEnd >= source.length) break
+      parameterStart = parameterEnd + 1
+    }
+  }
+  if (spans.length === 0) return { matched: false }
+  const last = spans[spans.length - 1]
+  return { matched: true, end: last.resume, spans }
+}
+
+/**
+ * The text from `start` to `end` with every span of it replaced by the
+ * redaction marker.
+ */
+function redactSpans(source, start, end, spans) {
+  let text = ''
+  let cursor = start
+  for (const span of spans) {
+    text += source.slice(cursor, span.start)
+    text += '<redacted>'
+    cursor = span.end
+  }
+  return text + source.slice(cursor, end)
 }
 
 /**
@@ -223,8 +308,12 @@ function readUriCredential(source, search, start) {
  * read by two different scanners. A URI is recognised only at the scheme
  * libpq accepts, and its password is the raw text after the first `:` of the
  * userinfo; a connection string honours the single quote and the backslash
- * and no other. A URI that holds no password is ordinary text, so the scan
- * continues inside it and a credential that follows it is still found.
+ * and no other. The query of a URI is read as libpq reads it too: the
+ * parameters are separated by `&`, the key of each one is decoded before it
+ * is compared with a credential word, and the value of a credential parameter
+ * runs to the next `&` or to the end of the source. A URI that holds no
+ * password is ordinary text, so the scan continues inside it and a credential
+ * that follows it is still found.
  *
  * The redaction runs before the excerpt is cut, so a secret can never be
  * split by the cut, and a value is consumed whole so its tail cannot survive
@@ -241,7 +330,7 @@ export function sanitizeProbeOutput(text, limit = PROBE_EXCERPT_LIMIT) {
     if (scheme !== null) {
       const credential = readUriCredential(source, uriSearch, index + scheme.length + 3)
       if (credential.matched) {
-        pieces.push(`${scheme}://<redacted>@`)
+        pieces.push(redactSpans(source, index, credential.end, credential.spans))
         index = credential.end
         continue
       }

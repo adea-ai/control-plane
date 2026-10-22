@@ -327,6 +327,62 @@ test('a connection URI with an empty user is redacted', () => {
   expect(sanitized).toBe('postgresql://<redacted>@localhost/db')
 })
 
+// The query of a connection URI is read as libpq reads it: the parameters are
+// separated by `&`, the key of each one is decoded before it is compared with
+// a credential word, and the value of a credential parameter runs to the next
+// `&` or to the end of the source. libpq decodes the key and the value, so an
+// encoded key is the option it spells out and an encoded value is the secret
+// it stands for.
+const URI_QUERY_CASES = [
+  [
+    'a percent-encoded key',
+    'postgresql://localhost/db?%70assword=secret',
+    ['secret'],
+    'postgresql://localhost/db?%70assword=<redacted>',
+  ],
+  [
+    'a percent-encoded value',
+    'postgresql://localhost/db?password=%73ecret',
+    ['secret', '%73ecret'],
+    'postgresql://localhost/db?password=<redacted>',
+  ],
+  [
+    'a percent-encoded key among other parameters',
+    'postgresql://localhost/db?sslmode=require&%70assword=secret&connect_timeout=5',
+    ['secret'],
+    'postgresql://localhost/db?sslmode=require&%70assword=<redacted>&connect_timeout=5',
+  ],
+  [
+    'a percent-encoded separator inside a value',
+    'postgresql://localhost/db?password=a%26b',
+    ['a&b', 'a%26b'],
+    'postgresql://localhost/db?password=<redacted>',
+  ],
+  [
+    'a percent-encoded key and a password in the userinfo',
+    'postgresql://user:psw0rd@localhost/db?%70assword=secret',
+    ['psw0rd', 'secret'],
+    'postgresql://<redacted>@localhost/db?%70assword=<redacted>',
+  ],
+]
+
+test.each(URI_QUERY_CASES)('%s is redacted whole', (_case, uri, secrets, expected) => {
+  const sanitized = sanitizeProbeOutput(uri)
+  for (const secret of secrets) expect(sanitized).not.toContain(secret)
+  expect(sanitized).toBe(expected)
+})
+
+// A query that carries no credential is left as it is, whether its key is
+// encoded or not.
+test('a query with no credential is left alone', () => {
+  expect(sanitizeProbeOutput('postgresql://localhost/db?sslmode=disable')).toBe(
+    'postgresql://localhost/db?sslmode=disable'
+  )
+  expect(sanitizeProbeOutput('postgresql://localhost/db?%73slmode=disable')).toBe(
+    'postgresql://localhost/db?%73slmode=disable'
+  )
+})
+
 // The redaction is one pass over the text: a long plain token may not cost a
 // pass per position, and the excerpt is still cut to the limit.
 test('a long plain token is read once and the excerpt is still bounded', () => {
@@ -389,6 +445,24 @@ test('the redaction matches what libpq recognises in the differential corpus', (
   }
   expect(leaks).toEqual([])
   expect(falseRedactions).toEqual([])
+})
+
+// A secret that is not in the text can never fail: the assertion would hold
+// whatever the redaction did, and the entry would say nothing. Every secret
+// of the corpus must be in the text, or in the text as libpq decodes it.
+const PERCENT_DECODED = (text) =>
+  text.replace(/%([0-9A-Fa-f]{2})/g, (_match, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
+const BACKSLASH_UNDONE = (text) => text.replace(/\\(.)/g, '$1')
+
+test('every secret of the corpus is really in the text', () => {
+  const vacuous = []
+  for (const entry of corpus.cases) {
+    const forms = [entry.text, PERCENT_DECODED(entry.text), BACKSLASH_UNDONE(entry.text)]
+    for (const secret of entry.secrets) {
+      if (!forms.some((form) => form.includes(secret))) vacuous.push(`${entry.name}: ${secret}`)
+    }
+  }
+  expect(vacuous).toEqual([])
 })
 
 // The corpus itself, so a change to it is a change to what libpq was asked.
