@@ -41,12 +41,18 @@ export async function runWithPullBackoff(
     log = (message) => console.warn(message),
     onAttempt = () => {},
     isInterrupted,
+    settlePendingSignal = async () => {},
   } = {}
 ) {
   const interrupted = () => (isInterrupted === undefined ? false : isInterrupted())
   for (let retry = 0; ; retry += 1) {
     // An interrupted run launches no further command: the attempt below would
-    // be a new command started after the signal.
+    // be a new command started after the signal. A caller that runs its commands
+    // synchronously supplies `settlePendingSignal`, because a signal delivered
+    // while such a command held the event loop is only processed on a later
+    // turn: without that turn the state read here is the state BEFORE the
+    // signal, and a command would start after the run was told to stop.
+    await settlePendingSignal()
     if (interrupted()) return { status: 1, stdout: '', stderr: pullInterruptedMessage }
     const result = attempt()
     onAttempt(result, { attempt: retry + 1 })
@@ -106,17 +112,25 @@ export async function runWithPullFallback(
     log = (message) => console.warn(message),
     pull,
     isInterrupted,
+    settlePendingSignal = async () => {},
   } = {}
 ) {
   const interrupted = () => (isInterrupted === undefined ? false : isInterrupted())
   const fallbacks = pull === undefined ? [] : fallbackImages(image)
   for (let retry = 0; ; retry += 1) {
     // An interrupted run launches no further command: neither the canonical
-    // attempt nor a fallback pull may start after the signal.
+    // attempt nor a fallback pull may start after the signal. A caller that runs
+    // its commands synchronously supplies `settlePendingSignal`, because a
+    // signal delivered while such a command held the event loop is only
+    // processed on a later turn: without that turn the state read here is the
+    // state BEFORE the signal, and a command would start after the run was told
+    // to stop.
+    await settlePendingSignal()
     if (interrupted()) return { result: interruptedResult(), image: undefined }
     let result = await attempt(undefined)
     if (!isRateLimitedResult(result)) return { result, image: undefined }
     for (const fallback of fallbacks) {
+      await settlePendingSignal()
       if (interrupted()) return { result: interruptedResult(), image: undefined }
       log(`Image registry rate-limited a pull; trying ${fallback}.`)
       const pulled = await pull(fallback)
@@ -126,6 +140,7 @@ export async function runWithPullFallback(
         log(`Pulling ${fallback} failed: ${reason}`)
         continue
       }
+      await settlePendingSignal()
       if (interrupted()) return { result: interruptedResult(), image: undefined }
       result = await attempt(fallback)
       if (result.status === 0) return { result, image: fallback }

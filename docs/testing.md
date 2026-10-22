@@ -299,7 +299,12 @@ before the process exits with `128 + signal`; a recorded verification failure st
 observable instead of being masked by the signal or by cleanup. A second signal
 stops immediately with the signal's status, and the bounded readiness probe
 observes a signal delivered during its blocking wait instead of surfacing it as a
-probe timeout. The recorded child's whole owned tree is terminated — a nested
+probe timeout. The image-configuration and pull commands are synchronous, so a
+signal delivered while one of them held the event loop is not yet visible to the
+next check; the pull path therefore yields one loop turn before every command it
+may start, and no configuration, canonical pull or fallback pull begins after the
+signal. A pending signal is reported as an interruption, never as a failed pull.
+The recorded child's whole owned tree is terminated — a nested
 build descendant that keeps the inherited pipes open is reaped with it, and a
 descendant that is still alive after the termination is reported as a survivor,
 because the direct child's exit is not proof that its tree was reaped. The
@@ -307,8 +312,14 @@ completion of a terminated child is bounded, so a pipe that a survivor still
 holds can no longer keep the runner from finishing. The command-double lifecycle
 suite injects a frozen startup, readiness, test and cleanup command, spawns an
 owned descendant that holds the inherited pipes, and delivers a real signal to
-prove those paths. A `SIGINT` during a rate-limited image-pull backoff ends the
-run without starting a further pull command, and the backoff wait ends with
+prove those paths. That suite's own harness holds itself to the same standard: it
+disposes of everything it spawned on every path — a passing case, a failing case
+and a settle timeout alike — reaping the fixture's recorded descendants by those
+exact PIDs and never by name or process group; a reap it cannot confirm retains
+the receipt that names them, rather than deleting the identity while the
+processes still run, and the failure is surfaced. A `SIGINT` during a
+rate-limited image-pull backoff ends the run without starting a further pull
+command, and the backoff wait ends with
 the interruption instead of being run out. `SIGKILL`, daemon loss and machine shutdown cannot execute
 JavaScript `finally`, so an interrupted run may still leave the owner-recorded
 project identity behind. Once the

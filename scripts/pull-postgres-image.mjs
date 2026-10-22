@@ -12,6 +12,15 @@ import {
 const pullArguments = ['compose', 'pull', 'postgres']
 const configArguments = ['compose', 'config', '--format', 'json', 'postgres']
 
+// The configuration and pull commands are SYNCHRONOUS: while one of them runs it
+// holds the event loop, so a signal delivered during it is only processed on a
+// later turn — after the next interruption check would already have read the
+// state from BEFORE the signal and started another command. Yielding one turn
+// closes that window: `setImmediate` resumes after the poll phase of the
+// current iteration, which is where a pending signal is dispatched, so the
+// interruption state read after it is the state the process already has.
+const settlePendingSignal = () => new Promise((resolve) => setImmediate(resolve))
+
 // The image Compose itself resolves for the postgres service: the same working directory,
 // environment, `.env` file, COMPOSE_FILE selection and overrides as the pull that follows. Anything
 // short of a definite answer (Compose fails, prints something else, names no image) is `undefined`,
@@ -49,6 +58,15 @@ export async function pullPostgresImage({
       env,
       timeout: 90_000,
     })
+  // No command is started after an interruption. The state is read after a turn
+  // that lets a signal delivered during an earlier synchronous command run, and
+  // it is read again by the loop through the same hook for every command the
+  // loop may start. A caller that supplies no interruption state keeps the
+  // previous behaviour exactly: no settle, no check.
+  if (isInterrupted !== undefined) {
+    await settlePendingSignal()
+    if (isInterrupted() === true) throw new Error(pullInterruptedMessage)
+  }
   const { result, image } = await runWithPullFallback(
     (fallback) => {
       // A fallback was already pulled by runWithPullFallback.
@@ -75,8 +93,9 @@ export async function pullPostgresImage({
       },
       ...backoffOptions,
       // The interruption state is the caller's: an interrupted run must launch
-      // no further pull command, and the backoff wait must end with it.
-      ...(isInterrupted === undefined ? {} : { isInterrupted }),
+      // no further pull command, and the backoff wait must end with it. The
+      // settle hook is what makes that true for these synchronous commands.
+      ...(isInterrupted === undefined ? {} : { isInterrupted, settlePendingSignal }),
     }
   )
 

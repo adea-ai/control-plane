@@ -107,6 +107,44 @@ with no registry and no Docker engine involved:
 | The timeout cleanup may wait on the same pipe-holder            | **Already closed by the owned-tree fix in this slice** | The completion of a terminated child is bounded on the timeout path as well as on the interruption path: the same `terminateChild` arms the bound, and the abandoned child releases the pipes. The new case drives the runner's own internals and a child that never emits `close`; it settles on the bound instead of waiting, and against the pre-fix head it never settled at all. |
 | The orphan fixture receipt may precede re-parenting             | **Real in the new fixture**                            | The receipt of a spawned survivor is written before the kernel re-parents it, and a survivor that is still a child is still part of the owned tree: the case could measure the owned-tree termination instead of the un-attributable survivor. The case now waits until the survivor's parent is init before it signals, so the property it measures is the one it names.             |
 
+## Second review round: pending signals and fixture disposal — 2026-10-22
+
+Two further concerns were raised against this branch. Both were re-validated
+against the exact source and the command doubles, again with no registry, no
+Docker engine and no Docker Hub request involved:
+
+| Concern                                                                         | Verdict                 | Evidence                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A pending SIGINT during a synchronous config/pull may still start a new command | **Real at this head**   | The pull path checked its interruption state immediately after `spawnSync` returned, but a signal delivered while that synchronous command held the event loop is only dispatched on a later turn, so the state read was the state from BEFORE the signal. Both new regressions fail against the reviewed head: one with "Missing expected rejection", the other reporting the interruption as a failed pull. |
+| The lifecycle harness's own cleanup could leak a fixture survivor               | **Real in the harness** | The harness's outer cleanup reaped only the direct runner and then deleted the scratch directory — and with it the receipt naming the detached pipe-holder it had spawned. The new failure-path case, run against that cleanup, leaves the survivor alive.                                                                                                                                                    |
+
+### Change in this round
+
+- **No command starts after a pending signal.** `runWithPullBackoff` and
+  `runWithPullFallback` take an optional `settlePendingSignal` hook, awaited
+  immediately before each interruption gate. Only the synchronous Postgres
+  configuration/pull path supplies it (`setImmediate`, which resumes after the
+  poll phase where a pending signal is dispatched), so every other caller keeps
+  the previous behaviour exactly. The pull path also reads the state once before
+  its first command, so a run that was already interrupted starts nothing at all.
+- **Two deterministic pending-signal regressions** drive `pullPostgresImage`
+  with a double that arms the interruption handler on a later event-loop turn —
+  exactly the ordering a pending signal produces. The double, not a real signal,
+  decides the ordering, so neither case depends on a race or on timing.
+- **The lifecycle harness disposes of what it spawned on every path.** A passing
+  case, a failing case and a settle timeout all reap the direct runner and the
+  fixture's recorded descendants, by those exact PIDs — never by name and never
+  by process group. The reap is bounded; one that cannot be confirmed RETAINS the
+  receipt naming the PIDs instead of deleting the identity while the processes
+  still run, and is surfaced, appended to the case's own failure when both fail.
+- **Survivor liveness is measured at the instant the runner was gone**, before
+  the harness's own disposal, so the assertion that the runner did not kill what
+  it could not attribute cannot be satisfied by the harness's later reap.
+- **A new case drives the failure path itself** (an impossible settle budget):
+  the case fails, the survivor it spawned is still reaped, and the identities
+  stay attached to the failure rather than being searched for in the process
+  table.
+
 ## Verification
 
 - `bun test tests/integration-runner-lifecycle.test.mjs`: 34 passed, 0 failed,
@@ -148,6 +186,33 @@ with no registry and no Docker engine involved:
   timed-out child whose descendant holds the pipes, and the re-parenting wait
   that makes the un-attributable survivor case deterministic.
 
+### Second-round verification
+
+Run with the pinned toolchain (`mise`): Node 24.21.0 and Bun 1.4.3, which this
+worker had to install first — the machine had neither.
+
+- `bun test tests/integration-runner-lifecycle.test.mjs
+  tests/docker-pull-backoff.test.mjs`: 63 passed, 0 failed, 3 skipped, 154
+  assertions. No process survived the run and no scratch directory was left
+  behind by it.
+- The two pending-signal regressions, run against the reviewed head's scripts
+  (`2d8adb418`, before this repair) and against the repaired ones: against the
+  reviewed head one fails with "Missing expected rejection" — the pull ran to
+  completion while a signal was pending — and the other with "docker compose
+  pull postgres exited with status 1", the interruption reported as a failed
+  pull after a fallback pull had already been started. With the repair both
+  pass, and the recorded command list stops at the command that was already
+  running when the signal arrived.
+- The new failure-path case, run against the previous harness cleanup, fails
+  with the detached pipe-holder still alive (`expect(received).toBe(expected)`
+  on `isProcessAlive`); with the bounded cleanup it passes, and the descendant
+  count is non-zero so the check cannot pass vacuously.
+- `bun run format:check` clean; `bun run lint` exit 0 (`vp run orch:lint`
+  47/47 successful, `oxlint --deny-warnings tests` 0 errors, and the workspace
+  boundary, canonical ordering and digest-writer checks all pass).
+- `requirements:check` was not run: it queries GitHub issue identities and this
+  worker has no GitHub credential.
+
 ## Limits
 
 No local Docker engine, database, install, build or real integration suite was
@@ -156,10 +221,11 @@ process reaping, not physical container/volume reclamation or full Docker/profil
 acceptance. `SIGKILL`, daemon loss and machine shutdown still cannot execute
 JavaScript cleanup, so the owner-recorded `COMPOSE_PROJECT_NAME` remains the
 fallback for those cases. The nested image pull and SQL readiness probes are
-still bounded synchronous calls, so an interruption is honored after the
-in-flight probe returns (at most its own five- or ninety-second bound). The
-working-tree `bun test tests/repository.test.mjs tests/docker-pull-backoff.test.mjs`
-run reported 1 unrelated failure (`Cannot find module '@control-plane/contracts'`
+still bounded synchronous calls, so the command already in flight still runs to
+completion (at most its own five- or ninety-second bound); what this round
+changed is that no FURTHER command starts after the signal, however it was
+delivered. The working-tree `bun test tests/repository.test.mjs
+tests/docker-pull-backoff.test.mjs` run reported 1 unrelated failure (`Cannot find module '@control-plane/contracts'`
 from `packages/production-readiness`), which is a missing build output in a
 clean worktree, not this change: after `bun run build` (47/47 successful) the
 same repository policy suite passes 31 passed, 0 failed. Whole-candidate CI, the

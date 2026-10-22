@@ -254,16 +254,92 @@ function isProcessAlive(pid) {
   }
 }
 
+// The bounded wait a fixture-owned descendant is given to disappear after its
+// own SIGKILL, before that reap is reported as failed.
+const FIXTURE_REAP_WAIT_MS = 5_000
+// The bounded settle after the runner is gone, before liveness is read. A
+// signal is delivered asynchronously, and a killed process can linger for a
+// moment as a zombie until its new parent reaps it, so liveness at a single
+// instant is not proof that anything survived.
+const FIXTURE_LIVENESS_SETTLE_MS = 2_000
+
+/**
+ * The PIDs that are still alive after a bounded settle.
+ *
+ * This is the same rule the runner applies to its own owned tree: a process
+ * that is on its way out is not a survivor, and one that is still there when
+ * the settle is over is.
+ */
+async function survivingAfterSettle(pids, budgetMs) {
+  const deadline = Date.now() + budgetMs
+  let alive = pids.filter((pid) => isProcessAlive(pid))
+  while (alive.length > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    alive = alive.filter((pid) => isProcessAlive(pid))
+  }
+  return alive
+}
+
+/**
+ * Reaps the descendants the FIXTURE spawned, by the exact PIDs its receipt named.
+ *
+ * Only those PIDs are signalled — never a lookup by name and never a process
+ * group — so the harness touches nothing it did not create. The PIDs still
+ * alive after the bounded wait are returned: their reap is not certain, and the
+ * caller then retains their receipt instead of deleting the identity along with
+ * the scratch directory.
+ */
+async function reapFixtureDescendants(pids) {
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error
+    }
+  }
+  return survivingAfterSettle(pids, FIXTURE_REAP_WAIT_MS)
+}
+
+/**
+ * Disposes of everything the harness spawned, on EVERY path.
+ *
+ * The direct runner is reaped, and the fixture-owned descendants named in its
+ * own receipt are reaped by that exact PID. The scratch directory — and with it
+ * the receipt that names those PIDs — is removed only when every reap is
+ * certain: a descendant that is still alive after the bounded wait keeps its
+ * identity on disk and is surfaced, instead of being deleted while it runs.
+ */
+async function disposeHarnessState(child, descendantsFile, directory) {
+  reapHarnessChild(child)
+  const unreaped = await reapFixtureDescendants(readDescendantPids(descendantsFile))
+  if (unreaped.length === 0) {
+    rmSync(directory, { recursive: true, force: true })
+    return
+  }
+  throw new Error(
+    `the fixture descendants ${unreaped.join(', ')} were still alive after ` +
+      `${FIXTURE_REAP_WAIT_MS} ms; their receipt is retained at ${descendantsFile}`
+  )
+}
+
 // Spawn the real runner asynchronously, wait until its receipt records the
 // injected command, deliver a real signal, and report how it exited. A runner
 // without an installed handler dies from the signal (status null, signal name);
 // a handled interruption exits with 128 + signal number.
+//
+// Whatever the path — a passing case, a failing case or a settle timeout — the
+// harness disposes of what it spawned before it reports: the direct runner and
+// the fixture's own recorded descendants, by those exact PIDs. A reap that is
+// not certain retains the receipt that names the PIDs instead of deleting it,
+// and is surfaced rather than swallowed.
 async function executeRunnerInterrupted(
   overrides,
   { signal, predicate, description, settleMs = 15_000, waitFor = 'close' }
 ) {
   const { directory, commands, descendants, environment } = createRunnerHarness(overrides)
   let child
+  let outcome
+  let bodyFailure
   try {
     child = spawn(process.execPath, [runner], {
       cwd: repository,
@@ -303,7 +379,7 @@ async function executeRunnerInterrupted(
       }
     }
     child.kill(signal)
-    const outcome = await Promise.race([
+    const settled = await Promise.race([
       exited,
       new Promise((resolve) => {
         const timer = setTimeout(
@@ -313,22 +389,48 @@ async function executeRunnerInterrupted(
         timer.unref?.()
       }),
     ])
-    if (outcome.signal === 'settle-timeout') {
+    if (settled.signal === 'settle-timeout') {
       reapHarnessChild(child)
       await exited
-      throw new Error(`Runner did not exit within ${settleMs}ms after ${signal}`)
+      const failure = new Error(`Runner did not exit within ${settleMs}ms after ${signal}`)
+      // The identities the fixture recorded stay attached to the failure, so a
+      // case that fails here can still name exactly what must be reaped, and
+      // never has to search the process table for it.
+      failure.fixtureDescendants = readDescendantPids(descendants)
+      throw failure
     }
-    return {
-      ...outcome,
+    // Liveness is measured after a bounded settle, and BEFORE this harness's
+    // own disposal below: it is what the runner left behind, which a
+    // post-disposal reading could not show. The settle is what makes the
+    // reading mean "survived" rather than "was still being reaped".
+    const survivorsAtExit = await survivingAfterSettle(
+      readDescendantPids(descendants),
+      FIXTURE_LIVENESS_SETTLE_MS
+    )
+    outcome = {
+      ...settled,
       stdout,
       stderr,
       calls: readCommandReceipts(commands),
       descendants: readDescendantPids(descendants),
+      survivorsAtExit,
     }
-  } finally {
-    reapHarnessChild(child)
-    rmSync(directory, { recursive: true, force: true })
+  } catch (error) {
+    bodyFailure = error
   }
+  // The disposal runs on EVERY path — a passing case, a failing case and a
+  // settle timeout alike — because the body's outcome is already captured above.
+  // A cleanup that itself fails is surfaced: on its own when the case passed,
+  // and appended to the case's own failure when both failed, so neither is lost.
+  try {
+    await disposeHarnessState(child, descendants, directory)
+  } catch (cleanupError) {
+    if (bodyFailure === undefined) throw cleanupError
+    bodyFailure.message += `\nHarness cleanup also failed: ${cleanupError.message}`
+    bodyFailure.cleanupFailure = cleanupError
+  }
+  if (bodyFailure !== undefined) throw bodyFailure
+  return outcome
 }
 
 const remoteTarget = {
@@ -1033,10 +1135,11 @@ describe('integration runner owned process tree', () => {
         )
         // The runner settled on the interruption and kept the signal's status.
         expect(result.status).toBe(130)
-        // The OWNED descendants are gone: the tree was reaped, not only the
-        // direct child.
+        // The OWNED descendants were already gone when the runner settled: the
+        // tree was reaped, not only the direct child. Measured before this
+        // harness's own disposal, so its reap cannot be what makes it true.
         expect(result.descendants.length).toBeGreaterThan(0)
-        for (const pid of result.descendants) expect(isProcessAlive(pid)).toBe(false)
+        expect(result.survivorsAtExit).toEqual([])
         // The runner verified its own tree, so it reported no survivor.
         expect(result.stderr).not.toMatch(/owned descendant survived/u)
         // An UNRELATED process was never signalled.
@@ -1190,17 +1293,40 @@ describe('integration runner owned process tree', () => {
     expect(result.status).toBe(143)
     // The completion was bounded and reported instead of hanging.
     expect(result.stderr).toMatch(/did not complete within \d+ ms after it was terminated/u)
-    // The un-attributable survivor was not killed: it was never proven to be
-    // the runner's own.
+    // The un-attributable survivor was still alive once the runner had settled:
+    // the runner never killed what it could not prove it owned. Measured before
+    // this harness's own disposal of it.
     expect(result.descendants.length).toBeGreaterThan(0)
-    for (const pid of result.descendants) expect(isProcessAlive(pid)).toBe(true)
-    // The case owns the cleanup of what it spawned.
-    for (const pid of result.descendants) {
-      try {
-        process.kill(pid, 'SIGKILL')
-      } catch {
-        // The survivor is already gone.
+    expect(result.survivorsAtExit).toEqual(result.descendants)
+    // The case disposed of what it spawned, in its own bounded cleanup, so the
+    // survivor is already gone by the time the harness reports back.
+    for (const pid of result.descendants) expect(isProcessAlive(pid)).toBe(false)
+  }, 40_000)
+
+  test('a case that exceeds its settle budget still reaps what its fixture spawned', async () => {
+    // The settle budget is deliberately impossible, so the case FAILS before it
+    // can assert anything. The failure path is the property under test: the
+    // un-attributable survivor is still reaped in the harness's own bounded
+    // cleanup, and the failure is still surfaced instead of being swallowed by
+    // that cleanup.
+    const outcome = await executeRunnerInterrupted(
+      { FAKE_BUN_SPAWN_DETACHED_DESCENDANT: 'true' },
+      {
+        signal: 'SIGTERM',
+        predicate: ({ program, args }) => program === 'bun' && args.includes('test'),
+        description: 'the owned test execution',
+        waitFor: 'exit',
+        settleMs: 1,
       }
-    }
+    ).then(
+      () => ({ error: undefined }),
+      (error) => ({ error })
+    )
+    expect(outcome.error?.message ?? '').toMatch(/Runner did not exit within 1ms after SIGTERM/u)
+    // The fixture DID spawn a survivor — named by the failure itself, so the
+    // check needs no process-table search — and it is gone once the harness
+    // reports, so a failing case cannot leak what it did not own.
+    expect(outcome.error?.fixtureDescendants?.length ?? 0).toBeGreaterThan(0)
+    for (const pid of outcome.error.fixtureDescendants) expect(isProcessAlive(pid)).toBe(false)
   }, 40_000)
 })
