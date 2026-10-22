@@ -45,16 +45,58 @@ export const TRANSIENT_STATUS = 503
 export const FAILED_AUDIT_EXIT_CODE = 1
 
 /**
- * The pinned Bun diagnostic for the bulk advisory endpoint answering HTTP 503:
- * `error: POST <registry>/-/npm/v1/security/advisories/bulk - 503`.
- *
- * The diagnostic is matched whole: the request method, the bulk advisory
- * endpoint and the status are all required. A bare "503" somewhere in the
- * output, or the word "advisor" anywhere in it, is not this condition.
+ * The error lines the pinned Bun prints for a failed audit. Bun reports one
+ * failure per run, so an output with more than one error line is not the
+ * single-condition failure this helper retries.
  */
-export const BUN_BULK_ADVISORY_503 = new RegExp(
-  `error: POST https?://\\S*${BULK_ADVISORY_PATH.replace('/', '\\/')} - ${TRANSIENT_STATUS}\\b`
-)
+const BUN_ERROR_LINE = /^\s*error:\s*(.+?)\s*$/gm
+
+/** The shape of Bun's request failure for the bulk advisory endpoint. */
+const BUN_REQUEST_FAILURE = /^POST (https?:\/\/\S+) - (\d+)$/
+
+/**
+ * The audit's error messages, in the order Bun printed them.
+ *
+ * @param {string} output the combined stdout and stderr of the attempt
+ * @returns {string[]}
+ */
+export function auditErrorMessages(output) {
+  return [...(output ?? '').matchAll(BUN_ERROR_LINE)].map((match) => match[1])
+}
+
+/**
+ * Whether the attempt failed with exactly the pinned Bun diagnostic for the
+ * npm bulk advisory endpoint answering HTTP 503.
+ *
+ * The whole diagnostic is required: the run must have produced exactly one
+ * error, that error must be Bun's own request failure, and the request must
+ * be the bulk advisory endpoint and nothing else. A diagnostic quoted inside
+ * another message, a second error beside it, or a request that merely ends
+ * with the same path is not this condition.
+ *
+ * @param {string} output the combined stdout and stderr of the attempt
+ * @returns {boolean}
+ */
+export function isPinnedBulkAdvisory503(output) {
+  const errors = auditErrorMessages(output)
+  if (errors.length !== 1) return false
+  const failure = BUN_REQUEST_FAILURE.exec(errors[0])
+  if (failure === null) return false
+  if (failure[2] !== String(TRANSIENT_STATUS)) return false
+  let url
+  try {
+    url = new URL(failure[1])
+  } catch {
+    return false
+  }
+  return (
+    url.pathname === BULK_ADVISORY_PATH &&
+    url.search === '' &&
+    url.hash === '' &&
+    url.username === '' &&
+    url.password === ''
+  )
+}
 
 /** Default number of audit attempts, including the first one. */
 export const DEFAULT_ATTEMPTS = 2
@@ -74,6 +116,14 @@ export const DEFAULT_ATTEMPT_TIMEOUT_MS = 420_000
  * ran out of budget.
  */
 export const DEFAULT_TERM_GRACE_MS = 10_000
+
+/**
+ * Default drain window after the owned child is reaped. The attempt resolves
+ * when the child's own streams close; a descendant that inherited those pipes
+ * can keep them open after the child is gone, so the drain bounds that wait
+ * instead of letting the attempt outlive its budget.
+ */
+export const DEFAULT_DRAIN_MS = 250
 
 /** The successful audit verdict bun prints. */
 const SUCCESS_MARKER = /no vulnerabilities found/i
@@ -116,7 +166,7 @@ export function classifyAuditAttempt(attempt) {
     // and it takes precedence over any success substring in the same output.
     return { kind: 'findings', exitCode }
   }
-  if (BUN_BULK_ADVISORY_503.test(output)) {
+  if (isPinnedBulkAdvisory503(output)) {
     // The pinned bulk advisory diagnostic, carried by the failed-audit exit
     // code this helper understands. Any other exit code with the same
     // diagnostic is not understood and fails closed.
@@ -179,12 +229,20 @@ export async function runAuditWithBoundedRetry(options) {
  * When the attempt runs out of budget the owned child is ended with a bounded
  * escalation: SIGTERM, then SIGKILL after the grace window. Only that child
  * is signalled - its own descendants are left to it - and the attempt is
- * resolved only after the child's exit and cleanup have been observed.
+ * resolved once that child has been reaped.
+ *
+ * The attempt resolves on the reap, not on the child's pipes closing: a
+ * descendant that inherited those pipes can keep them open after the child is
+ * gone, and waiting for them would let the attempt outlive its budget. The
+ * child's own output gets a bounded drain before the attempt resolves, and the
+ * streams are closed afterwards so a surviving descendant cannot hold the
+ * helper open either.
  */
 export async function runRealAuditAttempt({
   cwd,
   timeoutMs,
   termGraceMs = DEFAULT_TERM_GRACE_MS,
+  drainMs = DEFAULT_DRAIN_MS,
   spawn = spawnProcess,
 }) {
   const child = spawn('bun', ['audit'], { cwd, env: process.env })
@@ -198,13 +256,27 @@ export async function runRealAuditAttempt({
   const result = await new Promise((resolve) => {
     let settled = false
     let timedOut = false
+    let reaped = false
+    let exitCode = null
+    let exitSignal = null
     let killTimer
+    let drainTimer
     const finish = (value) => {
       if (settled) return
       settled = true
       clearTimeout(budgetTimer)
       clearTimeout(killTimer)
+      clearTimeout(drainTimer)
       resolve(value)
+    }
+    const settle = () => {
+      if (settled) return
+      // The owned child is reaped. Its streams can still be held open by a
+      // surviving descendant, so they are closed here and the attempt resolves
+      // on the reap rather than on those pipes closing.
+      child.stdout?.destroy?.()
+      child.stderr?.destroy?.()
+      finish({ exitCode, output, timedOut, signalled: exitSignal !== null })
     }
     const budgetTimer = setTimeout(() => {
       timedOut = true
@@ -217,10 +289,21 @@ export async function runRealAuditAttempt({
     child.on('error', (error) => {
       finish({ exitCode: null, output: `${output}${error.message}` })
     })
+    child.on('exit', (code, signal) => {
+      reaped = true
+      exitCode = code
+      exitSignal = signal
+      // The child is gone. Its own buffered output gets a bounded moment to
+      // arrive, then the attempt resolves.
+      drainTimer = setTimeout(settle, drainMs)
+    })
     child.on('close', (code, signal) => {
-      // The attempt resolves on the child's exit, so its cleanup is observed
-      // before the next attempt can start.
-      finish({ exitCode: code, output, timedOut, signalled: signal !== null })
+      if (!reaped) {
+        reaped = true
+        exitCode = code
+        exitSignal = signal
+      }
+      settle()
     })
   })
   return result

@@ -8,7 +8,9 @@ import {
   BULK_ADVISORY_PATH,
   DEFAULT_ATTEMPTS,
   FAILED_AUDIT_EXIT_CODE,
+  auditErrorMessages,
   classifyAuditAttempt,
+  isPinnedBulkAdvisory503,
   main,
   runAuditWithBoundedRetry,
   runRealAuditAttempt,
@@ -39,6 +41,28 @@ const BARE_503_OUTPUT =
   'bun audit v1.4.3 (c6da4a4d3)\n\nerror: request failed, status 503 Service Unavailable\n'
 const ADVISOR_TOKEN_OUTPUT =
   'bun audit v1.4.3 (c6da4a4d3)\n\nerror: the advisory service is unavailable: 503\n'
+const PINNED_503_PLUS_OTHER_ERROR = `bun audit v1.4.3 (c6da4a4d3)
+
+error: POST https://registry.npmjs.org${BULK_ADVISORY_PATH} - 503
+error: failed to read bun.lock: ENOENT
+`
+const PINNED_503_QUOTED = `bun audit v1.4.3 (c6da4a4d3)
+
+error: wrapper failed: {"inner":"error: POST https://registry.npmjs.org${BULK_ADVISORY_PATH} - 503"}
+`
+const PINNED_503_TWICE = `bun audit v1.4.3 (c6da4a4d3)
+
+error: POST https://registry.npmjs.org${BULK_ADVISORY_PATH} - 503
+error: POST https://registry.npmjs.org${BULK_ADVISORY_PATH} - 503
+`
+const PINNED_503_OTHER_PATH = `bun audit v1.4.3 (c6da4a4d3)
+
+error: POST https://registry.npmjs.org/-/npm/v1/security/other/bulk - 503
+`
+const PINNED_503_WITH_QUERY = `bun audit v1.4.3 (c6da4a4d3)
+
+error: POST https://registry.npmjs.org${BULK_ADVISORY_PATH}?audit=1 - 503
+`
 
 function fakeRunner(outcomes) {
   const calls = []
@@ -86,6 +110,32 @@ describe('the npm bulk advisory retry classification', () => {
   test("bun's own advisory timeout is not a confirmed 503", () => {
     expect(
       classifyAuditAttempt({ exitCode: FAILED_AUDIT_EXIT_CODE, output: BUN_TIMEOUT_OUTPUT }).kind
+    ).toBe('failure')
+  })
+
+  test('only the single pinned diagnostic is the transient condition', () => {
+    // A second error beside it means the audit failed for another reason too.
+    expect(
+      classifyAuditAttempt({
+        exitCode: FAILED_AUDIT_EXIT_CODE,
+        output: PINNED_503_PLUS_OTHER_ERROR,
+      }).kind
+    ).toBe('failure')
+    // The diagnostic quoted inside another message is not the audit's error.
+    expect(
+      classifyAuditAttempt({ exitCode: FAILED_AUDIT_EXIT_CODE, output: PINNED_503_QUOTED }).kind
+    ).toBe('failure')
+    // Bun reports one failure per run; two identical lines are not that shape.
+    expect(
+      classifyAuditAttempt({ exitCode: FAILED_AUDIT_EXIT_CODE, output: PINNED_503_TWICE }).kind
+    ).toBe('failure')
+    // A request that is not exactly the bulk advisory endpoint is not it.
+    expect(
+      classifyAuditAttempt({ exitCode: FAILED_AUDIT_EXIT_CODE, output: PINNED_503_OTHER_PATH }).kind
+    ).toBe('failure')
+    // A query on the advisory request is not the pinned diagnostic.
+    expect(
+      classifyAuditAttempt({ exitCode: FAILED_AUDIT_EXIT_CODE, output: PINNED_503_WITH_QUERY }).kind
     ).toBe('failure')
   })
 
@@ -308,6 +358,56 @@ setInterval(() => {}, 1000)
     }
   })
 
+  test('the attempt resolves when the owned child is reaped, even when a descendant holds the pipe', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'npm-audit-reap-'))
+    const grandchildPidFile = join(directory, 'grandchild.pid')
+    const script = join(directory, 'pipe-holding.mjs')
+    writeFileSync(
+      script,
+      `import { spawn } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
+process.on('SIGTERM', () => {})
+// The descendant inherits the pipes, so they stay open after the child is gone.
+const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+  stdio: ['ignore', 1, 2],
+})
+writeFileSync(${JSON.stringify(grandchildPidFile)}, String(grandchild.pid))
+setInterval(() => {}, 1000)
+`
+    )
+    let grandchildPid
+    try {
+      const started = Date.now()
+      const result = await runRealAuditAttempt({
+        cwd: directory,
+        timeoutMs: 300,
+        termGraceMs: 300,
+        drainMs: 250,
+        spawn: (command, args, options) =>
+          spawn(process.execPath, [script], { ...options, stdio: ['ignore', 'pipe', 'pipe'] }),
+      })
+      const elapsed = Date.now() - started
+
+      // The attempt resolved on the reap, inside its own budget and drain,
+      // instead of waiting for pipes a surviving descendant still holds.
+      expect(result.timedOut).toBe(true)
+      expect(elapsed).toBeLessThan(5_000)
+
+      // Only the owned child was cleaned up.
+      grandchildPid = Number(readFileSync(grandchildPidFile, 'utf8'))
+      expect(() => process.kill(grandchildPid, 0)).not.toThrow()
+    } finally {
+      if (grandchildPid) {
+        try {
+          process.kill(grandchildPid, 'SIGKILL')
+        } catch {
+          /* already gone */
+        }
+      }
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   test('a child that exits on SIGTERM is cleaned up without the escalation', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'npm-audit-term-'))
     const script = join(directory, 'term-responsive.mjs')
@@ -361,13 +461,24 @@ describe('the M9 production readiness workflow keeps the audit mandatory', () =>
 })
 
 describe('the helper keeps its own guard rails', () => {
-  test('the pinned diagnostic requires the method, the bulk advisory endpoint and the status', () => {
-    expect(TRANSIENT_OUTPUT).toMatch(
-      new RegExp(`error: POST https?://\\S*${BULK_ADVISORY_PATH.replace('/', '\\/')} - 503\\b`)
-    )
-    expect(BARE_503_OUTPUT).not.toMatch(
-      new RegExp(`error: POST https?://\\S*${BULK_ADVISORY_PATH.replace('/', '\\/')} - 503\\b`)
-    )
+  test('the audit error messages are the ones the pinned Bun prints', () => {
+    expect(auditErrorMessages(TRANSIENT_OUTPUT)).toEqual([
+      `POST https://registry.npmjs.org${BULK_ADVISORY_PATH} - 503`,
+    ])
+    expect(auditErrorMessages(SUCCESS_OUTPUT)).toEqual([])
+    expect(auditErrorMessages(FINDINGS_OUTPUT)).toEqual([])
+  })
+
+  test('the pinned diagnostic is the whole diagnostic, not a substring', () => {
+    expect(isPinnedBulkAdvisory503(TRANSIENT_OUTPUT)).toBe(true)
+    expect(isPinnedBulkAdvisory503(PINNED_503_PLUS_OTHER_ERROR)).toBe(false)
+    expect(isPinnedBulkAdvisory503(PINNED_503_QUOTED)).toBe(false)
+    expect(isPinnedBulkAdvisory503(PINNED_503_TWICE)).toBe(false)
+    expect(isPinnedBulkAdvisory503(PINNED_503_OTHER_PATH)).toBe(false)
+    expect(isPinnedBulkAdvisory503(PINNED_503_WITH_QUERY)).toBe(false)
+    expect(isPinnedBulkAdvisory503(BARE_503_OUTPUT)).toBe(false)
+    expect(isPinnedBulkAdvisory503(ADVISOR_TOKEN_OUTPUT)).toBe(false)
+    expect(isPinnedBulkAdvisory503(BUN_TIMEOUT_OUTPUT)).toBe(false)
   })
 
   test('the helper file exists where the workflow runs it from', () => {
