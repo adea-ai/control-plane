@@ -3,7 +3,11 @@ import { appendFileSync } from 'node:fs'
 import process from 'node:process'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { postgresImageVariable, runWithPullFallback } from './docker-pull-backoff.mjs'
+import {
+  postgresImageVariable,
+  pullInterruptedMessage,
+  runWithPullFallback,
+} from './docker-pull-backoff.mjs'
 
 const pullArguments = ['compose', 'pull', 'postgres']
 const configArguments = ['compose', 'config', '--format', 'json', 'postgres']
@@ -35,6 +39,7 @@ export async function pullPostgresImage({
   backoffOptions,
   stdout = process.stdout,
   stderr = process.stderr,
+  isInterrupted,
 } = {}) {
   const run = (arguments_, env = environment) =>
     spawnSync('docker', arguments_, {
@@ -69,9 +74,15 @@ export async function pullPostgresImage({
         return run(['pull', '--quiet', reference])
       },
       ...backoffOptions,
+      // The interruption state is the caller's: an interrupted run must launch
+      // no further pull command, and the backoff wait must end with it.
+      ...(isInterrupted === undefined ? {} : { isInterrupted }),
     }
   )
 
+  // An interrupted pull is reported as an interruption, not as a failed pull.
+  if (isInterrupted !== undefined && isInterrupted() === true)
+    throw new Error(pullInterruptedMessage)
   if (result.error) throw result.error
   if (result.status !== 0) {
     throw new Error(`docker compose pull postgres exited with status ${String(result.status)}`)

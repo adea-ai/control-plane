@@ -62,6 +62,10 @@ if (process.env.FAKE_BUN_SPAWN_DETACHED_DESCENDANT === 'true' && args.includes('
 }
 if (program === 'docker') {
   if (process.env.FAKE_DOCKER_DISABLED === 'true') process.exit(90)
+  if (process.env.FAKE_DOCKER_RATE_LIMIT === 'true' && args.includes('pull')) {
+    console.error('Error response from daemon: toomanyrequests: You have reached your unauthenticated pull rate limit.')
+    process.exit(1)
+  }
   if (args.includes('ps') && process.env.FAKE_POSTGRES_RUNNING === 'true') console.log('postgres')
   if (args.includes('exec')) console.log('1')
   if (args.includes('up') && process.env.FAKE_DOCKER_ECHO_PROJECT === 'true') console.log('Created ' + process.env.COMPOSE_PROJECT_NAME + '-postgres')
@@ -219,6 +223,26 @@ async function waitForDescendant(descendants) {
   }
 }
 
+/**
+ * Waits until a PID is no longer a child of the process that spawned it.
+ *
+ * The receipt of a spawned survivor can arrive before the kernel re-parents
+ * it, and a survivor that is still a child is still part of the owned tree: a
+ * case that signalled before the re-parenting would measure the owned-tree
+ * termination, not the un-attributable survivor. The wait makes the case
+ * deterministic.
+ */
+async function waitForReparent(pid, budgetMs = 5_000) {
+  const deadline = Date.now() + budgetMs
+  for (;;) {
+    const result = spawnSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' })
+    const parent = Number.parseInt(String(result.stdout ?? '').trim(), 10)
+    if (parent === 1) return true
+    if (Date.now() > deadline) return false
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}
+
 /** Whether a PID still names a live process. */
 function isProcessAlive(pid) {
   try {
@@ -269,6 +293,15 @@ async function executeRunnerInterrupted(
       overrides.FAKE_BUN_SPAWN_DETACHED_DESCENDANT === 'true'
     )
       await waitForDescendant(descendants)
+    // The survivor of the detached case must be RE-PARENTED before the signal:
+    // a survivor that is still a child is still part of the owned tree, and the
+    // case would then measure the owned-tree termination instead.
+    if (overrides.FAKE_BUN_SPAWN_DETACHED_DESCENDANT === 'true') {
+      for (const pid of readDescendantPids(descendants)) {
+        if (!(await waitForReparent(pid)))
+          throw new Error(`the descendant ${pid} was never re-parented`)
+      }
+    }
     child.kill(signal)
     const outcome = await Promise.race([
       exited,
@@ -842,6 +875,41 @@ describe('integration runner resource ownership', () => {
   )
 })
 
+/**
+ * Evaluates the runner's OWN internals together in one context.
+ *
+ * The lifecycle properties under test (the bounded completion of a terminated
+ * child, the owned-tree termination, the abandonment of the pipes) live in
+ * several functions that call each other, so they are sliced and evaluated as
+ * one block: the code under test is the shipped code, with only the process
+ * boundary stubbed. A constant may be overridden for the case, which is how the
+ * completion bound is shortened without changing the shipped value.
+ */
+function readScriptBlock(path, { functions, constants, overrides = {} }, globals, exportName) {
+  const source = readFileSync(new URL(`../scripts/${path}`, import.meta.url), 'utf8')
+  const ast = parse(source, { ecmaVersion: 'latest', sourceType: 'module' })
+  const pieces = []
+  for (const node of ast.body) {
+    if (node.type === 'FunctionDeclaration' && functions.includes(node.id.name)) {
+      pieces.push(source.slice(node.start, node.end))
+      continue
+    }
+    if (node.type !== 'VariableDeclaration') continue
+    for (const declaration of node.declarations) {
+      if (!constants.includes(declaration.id.name)) continue
+      let text = source.slice(node.start, node.end)
+      if (overrides[declaration.id.name] !== undefined) {
+        text = text.replace(
+          new RegExp(`(const\\s+${declaration.id.name}\\s*=\\s*)[^\\n]+`),
+          `$1${overrides[declaration.id.name]}`
+        )
+      }
+      pieces.push(text)
+    }
+  }
+  return runInNewContext(`${pieces.join('\n')}\n;${exportName}`, globals)
+}
+
 function readScriptFunction(path, name, globals) {
   const source = readFileSync(new URL(`../scripts/${path}`, import.meta.url), 'utf8')
   const declaration = parse(source, { ecmaVersion: 'latest', sourceType: 'module' }).body.find(
@@ -983,6 +1051,123 @@ describe('integration runner owned process tree', () => {
     },
     runnerTestBudgetMs
   )
+
+  test('SIGINT during a rate-limited pull backoff ends the run and starts no further pull', async () => {
+    // The backoff delay is 15 s. A runner that waits it out launches another
+    // pull AFTER the signal, so the case is deterministic about the wait being
+    // cut short by the interruption.
+    const result = await executeRunnerInterrupted(
+      { FAKE_DOCKER_RATE_LIMIT: 'true' },
+      {
+        signal: 'SIGINT',
+        predicate: ({ program, args }) => program === 'docker' && args.includes('pull'),
+        description: 'the rate-limited image pull',
+        // The backoff delay is 15 s, so a budget below it still separates a
+        // runner that ends the wait from one that waits it out, with room for
+        // a loaded host.
+        settleMs: 12_000,
+      }
+    )
+    expect(result.status).toBe(130)
+    // No pull command was started after the signal.
+    const pulls = result.calls.filter(
+      ({ program, args }) => program === 'docker' && args.includes('pull')
+    )
+    expect(pulls).toHaveLength(1)
+    // The owned project is still released exactly once, and nothing else is.
+    expect(destructiveCalls(result)).toHaveLength(1)
+  }, 30_000)
+
+  test('a timed-out owned child settles on the completion bound when a descendant holds the pipes', async () => {
+    // A descendant that keeps the inherited pipes open prevents the child's
+    // `close` event, so the timeout must not leave the runner waiting for a
+    // pipe nobody owns. The runner's OWN internals are evaluated here, with
+    // only the process boundary stubbed and the bound shortened for the case.
+    const signals = []
+    const released = []
+    const child = {
+      pid: 4242,
+      exitCode: null,
+      signalCode: null,
+      once() {},
+      kill(signal) {
+        signals.push(signal)
+      },
+      unref() {},
+      stdout: {
+        setEncoding() {},
+        on() {},
+        destroy() {
+          released.push('stdout')
+        },
+      },
+      stderr: {
+        setEncoding() {},
+        on() {},
+        destroy() {
+          released.push('stderr')
+        },
+      },
+    }
+    const run = readScriptBlock(
+      'run-integration-tests.mjs',
+      {
+        functions: [
+          'run',
+          'terminateChild',
+          'bindChildCompletion',
+          'abandonChildPipes',
+          'ownedDescendants',
+          'isProcessAlive',
+          'sleepSync',
+          'survivingOwnedPids',
+          'trackRunnerChild',
+        ],
+        constants: [
+          'activeChildren',
+          'childStates',
+          'CHILD_COMPLETION_TIMEOUT_MS',
+          'CHILD_COMMAND_TIMEOUT_MS',
+          'OWNED_TREE_EXIT_WAIT_MS',
+        ],
+        overrides: { CHILD_COMPLETION_TIMEOUT_MS: '150' },
+      },
+      {
+        interruptedSignal: null,
+        runnerEnvironment: {},
+        process: {
+          cwd: () => '/tmp',
+          kill: () => {
+            throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' })
+          },
+        },
+        setTimeout,
+        clearTimeout,
+        Atomics,
+        SharedArrayBuffer,
+        spawn: () => child,
+        spawnSync: () => ({ status: 0, stdout: '' }),
+      },
+      'run'
+    )
+    // The case waits with its own bound, so a runner that never settles fails
+    // the case instead of hanging it.
+    const outcome = await Promise.race([
+      run('docker', ['compose', 'up'], { timeout: 20 }).then(
+        () => ({ settled: true }),
+        (error) => ({ settled: true, error })
+      ),
+      new Promise((resolve) => setTimeout(() => resolve({ settled: false }), 5_000)),
+    ])
+    expect(outcome.settled).toBe(true)
+    expect(outcome.error?.message ?? '').toMatch(
+      /did not complete within 150 ms after it was terminated/u
+    )
+    // The owned child was terminated, and the pipes it held were released, so
+    // the runner can finish instead of waiting for the pipe.
+    expect(signals).toEqual(['SIGKILL'])
+    expect(released.toSorted()).toEqual(['stderr', 'stdout'])
+  })
 
   test('a stalled pipe is bounded when the survivor can no longer be attributed to the owned tree', async () => {
     // The descendant is re-parented to init before the runner terminates the

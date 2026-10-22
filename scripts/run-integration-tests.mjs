@@ -309,7 +309,12 @@ function run(command, arguments_, options = {}) {
 // run once, so a startup failure cannot be hidden by repeating `compose up`.
 async function composeUpPostgres() {
   if (interruptedSignal !== null) throw new Error('Integration startup interrupted')
-  const { image } = await pullPostgresImage({ environment: runnerEnvironment })
+  const { image } = await pullPostgresImage({
+    environment: runnerEnvironment,
+    // An interrupted run launches no further pull command, and the backoff wait
+    // ends with the interruption instead of running it out.
+    isInterrupted: () => interruptedSignal !== null,
+  })
   // A rate-limited registry falls over to the same digest elsewhere; compose then has to
   // start the image that is now present locally, here and in every later compose command.
   if (image !== undefined) runnerEnvironment[postgresImageVariable] = image

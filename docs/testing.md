@@ -307,7 +307,9 @@ completion of a terminated child is bounded, so a pipe that a survivor still
 holds can no longer keep the runner from finishing. The command-double lifecycle
 suite injects a frozen startup, readiness, test and cleanup command, spawns an
 owned descendant that holds the inherited pipes, and delivers a real signal to
-prove those paths. `SIGKILL`, daemon loss and machine shutdown cannot execute
+prove those paths. A `SIGINT` during a rate-limited image-pull backoff ends the
+run without starting a further pull command, and the backoff wait ends with
+the interruption instead of being run out. `SIGKILL`, daemon loss and machine shutdown cannot execute
 JavaScript `finally`, so an interrupted run may still leave the owner-recorded
 project identity behind. Once the
 engine is available, the owning operator can use that exact `COMPOSE_PROJECT_NAME`

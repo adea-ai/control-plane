@@ -86,6 +86,26 @@ termination as well.
   an open reader would keep the event loop alive and the runner would never
   exit — and finishes. A survivor is never killed, because the runner cannot
   prove it owns it.
+- **A SIGINT during a Docker pull backoff starts no further command.** The pull
+  loop retried a rate-limited pull after the signal, so a pull command was
+  launched after the run was told to stop, and the runner then waited out the
+  15 s backoff before it could finish. The pull path now takes the
+  interruption state: no attempt and no fallback pull is started after the
+  signal, and the backoff wait is consumed in slices so it ends with the
+  interruption instead of running it out. The pull reports the interruption as
+  an interruption, not as a failed pull, and the service is not started from a
+  pull that did not finish.
+
+## Advisory concerns re-validated against the source
+
+Three concerns were checked against the exact source and the command doubles,
+with no registry and no Docker engine involved:
+
+| Concern                                                         | Verdict                                                | Evidence                                                                                                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A SIGINT during a Docker pull backoff may still launch commands | **Real at this head**                                  | The backoff loop had no interruption awareness. Against the reviewed head the runner did not exit within 12 000 ms of the signal, and the three unit regressions failed; with the repair the runner ends promptly, exactly one pull command is recorded, and the owned project is still released once.                                                                                |
+| The timeout cleanup may wait on the same pipe-holder            | **Already closed by the owned-tree fix in this slice** | The completion of a terminated child is bounded on the timeout path as well as on the interruption path: the same `terminateChild` arms the bound, and the abandoned child releases the pipes. The new case drives the runner's own internals and a child that never emits `close`; it settles on the bound instead of waiting, and against the pre-fix head it never settled at all. |
+| The orphan fixture receipt may precede re-parenting             | **Real in the new fixture**                            | The receipt of a spawned survivor is written before the kernel re-parents it, and a survivor that is still a child is still part of the owned tree: the case could measure the owned-tree termination instead of the un-attributable survivor. The case now waits until the survivor's parent is init before it signals, so the property it measures is the one it names.             |
 
 ## Verification
 
@@ -117,6 +137,16 @@ termination as well.
   pull before starting Postgres'`: 1 passed.
 - Scoped `oxfmt --check`, `oxlint --deny-warnings`, `node --check` (pinned Node)
   and `git diff --check` on the changed files passed.
+
+- `bun test tests/docker-pull-backoff.test.mjs`: 24 passed, 0 failed, 3 skipped. The
+  three new cases are the interrupted backoff, the interrupted fallback loop and
+  the interrupted wait; against the reviewed head all three fail, and the
+  runner-level case fails with "Runner did not exit within 12000ms after
+  SIGINT".
+- `bun test tests/integration-runner-lifecycle.test.mjs`: 36 passed, 0 failed.
+  The new cases are the interrupted pull backoff, the bounded completion of a
+  timed-out child whose descendant holds the pipes, and the re-parenting wait
+  that makes the un-attributable survivor case deterministic.
 
 ## Limits
 
