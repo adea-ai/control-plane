@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { access, readFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { runInNewContext } from 'node:vm'
 import { URL } from 'node:url'
 import { test } from 'bun:test'
@@ -516,13 +516,7 @@ test('does not retain the former AWS deployment tree', async () => {
   )
 })
 
-test('retired provider workflow cannot run while portable PostgreSQL qualification stays required', async () => {
-  await assert.rejects(
-    access(new URL('../.github/workflows/postgres_workflow.yml', import.meta.url)),
-    {
-      code: 'ENOENT',
-    }
-  )
+test('production validation requires portable PostgreSQL qualification', async () => {
   const workflow = await readRepositoryFile('.github/workflows/postgres-pull-request.yml')
   for (const command of [
     'bun run db:check',

@@ -6,6 +6,8 @@ Use the protected production schema and promotion workflows. Confirm exact servi
 
 Production exposes the Control API, with its database runtime endpoint private. Optional durable-workflow sandbox qualification does not create production workers or storage. Local and Hosted profiles retain their independent lifecycle and persistence rules.
 
+The provisional operational targets remain RPO 5 minutes and RTO 60 minutes. These are qualification targets, not verified provider guarantees; measure backup freshness and restore/reconciliation in an isolated sandbox before relying on them.
+
 ## M11 intake rollout fence: incomplete operator workflow
 
 The development candidate adds migration 0052 and a durable PostgreSQL intake
@@ -481,3 +483,5 @@ Child-progress lead deliveries, evidence packets and correlated child usage cost
 - **Every M10 candidate:** Local and Hosted clean install/start/restart/backup/restore/conformance evidence.
 - **M11:** independent full-profile audit from frozen candidate.
 - **M12:** profile-substrate and live cross-product certification/release evidence only after M11 approval, per the #195 owner decision.
+
+The production database bootstrap did not claim a timed disaster-recovery exercise. Run `bun run certify:m9-cloud` only against an explicitly authorized disposable sandbox, including idempotent replay and recovery checks. Production promotion continues through its protected schema and readiness gates.

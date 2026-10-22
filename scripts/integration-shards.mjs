@@ -175,6 +175,11 @@ export const INTEGRATION_SHARDS = [
 // qualification step rather than an ordinary shard.
 export const DEDICATED_INTEGRATION_QUALIFICATIONS = [
   {
+    file: 'packages/database/src/scoped-migrations.integration.test.mjs',
+    workflow: '.github/workflows/postgres-pull-request.yml',
+    command: 'bun test ./packages/database/src/scoped-migrations.integration.test.mjs',
+  },
+  {
     file: 'packages/database/src/fresh-schema-bootstrap.integration.test.mjs',
     workflow: '.github/workflows/postgres-pull-request.yml',
     command:
