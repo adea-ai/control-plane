@@ -182,9 +182,10 @@ instant, so the next pass covers the same due set plus anything newly expired; o
 pass reports changes. Each pass samples that instant once and hands the same one to every
 assessment, so the classes are assessed against one consistent deadline boundary. Scheduled passes
 wait for the previous pass to settle before the next interval is armed, so a slow pass never
-overlaps the next and the effective period is never shorter than the configured interval. Shutdown cancels future passes and drains the active scheduled pass before
-closing storage. Local and managed cloud use the same scheduler lifecycle. Failures emit the fixed
-diagnostic `RETENTION_SWEEP_FAILED` by default, without raw storage details.
+overlaps the next and the effective period is never shorter than the configured interval. Shutdown
+cancels future passes and drains the active scheduled pass before closing storage. Local and
+managed cloud use the same scheduler lifecycle. Failures emit the fixed diagnostic
+`RETENTION_SWEEP_FAILED` by default, without raw storage details.
 
 The read cost of a pass lives in the assessment implementations rather than the scheduler. Both
 repository assessments select their candidates by the v2 `retentionExpiresAt` column, in ascending
