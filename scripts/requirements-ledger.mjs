@@ -1375,17 +1375,27 @@ export function validateWorkerEvidence(ledger, root, shallowRepository) {
 // error too. The tree-side identity follows later commits, so a stale one is
 // returned as provenance instead. The record cannot name its own tree identity, so
 // the row for the record itself is exempt from the blob comparison.
+//
+// The structure of the section fails closed whatever the history: a missing
+// record, a missing section, a missing lane statement, a duplicated (worker, path)
+// row and a lane statement that contradicts its own table or the ledger are errors
+// even when the inventory is incomplete. Only the comparison against the recorded
+// heads needs their blobs, so only that comparison is skipped, and `compared` says
+// so.
 export function validateWorkerContentBinding(record, inventory, options = {}) {
   const errors = []
   const provenance = []
-  if (record === undefined) return { errors, provenance }
+  if (record === undefined) {
+    errors.push('reconciliation record is missing, so its worker content binding cannot be checked')
+    return { errors, provenance, compared: false }
+  }
   const recordPath =
     options.recordPath ?? 'docs/requirements/cp186-195-reconciliation-2026-10-21.md'
   const heading = '### Worker evidence content binding'
   const start = record.indexOf(heading)
   if (start === -1) {
     errors.push(`reconciliation record is missing the "${heading.slice(4)}" section`)
-    return { errors, provenance }
+    return { errors, provenance, compared: false }
   }
   const rest = record.slice(start + heading.length)
   const next = rest.search(/\n#{2,3} /)
@@ -1400,9 +1410,34 @@ export function validateWorkerContentBinding(record, inventory, options = {}) {
       headBlob: cell(line, 3),
       treeBlob: cell(line, 4),
     }))
-  const expected = inventory.entries.filter(({ state }) => state === 'differs')
   const key = (worker, path) => `${worker} ${path}`
-  const recorded = new Map(rows.map((row) => [key(row.worker, row.path), row]))
+  const recorded = new Map()
+  for (const row of rows) {
+    const id = key(row.worker, row.path)
+    if (recorded.has(id)) {
+      errors.push(
+        `reconciliation record lists ${row.worker} ${row.path} more than once; a duplicated row can hide a wrong blob`
+      )
+      continue
+    }
+    recorded.set(id, row)
+  }
+  const lanes = /Lanes with such a path: (\d+) of (\d+)/.exec(section)
+  if (!lanes) {
+    errors.push('reconciliation record must state "Lanes with such a path: N of M"')
+  } else {
+    const tabulated = new Set(rows.map(({ worker }) => worker)).size
+    if (Number(lanes[1]) !== tabulated)
+      errors.push(
+        `reconciliation record says ${lanes[1]} lanes have a differing path, its table lists ${tabulated}`
+      )
+    if (options.workerCount !== undefined && Number(lanes[2]) !== options.workerCount)
+      errors.push(
+        `reconciliation record says ${lanes[2]} lanes in total, the ledger records ${options.workerCount}`
+      )
+  }
+  if (!inventory.complete) return { errors, provenance, compared: false }
+  const expected = inventory.entries.filter(({ state }) => state === 'differs')
   const actual = new Map(expected.map((entry) => [key(entry.worker, entry.path), entry]))
   for (const [id, entry] of actual) {
     const row = recorded.get(id)
@@ -1427,21 +1462,12 @@ export function validateWorkerContentBinding(record, inventory, options = {}) {
         `reconciliation record lists ${row.worker} ${row.path} as differing, but its content is not different from the recorded head`
       )
   }
-  const lanes = /Lanes with such a path: (\d+) of (\d+)/.exec(section)
   const expectedLanes = new Set(expected.map(({ worker }) => worker)).size
-  if (!lanes) {
-    errors.push('reconciliation record must state "Lanes with such a path: N of M"')
-  } else {
-    if (Number(lanes[1]) !== expectedLanes)
-      errors.push(
-        `reconciliation record says ${lanes[1]} lanes have a differing path, the recorded heads show ${expectedLanes}`
-      )
-    if (options.workerCount !== undefined && Number(lanes[2]) !== options.workerCount)
-      errors.push(
-        `reconciliation record says ${lanes[2]} lanes in total, the ledger records ${options.workerCount}`
-      )
-  }
-  return { errors, provenance }
+  if (lanes && Number(lanes[1]) !== expectedLanes)
+    errors.push(
+      `reconciliation record says ${lanes[1]} lanes have a differing path, the recorded heads show ${expectedLanes}`
+    )
+  return { errors, provenance, compared: true }
 }
 
 // The profile and requirement rows are joined in two directions: a requirement row
@@ -2338,17 +2364,18 @@ async function main() {
       if (crosswalkErrors.length === 0) {
         errors.push(...validateReconciliationRecord(record, ledger, crosswalk))
       }
-      if (workerInventory.complete) {
-        const binding = validateWorkerContentBinding(record, workerInventory, {
-          workerCount: (ledger.workerEvidence ?? []).length,
-        })
-        errors.push(...binding.errors)
-        provenance.push(...binding.provenance)
-      } else {
-        warnings.push(
-          'the reconciliation record worker content binding was not checked because not every recorded worker head is resolvable'
-        )
-      }
+    }
+    // The record and its binding section are required whatever the history is;
+    // only the blob comparison needs the recorded heads and degrades to a warning.
+    const binding = validateWorkerContentBinding(record, workerInventory, {
+      workerCount: (ledger.workerEvidence ?? []).length,
+    })
+    errors.push(...binding.errors)
+    provenance.push(...binding.provenance)
+    if (record !== undefined && !binding.compared) {
+      warnings.push(
+        'the reconciliation record worker content blobs were not compared because not every recorded worker head is resolvable'
+      )
     }
   }
   for (const warning of warnings) console.warn(`Requirements ledger warning: ${warning}`)

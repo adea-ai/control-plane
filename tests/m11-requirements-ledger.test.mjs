@@ -2053,6 +2053,77 @@ describe('worker evidence content binding record (#186/#195)', () => {
     ])
   })
 
+  test('rejects a duplicated row whichever order the wrong blob comes in', () => {
+    const wrongRow = `| W1 | \`a.md\` | \`${blob('9')}\` | \`${blob('2')}\` |`
+    for (const rows of [
+      [wrongRow, ...goodRows],
+      [...goodRows, wrongRow],
+    ]) {
+      const result = validateWorkerContentBinding(recordWith({ rows }), inventory, {
+        workerCount: 7,
+      })
+      expect(result.errors).toContain(
+        'reconciliation record lists W1 a.md more than once; a duplicated row can hide a wrong blob'
+      )
+    }
+    // The same rows are rejected without history, so a shallow checkout cannot hide them.
+    const shallow = validateWorkerContentBinding(
+      recordWith({ rows: [wrongRow, ...goodRows] }),
+      { entries: [], complete: false },
+      { workerCount: 7 }
+    )
+    expect(shallow.errors).toContain(
+      'reconciliation record lists W1 a.md more than once; a duplicated row can hide a wrong blob'
+    )
+  })
+
+  test('fails closed on a missing record', () => {
+    for (const given of [inventory, { entries: [], complete: false }]) {
+      const result = validateWorkerContentBinding(undefined, given, { workerCount: 7 })
+      expect(result.errors).toEqual([
+        'reconciliation record is missing, so its worker content binding cannot be checked',
+      ])
+      expect(result.compared).toBe(false)
+    }
+  })
+
+  test('checks the section structure even when the history is incomplete', () => {
+    const incomplete = { entries: [], complete: false }
+    expect(validateWorkerContentBinding('## nothing', incomplete).errors).toEqual([
+      'reconciliation record is missing the "Worker evidence content binding" section',
+    ])
+    const noStatement = validateWorkerContentBinding(
+      recordWith({ rows: goodRows, lanes: 'Several lanes.' }),
+      incomplete,
+      { workerCount: 7 }
+    )
+    expect(noStatement.errors).toEqual([
+      'reconciliation record must state "Lanes with such a path: N of M"',
+    ])
+    const contradictory = validateWorkerContentBinding(
+      recordWith({ rows: goodRows, lanes: 'Lanes with such a path: 4 of 9 (W1, W2).' }),
+      incomplete,
+      { workerCount: 7 }
+    )
+    expect(contradictory.errors).toEqual([
+      'reconciliation record says 4 lanes have a differing path, its table lists 2',
+      'reconciliation record says 9 lanes in total, the ledger records 7',
+    ])
+  })
+
+  test('skips only the blob comparison when the history is incomplete', () => {
+    const incomplete = { entries: [], complete: false }
+    const result = validateWorkerContentBinding(recordWith({ rows: goodRows }), incomplete, {
+      workerCount: 7,
+    })
+    expect(result.errors).toEqual([])
+    expect(result.compared).toBe(false)
+    expect(
+      validateWorkerContentBinding(recordWith({ rows: goodRows }), inventory, { workerCount: 7 })
+        .compared
+    ).toBe(true)
+  })
+
   test('reports a stale tree-side blob as provenance and exempts the record itself', () => {
     const stale = validateWorkerContentBinding(
       recordWith({
