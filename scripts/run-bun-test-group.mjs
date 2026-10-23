@@ -67,6 +67,7 @@ const repositoryGroups = {
     'tests/infrastructure.test.mjs',
     'tests/integration-shards.test.mjs',
     'tests/integration-runner-lifecycle.test.mjs',
+    'tests/postgres-probe-diagnostics.test.mjs',
     'tests/hosted-compose-lifecycle.test.mjs',
     'tests/hosted-graph-qualification.test.mjs',
     'tests/langgraph-retirement-inventory.test.mjs',
