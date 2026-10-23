@@ -49,6 +49,17 @@ Reads are nondestructive; wake callbacks are advisory and never acknowledge user
 publication or require inference. Run recovery at startup independently of model
 turns. Native tool effects remain governed by the existing tool-execution authority.
 
+The opt-in `pi-durable.child.publication.current` read joins the exact dispatched
+parent receipt, canonical child record and retained terminal J1 inbox event. It
+requires a published delegation terminal receipt, the same parent and child
+attempts, matching state/result reference/failure metadata, and a final lock-safe
+current CP principal/grant check. The response carries bounded metadata and a
+short expiry. `terminalResultRef` remains an opaque reference, not result content
+or an artifact read grant. The API and SDK remain unavailable without the
+production child composition and its current publication authority. Adea holds
+its own current audience and rollback locks while consuming this operation;
+reading the terminal event does not append an Adea timeline message.
+
 The additive `CanonicalDelegationRuntimeBridge` takes the strict trusted-host
 `delegation-runtime-admission/v1` identity: `parentExecutionId`, `parentAttemptId`,
 `delegationId` and `childAttemptId`. It reloads canonical lineage, immutable plan

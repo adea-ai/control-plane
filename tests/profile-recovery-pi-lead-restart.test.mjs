@@ -280,11 +280,11 @@ test('a SIGKILLed Pi lead run is adopted by a restarted composition with no rese
   if (failed) throw primaryFailure
 }, 120_000)
 
-// A kill before the native HTTP dispatch does not resume the run. The usage ledger admits a model
-// dispatch once and refuses any later admission for the same request, even when the first never
-// reached the provider (usage-ledger durable.test.mjs pins this). Resuming it would change spend
-// semantics, which is a decision for the owner. So recovery fails closed: the decision is safe, no
-// request is sent, nothing is resent, and the record is held for reconciliation.
+// A kill before the native HTTP dispatch does not resume from advisory process logs.
+// The retained usage hold remains uncertain without an independently current no-send proof.
+// No private hold-reuse permission is minted, no second admission is attempted, and the
+// record remains held for reconciliation. The usage-ledger suite separately pins refusal
+// of an ordinary second physical-dispatch admission.
 test('a SIGKILL before HTTP dispatch fails closed after composition restart: no resend, no second admission', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'pi-lead-restart-safe-'))
   let initial
@@ -312,14 +312,14 @@ test('a SIGKILL before HTTP dispatch fails closed after composition restart: no 
     expect(record.handleId).toBe(held.handleId)
     expect(record.attemptId).toBe(held.attemptId)
     expect(record.executionId).toBe(held.executionId)
-    // The reconciliation verdict is safe: no native dispatch crossed the boundary.
+    // The logs record the checkpoint, but do not independently authorize hold reuse.
     expect(report.reconcileEvidence).toEqual({
       key: held.inferenceKey,
       beforeDispatch: true,
       alreadyForwarded: false,
-      decision: 'safe_to_resume',
+      decision: 'unresolved',
     })
-    // The dispatch was already admitted once, so the ledger refuses a second admission. Fail closed.
+    // Recovery keeps the original uncertain hold without attempting another admission.
     expect(record.state).toBe('unknown')
     expect(record.inferencePending).toBe(true)
     expect(report.recoveryBlocked).toEqual([])
@@ -340,15 +340,9 @@ test('a SIGKILL before HTTP dispatch fails closed after composition restart: no 
     expect(evidence.filter((entry) => entry.phase === 'before_dispatch')).toEqual([
       { boundary: 'native_fetch', phase: 'before_dispatch', inferenceKey: held.inferenceKey },
     ])
-    // The exact ledger rejection, recorded at the authority boundary before the engine's generic failure.
-    expect(evidence.filter((entry) => entry.boundary === 'authority')).toEqual([
-      {
-        boundary: 'authority',
-        phase: 'rejected',
-        code: 'MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED',
-        inferenceKey: held.inferenceKey,
-      },
-    ])
+    // The adapter never asks the spending port to authorize a second inference.
+    // Do not manufacture a ledger rejection for an operation it did not attempt.
+    expect(evidence.filter((entry) => entry.boundary === 'authority')).toEqual([])
   } catch (error) {
     failed = true
     primaryFailure = error

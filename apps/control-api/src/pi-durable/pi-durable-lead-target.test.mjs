@@ -376,7 +376,8 @@ test('935: a generation observed for another attempt is fenced at the control bo
         principal
       )
     )
-  ).toBe('PI_LEAD_AUTHORITY_CONFLICT')
+  ).toBe('PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN')
+  expect(calls.cancels).toBe(1)
   // The lead-stop itself never cascaded to children.
   expect(calls.childStops).toHaveLength(0)
 })

@@ -2663,6 +2663,49 @@
       "controllerReachable": true
     },
     {
+      "id": "OP-PI-DURABLE-CHILD-PUBLICATION-CURRENT",
+      "name": "getPiDurableChildPublication",
+      "operation": "pi-durable.child.publication.current",
+      "method": "POST",
+      "path": "/v1/pi-durable/child-publication/current",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing execution:read service authentication, exact workspace and transport principal, final lock-safe current CP grant",
+        "service": "PiChildPublicationController -> PiChildPublicationService -> exact canonical parent receipt, child record and retained terminal J1 inbox event",
+        "persistence": "Two matching reads of retained SQLite parent and child metadata and persistent parent inbox; no writes",
+        "execution": "No runtime start, product callback, provider call, spending reservation or artifact content read",
+        "delivery": "Bounded terminal metadata with exact parent/child attempt, publication receipt and short current authority expiry",
+        "cleanup": "No acknowledgment or deletion of J1 inbox; independent Adea audience and publication receipt required"
+      },
+      "assessment": "Focused source and SDK tests cover exact retained J1 event, mismatched/out-of-order event, stale attempt and revoked grant. Adea PostgreSQL publisher has an independent receipt; installed SDK, authorized artifact content and combined desktop acceptance remain unqualified.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/child-publication-current.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/pi-child-publication.test.mjs"
+        },
+        {
+          "kind": "documentation",
+          "path": "docs/pi-durable-report-back.md"
+        }
+      ],
+      "gap": {
+        "issue": 931,
+        "severity": "high",
+        "owner": "Pi Durable implementation owner",
+        "disposition": "Qualify installed SDK and combined Adea/CP J1-to-timeline delivery, authorized result content and live restart/revocation acceptance before closing child progress delivery."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "pi-durable.child.publication.current",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
       "id": "OP-PI-DURABLE-LEAD-CANCEL",
       "name": "cancelPiDurableLead",
       "operation": "pi-durable.lead.cancel",

@@ -25,6 +25,7 @@ export type {
 export { createProductionRoleModelSelection } from './models/production-role-selection.js'
 export { ProductionLeadProductEvidenceSchema } from './models/production-lead-product.js'
 export { createProductionProductHttpReader } from './models/production-product-http.js'
+export { createPiChildTimelineHttpNotify } from './pi-durable/child-timeline-delivery.js'
 import {
   createProductionPiLeadComposition,
   type ProductionPiLeadCompositionOptions,
@@ -194,6 +195,9 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
           ? {
               modelConnectionService: production.modelConnectionService,
               piLeadPublicationService: production.publicationService,
+              ...(production.childPublicationService
+                ? { piChildPublicationService: production.childPublicationService }
+                : {}),
               ...(production.piDurableCurrentToolAuthority
                 ? { piDurableCurrentToolAuthority: production.piDurableCurrentToolAuthority }
                 : {}),

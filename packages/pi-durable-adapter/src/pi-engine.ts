@@ -27,6 +27,7 @@ import {
 } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { z } from 'zod'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import {
   PiDurableDelegateChildOutcomeSchema,
   type PiDurableDelegateChildOutcome,
@@ -59,6 +60,9 @@ export interface PiDurableEngineOptions {
     readonly maxOutputTokens: number
     readonly maximumInputTokens: number
     readonly assertActive: () => Promise<void>
+    /** Durable, owner-fenced markers surrounding the one physical provider send. */
+    readonly preparePhysicalSend?: (requestDigest: string) => Promise<void>
+    readonly armPhysicalSend?: (requestDigest: string) => Promise<void>
   }>
   /** Rebuild Models and hold eligible credential access only for this callback. */
   readonly withModels: <T>(use: (models: Models) => Promise<T>) => Promise<T>
@@ -606,10 +610,25 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
                   maxTokens: Math.min(request?.maxTokens ?? allowance, allowance),
                   fetch: async (input, init) => {
                     if (++physicalSends !== 1) throw new Error('PI_ADDITIONAL_PHYSICAL_SEND_DENIED')
+                    const physicalInit = { ...init, redirect: 'error' as const }
                     // SDK/auth resolution may await after streamSimple. Fence the actual HTTP boundary too.
                     await options.assertAuthority()
                     await reservation?.assertActive()
-                    return physicalFetch(input, { ...init, redirect: 'error' })
+                    if (reservation?.preparePhysicalSend || reservation?.armPhysicalSend) {
+                      if (!reservation.preparePhysicalSend || !reservation.armPhysicalSend)
+                        throw new Error('PI_PHYSICAL_SEND_MARKER_INCOMPLETE')
+                      const physicalRequest = new Request(input, physicalInit)
+                      const requestDigest = await physicalRequestDigest(physicalRequest)
+                      await reservation.preparePhysicalSend(requestDigest)
+                      // An ambiguous arm result must never reach physicalFetch.
+                      await reservation.armPhysicalSend(requestDigest)
+                      await reservation.assertActive()
+                      // This is the last await before fetch: a spending check may yield while
+                      // another owner or cancellation advances the journal epoch.
+                      await options.assertAuthority()
+                      return physicalFetch(physicalRequest)
+                    }
+                    return physicalFetch(input, physicalInit)
                   },
                 }
               )
@@ -869,4 +888,20 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
       turns.clear()
     },
   }
+}
+
+/** Fingerprint the actual SDK request without retaining its URL, headers, or body in the journal. */
+async function physicalRequestDigest(request: Request): Promise<string> {
+  const body = Buffer.from(await request.clone().arrayBuffer())
+  const headers = [...request.headers.entries()].toSorted(([a], [b]) => compareCodePointOrder(a, b))
+  return `sha256:${createHash('sha256')
+    .update(
+      JSON.stringify([
+        request.method,
+        request.url,
+        headers,
+        createHash('sha256').update(body).digest('hex'),
+      ])
+    )
+    .digest('hex')}`
 }

@@ -40,6 +40,7 @@ import { NodeSessionLease } from './lease.js'
 import { DurableToolCallRequestSchema, type DurableToolCallRequest } from '@control-plane/tool-sdk'
 import { z } from 'zod'
 import { PiDurableEffectGate, type DurableEffectGateOutcome } from './effect-gate.js'
+import { issueInferenceResumePermit } from './resume-permit.js'
 import {
   PiDurableToolSourceSchema,
   verifyPiDurableManagementToolSource,
@@ -731,11 +732,17 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       // advance the epoch past its ownerEpoch and reject that owner's own commits.
       if (this.#hasLiveForeignOwner(this.journal.get(record.handleId))) return this.status(handle)
       const activeInference = readActiveInference(record)
-      const observe = () =>
-        activeInference
-          ? this.#options.reconcileInference(authority, activeInference.inferenceKey)
-          : this.#options.reconcileInference(authority, turnKey(record))
-      const preliminary = await observe()
+      const retainedKey = (['resumeGenerationKey', 'safeResumeInferenceKey'] as const)
+        .map((field) => record.detail[field])
+        .find((value): value is string => typeof value === 'string')
+      const resumeKey = activeInference?.inferenceKey ?? retainedKey
+      const observe = (candidate: JournalRecord) =>
+        hasUnqualifiedPhysicalDispatch(candidate)
+          ? Promise.resolve('unresolved' as const)
+          : hasDurablePreRunNoSend(candidate)
+            ? Promise.resolve('safe_to_resume' as const)
+            : this.#options.reconcileInference(authority, resumeKey ?? turnKey(record))
+      const preliminary = await observe(record)
       await this.#authority(authority)
       this.#assertOpen()
       const admitted = this.journal.get(record.handleId)
@@ -756,7 +763,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       try {
         const claimed = this.journal.get(record.handleId)
         // A safe verdict authorizes a physical send, so it is confirmed under the claimed epoch.
-        const safe = preliminary === 'safe_to_resume' ? await observe() : preliminary
+        const safe = preliminary === 'safe_to_resume' ? await observe(claimed) : preliminary
         await this.#authority(authority)
         this.#assertOpen()
         const current = this.journal.get(record.handleId)
@@ -770,6 +777,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               inferenceTrackingVersion: 1,
               engineRunStarted: false,
               activeInference: undefined,
+              resumeGenerationKey: resumeKey,
+              safeResumeInferenceKey: resumeKey,
               inferencePending: false,
               observedAt: this.#now(),
               reasonCode: undefined,
@@ -785,6 +794,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             state: 'unknown',
             detail: {
               ...claimed.detail,
+              resumeGenerationKey: resumeKey,
+              safeResumeInferenceKey: undefined,
               observedAt: this.#now(),
               reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
             },
@@ -1079,9 +1090,14 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               inferencePending: true,
             },
           })
+          const safeResume =
+            current.detail['safeResumeInferenceKey'] === generation.inferenceKey
+              ? issueInferenceResumePermit(generation.inferenceKey)
+              : undefined
           const allowance = await this.#options.authorizeInference(
             authority,
-            generation.inferenceKey
+            generation.inferenceKey,
+            safeResume
           )
           if (typeof allowance.assertActive !== 'function')
             fail('PI_MODEL_SPENDING_AUTHORITY_REQUIRED', 'validation')
@@ -1100,7 +1116,81 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           )
             fail('PI_INFERENCE_ALLOWANCE_INVALID', 'validation')
           await assertCurrent()
-          return allowance
+          if (safeResume) {
+            const authorized = this.journal.get(record.handleId)
+            if (
+              authorized.epoch !== epoch ||
+              authorized.state !== 'running' ||
+              authorized.detail['safeResumeInferenceKey'] !== generation.inferenceKey ||
+              readActiveInference(authorized)?.inferenceKey !== generation.inferenceKey
+            )
+              fail('PI_INFERENCE_GENERATION_CONFLICT', 'conflict')
+            this.journal.update(record.handleId, epoch, {
+              detail: { ...authorized.detail, safeResumeInferenceKey: undefined },
+            })
+          }
+          const markPhysicalSend = async (stage: 'prepared' | 'armed', requestDigest: string) => {
+            if (!/^sha256:[a-f0-9]{64}$/.test(requestDigest))
+              fail('PI_PHYSICAL_REQUEST_DIGEST_INVALID', 'validation')
+            await assertCurrent()
+            await allowance.assertActive()
+            const latest = this.journal.get(record.handleId)
+            if (
+              latest.state !== 'running' ||
+              latest.epoch !== epoch ||
+              latest.detail['cancellationIntent'] !== undefined ||
+              readActiveInference(latest)?.inferenceKey !== generation.inferenceKey
+            )
+              fail('PI_PHYSICAL_SEND_OWNER_STALE', 'conflict')
+            const retained = latest.detail['physicalDispatches']
+            if (
+              retained !== undefined &&
+              (!retained || typeof retained !== 'object' || Array.isArray(retained))
+            )
+              fail('PI_PHYSICAL_SEND_MARKER_INVALID', 'conflict')
+            const dispatches = (retained ?? {}) as Record<string, unknown>
+            const prior = Object.hasOwn(dispatches, generation.inferenceKey)
+              ? dispatches[generation.inferenceKey]
+              : undefined
+            const identity = {
+              schemaVersion: 'pi-physical-dispatch/v1',
+              attemptId: record.attemptId,
+              inferenceKey: generation.inferenceKey,
+              generationDigest: digest(generation),
+              requestDigest,
+              providerDigest: authority.providerDigest,
+              ownerEpoch: epoch,
+            }
+            if (prior !== undefined) {
+              if (!prior || typeof prior !== 'object' || Array.isArray(prior))
+                fail('PI_PHYSICAL_SEND_MARKER_INVALID', 'conflict')
+              const previous = prior as Record<string, unknown>
+              if (
+                Object.entries(identity).some(([key, value]) => previous[key] !== value) ||
+                (previous['stage'] !== 'prepared' && previous['stage'] !== 'armed') ||
+                previous['stage'] === 'armed'
+              )
+                fail('PI_PHYSICAL_SEND_ALREADY_ARMED_OR_CHANGED', 'conflict')
+              if (stage === 'prepared') return
+            } else if (stage !== 'prepared') {
+              fail('PI_PHYSICAL_SEND_NOT_PREPARED', 'conflict')
+            }
+            this.journal.update(record.handleId, epoch, {
+              detail: {
+                ...latest.detail,
+                physicalDispatches: {
+                  ...dispatches,
+                  [generation.inferenceKey]: { ...identity, stage },
+                },
+              },
+            })
+          }
+          return {
+            ...allowance,
+            preparePhysicalSend: (requestDigest: string) =>
+              markPhysicalSend('prepared', requestDigest),
+            armPhysicalSend: (requestDigest: string) => markPhysicalSend('armed', requestDigest),
+          }
         },
         withModels: async (use) => {
           await assertCurrent()
@@ -1153,6 +1243,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             error: undefined,
             terminalUsage: undefined,
             activeInference: undefined,
+            resumeGenerationKey: undefined,
+            safeResumeInferenceKey: undefined,
             inferenceTrackingVersion: 1,
             engineRunStarted: false,
             ownerPid: process.pid,
@@ -1212,6 +1304,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
               detail: {
                 ...this.journal.get(record.handleId).detail,
                 activeInference: undefined,
+                resumeGenerationKey: undefined,
+                safeResumeInferenceKey: undefined,
                 inferenceTrackingVersion: 1,
                 engineRunStarted: false,
                 inferencePending: false,
@@ -1260,6 +1354,10 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
             state: 'unknown',
             detail: {
               ...this.journal.get(record.handleId).detail,
+              resumeGenerationKey:
+                this.journal.get(record.handleId).detail['resumeGenerationKey'] ??
+                this.journal.get(record.handleId).detail['safeResumeInferenceKey'],
+              safeResumeInferenceKey: undefined,
               observedAt: this.#now(),
               reasonCode: 'PI_INFERENCE_RECONCILIATION_REQUIRED',
             },
@@ -1556,6 +1654,38 @@ function isOwnerContention(error: unknown): boolean {
   return (
     error instanceof Error && ['STALE_STATE', 'PI_SESSION_OWNER_ACTIVE'].includes(error.message)
   )
+}
+
+// The adapter persists this marker before engine construction and sets engineRunStarted=true
+// before calling engine.run. Only that exact retained pre-run shape proves that this attempt
+// could not have made a physical model send. Absence of a hold, timeout, or legacy marker does not.
+function hasDurablePreRunNoSend(record: JournalRecord): boolean {
+  const detail = record.detail
+  return (
+    (record.state === 'running' || record.state === 'unknown') &&
+    detail['inferenceTrackingVersion'] === 1 &&
+    detail['engineRunStarted'] === false &&
+    detail['inferencePending'] === true &&
+    detail['activeInference'] === undefined &&
+    detail['resumeGenerationKey'] === undefined &&
+    detail['safeResumeInferenceKey'] === undefined &&
+    detail['inferenceReceipts'] === undefined &&
+    detail['physicalDispatches'] === undefined &&
+    detail['cancellationIntent'] === undefined &&
+    detail['nativeToolBlocked'] === undefined &&
+    detail['pendingApproval'] === undefined
+  )
+}
+
+/** A copied journal cannot independently prove that a prepared generation is current. */
+function hasUnqualifiedPhysicalDispatch(record: JournalRecord): boolean {
+  const retained = record.detail['physicalDispatches']
+  if (retained === undefined) return false
+  if (!retained || typeof retained !== 'object' || Array.isArray(retained)) return true
+  const active = readActiveInference(record)
+  if (!active) return true
+  const dispatches = retained as Record<string, unknown>
+  return Object.hasOwn(dispatches, active.inferenceKey)
 }
 
 function turnKey(record: Pick<JournalRecord, 'attemptId' | 'detail'>): string {

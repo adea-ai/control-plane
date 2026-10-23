@@ -1487,6 +1487,17 @@ export async function recoveryWorker(directory, mode, baseUrl) {
     if (status.state === 'completed')
       publication = await publishProcessTerminal(directory, ports, runtime)
     const latest = runtime.adapter.journal.get(row.handleId)
+    // A retained physical-dispatch marker quarantines recovery before the runtime
+    // asks the external no-send port. Classify that refusal only after independently
+    // verifying the same native checkpoint and exact unsettled ledger hold.
+    if (status.state === 'unknown' && !pendingPhysicalSend && latest.detail.physicalDispatches) {
+      try {
+        await assertProcessNoSend(directory, authority, probe, ledger, usageStore)
+      } catch (error) {
+        if (!(error instanceof ProcessPhysicalSendPendingError)) throw error
+        pendingPhysicalSend = true
+      }
+    }
     let recoveryOutcome
     if (status.state === 'completed') recoveryOutcome = 'completed'
     else if (pendingPhysicalSend && status.state === 'unknown')
