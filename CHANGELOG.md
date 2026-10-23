@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.112.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.112.0...workspace-v1.112.1) (2026-10-23)
+
+
+### Documentation
+
+* record exact-head cross-repository toolchain evidence ([#1233](https://github.com/adea-ai/control-plane/issues/1233)) ([#1292](https://github.com/adea-ai/control-plane/issues/1292)) ([2d59098](https://github.com/adea-ai/control-plane/commit/2d59098248b107f397f8ff55b4d3b2fb3d92d239))
+* record exact-head toolchain qualification for cp1233 ([2d59098](https://github.com/adea-ai/control-plane/commit/2d59098248b107f397f8ff55b4d3b2fb3d92d239))
+
 ## [1.112.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.111.1...workspace-v1.112.0) (2026-10-23)
 
 
