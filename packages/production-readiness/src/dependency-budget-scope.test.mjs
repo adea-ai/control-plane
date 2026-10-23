@@ -541,8 +541,8 @@ test('the per-root attribution reproduces the published dependency-path attribut
   )
   const expected = {
     'vite-plus': 168,
-    '@earendil-works/pi-durable': 117,
-    '@earendil-works/pi-ai': 87,
+    '@earendil-works/pi-durable': 115,
+    '@earendil-works/pi-ai': 85,
     '@nestjs/platform-fastify': 76,
     miniflare: 56,
     fastify: 49,
@@ -587,7 +587,7 @@ test('the reduction sequence accounts for each marginal saving without claiming 
   }
   // The plan is a measurement of a possible reduction: it changes neither the
   // count nor the ceiling.
-  assert.equal(measured, 551)
+  assert.equal(measured, 548)
   assert.equal(ceiling, 285)
 })
 
@@ -699,7 +699,33 @@ test('direct formatter and linter pins share the exact Vite+ versions', () => {
   }
 })
 
-test('the stable full-lock receipt preserves the old all-platform scope and real 40-pair reduction', async () => {
+test('compatible transitive pins consolidate existing versions without dropping consumers', () => {
+  const manifest = JSON.parse(readFileSync(join(repositoryRoot, 'package.json'), 'utf8'))
+  const lock = JSONC.parse(readFileSync(join(repositoryRoot, 'bun.lock'), 'utf8'))
+  for (const [name, version] of Object.entries({
+    '@smithy/core': '3.35.0',
+    '@smithy/types': '4.19.0',
+    'magic-string': '1.4.3',
+  })) {
+    assert.equal(manifest.overrides[name], version)
+    const versions = new Set(
+      Object.entries(lock.packages)
+        .filter(([key]) => key === name || key.endsWith(`/${name}`))
+        .map(([, entry]) => entry[0])
+    )
+    assert.deepEqual([...versions], [`${name}@${version}`])
+  }
+  // These consumers remain in the real lock: no supported provider or bundler
+  // was deleted to create the saving.
+  for (const consumer of [
+    '@aws-sdk/client-bedrock-runtime',
+    '@aws-sdk/client-s3',
+    '@sentry/bundler-plugins',
+  ])
+    assert.ok(lock.packages[consumer], `${consumer}: required consumer disappeared`)
+})
+
+test('the stable full-lock receipt preserves all-platform scope and the real 43-pair reduction', async () => {
   const { lockfileExternalPairs, externalPackagePairs } = await loadChecker()
   const before = externalPackagePairs(
     readFileSync(
@@ -716,7 +742,16 @@ test('the stable full-lock receipt preserves the old all-platform scope and real
   const current = lockfileExternalPairs(readFileSync(join(repositoryRoot, 'bun.lock'), 'utf8'))
   assert.equal(before.size, 591)
   assert.equal(after.size, 551)
-  assert.deepEqual([...current].toSorted(), [...after].toSorted())
+  assert.equal(current.size, 548)
+  assert.deepEqual([...after].filter((pair) => !current.has(pair)).toSorted(), [
+    '@smithy/core@3.33.3',
+    '@smithy/types@4.17.2',
+    'magic-string@0.30.21',
+  ])
+  assert.deepEqual(
+    [...current].filter((pair) => !after.has(pair)),
+    []
+  )
   assert.equal([...before].filter((pair) => !after.has(pair)).length, 40)
   assert.deepEqual(
     [...after].filter((pair) => !before.has(pair)),

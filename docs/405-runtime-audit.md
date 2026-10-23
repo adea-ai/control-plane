@@ -2,9 +2,9 @@
 
 Current dependency remediation is recorded in
 [the #1230 receipt](1230-dependency-budget-attribution.md): the integrated
-candidate removes 40 actual full-lock identities (**591 → 551**) by
-consolidating existing formatter/linter versions. The ceiling remains **285**,
-leaving **266** unresolved. Bun 1.4.4's host-only CLI listing is reported
+candidate removes 43 actual full-lock identities (**591 → 548**) by
+consolidating existing formatter/linter and compatible transitive versions. The ceiling remains **285**,
+leaving **263** unresolved. Bun 1.4.4's host-only CLI listing is reported
 separately; it does not replace the established all-platform scope. Historical
 measurements below retain their original head provenance.
 

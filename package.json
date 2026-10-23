@@ -118,8 +118,11 @@
     "vite-plus": "1.3.0"
   },
   "overrides": {
+    "@smithy/core": "3.35.0",
+    "@smithy/types": "4.19.0",
     "esbuild": "0.28.2",
     "fastify": "5.12.6",
+    "magic-string": "1.4.3",
     "sharp": "0.35.5",
     "undici": "8.11.2"
   },

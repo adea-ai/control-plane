@@ -1,12 +1,12 @@
 # #1230 — Dependency budget remediation
 
-## Current candidate: 40 real identities removed, residual 266
+## Current candidate: 43 real identities removed, residual 263
 
 The integrated candidate preserves the transferred #1270 head
 `0b190108b34d2feef46bd29d8b3f0aeadda347e7`, #1214 head
 `5f078dc25d4a86434d3cbea1d7fe6949d21dba7e`, and unpublished recovery tip
-`a548b164942e6e9215deaa0e6aabd75aca19f26a`. It reconciles source with main
-`ab931d068142a0c5629ed4d6cc2c96a1b377a986`; main pins Bun **1.4.4**.
+`a548b164942e6e9215deaa0e6aabd75aca19f26a`. Published reconciliation `c30c058af42d1504c6e2ef3e40e7b380448d7a01`
+incorporates main `5dc4a3396a6442dc5dc1e3c0131468702d4da15e`; main pins Bun **1.4.4**.
 
 Root `oxfmt` and `oxlint` now pin **0.73.0** and **1.88.0**, exactly the
 versions already required by Vite+ 1.3.0. Both exact packages and integrity
@@ -18,16 +18,19 @@ actual regenerated lockfile. A real `bun install --frozen-lockfile` succeeded.
 | Full lock receipt                 | Identities | Ceiling | Overage |
 | --------------------------------- | ---------: | ------: | ------: |
 | Current main before consolidation |        591 |     285 |     306 |
-| Candidate after consolidation     |        551 |     285 |     266 |
+| Formatter/linter consolidation    |        551 |     285 |     266 |
+| Compatible transitive pins        |        548 |     285 |     263 |
 
-This is a **40-identity source reduction**, not a change in counting scope.
-The final lockfile SHA-256 is
+This is a **43-identity source reduction**, not a change in counting scope.
+The current lockfile SHA-256 is
+`6c7d01d7658c8dcb787841ce9840d177188f7942222d1a823224936119083bf4`.
+The earlier 551-identity lock receipt remains historical at
 `6b42afa9967a45911c55b8b4e45da6601a0bd62dbd7a42611ef6845d02517543`.
 No ceiling is raised or disabled, and #1230 remains open.
 
 ### Preserve the all-platform scope across the Bun upgrade
 
-The same candidate lockfile produces **551** pairs from Bun 1.4.3's real
+The historical 551-identity lockfile produces **551** pairs from Bun 1.4.3's real
 `bun pm ls --all`, but **370** on Bun 1.4.4 on this Darwin ARM64 host.
 The installed Bun 1.4.4 help describes this command as the installed dependency
 tree and exposes no all-platform listing option. Reporting the 370 as the old
@@ -45,18 +48,37 @@ CLI listing's runtime, host, and measured count:
 
 ```text
 env -u ADEA_DEPS_LISTING_FILE bun scripts/check-budgets.mjs deps
-BUDGET EXCEEDED: measured 551, ceiling 285, scope all-platform lockfile identities
-installedListing: bun@1.4.4, darwin-arm64, measured 370
+BUDGET EXCEEDED: measured 548, ceiling 285, scope all-platform lockfile identities
+installedListing: bun@1.4.4, darwin-arm64, measured 367
 exit 1
 ```
 
 The two committed listing fixtures were produced by real Bun 1.4.3 on main's
 before and candidate's after lockfiles; only the machine-specific header is
 replaced by `node_modules`. Tests pin **591 → 551**, exactly 40 removed pairs,
-no added pairs, and exact agreement between the after fixture, independent
-lock-entry inventory, and reachable graph. Every current installed CLI identity
+no added pairs. The current lock inventory removes exactly three further pairs
+from that after fixture, adds none, and agrees with the reachable graph. Every current installed CLI identity
 must be covered. Replacing equality with the runtime's host-only listing is
 necessary to preserve the original scope, not to waive it.
+
+### Compatible transitive consolidation
+
+Three exact root overrides reuse versions already present in the lockfile:
+`@smithy/core@3.35.0`, `@smithy/types@4.19.0`, and `magic-string@1.4.3`.
+All declared consumer ranges admit these targets, including the older Smithy
+`^3.33.2`/`^3.33.3` and types `^4.17.2`/`^4.18.0` ranges, and Sentry's
+`~0.30.8 || ^1.0.0` magic-string range. The official npm registry confirms all
+three exact versions and their integrity values match the existing lock entries.
+The regenerated lock removes exactly `@smithy/core@3.33.3`,
+`@smithy/types@4.17.2`, and `magic-string@0.30.21`; it introduces no new
+package/version identities. AWS Bedrock/S3, Sentry, Vite+ and their supported
+consumers remain present. Seven workspace version metadata entries synchronize
+with the already-merged main manifests; external pins otherwise remain unchanged.
+
+The current attributed closures are 115 for `@earendil-works/pi-durable`,
+85 for `@earendil-works/pi-ai`, 168 for Vite+, 76 for Nest's Fastify platform,
+56 for Miniflare, 49 for Fastify, 42 for Sentry Node, and 38 for Drizzle Kit.
+The test pins these current figures separately from historical attribution below.
 
 ### Attribution, reconciliation, and remaining ownership
 
@@ -77,6 +99,49 @@ infrastructure/guarded CLI scripts. Deleting them would remove required consumer
 Further reduction needs scoped owner-approved implementation; no architectural
 feature, supported runner, or required check is removed here. This work authorizes
 no release, deployment, provider change, production data access, or live account.
+
+### Remaining compatible-version audit and required tools
+
+A read-only audit of every remaining multi-version name checks each existing
+locked version against all dependency, optional, peer and workspace consumer
+ranges. None of these 15 names has an existing target that satisfies every
+declared range. Representative opposing constraints are recorded below; no
+cross-major override or forced exact-pin replacement is applied.
+
+| Name                        | Opposing declared consumer constraints                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `@aws-sdk/token-providers`  | `@aws-sdk/credential-provider-sso@3.973.16` requires `3.1138.0`; `@aws-sdk/client-bedrock-runtime@3.1127.0` requires `3.1127.0` |
+| `@jridgewell/trace-mapping` | `@cspotcode/source-map-support@0.8.1` requires `0.3.9`; `@vitest/mocker@5.0.5` requires `0.3.31`                                |
+| `@oxc-project/types`        | `oxc-parser@0.152.0` requires `^0.152.0`; `rolldown@1.2.14` requires `=0.154.0`                                                 |
+| `agent-base`                | `https-proxy-agent@7.0.6` requires `^7.1.2`; `http-proxy-agent@9.1.0` requires `9.0.0`                                          |
+| `eventemitter3`             | `p-queue@6.6.2` requires `^4.0.4`; `p-queue@9.3.3` requires `^5.0.4`                                                            |
+| `fast-uri`                  | `@fastify/ajv-compiler@4.0.6` requires `^4.0.0`; `ajv@8.20.0` requires `^3.0.1`                                                 |
+| `https-proxy-agent`         | `gaxios@7.3.1` requires `^7.0.1`; `@earendil-works/pi-ai@1.1.0` requires `9.1.0`                                                |
+| `p-queue`                   | `@langchain/core@1.2.9` requires `^6.6.2`; `@langchain/langgraph-sdk@1.12.2` requires `^9.0.1`                                  |
+| `p-retry`                   | `@langchain/langgraph-sdk@1.12.2` requires `^7.1.1`; `@google/genai@2.21.0` requires `^4.6.2`                                   |
+| `p-timeout`                 | `p-queue@6.6.2` requires `^3.2.0`; `p-queue@9.3.3` requires `^7.0.0`                                                            |
+| `process-warning`           | `light-my-request@6.6.0` requires `^4.0.0`; `fastify@5.12.6` requires `^5.1.0`                                                  |
+| `real-require`              | `thread-stream@4.2.0` requires `^1.0.0`; `pino@10.3.1` requires `^0.2.0`                                                        |
+| `supports-color`            | `@poppinss/dumper@0.6.5` requires `^10.0.0`; `@sentry/bundler-plugins@11.4.0` requires `^8.1.1`                                 |
+| `typescript`                | `@nestjs/swagger@12.0.2` requires `^5.5.0                                                                                       |     | ^6.0.0`; `workspace:.`requires`^7.0.2` |
+| `ws`                        | `@vitest/browser@5.0.5` requires `^8.22.0`; `miniflare@5.20260926.0-alpha` requires `8.21.0`                                    |
+
+The joint reachable closure of the required Vite+, Miniflare, Sentry Node,
+TypeScript 7, formatter and linter declarations is **282 identities** in the
+current graph (shared identities counted once). This is a read-only union
+measurement, **not a proved minimum** for a future implementation and not a
+proposal to remove other required consumers. It does not establish impossibility
+of meeting the budget. The real complete inventory remains **548**, over the
+unchanged ceiling by **263**.
+
+Further source-compatible reductions require evaluating upstream consumer
+updates against their actual APIs and qualification, rather than forcing the
+incompatible ranges above. In particular, AWS Bedrock's exact token-provider
+pin and S3's newer provider chain need an upstream-compatible alignment;
+LangChain queue/retry majors need their respective supported consumers aligned;
+Vite+/Miniflare/TypeScript peer constraints belong to the already-supported
+build/emulator graph. No such upstream version is invented or adopted by this
+receipt, and no package/API removal is authorized by the arithmetic.
 
 ### Checked output optimization and validation limits
 
@@ -113,7 +178,7 @@ are retained.
 The earlier aggregate test run encountered lifecycle and digest-history
 failures, then was interrupted to release the shared host. It is **not** a
 passing aggregate suite. Focused qualification and normal hooks are reported
-separately; dependency acceptance remains failing at **551 / 285**.
+separately; dependency acceptance remains failing at **548 / 285**.
 
 ## Historical audit evidence before consolidation
 
