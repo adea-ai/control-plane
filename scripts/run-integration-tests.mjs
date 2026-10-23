@@ -463,14 +463,12 @@ async function waitForPostgres(isInterrupted = () => false) {
       env: runnerEnvironment,
       timeout: Math.min(5000, remaining),
     })
-    if (result.error) {
-      // A signal delivered while spawnSync held the event loop cannot run until
-      // the loop regains control; yield one macrotask so a pending interruption
-      // is observed instead of surfacing as a probe timeout.
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      if (isInterrupted()) throw new Error('PostgreSQL readiness probe interrupted')
-      throw result.error
-    }
+    // Deliver a signal queued while spawnSync held the event loop before
+    // accepting readiness, so a successful probe cannot launch a new build
+    // before the interruption handler runs. Errors retain the same boundary.
+    await new Promise((resolve) => setImmediate(resolve))
+    if (isInterrupted()) throw new Error('PostgreSQL readiness probe interrupted')
+    if (result.error) throw result.error
     if (result.status === 0 && result.stdout.trim() === '1') {
       console.log('PostgreSQL database system is accepting SQL connections')
       return

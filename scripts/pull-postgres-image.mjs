@@ -19,7 +19,7 @@ const configArguments = ['compose', 'config', '--format', 'json', 'postgres']
 // closes that window: `setImmediate` resumes after the poll phase of the
 // current iteration, which is where a pending signal is dispatched, so the
 // interruption state read after it is the state the process already has.
-const settlePendingSignal = () => new Promise((resolve) => setImmediate(resolve))
+const settlePendingSignal = () => new Promise((resume) => setImmediate(resume))
 
 // The image Compose itself resolves for the postgres service: the same working directory,
 // environment, `.env` file, COMPOSE_FILE selection and overrides as the pull that follows. Anything
@@ -78,10 +78,15 @@ export async function pullPostgresImage({
     },
     effectiveImage(run, environment),
     {
-      pull: (reference) => {
+      pull: async (reference) => {
         // The fallback only helps if exporting it makes Compose run exactly that reference. A
         // Compose override or file selection that ignores the variable would start another image.
         const selected = effectiveImage(run, { ...environment, [postgresImageVariable]: reference })
+        if (isInterrupted !== undefined) {
+          await settlePendingSignal()
+          if (isInterrupted() === true)
+            return { status: 1, stdout: '', stderr: pullInterruptedMessage }
+        }
         if (selected !== reference) {
           return {
             status: 1,

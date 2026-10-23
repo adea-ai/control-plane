@@ -220,6 +220,128 @@ test('a pending signal that arrives during the pull starts no fallback pull afte
   assert.deepEqual(calls, ['compose config --format json postgres', 'compose pull postgres'])
 })
 
+function queuedInterruption() {
+  let interrupted = false
+  let pending = Promise.resolve()
+  return {
+    queue() {
+      pending = new Promise((resolve) =>
+        setImmediate(() => {
+          interrupted = true
+          resolve()
+        })
+      )
+    },
+    isInterrupted: () => interrupted,
+    settled: () => pending,
+    settlePendingSignal: () => new Promise((resolve) => setImmediate(resolve)),
+  }
+}
+
+test('a pending signal during fallback configuration starts no fallback pull', async () => {
+  const interruption = queuedInterruption()
+  const compose = fakeCompose({ effective: pinnedPostgres })
+  const pending = pullPostgresImage({
+    cwd: '/workspace/control-plane',
+    environment: {},
+    spawnSync: (command, args, options) => {
+      const result = compose.spawnSync(command, args, options)
+      if (args[1] === 'config' && options.env[postgresImageVariable] === mirrorPostgres)
+        interruption.queue()
+      return result
+    },
+    isInterrupted: interruption.isInterrupted,
+    ...quiet,
+  })
+  await assert.rejects(pending, (error) => error.message === pullInterruptedMessage)
+  await interruption.settled()
+  assert.deepEqual(compose.calls, [
+    ['docker', 'compose', 'config', '--format', 'json', 'postgres'],
+    ['docker', 'compose', 'pull', 'postgres'],
+    ['docker', 'compose', 'config', '--format', 'json', 'postgres'],
+  ])
+})
+
+test('a pending signal during a successful pull prevents the startup handoff', async () => {
+  const interruption = queuedInterruption()
+  const calls = []
+  const startup = async () => {
+    await pullPostgresImage({
+      cwd: '/workspace/control-plane',
+      environment: {},
+      spawnSync: (_command, args) => {
+        calls.push(args)
+        if (args[1] === 'config')
+          return {
+            status: 0,
+            stdout: JSON.stringify({ services: { postgres: { image: pinnedPostgres } } }),
+            stderr: '',
+          }
+        interruption.queue()
+        return { status: 0, stdout: '', stderr: '' }
+      },
+      isInterrupted: interruption.isInterrupted,
+      ...quiet,
+    })
+    calls.push(['compose', 'up'])
+  }
+  await assert.rejects(startup(), (error) => error.message === pullInterruptedMessage)
+  await interruption.settled()
+  assert.deepEqual(calls, [
+    ['compose', 'config', '--format', 'json', 'postgres'],
+    ['compose', 'pull', 'postgres'],
+  ])
+})
+
+test('backoff observes a queued interruption before returning a synchronous success', async () => {
+  const interruption = queuedInterruption()
+  const result = await runWithPullBackoff(() => {
+    interruption.queue()
+    return succeeded
+  }, interruption)
+  await interruption.settled()
+  assert.equal(result.stderr, pullInterruptedMessage)
+  assert.notEqual(result.status, 0)
+})
+
+for (const phase of ['canonical', 'fallback']) {
+  test(`fallback observes a queued interruption before returning a ${phase} success`, async () => {
+    const interruption = queuedInterruption()
+    const calls = []
+    const outcome = await runWithPullFallback(
+      (reference) => {
+        calls.push(['attempt', reference])
+        if (phase === 'fallback' && reference === undefined) return ecrRateLimited
+        interruption.queue()
+        return succeeded
+      },
+      pinnedPostgres,
+      {
+        ...interruption,
+        pull: (reference) => {
+          calls.push(['pull', reference])
+          return succeeded
+        },
+        log: () => {},
+      }
+    )
+    await interruption.settled()
+    assert.equal(outcome.result.stderr, pullInterruptedMessage)
+    assert.notEqual(outcome.result.status, 0)
+    assert.equal(outcome.image, undefined)
+    assert.deepEqual(
+      calls,
+      phase === 'canonical'
+        ? [['attempt', undefined]]
+        : [
+            ['attempt', undefined],
+            ['pull', mirrorPostgres],
+            ['attempt', mirrorPostgres],
+          ]
+    )
+  })
+}
+
 test('does not retry or delay a non-rate-limit failure', async () => {
   const failure = { status: 1, stdout: '', stderr: 'manifest unknown' }
   const { attempt, calls } = scripted([failure])

@@ -1075,6 +1075,56 @@ test('an interrupted runner spends no new owned command beyond cleanup', async (
   expect(spawnCalls).toEqual([['docker', ['compose', 'down', '--volumes']]])
 })
 
+test('a successful readiness probe observes queued interruption before build and permits cleanup', async () => {
+  const commands = []
+  const globals = {
+    Date,
+    process,
+    console: { log() {} },
+    interruptedSignal: null,
+    runnerEnvironment: {},
+    CHILD_COMMAND_TIMEOUT_MS: 90_000,
+    setTimeout,
+    clearTimeout,
+    setImmediate,
+    trackRunnerChild: (child) => child,
+    bindChildCompletion: () => {},
+    spawnSync: () => {
+      // Model a signal queued while the synchronous SQL probe blocked its
+      // handler. Promise continuations alone cannot deliver that signal.
+      setImmediate(() => {
+        globals.interruptedSignal = 'SIGINT'
+      })
+      return { status: 0, stdout: '1\n' }
+    },
+    spawn: (command, args) => {
+      commands.push([command, args])
+      return {
+        once(event, callback) {
+          if (event === 'close') queueMicrotask(() => callback(0))
+        },
+      }
+    },
+  }
+  const { waitForPostgres, run } = readScriptBlock(
+    'run-integration-tests.mjs',
+    { functions: ['waitForPostgres', 'run'], constants: [] },
+    globals,
+    '({ waitForPostgres, run })'
+  )
+  let failure
+  try {
+    await waitForPostgres(() => globals.interruptedSignal !== null)
+    await run('bun', ['run', 'build'])
+  } catch (error) {
+    failure = error
+  } finally {
+    await run('docker', ['compose', 'down', '--volumes'], { allowInterrupted: true })
+  }
+  expect(commands).toEqual([['docker', ['compose', 'down', '--volumes']]])
+  expect(failure?.message).toBe('PostgreSQL readiness probe interrupted')
+})
+
 for (const script of ['run-integration-tests.mjs', 'run-postgres-disruption-drill.mjs']) {
   test(`${script} cannot spend a full probe beyond its readiness deadline`, async () => {
     let now = 28_000
@@ -1088,6 +1138,7 @@ for (const script of ['run-integration-tests.mjs', 'run-postgres-disruption-dril
       describePostgresProbeFailure,
       isProbeTimeout,
       readContainerState: () => '',
+      setImmediate,
       spawnSync: (_command, _args, options) => {
         timeouts.push(options.timeout)
         now += options.timeout ?? 5000

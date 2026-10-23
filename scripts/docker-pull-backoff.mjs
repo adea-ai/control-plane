@@ -56,6 +56,10 @@ export async function runWithPullBackoff(
     if (interrupted()) return { status: 1, stdout: '', stderr: pullInterruptedMessage }
     const result = attempt()
     onAttempt(result, { attempt: retry + 1 })
+    if (isInterrupted !== undefined) {
+      await settlePendingSignal()
+      if (interrupted()) return interruptedResult()
+    }
     const rateLimited =
       result.status !== 0 && isRegistryRateLimit(`${result.stdout ?? ''}\n${result.stderr ?? ''}`)
     if (!rateLimited || retry >= delaysMs.length) return result
@@ -128,12 +132,22 @@ export async function runWithPullFallback(
     await settlePendingSignal()
     if (interrupted()) return { result: interruptedResult(), image: undefined }
     let result = await attempt(undefined)
+    // A synchronous command can finish before its queued signal handler runs.
+    // Observe that signal before returning success or selecting another command.
+    if (isInterrupted !== undefined) {
+      await settlePendingSignal()
+      if (interrupted()) return { result: interruptedResult(), image: undefined }
+    }
     if (!isRateLimitedResult(result)) return { result, image: undefined }
     for (const fallback of fallbacks) {
       await settlePendingSignal()
       if (interrupted()) return { result: interruptedResult(), image: undefined }
       log(`Image registry rate-limited a pull; trying ${fallback}.`)
       const pulled = await pull(fallback)
+      if (isInterrupted !== undefined) {
+        await settlePendingSignal()
+        if (interrupted()) return { result: interruptedResult(), image: undefined }
+      }
       if (pulled.status !== 0) {
         const reason =
           `${pulled.stderr ?? ''}`.trim() || pulled.error?.message || `exit ${pulled.status}`
@@ -143,6 +157,10 @@ export async function runWithPullFallback(
       await settlePendingSignal()
       if (interrupted()) return { result: interruptedResult(), image: undefined }
       result = await attempt(fallback)
+      if (isInterrupted !== undefined) {
+        await settlePendingSignal()
+        if (interrupted()) return { result: interruptedResult(), image: undefined }
+      }
       if (result.status === 0) return { result, image: fallback }
       log(`Using ${fallback} failed (exit ${result.status}); trying the next registry.`)
     }
