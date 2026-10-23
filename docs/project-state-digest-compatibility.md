@@ -97,10 +97,11 @@ bytes cannot disagree.
 - **SQLite.** The mutation record is a JSON document, so the version travels with the record. No
   schema change is required.
 - **PostgreSQL.** `project_state_mutations.input_digest_version` is a nullable `integer` column.
-  `NULL` means untagged. The additive migration that creates the column is **not part of this
-  change**: migration `0074` and the shared migration journal are owned by another writer, and
-  migration `0075` is held until that sequencing is agreed. Until it lands, the PostgreSQL
-  integration suite applies the identical additive statement to its own disposable database.
+  `NULL` means untagged. Migration `0075_project_state_digest_version` adds the column; it is a
+  single additive `ALTER TABLE ... ADD COLUMN` that moves no data. It is sequenced after migration
+  `0074_dear_talisman` (`executions.model_id`, CP #678), whose files this branch carries
+  byte-for-byte from CP #1210 so that either branch can land first. The PostgreSQL integration
+  suite runs against the migrated schema.
 
 ## Rollback bounds
 
@@ -149,15 +150,13 @@ anything in production, and does not change the default writer's output.
 
 ## Prerequisites that are still missing
 
-- **Migration sequencing.** `packages/database/drizzle/0075_*` and the shared `_journal.json` are
-  owned by the migration writer that also owns `0074`. The additive column statement has to be
-  sequenced with that work before the PostgreSQL schema can carry the version outside a disposable
-  database. The statement is a single nullable column and moves no data.
-- **A dirty journal owner.** A separate detached worktree modifies the shared migration journal.
-  It has to be reconciled before any journal edit.
-- **The deployed schema.** Until the migration is sequenced and applied by its owner, the version
-  lives only in the disposable database the integration suite creates. No production or deployed
-  database carries the column, and no activation has happened.
+- **Migration sequencing.** `0074_dear_talisman` and `0075_project_state_digest_version` are
+  authored in this change and are the only migrations in the journal after `0073`. CP #1048 and
+  CP #1210 each carry the identical `0074` files. Whichever branch merges second takes main's
+  journal and snapshots; no `0074` content differs between them.
+- **The deployed schema.** The migrations are source only. Nothing here applies them to a
+  production or deployed database, and no activation has happened. Applying `0075` is the
+  deployment owner's step, after `0074`.
 
 The integration suite in `packages/database/src/project-state-digest-postgres.integration.test.mjs`
 runs against the repository's disposable-database harness and is skipped unless

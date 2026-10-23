@@ -18,17 +18,6 @@ const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
 const now = '2026-08-23T12:00:00.000Z'
 const later = '2026-08-23T13:00:00.000Z'
 
-/**
- * The digest version column of the pending additive migration 0075. The migration itself is
- * held for sequencing with the owning migration writer, so this suite applies the identical
- * additive DDL to its own disposable database. The statement is idempotent: once migration
- * 0075 lands it changes nothing and the same suite exercises the migrated schema.
- */
-const ADDITIVE_DIGEST_VERSION_COLUMN = sql`
-  alter table project_state_mutations
-  add column if not exists input_digest_version integer
-`
-
 describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
   'PostgreSQL ProjectState digest versioning',
   () => {
@@ -42,9 +31,6 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
         migration: loadDatabaseCredentials(process.env, 'migration'),
       })
       await isolated.migrate()
-      await isolated.withMigrationDatabase((database) =>
-        database.execute(ADDITIVE_DIGEST_VERSION_COLUMN)
-      )
       repository = new PostgresProjectStateRepository(isolated.application)
     }, integrationTestTimeout(60_000))
 
