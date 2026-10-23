@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { availableRuntimesFromDiscovery } from '@control-plane/contracts'
+import {
+  availableRuntimesFromDiscovery,
+  DecisionResolutionRequestSchema,
+} from '@control-plane/contracts'
 import {
   DecisionResolutionDeniedError,
   resolveDecisionLayer,
@@ -14,6 +17,7 @@ const ids = {
   skillVersionId: 'skv_01JABCDEF0123456789ABCDEFG',
   runtimeLocal: 'rtd_01JABCDEF0123456789ABCDEFG',
   runtimeRemote: 'rtd_01JABCDEF0123456789BBCDEFG',
+  runtimeCloud: 'rtd_01JABCDEF0123456789CBCDEFG',
 }
 
 const baseRequest = () => ({
@@ -513,5 +517,245 @@ describe('selectRuntimesExposingHarness (production router hard filter, #678)', 
 
   test('without a pin the candidate list passes through unchanged', () => {
     expect(selectRuntimesExposingHarness([first, second])).toEqual([first, second])
+  })
+})
+
+describe('per-model harness mapping (M12/#678)', () => {
+  const mappedRequest = (pins) => ({ ...baseRequest(), explicitPins: pins })
+
+  test('without a map the resolution is exactly what it was', () => {
+    const resolution = resolveDecisionLayer(baseRequest(), {})
+    expect(resolution.resolution.harness.harnessId).toBe('managed-pi')
+    expect(resolution.resolution.model).toEqual({ withheld: 'NO_DEFAULT_MODEL' })
+  })
+
+  test('without a map a pinned harness denial keeps precedence over model entitlement denial', () => {
+    const request = baseRequest()
+    expectDenied('HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME', () =>
+      resolveDecisionLayer(
+        {
+          ...request,
+          entitlements: { ...request.entitlements, modelAccess: 'none' },
+          explicitPins: {
+            runtime: { runtimeDefinitionId: ids.runtimeRemote },
+            harness: { harnessId: 'claude-code' },
+            model: { modelId: 'deepseek-flash' },
+          },
+        },
+        {}
+      )
+    )
+  })
+
+  test('a mapped model resolves the mapped harness', () => {
+    const resolution = resolveDecisionLayer(
+      mappedRequest({ model: { modelId: 'deepseek-flash' } }),
+      {
+        harnessByModel: { 'deepseek-flash': 'claude-code' },
+      }
+    )
+    expect(resolution.resolution.harness.harnessId).toBe('claude-code')
+    expect(resolution.resolution.model).toEqual({ modelId: 'deepseek-flash' })
+    expect(resolution.trace.harness.source).toBe('policy-default')
+  })
+
+  test('the map lookup preserves the case of the accepted model', () => {
+    const resolution = resolveDecisionLayer(mappedRequest({ model: { modelId: 'DeepSeek-V3' } }), {
+      harnessByModel: { 'DeepSeek-V3': 'claude-code' },
+    })
+    expect(resolution.resolution.harness.harnessId).toBe('claude-code')
+    expectDenied('HARNESS_MAP_MODEL_UNMAPPED', () =>
+      resolveDecisionLayer(mappedRequest({ model: { modelId: 'DeepSeek-V3' } }), {
+        harnessByModel: { 'deepseek-v3': 'claude-code' },
+      })
+    )
+  })
+
+  test('a model the map does not name is denied', () => {
+    expectDenied('HARNESS_MAP_MODEL_UNMAPPED', () =>
+      resolveDecisionLayer(mappedRequest({ model: { modelId: 'glm-4' } }), {
+        harnessByModel: { 'deepseek-flash': 'claude-code' },
+      })
+    )
+  })
+
+  test('a model that cannot be resolved is denied while a map is configured', () => {
+    expectDenied('HARNESS_MAP_MODEL_ABSENT', () =>
+      resolveDecisionLayer(baseRequest(), {
+        harnessByModel: { 'deepseek-flash': 'claude-code' },
+      })
+    )
+  })
+
+  test('a model id that names an inherited property is unmapped', () => {
+    // Only ids the contract accepts reach the lookup; `__proto__` is not a
+    // model id at all and the request schema refuses it before the map.
+    for (const modelId of [
+      'constructor',
+      'toString',
+      'valueOf',
+      'hasOwnProperty',
+      'isPrototypeOf',
+    ]) {
+      expectDenied('HARNESS_MAP_MODEL_UNMAPPED', () =>
+        resolveDecisionLayer(mappedRequest({ model: { modelId } }), {
+          harnessByModel: { 'deepseek-flash': 'claude-code' },
+        })
+      )
+    }
+  })
+
+  test('an existing pin that agrees with the map keeps the deployment working', () => {
+    const resolution = resolveDecisionLayer(
+      mappedRequest({
+        model: { modelId: 'deepseek-flash' },
+        harness: { harnessId: 'claude-code' },
+      }),
+      { harnessByModel: { 'deepseek-flash': 'claude-code' } }
+    )
+    expect(resolution.resolution.harness.harnessId).toBe('claude-code')
+    expect(resolution.trace.harness.source).toBe('explicit-pin')
+  })
+
+  test('an explicit harness that contradicts the map is denied', () => {
+    expectDenied('HARNESS_MAP_CONFLICTS_WITH_PIN', () =>
+      resolveDecisionLayer(
+        mappedRequest({
+          model: { modelId: 'deepseek-flash' },
+          harness: { harnessId: 'managed-pi' },
+        }),
+        { harnessByModel: { 'deepseek-flash': 'claude-code' } }
+      )
+    )
+  })
+
+  test('a runtime that does not expose the mapped harness is denied', () => {
+    // The mapped harness is a candidate filter applied before ranking, so a
+    // runtime that cannot serve it is not a candidate at all: the request is
+    // denied because no compatible runtime is left, and no other runtime is
+    // substituted for it.
+    expectDenied('NO_COMPATIBLE_RUNTIME', () =>
+      resolveDecisionLayer(
+        {
+          ...baseRequest(),
+          explicitPins: { model: { modelId: 'deepseek-flash' } },
+          availableRuntimes: [
+            {
+              runtimeDefinitionId: ids.runtimeRemote,
+              kind: 'self-hosted',
+              transport: 'remote-gateway',
+              harnessIds: ['managed-pi'],
+              capabilities: ['shell.exec'],
+            },
+          ],
+        },
+        { harnessByModel: { 'deepseek-flash': 'claude-code' } }
+      )
+    )
+  })
+
+  test('an explicitly pinned runtime that cannot serve the mapped harness is denied', () => {
+    // An explicit runtime pin is preserved: the request is not rerouted to
+    // another runtime, it is denied.
+    expectDenied('HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME', () =>
+      resolveDecisionLayer(
+        {
+          ...baseRequest(),
+          explicitPins: {
+            model: { modelId: 'deepseek-flash' },
+            runtime: { runtimeDefinitionId: ids.runtimeRemote },
+          },
+        },
+        { harnessByModel: { 'deepseek-flash': 'claude-code' } }
+      )
+    )
+  })
+})
+
+describe('the mapped harness filters runtime candidates before ranking', () => {
+  // The local runtime ranks first but cannot serve the mapped harness; the
+  // cloud runtime can. The map is applied to the eligible candidates before
+  // ranking, so the compatible runtime is selected.
+  const incompatiblePreferredLocal = {
+    runtimeDefinitionId: ids.runtimeLocal,
+    kind: 'local',
+    transport: 'direct-local',
+    harnessIds: ['managed-pi'],
+    capabilities: ['shell.exec', 'fs.read'],
+  }
+  const compatibleCloud = {
+    runtimeDefinitionId: ids.runtimeCloud,
+    kind: 'cloud',
+    transport: 'remote-gateway',
+    harnessIds: ['claude-code'],
+    capabilities: ['shell.exec', 'fs.read'],
+  }
+  const request = {
+    ...baseRequest(),
+    availableRuntimes: [incompatiblePreferredLocal, compatibleCloud],
+    explicitPins: { model: { modelId: 'deepseek-flash' } },
+  }
+
+  test('a compatible cloud runtime is selected over a preferred incompatible local one', () => {
+    // The fixture is a real request: it satisfies the real contract schema.
+    expect(DecisionResolutionRequestSchema.parse(request)).toBeTruthy()
+    const resolution = resolveDecisionLayer(request, {
+      harnessByModel: { 'deepseek-flash': 'claude-code' },
+    })
+    expect(resolution.resolution.runtime.runtimeDefinitionId).toBe(ids.runtimeCloud)
+    expect(resolution.resolution.runtime.kind).toBe('cloud')
+    expect(resolution.resolution.harness).toEqual({ harnessId: 'claude-code' })
+    expect(resolution.resolution.model).toEqual({ modelId: 'deepseek-flash' })
+    expect(resolution.trace.runtime.source).toBe('policy-default')
+  })
+
+  test('without the map the ranking is unchanged and the local runtime still wins', () => {
+    // No map: the resolution is exactly what it was before the repair.
+    const resolution = resolveDecisionLayer(request, {})
+    expect(resolution.resolution.runtime.runtimeDefinitionId).toBe(ids.runtimeLocal)
+    expect(resolution.resolution.runtime.kind).toBe('local')
+    expect(resolution.resolution.harness).toEqual({ harnessId: 'managed-pi' })
+    expect(resolution.resolution.model).toEqual({ modelId: 'deepseek-flash' })
+  })
+
+  test('the map never substitutes a model for the one the request names', () => {
+    const resolution = resolveDecisionLayer(request, {
+      harnessByModel: { 'deepseek-flash': 'claude-code' },
+    })
+    expect(resolution.resolution.model).toEqual({ modelId: 'deepseek-flash' })
+    expect(resolution.trace.model.source).toBe('explicit-pin')
+  })
+})
+
+describe('the mapped harness with an entitlement-withheld model', () => {
+  const unentitled = {
+    ...baseRequest(),
+    entitlements: { modelAccess: 'none', grantedCapabilityNames: ['shell.exec', 'fs.read'] },
+  }
+
+  test('a map with an entitlement-withheld model denies instead of resolving a harness', () => {
+    // The model is withheld, so the map cannot be applied to it. The request
+    // fails closed rather than resolving a harness the policy never named.
+    expectDenied('HARNESS_MAP_MODEL_ABSENT', () =>
+      resolveDecisionLayer(unentitled, { harnessByModel: { 'deepseek-flash': 'claude-code' } })
+    )
+  })
+
+  test('the same request without a map still withholds the model and resolves', () => {
+    const withheld = resolveDecisionLayer(unentitled, {})
+    expect(withheld.resolution.model).toEqual({ withheld: 'MODEL_ACCESS_NOT_ENTITLED' })
+    expect(withheld.diagnostics).toEqual(['MODEL_ACCESS_NOT_ENTITLED'])
+    expect(withheld.resolution.harness).toEqual({ harnessId: 'managed-pi' })
+  })
+
+  test('a model pin the caller is not entitled to denies MODEL_ACCESS_NOT_ENTITLED', () => {
+    // The entitlement denial is the one the request earns: the map never
+    // turns an unentitled model into a resolved harness.
+    expectDenied('MODEL_ACCESS_NOT_ENTITLED', () =>
+      resolveDecisionLayer(
+        { ...unentitled, explicitPins: { model: { modelId: 'deepseek-flash' } } },
+        { harnessByModel: { 'deepseek-flash': 'claude-code' } }
+      )
+    )
   })
 })

@@ -4,6 +4,7 @@ import {
   executionScopeOf,
   type ExecutionScope,
   IdentifierSchemas,
+  ModelIdSchema,
   type ErrorClass,
 } from '@control-plane/contracts'
 import { z } from 'zod'
@@ -250,6 +251,11 @@ const AcceptExecutionSchema = z
       .strict()
       .superRefine(validateExecutionScopeFields),
     executionPlan: ExecutionPlanPinSchema,
+    /**
+     * The model accepted for the execution (M12/#678). It is recorded in the
+     * execution read model so the routing layer can map it to a harness.
+     */
+    modelId: ModelIdSchema.optional(),
     marketplacePluginReferences: z.array(MarketplacePluginReferenceSchema).max(128).optional(),
     parentExecutionId: IdentifierSchemas.executionId.optional(),
     receivedAt: TimestampSchema,
@@ -426,6 +432,7 @@ export class CommandInboxService {
       version: 1,
       correlation: { ...parsed.correlation, requestId: parsed.requestId },
       executionPlan: parsed.executionPlan,
+      ...(parsed.modelId === undefined ? {} : { modelId: parsed.modelId }),
       ...(parsed.marketplacePluginReferences === undefined
         ? {}
         : { marketplacePluginReferences: parsed.marketplacePluginReferences }),

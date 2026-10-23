@@ -2,6 +2,7 @@ import {
   executionScopeFields,
   validateExecutionScopeFields,
   IdentifierSchemas,
+  ModelIdSchema,
 } from '@control-plane/contracts'
 import { z } from 'zod'
 
@@ -130,6 +131,13 @@ export const ExecutionSchema = z
     version: z.number().int().positive(),
     correlation: ExecutionCorrelationSchema,
     executionPlan: ExecutionPlanPinSchema,
+    /**
+     * The model accepted for this execution (M12/#678). It is the carrier the
+     * routing layer reads to look the model's harness up in the deployment's
+     * per-model map. Absent means the execution predates the field and keeps
+     * today's routing exactly.
+     */
+    modelId: ModelIdSchema.optional(),
     marketplacePluginReferences: z.array(MarketplacePluginReferenceSchema).max(128).optional(),
     parentExecutionId: IdentifierSchemas.executionId.optional(),
     attemptCount: z.number().int().nonnegative(),
