@@ -214,7 +214,7 @@ function resolveHarness(
   const resolved = resolveRuntimeHarness(runtime, mapped.harnessId)
   return {
     value: { harnessId: resolved.harnessId },
-    source: pin === undefined ? resolved.source : source,
+    source,
   }
 }
 
@@ -410,10 +410,13 @@ export function resolveDecisionLayer(
   // denial is raised below, where it was raised before.
   const model = selectModel(parsed, policyDefaults)
   const runtimeSelection = resolveRuntime(parsed, policyDefaults, model)
-  if (model.denial !== undefined) {
+  if (policyDefaults.harnessByModel !== undefined && model.denial !== undefined) {
     throw new DecisionResolutionDeniedError(model.denial)
   }
   const harness = resolveHarness(parsed, policyDefaults, runtimeSelection.runtime, model.value)
+  if (model.denial !== undefined) {
+    throw new DecisionResolutionDeniedError(model.denial)
+  }
   const sandbox = resolveSandbox(parsed, policyDefaults, capabilities.value.capabilityNames)
   const contextPackage = resolveContextPackage(parsed, policyDefaults)
   const delegation = pickPin('delegation', parsed, policyDefaults)
