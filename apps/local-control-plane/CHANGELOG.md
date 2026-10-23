@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.36.5](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.4...local-control-plane-v1.36.5) (2026-10-22)
+
+
+### Tests
+
+* **#1018:** prove the concurrent retry and a client reconnect on PostgreSQL ([#1252](https://github.com/adea-ai/control-plane/issues/1252)) ([9789445](https://github.com/adea-ai/control-plane/commit/9789445e7f73dbe5ad3d06bee5873be54ad750fc))
+
+## [1.36.4](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.3...local-control-plane-v1.36.4) (2026-10-22)
+
+
+### Maintenance
+
+* pin Bun 1.4.4 and use native SDK consumer checking ([#1255](https://github.com/adea-ai/control-plane/issues/1255)) ([176d2d6](https://github.com/adea-ai/control-plane/commit/176d2d61571ef89263e017ddb911b4315aa07234))
+
+## [1.36.3](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.2...local-control-plane-v1.36.3) (2026-10-22)
+
+
+### Tests
+
+* **local:** stabilize operations measurement lifecycle ([#1217](https://github.com/adea-ai/control-plane/issues/1217)) ([7f42d34](https://github.com/adea-ai/control-plane/commit/7f42d347800f1a83b9bddcf8bb7f5cccf9486bd6))
+
 ## [1.36.2](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.1...local-control-plane-v1.36.2) (2026-10-17)
 
 

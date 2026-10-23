@@ -1,8 +1,8 @@
-# Neon provider compatibility budget — 2026-10-12
+# PostgreSQL provider compatibility budget — 2026-10-12
 
 ## Scope and status
 
-The trusted-main Neon workflow is reduced to one ephemeral branch and one bounded compatibility
+The trusted-main PostgreSQL workflow is reduced to one ephemeral branch and one bounded compatibility
 proof for pooled/direct routing, the application and migrator roles, required TLS, and transaction
 round trips. Portable integration, migration, PostgreSQL profile conformance, and Hosted
 PostgreSQL/Restate qualification retain their local PostgreSQL owners. This aligns with
@@ -25,13 +25,13 @@ is still required to qualify actual elapsed time and cleanup behavior.
 - The same PR's local migration/PostgreSQL profile-conformance job passed in 58s. Its graph scenario
   will now run in this local job under the same strict no-skip script; this candidate has not yet
   produced a local run of that new ownership.
-- Complete Neon run [38198473355](https://github.com/adea-ai/control-plane/actions/runs/38198473355)
+- Complete PostgreSQL run [38198473355](https://github.com/adea-ai/control-plane/actions/runs/38198473355)
   measured integration steps of 791s, 416s, and 1,047s on shards 1, 2, and 3. Hosted
   PostgreSQL/Restate qualification took 31s on shard 3.
-- Later Neon run [38209161123](https://github.com/adea-ai/control-plane/actions/runs/38209161123)
+- Later PostgreSQL run [38209161123](https://github.com/adea-ai/control-plane/actions/runs/38209161123)
   took 37m09s on shard 1 and 18m14s on shard 2; shard 3 was canceled at 45m23s. Its three owned
   branches were deleted and absence was verified. These observations show that balancing full test
-  files cannot meet a five-minute Neon job budget.
+  files cannot meet a five-minute PostgreSQL job budget.
 
 The observed step times in the latter workflow included about 2s for branch creation, 2s for
 checkout, 4s for dependency installation, 11s for the now-removed build, and 1s for database-owner
@@ -41,9 +41,9 @@ the new job.
 
 ## Qualification checklist
 
-A successful trusted-main run must show one compatibility job with exactly one Neon branch, a
+A successful trusted-main run must show one compatibility job with exactly one database sandbox, a
 successful provider proof, successful exact-name cleanup lookup, successful branch deletion and
 absence verification, and a final elapsed time no greater than 300 seconds. If the proof, cleanup,
-or budget step fails, the run remains failed. Cleanup receives the Neon API key and project ID but
+or budget step fails, the run remains failed. Cleanup receives the PostgreSQL API key and project ID but
 no database connection URL or database password. Database-admin credentials and role grants are not
 used by this proof.

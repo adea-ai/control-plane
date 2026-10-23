@@ -316,6 +316,31 @@ describe('M11.1 requirements ledger', () => {
     )
   })
 
+  test('reviewed display titles preserve current presentation without relaxing live issue membership', () => {
+    const input = {
+      ...emptyIssueLedger(),
+      priorMilestoneAudits: [
+        {
+          issue: 100,
+          displayTitle: 'Current infrastructure qualification',
+          assessment: 'preserved',
+        },
+      ],
+    }
+    const refreshed = refreshPriorMilestoneAudits(input, [
+      canonicalIssue(100, 9, { title: 'Historical title' }),
+    ])
+    expect(refreshed.priorIssueInventory[0].title).toBe('Current infrastructure qualification')
+    expect(refreshed.priorMilestoneAudits[0].assessment).toBe('preserved')
+    expect(() => refreshPriorMilestoneAudits(input, [])).toThrow('Issue inventory drift')
+    expect(() =>
+      refreshPriorMilestoneAudits(
+        { ...input, priorMilestoneAudits: [{ issue: 100, displayTitle: 'bad\nlabel' }] },
+        [canonicalIssue(100, 9)]
+      )
+    ).toThrow('Invalid audited issue display title')
+  })
+
   test('covers every normative source and prior milestone', async () => {
     const result = await validateRequirementsLedger(ledger, {
       repositoryRoot: new URL('..', import.meta.url),

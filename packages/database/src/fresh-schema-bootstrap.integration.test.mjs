@@ -166,7 +166,7 @@ test.skipIf(process.env.RUN_CP_FRESH_SCHEMA_ACCEPTANCE !== 'true')(
       await fixture.withMigrationDatabase(async (database) => {
         const [before] = await database.execute(sql`
         select to_regnamespace('drizzle') is null as no_ledger_schema,
-          to_regnamespace('neon_auth') is null as no_legacy_auth_schema
+          to_regnamespace('postgres_auth') is null as no_legacy_auth_schema
       `)
         expect(before).toEqual({ no_ledger_schema: true, no_legacy_auth_schema: true })
       })

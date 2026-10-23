@@ -18,7 +18,7 @@ import {
   createFakeContextProvider,
   deriveContextPackage,
 } from '@control-plane/context'
-import { NeonEncryptedSecretProvider } from '@control-plane/credential-vault'
+import { PostgresEncryptedSecretProvider } from '@control-plane/credential-vault'
 import {
   EvaluationService,
   createEvidenceAuditMetricsExecutor,
@@ -945,7 +945,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
   test('persists aad-v1 credential rows and marks pre-migration rows as fail-closed legacy', async () => {
     await isolated.migrate()
     const store = new PostgresEncryptedSecretStore(isolated.application)
-    const provider = new NeonEncryptedSecretProvider({
+    const provider = new PostgresEncryptedSecretProvider({
       store,
       encryptionKey: 'a'.repeat(64),
       keyReference: 'control-plane-secret-key-v1',
@@ -964,7 +964,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         .where(eq(credentialSecrets.locator, reference.locator))
     ).toEqual([{ encryptionVersion: 'aad-v1' }])
 
-    const legacyLocator = 'neon://credential-secrets/cred_01JBBCDEF0123456789ABCDEFG'
+    const legacyLocator = 'postgres://credential-secrets/cred_01JBBCDEF0123456789ABCDEFG'
     await isolated.application.insert(credentialSecrets).values({
       locator: legacyLocator,
       version: '1',
@@ -978,7 +978,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     })
     await expect(
       provider.resolve({
-        backend: 'neon-encrypted',
+        backend: 'postgres-encrypted',
         locator: legacyLocator,
         version: '1',
         keyReference: 'control-plane-secret-key-v1',
@@ -6326,7 +6326,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         if (bodyStartedAt !== undefined) recordIntegrationTiming('body', bodyStartedAt)
       }
       // Eight funding-reference variants and their retention assertions took
-      // 73s against real Neon; keep this compound body bounded at 90s.
+      // 73s against real PostgreSQL; keep this compound body bounded at 90s.
     },
     integrationTestTimeout(90_000)
   )

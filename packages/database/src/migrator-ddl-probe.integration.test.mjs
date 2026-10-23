@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import process from 'node:process'
 import postgres from 'postgres'
 import { loadDatabaseCredentials } from '@control-plane/config'
-import { verifyNeonMigratorDdl } from '../scripts/neon-ddl-probe.mjs'
+import { verifyMigratorDdl } from '../scripts/migrator-ddl-probe.mjs'
 import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
@@ -23,7 +23,7 @@ async function assertDdlDenied(client, statement) {
   throw new Error('APPLICATION_DDL_PROBE_INVALID')
 }
 
-describe.skipIf(!enabled)('Neon migrator DDL probe', () => {
+describe.skipIf(!enabled)('PostgreSQL migrator DDL probe', () => {
   test(
     'creates and removes an absent app schema with the migrator while application DDL stays denied',
     async () => {
@@ -57,21 +57,21 @@ describe.skipIf(!enabled)('Neon migrator DDL probe', () => {
               operation({
                 unsafe: async (statement, values) => {
                   if (statement.startsWith('INSERT INTO app.'))
-                    throw new Error('SYNTHETIC_NEON_DDL_PROBE_FAILURE')
+                    throw new Error('SYNTHETIC_POSTGRES_DDL_PROBE_FAILURE')
                   return transaction.unsafe(statement, values)
                 },
               })
             ),
         }
-        await expect(verifyNeonMigratorDdl(failingProbe)).rejects.toThrow(
-          'SYNTHETIC_NEON_DDL_PROBE_FAILURE'
+        await expect(verifyMigratorDdl(failingProbe)).rejects.toThrow(
+          'SYNTHETIC_POSTGRES_DDL_PROBE_FAILURE'
         )
         const [{ schema_after_rollback: schemaAfterRollback }] = await migration`
           select to_regnamespace('app') is not null as schema_after_rollback
         `
         expect(schemaAfterRollback).toBe(false)
 
-        await verifyNeonMigratorDdl(migration)
+        await verifyMigratorDdl(migration)
 
         const [{ schema_exists: schemaAfter }] = await migration`
           select to_regnamespace('app') is not null as schema_exists
@@ -81,7 +81,7 @@ describe.skipIf(!enabled)('Neon migrator DDL probe', () => {
         await migration.unsafe('create schema app')
         const applicationRole = new URL(credentials.application.url).username
         await migration`grant usage on schema app to ${migration(applicationRole)}`
-        const table = `cp_neon_application_denied_${randomUUID().replaceAll('-', '')}`
+        const table = `cp_postgres_application_denied_${randomUUID().replaceAll('-', '')}`
         await assertDdlDenied(application, `create table app.${table} (id integer)`)
       } catch (error) {
         testFailed = true
@@ -104,12 +104,12 @@ describe.skipIf(!enabled)('Neon migrator DDL probe', () => {
       if (testFailed && cleanupErrors.length > 0)
         throw new AggregateError(
           [testError, ...cleanupErrors],
-          'NEON_DDL_PROBE_TEST_AND_CLEANUP_FAILED',
+          'POSTGRES_DDL_PROBE_TEST_AND_CLEANUP_FAILED',
           { cause: testError }
         )
       if (testFailed) throw testError
       if (cleanupErrors.length > 0)
-        throw new AggregateError(cleanupErrors, 'NEON_DDL_PROBE_TEST_CLEANUP_FAILED')
+        throw new AggregateError(cleanupErrors, 'POSTGRES_DDL_PROBE_TEST_CLEANUP_FAILED')
     },
     integrationTestTimeout(60_000)
   )

@@ -205,7 +205,7 @@ function replaceDatabaseName(value: string, name: string): string {
 /**
  * Explicit per-test and per-hook timeouts in the PostgreSQL integration
  * suites are authored against the local fixture, where a case finishes in
- * seconds. The remote Neon lane runs the same suites against a distant
+ * seconds. The remote PostgreSQL lane runs the same suites against a distant
  * disposable branch where every query legitimately stretches several-fold,
  * so the integration runner exports INTEGRATION_TEST_TIMEOUT_MS and suites
  * scale their explicit budgets through this helper instead of being clamped

@@ -215,11 +215,45 @@ export const RuntimeExecutionStateSchema = z.enum([
   'unknown',
 ])
 
+/**
+ * The runtime's own observed generation identity for the execution's current
+ * turn.
+ *
+ * Observed by construction: the runtime reports the generation it authorized
+ * for this attempt, never a generation a caller claimed. A control that names
+ * a generation the runtime did not observe is not bound to it, so this shape
+ * is an identity, not a counter the caller can advance.
+ *
+ * The identity is self-verifying: the inference key is the turn's key extended
+ * by the inference id, exactly as the runtime retained it. A key that names a
+ * different turn or inference is refused here rather than accepted as an
+ * observation of something else.
+ */
+export const RuntimeObservedGenerationSchema = z
+  .object({
+    schemaVersion: z.literal('runtime-observed-generation/v1'),
+    attemptId: IdentifierSchemas.attemptId,
+    turnKey: z.string().min(1).max(4096),
+    inferenceId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/),
+    inferenceKey: z.string().min(1).max(8192),
+  })
+  .strict()
+  .superRefine((generation, context) => {
+    if (generation.inferenceKey !== `${generation.turnKey}:${generation.inferenceId}`)
+      context.addIssue({ code: 'custom', path: ['inferenceKey'], message: 'invalid inference key' })
+  })
+export type RuntimeObservedGeneration = z.output<typeof RuntimeObservedGenerationSchema>
+
 export const RuntimeExecutionStatusSchema = z
   .object({
     handle: RuntimeExecutionHandleSchema,
     state: RuntimeExecutionStateSchema,
     observedAt: TimestampSchema,
+    // The generation the runtime observed for this attempt, when it has one.
+    // Additive in contract 3.1: a consumer that advertised an earlier version
+    // parses with the pre-3.1 strict status shape, so a producer publishes it
+    // only to a consumer whose negotiated version includes it.
+    observedGeneration: RuntimeObservedGenerationSchema.optional(),
     result: RuntimeExecutionResultSchema.optional(),
     // Observed usage survives unsuccessful termination without fabricating a result.
     terminalUsage: RuntimeUsageSchema.optional(),

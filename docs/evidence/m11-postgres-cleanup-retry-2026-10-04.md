@@ -1,4 +1,4 @@
-# M11 Neon cleanup retry evidence — 2026-10-04
+# M11 PostgreSQL cleanup retry evidence — 2026-10-04
 
 ## Observed failure
 
@@ -26,14 +26,14 @@ The actual embedded workflow script is executed in a synthetic VM with controlle
 responses and timer callbacks. Four new recovery assertions failed on the original source.
 Independent review then found an unhandled response-body reset; two focused assertions reproduced
 that gap and the unsanitized malformed-JSON error. After repair,
-`bun test ./tests/neon-workflow.test.mjs` passed 34 tests with 266 assertions in 13.43 seconds;
+`bun test ./tests/postgres-workflow.test.mjs` passed 34 tests with 266 assertions in 13.43 seconds;
 the outer runner completed in 13.443 seconds under a twenty-second bound.
 The suite covers transient recovery, exhausted retries, permanent HTTP errors, pagination,
 unsafe metadata, failed complete-list verification, and trusted-main migration gating.
 Scoped Oxfmt, Oxlint, and `git diff --check` passed. The existing cached Code Foundry 1.44.3
 CLI passed `doctor`; no package was installed.
 
-This is deterministic workflow-script evidence. Live recovery from a Neon network reset,
+This is deterministic workflow-script evidence. Live recovery from a PostgreSQL network reset,
 the old branch's deletion, billed-minute savings, and complete M11 acceptance are unverified.
 No local Docker, database service, dependency installation, or persistent server was used.
 
