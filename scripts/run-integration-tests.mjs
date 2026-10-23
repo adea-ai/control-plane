@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { readdirSync, readFileSync } from 'node:fs'
 import process from 'node:process'
 import { postgresImageVariable } from './docker-pull-backoff.mjs'
 import { pullPostgresImage } from './pull-postgres-image.mjs'
@@ -40,6 +41,12 @@ const CHILD_COMPLETION_TIMEOUT_MS = 10_000
 // visible.
 const OWNED_TREE_EXIT_WAIT_MS = 2_000
 
+// Every owned child is started with a unique value of this variable. A
+// descendant inherits it, so it stays attributable to the child that started it
+// after the direct child has exited and the kernel has re-parented the
+// descendant to init, which is when the parent links can no longer prove it.
+const OWNER_TOKEN_VARIABLE = 'CONTROL_PLANE_RUNNER_OWNER'
+
 // Runner-owned children stay in the runner's own process group. They are
 // recorded here so an interruption signals only them, and they also share the
 // runner's group so a supervising group termination reaps them rather than
@@ -50,18 +57,27 @@ const activeChildren = new Set()
 // the bound that makes its completion settle.
 const childStates = new WeakMap()
 
-function trackRunnerChild(child, command) {
+function trackRunnerChild(child, command, ownerToken) {
   activeChildren.add(child)
   childStates.set(child, {
     command,
+    ownerToken,
     terminated: false,
     completionTimer: undefined,
     failWith: undefined,
     abandon: undefined,
   })
-  const release = () => activeChildren.delete(child)
+  const release = () => {
+    activeChildren.delete(child)
+    const state = childStates.get(child)
+    if (state?.completionTimer !== undefined) clearTimeout(state.completionTimer)
+  }
   child.once('close', release)
   child.once('error', release)
+  // The direct child can exit while a descendant still holds the inherited
+  // pipes, so `close` never arrives. Its exit starts the same bounded wait that
+  // a termination does; a normal exit closes the pipes at once and clears it.
+  child.once('exit', () => armCompletionBound(child))
   return child
 }
 
@@ -145,6 +161,40 @@ function isProcessAlive(pid) {
   }
 }
 
+/**
+ * The live processes that carry an owned child's token.
+ *
+ * Only a descendant of that child can carry its token, so the result is owned
+ * by construction, and unlike the parent links it still names a descendant that
+ * outlived the child and was re-parented to init. It reads /proc, so on a
+ * platform without it the result is empty and the parent links are all there is.
+ */
+function pidsCarryingOwnerToken(token, directChildPid) {
+  if (typeof token !== 'string' || token === '') return []
+  let entries
+  try {
+    entries = readdirSync('/proc')
+  } catch {
+    return []
+  }
+  // Entries are NUL-separated; the leading NUL anchors the name at an entry start.
+  const needle = `\0${OWNER_TOKEN_VARIABLE}=${token}\0`
+  const owned = []
+  for (const entry of entries) {
+    if (!/^\d+$/u.test(entry)) continue
+    const pid = Number.parseInt(entry, 10)
+    // The direct child carries its own token; it is signalled and reaped as the
+    // child, not reported as a descendant.
+    if (pid <= 1 || pid === process.pid || pid === directChildPid) continue
+    try {
+      if (`\0${readFileSync(`/proc/${pid}/environ`, 'latin1')}\0`.includes(needle)) owned.push(pid)
+    } catch {
+      // The process is gone, or belongs to someone else and cannot be read.
+    }
+  }
+  return owned
+}
+
 /** Waits without yielding the event loop, for a bounded time. */
 function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
@@ -191,30 +241,25 @@ function bindChildCompletion(child, { failWith, abandon }) {
  * completion from ever settling. The descendants are therefore terminated
  * first, and the direct child after them.
  *
- * Only the owned tree is touched: the descendants of the owned child and the
- * child itself. No process is looked up by name, and the caller's own process
- * and process group are never signalled.
+ * Only the owned tree is touched: the descendants of the owned child (found by
+ * its parent links while it runs, and by the token they inherited once it has
+ * exited and orphaned them) and the child itself. No process is looked up by
+ * name, a descendant that dropped the token is reported but never signalled, and
+ * the caller's own process and process group are never signalled.
  */
 function terminateChild(child) {
   const state = childStates.get(child)
-  if (state !== undefined) {
-    state.terminated = true
-    // The completion of a terminated child is bounded: the inherited pipes may
-    // be held by a descendant, so `close` is not guaranteed to arrive.
-    if (state.completionTimer === undefined) {
-      state.completionTimer = setTimeout(() => {
-        // The child is abandoned: its pipes are released so the runner can
-        // settle, and the run fails with the bound that was exceeded.
-        state.abandon?.()
-        state.failWith?.(
-          `${state.command} did not complete within ${CHILD_COMPLETION_TIMEOUT_MS} ms after it was terminated; an owned descendant may still hold the inherited pipes`
-        )
-      }, CHILD_COMPLETION_TIMEOUT_MS)
-      state.completionTimer.unref?.()
-    }
-  }
-  if (child.exitCode !== null || child.signalCode !== null) return []
-  const descendants = ownedDescendants(child.pid)
+  if (state !== undefined) state.terminated = true
+  armCompletionBound(child)
+  const alive = child.exitCode === null && child.signalCode === null
+  // A child that already exited has no parent links left to walk, so its
+  // descendants are found by the token they inherited instead.
+  const descendants = [
+    ...new Set([
+      ...(alive ? ownedDescendants(child.pid) : []),
+      ...pidsCarryingOwnerToken(state?.ownerToken, child.pid),
+    ]),
+  ]
   for (const pid of descendants) {
     try {
       process.kill(pid, 'SIGKILL')
@@ -222,12 +267,53 @@ function terminateChild(child) {
       if (error.code !== 'ESRCH') throw error
     }
   }
-  try {
-    child.kill('SIGKILL')
-  } catch (error) {
-    if (error.code !== 'ESRCH') throw error
+  if (alive) {
+    try {
+      child.kill('SIGKILL')
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error
+    }
   }
   return descendants
+}
+
+/**
+ * Bounds how long an owned child's completion may take once it has exited or
+ * been terminated.
+ *
+ * The inherited pipes may be held by a descendant, so `close` is not
+ * guaranteed to arrive. When the bound is reached the owned remnants that can
+ * still be proven are reaped, the runner's ends of the pipes are released, and
+ * the run fails with the bound instead of waiting for a pipe nobody owns.
+ */
+function armCompletionBound(child) {
+  const state = childStates.get(child)
+  if (state === undefined || state.completionTimer !== undefined) return
+  state.completionTimer = setTimeout(() => {
+    const remnants = pidsCarryingOwnerToken(state.ownerToken, child.pid)
+    for (const pid of remnants) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        // The remnant is already gone.
+      }
+    }
+    const survivors = survivingOwnedPids(remnants)
+    const report =
+      remnants.length === 0
+        ? 'an owned descendant may still hold the inherited pipes'
+        : `reaped owned descendant(s) ${remnants.join(', ')}${
+            survivors.length > 0 ? `; still alive: ${survivors.join(', ')}` : ''
+          }`
+    // The child is abandoned: its pipes are released so the runner can settle.
+    state.abandon?.()
+    state.failWith?.(
+      state.terminated
+        ? `${state.command} did not complete within ${CHILD_COMPLETION_TIMEOUT_MS} ms after it was terminated; ${report}`
+        : `${state.command} exited but did not complete within ${CHILD_COMPLETION_TIMEOUT_MS} ms; ${report}`
+    )
+  }, CHILD_COMPLETION_TIMEOUT_MS)
+  state.completionTimer.unref?.()
 }
 
 /**
@@ -256,13 +342,15 @@ function run(command, arguments_, options = {}) {
       reject(new Error(`${command} not started: integration run interrupted`))
       return
     }
+    const ownerToken = randomUUID()
     const child = trackRunnerChild(
       spawn(command, arguments_, {
         cwd: options.cwd ?? process.cwd(),
-        env: options.environment ?? runnerEnvironment,
+        env: { ...(options.environment ?? runnerEnvironment), [OWNER_TOKEN_VARIABLE]: ownerToken },
         stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
       }),
-      command
+      command,
+      ownerToken
     )
     let stdout = ''
     let stderr = ''
@@ -344,13 +432,15 @@ function runStreaming(command, arguments_, options = {}) {
       reject(new Error(`${command} not started: integration run interrupted`))
       return
     }
+    const ownerToken = randomUUID()
     const child = trackRunnerChild(
       spawn(command, arguments_, {
         cwd: options.cwd ?? process.cwd(),
-        env: options.environment ?? runnerEnvironment,
+        env: { ...(options.environment ?? runnerEnvironment), [OWNER_TOKEN_VARIABLE]: ownerToken },
         stdio: ['ignore', 'pipe', 'pipe'],
       }),
-      command
+      command,
+      ownerToken
     )
     let settled = false
     const settle = (complete, value) => {

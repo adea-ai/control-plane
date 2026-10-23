@@ -52,13 +52,30 @@ if (process.env.FAKE_BUN_SPAWN_DESCENDANT === 'true' && args.includes('test')) {
 if (process.env.FAKE_BUN_SPAWN_DETACHED_DESCENDANT === 'true' && args.includes('test')) {
   // A descendant that is re-parented to init before the runner terminates the
   // direct child, so the runner can no longer attribute it to its own tree. It
-  // still holds the inherited pipes.
+  // still holds the inherited pipes. With FAKE_DESCENDANT_SCRUBS_OWNER it also
+  // drops the owner token the runner gave its child, so the token cannot
+  // attribute it either.
   const { spawn } = await import('node:child_process')
+  const detachedEnv = { ...process.env }
+  if (process.env.FAKE_DESCENDANT_SCRUBS_OWNER === 'true') delete detachedEnv.CONTROL_PLANE_RUNNER_OWNER
   spawn(process.execPath, [
     '-e',
     "const { spawn } = require('node:child_process'); const { appendFileSync } = require('node:fs'); const holder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] }); appendFileSync(process.env.DESCENDANT_RECEIPT, String(holder.pid) + '\\\\n'); process.exit(0)",
-  ], { stdio: ['ignore', 'inherit', 'inherit'] })
+  ], { stdio: ['ignore', 'inherit', 'inherit'], env: detachedEnv })
   await new Promise(() => {})
+}
+if (process.env.FAKE_BUN_WRAPPER_EXITS_FIRST === 'true' && args.includes('test')) {
+  // The direct child exits at once, before anything interrupts it, and leaves a
+  // descendant holding the inherited pipes, so its \`close\` can never arrive.
+  const { spawn } = await import('node:child_process')
+  const holderEnv = { ...process.env }
+  if (process.env.FAKE_DESCENDANT_SCRUBS_OWNER === 'true') delete holderEnv.CONTROL_PLANE_RUNNER_OWNER
+  const holder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    stdio: ['ignore', 'inherit', 'inherit'],
+    env: holderEnv,
+  })
+  appendFileSync(process.env.DESCENDANT_RECEIPT, String(holder.pid) + '\\n')
+  process.exit(0)
 }
 if (program === 'docker') {
   if (process.env.FAKE_DOCKER_DISABLED === 'true') process.exit(90)
@@ -325,6 +342,63 @@ async function executeRunnerInterrupted(
       calls: readCommandReceipts(commands),
       descendants: readDescendantPids(descendants),
     }
+  } finally {
+    reapHarnessChild(child)
+    rmSync(directory, { recursive: true, force: true })
+  }
+}
+
+/** Kills a process the case spawned, tolerating one that is already gone. */
+function killQuietly(pid) {
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch {
+    // The process is already gone.
+  }
+}
+
+/**
+ * Runs the real runner with no signal and reports how it ended. A descendant
+ * that holds an inherited pipe keeps `close` from arriving, so the case waits
+ * for the runner PROCESS to exit and treats a runner that never exits as a
+ * failure instead of hanging.
+ */
+async function executeRunnerToExit(overrides, { settleMs = 30_000 } = {}) {
+  const { directory, descendants, environment } = createRunnerHarness(overrides)
+  let child
+  try {
+    child = spawn(process.execPath, [runner], {
+      cwd: repository,
+      env: environment,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    const exited = new Promise((resolve) =>
+      child.once('exit', (status, signal) => resolve({ status, signal }))
+    )
+    const outcome = await Promise.race([
+      exited,
+      new Promise((resolve) => {
+        const timer = setTimeout(() => resolve({ signal: 'settle-timeout' }), settleMs)
+        timer.unref?.()
+      }),
+    ])
+    if (outcome.signal === 'settle-timeout') {
+      reapHarnessChild(child)
+      await exited
+      for (const pid of readDescendantPids(descendants)) killQuietly(pid)
+      throw new Error(`Runner did not exit within ${settleMs}ms`)
+    }
+    return { ...outcome, stdout, stderr, descendants: readDescendantPids(descendants) }
   } finally {
     reapHarnessChild(child)
     rmSync(directory, { recursive: true, force: true })
@@ -938,6 +1012,8 @@ test('an interrupted runner spends no new owned command beyond cleanup', async (
     interruptedSignal: 'SIGINT',
     runnerEnvironment: {},
     CHILD_COMMAND_TIMEOUT_MS: 90_000,
+    OWNER_TOKEN_VARIABLE: 'CONTROL_PLANE_RUNNER_OWNER',
+    randomUUID: () => 'owner-token',
     process,
     setTimeout,
     trackRunnerChild: (child) => child,
@@ -1122,6 +1198,8 @@ describe('integration runner owned process tree', () => {
           'sleepSync',
           'survivingOwnedPids',
           'trackRunnerChild',
+          'pidsCarryingOwnerToken',
+          'armCompletionBound',
         ],
         constants: [
           'activeChildren',
@@ -1129,12 +1207,18 @@ describe('integration runner owned process tree', () => {
           'CHILD_COMPLETION_TIMEOUT_MS',
           'CHILD_COMMAND_TIMEOUT_MS',
           'OWNED_TREE_EXIT_WAIT_MS',
+          'OWNER_TOKEN_VARIABLE',
         ],
         overrides: { CHILD_COMPLETION_TIMEOUT_MS: '150' },
       },
       {
         interruptedSignal: null,
         runnerEnvironment: {},
+        randomUUID: () => 'owner-token',
+        readdirSync: () => {
+          throw new Error('no /proc')
+        },
+        readFileSync,
         process: {
           cwd: () => '/tmp',
           kill: () => {
@@ -1169,14 +1253,14 @@ describe('integration runner owned process tree', () => {
     expect(released.toSorted()).toEqual(['stderr', 'stdout'])
   })
 
-  test('a stalled pipe is bounded when the survivor can no longer be attributed to the owned tree', async () => {
+  test('a stalled pipe is bounded when the survivor carries no proof of ownership', async () => {
     // The descendant is re-parented to init before the runner terminates the
-    // direct child, so the runner can no longer attribute it to its own tree
-    // and must not kill what it cannot prove it owns. The inherited pipe
+    // direct child and has dropped the owner token, so the runner can no longer
+    // attribute it to its own tree and must not kill what it cannot prove it owns. The inherited pipe
     // stays open, so the runner's completion has to be BOUNDED rather than
     // waited on forever.
     const result = await executeRunnerInterrupted(
-      { FAKE_BUN_SPAWN_DETACHED_DESCENDANT: 'true' },
+      { FAKE_BUN_SPAWN_DETACHED_DESCENDANT: 'true', FAKE_DESCENDANT_SCRUBS_OWNER: 'true' },
       {
         signal: 'SIGTERM',
         predicate: ({ program, args }) => program === 'bun' && args.includes('test'),
@@ -1203,4 +1287,309 @@ describe('integration runner owned process tree', () => {
       }
     }
   }, 40_000)
+
+  test.skipIf(process.platform !== 'linux')(
+    'an interruption reaps an owned descendant that was orphaned before the signal',
+    async () => {
+      // The direct child's parent links to the descendant are gone by the time
+      // the signal arrives, but the descendant still carries the token the
+      // runner gave its child, so it is provably owned and is reaped.
+      const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        stdio: 'ignore',
+      })
+      let result
+      try {
+        result = await executeRunnerInterrupted(
+          { FAKE_BUN_SPAWN_DETACHED_DESCENDANT: 'true' },
+          {
+            signal: 'SIGTERM',
+            predicate: ({ program, args }) => program === 'bun' && args.includes('test'),
+            description: 'the owned test execution',
+            waitFor: 'exit',
+            settleMs: 25_000,
+          }
+        )
+        expect(result.status).toBe(143)
+        expect(result.descendants.length).toBeGreaterThan(0)
+        for (const pid of result.descendants) expect(isProcessAlive(pid)).toBe(false)
+        expect(result.stderr).not.toMatch(/owned descendant survived/u)
+        expect(isProcessAlive(unrelated.pid)).toBe(true)
+      } finally {
+        for (const pid of result?.descendants ?? []) killQuietly(pid)
+        killQuietly(unrelated.pid)
+      }
+    },
+    40_000
+  )
+
+  test.skipIf(process.platform !== 'linux')(
+    'a wrapper that exits first leaves no unbounded wait and its owned descendant is reaped',
+    async () => {
+      // Nothing interrupts this run. The direct child exits at once and a
+      // descendant keeps the inherited pipes, so `close` can never arrive; the
+      // exit itself has to start the bounded wait.
+      const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        stdio: 'ignore',
+      })
+      let result
+      try {
+        result = await executeRunnerToExit({ FAKE_BUN_WRAPPER_EXITS_FIRST: 'true' })
+        expect(result.status).not.toBe(0)
+        expect(result.stderr).toMatch(
+          /bun exited but did not complete within \d+ ms; reaped owned descendant\(s\) \d+/u
+        )
+        expect(result.descendants.length).toBeGreaterThan(0)
+        for (const pid of result.descendants) expect(isProcessAlive(pid)).toBe(false)
+        expect(isProcessAlive(unrelated.pid)).toBe(true)
+      } finally {
+        for (const pid of result?.descendants ?? []) killQuietly(pid)
+        killQuietly(unrelated.pid)
+      }
+    },
+    40_000
+  )
+
+  test('a wrapper that exits first is bounded and reported even when the descendant proves no ownership', async () => {
+    const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+    })
+    let result
+    try {
+      result = await executeRunnerToExit({
+        FAKE_BUN_WRAPPER_EXITS_FIRST: 'true',
+        FAKE_DESCENDANT_SCRUBS_OWNER: 'true',
+      })
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toMatch(
+        /bun exited but did not complete within \d+ ms; an owned descendant may still hold the inherited pipes/u
+      )
+      // Nothing proves the holder is the runner's, so it is left alone.
+      expect(result.descendants.length).toBeGreaterThan(0)
+      for (const pid of result.descendants) expect(isProcessAlive(pid)).toBe(true)
+      expect(isProcessAlive(unrelated.pid)).toBe(true)
+    } finally {
+      for (const pid of result?.descendants ?? []) killQuietly(pid)
+      killQuietly(unrelated.pid)
+    }
+  }, 40_000)
+})
+
+describe('integration runner descendant attribution', () => {
+  const runnerFunctions = [
+    'pidsCarryingOwnerToken',
+    'terminateChild',
+    'armCompletionBound',
+    'ownedDescendants',
+    'isProcessAlive',
+    'sleepSync',
+    'survivingOwnedPids',
+    'abandonChildPipes',
+    'trackRunnerChild',
+    'run',
+    'bindChildCompletion',
+  ]
+  const runnerConstants = [
+    'activeChildren',
+    'childStates',
+    'CHILD_COMPLETION_TIMEOUT_MS',
+    'CHILD_COMMAND_TIMEOUT_MS',
+    'OWNED_TREE_EXIT_WAIT_MS',
+    'OWNER_TOKEN_VARIABLE',
+  ]
+  const token = 'token-under-test'
+
+  /** A fake /proc of `pid -> environ` that the runner's own reader code scans. */
+  function fakeProc(environments) {
+    return {
+      readdirSync: (path) => {
+        if (path !== '/proc') throw new Error(`unexpected read of ${path}`)
+        return [...Object.keys(environments), 'self', 'thread-self']
+      },
+      readFileSync: (path) => {
+        const pid = String(path).split('/')[2]
+        if (!(pid in environments)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+        return environments[pid]
+      },
+    }
+  }
+
+  function load(globals, exportName, overrides = {}) {
+    return readScriptBlock(
+      'run-integration-tests.mjs',
+      { functions: runnerFunctions, constants: runnerConstants, overrides },
+      {
+        Atomics,
+        SharedArrayBuffer,
+        setTimeout,
+        clearTimeout,
+        randomUUID: () => token,
+        interruptedSignal: null,
+        runnerEnvironment: {},
+        ...globals,
+      },
+      exportName
+    )
+  }
+
+  test('only a process carrying this exact token is attributed to the child', () => {
+    const find = load(
+      {
+        process: { pid: 10 },
+        ...fakeProc({
+          200: `PATH=/bin\0CONTROL_PLANE_RUNNER_OWNER=${token}\0HOME=/root`,
+          201: `CONTROL_PLANE_RUNNER_OWNER=${token}`,
+          202: 'CONTROL_PLANE_RUNNER_OWNER=another-child',
+          203: `XCONTROL_PLANE_RUNNER_OWNER=${token}`,
+          204: `CONTROL_PLANE_RUNNER_OWNER=${token}-extended`,
+          // The runner itself, init and the direct child are never reported.
+          10: `CONTROL_PLANE_RUNNER_OWNER=${token}`,
+          1: `CONTROL_PLANE_RUNNER_OWNER=${token}`,
+          300: `CONTROL_PLANE_RUNNER_OWNER=${token}`,
+        }),
+      },
+      'pidsCarryingOwnerToken'
+    )
+    expect(find(token, 300)).toEqual([200, 201])
+    expect(find('', 300)).toEqual([])
+    expect(find(undefined, 300)).toEqual([])
+  })
+
+  test('a platform without /proc attributes nothing by token', () => {
+    const find = load(
+      {
+        process: { pid: 10 },
+        readdirSync: () => {
+          throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+        },
+        readFileSync: () => '',
+      },
+      'pidsCarryingOwnerToken'
+    )
+    expect(find(token, 300)).toEqual([])
+  })
+
+  test('terminating a child whose wrapper already exited still reaps its orphaned owned descendants', () => {
+    const killed = []
+    const child = {
+      pid: 300,
+      exitCode: 0,
+      signalCode: null,
+      once() {},
+      kill() {
+        killed.push('direct-child')
+      },
+    }
+    const register = load(
+      {
+        process: {
+          pid: 10,
+          kill: (pid) => {
+            killed.push(pid)
+          },
+        },
+        // The parent links of an exited child are gone, so no process listing may be needed.
+        spawnSync: () => {
+          throw new Error('the process tree must not be listed for an exited child')
+        },
+        ...fakeProc({
+          200: `CONTROL_PLANE_RUNNER_OWNER=${token}`,
+          201: 'CONTROL_PLANE_RUNNER_OWNER=another-child',
+          202: 'PATH=/bin',
+        }),
+      },
+      '({ trackRunnerChild, terminateChild })'
+    )
+    register.trackRunnerChild(child, 'bun', token)
+    expect(register.terminateChild(child)).toEqual([200])
+    // The owned descendant is signalled; the unrelated and foreign ones are not,
+    // and a child that already exited is not signalled again.
+    expect(killed).toEqual([200])
+  })
+
+  test('the exit of a wrapper starts the bounded wait for its completion', async () => {
+    const handlers = {}
+    const released = []
+    const child = {
+      pid: 301,
+      exitCode: 0,
+      signalCode: null,
+      once(event, handler) {
+        handlers[event] = handler
+      },
+      unref() {},
+      stdout: {
+        setEncoding() {},
+        on() {},
+        destroy() {
+          released.push('stdout')
+        },
+      },
+      stderr: {
+        setEncoding() {},
+        on() {},
+        destroy() {
+          released.push('stderr')
+        },
+      },
+    }
+    const run = load(
+      {
+        process: {
+          pid: 10,
+          cwd: () => '/tmp',
+          kill: () => {
+            throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' })
+          },
+        },
+        spawn: () => child,
+        spawnSync: () => ({ status: 0, stdout: '' }),
+        ...fakeProc({}),
+      },
+      'run',
+      { CHILD_COMPLETION_TIMEOUT_MS: '120' }
+    )
+    const pending = run('bun', ['test'], {})
+    // The direct child exits and `close` never arrives.
+    handlers.exit(0, null)
+    const outcome = await Promise.race([
+      pending.then(
+        () => ({ settled: true }),
+        (error) => ({ settled: true, error })
+      ),
+      new Promise((resolve) => setTimeout(() => resolve({ settled: false }), 3_000)),
+    ])
+    expect(outcome.settled).toBe(true)
+    expect(outcome.error?.message ?? '').toMatch(/bun exited but did not complete within 120 ms/u)
+    // The runner's ends of the held pipes are released so the run can finish.
+    expect(released.toSorted()).toEqual(['stderr', 'stdout'])
+  })
+
+  test('a wrapper whose pipes close normally never starts a failing bound', async () => {
+    const handlers = {}
+    const child = {
+      pid: 302,
+      exitCode: 0,
+      signalCode: null,
+      once(event, handler) {
+        handlers[event] = handler
+      },
+      unref() {},
+    }
+    const run = load(
+      {
+        process: { pid: 10, cwd: () => '/tmp', kill: () => {} },
+        spawn: () => child,
+        spawnSync: () => ({ status: 0, stdout: '' }),
+        ...fakeProc({}),
+      },
+      'run',
+      { CHILD_COMPLETION_TIMEOUT_MS: '60' }
+    )
+    const pending = run('bun', ['test'], {})
+    handlers.exit(0, null)
+    handlers.close(0)
+    await expect(pending).resolves.toBe('')
+    // Past the bound: a closed child must not fail or abandon anything late.
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  })
 })
