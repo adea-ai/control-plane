@@ -1,6 +1,6 @@
 # #1230 — Dependency budget remediation
 
-## Current candidate: 43 real identities removed, residual 263
+## Current candidate: net 44 identities removed, residual 262
 
 The integrated candidate preserves the transferred #1270 head
 `0b190108b34d2feef46bd29d8b3f0aeadda347e7`, #1214 head
@@ -20,9 +20,13 @@ actual regenerated lockfile. A real `bun install --frozen-lockfile` succeeded.
 | Current main before consolidation |        591 |     285 |     306 |
 | Formatter/linter consolidation    |        551 |     285 |     266 |
 | Compatible transitive pins        |        548 |     285 |     263 |
+| Targeted Pino minor update        |        547 |     285 |     262 |
 
-This is a **43-identity source reduction**, not a change in counting scope.
+This is a **net 44-identity source reduction**: 45 identities removed and one
+added relative to the 591 baseline, not a change in counting scope.
 The current lockfile SHA-256 is
+`829196fc27f4a3e4a4e4af2b3a291d5421401b3b57c8f4976f1cf46f8f9a4535`.
+The earlier 548-identity receipt remains historical at
 `6c7d01d7658c8dcb787841ce9840d177188f7942222d1a823224936119083bf4`.
 The earlier 551-identity lock receipt remains historical at
 `6b42afa9967a45911c55b8b4e45da6601a0bd62dbd7a42611ef6845d02517543`.
@@ -48,16 +52,18 @@ CLI listing's runtime, host, and measured count:
 
 ```text
 env -u ADEA_DEPS_LISTING_FILE bun scripts/check-budgets.mjs deps
-BUDGET EXCEEDED: measured 548, ceiling 285, scope all-platform lockfile identities
-installedListing: bun@1.4.4, darwin-arm64, measured 367
+BUDGET EXCEEDED: measured 547, ceiling 285, scope all-platform lockfile identities
+installedListing: bun@1.4.4, darwin-arm64, measured 366
 exit 1
 ```
 
 The two committed listing fixtures were produced by real Bun 1.4.3 on main's
 before and candidate's after lockfiles; only the machine-specific header is
 replaced by `node_modules`. Tests pin **591 → 551**, exactly 40 removed pairs,
-no added pairs. The current lock inventory removes exactly three further pairs
-from that after fixture, adds none, and agrees with the reachable graph. Every current installed CLI identity
+no added pairs. The historical 548 lock inventory removed exactly three further
+pairs from that after fixture. The current Pino follow-up
+removes two further identities and adds its replacement; the reachable graph
+agrees with the complete 547-identity inventory. Every current installed CLI identity
 must be covered. Replacing equality with the runtime's host-only listing is
 necessary to preserve the original scope, not to waive it.
 
@@ -76,8 +82,8 @@ consumers remain present. Seven workspace version metadata entries synchronize
 with the already-merged main manifests; external pins otherwise remain unchanged.
 
 The current attributed closures are 115 for `@earendil-works/pi-durable`,
-85 for `@earendil-works/pi-ai`, 168 for Vite+, 76 for Nest's Fastify platform,
-56 for Miniflare, 49 for Fastify, 42 for Sentry Node, and 38 for Drizzle Kit.
+85 for `@earendil-works/pi-ai`, 168 for Vite+, 75 for Nest's Fastify platform,
+56 for Miniflare, 48 for Fastify, 42 for Sentry Node, and 38 for Drizzle Kit.
 The test pins these current figures separately from historical attribution below.
 
 ### Attribution, reconciliation, and remaining ownership
@@ -100,11 +106,32 @@ Further reduction needs scoped owner-approved implementation; no architectural
 feature, supported runner, or required check is removed here. This work authorizes
 no release, deployment, provider change, production data access, or live account.
 
+### Targeted Pino update within the existing consumer range
+
+Fastify 5.12.6 is the only locked consumer of Pino; its declared
+`^9.14.0 || ^10.1.0` range accepts published **Pino 10.4.0**. Official npm
+metadata confirms integrity
+`sha512-bk1ZMTwG/Vymx+zPoa28MhNzucFvXJWp3csrSuxuHPSMeUettaCoQ5Jvg07mtC4JGNpcfTwz41oVCnNgBK9+vA==`.
+Its dependency names/ranges otherwise match 10.3.1, with `real-require` moving
+from `^0.2.0` to `^1.0.0`, already accepted by thread-stream 4.2.0.
+Pinned Bun 1.4.4's documented targeted route, `bun update pino@10.4.0`,
+first reports one package in a dry run and then updates only the lockfile.
+No direct declaration, override or package consumer is added or removed.
+Eight workspace version metadata refreshes exactly match the already-merged
+1.114.0 main manifests.
+
+The actual delta from 548 is removal of `pino@10.3.1` and
+`real-require@0.2.0`, addition of `pino@10.4.0`, and a **net one** reduction
+to **547**. It is not a no-additions claim. The new Fastify behavior regression
+checks request IDs, child log bindings, secret/header redaction, response/error
+serializers and status handling through actual injected requests; the existing
+Control API application tests and complete budget tests pass alongside it.
+
 ### Remaining compatible-version audit and required tools
 
 A read-only audit of every remaining multi-version name checks each existing
 locked version against all dependency, optional, peer and workspace consumer
-ranges. None of these 15 names has an existing target that satisfies every
+ranges. None of these 14 names has an existing target that satisfies every
 declared range. Representative opposing constraints are recorded below; no
 cross-major override or forced exact-pin replacement is applied.
 
@@ -121,7 +148,6 @@ cross-major override or forced exact-pin replacement is applied.
 | `p-retry`                   | `@langchain/langgraph-sdk@1.12.2` requires `^7.1.1`; `@google/genai@2.21.0` requires `^4.6.2`                                   |
 | `p-timeout`                 | `p-queue@6.6.2` requires `^3.2.0`; `p-queue@9.3.3` requires `^7.0.0`                                                            |
 | `process-warning`           | `light-my-request@6.6.0` requires `^4.0.0`; `fastify@5.12.6` requires `^5.1.0`                                                  |
-| `real-require`              | `thread-stream@4.2.0` requires `^1.0.0`; `pino@10.3.1` requires `^0.2.0`                                                        |
 | `supports-color`            | `@poppinss/dumper@0.6.5` requires `^10.0.0`; `@sentry/bundler-plugins@11.4.0` requires `^8.1.1`                                 |
 | `typescript`                | `@nestjs/swagger@12.0.2` requires `^5.5.0                                                                                       |     | ^6.0.0`; `workspace:.`requires`^7.0.2` |
 | `ws`                        | `@vitest/browser@5.0.5` requires `^8.22.0`; `miniflare@5.20260926.0-alpha` requires `8.21.0`                                    |
@@ -131,8 +157,8 @@ TypeScript 7, formatter and linter declarations is **282 identities** in the
 current graph (shared identities counted once). This is a read-only union
 measurement, **not a proved minimum** for a future implementation and not a
 proposal to remove other required consumers. It does not establish impossibility
-of meeting the budget. The real complete inventory remains **548**, over the
-unchanged ceiling by **263**.
+of meeting the budget. The real complete inventory is **547**, over the
+unchanged ceiling by **262**.
 
 Further source-compatible reductions require evaluating upstream consumer
 updates against their actual APIs and qualification, rather than forcing the
@@ -190,7 +216,7 @@ are retained.
 The earlier aggregate test run encountered lifecycle and digest-history
 failures, then was interrupted to release the shared host. It is **not** a
 passing aggregate suite. Focused qualification and normal hooks are reported
-separately; dependency acceptance remains failing at **548 / 285**.
+separately; dependency acceptance remains failing at **547 / 285**.
 
 ## Historical audit evidence before consolidation
 

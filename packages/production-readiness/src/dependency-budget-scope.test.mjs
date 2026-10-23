@@ -559,9 +559,9 @@ test('the per-root attribution reproduces the published dependency-path attribut
     'vite-plus': 168,
     '@earendil-works/pi-durable': 115,
     '@earendil-works/pi-ai': 85,
-    '@nestjs/platform-fastify': 76,
+    '@nestjs/platform-fastify': 75,
     miniflare: 56,
-    fastify: 49,
+    fastify: 48,
     '@sentry/node': 42,
     'drizzle-kit': 38,
   }
@@ -603,7 +603,7 @@ test('the reduction sequence accounts for each marginal saving without claiming 
   }
   // The plan is a measurement of a possible reduction: it changes neither the
   // count nor the ceiling.
-  assert.equal(measured, 548)
+  assert.equal(measured, 547)
   assert.equal(ceiling, 285)
 })
 
@@ -741,7 +741,7 @@ test('compatible transitive pins consolidate existing versions without dropping 
     assert.ok(lock.packages[consumer], `${consumer}: required consumer disappeared`)
 })
 
-test('the stable full-lock receipt preserves all-platform scope and the real 43-pair reduction', async () => {
+test('the stable full-lock receipt preserves all-platform scope and the real net 44-pair reduction', async () => {
   const { lockfileExternalPairs, externalPackagePairs } = await loadChecker()
   const before = externalPackagePairs(
     readFileSync(
@@ -758,21 +758,40 @@ test('the stable full-lock receipt preserves all-platform scope and the real 43-
   const current = lockfileExternalPairs(readFileSync(join(repositoryRoot, 'bun.lock'), 'utf8'))
   assert.equal(before.size, 591)
   assert.equal(after.size, 551)
-  assert.equal(current.size, 548)
+  assert.equal(current.size, 547)
   assert.deepEqual([...after].filter((pair) => !current.has(pair)).toSorted(), [
     '@smithy/core@3.33.3',
     '@smithy/types@4.17.2',
     'magic-string@0.30.21',
+    'pino@10.3.1',
+    'real-require@0.2.0',
   ])
   assert.deepEqual(
     [...current].filter((pair) => !after.has(pair)),
-    []
+    ['pino@10.4.0']
   )
   assert.equal([...before].filter((pair) => !after.has(pair)).length, 40)
   assert.deepEqual(
     [...after].filter((pair) => !before.has(pair)),
     []
   )
+})
+
+test('the targeted Pino update shares the real-require version already used by thread-stream', () => {
+  const lock = JSONC.parse(readFileSync(join(repositoryRoot, 'bun.lock'), 'utf8'))
+  assert.equal(lock.packages.pino[0], 'pino@10.4.0')
+  assert.equal(lock.packages.pino[2].dependencies['real-require'], '^1.0.0')
+  assert.equal(lock.packages['thread-stream'][2].dependencies['real-require'], '^1.0.0')
+  assert.deepEqual(
+    Object.values(lock.packages)
+      .filter((entry) => entry[0].startsWith('real-require@'))
+      .map((entry) => entry[0]),
+    ['real-require@1.0.0']
+  )
+  const manifest = JSON.parse(readFileSync(join(repositoryRoot, 'package.json'), 'utf8'))
+  assert.equal(manifest.overrides.pino, undefined)
+  assert.equal(manifest.dependencies?.pino, undefined)
+  assert.equal(manifest.devDependencies?.pino, undefined)
 })
 
 test('the stable receipt counts orphan lock entries and refuses malformed lockfiles', async () => {
