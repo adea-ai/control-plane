@@ -594,6 +594,11 @@ export class SqliteProjectStateRepository
           revision: state.revision,
           mutationId: mutation.mutationId,
           inputDigest: mutation.inputDigest,
+          // Only a versioned writer records a version; untagged records keep the event
+          // payload they have always published.
+          ...(mutation.inputDigestVersion === undefined
+            ? {}
+            : { inputDigestVersion: mutation.inputDigestVersion }),
           touchedItemIds: [...mutation.touchedItemIds],
         }),
       })

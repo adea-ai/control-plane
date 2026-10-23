@@ -6,6 +6,26 @@ import { z } from 'zod'
 
 const TimestampSchema = z.iso.datetime()
 const PrincipalRefSchema = z.string().min(1).max(256)
+
+/**
+ * The only mutation digest canonicalization this release writes or reads as a versioned
+ * record: the code-point canonical JSON form introduced by the #659 cutover.
+ */
+const PROJECT_STATE_MUTATION_DIGEST_VERSION = 2
+
+/**
+ * The canonicalization each recorded digest version names. This is the single place that
+ * binds a version to the bytes it stands for: the writer derives the digest from the version
+ * it records, and the reader verifies against the version the record carries. A version that
+ * has no entry here is one this release cannot produce or verify, so the writer refuses to
+ * record it and the reader fails closed.
+ */
+const PROJECT_STATE_MUTATION_DIGEST_FORMS: Readonly<
+  Record<number, (mutation: ProjectStateMutationInput) => string>
+> = Object.freeze({
+  [PROJECT_STATE_MUTATION_DIGEST_VERSION]: (mutation) => digestV2(mutation),
+})
+
 const ItemKeySchema = z
   .string()
   .min(1)
@@ -172,14 +192,47 @@ export type ProjectStateItem = z.output<typeof ProjectStateItemSchema>
 export type ProjectStateOperation = z.output<typeof ProjectStateOperationSchema>
 export type StatePromotionProposal = z.output<typeof StatePromotionProposalSchema>
 
+/**
+ * The canonicalization a persisted mutation digest was computed with. Version 2 is the
+ * code-point canonical JSON form. Its absence marks a record written before explicit
+ * versioning, whose canonicalization a reader can only accept provisionally.
+ */
+export const ProjectStateMutationDigestVersionSchema = z.literal(
+  PROJECT_STATE_MUTATION_DIGEST_VERSION
+)
+
+export type ProjectStateMutationDigestVersion = z.output<
+  typeof ProjectStateMutationDigestVersionSchema
+>
+
 export const AppliedStateMutationSchema = z.object({
   mutationId: IdentifierSchemas.stateMutationId,
   inputDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  /**
+   * The canonicalization the writer used, recorded by the versioned writer path. Absent on
+   * every record written before explicit versioning. Malformed values are rejected by this
+   * schema; well-formed but unsupported versions are rejected by the reader.
+   */
+  inputDigestVersion: z.number().int().optional(),
   resultingRevision: z.number().int().positive(),
   touchedItemIds: z.array(IdentifierSchemas.projectStateItemId).max(256),
 })
 
 export type AppliedStateMutation = z.output<typeof AppliedStateMutationSchema>
+
+/**
+ * The writer options of the mutation path. The default writer keeps the untagged record it
+ * has always written; the versioned writer is explicitly opt-in. Both write paths that can
+ * persist a mutation record accept them: `applyMutation` and `mergePromotion`.
+ */
+export interface ProjectStateMutationWriterOptions {
+  /**
+   * Opt in to the explicitly versioned writer: the persisted record then carries the digest
+   * version, so a reader verifies the canonicalization the writer used instead of accepting a
+   * compatibility form. Omitting it preserves the existing writer defaults and stored bytes.
+   */
+  readonly digestVersion?: ProjectStateMutationDigestVersion
+}
 
 /**
  * Durable receipt for the one command that initialized a scope's revision zero. It binds the
@@ -386,6 +439,7 @@ export type ProjectStateErrorCode =
   | 'INITIALIZATION_IDEMPOTENCY_CONFLICT'
   | 'PROJECT_STATE_MISSING'
   | 'MUTATION_ID_REUSED'
+  | 'MUTATION_DIGEST_VERSION_UNSUPPORTED'
   | 'PROMOTION_REQUIRED'
   | 'ITEM_ALREADY_EXISTS'
   | 'ITEM_MISSING'
@@ -429,6 +483,14 @@ const MutationInputSchema = z.object({
   operations: z.array(ProjectStateOperationSchema).min(1).max(256),
   at: TimestampSchema,
 })
+
+type ProjectStateMutationInput = z.output<typeof MutationInputSchema>
+
+const MutationWriterOptionsSchema = z
+  .object({
+    digestVersion: ProjectStateMutationDigestVersionSchema.optional(),
+  })
+  .strict()
 
 const PromotionProposalInputSchema = z.object({
   proposalId: IdentifierSchemas.statePromotionProposalId,
@@ -554,15 +616,20 @@ export class ProjectStateService {
     return state
   }
 
-  async applyMutation(input: unknown): Promise<{ state: ProjectState; applied: boolean }> {
-    return this.#applyMutation(input, false)
+  async applyMutation(
+    input: unknown,
+    options?: ProjectStateMutationWriterOptions
+  ): Promise<{ state: ProjectState; applied: boolean }> {
+    return this.#applyMutation(input, false, options)
   }
 
   async #applyMutation(
     input: unknown,
-    allowExecutionProvenance: boolean
+    allowExecutionProvenance: boolean,
+    options?: ProjectStateMutationWriterOptions
   ): Promise<{ state: ProjectState; applied: boolean }> {
     const mutation = MutationInputSchema.parse(input)
+    const writer = MutationWriterOptionsSchema.parse(options ?? {})
     if (
       !allowExecutionProvenance &&
       mutation.operations.some(
@@ -571,25 +638,25 @@ export class ProjectStateService {
     ) {
       throw new ProjectStateError('PROMOTION_REQUIRED')
     }
-    // Dual-accept (#612): records persisted before the code-point cutover
-    // carry the legacy locale-dependent digest of the same mutation.
-    const inputDigest = digestV2(mutation)
-    const legacyInputDigest = digest(mutation)
+    // The writer path decides what a record carries, never what a reader accepts. The default
+    // writer keeps the untagged record it has always written; the opt-in versioned writer
+    // records the canonicalization it used so the reader does not have to guess it.
+    const inputDigest =
+      writer.digestVersion === undefined
+        ? digestV2(mutation)
+        : digestForVersion(writer.digestVersion, mutation)
+    if (inputDigest === undefined) {
+      // The writer cannot produce the canonicalization the requested version names, so it
+      // refuses to record a version it could not stand behind.
+      throw new ProjectStateError('MUTATION_DIGEST_VERSION_UNSUPPORTED')
+    }
     const applied = await this.repository.getMutation(
       mutation.workspaceId,
       mutation.projectId,
       mutation.mutationId
     )
     if (applied) {
-      if (applied.inputDigest !== inputDigest && applied.inputDigest !== legacyInputDigest)
-        throw new ProjectStateError('MUTATION_ID_REUSED')
-      const state = await this.repository.getAtRevision(
-        mutation.workspaceId,
-        mutation.projectId,
-        applied.resultingRevision
-      )
-      if (!state) throw new ProjectStateError('REVISION_MISSING')
-      return { state, applied: false }
+      return { state: await this.#replayAppliedMutation(applied, mutation), applied: false }
     }
 
     for (;;) {
@@ -616,6 +683,7 @@ export class ProjectStateService {
       const record: AppliedStateMutation = {
         mutationId: mutation.mutationId,
         inputDigest,
+        ...(writer.digestVersion === undefined ? {} : { inputDigestVersion: writer.digestVersion }),
         resultingRevision: next.revision,
         touchedItemIds: mutation.operations.map(operationItemId).toSorted(),
       }
@@ -626,15 +694,7 @@ export class ProjectStateService {
           mutation.mutationId
         )
         if (winner) {
-          if (winner.inputDigest !== inputDigest && winner.inputDigest !== legacyInputDigest)
-            throw new ProjectStateError('MUTATION_ID_REUSED')
-          const winnerState = await this.repository.getAtRevision(
-            mutation.workspaceId,
-            mutation.projectId,
-            winner.resultingRevision
-          )
-          if (!winnerState) throw new ProjectStateError('REVISION_MISSING')
-          return { state: winnerState, applied: false }
+          return { state: await this.#replayAppliedMutation(winner, mutation), applied: false }
         }
         continue
       }
@@ -649,6 +709,34 @@ export class ProjectStateService {
       })
       return { state: next, applied: true }
     }
+  }
+
+  /**
+   * The single verification path for a mutation that is already applied. The ordinary replay
+   * and the compare-and-set loser both resolve through it, so they accept exactly the same
+   * records: the record's own digest version selects the canonicalization, an untagged record
+   * is accepted only through the compatibility forms, and an unsupported version fails closed.
+   */
+  async #replayAppliedMutation(
+    applied: AppliedStateMutation,
+    mutation: ProjectStateMutationInput
+  ): Promise<ProjectState> {
+    if (
+      applied.inputDigestVersion !== undefined &&
+      applied.inputDigestVersion !== PROJECT_STATE_MUTATION_DIGEST_VERSION
+    ) {
+      throw new ProjectStateError('MUTATION_DIGEST_VERSION_UNSUPPORTED')
+    }
+    if (!matchesMutationDigest(mutation, applied.inputDigest, applied.inputDigestVersion)) {
+      throw new ProjectStateError('MUTATION_ID_REUSED')
+    }
+    const state = await this.repository.getAtRevision(
+      mutation.workspaceId,
+      mutation.projectId,
+      applied.resultingRevision
+    )
+    if (!state) throw new ProjectStateError('REVISION_MISSING')
+    return state
   }
 
   async getAtRevision(input: unknown): Promise<ProjectState> {
@@ -732,7 +820,10 @@ export class ProjectStateService {
     })
   }
 
-  async mergePromotion(input: unknown): Promise<StatePromotionProposal> {
+  async mergePromotion(
+    input: unknown,
+    options?: ProjectStateMutationWriterOptions
+  ): Promise<StatePromotionProposal> {
     const parsed = z
       .object({
         proposalId: IdentifierSchemas.statePromotionProposalId,
@@ -755,7 +846,8 @@ export class ProjectStateService {
         operations: proposal.operations,
         at: parsed.mergedAt,
       },
-      true
+      true,
+      options
     )
     return this.#replaceProposal(proposal, {
       state: 'merged',
@@ -966,6 +1058,59 @@ export function projectStateMutationLegacyDigest(input: unknown): string {
 
 export function projectStateMutationDigestV2(input: unknown): string {
   return digestV2(MutationInputSchema.parse(input))
+}
+
+/**
+ * The digest of a mutation input under the canonicalization a digest version names.
+ *
+ * `undefined` means this release has no canonicalization for that version: the writer must
+ * not record it and the reader must not verify against it. The version and the bytes it
+ * stands for are therefore always derived from the same table.
+ */
+export function projectStateMutationDigestForVersion(
+  version: number,
+  input: unknown
+): string | undefined {
+  return digestForVersion(version, MutationInputSchema.parse(input))
+}
+
+function digestForVersion(
+  version: number,
+  mutation: ProjectStateMutationInput
+): string | undefined {
+  const form = PROJECT_STATE_MUTATION_DIGEST_FORMS[version]
+  return form ? form(mutation) : undefined
+}
+
+/**
+ * Reader-first verification of a persisted mutation digest.
+ *
+ * The record's own digest version selects the canonicalization: a versioned record is
+ * verified against exactly that version's form, an untagged record is verified against the
+ * compatibility forms that predate explicit versioning, and any other version fails closed
+ * instead of falling back to a compatibility form.
+ */
+export function projectStateMutationMatchesDigest(
+  input: unknown,
+  expectedDigest: string,
+  version?: number
+): boolean {
+  return matchesMutationDigest(MutationInputSchema.parse(input), expectedDigest, version)
+}
+
+function matchesMutationDigest(
+  mutation: ProjectStateMutationInput,
+  expectedDigest: string,
+  version?: number
+): boolean {
+  if (version !== undefined && version !== PROJECT_STATE_MUTATION_DIGEST_VERSION) return false
+  if (version === PROJECT_STATE_MUTATION_DIGEST_VERSION) {
+    const canonicalDigest = digestForVersion(version, mutation)
+    return canonicalDigest !== undefined && expectedDigest === canonicalDigest
+  }
+  // Untagged record: the code-point form is what every writer has stored since the cutover,
+  // and the legacy locale-dependent form is what records written before it carry.
+  return expectedDigest === digestV2(mutation) || expectedDigest === digest(mutation)
 }
 
 // CANONICAL-JSON: verification-only legacy form (#612 transition). applyMutation

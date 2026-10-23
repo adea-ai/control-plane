@@ -204,6 +204,11 @@ export class PostgresProjectStateRepository
           revision: state.revision,
           mutationId: mutation.mutationId,
           inputDigest: mutation.inputDigest,
+          // Only a versioned writer records a version; untagged records keep the event
+          // payload they have always published.
+          ...(mutation.inputDigestVersion === undefined
+            ? {}
+            : { inputDigestVersion: mutation.inputDigestVersion }),
           touchedItemIds: [...mutation.touchedItemIds],
         },
       })
@@ -354,6 +359,8 @@ function mutationFromRow(row: MutationRow): AppliedStateMutation {
   return AppliedStateMutationSchema.parse({
     mutationId: row.mutationId,
     inputDigest: row.inputDigest,
+    // A NULL version is an untagged record: it predates explicit digest versioning.
+    inputDigestVersion: row.inputDigestVersion ?? undefined,
     resultingRevision: row.resultingRevision,
     touchedItemIds: row.touchedItemIds,
   })
