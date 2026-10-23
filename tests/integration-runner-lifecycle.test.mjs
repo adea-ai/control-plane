@@ -39,8 +39,17 @@ const runnerTestBudgetMs = 30_000
 // injection point (startup, readiness, test execution or cleanup) after writing
 // its receipt, so the test can send a real SIGINT/SIGTERM and observe the cleanup.
 const runnerDoubleSource = `#!${process.execPath}
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, existsSync } from 'node:fs'
 import { basename } from 'node:path'
+// The descendant fixtures detach (exit, so their holder is re-parented) only once
+// the harness has acknowledged that it recorded the holder's ownership, or has
+// deliberately declined to. The wait is bounded, so a harness that is gone never
+// strands the double.
+async function awaitFixtureAck() {
+  const deadline = Date.now() + 10_000
+  while (process.env.FIXTURE_ACK && !existsSync(process.env.FIXTURE_ACK) && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+}
 const program = basename(process.argv[1])
 const args = process.argv.slice(2)
 appendFileSync(process.env.COMMAND_RECEIPT, JSON.stringify({ program, args, project: process.env.COMPOSE_PROJECT_NAME ?? null }) + '\\n')
@@ -67,7 +76,7 @@ if (process.env.FAKE_BUN_SPAWN_DETACHED_DESCENDANT === 'true' && args.includes('
   if (process.env.FAKE_DESCENDANT_SCRUBS_OWNER === 'true') delete detachedEnv.CONTROL_PLANE_RUNNER_OWNER
   spawn(process.execPath, [
     '-e',
-    "const { spawn } = require('node:child_process'); const { appendFileSync } = require('node:fs'); const holder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] }); appendFileSync(process.env.DESCENDANT_RECEIPT, String(holder.pid) + '\\\\n'); process.exit(0)",
+    "const { spawn } = require('node:child_process'); const { appendFileSync } = require('node:fs'); const holder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] }); appendFileSync(process.env.DESCENDANT_RECEIPT, String(holder.pid) + '\\\\n'); const { existsSync } = require('node:fs'); const deadline = Date.now() + 10000; const detach = () => { if (!process.env.FIXTURE_ACK || existsSync(process.env.FIXTURE_ACK) || Date.now() > deadline) process.exit(0); setTimeout(detach, 10) }; detach()",
   ], { stdio: ['ignore', 'inherit', 'inherit'], env: detachedEnv })
   await new Promise(() => {})
 }
@@ -88,6 +97,7 @@ if (process.env.FAKE_BUN_WRAPPER_EXITS_FIRST === 'true' && args.includes(process
     env: holderEnv,
   })
   appendFileSync(process.env.DESCENDANT_RECEIPT, String(holder.pid) + '\\n')
+  await awaitFixtureAck()
   process.exit(0)
 }
 if (program === 'docker') {
@@ -158,6 +168,8 @@ function createRunnerHarness(overrides = {}) {
       // that drop the runner's owner token on purpose, so a teardown can prove a
       // process is the fixture's before it signals it.
       [FIXTURE_MARKER_VARIABLE]: directory,
+      // The descendant fixtures wait for this file before they detach.
+      FIXTURE_ACK: join(directory, FIXTURE_ACK_FILE),
       ...overrides,
     },
   }
@@ -177,6 +189,7 @@ function targetedShardOverrides(overrides, shard) {
 }
 
 const FIXTURE_MARKER_VARIABLE = 'CP_LIFECYCLE_FIXTURE'
+const FIXTURE_ACK_FILE = 'fixture-ack'
 const TEARDOWN_WAIT_MS = 5_000
 const SAMPLE_INTERVAL_MS = 100
 
@@ -274,11 +287,15 @@ function processTree(rootPid) {
  * still tells the two apart. This is what makes the teardown safe where /proc
  * cannot be read.
  */
-function createFixtureLedger() {
+function createFixtureLedger({ record = true } = {}) {
   const identities = new Map()
   return {
     identities,
     sample(rootPid) {
+      // A ledger that does not record is for the cases whose holder is
+      // intentionally unowned: nothing, neither the periodic sample nor the
+      // synchronous one, can then make the holder owned by timing.
+      if (!record) return
       for (const pid of processTree(rootPid)) {
         if (pid === process.pid || identities.has(pid)) continue
         const identity = processIdentity(pid)
@@ -472,6 +489,48 @@ async function waitForDescendant(descendants) {
   }
 }
 
+/** Whether the fixture doubles detach (re-parent) a holder in this configuration. */
+function detachesDescendant(overrides) {
+  return (
+    overrides.FAKE_BUN_SPAWN_DETACHED_DESCENDANT === 'true' ||
+    overrides.FAKE_BUN_WRAPPER_EXITS_FIRST === 'true'
+  )
+}
+
+/**
+ * The deterministic ownership boundary of a detaching fixture.
+ *
+ * Whether the harness owns a holder must not depend on whether a periodic sample
+ * happened to land while the holder was still in the runner's tree. The fixture
+ * therefore writes its receipt and then WAITS, still attached, for an
+ * acknowledgment; this function waits for the receipt, settles the ownership
+ * question while the holder is provably in the runner's tree, and only then
+ * writes the acknowledgment that lets the fixture detach.
+ *
+ * - `owned`: the holder is recorded in the ledger now, with its identity, and the
+ *   case fails loudly if it could not be, rather than leaking an unowned holder
+ *   that a later assertion expects to be gone.
+ * - `unowned`: the ledger records nothing, so the holder stays without proof of
+ *   ownership whatever the timing; the case fails loudly if it was recorded anyway.
+ */
+async function settleFixtureOwnership({ child, descendants, directory, ledger, ownership }) {
+  await waitForDescendant(descendants)
+  ledger.sample(child.pid)
+  const holders = readDescendantPids(descendants)
+  const recorded = holders.filter((pid) => ledger.owns(pid))
+  if (ownership === 'unowned') {
+    if (recorded.length > 0)
+      throw new Error(`the fixture holder ${recorded.join(', ')} was recorded as owned`)
+  } else {
+    const missing = holders.filter((pid) => !recorded.includes(pid))
+    if (missing.length > 0)
+      throw new Error(
+        `the fixture ownership handshake failed: ${missing.join(', ')} was not in the runner's tree before it detached`
+      )
+  }
+  writeFileSync(join(directory, FIXTURE_ACK_FILE), '')
+}
+
 /**
  * Waits until a PID is no longer a child of the process that spawned it.
  *
@@ -563,12 +622,13 @@ async function executeRunnerInterrupted(
     inspect,
     sampleIntervalMs,
     shard = TARGETED_SHARD,
+    ownership = 'owned',
   }
 ) {
   const { directory, commands, descendants, environment } = createRunnerHarness(
     targetedShardOverrides(overrides, shard)
   )
-  const ledger = createFixtureLedger()
+  const ledger = createFixtureLedger({ record: ownership !== 'unowned' })
   let child
   let gone
   let sampler
@@ -599,11 +659,11 @@ async function executeRunnerInterrupted(
       child.once(waitFor, (status, closeSignal) => resolve({ status, signal: closeSignal }))
     )
     await waitForReceipt(commands, predicate, description)
-    if (
-      overrides.FAKE_BUN_SPAWN_DESCENDANT === 'true' ||
-      overrides.FAKE_BUN_SPAWN_DETACHED_DESCENDANT === 'true'
-    )
-      await waitForDescendant(descendants)
+    if (overrides.FAKE_BUN_SPAWN_DESCENDANT === 'true') await waitForDescendant(descendants)
+    // A fixture that detaches its holder does so only after this boundary: the
+    // holder is recorded as owned, or deliberately not, and only then released.
+    if (detachesDescendant(overrides))
+      await settleFixtureOwnership({ child, descendants, directory, ledger, ownership })
     // The survivor of the detached case must be RE-PARENTED before the signal:
     // a survivor that is still a child is still part of the owned tree, and the
     // case would then measure the owned-tree termination instead.
@@ -701,12 +761,12 @@ function killQuietly(pid) {
  */
 async function executeRunnerToExit(
   overrides,
-  { settleMs = 30_000, inspect, shard = TARGETED_SHARD } = {}
+  { settleMs = 30_000, inspect, shard = TARGETED_SHARD, ownership = 'owned', sampleIntervalMs } = {}
 ) {
   const { directory, descendants, environment } = createRunnerHarness(
     targetedShardOverrides(overrides, shard)
   )
-  const ledger = createFixtureLedger()
+  const ledger = createFixtureLedger({ record: ownership !== 'unowned' })
   let child
   let gone
   let sampler
@@ -717,7 +777,7 @@ async function executeRunnerToExit(
       env: environment,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    sampler = startSampling(ledger, child)
+    sampler = startSampling(ledger, child, sampleIntervalMs)
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8')
@@ -732,6 +792,8 @@ async function executeRunnerToExit(
       child.once('exit', (status, signal) => resolve({ status, signal }))
     )
     gone = exited
+    if (detachesDescendant(overrides))
+      await settleFixtureOwnership({ child, descendants, directory, ledger, ownership })
     const outcome = await Promise.race([
       exited,
       new Promise((resolve) => {
@@ -2050,6 +2112,9 @@ describe('integration runner lifecycle harness teardown', () => {
           // fixture's without /proc, so the teardown must leave it and say so.
           { FAKE_BUN_WRAPPER_EXITS_FIRST: 'true', FAKE_DESCENDANT_SCRUBS_OWNER: 'true' },
           {
+            // Deliberately unowned: the ledger records nothing, however often it samples.
+            ownership: 'unowned',
+            sampleIntervalMs: 1,
             inspect: (result) => {
               seen.descendants = result.descendants
               throw new Error('the primary failure')
@@ -2086,7 +2151,12 @@ describe('integration runner lifecycle harness teardown', () => {
       try {
         await executeRunnerToExit(
           { FAKE_BUN_WRAPPER_EXITS_FIRST: 'true', FAKE_DESCENDANT_SCRUBS_OWNER: 'true' },
-          { inspect: (result) => (descendantsSeen = result.descendants) }
+          {
+            // Deliberately unowned: the ledger records nothing, however often it samples.
+            ownership: 'unowned',
+            sampleIntervalMs: 1,
+            inspect: (result) => (descendantsSeen = result.descendants),
+          }
         )
       } catch (error) {
         failure = error
@@ -2127,6 +2197,34 @@ describe('integration runner lifecycle harness teardown', () => {
     // reports, so a failing case cannot leak what it did not own.
     expect(outcome.error?.fixtureDescendants?.length ?? 0).toBeGreaterThan(0)
     for (const pid of outcome.error.fixtureDescendants) expect(isProcessAlive(pid)).toBe(false)
+  }, 40_000)
+
+  test('without /proc a case that exceeds its settle budget still reaps its holder, whatever the sampler saw', async () => {
+    // The periodic sample is made too slow to ever land, so the holder is owned
+    // only because the fixture ownership handshake recorded it while it was still
+    // attached to the runner's tree. A detached holder that the teardown could not
+    // prove would stay running while the assertion below says it is gone.
+    await withoutProcFilesystem(async () => {
+      const outcome = await executeRunnerInterrupted(
+        { FAKE_BUN_SPAWN_DETACHED_DESCENDANT: 'true' },
+        {
+          signal: 'SIGTERM',
+          predicate: ({ program, args }) => program === 'bun' && args.includes('test'),
+          description: 'the owned test execution',
+          waitFor: 'exit',
+          settleMs: 1,
+          sampleIntervalMs: 60_000,
+        }
+      ).then(
+        () => ({ error: undefined }),
+        (error) => ({ error })
+      )
+      expect(outcome.error?.message ?? '').toMatch(/Runner did not exit within 1ms after SIGTERM/u)
+      // The harness reported no cleanup problem: the holder was proven and reaped.
+      expect(outcome.error?.message ?? '').not.toMatch(/Harness cleanup problem/u)
+      expect(outcome.error?.fixtureDescendants?.length ?? 0).toBeGreaterThan(0)
+      for (const pid of outcome.error.fixtureDescendants) expect(isProcessAlive(pid)).toBe(false)
+    })
   }, 40_000)
 })
 
