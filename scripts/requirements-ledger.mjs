@@ -1591,6 +1591,7 @@ export function validateReconciliationRecord(record, ledger, crosswalk) {
       crosswalk.summary.requirementsWithProfileTargets,
     ],
     ['M1–M10 issue audits', crosswalk.summary.priorIssueAudits],
+    ['Deployment profiles', crosswalk.deploymentProfiles?.length ?? 0],
     ['External acceptance gates recorded', crosswalk.summary.externalGates],
   ]
   for (const [label, expected] of coverage) {
@@ -1605,6 +1606,61 @@ export function validateReconciliationRecord(record, ledger, crosswalk) {
         `reconciliation record "${label}" says ${String(actual)}, the crosswalk says ${String(expected)}`
       )
     }
+  }
+  const profileRows = crosswalk.deploymentProfiles ?? []
+  const profileClassifications = countBy(profileRows, 'classification')
+  const profileClassificationSummary = Object.entries(profileClassifications)
+    .toSorted(([left], [right]) => compareCodePointOrder(left, right))
+    .map(([classification, count]) =>
+      Object.keys(profileClassifications).length === 1
+        ? `all \`${classification}\``
+        : `${count} \`${classification}\``
+    )
+    .join(', ')
+  const profileRow = rows.find((line) => cell(line, 1) === 'Deployment profiles')
+  if (profileRow !== undefined) {
+    const expected = `${profileRows.length} (${profileClassificationSummary || 'none'})`
+    if (cell(profileRow, 2) !== expected) {
+      errors.push(
+        `reconciliation record "Deployment profiles" says ${cell(profileRow, 2)}, the crosswalk inventory says ${expected}`
+      )
+    }
+  }
+  const workerRows = crosswalk.workers ?? []
+  const integratedWorkers = workerRows.filter((worker) => worker.status === 'integrated').length
+  const workerStatusCounts = countBy(
+    workerRows.filter((worker) => worker.status !== 'integrated'),
+    'status'
+  )
+  const workerStatusSummary = Object.entries(workerStatusCounts)
+    .toSorted(([left], [right]) => compareCodePointOrder(left, right))
+    .map(([status, count]) => `${count} ${status}`)
+    .join(', ')
+  const workerSummaryRow = rows.find((line) => cell(line, 1) === 'Worker lanes recorded')
+  if (workerSummaryRow === undefined) {
+    errors.push('reconciliation record is missing the "Worker lanes recorded" row')
+  } else {
+    const expected = `${workerRows.length} (${integratedWorkers} integrated; ${workerStatusSummary || 'none'})`
+    if (cell(workerSummaryRow, 2) !== expected) {
+      errors.push(
+        `reconciliation record "Worker lanes recorded" says ${cell(workerSummaryRow, 2)}, the crosswalk inventory says ${expected}`
+      )
+    }
+  }
+  if (crosswalk.summary.deploymentProfiles !== profileRows.length) {
+    errors.push(
+      `crosswalk summary reports ${crosswalk.summary.deploymentProfiles} deployment profiles, but its inventory has ${profileRows.length}`
+    )
+  }
+  if (crosswalk.summary.workers !== workerRows.length) {
+    errors.push(
+      `crosswalk summary reports ${crosswalk.summary.workers} workers, but its inventory has ${workerRows.length}`
+    )
+  }
+  if (crosswalk.summary.workersIntegrated !== integratedWorkers) {
+    errors.push(
+      `crosswalk summary reports ${crosswalk.summary.workersIntegrated} integrated workers, but its inventory has ${integratedWorkers}`
+    )
   }
   for (const worker of ledger.workerEvidence ?? []) {
     const row = rows.find((line) => cell(line, 1) === worker.id)

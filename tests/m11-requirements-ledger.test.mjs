@@ -1533,6 +1533,97 @@ describe('CP #195 reconciliation record provenance (#186/#195)', () => {
     )
   }, 60000)
 
+  test('fails closed when deployment profile count or classification claims drift', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    const countDrift = record.replace(
+      '| Deployment profiles                                          | 4 (all `partially_verified`) |',
+      '| Deployment profiles                                          | 400 (all `partially_verified`) |'
+    )
+    expect(countDrift).not.toBe(record)
+    expect(validateReconciliationRecord(countDrift, ledger, crosswalk)).toContain(
+      'reconciliation record "Deployment profiles" says 400 (all `partially_verified`), the crosswalk inventory says 4 (all `partially_verified`)'
+    )
+
+    const classificationDrift = record.replace('4 (all `partially_verified`)', '4 (all `verified`)')
+    expect(classificationDrift).not.toBe(record)
+    expect(validateReconciliationRecord(classificationDrift, ledger, crosswalk)).toContain(
+      'reconciliation record "Deployment profiles" says 4 (all `verified`), the crosswalk inventory says 4 (all `partially_verified`)'
+    )
+
+    const inconsistentSummary = clone(crosswalk)
+    inconsistentSummary.summary.deploymentProfiles = 400
+    expect(validateReconciliationRecord(record, ledger, inconsistentSummary)).toContain(
+      'crosswalk summary reports 400 deployment profiles, but its inventory has 4'
+    )
+  }, 60000)
+
+  test('checks mixed deployment profile classifications against each inventory count', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    const mixed = clone(crosswalk)
+    mixed.deploymentProfiles[0].classification = 'verified'
+    const mixedRecord = record.replace(
+      '4 (all `partially_verified`)',
+      '4 (3 `partially_verified`, 1 `verified`)'
+    )
+    expect(validateReconciliationRecord(mixedRecord, ledger, mixed)).toEqual([])
+    expect(
+      validateReconciliationRecord(
+        mixedRecord.replace('3 `partially_verified`', '2 `partially_verified`'),
+        ledger,
+        mixed
+      )
+    ).toContain(
+      'reconciliation record "Deployment profiles" says 4 (2 `partially_verified`, 1 `verified`), the crosswalk inventory says 4 (3 `partially_verified`, 1 `verified`)'
+    )
+  }, 60000)
+
+  test('fails closed when worker aggregate counts drift from the worker inventory', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    for (const [actual, claimed] of [
+      ['7 (0 integrated; 7 received)', '99 (0 integrated; 7 received)'],
+      ['7 (0 integrated; 7 received)', '7 (7 integrated; 0 received)'],
+      ['7 (0 integrated; 7 received)', '7 (0 integrated; 6 received; 1 blocked)'],
+    ]) {
+      const drifted = record.replace(actual, claimed)
+      expect(drifted).not.toBe(record)
+      expect(validateReconciliationRecord(drifted, ledger, crosswalk)).toContain(
+        `reconciliation record "Worker lanes recorded" says ${claimed}, the crosswalk inventory says 7 (0 integrated; 7 received)`
+      )
+    }
+
+    const inconsistentSummary = clone(crosswalk)
+    inconsistentSummary.summary.workers = 99
+    expect(validateReconciliationRecord(record, ledger, inconsistentSummary)).toContain(
+      'crosswalk summary reports 99 workers, but its inventory has 7'
+    )
+    inconsistentSummary.summary.workers = 7
+    inconsistentSummary.summary.workersIntegrated = 99
+    expect(validateReconciliationRecord(record, ledger, inconsistentSummary)).toContain(
+      'crosswalk summary reports 99 integrated workers, but its inventory has 0'
+    )
+  }, 60000)
+
+  test('checks mixed worker status counts against the worker inventory', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    const mixed = clone(crosswalk)
+    mixed.workers[0].status = 'integrated'
+    mixed.summary.workersIntegrated = 1
+    const mixedRecord = record.replace(
+      '7 (0 integrated; 7 received)',
+      '7 (1 integrated; 6 received)'
+    )
+    expect(validateReconciliationRecord(mixedRecord, ledger, mixed)).toEqual([])
+    expect(
+      validateReconciliationRecord(mixedRecord.replace('6 received', '5 received'), ledger, mixed)
+    ).toContain(
+      'reconciliation record "Worker lanes recorded" says 7 (1 integrated; 5 received), the crosswalk inventory says 7 (1 integrated; 6 received)'
+    )
+  }, 60000)
+
   test('fails closed when the record drifts from a recorded worker head', async () => {
     const record = await loadRecord()
     const crosswalk = await loadCrosswalk()
