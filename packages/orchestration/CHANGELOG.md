@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/adea-ai/control-plane/compare/orchestration-v1.11.0...orchestration-v1.12.0) (2026-10-23)
+
+
+### Features
+
+* child-progress-outcomes-1019 ([#1273](https://github.com/adea-ai/control-plane/issues/1273)) ([ac39ab9](https://github.com/adea-ai/control-plane/commit/ac39ab9fde85bf52f3fd60aebd1512c3fe919359))
+
 ## [1.11.0](https://github.com/adea-ai/control-plane/compare/orchestration-v1.10.3...orchestration-v1.11.0) (2026-10-22)
 
 
