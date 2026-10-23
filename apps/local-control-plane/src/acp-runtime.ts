@@ -24,6 +24,14 @@ export interface LocalAcpRuntimeOptions extends AcpProcessTransportOptions {
   readonly externalSessionId: AcpDriverOptions['externalSessionId']
   readonly interactionId: AcpDriverOptions['interactionId']
   readonly resolvePrompt: NonNullable<AcpDriverOptions['resolvePrompt']>
+  /**
+   * Qualified native route gate. Optional: when supplied, the driver advertises
+   * exactly the evidenced capability allow-list, refuses `execution.cancel`
+   * the evidence omits and passes usage through only when the route reports
+   * it. Evidence supply stays with the deployment; this factory only carries
+   * the gate it is given and never builds one.
+   */
+  readonly nativeRouteGate?: AcpDriverOptions['nativeRouteGate']
 }
 
 /** Explicit native harness configuration; does not install or authenticate the harness. */
@@ -41,6 +49,7 @@ export function createLocalAcpRuntime(options: LocalAcpRuntimeOptions): LocalRun
     externalSessionId: options.externalSessionId,
     interactionId: options.interactionId,
     resolvePrompt: options.resolvePrompt,
+    ...(options.nativeRouteGate === undefined ? {} : { nativeRouteGate: options.nativeRouteGate }),
     ...(options.requestTimeoutMs === undefined
       ? {}
       : { requestTimeoutMs: options.requestTimeoutMs }),

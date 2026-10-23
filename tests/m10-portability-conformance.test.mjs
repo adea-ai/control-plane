@@ -144,7 +144,7 @@ async function createProfileAdapter(profile) {
       'project-state': isSqlite ? 'sqlite-project-state' : 'postgresql-project-state',
       context: 'context-package-v1',
       'execution-plan': 'execution-plan-v1',
-      persistence: isSqlite ? 'sqlite' : profile === 'cloud' ? 'postgresql-neon' : 'postgresql',
+      persistence: isSqlite ? 'sqlite' : profile === 'cloud' ? 'postgresql-postgres' : 'postgresql',
       'workflow-runtime': workflowPolicies.version,
       'object-store': isFilesystem ? 'filesystem' : profile === 'cloud' ? 'r2' : 's3-compatible',
       secrets:

@@ -16,16 +16,16 @@ not a demonstrated loss of user data.
 
 Railway deployment-variable readback independently confirmed both services:
 
-| Resource                         | Verified identity                                                         |
-| -------------------------------- | ------------------------------------------------------------------------- |
-| Railway project                  | `18c6a1fd-6b4b-421e-9ec9-fd1550ce9a3f`                                    |
-| Production environment           | `52f5b0ac-2af0-4792-aa56-30d80e5db31e`                                    |
-| API                              | `9167a33b-af0f-4780-8614-a5a161697c9c`                                    |
-| Worker                           | `d733ec0d-bda5-4be5-86b9-637154d282eb`                                    |
-| Neon project / production branch | `muddy-firefly-58711535` / `br-rough-tooth-ay4q6u73`                      |
-| Direct migration endpoint        | `ep-crimson-bird-ay77m275.c-5.us-east-2.aws.neon.tech`                    |
-| Runtime binding                  | Same endpoint with `-pooler`, database `neondb`, role `control_plane_app` |
-| Migration role                   | Direct connection, `control_plane_migrator`, TLS required                 |
+| Resource                               | Verified identity                                                          |
+| -------------------------------------- | -------------------------------------------------------------------------- |
+| Railway project                        | `18c6a1fd-6b4b-421e-9ec9-fd1550ce9a3f`                                     |
+| Production environment                 | `52f5b0ac-2af0-4792-aa56-30d80e5db31e`                                     |
+| API                                    | `9167a33b-af0f-4780-8614-a5a161697c9c`                                     |
+| Worker                                 | `d733ec0d-bda5-4be5-86b9-637154d282eb`                                     |
+| PostgreSQL project / production branch | `muddy-firefly-58711535` / `br-rough-tooth-ay4q6u73`                       |
+| Direct migration endpoint              | `ep-crimson-bird-ay77m275.c-5.us-east-2.aws.db.example.invalid`            |
+| Runtime binding                        | Same endpoint with `-pooler`, database `railway`, role `control_plane_app` |
+| Migration role                         | Direct connection, `control_plane_migrator`, TLS required                  |
 
 Both services have `APP_ENV=production`. The API's catalog approval configuration
 is `true`, required since `2026-09-25T00:00:00.000Z`. Configuration readback alone
@@ -75,10 +75,10 @@ redeployment and no destructive schema rollback was attempted.
 
 ## Rehearsal cleanup
 
-The dedicated `NEON_PRODUCTION_MIGRATION_URL` secret was provisioned in GitHub's
+The dedicated `DATABASE_MIGRATION_URL` secret was provisioned in GitHub's
 `control-plane / production` environment, with name-only metadata readback.
 It uses the existing direct-TLS production migration role, not an administrator,
-OAuth token, runtime role, or CI staging password. No database role/password,
+OAuth token, runtime role, or CI sandbox password. No database role/password,
 branch protection, or environment approval policy was changed. The environment
 currently has no reviewer protection rules; environment scoping is not a claim
 of human deployment approval. The prepared workflow must validate the final
@@ -93,7 +93,7 @@ gate-credential check must not be reported as runtime TLS hardening.
 
 The exact task-owned rehearsal branch was deleted after evidence capture.
 Subsequent branch inventory verified it absent and confirmed production,
-staging, and both unrelated preview branches remain. No production data was
+sandbox, and both unrelated preview branches remain. No production data was
 deleted. The rehearsal can be recreated from the preserved production parent
 and canonical migration source; the disposable child's transient state was
 not retained.
@@ -102,7 +102,7 @@ not retained.
 
 At `2026-09-27T00:34Z`, a separate read-only connection using the existing
 production `control_plane_app` role verified the exact direct endpoint,
-`neondb`, and certificate-verified TLS. Catalog queries returned:
+`railway`, and certificate-verified TLS. Catalog queries returned:
 
 - No role memberships, including potential `SET ROLE` authority.
 - No ownership of the current database or any public `pg_class` objects.
@@ -139,14 +139,14 @@ project-token lookup has mock coverage but still needs actual workflow proof.
 - Execute the integrated fail-closed tagged-source migration step before any
   Railway deployment mutation; verify its dedicated production-scoped migrator
   credential, runtime target bindings, serialization, and full journal readback
-  on the released candidate. Do not reuse CI staging/admin credentials.
+  on the released candidate. Do not reuse CI sandbox/admin credentials.
 - Validate the integrated candidate locally and through required current-head
   checks, then promote its exact released image digests and schema.
 - Complete the original M11 profile, retention, security, documentation,
   recovery, evaluation, skill, and independent human acceptance gates. This
   repair does not close those issues.
 - Clean up task-owned local helpers and test resources after validation. The
-  Neon rehearsal child is already removed; production, staging, and unrelated
+  PostgreSQL rehearsal child is already removed; production, sandbox, and unrelated
   preview branches are not cleanup targets.
 
 See also [released image promotion readback](m11-release-promotion-readback-2026-09-26.md).

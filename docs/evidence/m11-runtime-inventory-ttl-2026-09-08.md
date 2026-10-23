@@ -11,7 +11,7 @@ stale diagnostic and one availability transition.
 
 Production composition is still a separate high-severity #188/#194 gap:
 `apps/runtime-gateway/package.json` starts `src/start.ts`, which calls `start()`
-without a WebSocket server. `src/index.ts` rejects that absence in staging and
+without a WebSocket server. `src/index.ts` rejects that absence in sandbox and
 production; its startup tests only prove refusal and injected-server lifecycle.
 The source search found inventory ingestion construction in tests, not the
 production executable, and no production caller of health refresh or

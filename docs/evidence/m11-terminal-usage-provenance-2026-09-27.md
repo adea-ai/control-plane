@@ -72,6 +72,6 @@ source-authorized monetary charging, all-outcome settlement, remote terminal
 usage transport and replay, runtime enforcement of per-attempt bounds,
 extensions, usage retention/aggregate fences/restore/capacity and supported live
 profile certification remain required. Do not finalize unknown charges at zero.
-No staging/production deployment, issue closure, merge or full-goal completion.
+No sandbox/production deployment, issue closure, merge or full-goal completion.
 The bounded Luna worker and root runners are settled; unfinished checkouts and
 the stopped existing local PostgreSQL volume remain owned by the ongoing goal.

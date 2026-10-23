@@ -128,7 +128,7 @@ describe('workflow worker telemetry', () => {
     await runtime.shutdown('test-complete')
   })
 
-  test('composes durable activities from the managed Cloud Neon boundary', () => {
+  test('composes durable activities from the managed Cloud PostgreSQL boundary', () => {
     const composition = createManagedCloudWorkflowWorkerComposition(
       loadManagedCloudConfiguration(managedCloudEnvironment(), 'workflow-worker'),
       runtimePort(),
@@ -360,7 +360,7 @@ describe('workflow worker telemetry', () => {
     expect(adapter.emissions).toEqual([])
   })
 
-  test('probes and closes Neon around managed Cloud worker startup', async () => {
+  test('probes and closes PostgreSQL around managed Cloud worker startup', async () => {
     const processAdapter = new FakeProcessAdapter()
     const lifecycle = []
     const endpoint = {
@@ -386,14 +386,14 @@ describe('workflow worker telemetry', () => {
     expect(lifecycle).toEqual(['checked', 'endpoint', 'postgres'])
   })
 
-  test('composes and closes the staging certification runtime through R2', async () => {
+  test('composes and closes the disposable test certification runtime through R2', async () => {
     const lifecycle = []
     const endpoint = {
       run: async () => undefined,
       shutdown: async () => lifecycle.push('endpoint'),
     }
     const runtime = await start({
-      environment: managedCloudEnvironment(),
+      environment: { ...managedCloudEnvironment(), APP_ENV: 'test' },
       logger: { write: () => undefined },
       processAdapter: new FakeProcessAdapter(),
       restateEndpointFactory: { create: async () => endpoint },
@@ -490,12 +490,12 @@ function runtimePort() {
 
 function managedCloudEnvironment() {
   return {
-    APP_ENV: 'staging',
+    APP_ENV: 'production',
     COMMIT_SHA: 'abc123',
     INSTANCE_ID: 'worker-1',
     SERVICE_VERSION: '1.0.0',
     DATABASE_URL:
-      'postgresql://app:database-secret@example.neon.tech/control_plane?sslmode=require',
+      'postgresql://app:database-secret@postgres.example.invalid/control_plane?sslmode=require',
     CONTROL_PLANE_SECRET_ENCRYPTION_KEY:
       '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
     RESTATE_REQUEST_IDENTITY_PUBLIC_KEY: 'publickeyv1_w7YHemBctH5Ck2nQRQ47iBBqhNHy4FV7t2Usbye2A6f',

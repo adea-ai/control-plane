@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.2](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.6.1...model-gateway-v1.6.2) (2026-10-21)
+
+
+### Tests
+
+* **model-gateway:** prove the BYO eligibility rules independently ([f1bd75c](https://github.com/adea-ai/control-plane/commit/f1bd75c5877f31b809c42b8aa43e2d5b08e3ad14))
+* **model-gateway:** prove the BYO eligibility rules independently (CP [#931](https://github.com/adea-ai/control-plane/issues/931)) ([#1225](https://github.com/adea-ai/control-plane/issues/1225)) ([f1bd75c](https://github.com/adea-ai/control-plane/commit/f1bd75c5877f31b809c42b8aa43e2d5b08e3ad14))
+
 ## [1.6.1](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.6.0...model-gateway-v1.6.1) (2026-10-17)
 
 

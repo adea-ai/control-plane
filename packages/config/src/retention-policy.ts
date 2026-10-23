@@ -128,7 +128,7 @@ export const decidedRetentionPolicy: RetentionPolicyConfig = RetentionPolicySche
     { id: 'evaluation-runs', retainMs: 180 * day, holdOwner: 'release-owner' },
     { id: 'logs-traces', retainMs: 30 * day, holdOwner: 'platform-operator' },
     { id: 'artifacts', retainMs: 90 * day, holdOwner: 'release-owner' },
-    // Provider capability: Neon PITR window, exercised by the restore drill.
+    // Provider capability: PostgreSQL PITR window, exercised by the restore drill.
     { id: 'backups', retainMs: 7 * day, holdOwner: 'platform-operator' },
     { id: 'audit-records', retainMs: 400 * day, holdOwner: 'release-owner' },
   ],

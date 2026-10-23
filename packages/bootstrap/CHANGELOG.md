@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.4](https://github.com/adea-ai/control-plane/compare/bootstrap-v1.3.3...bootstrap-v1.3.4) (2026-10-22)
+
+
+### Maintenance
+
+* **railway:** finish production PostgreSQL reference cleanup ([#1259](https://github.com/adea-ai/control-plane/issues/1259)) ([bc15dfb](https://github.com/adea-ai/control-plane/commit/bc15dfbe7ef59723acb3d0da438515f7ea30417d))
+
+## [1.3.3](https://github.com/adea-ai/control-plane/compare/bootstrap-v1.3.2...bootstrap-v1.3.3) (2026-10-22)
+
+
+### Bug Fixes
+
+* **railway:** verify production PostgreSQL identity and scoped migrations ([#1256](https://github.com/adea-ai/control-plane/issues/1256)) ([86b7515](https://github.com/adea-ai/control-plane/commit/86b751520c569106644c518dd5fd0819056cd169))
+
 ## [1.3.2](https://github.com/adea-ai/control-plane/compare/bootstrap-v1.3.1...bootstrap-v1.3.2) (2026-10-17)
 
 

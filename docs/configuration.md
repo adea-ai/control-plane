@@ -4,11 +4,11 @@ All deployable services enter through `@control-plane/bootstrap`, which loads ty
 
 ## Environments and profiles
 
-`APP_ENV` accepts exactly `development`, `test`, `staging`, or `production`.
+`APP_ENV` accepts exactly `development`, `test`, `sandbox`, or `production`.
 
 Deployment profile is a separate concept from application environment:
 
-- managed cloud: Railway services using Neon, R2 and Restate;
+- managed cloud: Railway services using PostgreSQL, R2 and Restate;
 - Local: all-in-one composition using SQLite, the embedded SQLite workflow queue (no Restate
   process) and direct RuntimeTransport;
 - Hosted `simple`: containerized all-in-one with SQLite and bundled Restate;
@@ -16,7 +16,7 @@ Deployment profile is a separate concept from application environment:
 
 The same public/domain behavior must not depend on an environment-specific variable name.
 
-Development and test may load local dotenv files. Staging and production do not load dotenv files automatically; configuration comes from the deployment/runtime secret/configuration boundary.
+Development and test may load local dotenv files. Production do not load dotenv files automatically; configuration comes from the deployment/runtime secret/configuration boundary.
 
 ## Managed-cloud configuration (M9)
 
@@ -24,8 +24,8 @@ Railway service/shared variables are the accepted initial source for **service/b
 
 - application environment and service configuration;
 - service-to-service endpoints/credentials;
-- Neon runtime connection reference;
-- separately scoped Neon migration/admin reference for the migration job only;
+- PostgreSQL runtime connection reference;
+- separately scoped PostgreSQL migration/admin reference for the migration job only;
 - Restate endpoint/runtime configuration;
 - R2 endpoint/bucket/credential references;
 - bootstrap/master references for other deployment services.
@@ -56,7 +56,7 @@ server does not retain its 2 GiB default inside a 1 GiB container. There is no
 `RESTATE_SERVICE_AUTH_TOKEN` compatibility variable: self-hosted ingress authentication, private
 networking, and Restate-to-service request identity are separate controls.
 
-`workflow-worker` also requires `CONTROL_PLANE_CLOUD_RUNTIME`. Railway staging sets it to
+`workflow-worker` also requires `CONTROL_PLANE_CLOUD_RUNTIME`. Railway sandbox sets it to
 `certification`, which enables the bounded M9 runtime that writes and verifies a terminal result
 through the Control Plane R2 `ObjectStore`. Railway production sets it to `disabled`; the worker and
 Restate endpoint remain healthy, but execution and interaction activities fail closed with
@@ -81,7 +81,7 @@ Railway's injected `PORT` must be honored by HTTP services or mapped explicitly 
 
 Railway environment variables are not the storage model for arbitrary user-scoped connector/provider credentials. Those remain behind the audited credential-vault secret-provider boundary. Service/bootstrap secrets and dynamic user/provider credentials are separate classes with separate lifecycle and least-privilege rules.
 
-Managed Cloud uses `NeonEncryptedSecretProvider` backed by the repo-owned `credential_secrets` table. `CONTROL_PLANE_SECRET_ENCRYPTION_KEY` is a Railway secret used only to encrypt/decrypt dynamic credentials; it does not replace the credential vault or expose one environment variable per user credential. AWS Secrets Manager is not an active dependency.
+Managed Cloud uses `PostgresEncryptedSecretProvider` backed by the repo-owned `credential_secrets` table. `CONTROL_PLANE_SECRET_ENCRYPTION_KEY` is a Railway secret used only to encrypt/decrypt dynamic credentials; it does not replace the credential vault or expose one environment variable per user credential. AWS Secrets Manager is not an active dependency.
 
 ## Local and Hosted configuration (M10)
 
@@ -90,7 +90,7 @@ Local and Hosted compositions consume the same typed configuration model through
 - packaged Local: host-secure handles for reusable secrets plus local data/component paths selected by the trusted launcher;
 - standalone Local: owner-controlled environment/private-file references where supported;
 - Hosted: environment/Docker/private-file or external secret-manager references;
-- cloud-only provider identifiers such as Railway/Neon/R2 cannot be required by Local/Hosted core startup.
+- cloud-only provider identifiers such as Railway/PostgreSQL/R2 cannot be required by Local/Hosted core startup.
 
 Profile-specific configuration may select persistence, object store, secrets, runtime transport, process supervision and service discovery. It may not redefine Task/Execution/Profile/Skill/ProjectState/ContextProvider semantics.
 
@@ -164,7 +164,7 @@ requirement. Local uses an all-in-one Control Plane plus the embedded SQLite wor
 Restate process), and Hosted selects only the
 processes its implemented topology requires.
 
-If a deployment explicitly starts the optional `runtime-worker` service in staging or production,
+If a deployment explicitly starts the optional `runtime-worker` service in production,
 it must inject a `HostedManagedPiWorker`; the bare entrypoint fails startup instead of reporting
 readiness without a worker. The injected worker is registered for cleanup before its readiness
 probe, so failed or throwing probes also release it. Test/development bootstrap without a worker

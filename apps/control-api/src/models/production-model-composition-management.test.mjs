@@ -163,9 +163,9 @@ test('retains the gate store on the runtime journal database and survives reopen
       value: { id: TARGET },
     })
     expect(counts).toEqual({ issued: 1, calls: 1 })
-    // Repeatable boundary checks: admission before the claim, effect before
-    // dispatch — never consuming an approval (the request carries none).
-    expect(boundaries).toEqual(['admission', 'effect'])
+    // Admission precedes the claim, effect precedes dispatch, and publication
+    // is rechecked before returning the outcome. This request carries no approval.
+    expect(boundaries).toEqual(['admission', 'effect', 'publication'])
     const stored = database.prepare('SELECT revision, record FROM pi_management_call_gates').all()
     expect(stored).toHaveLength(1)
     const record = JSON.parse(String(stored[0]['record']))
@@ -192,6 +192,7 @@ test('retains the gate store on the runtime journal database and survives reopen
       value: { id: TARGET },
     })
     expect(reopenedCounts).toEqual({ issued: 0, calls: 0 })
+    expect(reopenedBoundaries).toEqual(['admission', 'admission', 'publication'])
     database.close()
   } finally {
     rmSync(directory, { recursive: true, force: true })

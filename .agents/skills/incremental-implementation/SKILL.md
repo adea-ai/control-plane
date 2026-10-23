@@ -1,9 +1,12 @@
 ---
 name: incremental-implementation
 metadata:
-  version: "1.0.1"
+  version: "1.1.0"
   owner: "Control Plane maintainers"
-description: Delivers changes incrementally. Use when implementing any feature or change that touches more than one file. Use when you're about to write a large amount of code at once, or when a task feels too big to land in one step.
+  provenance:
+    origin: repository-owned
+    integration_version: "1.1.0"
+description: "Use when a change spans more than one file or is too large to land in one step. Not for a single-file, single-function change of minimal scope. Delivers multi-file changes as thin vertical slices — implement, test, verify, and checkpoint each increment."
 ---
 
 # Incremental Implementation
@@ -263,3 +266,12 @@ Per-increment verification is the local check. Before declaring a task done, fol
 - **Failure/skip reporting:** a failing increment stops the cycle — revert or fix before the next slice; any skipped step is reported with its reason, never silently dropped.
 - **Cleanup:** remove or document task-owned scaffolding, fixtures, and temporary files; preserve pre-existing and unrelated user changes, and report them rather than staging or cleaning them.
 - **Completion-claim guard:** the skill must not declare the task done while any increment is unstarted, failing, or skipped without a documented reason.
+- **Stop conditions:** Stop the cycle when an increment fails verification, when the requested scope is unclear, or when the next slice would need a decision reserved for the user.
+
+### Boundary contract
+
+- **Secrets:** Never commit, log, or print credentials while staging increments; secret material stays in its configured store.
+- **Dirty worktree:** Inspect the starting worktree, preserve pre-existing and unrelated user changes, and never stage or clean them.
+- **Migration:** A migration is its own increment with its own verification; an increment that changes schema is not complete until the migration check passes.
+- **Generated files:** Regenerate committed generated files with their pinned generator inside the same increment as the source change that produced them.
+- **Provider:** No provider activation and no deployment; a provider-dependent increment stays blocked with its prerequisite named.

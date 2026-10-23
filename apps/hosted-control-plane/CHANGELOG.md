@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.4](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.21.3...hosted-control-plane-v1.21.4) (2026-10-22)
+
+
+### Bug Fixes
+
+* **railway:** verify production PostgreSQL identity and scoped migrations ([#1256](https://github.com/adea-ai/control-plane/issues/1256)) ([86b7515](https://github.com/adea-ai/control-plane/commit/86b751520c569106644c518dd5fd0819056cd169))
+
 ## [1.21.3](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.21.2...hosted-control-plane-v1.21.3) (2026-10-20)
 
 
@@ -67,7 +74,7 @@
 
 ### Bug Fixes
 
-* **ci:** scale explicit integration test budgets for the remote Neon lane ([#847](https://github.com/adea-ai/control-plane/issues/847)) ([887db8a](https://github.com/adea-ai/control-plane/commit/887db8a518800246465a1ebd801d222af45386f2))
+* **ci:** scale explicit integration test budgets for the remote PostgreSQL lane ([#847](https://github.com/adea-ai/control-plane/issues/847)) ([887db8a](https://github.com/adea-ai/control-plane/commit/887db8a518800246465a1ebd801d222af45386f2))
 
 ## [1.16.0](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.15.0...hosted-control-plane-v1.16.0) (2026-10-02)
 
