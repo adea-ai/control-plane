@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.108.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.107.0...workspace-v1.108.0) (2026-10-23)
+
+
+### Features
+
+* **acp-adapter:** add the production secure ACP remote wire and device agent ([#1023](https://github.com/adea-ai/control-plane/issues/1023)) ([#1238](https://github.com/adea-ai/control-plane/issues/1238)) ([52c3b36](https://github.com/adea-ai/control-plane/commit/52c3b36bccd04e3419b28945e8cfc97342b8612a))
+* **skills:** qualify the skill library with contracts and cold-task evidence ([#196](https://github.com/adea-ai/control-plane/issues/196)) ([#1216](https://github.com/adea-ai/control-plane/issues/1216)) ([11d7cea](https://github.com/adea-ai/control-plane/commit/11d7cea83f4bc9fb49acd2e6a3de400c76da037d))
+
+
+### Bug Fixes
+
+* **scripts:** report why the PostgreSQL readiness probe failed ([#1247](https://github.com/adea-ai/control-plane/issues/1247)) ([c0c28ef](https://github.com/adea-ai/control-plane/commit/c0c28ef5a11fc30b39468fd81658f4e7329e9ae3))
+
 ## [1.107.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.12...workspace-v1.107.0) (2026-10-23)
 
 
