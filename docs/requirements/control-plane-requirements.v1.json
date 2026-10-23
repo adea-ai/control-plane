@@ -47,6 +47,12 @@
         "requirementMapping": "incomplete",
         "implementationMapping": "bounded-path-inspection",
         "candidateAcceptance": "not-established"
+      },
+      "embeddedObjects": {
+        "scope": "selected root tabs only; nested tabs were not inventoried in any recorded observation",
+        "nestedTabsInventoried": false,
+        "historicalObservations": [],
+        "disposition": null
       }
     },
     {
@@ -73,6 +79,31 @@
         "requirementMapping": "incomplete",
         "implementationMapping": "bounded-path-inspection",
         "candidateAcceptance": "not-established"
+      },
+      "embeddedObjects": {
+        "scope": "selected root tabs only; nested tabs were not inventoried in any recorded observation",
+        "nestedTabsInventoried": false,
+        "historicalObservations": [
+          {
+            "observedAt": "2026-09-30",
+            "observedRevision": 2021,
+            "observationSource": "docs/requirements/canonical-figure-audit-2026-09-30.md",
+            "objects": [
+              {
+                "objectId": "kix.vzbv0wf940bf",
+                "sha256": "ffe6fef5090d37a94c683dcebb58e87f0824883d8013d433d12e6ff9de749d41",
+                "byteLength": 50662,
+                "recordedTextAnchor": "image immediately before the Figure 1 caption at L059"
+              }
+            ]
+          }
+        ],
+        "disposition": {
+          "severity": "high",
+          "owner": "documentation-governance",
+          "issue": 195,
+          "disposition": "The captured inline object identity is still observed at the current revision, but the current bytes were not retrieved and the figure still shows an unconditional Restate box that contradicts the recorded Local default. Re-read the bytes and reconcile the figure against the profile architecture."
+        }
       }
     },
     {
@@ -108,6 +139,12 @@
         "requirementCrosswalk": {
           "atomIdPrefix": "CPPRD-"
         }
+      },
+      "embeddedObjects": {
+        "scope": "selected root tabs only; nested tabs were not inventoried in any recorded observation",
+        "nestedTabsInventoried": false,
+        "historicalObservations": [],
+        "disposition": null
       }
     },
     {
@@ -140,6 +177,12 @@
         "requirementMapping": "incomplete",
         "implementationMapping": "bounded-path-inspection",
         "candidateAcceptance": "not-established"
+      },
+      "embeddedObjects": {
+        "scope": "selected root tabs only; nested tabs were not inventoried in any recorded observation",
+        "nestedTabsInventoried": false,
+        "historicalObservations": [],
+        "disposition": null
       }
     },
     {
@@ -172,6 +215,31 @@
         "severity": "high",
         "owner": "documentation-governance",
         "disposition": "The current revision 99 captured-text clause inventory has 546 atoms over 111 logical lines. Repository-path inspection is bounded; current atom-to-requirement/code/test/deployment mapping and all-profile independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
+      },
+      "embeddedObjects": {
+        "scope": "selected root tabs only; nested tabs were not inventoried in any recorded observation",
+        "nestedTabsInventoried": false,
+        "historicalObservations": [
+          {
+            "observedAt": "2026-09-30",
+            "observedRevision": 99,
+            "observationSource": "docs/requirements/canonical-figure-audit-2026-09-30.md",
+            "objects": [
+              {
+                "objectId": "kix.ows2808gmq16",
+                "sha256": "1714b1f2e825c908d41b5d9ffd6a516d2b9ac242fc4246f065fe72041c5d68e0",
+                "byteLength": 185403,
+                "recordedTextAnchor": "L043 caption"
+              }
+            ]
+          }
+        ],
+        "disposition": {
+          "severity": "high",
+          "owner": "documentation-governance",
+          "issue": 195,
+          "disposition": "The current root tab exposes two inline objects that were not present at the captured revision, and the captured object identity is no longer observed. The current bytes were not retrieved, so the captured PNG hash describes the historical revision only. Reconcile the canonical System Architecture figure with the profile-specific persistence defaults before any acceptance claim."
+        }
       }
     },
     {
@@ -207,6 +275,43 @@
         "severity": "high",
         "owner": "documentation-governance",
         "disposition": "The current revision 110 captured-text clause inventory has 421 atoms over 303 logical lines. Repository-path inspection is bounded; current atom-to-requirement/code/test/deployment mapping and all-profile independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
+      },
+      "embeddedObjects": {
+        "scope": "selected root tabs only; nested tabs were not inventoried in any recorded observation",
+        "nestedTabsInventoried": false,
+        "historicalObservations": [
+          {
+            "observedAt": "2026-09-30",
+            "observedRevision": 110,
+            "observationSource": "docs/requirements/canonical-figure-audit-2026-09-30.md",
+            "objects": [
+              {
+                "objectId": "kix.x35li8uk2135",
+                "sha256": "c93a4f16da227eff703bace6ab8e00f0358142a5032ed51005acbcfe1f850b78",
+                "byteLength": 144576,
+                "recordedTextAnchor": "image before the Figure 1 caption at L113"
+              },
+              {
+                "objectId": "kix.obxnsrixkdh2",
+                "sha256": "33e16d6cd6683dc9145467da0504573babd07026c25bbe6a5302cf969d047139",
+                "byteLength": 191741,
+                "recordedTextAnchor": "image before the Figure 2 caption at L137"
+              },
+              {
+                "objectId": "kix.ro51mjyzqmi9",
+                "sha256": "cafdbfac8880b4b374b8de1d158fc522390b4e0ca6b520a5f4336d6e6b8eff99",
+                "byteLength": 119111,
+                "recordedTextAnchor": "image before the Figure 3 caption at L181"
+              }
+            ]
+          }
+        ],
+        "disposition": {
+          "severity": "high",
+          "owner": "documentation-governance",
+          "issue": 195,
+          "disposition": "All three captured inline object identities are still observed at the current revision, but the current bytes were not retrieved and the execution figure still shows Restate as the sole outer workflow engine. Re-read the bytes and reconcile the figure against the profile architecture."
+        }
       }
     },
     {
@@ -239,6 +344,12 @@
         "severity": "high",
         "owner": "documentation-governance",
         "disposition": "The current revision 45 captured-text clause inventory has 237 atoms over 104 logical lines. Source-required per-field merge strategies remain unmapped in catalog/execution constraints (CP-AS-002), and Capability v1 stable ID, category/enum, description, risk, sensitivity, approval, constraints and compatibility metadata remain unmapped across catalog/policy/runtime-discovery contracts (CP-AS-004). Current atom-to-requirement/code/test/deployment mapping and independent acceptance remain incomplete. Existing classifications and historical candidate evidence are unchanged."
+      },
+      "embeddedObjects": {
+        "scope": "selected root tabs only; nested tabs were not inventoried in any recorded observation",
+        "nestedTabsInventoried": false,
+        "historicalObservations": [],
+        "disposition": null
       }
     },
     {
@@ -271,6 +382,37 @@
         "severity": "high",
         "owner": "documentation-governance",
         "disposition": "The current revision 73 captured-text clause inventory has 935 atoms over 234 logical lines. Repository-path inspection is bounded; current atom-to-requirement/code/test/deployment mapping and all-profile independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
+      },
+      "embeddedObjects": {
+        "scope": "selected root tabs only; nested tabs were not inventoried in any recorded observation",
+        "nestedTabsInventoried": false,
+        "historicalObservations": [
+          {
+            "observedAt": "2026-09-30",
+            "observedRevision": 73,
+            "observationSource": "docs/requirements/canonical-figure-audit-2026-09-30.md",
+            "objects": [
+              {
+                "objectId": "kix.3cdr0vj1ebkd",
+                "sha256": "c16ae0d9d91bb99a78cd5af06bfc884560c4eca974c56c5b576cbdb20fc9f9a2",
+                "byteLength": 63584,
+                "recordedTextAnchor": "L063 domain relationships"
+              },
+              {
+                "objectId": "kix.j8qqp2z5p3tm",
+                "sha256": "ce9932af244815b4a38c9d5da931356ebbb7cf744c9842ae2ba3330ffcb0e11a",
+                "byteLength": 50696,
+                "recordedTextAnchor": "L072 state machines"
+              }
+            ]
+          }
+        ],
+        "disposition": {
+          "severity": "medium",
+          "owner": "documentation-governance",
+          "issue": 195,
+          "disposition": "Both captured inline object identities are still observed at the current revision, but the current bytes were not retrieved and the state-machine figure still draws a lifecycle vocabulary that differs from the executable execution-state schema. Re-read the bytes and reconcile the figure against packages/domain/src/execution-lifecycle.ts."
+        }
       }
     },
     {
@@ -308,6 +450,12 @@
         "requirementMapping": "incomplete",
         "implementationMapping": "bounded-path-inspection",
         "candidateAcceptance": "not-established"
+      },
+      "embeddedObjects": {
+        "scope": "selected root tabs only; nested tabs were not inventoried in any recorded observation",
+        "nestedTabsInventoried": false,
+        "historicalObservations": [],
+        "disposition": null
       }
     },
     {
@@ -345,6 +493,12 @@
         "requirementMapping": "incomplete",
         "implementationMapping": "bounded-path-inspection",
         "candidateAcceptance": "not-established"
+      },
+      "embeddedObjects": {
+        "scope": "selected root tabs only; nested tabs were not inventoried in any recorded observation",
+        "nestedTabsInventoried": false,
+        "historicalObservations": [],
+        "disposition": null
       }
     },
     {
@@ -377,6 +531,12 @@
         "requirementMapping": "incomplete",
         "implementationMapping": "bounded-path-inspection",
         "candidateAcceptance": "not-established"
+      },
+      "embeddedObjects": {
+        "scope": "selected root tabs only; nested tabs were not inventoried in any recorded observation",
+        "nestedTabsInventoried": false,
+        "historicalObservations": [],
+        "disposition": null
       }
     },
     {
@@ -409,6 +569,37 @@
         "requirementMapping": "incomplete",
         "implementationMapping": "bounded-path-inspection",
         "candidateAcceptance": "not-established"
+      },
+      "embeddedObjects": {
+        "scope": "selected root tabs only; nested tabs were not inventoried in any recorded observation",
+        "nestedTabsInventoried": false,
+        "historicalObservations": [
+          {
+            "observedAt": "2026-09-30",
+            "observedRevision": 78,
+            "observationSource": "docs/requirements/canonical-figure-audit-2026-09-30.md",
+            "objects": [
+              {
+                "objectId": "kix.vlyjrmx8itur",
+                "sha256": "75ad026c90af7abe89a8f20f9c3604a17e2a91658b712265fc1299ff730eee6f",
+                "byteLength": 164420,
+                "recordedTextAnchor": "image before the Figure 1 caption at L036"
+              },
+              {
+                "objectId": "kix.a77to4b9gn0r",
+                "sha256": "8f24f3000f97c91b9349e40d494d0cb7a48f9f5c4e6f88d9f3cbc67ad154199c",
+                "byteLength": 112498,
+                "recordedTextAnchor": "inline in the heading \"3. Workspace Isolation\" at L037; no separate caption"
+              }
+            ]
+          }
+        ],
+        "disposition": {
+          "severity": "high",
+          "owner": "documentation-governance",
+          "issue": 195,
+          "disposition": "The current root tab exposes four inline objects: three identities that were not present at the captured revision and one retained identity; the captured \"3. Workspace Isolation\" identity is no longer observed. The current bytes were not retrieved, so the relay and runtime-gateway split cannot be confirmed from the current image. Re-read the bytes and reconcile the figure against the remote-control relay boundary."
+        }
       }
     },
     {
@@ -441,6 +632,12 @@
         "severity": "high",
         "owner": "documentation-governance",
         "disposition": "The current revision 53 captured-text clause inventory has 466 atoms over 114 logical lines. Repository-path inspection is bounded; current atom-to-requirement/code/test/deployment mapping and all-profile independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
+      },
+      "embeddedObjects": {
+        "scope": "selected root tabs only; nested tabs were not inventoried in any recorded observation",
+        "nestedTabsInventoried": false,
+        "historicalObservations": [],
+        "disposition": null
       }
     },
     {
@@ -473,6 +670,12 @@
         "severity": "high",
         "owner": "documentation-governance",
         "disposition": "The current revision 50 captured-text clause inventory has 326 atoms over 172 logical lines. Repository-path inspection is bounded; current atom-to-requirement/code/test/deployment mapping and all-profile independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
+      },
+      "embeddedObjects": {
+        "scope": "selected root tabs only; nested tabs were not inventoried in any recorded observation",
+        "nestedTabsInventoried": false,
+        "historicalObservations": [],
+        "disposition": null
       }
     },
     {
@@ -499,6 +702,12 @@
         "requirementMapping": "incomplete",
         "implementationMapping": "bounded-path-inspection",
         "candidateAcceptance": "not-established"
+      },
+      "embeddedObjects": {
+        "scope": "selected root tabs only; nested tabs were not inventoried in any recorded observation",
+        "nestedTabsInventoried": false,
+        "historicalObservations": [],
+        "disposition": null
       }
     }
   ],
@@ -5211,7 +5420,13 @@
           "kind": "document",
           "path": "docs/requirements/control-plane-tdd-source-audit.md"
         }
-      ]
+      ],
+      "supersession": {
+        "issue": 195,
+        "severity": "medium",
+        "owner": "workflow-runtime",
+        "disposition": "Superseded by the Restate durable lifecycle recorded in the Control Plane TDD revision 134 lineage and ADR-025. The Temporal obligation is retained as historical provenance only and is not re-opened by this reconciliation."
+      }
     },
     {
       "id": "CP-TDD-006",
@@ -5504,7 +5719,13 @@
           "kind": "document",
           "path": "packages/contracts/src/versioning.ts"
         }
-      ]
+      ],
+      "supersession": {
+        "issue": 195,
+        "severity": "medium",
+        "owner": "public-contracts",
+        "disposition": "Superseded by the versioned public contract set in packages/contracts. The historical prose wire shape remains available in the source lineage and is not re-opened by this reconciliation."
+      }
     },
     {
       "id": "RUNTIME-NODE-RETRIEVAL-001",
@@ -5881,7 +6102,13 @@
           "kind": "document",
           "path": "docs/architecture.md"
         }
-      ]
+      ],
+      "supersession": {
+        "issue": 195,
+        "severity": "medium",
+        "owner": "workflow-runtime",
+        "disposition": "Superseded by ADR-025 and the current Restate workflow worker. The Temporal lifecycle decision remains historical provenance only and is not re-opened by this reconciliation."
+      }
     },
     {
       "id": "CP-ADR-004",
@@ -6068,7 +6295,13 @@
           "path": "docs/infrastructure.md"
         }
       ],
-      "assessment": "The original AWS, ECS, and Terraform-oriented deployment baseline is no longer accepted; M9 replaced it with Railway, PostgreSQL, R2, and Restate, while M10 added Local and Hosted profiles."
+      "assessment": "The original AWS, ECS, and Terraform-oriented deployment baseline is no longer accepted; M9 replaced it with Railway, PostgreSQL, R2, and Restate, while M10 added Local and Hosted profiles.",
+      "supersession": {
+        "issue": 195,
+        "severity": "medium",
+        "owner": "infrastructure",
+        "disposition": "Superseded by the current M1 successor recorded in the repository architecture and operations documentation. The historical M1 outcome is retained as provenance, is not re-opened by this reconciliation, and does not satisfy the open acceptance gates that reference it."
+      }
     },
     {
       "id": "M1-ISSUE-9",
@@ -6314,7 +6547,13 @@
           "path": "docs/infrastructure.md"
         }
       ],
-      "assessment": "Temporal is no longer an accepted runtime or release-evidence source; M9 replaced the Cloud workflow path with Restate and M10 carried Restate into Local and Hosted."
+      "assessment": "Temporal is no longer an accepted runtime or release-evidence source; M9 replaced the Cloud workflow path with Restate and M10 carried Restate into Local and Hosted.",
+      "supersession": {
+        "issue": 195,
+        "severity": "medium",
+        "owner": "workflow-runtime",
+        "disposition": "Superseded by the current M3 successor recorded in the repository architecture and operations documentation. The historical M3 outcome is retained as provenance, is not re-opened by this reconciliation, and does not satisfy the open acceptance gates that reference it."
+      }
     },
     {
       "id": "M3-ISSUE-24",
@@ -6684,7 +6923,13 @@
           "path": "packages/runtime-sdk/src/transport.test.mjs"
         }
       ],
-      "assessment": "M10 removed Runtime Gateway from the Local critical path and replaced this topology with DirectLocalRuntimeTransport; gateway delivery remains valid only for non-co-located nodes."
+      "assessment": "M10 removed Runtime Gateway from the Local critical path and replaced this topology with DirectLocalRuntimeTransport; gateway delivery remains valid only for non-co-located nodes.",
+      "supersession": {
+        "issue": 195,
+        "severity": "medium",
+        "owner": "local-runtime-transport",
+        "disposition": "Superseded by the current M6 successor recorded in the repository architecture and operations documentation. The historical M6 outcome is retained as provenance, is not re-opened by this reconciliation, and does not satisfy the open acceptance gates that reference it."
+      }
     },
     {
       "id": "M6-ISSUE-46",
@@ -6748,7 +6993,13 @@
           "path": "packages/runtime-sdk/src/transport.test.mjs"
         }
       ],
-      "assessment": "M10 replaced Local ACP gateway transport with direct co-located transport; Runtime Gateway remains supported only when the ACP RuntimeNode is non-co-located."
+      "assessment": "M10 replaced Local ACP gateway transport with direct co-located transport; Runtime Gateway remains supported only when the ACP RuntimeNode is non-co-located.",
+      "supersession": {
+        "issue": 195,
+        "severity": "medium",
+        "owner": "local-runtime-transport",
+        "disposition": "Superseded by the current M6 successor recorded in the repository architecture and operations documentation. The historical M6 outcome is retained as provenance, is not re-opened by this reconciliation, and does not satisfy the open acceptance gates that reference it."
+      }
     },
     {
       "id": "M6-ISSUE-50",
@@ -7018,7 +7269,13 @@
           "path": "apps/workflow-worker/src/graph-segment-activity.ts"
         }
       ],
-      "assessment": "The graph-segment and interrupt behavior remains, but the Temporal boundary named by the issue was replaced by the current Restate workflow worker."
+      "assessment": "The graph-segment and interrupt behavior remains, but the Temporal boundary named by the issue was replaced by the current Restate workflow worker.",
+      "supersession": {
+        "issue": 195,
+        "severity": "medium",
+        "owner": "workflow-orchestration",
+        "disposition": "Superseded by the current M8 successor recorded in the repository architecture and operations documentation. The historical M8 outcome is retained as provenance, is not re-opened by this reconciliation, and does not satisfy the open acceptance gates that reference it."
+      }
     },
     {
       "id": "M8-ISSUE-65",
@@ -9363,6 +9620,467 @@
     {
       "id": "CP-ADR-006",
       "sourceId": "architecture-decisions"
+    }
+  ],
+  "reconciliation": {
+    "schemaVersion": 1,
+    "reconciledAt": "2026-10-21",
+    "reconciliationBase": "27f17bd55e0266439b5b3089163195c9e7a669be",
+    "scope": "current source → atomic clause → requirement → code/test/profile → issue/evidence crosswalk for #186 and #195",
+    "candidateProof": {
+      "candidateCommit": "d3e449471d02f791c52196ea296a5a8a653a4dd4",
+      "coversReconciliationBase": false,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "disposition": "The recorded candidate is the 2026-08-30 audit baseline. It predates the current implementation, the recorded current source revisions and every later evidence document, so it is retained unchanged as a historical baseline and is not re-certified here. No requirement, audit or profile classification was promoted on its authority, and the recorded reviewer sample and verification runs remain bound to it."
+    },
+    "externalGates": [
+      {
+        "id": "GATE-SOURCE-IMAGE-ACCESS",
+        "gate": "Current embedded figure bytes and nested-tab inventory for the fifteen canonical sources",
+        "status": "blocked",
+        "severity": "high",
+        "owner": "documentation-governance",
+        "issue": 195,
+        "disposition": "The 2026-10-03 root-tab read recorded twelve inline object identities across five parents but refreshed no image bytes and inventoried no nested tab. The 2026-09-30 PNG hashes therefore describe the captured revisions only, and the current visual content of the replaced System Architecture and Security objects is unknown.",
+        "nextAction": "With read-only Drive/Docs access, re-read every parent tab including nested tabs at the current revision and record the native inline-object identity, byte length and SHA-256 of each image; do not infer an image from its caption."
+      },
+      {
+        "id": "GATE-HUMAN-RATIFICATION",
+        "gate": "Source-owner semantic ratification of the current-source clause reconciliation",
+        "status": "blocked",
+        "severity": "high",
+        "owner": "documentation-governance",
+        "issue": 195,
+        "disposition": "The recorded lineage is a mechanical line-text comparison across 15 changed sources: 1529 captured clauses have changed source text and 1202 current clauses were extracted with clarifications, supersessions, additions, deletions and metadata dispositions. A mechanical comparison is not a semantic reading, and no source owner has ratified the dispositions.",
+        "nextAction": "The source owner reviews the changed clauses and the current figure inventory clause by clause and ratifies or corrects each disposition before the ledger re-extracts the affected atoms."
+      },
+      {
+        "id": "GATE-INDEPENDENT-SAMPLE",
+        "gate": "Independent representative reproduction on the current head",
+        "status": "blocked",
+        "severity": "high",
+        "owner": "independent-reviewer",
+        "issue": 197,
+        "disposition": "The only recorded reviewer sample is the 2026-08-30 baseline bound to the recorded candidate. No independent reviewer has reproduced the current crosswalk, the drift controls or a representative requirement and issue sample on the current head.",
+        "nextAction": "An independent reviewer re-runs bun run requirements:check and reproduces a representative sample of the requirement, issue-audit and figure-inventory rows on the exact head recorded in workerEvidence, and reports observed results rather than a pass claim."
+      },
+      {
+        "id": "GATE-WORKER-EVIDENCE",
+        "gate": "Worker contributions integrated by stable ID and exact head",
+        "status": "pending",
+        "severity": "medium",
+        "owner": "requirements-ledger",
+        "issue": 195,
+        "disposition": "All seven contributing lanes have published a commit, and each is recorded as received with its exact head and with its evidence paths proven against the tree of that head. No contribution is merged into this tree, so no worker result is integrated into the crosswalk and no worker result is reported as evidence. The recorded worker heads identify received evidence snapshots, not continuing claims of current remote state. W7 separately notes publication of the newer head 1bdae6df04ef0714c48dc89381ee3c61188a0965 observed on 2026-10-21; its received evidence remains bound to eb7d3ba7f42af0550f14dab8a30fc6a710ebcafc. Historical checks are not promoted to checks of the newer head.",
+        "nextAction": "Re-run bun run requirements:refresh after a lane publishes a further commit to re-record the live issue identities and the exact head per stable worker ID, then re-run the crosswalk so an integrated contribution appears against the requirement and issue rows it covers."
+      },
+      {
+        "id": "GATE-CURRENT-CANDIDATE",
+        "gate": "Frozen current candidate accepted for the milestone",
+        "status": "blocked",
+        "severity": "high",
+        "owner": "validation-architecture",
+        "issue": 197,
+        "disposition": "The recorded candidate does not cover the reconciliation base and no current candidate has been frozen, rebuilt or reviewed. Every later requirement-level evidence record is scoped to its own cited commit and does not certify the whole milestone.",
+        "nextAction": "Freeze a current candidate on the reconciled head, record it in candidate, and run the required deterministic lanes before any acceptance review."
+      }
+    ]
+  },
+  "githubIssueSnapshot": {
+    "schemaVersion": 1,
+    "repository": "adea-ai/control-plane",
+    "retrievedAt": "2026-10-21",
+    "method": "public GitHub REST API without authentication; issue identity, state and milestone only",
+    "repositoryMilestoneLabel": "M11",
+    "githubMilestoneTitle": "M19 — Feature Completion & Production Audit",
+    "milestoneNumber": 11,
+    "issues": [
+      {
+        "number": 186,
+        "title": "M19.01 — Build the canonical requirements and prior-milestone evidence ledger",
+        "state": "OPEN",
+        "closedAt": null,
+        "milestone": 11,
+        "url": "https://github.com/adea-ai/control-plane/issues/186",
+        "repositoryDocumentationLabel": "M11.1 — Build the canonical requirements and prior-milestone evidence ledger"
+      },
+      {
+        "number": 187,
+        "title": "M19.02 — Audit architecture, contracts, persistence, and production wiring",
+        "state": "OPEN",
+        "closedAt": null,
+        "milestone": 11,
+        "url": "https://github.com/adea-ai/control-plane/issues/187",
+        "repositoryDocumentationLabel": "M11.2 — Audit architecture, contracts, persistence, and production wiring"
+      },
+      {
+        "number": 188,
+        "title": "M19.05 — Prove complete standalone feature behavior end to end",
+        "state": "OPEN",
+        "closedAt": null,
+        "milestone": 11,
+        "url": "https://github.com/adea-ai/control-plane/issues/188",
+        "repositoryDocumentationLabel": "M11.3 — Prove complete standalone feature behavior end to end"
+      },
+      {
+        "number": 189,
+        "title": "M19.03 — Rebuild validation into deterministic Code Foundry test lanes",
+        "state": "OPEN",
+        "closedAt": null,
+        "milestone": 11,
+        "url": "https://github.com/adea-ai/control-plane/issues/189",
+        "repositoryDocumentationLabel": "M11.4 — Rebuild validation into deterministic Code Foundry test lanes"
+      },
+      {
+        "number": 190,
+        "title": "M19.06 — Complete the security, trust-boundary, and adversarial audit",
+        "state": "OPEN",
+        "closedAt": null,
+        "milestone": 11,
+        "url": "https://github.com/adea-ai/control-plane/issues/190",
+        "repositoryDocumentationLabel": "M11.5 — Complete the security, trust-boundary, and adversarial audit"
+      },
+      {
+        "number": 191,
+        "title": "M19.07 — Build adversarial evals for goal adherence and assumption control",
+        "state": "OPEN",
+        "closedAt": null,
+        "milestone": 11,
+        "url": "https://github.com/adea-ai/control-plane/issues/191",
+        "repositoryDocumentationLabel": "M11.6 — Build adversarial evals for goal adherence and assumption control"
+      },
+      {
+        "number": 192,
+        "title": "M11.7: Remove stale code, consolidate duplication, and simplify complexity",
+        "state": "CLOSED",
+        "closedAt": "2026-09-21T00:45:56Z",
+        "milestone": 11,
+        "url": "https://github.com/adea-ai/control-plane/issues/192",
+        "repositoryDocumentationLabel": "M11.7 — Remove stale code, consolidate duplication, and simplify complexity"
+      },
+      {
+        "number": 193,
+        "title": "M19.08 — Execute a complete performance, capacity, and cost optimization audit",
+        "state": "OPEN",
+        "closedAt": null,
+        "milestone": 11,
+        "url": "https://github.com/adea-ai/control-plane/issues/193",
+        "repositoryDocumentationLabel": "M11.8 — Execute a complete performance, capacity, and cost optimization audit"
+      },
+      {
+        "number": 194,
+        "title": "M19.09 — Audit reliability, observability, recovery, and production operations",
+        "state": "OPEN",
+        "closedAt": null,
+        "milestone": 11,
+        "url": "https://github.com/adea-ai/control-plane/issues/194",
+        "repositoryDocumentationLabel": "M11.9 — Audit reliability, observability, recovery, and production operations"
+      },
+      {
+        "number": 195,
+        "title": "M19.10 — Reconcile all GitHub and Google Drive documentation with verified reality",
+        "state": "OPEN",
+        "closedAt": null,
+        "milestone": 11,
+        "url": "https://github.com/adea-ai/control-plane/issues/195",
+        "repositoryDocumentationLabel": "M11.10 — Reconcile all GitHub and Google Drive documentation with verified reality"
+      },
+      {
+        "number": 196,
+        "title": "M19.11 — Optimize the audit and maintenance Skill library",
+        "state": "OPEN",
+        "closedAt": null,
+        "milestone": 11,
+        "url": "https://github.com/adea-ai/control-plane/issues/196",
+        "repositoryDocumentationLabel": "M11.11 — Optimize the audit and maintenance Skill library"
+      },
+      {
+        "number": 197,
+        "title": "M19.12 — Run the independent final audit and production-readiness gate",
+        "state": "OPEN",
+        "closedAt": null,
+        "milestone": 11,
+        "url": "https://github.com/adea-ai/control-plane/issues/197",
+        "repositoryDocumentationLabel": "M11.12 — Run the independent final audit and production-readiness gate"
+      }
+    ]
+  },
+  "atomDispositions": [
+    {
+      "sourceId": "project-index",
+      "unmappedAtoms": 135,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "issue": 195,
+      "disposition": "The 135 captured clauses of this source have no requirement link in the checked-in crosswalk. The clause text and anchors remain authoritative in the atomic inventory; mapping them to bounded requirement rows, code, test and profile evidence is the open #195 work and must not be reported as mapped before it is recorded."
+    },
+    {
+      "sourceId": "agent-hq-prd",
+      "unmappedAtoms": 415,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "issue": 195,
+      "disposition": "The 415 captured clauses of this source have no requirement link in the checked-in crosswalk. The clause text and anchors remain authoritative in the atomic inventory; mapping them to bounded requirement rows, code, test and profile evidence is the open #195 work and must not be reported as mapped before it is recorded."
+    },
+    {
+      "sourceId": "control-plane-prd",
+      "unmappedAtoms": 239,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "issue": 195,
+      "disposition": "The 239 captured clauses of this source have no requirement link in the checked-in crosswalk. The clause text and anchors remain authoritative in the atomic inventory; mapping them to bounded requirement rows, code, test and profile evidence is the open #195 work and must not be reported as mapped before it is recorded."
+    },
+    {
+      "sourceId": "cortana-prd",
+      "unmappedAtoms": 366,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "issue": 195,
+      "disposition": "The 366 captured clauses of this source have no requirement link in the checked-in crosswalk. The clause text and anchors remain authoritative in the atomic inventory; mapping them to bounded requirement rows, code, test and profile evidence is the open #195 work and must not be reported as mapped before it is recorded."
+    },
+    {
+      "sourceId": "system-architecture",
+      "unmappedAtoms": 546,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "issue": 195,
+      "disposition": "The 546 captured clauses of this source have no requirement link in the checked-in crosswalk. The clause text and anchors remain authoritative in the atomic inventory; mapping them to bounded requirement rows, code, test and profile evidence is the open #195 work and must not be reported as mapped before it is recorded."
+    },
+    {
+      "sourceId": "control-plane-tdd",
+      "unmappedAtoms": 238,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "issue": 195,
+      "disposition": "The 238 captured clauses of this source have no requirement link in the checked-in crosswalk. The clause text and anchors remain authoritative in the atomic inventory; mapping them to bounded requirement rows, code, test and profile evidence is the open #195 work and must not be reported as mapped before it is recorded."
+    },
+    {
+      "sourceId": "agent-skill-spec",
+      "unmappedAtoms": 237,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "issue": 195,
+      "disposition": "The 237 captured clauses of this source have no requirement link in the checked-in crosswalk. The clause text and anchors remain authoritative in the atomic inventory; mapping them to bounded requirement rows, code, test and profile evidence is the open #195 work and must not be reported as mapped before it is recorded."
+    },
+    {
+      "sourceId": "data-api-spec",
+      "unmappedAtoms": 935,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "issue": 195,
+      "disposition": "The 935 captured clauses of this source have no requirement link in the checked-in crosswalk. The clause text and anchors remain authoritative in the atomic inventory; mapping them to bounded requirement rows, code, test and profile evidence is the open #195 work and must not be reported as mapped before it is recorded."
+    },
+    {
+      "sourceId": "runtime-node-spec",
+      "unmappedAtoms": 309,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "issue": 195,
+      "disposition": "The 309 captured clauses of this source have no requirement link in the checked-in crosswalk. The clause text and anchors remain authoritative in the atomic inventory; mapping them to bounded requirement rows, code, test and profile evidence is the open #195 work and must not be reported as mapped before it is recorded."
+    },
+    {
+      "sourceId": "execution-consistency-spec",
+      "unmappedAtoms": 372,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "issue": 195,
+      "disposition": "The 372 captured clauses of this source have no requirement link in the checked-in crosswalk. The clause text and anchors remain authoritative in the atomic inventory; mapping them to bounded requirement rows, code, test and profile evidence is the open #195 work and must not be reported as mapped before it is recorded."
+    },
+    {
+      "sourceId": "artifact-storage-spec",
+      "unmappedAtoms": 237,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "issue": 195,
+      "disposition": "The 237 captured clauses of this source have no requirement link in the checked-in crosswalk. The clause text and anchors remain authoritative in the atomic inventory; mapping them to bounded requirement rows, code, test and profile evidence is the open #195 work and must not be reported as mapped before it is recorded."
+    },
+    {
+      "sourceId": "security-trust-model",
+      "unmappedAtoms": 261,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "issue": 195,
+      "disposition": "The 261 captured clauses of this source have no requirement link in the checked-in crosswalk. The clause text and anchors remain authoritative in the atomic inventory; mapping them to bounded requirement rows, code, test and profile evidence is the open #195 work and must not be reported as mapped before it is recorded."
+    },
+    {
+      "sourceId": "evaluation-plan",
+      "unmappedAtoms": 466,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "issue": 195,
+      "disposition": "The 466 captured clauses of this source have no requirement link in the checked-in crosswalk. The clause text and anchors remain authoritative in the atomic inventory; mapping them to bounded requirement rows, code, test and profile evidence is the open #195 work and must not be reported as mapped before it is recorded."
+    },
+    {
+      "sourceId": "runtime-compatibility",
+      "unmappedAtoms": 326,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "issue": 195,
+      "disposition": "The 326 captured clauses of this source have no requirement link in the checked-in crosswalk. The clause text and anchors remain authoritative in the atomic inventory; mapping them to bounded requirement rows, code, test and profile evidence is the open #195 work and must not be reported as mapped before it is recorded."
+    },
+    {
+      "sourceId": "architecture-decisions",
+      "unmappedAtoms": 720,
+      "severity": "high",
+      "owner": "requirements-ledger",
+      "issue": 195,
+      "disposition": "The 720 captured clauses of this source have no requirement link in the checked-in crosswalk. The clause text and anchors remain authoritative in the atomic inventory; mapping them to bounded requirement rows, code, test and profile evidence is the open #195 work and must not be reported as mapped before it is recorded."
+    }
+  ],
+  "workerEvidence": [
+    {
+      "id": "W1",
+      "lane": "cp558-resolution",
+      "status": "received",
+      "head": "24c84da87575ec458116138ceaa647258a9e51f8",
+      "branch": "f2w1/cp558-resolution",
+      "issueRefs": [558],
+      "evidence": [
+        {
+          "path": "docs/architecture/decision-558-context-consumer-conformance.md",
+          "commit": "24c84da87575ec458116138ceaa647258a9e51f8"
+        },
+        {
+          "path": "apps/control-api/src/decision-context-consumer-conformance.test.mjs",
+          "commit": "24c84da87575ec458116138ceaa647258a9e51f8"
+        }
+      ],
+      "nextAction": "Refresh the recorded head when the #558 resolution lane publishes a further commit."
+    },
+    {
+      "id": "W2",
+      "lane": "cp186-195-requirements",
+      "status": "received",
+      "head": "076cc525a9ca2d45f9a727cb44e4e763cef261f4",
+      "branch": "f2w2/cp186-195-requirements",
+      "issueRefs": [186, 195],
+      "evidence": [
+        {
+          "path": "docs/requirements/control-plane-requirements-crosswalk.v1.json",
+          "commit": "076cc525a9ca2d45f9a727cb44e4e763cef261f4"
+        },
+        {
+          "path": "docs/requirements/canonical-figure-inventory.v1.json",
+          "commit": "076cc525a9ca2d45f9a727cb44e4e763cef261f4"
+        },
+        {
+          "path": "docs/requirements/cp186-195-reconciliation-2026-10-21.md",
+          "commit": "076cc525a9ca2d45f9a727cb44e4e763cef261f4"
+        }
+      ],
+      "nextAction": "Refresh the recorded head when this branch publishes its next commit; the recorded head names the last published state of this lane."
+    },
+    {
+      "id": "W3",
+      "lane": "cp187-architecture-audit",
+      "status": "received",
+      "head": "70017bd9ae7a46a8a58aada372f9e75166004d02",
+      "branch": "f2w3/cp187-architecture-audit",
+      "issueRefs": [187],
+      "evidence": [
+        {
+          "path": "docs/evidence/m11-architecture-audit-binding-detector-handoff-2026-10-21.md",
+          "commit": "70017bd9ae7a46a8a58aada372f9e75166004d02"
+        },
+        {
+          "path": "scripts/architecture-audit.mjs",
+          "commit": "70017bd9ae7a46a8a58aada372f9e75166004d02"
+        },
+        {
+          "path": "scripts/m11-architecture-audit-regression.test.mjs",
+          "commit": "70017bd9ae7a46a8a58aada372f9e75166004d02"
+        }
+      ],
+      "nextAction": "Refresh the recorded head when the architecture lane publishes a further commit."
+    },
+    {
+      "id": "W4",
+      "lane": "cp190-trust-boundary",
+      "status": "received",
+      "head": "43295261c6a8a5ef112e1e319961f3601f6de71b",
+      "branch": "f2w4/cp190-trust-boundary",
+      "issueRefs": [190],
+      "evidence": [
+        {
+          "path": "docs/evidence/m11-security-trust-boundary-audit-2026-10-21.md",
+          "commit": "43295261c6a8a5ef112e1e319961f3601f6de71b"
+        },
+        {
+          "path": "docs/evidence/m11-security-trust-boundary-matrix-2026-10-21.v1.json",
+          "commit": "43295261c6a8a5ef112e1e319961f3601f6de71b"
+        },
+        {
+          "path": "scripts/security-trust-boundary-probes.mjs",
+          "commit": "43295261c6a8a5ef112e1e319961f3601f6de71b"
+        }
+      ],
+      "nextAction": "Refresh the recorded head when the trust-boundary lane publishes a further commit."
+    },
+    {
+      "id": "W5",
+      "lane": "cp191-adversarial-eval",
+      "status": "received",
+      "head": "9bf1cb374a189345750e6dad6057191233c52a61",
+      "branch": "f2w5/cp191-adversarial-eval",
+      "issueRefs": [191],
+      "evidence": [
+        {
+          "path": "docs/evidence/cp191-adversarial-eval-program-2026-10-21.md",
+          "commit": "9bf1cb374a189345750e6dad6057191233c52a61"
+        },
+        {
+          "path": "docs/evidence/cp191-adversarial-baseline-scorecard.json",
+          "commit": "9bf1cb374a189345750e6dad6057191233c52a61"
+        },
+        {
+          "path": "docs/adversarial-corpus-v1.md",
+          "commit": "9bf1cb374a189345750e6dad6057191233c52a61"
+        }
+      ],
+      "nextAction": "Refresh the recorded head when the adversarial-evaluation lane publishes a further commit."
+    },
+    {
+      "id": "W6",
+      "lane": "cp196-skill-library",
+      "status": "received",
+      "head": "eb84f92e73a665f676a9a7ff22041b73e0844076",
+      "branch": "f2w6/cp196-skill-library",
+      "issueRefs": [196],
+      "evidence": [
+        {
+          "path": "docs/evals/skill-evals/blinded-comparison-packet.md",
+          "commit": "eb84f92e73a665f676a9a7ff22041b73e0844076"
+        },
+        {
+          "path": "docs/evals/skill-evals/README.md",
+          "commit": "eb84f92e73a665f676a9a7ff22041b73e0844076"
+        },
+        {
+          "path": ".agents/skills/control-plane-audit/SKILL.md",
+          "commit": "eb84f92e73a665f676a9a7ff22041b73e0844076"
+        }
+      ],
+      "nextAction": "Refresh the recorded head when the skill-library lane publishes a further commit; the lane also carries a separate credential-vault branch."
+    },
+    {
+      "id": "W7",
+      "lane": "cp612-project-state-digest-compat",
+      "status": "received",
+      "head": "eb7d3ba7f42af0550f14dab8a30fc6a710ebcafc",
+      "branch": "f2w7/cp612-project-state-digest-compat",
+      "issueRefs": [612],
+      "evidence": [
+        {
+          "path": "docs/project-state-digest-compatibility.md",
+          "commit": "eb7d3ba7f42af0550f14dab8a30fc6a710ebcafc"
+        },
+        {
+          "path": "packages/sqlite-persistence/src/project-state-digest-reopen-race.test.mjs",
+          "commit": "eb7d3ba7f42af0550f14dab8a30fc6a710ebcafc"
+        }
+      ],
+      "nextAction": "Published head observed on 2026-10-21: 1bdae6df04ef0714c48dc89381ee3c61188a0965. The cited evidence retains its original eb7d3ba7f42af0550f14dab8a30fc6a710ebcafc commit; earlier checks do not certify the newer head. Refresh this publication snapshot after a further publication and validate the newer head separately."
     }
   ]
 }
