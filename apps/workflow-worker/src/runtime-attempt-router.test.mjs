@@ -317,6 +317,57 @@ describe('no implicit cloud rerouting (TDD-A377)', () => {
     ).rejects.toThrow('WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK')
   })
 
+  test('an offline enrolled remote_host is never silently replaced by the cloud service', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const router = new RuntimeDiscoveryAttemptRouter({
+      discovery: {
+        listRuntimeConnections: async () => [offlineRemoteHostDevice(), cloudRuntime()],
+      },
+      now: () => '2026-08-28T12:00:00.000Z',
+    })
+
+    await expect(
+      router.resolve({ execution: execution(plan), executionPlan: plan })
+    ).rejects.toThrow('WORKFLOW_RUNTIME_REMOTE_HOST_UNAVAILABLE_NO_FALLBACK')
+  })
+
+  test('a revoked enrolled remote_host is never silently replaced by the cloud service', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const router = new RuntimeDiscoveryAttemptRouter({
+      discovery: {
+        listRuntimeConnections: async () => [revokedRemoteHostDevice(), cloudRuntime()],
+      },
+      now: () => '2026-08-28T12:00:00.000Z',
+    })
+
+    await expect(
+      router.resolve({ execution: execution(plan), executionPlan: plan })
+    ).rejects.toThrow('WORKFLOW_RUNTIME_REMOTE_HOST_UNAVAILABLE_NO_FALLBACK')
+  })
+
+  test('cloud remains eligible when a remote_host cannot serve the plan', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const cloud = cloudRuntime()
+    const excludedRemoteHosts = [
+      remoteHostDevice({ compatibility: { state: 'incompatible', limitations: [] } }),
+      remoteHostDevice({
+        capabilities: ['filesystem.read'],
+        capabilityDetails: [{ name: 'filesystem.read', support: 'supported' }],
+      }),
+    ]
+
+    for (const remoteHost of excludedRemoteHosts) {
+      const router = new RuntimeDiscoveryAttemptRouter({
+        discovery: { listRuntimeConnections: async () => [remoteHost, cloud] },
+        now: () => '2026-08-28T12:00:00.000Z',
+      })
+
+      const selected = await router.resolve({ execution: execution(plan), executionPlan: plan })
+
+      expect(selected.runtimeConnectionId).toBe(cloud.runtimeConnectionId)
+    }
+  })
+
   test('an offline local device with no remote alternative stays unavailable', async () => {
     const plan = createExecutionPlanTestFixture()
     const router = new RuntimeDiscoveryAttemptRouter({
@@ -483,6 +534,32 @@ function revokedLocalDevice() {
   return localDevice({
     status: 'revoked',
     node: runtimeNode({ location: 'local_device', status: 'revoked', health: 'revoked' }),
+    connection: { status: 'revoked', health: 'unavailable', availability: 'revoked' },
+    compatibility: { state: 'revoked', limitations: [] },
+  })
+}
+
+function remoteHostDevice(overrides = {}) {
+  return runtimeConnection('rtc_01JABCDEF0123456789ABCDEFC', {
+    location: 'remote_host',
+    node: runtimeNode({ location: 'remote_host' }),
+    ...overrides,
+  })
+}
+
+function offlineRemoteHostDevice(overrides = {}) {
+  return remoteHostDevice({
+    status: 'unavailable',
+    node: runtimeNode({ location: 'remote_host', status: 'offline', health: 'offline' }),
+    connection: { status: 'disconnected', health: 'unavailable', availability: 'offline' },
+    ...overrides,
+  })
+}
+
+function revokedRemoteHostDevice() {
+  return remoteHostDevice({
+    status: 'revoked',
+    node: runtimeNode({ location: 'remote_host', status: 'revoked', health: 'revoked' }),
     connection: { status: 'revoked', health: 'unavailable', availability: 'revoked' },
     compatibility: { state: 'revoked', limitations: [] },
   })
