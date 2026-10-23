@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { loadDatabaseCredentials } from '@control-plane/config'
 import { PostgresModelSelectionRepository } from './model-selection-repository.ts'
 import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
@@ -50,7 +50,8 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
   () => {
     let isolated
     let repository
-    beforeAll(async () => {
+    // A fresh database per test: each case owns its state, so the suite passes in any order.
+    beforeEach(async () => {
       isolated = await createIsolatedTestDatabase({
         administration: loadDatabaseCredentials(process.env, 'administration'),
         application: loadDatabaseCredentials(process.env, 'application'),
@@ -59,7 +60,7 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       await isolated.migrate()
       repository = new PostgresModelSelectionRepository(isolated.application)
     }, integrationTestTimeout(60_000))
-    afterAll(async () => {
+    afterEach(async () => {
       await isolated?.dispose()
     })
     test('serializes competing defaults and immutable insertions and scopes reads on reopen', async () => {
@@ -97,6 +98,9 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       ).toBeUndefined()
     })
     test('rejects account replacement and stale competing updates; revocation cannot revive', async () => {
+      // Own setup: the revision-1 connection this case updates, saved here rather than left
+      // behind by the other case.
+      expect(await repository.saveConnection(0, connection)).toBe(true)
       expect(
         await repository.saveConnection(1, {
           ...connection,

@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/workspace",
-  "version": "1.110.1",
+  "version": "1.110.3",
   "private": true,
   "workspaces": [
     "apps/*",
@@ -21,6 +21,7 @@
     "requirements:atomic:write": "bun scripts/atomic-clause-ledger.mjs --write",
     "requirements:crosswalk:write": "bun scripts/atomic-clause-ledger.mjs --crosswalk --write",
     "requirements:write": "bun scripts/requirements-ledger.mjs --write",
+    "requirements:provenance:fetch": "bun scripts/fetch-requirements-provenance.mjs",
     "requirements:refresh": "bun scripts/requirements-ledger.mjs --refresh-issues",
     "lint": "vp run orch:lint && oxlint --deny-warnings tests && bun run check:boundaries && bun run check:canonical-ordering && bun run check:digest-writers",
     "openapi:check": "vp run orch:openapi:check",
