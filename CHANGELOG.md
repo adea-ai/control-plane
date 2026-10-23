@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.112.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.111.1...workspace-v1.112.0) (2026-10-23)
+
+
+### Features
+
+* **acp-adapter:** require current controller enrollment authority on secure remote route ([#1282](https://github.com/adea-ai/control-plane/issues/1282)) ([5da0e9f](https://github.com/adea-ai/control-plane/commit/5da0e9f92b82d3df779e94a85006208c8ab4013d))
+
 ## [1.111.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.111.0...workspace-v1.111.1) (2026-10-23)
 
 
