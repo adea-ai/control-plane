@@ -212,12 +212,30 @@ export interface AcpRemoteWire {
   readonly currentChannelGeneration?: () => number
 }
 
+/** Server-owned authority for the controller's currently enrolled signing key. */
+export interface AcpRemoteControllerAuthorityPort {
+  /** Synchronous cache corroborated after each durable assertion and used for connection state. */
+  isCurrent(input: AcpRemoteControllerAuthorityBinding): boolean
+  /** Durable/current view rechecked at each asynchronous wire boundary. */
+  assertCurrent(input: AcpRemoteControllerAuthorityBinding): void | Promise<void>
+}
+
+export interface AcpRemoteControllerAuthorityBinding {
+  readonly workspaceId: string
+  readonly nodeId: string
+  readonly runtimeConnectionId: string
+  readonly controllerKeyId: string
+  readonly controllerSigningPublicKey: string
+}
+
 export interface SecureAcpRemoteTransportOptions {
   readonly route: AcpRemoteDeviceRoute
   readonly wire: AcpRemoteWire
   readonly controller: { readonly keyId: string; readonly signingKey: KeyObject }
   /** Controller-recorded project grant view. The device re-checks its own grant before every effect. */
   readonly grantState: (grantRef: string) => AcpLocalProjectGrantState
+  /** Omit only for isolated transport tests; production construction requires the enrollment port. */
+  readonly controllerAuthority?: AcpRemoteControllerAuthorityPort
   readonly now?: () => Date
 }
 
@@ -227,7 +245,9 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
   readonly #wire: AcpRemoteWire
   readonly #signingKey: KeyObject
   readonly #grantState: (grantRef: string) => AcpLocalProjectGrantState
+  readonly #controllerAuthority: AcpRemoteControllerAuthorityPort | undefined
   readonly #now: () => Date
+  #controllerAuthorityVerified = false
   #revokedAt: string | undefined
   /**
    * The sealed command per inner command identity, reused by every retry of that command.
@@ -264,6 +284,7 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
     this.#wire = options.wire
     this.#signingKey = options.controller.signingKey
     this.#grantState = options.grantState
+    this.#controllerAuthority = options.controllerAuthority
     this.#now = options.now ?? (() => new Date())
   }
 
@@ -279,16 +300,43 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
 
   connectionState(): AcpGatewayConnectionState {
     const decision = this.fenceDecision()
-    if (decision.outcome === 'allowed') return 'online'
-    return decision.reason === 'device_revoked' ? 'revoked' : 'offline'
+    if (decision.outcome === 'denied') {
+      this.#invalidateControllerAuthority()
+      return decision.reason === 'device_revoked' ? 'revoked' : 'offline'
+    }
+    if (this.#controllerAuthority !== undefined) {
+      if (!this.#controllerAuthorityVerified) return 'offline'
+      if (!this.#controllerIsCurrent()) {
+        this.#controllerAuthorityVerified = false
+        return 'revoked'
+      }
+    }
+    return 'online'
   }
 
   grantState(grantRef: string): AcpLocalProjectGrantState {
     return this.#grantState(grantRef)
   }
 
-  /** Revokes this route locally and returns a controller-signed notice for the device to apply. */
+  /** Synchronous test seam; enrolled transports require `revokeCurrent`. */
   revoke(revokedAt: string): AcpRemoteRevocationNotice {
+    if (this.#controllerAuthority !== undefined)
+      throw new Error('ACP_REMOTE_CONTROLLER_AUTHORITY_RECHECK_REQUIRED')
+    return this.#createRevocationNotice(revokedAt)
+  }
+
+  /**
+   * Rechecks the enrolled signer, then revokes this route locally and returns a
+   * controller-signed notice for the device to apply.
+   */
+  async revokeCurrent(revokedAt: string): Promise<AcpRemoteRevocationNotice> {
+    if (this.#controllerAuthority === undefined)
+      throw new Error('ACP_REMOTE_CONTROLLER_AUTHORITY_REQUIRED')
+    await this.#assertControllerCurrent()
+    return this.#createRevocationNotice(revokedAt)
+  }
+
+  #createRevocationNotice(revokedAt: string): AcpRemoteRevocationNotice {
     this.#revokedAt ??= IsoSchema.parse(revokedAt)
     const body = {
       kind: 'device_revocation' as const,
@@ -303,6 +351,7 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
 
   async inventory(signal?: AbortSignal): Promise<GatewayInventoryEnvelope> {
     this.#assertFenced()
+    await this.#assertControllerCurrent()
     if (signalAborted(signal)) throw timeoutError()
     if (this.#wire.inventoryMode === 'channel-authenticated') {
       // Bounded wait over the existing pushed inventory: the authenticated channel validated the
@@ -311,9 +360,11 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
       try {
         pushed = await this.#wire.requestInventory(`inv_${randomBytes(16).toString('hex')}`)
       } catch {
+        this.#invalidateControllerAuthority()
         throw remoteDenialError(denyRemote('device_stale'))
       }
       // Current-authority recheck after the wire await.
+      await this.#assertControllerCurrent()
       this.#assertFenced()
       const bound =
         typeof pushed === 'object' && pushed !== null && 'inventory' in pushed
@@ -356,10 +407,12 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
     try {
       reply = await this.#wire.requestInventory(requestId)
     } catch {
+      this.#invalidateControllerAuthority()
       throw remoteDenialError(denyRemote('device_offline'))
     }
     // Current-authority recheck after the wire await: revocation applied while the request was in
     // flight must stop the returned inventory from being published.
+    await this.#assertControllerCurrent()
     this.#assertFenced()
     const parsed = InventoryOrDenialSchema.safeParse(reply)
     if (!parsed.success) throw untrusted()
@@ -451,6 +504,7 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
     readonly message: AcpRemoteSealedCommand
   }> {
     const returnKey = await generateRecipientKeyPair()
+    await this.#assertControllerCurrent()
     const header: AcpRemoteCommandHeader = {
       suite: ACP_REMOTE_SUITE,
       workspaceId: command.workspaceId,
@@ -472,6 +526,7 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
       aad: associatedData(DOMAIN.commandAad, header),
       plaintext,
     })
+    await this.#assertControllerCurrent()
     const body = { header, encapsulatedKey: sealed.encapsulatedKey, ciphertext: sealed.ciphertext }
     const message: AcpRemoteSealedCommand = {
       ...body,
@@ -495,6 +550,7 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
     signal?: AbortSignal
   ): Promise<AcpGatewayExchange> {
     this.#assertFenced()
+    await this.#assertControllerCurrent()
     const command = GatewayCommandEnvelopeSchema.parse(commandInput)
     if (
       command.nodeId !== this.#route.nodeId ||
@@ -538,11 +594,13 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
     })
     if (resendWindow.outcome === 'denied') throw remoteDenialError(resendWindow)
     if (signalAborted(signal)) throw timeoutError()
+    await this.#assertControllerCurrent()
 
     let reply: unknown
     try {
       reply = await this.#wire.sendCommand(message)
     } catch (error) {
+      this.#invalidateControllerAuthority()
       if (error instanceof AcpRemoteUndeliveredError) {
         throw remoteDenialError(denyRemote(error.reason))
       }
@@ -554,6 +612,7 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
     // command was on the wire must stop the reply from being opened and published to the caller.
     // The window is rechecked only when an exchange is opened: a signed device denial (for example
     // `command_expired`, with nothing executed) is the more accurate answer and is surfaced as is.
+    await this.#assertControllerCurrent()
     this.#assertFencedAfterDelivery()
     if (signalAborted(signal)) throw timeoutError()
     return this.#openReply(reply, header, returnKey)
@@ -561,7 +620,45 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
 
   #assertFenced(): void {
     const decision = this.fenceDecision()
-    if (decision.outcome === 'denied') throw remoteDenialError(decision)
+    if (decision.outcome === 'denied') {
+      this.#invalidateControllerAuthority()
+      throw remoteDenialError(decision)
+    }
+  }
+
+  #invalidateControllerAuthority(): void {
+    if (this.#controllerAuthority !== undefined) this.#controllerAuthorityVerified = false
+  }
+
+  #controllerAuthorityBinding(): AcpRemoteControllerAuthorityBinding {
+    return {
+      workspaceId: this.#route.workspaceId,
+      nodeId: this.#route.nodeId,
+      runtimeConnectionId: this.#route.runtimeConnectionId,
+      controllerKeyId: this.#route.controllerKeyId,
+      controllerSigningPublicKey: this.#route.controllerSigningPublicKey,
+    }
+  }
+
+  #controllerIsCurrent(): boolean {
+    try {
+      return this.#controllerAuthority?.isCurrent(this.#controllerAuthorityBinding()) ?? true
+    } catch {
+      return false
+    }
+  }
+
+  async #assertControllerCurrent(): Promise<void> {
+    const authority = this.#controllerAuthority
+    if (authority === undefined) return
+    try {
+      await authority.assertCurrent(this.#controllerAuthorityBinding())
+      if (!this.#controllerIsCurrent()) throw new Error('CONTROLLER_AUTHORITY_CACHE_STALE')
+      this.#controllerAuthorityVerified = true
+    } catch {
+      this.#invalidateControllerAuthority()
+      throw new Error('ACP_REMOTE_CONTROLLER_AUTHORITY_DENIED')
+    }
   }
 
   /**
@@ -572,6 +669,7 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
    */
   #assertFencedAfterDelivery(): void {
     const decision = this.fenceDecision()
+    if (decision.outcome === 'denied') this.#invalidateControllerAuthority()
     if (decision.outcome === 'denied' && decision.reason !== 'device_offline') {
       throw remoteDenialError(decision)
     }
@@ -637,6 +735,7 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
     }
     // Current-authority recheck after the decrypt await: authority that changed while the sealed
     // reply was opening must stop the exchange from reaching the caller.
+    await this.#assertControllerCurrent()
     this.#assertFencedAfterDelivery()
     this.#assertWindowAfterDelivery(command)
     const decoded = ExchangeSchema.safeParse(exchange)

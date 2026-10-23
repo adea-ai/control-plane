@@ -17,6 +17,8 @@ export type {
 } from './acp-remote-fence.js'
 export { AcpRemoteDeviceRouteSchema } from './acp-remote-fence.js'
 export type {
+  AcpRemoteControllerAuthorityBinding,
+  AcpRemoteControllerAuthorityPort,
   AcpRemoteRevocationNotice,
   AcpRemoteSealedCommand,
   AcpRemoteSealedResponse,
@@ -53,7 +55,9 @@ export {
   PersistenceProviderAcpRemoteDeviceStateStore,
 } from './acp-remote-device-state.js'
 export {
+  createEnrolledSecureAcpRemoteTransport,
   createPersistentSecureAcpDeviceEndpoint,
+  type EnrolledSecureAcpRemoteTransportOptions,
   type PersistentSecureAcpDeviceEndpointOptions,
 } from './acp-remote-composition.js'
 export {
