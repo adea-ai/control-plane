@@ -521,11 +521,6 @@ test('the exact offenders are attributed per root, and their removal is what an 
       `${root}: the exclusive share and the removal saving disagree`
     )
   }
-  const overage = counted.size - budgets.dependencies.externalPackageCeiling
-  assert.ok(
-    total >= overage,
-    `the removal savings (${total}) no longer cover the overage (${overage}); the residual analysis must be revisited`
-  )
 })
 
 test('the per-root attribution reproduces the published dependency-path attribution', async () => {
@@ -560,9 +555,8 @@ test('the per-root attribution reproduces the published dependency-path attribut
 
 test('the reduction plan is measured, and six removals reach the unchanged ceiling', async () => {
   // The plan is measured, not argued: every step's saving is the number of
-  // identities the remaining roots no longer reach. The minimum is proved by
-  // the upper bound — a set of removals sheds only what its members shed
-  // alone, so the five largest single removals bound any set of five.
+  // identities the remaining roots no longer reach. This greedy sequence is
+  // sufficient; shared ownership prevents inferring a minimum from singles.
   const { planDependencyReduction, externalPackagePairs } = await loadChecker()
   const measured = externalPackagePairs(realListing()).size
   const ceiling = budgets.dependencies.externalPackageCeiling
@@ -572,7 +566,7 @@ test('the reduction plan is measured, and six removals reach the unchanged ceili
   )
   assert.equal(plan.residual <= ceiling, true, 'the plan does not reach the ceiling')
   assert.equal(plan.reachable, true)
-  assert.equal(plan.minimumRemovals, 6)
+  assert.equal(plan.minimumRemovals, null)
   // The measured steps, in order, with the saving each one is worth.
   assert.deepEqual(
     plan.steps.map((step) => [step.root, step.saving, step.closure]),
@@ -628,4 +622,59 @@ test('every attributed path names the install path and the consumers of the pack
     required.some((consumer) => consumer.startsWith('oxfmt@0.73.0 (optionalDependencies)')),
     `the nested binding has no consumer: ${required.join(', ')}`
   )
+})
+test('attribution follows the nearest nested version rather than every same-named entry', async () => {
+  const { attributeExternalPackages } = await loadChecker()
+  const lock = {
+    workspaces: { '': { dependencies: { consumer: '1.0.0', '@owner/other': '1.0.0' } } },
+    packages: {
+      consumer: ['consumer@1.0.0', '', { dependencies: { shared: '1.0.0' } }],
+      '@owner/other': ['@owner/other@1.0.0', '', { dependencies: { shared: '2.0.0' } }],
+      shared: ['shared@1.0.0', '', {}],
+      '@owner/other/shared': ['shared@2.0.0', '', {}],
+    },
+  }
+  const { identities, perRoot, exclusivePerRoot } = attributeExternalPackages(JSON.stringify(lock))
+  assert.equal(identities.size, 4)
+  assert.deepEqual(perRoot, { consumer: 2, '@owner/other': 2 })
+  assert.deepEqual(exclusivePerRoot, { consumer: 2, '@owner/other': 2 })
+})
+
+test('attribution starts each dependency at its declaring workspace and preserves aliases', async () => {
+  const { attributeExternalPackages } = await loadChecker()
+  const lock = {
+    workspaces: {
+      '': { name: 'repo', dependencies: { shared: '1.0.0' } },
+      'packages/consumer': {
+        name: '@owner/consumer',
+        dependencies: { shared: '2.0.0', shim: 'npm:actual@1.0.0' },
+      },
+    },
+    packages: {
+      shared: ['shared@1.0.0', '', {}],
+      '@owner/consumer/shared': ['shared@2.0.0', '', { dependencies: { '@scope/leaf': '1.0.0' } }],
+      '@owner/consumer/@scope/leaf': ['@scope/leaf@1.0.0', '', {}],
+      shim: ['actual@1.0.0', '', {}],
+    },
+  }
+  const { identities, perRoot, resolutions, unresolvedRoots } = attributeExternalPackages(
+    JSON.stringify(lock)
+  )
+  assert.deepEqual([...identities].toSorted(), [
+    '@scope/leaf@1.0.0',
+    'shared@1.0.0',
+    'shared@2.0.0',
+    'shim@1.0.0',
+  ])
+  assert.deepEqual(perRoot, { shared: 3, shim: 1 })
+  assert.equal(resolutions.get('shim@1.0.0'), 'actual@1.0.0')
+  assert.deepEqual(unresolvedRoots, [])
+})
+
+test('the greedy plan does not claim an unproved minimum', async () => {
+  const { planDependencyReduction } = await loadChecker()
+  const lockfile = readFileSync(join(repositoryRoot, 'bun.lock'), 'utf8')
+  const plan = planDependencyReduction(lockfile, budgets.dependencies.externalPackageCeiling)
+  assert.equal(plan.reachable, true)
+  assert.equal(plan.minimumRemovals, null)
 })

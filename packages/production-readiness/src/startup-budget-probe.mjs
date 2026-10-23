@@ -8,8 +8,14 @@
 //     refuses to start rather than measuring somebody else's readiness;
 //   - readiness is only accepted once the listener on the port is proved to
 //     belong to the launched child (or a descendant of it);
+//   - the readiness OBSERVATION is timestamped before that validation, and
+//     reported only once the validation passes, so a slow inspection never
+//     inflates the measured time-to-ready;
 //   - a child that exits early, a missing PID, a failed spawn or a thrown
 //     dependency fails the probe;
+//   - the ownership inspection is a BOUNDED subprocess: a stalled `lsof` or
+//     `ps` is abandoned and fails closed, so it can never hold the probe
+//     open and keep the owned child alive past the deadlines;
 //   - a malformed, empty or unsuccessful `ps` sample is refused, and a run with
 //     no valid RSS sample is a failure, not a zero-megabyte pass;
 //   - every path AFTER the spawn cleans the OWNED child up, in a `finally`,
@@ -25,6 +31,18 @@ import { spawnSync } from 'node:child_process'
 export const READY_POLL_INTERVAL_MS = 100
 /** How long the probe waits for the owned child to exit after a signal. */
 export const CLEANUP_GRACE_MS = 5_000
+/**
+ * How long an ownership-inspection command may run before it is abandoned.
+ *
+ * The inspection is a subprocess (`lsof`, `ps`), and a stalled one must not
+ * hold the probe open: the probe owns the child's lifecycle, so a command that
+ * never returns would keep the owned child alive past every deadline. The
+ * bound is short enough that the inspection, the child's termination and the
+ * cleanup grace still fit inside the probe's own budgets, and a command that
+ * hits it FAILS CLOSED — an inspection that cannot be made is an inability to
+ * prove ownership, never an empty listener set.
+ */
+export const INSPECTION_TIMEOUT_MS = 2_000
 
 /**
  * Parses one `ps -o rss=` sample.
@@ -36,6 +54,8 @@ export const CLEANUP_GRACE_MS = 5_000
  */
 export function parseRssSample(result) {
   if (result === undefined || result === null) return { ok: false, reason: 'no sample was taken' }
+  if (result.error !== undefined && result.error !== null && result.error.code === 'ETIMEDOUT')
+    return { ok: false, reason: 'the RSS sample command timed out' }
   if (result.status !== 0)
     return {
       ok: false,
@@ -287,6 +307,12 @@ export async function runStartupBudgetProbe(options) {
         }
         const ready = await probeReady()
         if (ready.ok) {
+          // The READINESS OBSERVATION is timestamped BEFORE the ownership
+          // inspection. The inspection validates that observation; it is not
+          // part of it, so a slow inspection must not inflate the measured
+          // time-to-ready. The observation is ACCEPTED only once the validation
+          // passes: an unvalidated observation is never reported.
+          const observedReadyAt = now()
           const listeners = listenerPids()
           const classification = assessListenerOwnership({
             listeners,
@@ -298,7 +324,7 @@ export async function runStartupBudgetProbe(options) {
             primary = `the readiness came from a listener that is not the launched child: ${classification.reason}`
             break
           }
-          readySeconds = Math.round(((now() - startedAt) / 1000) * 10) / 10
+          readySeconds = Math.round(((observedReadyAt - startedAt) / 1000) * 10) / 10
           break
         }
         if (child.hasExited()) {
@@ -340,14 +366,37 @@ export async function runStartupBudgetProbe(options) {
   return { ok: true, readySeconds, peakRssMb, cleanup }
 }
 
-/** The real RSS sample command. */
-export function psRss(pid) {
-  return spawnSync('ps', ['-o', 'rss=', '-p', String(pid)])
+/**
+ * The real RSS sample command.
+ *
+ * The sample is a subprocess, so it is bounded: a `ps` that stalls is
+ * abandoned rather than held open, and the stalled sample is REFUSED by
+ * `parseRssSample` — a sample that never came back is not a small process.
+ */
+export function psRss(pid, { timeoutMs = INSPECTION_TIMEOUT_MS, env } = {}) {
+  return spawnSync('ps', ['-o', 'rss=', '-p', String(pid)], {
+    timeout: timeoutMs,
+    ...(env === undefined ? {} : { env }),
+  })
 }
 
-/** The real parent-PID lookup, used by the listener ownership walk. */
-export function psParent(pid) {
-  const result = spawnSync('ps', ['-o', 'ppid=', '-p', String(pid)])
+/**
+ * The real parent-PID lookup, used by the listener ownership walk.
+ *
+ * The lookup is a subprocess, so it is bounded. A lookup that times out
+ * FAILS CLOSED by throwing: the ownership walk cannot attribute the listener
+ * without it, and an unowned listener is refused rather than assumed.
+ */
+export function psParent(pid, { timeoutMs = INSPECTION_TIMEOUT_MS, env } = {}) {
+  const result = spawnSync('ps', ['-o', 'ppid=', '-p', String(pid)], {
+    timeout: timeoutMs,
+    ...(env === undefined ? {} : { env }),
+  })
+  if (result.error !== undefined && result.error !== null) {
+    if (result.error.code === 'ETIMEDOUT')
+      throw new Error(`the ps ownership inspection timed out after ${String(timeoutMs)} ms`)
+    return undefined
+  }
   if (result.status !== 0) return undefined
   const text = String(result.stdout ?? '').trim()
   if (!/^\d+$/u.test(text)) return undefined
@@ -361,15 +410,22 @@ export function psParent(pid) {
  * port can be listened on at several local addresses at once, and the
  * ownership decision needs every one of them.
  *
- * An unusable `lsof` is an inability to prove ownership, so it throws and the
- * probe fails closed rather than measuring blind.
+ * The lookup is a subprocess, so it is bounded: an `lsof` that stalls is
+ * abandoned and the inspection FAILS CLOSED. An unusable `lsof` is an
+ * inability to prove ownership, so it throws and the probe fails closed rather
+ * than measuring blind.
  */
-export function readListenerPids(port) {
+export function readListenerPids(port, { timeoutMs = INSPECTION_TIMEOUT_MS, env } = {}) {
   const result = spawnSync('lsof', ['-nP', '-iTCP:' + String(port), '-sTCP:LISTEN', '-F', 'pn'], {
     encoding: 'utf8',
+    timeout: timeoutMs,
+    ...(env === undefined ? {} : { env }),
   })
-  if (result.error !== undefined && result.error !== null)
+  if (result.error !== undefined && result.error !== null) {
+    if (result.error.code === 'ETIMEDOUT')
+      throw new Error(`the lsof ownership inspection timed out after ${String(timeoutMs)} ms`)
     throw new Error(`lsof could not be executed: ${result.error.message}`)
+  }
   if (result.status !== 0) {
     // lsof exits 1 when nothing matches the filter; any other failure means
     // the ownership check cannot be made, so the probe must fail closed.

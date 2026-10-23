@@ -135,7 +135,7 @@ BUDGET EXCEEDED: {"ok":false,"ceiling":285,"measured":591,"scope":"lockfile tree
         {"root":"oxfmt","saving":21,"closure":317,"owner":["package.json (root)"]},
         {"root":"typescript","saving":21,"closure":296,"owner":["package.json (root)"]},
         {"root":"oxlint","saving":20,"closure":276,"owner":["package.json (root)"]}],
-      "residual":276,"reachable":true,"minimumRemovals":6,"overageUpperBound":306},
+      "residual":276,"reachable":true,"minimumRemovals":null,"overageUpperBound":306},
     "aliasedIdentities":2,
     "aliases":{"vite@1.3.0":"@voidzero-dev/vite-plus-core@1.3.0","typescript6@6.0.3":"typescript@6.0.3"},
     "unresolvedRoots":[]}}
@@ -263,14 +263,11 @@ test pins it:
 | 5    | `typescript`          | `devDependencies` | −21    | 296     | `package.json` (root)         |
 | 6    | `oxlint`              | `devDependencies` | −20    | **276** | `package.json` (root)         |
 
-**Six removals are the minimum, and that is proved rather than found.** A set
-of removals sheds only what one of its members sheds alone, so the _n_ largest
-single removals bound any set of _n_. The five largest single removals are
-160 + 50 + 40 + 21 + 20 = **291**, below the 306 the ceiling requires, so no
-five-root set reaches 285; the six-removal plan above does, at 276. (A step's
-_marginal_ saving in the plan above can exceed its single-removal saving —
-`miniflare` is worth 52 once `vite-plus` is gone and 50 alone — because the
-plan removes the roots in the order that frees the most.)
+**Six removals are a sufficient greedy sequence; a minimum is unproved.**
+Shared identities can become removable only after several roots disappear.
+The sum of the largest single-removal savings therefore does not bound the
+saving of a combined removal. `minimumRemovals` is `null` while a minimum is
+unknown; the measured sequence remains available for architecture review.
 
 **Every one of the six is a devDependency**, and every one of them is declared
 in a manifest this issue does not own (§7). The plan is therefore _measured and
@@ -309,11 +306,11 @@ and the owner of each removal named.
 
 ## 8. What this slice changed
 
-| Path                                                                 | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/check-budgets.mjs`                                          | the counting rule is **unchanged** — no parser defect is proven (§2), so the counter is not touched. The checker gains the attribution: `attributeExternalPackages` walks the lockfile graph from the declared roots with **every edge resolved to the entry that provides it** and **optional peers not treated as edges**, records the owning manifest of every declared root, the consumers of every identity and the install layout of the measured listing; `planDependencyReduction` measures the reduction plan and proves the minimum number of removals; and the `deps` report carries the attribution next to the unchanged verdict |
-| `packages/production-readiness/src/dependency-budget-scope.test.mjs` | the regression tests pin the §2 invariants over the **real** listing, the per-root attribution against the published table, the measured reduction plan and its proved minimum, the install path and the consumers of a nested identity, and that the exclusive share of a root and its removal saving are the same set — the measurement's own count, the ceiling and the identity rule are unchanged, and the real listing is measured with the seam unset                                                                                                                                                                                  |
-| `docs/1230-dependency-budget-attribution.md`                         | this document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Path                                                                 | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/check-budgets.mjs`                                          | the counting rule is **unchanged** — no parser defect is proven (§2), so the counter is not touched. The checker gains the attribution: `attributeExternalPackages` walks the lockfile graph from the declared roots with **every edge resolved to the entry that provides it** and **optional peers not treated as edges**, records the owning manifest of every declared root, the consumers of every identity and the install layout of the measured listing; `planDependencyReduction` measures a sufficient greedy reduction sequence without claiming a minimum; and the `deps` report carries the attribution next to the unchanged verdict |
+| `packages/production-readiness/src/dependency-budget-scope.test.mjs` | the regression tests pin the §2 invariants over the **real** listing, the per-root attribution against the published table, the measured reduction sequence without an unproved minimum, the install path and the consumers of a nested identity, and that the exclusive share of a root and its removal saving are the same set — the measurement's own count, the ceiling and the identity rule are unchanged, and the real listing is measured with the seam unset                                                                                                                                                                              |
+| `docs/1230-dependency-budget-attribution.md`                         | this document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 ## 9. Receipts
 
@@ -323,7 +320,18 @@ and the owner of each removal named.
 - Installed graph: 374 distinct external identities on this host (376 store entries walked).
 - Focused regression: `bun test src/dependency-budget-scope.test.mjs` (packages/production-readiness) — 21 pass / 0 fail.
 - Reproduced attribution: the lockfile walk reaches exactly the 591 counted identities (591 = 591, no difference in either direction, no unresolved root), the per-root attribution reproduces the table `docs/405-runtime-audit.md` §3.3 publishes, and the gate's own report carries it.
-- The measured plan: six removals reach 276 against the unchanged 285 ceiling, and the five largest single removals (160 + 50 + 40 + 21 + 20 = 291) prove that no smaller set can.
+- The measured plan: six removals reach 276 against the unchanged 285 ceiling, without establishing whether a smaller set can.
 - The ceiling is unchanged: `budgets.json` → `dependencies.externalPackageCeiling = 285`.
 - No manifest, lockfile or threshold was edited, and no dependency was removed.
 - No release and no deployment were performed or requested.
+
+## Reconciliation correction
+
+The recovery branch and #1214 are preserved together. Dependency edges now
+resolve through intermediate scoped ancestors, and root declarations retain
+workspace-specific resolutions. Regression fixtures cover nested versions,
+scoped parents, workspace conflicts, aliases, and the unproved-minimum report.
+The measurement, ceiling and verdict are unchanged. No fixture substitutes for
+the real listing. Removing build tooling, Miniflare tests, database migration
+commands or supported Sentry instrumentation is not a safe unused-dependency
+cleanup; their source consumers must be retained.

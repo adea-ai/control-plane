@@ -89,7 +89,7 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.34.2",
+      "version": "1.34.3",
       "lockVersion": "1.34.2",
       "kind": "application",
       "private": true,
@@ -209,7 +209,7 @@
     {
       "name": "@control-plane/deployment",
       "path": "packages/deployment",
-      "version": "1.10.7",
+      "version": "1.10.8",
       "lockVersion": "1.10.7",
       "kind": "package",
       "private": true,
@@ -355,7 +355,7 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.36.2",
+      "version": "1.36.3",
       "lockVersion": "1.36.2",
       "kind": "application",
       "private": true,
@@ -433,7 +433,7 @@
     {
       "name": "@control-plane/model-gateway",
       "path": "packages/model-gateway",
-      "version": "1.6.1",
+      "version": "1.6.2",
       "lockVersion": "1.6.1",
       "kind": "package",
       "private": true,
@@ -474,7 +474,7 @@
     {
       "name": "@control-plane/orchestration",
       "path": "packages/orchestration",
-      "version": "1.10.3",
+      "version": "1.11.0",
       "lockVersion": "1.10.3",
       "kind": "package",
       "private": true,
@@ -652,7 +652,7 @@
     {
       "name": "@control-plane/runtime-gateway",
       "path": "apps/runtime-gateway",
-      "version": "1.9.0",
+      "version": "1.9.1",
       "lockVersion": "1.9.0",
       "kind": "application",
       "private": true,
@@ -782,7 +782,7 @@
     {
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
-      "version": "1.42.1",
+      "version": "1.42.3",
       "lockVersion": "1.42.1",
       "kind": "package",
       "private": true,
@@ -835,7 +835,7 @@
     {
       "name": "@control-plane/testing",
       "path": "packages/testing",
-      "version": "1.2.4",
+      "version": "1.2.5",
       "lockVersion": "1.2.4",
       "kind": "package",
       "private": true,
@@ -3407,7 +3407,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:31a06098ed2da7f769ae13528fae13dc5f6b8ce65c724ad3ad20e55ccb9ce74b"
+      "sourceDigest": "sha256:3225cc501b08494cf89f8b043311f173ac27c79bc63f5f56b618a651bcaa49fe"
     },
     {
       "id": "local",
@@ -3450,7 +3450,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:31a06098ed2da7f769ae13528fae13dc5f6b8ce65c724ad3ad20e55ccb9ce74b"
+      "sourceDigest": "sha256:3225cc501b08494cf89f8b043311f173ac27c79bc63f5f56b618a651bcaa49fe"
     }
   ],
   "ownership": [

@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.106.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.2...workspace-v1.106.3) (2026-10-22)
+
+
+### Tests
+
+* **toolchain:** record per-repository adoption evidence ([#1233](https://github.com/adea-ai/control-plane/issues/1233)) ([#1234](https://github.com/adea-ai/control-plane/issues/1234)) ([8f6c921](https://github.com/adea-ai/control-plane/commit/8f6c921dba2cee0dd97cb200880f1e15e1e265ee))
+
+## [1.106.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.1...workspace-v1.106.2) (2026-10-22)
+
+
+### Tests
+
+* **deployment:** qualify retention scheduler cadence ([#194](https://github.com/adea-ai/control-plane/issues/194)) ([#1242](https://github.com/adea-ai/control-plane/issues/1242)) ([dc66373](https://github.com/adea-ai/control-plane/commit/dc66373d50b64af2182425533ca1dc9f9e437f6b))
+* **local:** stabilize operations measurement lifecycle ([#1217](https://github.com/adea-ai/control-plane/issues/1217)) ([7f42d34](https://github.com/adea-ai/control-plane/commit/7f42d347800f1a83b9bddcf8bb7f5cccf9486bd6))
+
+## [1.106.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.0...workspace-v1.106.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **lint:** fail closed on digest guard scan roots and traversal errors ([590f8f8](https://github.com/adea-ai/control-plane/commit/590f8f8b76f96ad476fa8d9363901d8828dcbd3b)), closes [#612](https://github.com/adea-ai/control-plane/issues/612)
+* m612-digest-guard-fail-closed-root ([#1243](https://github.com/adea-ai/control-plane/issues/1243)) ([590f8f8](https://github.com/adea-ai/control-plane/commit/590f8f8b76f96ad476fa8d9363901d8828dcbd3b))
+* runtime-gateway-start-authority-marker ([#1245](https://github.com/adea-ai/control-plane/issues/1245)) ([f6e012b](https://github.com/adea-ai/control-plane/commit/f6e012b4906cafe515d086ace93c8956acb143bc))
+* **testing:** print the authority marker the startup test looks for ([f6e012b](https://github.com/adea-ai/control-plane/commit/f6e012b4906cafe515d086ace93c8956acb143bc))
+
+
+### Tests
+
+* m612-sqlite-receipt-byte-provenance ([#1244](https://github.com/adea-ai/control-plane/issues/1244)) ([75e91e6](https://github.com/adea-ai/control-plane/commit/75e91e6952e77fa929a56ea954270997d8a101d3))
+* **sqlite:** pin historical receipt bytes for the SQLite lane ([75e91e6](https://github.com/adea-ai/control-plane/commit/75e91e6952e77fa929a56ea954270997d8a101d3)), closes [#612](https://github.com/adea-ai/control-plane/issues/612)
+
 ## [1.106.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.8...workspace-v1.106.0) (2026-10-22)
 
 

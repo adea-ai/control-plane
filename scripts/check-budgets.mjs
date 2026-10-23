@@ -175,18 +175,28 @@ function lockfileGraph(lockfileText) {
         Array.isArray(value) && typeof value[2] === 'object' && value[2] !== null ? value[2] : {},
     })
   }
-  const byBaseName = new Map()
-  for (const key of entries.keys()) {
-    const base = normalizePackageName(key)
-    if (!byBaseName.has(base)) byBaseName.set(base, [])
-    byBaseName.get(base).push(key)
+  // Resolve the nearest ancestor copy, including scoped package ancestors.
+  // An unrelated nested copy never supplies a missing dependency.
+  const providerOf = (parentKey, name) => {
+    let ancestor = parentKey
+    while (ancestor !== '') {
+      const nested = `${ancestor}/${name}`
+      if (entries.has(nested)) return nested
+      ancestor = ancestor.replace(/(?:^|\/)(?:@[^/]+\/)?[^/]+$/u, '')
+    }
+    return entries.has(name) ? name : undefined
   }
+  const rootProviders = new Map()
   const declaredRoots = []
   const owners = new Map()
   for (const [path, workspace] of Object.entries(lock.workspaces ?? {})) {
     for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) {
       for (const name of Object.keys(workspace[section] ?? {})) {
         declaredRoots.push(name)
+        // Preserve each workspace's resolution before grouping roots by name.
+        const provider = providerOf(workspace.name ?? '', name)
+        if (!rootProviders.has(name)) rootProviders.set(name, new Set())
+        if (provider !== undefined) rootProviders.get(name).add(provider)
         // The manifest that declares the root: the owner of the declaration,
         // and so of the identities removing it would shed.
         const list = owners.get(name) ?? []
@@ -196,17 +206,6 @@ function lockfileGraph(lockfileText) {
     }
   }
   const roots = [...new Set(declaredRoots)]
-  // The entry that provides a dependency for a given parent: the copy
-  // installed under that parent when the lockfile nests one, the hoisted copy
-  // otherwise.
-  const providerOf = (parentKey, name) => {
-    if (parentKey !== '') {
-      const nested = `${parentKey}/${name}`
-      if (entries.has(nested)) return nested
-    }
-    const candidates = byBaseName.get(name) ?? []
-    return candidates.find((key) => key === name) ?? candidates[0]
-  }
   const identityOf = (key) => {
     const { spec } = entries.get(key)
     const at = spec.lastIndexOf('@')
@@ -222,12 +221,12 @@ function lockfileGraph(lockfileText) {
     const queue = []
     const unresolved = []
     for (const root of new Set(rootNames)) {
-      const keys = byBaseName.get(root) ?? []
-      if (keys.length === 0) {
+      const keys = rootProviders.get(root) ?? new Set()
+      if (keys.size === 0) {
         unresolved.push(root)
         continue
       }
-      queue.push(keys.find((key) => key === root) ?? keys[0])
+      queue.push(...keys)
     }
     while (queue.length > 0) {
       const key = queue.pop()
@@ -252,7 +251,7 @@ function lockfileGraph(lockfileText) {
     }
     return { identities, resolutions, unresolved }
   }
-  return { entries, byBaseName, roots, owners, providerOf, identityOf, closureOf }
+  return { entries, roots, owners, providerOf, identityOf, closureOf }
 }
 
 /**
@@ -361,10 +360,9 @@ export function attributeExternalPackages(lockfileText) {
  * the plan accounts for the identities several roots share instead of
  * counting them once per root.
  *
- * The minimum is proved, not asserted: removing a set of roots sheds only
- * what the single removals shed, so the sum of the largest single removals is
- * an upper bound for any set of that size. When that bound is below the
- * overage, no set of that size can reach the ceiling.
+ * This greedy plan establishes a sufficient sequence, not the minimum.
+ * Shared identities can disappear only after several roots are removed, so
+ * summing individual savings cannot bound the saving of a combined removal.
  *
  * The plan is a *measurement of a possible reduction*. It changes nothing:
  * the ceiling, the count and the verdict are computed before it, and the
@@ -377,27 +375,7 @@ export function attributeExternalPackages(lockfileText) {
 export function planDependencyReduction(lockfileText, ceiling) {
   const { roots, owners, closureOf } = lockfileGraph(lockfileText)
   const measured = closureOf(roots).identities.size
-  const singleSavings = []
-  for (const root of roots) {
-    const remaining = closureOf(roots.filter((name) => name !== root)).identities.size
-    const saving = measured - remaining
-    if (saving > 0) singleSavings.push({ root, saving })
-  }
-  singleSavings.sort((left, right) => right.saving - left.saving)
-  // The upper bound for any set of `n` removals: the n largest single
-  // removals. A set sheds only what one of its members sheds alone.
-  const upperBoundFor = (n) =>
-    singleSavings.slice(0, n).reduce((sum, entry) => sum + entry.saving, 0)
-  const overage = measured - ceiling
-  // The fewest removals that can reach the ceiling: the first `n` for which
-  // the bound allows it.
-  let minimumRemovals = null
-  for (let n = 1; n <= singleSavings.length; n += 1) {
-    if (upperBoundFor(n) >= overage) {
-      minimumRemovals = n
-      break
-    }
-  }
+  const overage = Math.max(0, measured - ceiling)
   // The plan itself: remove the root with the largest marginal saving until
   // the closure is at or below the ceiling.
   const steps = []
@@ -425,7 +403,7 @@ export function planDependencyReduction(lockfileText, ceiling) {
     steps,
     residual: closure,
     reachable: closure <= ceiling,
-    minimumRemovals,
+    minimumRemovals: measured <= ceiling ? 0 : null,
     overageUpperBound: overage,
   }
 }

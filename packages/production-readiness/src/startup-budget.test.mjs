@@ -7,6 +7,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { delimiter, join } from 'node:path'
 
 import {
   assessListenerOwnership,
@@ -744,4 +747,164 @@ test('a failing body still tears the test-owned child down', async () => {
   )
   assert.notEqual(observed, undefined)
   assert.equal(observed.hasExited(), true)
+})
+
+/**
+ * A stand-in for `lsof` that stalls from the `stallFrom`-th call on.
+ *
+ * The stall is REAL: the script is what the command boundary actually
+ * executes, so the probe's own bound is what ends the wait. `exec` replaces the
+ * shell with the sleeper, so the timeout's signal reaches the sleeper itself
+ * and no process is left behind by the test.
+ */
+function writeStallingLsof(directory, stallFrom) {
+  const counter = join(directory, 'calls')
+  const script = [
+    '#!/bin/sh',
+    `calls=$(cat "${counter}" 2>/dev/null || echo 0)`,
+    'calls=$((calls + 1))',
+    `echo "$calls" > "${counter}"`,
+    `if [ "$calls" -ge ${String(stallFrom)} ]; then exec sleep 30; fi`,
+    'exit 1',
+    '',
+  ].join('\n')
+  const file = join(directory, 'lsof')
+  writeFileSync(file, script, { mode: 0o700 })
+  return file
+}
+
+/**
+ * A directory whose `lsof` stalls, and the environment that finds it.
+ *
+ * The command is resolved through `PATH`, so the stand-in is used by the real
+ * `readListenerPids` without changing the function under test.
+ */
+function stallingLsofEnvironment(directory, stallFrom) {
+  writeStallingLsof(directory, stallFrom)
+  return {
+    ...process.env,
+    PATH: `${directory}${delimiter}${process.env.PATH ?? ''}`,
+  }
+}
+
+test('the real listener lookup refuses a stalled lsof within its bound', async () => {
+  // The bound itself, at the command boundary: the real lookup is pointed at a
+  // stand-in that never returns, and it must give up inside the bound instead
+  // of waiting for the command. An inspection that cannot be made is an
+  // inability to prove ownership, so it throws rather than reporting an empty
+  // listener set.
+  const directory = mkdtempSync(join(tmpdir(), 'control-plane-lsof-bound-'))
+  try {
+    const env = stallingLsofEnvironment(directory, 1)
+    const startedAt = Date.now()
+    assert.throws(() => readListenerPids(3917, { timeoutMs: 250, env }), /timed out/u)
+    assert.ok(Date.now() - startedAt < 2_000, 'the lookup waited for the stalled command')
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a stalled ownership inspection is bounded, fails closed, and still terminates the owned child', async () => {
+  // The COMMAND BOUNDARY: the real `lsof` is a stalled stand-in, so the
+  // probe's own bound is what ends the wait. Without the bound the probe
+  // would hold the owned child open forever, because the cleanup runs after
+  // the inspection returns.
+  const directory = mkdtempSync(join(tmpdir(), 'control-plane-stalled-lsof-'))
+  const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    stdio: ['ignore', 'ignore', 'ignore'],
+  })
+  const { handle: child } = spawnOwned(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
+  let outcome
+  let unrelatedAlive
+  const startedAt = Date.now()
+  try {
+    outcome = await runStartupBudgetProbe({
+      spawnChild: () => child,
+      probeReady: async () => ({ ok: true }),
+      // The first call is the pre-launch check and reports nothing; the second
+      // is the post-launch ownership inspection and stalls.
+      listenerPids: () =>
+        readListenerPids(3917, { timeoutMs: 300, env: stallingLsofEnvironment(directory, 2) }),
+      parentOf: () => undefined,
+      sampleRss: () => ({ status: 0, stdout: '1024' }),
+      sleep: realSleep,
+      now: () => Date.now(),
+      readyTimeoutMs: 5_000,
+    })
+    // Observed BEFORE the teardown below: the unrelated process is alive, and
+    // the probe never signalled it.
+    unrelatedAlive = unrelated.exitCode === null && unrelated.signalCode === null
+  } finally {
+    await child.stop()
+    unrelated.kill('SIGKILL')
+    rmSync(directory, { recursive: true, force: true })
+  }
+  assert.equal(outcome.ok, false)
+  assert.match(outcome.reason, /timed out/u)
+  // The stalled inspection did not hold the probe open: it failed closed
+  // within the inspection bound, and the OWNED child was terminated.
+  assert.equal(child.hasExited(), true)
+  assert.ok(Date.now() - startedAt < 5_000, 'the probe waited for the stalled inspection')
+  // The UNRELATED process was never signalled: only the owned child's handle
+  // is ever stopped.
+  assert.equal(unrelatedAlive, true)
+})
+
+test('a stalled ownership inspection before the launch fails closed and launches nothing', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'control-plane-stalled-lsof-first-'))
+  const child = fakeChild()
+  let outcome
+  try {
+    outcome = await runStartupBudgetProbe({
+      spawnChild: () => child.handle,
+      probeReady: async () => ({ ok: true }),
+      // The very first inspection stalls: the port cannot be shown to be free.
+      listenerPids: () =>
+        readListenerPids(3917, { timeoutMs: 300, env: stallingLsofEnvironment(directory, 1) }),
+      parentOf: () => undefined,
+      sampleRss: () => ({ status: 0, stdout: '1024' }),
+      sleep: realSleep,
+      now: () => Date.now(),
+      readyTimeoutMs: 1_000,
+    })
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+  assert.equal(outcome.ok, false)
+  assert.match(outcome.reason, /ownership check is unavailable/u)
+  assert.match(outcome.reason, /timed out/u)
+  // Nothing was launched and nothing was signalled.
+  assert.deepEqual(child.signals, [])
+})
+
+test('the reported ready time is the observation, not the end of a delayed ownership inspection', async () => {
+  // The inspection VALIDATES the readiness observation; a slow inspection
+  // must not be counted into the measured time-to-ready. The observation is
+  // still reported only because the validation passes.
+  const child = fakeChild()
+  let clock = 0
+  let calls = 0
+  const outcome = await runStartupBudgetProbe({
+    spawnChild: () => child.handle,
+    probeReady: async () => ({ ok: true }),
+    // The pre-launch check reports nothing; the post-launch ownership
+    // inspection takes 1.2 s of the probe's own clock.
+    listenerPids: () => {
+      calls += 1
+      if (calls === 1) return []
+      clock += 1_200
+      return [listener(child.handle.pid)]
+    },
+    parentOf: () => undefined,
+    sampleRss: () => ({ status: 0, stdout: '1024' }),
+    sleep: async (ms) => {
+      clock += ms
+    },
+    now: () => clock,
+    readyTimeoutMs: 10_000,
+  })
+  assert.equal(outcome.ok, true)
+  // The observation is timestamped after the first poll (100 ms) and before the
+  // 1.2 s inspection, so the reported time is 0.1 s and not 1.3 s.
+  assert.equal(outcome.readySeconds, 0.1)
 })
