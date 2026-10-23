@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.111.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.110.4...workspace-v1.111.0) (2026-10-23)
+
+
+### Features
+
+* **database:** add ProjectState digest compatibility ([#612](https://github.com/adea-ai/control-plane/issues/612)) ([#1223](https://github.com/adea-ai/control-plane/issues/1223)) ([5123466](https://github.com/adea-ai/control-plane/commit/512346603a7ca0c0d9f9b90ed40cf48d6dc2d474))
+
 ## [1.110.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.110.3...workspace-v1.110.4) (2026-10-23)
 
 

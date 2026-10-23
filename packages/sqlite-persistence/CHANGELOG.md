@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.43.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.42.4...sqlite-persistence-v1.43.0) (2026-10-23)
+
+
+### Features
+
+* **database:** add ProjectState digest compatibility ([#612](https://github.com/adea-ai/control-plane/issues/612)) ([#1223](https://github.com/adea-ai/control-plane/issues/1223)) ([5123466](https://github.com/adea-ai/control-plane/commit/512346603a7ca0c0d9f9b90ed40cf48d6dc2d474))
+
 ## [1.42.4](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.42.3...sqlite-persistence-v1.42.4) (2026-10-23)
 
 
