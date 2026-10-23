@@ -162,7 +162,7 @@ PostgreSQL behavioral tests. Final combined validation remains open.
 
 The released image baseline's production schema was separately found behind:
 both Railway services' exact database bindings were verified, then released
-`0047` and `0048` were rehearsed on an isolated Neon child and applied through
+`0047` and `0048` were rehearsed on an isolated PostgreSQL child and applied through
 the canonical immutable released-source migrator. Full journal readback,
 idempotent replay, individual runtime grants and least-privilege checks passed.
 Unmerged `0049` remains off production. The fail-closed pre-deploy migration gate
@@ -337,7 +337,7 @@ open. This failed invocation is not a complete integration pass.
 
 A separate execution-coverage audit found that all three Hosted integration
 files were discovered but unscheduled: their package had no `test:integration`
-command. Foundation and Neon use the serialized Turbo integration runner, not
+command. Foundation and PostgreSQL use the serialized Turbo integration runner, not
 the discovered-file list directly. A new repository regression reproduced the
 missing command before adding the Hosted command at the existing 30-second
 deadline. It checks executable package selection for every discovered integration
@@ -374,7 +374,7 @@ restored evidence and app-role operations, and rejection during service loss
 followed by recovery of committed receipts/context/plan evidence. Runtime behavior
 was scripted; these are not native active-cancellation, live-provider, production
 RPO/RTO or full-profile acceptance. The owned database is stopped between testing
-windows, preserving its volume; no staging or production deployment is certified
+windows, preserving its volume; no production deployment is certified
 by these local drills.
 
 Serialized PostgreSQL integration at `994d95fd` passed 89 tests but failed three

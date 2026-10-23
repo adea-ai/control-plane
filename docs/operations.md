@@ -1,226 +1,12 @@
 # Production operations runbook
 
-This runbook covers the accepted Control Plane deployment sequence and must distinguish **managed cloud (M9)** from **Local/Hosted portability (M10)**. A release is not complete because infrastructure files exist; live environment evidence is required.
+Production compute runs on Railway; the production PostgreSQL database is `railway`. Adea and Control Plane have separate schemas and roles. Runtime uses scoped non-admin credentials. No persistent preproduction environment exists: qualification uses disposable sandboxes with synthetic data and credentials.
 
-## Milestone sequence
+Use the protected production schema and promotion workflows. Confirm exact service/environment/database identity, verified TLS, canonical migration history, least-privilege capabilities, private connectivity, readiness and representative application behavior before accepting a deployment. Liveness alone is insufficient. Never apply an unknown staged provider patch. Preserve existing rotated operational secrets. See [the database contract](railway-production-database-cutover.md).
 
-- **M9: Managed Cloud Deployment, Hardening & Evals.** Make the Railway + Neon + R2 + Restate profile deploy, recover, and pass the cloud hardening/eval gates.
-- **M10: Local & Hosted Portability.** Port the accepted M9 semantics to Local and user-controlled Hosted profiles.
-- **M11: Feature Completion & Production Audit.** Rerun production-readiness evidence across managed cloud, Local, and Hosted.
-- **M12: Cross-Product Integration & Release.** Connect the independently approved Control Plane candidate to Adea and optional Cortana release candidates. Per the [2026-09-24 owner decision in #195](https://github.com/adea-ai/control-plane/issues/195#issuecomment-5822863459), CP-M12 also includes the Local/Hosted deployment-profile substrate and the cross-product certification/release built on it.
+Production exposes the Control API, with its database runtime endpoint private. Optional durable-workflow sandbox qualification does not create production workers or storage. Local and Hosted profiles retain their independent lifecycle and persistence rules.
 
-Historical AWS/ECS/Terraform procedures are not the current first-party cloud runbook.
-
-## Managed-cloud access and configuration
-
-The initial managed-cloud profile uses:
-
-- Railway for compute/service lifecycle;
-- a separate Control Plane Neon PostgreSQL project/database;
-- Cloudflare R2 behind the `ObjectStore` boundary;
-- Restate as the canonical durable workflow runtime;
-- Railway private networking where applicable;
-- Railway variables for service/bootstrap configuration;
-- a separate provider-neutral credential-vault boundary for dynamic user/provider secrets.
-
-Keep runtime database credentials separate from migration/admin authority. Keep service credentials scoped by service/audience. Do not store production credentials in repository files, issue bodies, test fixtures, or ordinary logs.
-
-## Current M9 state
-
-The Railway project has isolated `staging` and `production` environments. The Cloud activation
-topology is the public `control-api`, private `workflow-worker`, and separately pinned `restate`
-runtime. The 2026-10-03 live-state readback is recorded in
-[`evidence/cost-followup-2026-10-03.md`](evidence/cost-followup-2026-10-03.md) and supersedes the
-older 2026-09-29 snapshot below. Production now contains only the public control-api service at
-0.5 CPU/1 GiB with `/health` liveness; worker, Restate, and its former production volume were
-removed. Staging still has the three configured services but no active deployment, and the latest
-inventory found no Restate volume or mount. Deployment status does not establish production
-availability or M11 profile acceptance. The staging definition and standby procedure preserve a
-volume when one exists; they do not prove that it exists or provision it when absent.
-
-Use these terms precisely:
-
-- **configured:** the service graph, provider mappings, variable names, health policy, and resource
-  limits are reproducible from the repository;
-- **deployed:** Railway has a built service revision or image deployment record;
-- **running:** the environment currently has one or more live replicas;
-- **availability enabled:** the environment has passed its release, migration, dependency, health,
-  smoke, and rollback gates and is intentionally allowed to serve users.
-
-A configured environment can therefore be neither running nor available. The 2026-08-28 staging
-activation, restart, execution, Neon, R2, security, resource, and bounded cost results are recorded in
-[`evidence/m9-cloud-certification-2026-08-28.md`](evidence/m9-cloud-certification-2026-08-28.md).
-
-The repository Cloud composition now persists accepted commands/executions in PostgreSQL and wires
-the workflow worker's lifecycle activities to the same authoritative execution and plan data.
-Staging uses the explicit `certification` runtime mode to persist and integrity-check a deterministic
-terminal result through R2. Production uses `disabled`: the worker remains healthy and discoverable,
-but runtime activities fail closed with `CLOUD_RUNTIME_DISABLED` and never open R2. It cannot accept
-certification executions or claim execution availability.
-This path certifies the Control Plane cloud infrastructure only; later Adea managed-runtime
-support requires its own runtime provider and certification.
-
-Do not treat the staging certification, current Railway dashboard, or historical AWS configuration as
-production certification. Production promotion remains a separate reviewed release gate.
-
-## Local-first Railway standby
-
-`infrastructure/railway/cost-policy.json` is the machine-readable standby policy. Railway rejects a
-configured replica count of zero in both the TypeScript Infrastructure as Code schema and the live
-service update API, so `.railway/railway.ts` describes the explicit one-replica activation shape.
-Standby disconnects application sources and removes the exact active deployment revisions while
-retaining services, settings, and any volumes that exist. The guarded command also inventories and removes
-reactivatable nonterminal revisions so a delayed build cannot start compute after standby has been
-verified. Applying the Infrastructure as Code file can start compute; it must never be used as an
-ordinary standby reconciliation command.
-
-Standby requires `--project <project-id>` as well as `--environment staging` or `production`.
-It checks actual repository source configuration, not just Git trigger count. Railway source
-disconnection is service-wide: the command refuses to proceed if the same service has a Git source
-or trigger in another environment, or if it cannot verify the full environment/trigger inventory.
-It repeats this check immediately before disconnection. Coordinate configuration changes while
-running standby; the provider does not offer a conditional atomic disconnect across environments.
-Trigger disconnection alone does not clear the retained environment source. The command also uses
-`serviceInstanceUpdate` with the resolved environment ID and `source.repo: null`, then verifies
-source absence and zero compute. An accepted configuration patch is not evidence of disconnection:
-the null-source configuration-patch route was observed to leave the source unchanged.
-
-The baseline is:
-
-| Environment | 2026-10-03 observed state                                                                                 | Operating intent                                   | Persistent state                                                                                                       |
-| ----------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| staging     | Three configured services; no active serving deployment; current inventory has no Restate volume or mount | On-demand qualification; stop compute between runs | Provision the declared 500 MB volume and request identity if either is absent; Neon/R2 remain provider-managed         |
-| production  | control-api only, 0.5 CPU/1 GiB, `/health` liveness; worker, Restate, and former Restate volume removed   | Availability remains gated                         | No production Restate volume; future runtime reactivation requires fresh provisioning; Neon/R2 remain provider-managed |
-
-Production API logs also continue to report retention sweeps blocked on command-inbox and execution-event eligibility. Treat retention policy and its operational evidence as an open M11 gate; deployment health does not close it.
-
-Railway Serverless remains disabled. Control API first-request failures/cold starts and the
-worker/Restate long-lived connection and registration behavior have not been accepted under a sleep
-model. No active deployment is explicit and unambiguous.
-
-The current Railway trial plan does not expose workspace usage limits: the live CLI rejected the
-attempt with `Usage limits require an active subscription`. When the workspace moves to a paid plan,
-configure the versioned $5 soft alert and $10 hard limit only after confirming the workspace still
-contains no project other than Control Plane. The hard limit is an availability control, not a normal
-autoscaling target.
-
-To activate staging for a bounded Cloud test:
-
-1. Confirm the intended `main` commit for the Railway staging deployment, Railway variables, Neon
-   staging branch/schema, and R2 mapping. Check the configured Restate volume and identity against
-   live state; provision the 500 MB volume and matching request identity keypair if either is absent.
-2. Run `railway config plan` while linked to staging and review every change. Run
-   `railway config apply` to reconcile the activation profile, reconnect the staging sources, and
-   deploy the one-replica topology. A source-only redeploy is acceptable when the project graph is
-   already current.
-3. Verify Restate health and registration, private worker readiness, and public `/health` and
-   `/ready` through the intended paths. The Cloud API `/ready` check covers process state and
-   PostgreSQL connectivity, not physical schema definitions. Confirm Neon schema compatibility
-   through the explicit migration and journal checks, then run the required smoke/certification
-   scenario.
-4. After evidence is captured, preview and apply the guarded standby transition. It disconnects both
-   application sources, removes the exact active and reactivatable deployment revisions in admission
-   order, and verifies that running replicas and nonterminal deployment work are both zero:
-
-   ```sh
-   bun run railway:standby --project <project-id> --environment staging
-   bun run railway:standby --project <project-id> --environment staging --apply --confirm staging
-   railway service list --environment staging --json
-   ```
-
-Production activation is a release operation, not a scale-only operation. Before scaling production,
-the candidate commit must be merged to `main` and tagged by the release flow; production-specific secrets and service
-identity must exist; the production Neon migration must pass with migration-only authority; Restate
-must have its production volume, stable identity key, and worker registration; and R2 isolation,
-health, smoke, observability, and rollback gates must pass. The container-promotion workflow connects
-each application service only to its scan-attested public GHCR digest and verifies the Railway deployment
-record before activation evidence is accepted. GHCR creates packages as private by default: bootstrap
-`control-plane-control-api` and `control-plane-workflow-worker` with a non-deploying manual workflow
-run, then an organization package administrator must make both packages public before the first
-production promotion. The deployment job proves anonymous digest retrieval before changing Railway. On rollback, stop new admission, preserve provider
-state, return to the prior attested digest (or no active application deployments), and never request a
-fresh build from the same source as a substitute for the recorded artifact.
-
-## Managed-cloud release and rollback
-
-The provisional operational targets remain RPO 5 minutes and RTO 60 minutes. M9.6 recorded no
-committed-work loss in its bounded restart scenarios, but it did not claim a timed disaster-recovery
-exercise or measured production RTO. M11 must measure or explicitly revise these targets against a
-production release candidate.
-
-1. Require M9.7–M9.13 implementation/configuration gates to be complete.
-2. Build/test the complete monorepo, then use `.github/workflows/container-promotion.yml` to build each production image once, scan it, publish it, attest it, and deploy its immutable GHCR digest.
-3. Record exact commit, image references and digests, attestations, SBOM artifacts, service versions, Restate version, schema/contracts, and repository-owned Railway configuration.
-4. Validate required Railway variables and external dependency references without exposing secret values.
-5. Run explicit Neon migrations using separately scoped migration authority.
-6. Deploy required Railway services and the accepted Restate topology.
-7. Verify liveness/readiness through intended public/private network paths.
-8. Run a representative durable execution through Restate and verify authoritative Neon state plus R2 operations where used.
-9. Exercise failed deploy rollback/forward repair, service restart/redeploy, Neon reconnect, Restate restart/recovery, and Runtime Gateway reconnect where applicable.
-10. Run the existing M9 security, recovery, and performance tooling against the actual staging candidate and record measured evidence.
-
-A database migration failure blocks rollout. Never hide a broken revision behind a green process health check. Applied schema changes are repaired forward unless a reviewed restore operation is explicitly required.
-
-### Production schema promotion gate
-
-The production deployment job serializes promotions across release tags and runs
-`bun scripts/migrate-production-schema.mjs` before changing either Railway image
-source. It installs frozen workspace dependencies and builds the database
-migration dependency closure from the checked-out release candidate. The gate
-uses the existing `RAILWAY_PRODUCTION_TOKEN` plus the separate environment-scoped
-`NEON_PRODUCTION_MIGRATION_URL` secret in `control-plane / production`. The latter
-must use the direct production endpoint, `control_plane_migrator`, `neondb`, and
-`sslmode=verify-full`; never substitute a pooled runtime, staging, or administrator
-credential. Do not print either secret or the rendered service variables.
-
-Before applying schema changes, the gate checks both production services' exact
-database bindings, verifies the connected migration identity, and requires the
-database journal to be an exact hash/timestamp prefix of the tagged migration
-source. It acquires the shared session advisory lock `(1295070001, 11)`, then
-rechecks that prefix before calling the canonical repository migrator with
-bounded connection, statement, and lock timeouts. Foreign, gapped, or ahead
-history, concurrent migration ownership, unsafe URL options, or missing secrets
-block promotion. After migration it verifies the complete journal and connects
-with each service's actual application credential using certificate verification
-to check runtime grants, role restrictions, and the retention-clock columns.
-
-On failure, inspect sanitized workflow status and perform a separately scoped
-readback of the exact target and journal. Do not bypass the gate, change history
-hashes, or roll back DDL to make an older image promotable. A migration can have
-committed before a later privilege or rollout check fails; verify state and
-repair forward, then rerun the intended release. An older tag whose history is
-behind the database is deliberately rejected and requires an explicit reviewed
-schema-compatible rollback procedure. This gate does not establish service
-runtime TLS configuration, representative execution, RPO/RTO, or full profile
-acceptance merely because process readiness is green.
-
-For M9 staging certification, verify the retained `m9/certification/` result with `get` and `head`,
-match its digest to the terminal execution/command state, and replay the same accepted command to
-confirm that no second logical artifact is created. Do not report this as managed Pi certification.
-
-Run the repository-owned live certification harness only against the isolated Railway/Neon/R2
-staging profile:
-
-```sh
-bun run certify:m9-cloud
-```
-
-The operator supplies `M9_CONTROL_API_URL`, `M9_SERVICE_AUTH_ISSUER`,
-`M9_SERVICE_AUTH_KEY_ID`, `M9_SERVICE_AUTH_PRIVATE_KEY_FILE`, `DATABASE_URL`, `R2_ENDPOINT`,
-`R2_BUCKET`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY` through the local secret boundary. The
-private signing key is a short-lived staging-certification credential whose matching public key is
-configured in the staging Control API trust set; it is never committed or printed. `DATABASE_URL`
-uses the least-privilege staging application role because the harness seeds one immutable bounded
-certification plan through the same repository used by the service. The harness does not accept a
-migration/admin connection.
-
-A passing JSON record proves all of the following for one run: authenticated public acceptance,
-terminal command/execution/attempt state in Neon, an integrity-matched retained result through the
-R2 `ObjectStore`, and idempotent replay returning the original execution and artifact. The record
-contains identifiers, timestamps, state, and digests only. Keep deployment IDs, exact source commit,
-Railway build/readiness results, Restate registration/restart evidence, resource metrics, and the
-sanitized harness record together in the M9.6 evidence attachment. The harness is not by itself
-proof of rollback, restart recovery, load, isolation, secret-canary, or cost acceptance.
+The provisional operational targets remain RPO 5 minutes and RTO 60 minutes. These are qualification targets, not verified provider guarantees; measure backup freshness and restore/reconciliation in an isolated sandbox before relying on them.
 
 ## M11 intake rollout fence: incomplete operator workflow
 
@@ -320,7 +106,7 @@ publication. Unapproved versions remain authorable and listable.
   `CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED_SINCE=<ISO instant>`. Any other value fails startup rather
   than silently disabling the gate. Versions published strictly before the cutover are grandfathered;
   the cutover instant itself is not.
-- Production enables the gate with the cutover declared in `.railway/railway.ts`; staging keeps it
+- Production enables the gate with the cutover declared in `.railway/railway.ts`; disposable test fixtures keep it
   disabled so reference-environment debugging is never blocked by approvals. Reviewing or changing the
   cutover is a data-governance decision, not a routine config edit.
 - Record and inspect decisions with the scoped operator tool
@@ -352,7 +138,7 @@ bun scripts/retention-apply.mjs --backend sqlite --class command-inbox \
 
 # PostgreSQL profile (host and database must match the credentialed target)
 bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
-  --database control_plane --host <neon-host>
+  --database control_plane --host <postgres-host>
 
 # The same command covers execution events, executions and context packages:
 #   --class execution-events
@@ -389,11 +175,11 @@ record its result with the change:
 
 ```sh
 bun scripts/retention-apply.mjs --backend postgres --class retired-command-keys \
-  --database control_plane --host <neon-host>
+  --database control_plane --host <postgres-host>
 
 # Only after review; requires the explicit operator hold policy and confirmation.
 bun scripts/retention-apply.mjs --backend postgres --class retired-command-keys \
-  --database control_plane --host <neon-host> \
+  --database control_plane --host <postgres-host> \
   --hold-policy /etc/control-plane/operator-policy.json \
   --apply --confirm retired-command-keys
 ```
@@ -475,7 +261,7 @@ path and encoded OS username with the actual operator's values):
 ```
 
 For PostgreSQL, the target is
-`{"backend":"postgres","database":"control_plane","host":"<neon-host>","port":5432}`;
+`{"backend":"postgres","database":"control_plane","host":"<postgres-host>","port":5432}`;
 it must match the application credential's database, hostname, and effective
 port exactly. Existing policies without `port` remain scoped to the default
 PostgreSQL port 5432 only. The
@@ -519,7 +305,7 @@ bun scripts/retention-apply.mjs --backend sqlite --class command-inbox \
   --hold-policy /etc/control-plane/operator-policy.json --apply --confirm command-inbox
 ```
 
-PostgreSQL administration uses the same flags plus `--host <neon-host>` and
+PostgreSQL administration uses the same flags plus `--host <postgres-host>` and
 `--database control_plane`. An unconfigured dry run remains possible only when
 the existing storage guards can prove there are no holds. An active matching
 hold prevents deletion and produces no deletion-journal entry; releasing it
@@ -538,7 +324,7 @@ bun scripts/retention-reapply.mjs --backend sqlite --database <restored.sqlite> 
   --journal <retention-journal.jsonl>
 
 bun scripts/retention-reapply.mjs --backend postgres --database control_plane \
-  --host <neon-host> --journal <retention-journal.jsonl>
+  --host <postgres-host> --journal <retention-journal.jsonl>
 ```
 
 Reapply is idempotent: inserts are insert-if-absent and deletes are by identity.
@@ -584,15 +370,14 @@ retry of that event cannot resurrect it and the sequence number is never reused;
 `bun run db:migrate` must have applied migration `0048_tense_thor.sql` before the
 first event deletion on a PostgreSQL deployment.
 
-## Neon operations
+## PostgreSQL operations
 
-- Use the dedicated Control Plane Neon project/database, never Adea's database.
+- Use Control Plane’s public schema in the existing Railway database; never grant its roles access to Adea’s app/auth schemas.
 - Application services receive least-privilege runtime authority only where needed.
 - Migration/admin authority is one-shot/operator scoped and not available to ordinary service replicas.
 - Validate schema version before accepting traffic.
 - On database saturation, stop nonessential producers and inspect query/pool/backlog evidence before increasing retry pressure.
-- On corruption or accidental deletion, freeze writes where practical, restore into an isolated destination using Neon recovery/PITR or equivalent provider capability, verify schema/integrity/reconciliation, then switch through an explicit change process.
-- The existing `neon_auth` schema in the Control Plane Neon project is not application identity authority and must remain unused unless an explicit architecture decision changes ownership.
+- On corruption or accidental deletion, freeze writes where practical, restore into an isolated destination using PostgreSQL recovery/PITR or equivalent provider capability, verify schema/integrity/reconciliation, then switch through an explicit change process.
 
 ## R2 operations
 
@@ -603,21 +388,7 @@ first event deletion on a PostgreSQL deployment.
 
 ## Restate operations
 
-- Restate is the only required durable workflow runtime for the accepted release path.
-- Railway staging is configured to run the immutable Restate image recorded in
-  `infrastructure/railway/restate.json`, with a persistent `/restate-data` volume and stable node
-  name. The latest live inventory found no staging volume or mount, so provision and verify these
-  before activation when absent. Never replace the volume-backed design with a floating image tag or
-  an ephemeral filesystem deployment.
-- Keep ingress, Admin API, and fabric ports private. Register `workflow-worker` through its Railway
-  private-network endpoint and verify that the registration survives a Restate service restart.
-- Treat the volume-backed Restate node as a singleton during replacement: remove its active Railway
-  deployment and verify zero active revisions before starting the replacement. Two Restate
-  processes must never contend for the same RocksDB volume during a health-checked rollout.
-- M9.8 replaced active Temporal cloud configuration with Restate and defined its Railway networking, persistence, health/readiness, restart, upgrade, and observability behavior.
-- On Restate degradation, stop unsafe new admission where required, preserve durable command/domain state, and recover using the accepted Restate lifecycle guarantees.
-- LangGraph graph/checkpoint mechanics remain subordinate to the Restate lifecycle; ProjectState remains separately authoritative.
-- Temporal-specific worker/runbook evidence is historical migration provenance and is not part of the active path.
+Durable-workflow qualification uses the pinned runtime in `infrastructure/railway/restate.json` only inside an explicitly provisioned disposable sandbox. Keep ingress, administration and fabric ports private. Use persistent sandbox storage for restart/recovery tests and never run two processes against the same volume. Production currently promotes only the Control API; expanding that topology requires a separately reviewed configuration change.
 
 ## Gateway and provider degradation
 
@@ -688,13 +459,13 @@ Required operational evidence includes:
 - update/rollback/forward repair;
 - key/credential rotation/revocation;
 - resource budgets for small VPS and server profiles;
-- no dependency on Railway/Neon/R2/Adea Cloud for standalone operation.
+- no dependency on Railway/PostgreSQL/R2/Adea Cloud for standalone operation.
 
 ## Diagnostic correlation
 
 Investigations begin with stable product/execution identifiers, not provider-specific resource IDs. Minimum useful correlation includes request, workspace, execution, attempt, workflow/Restate invocation, runtime/node/transport, profile/Skill versions, provider/tool/model policy versions, and trace identifiers.
 
-Provider-specific Railway/Neon/R2/Restate identifiers may appear in operational diagnostics but do not replace stable Control Plane IDs and must not leak secrets or protected content.
+Provider-specific Railway/PostgreSQL/R2/Restate identifiers may appear in operational diagnostics but do not replace stable Control Plane IDs and must not leak secrets or protected content.
 
 Child-progress lead deliveries, evidence packets and correlated child usage cost states are documented in [child-progress-evidence.md](child-progress-evidence.md), including the durable publication path, restart replay, and the current single-child runtime guard limits.
 
@@ -708,7 +479,9 @@ Child-progress lead deliveries, evidence packets and correlated child usage cost
 
 ## Scheduled evidence
 
-- **Every managed-cloud candidate:** build/deploy, Neon migration/schema, Restate, R2, health/readiness, recovery, security, and cost evidence.
+- **Every managed-cloud candidate:** build/deploy, PostgreSQL migration/schema, Restate, R2, health/readiness, recovery, security, and cost evidence.
 - **Every M10 candidate:** Local and Hosted clean install/start/restart/backup/restore/conformance evidence.
 - **M11:** independent full-profile audit from frozen candidate.
 - **M12:** profile-substrate and live cross-product certification/release evidence only after M11 approval, per the #195 owner decision.
+
+The production database bootstrap did not claim a timed disaster-recovery exercise. Run `bun run certify:m9-cloud` only against an explicitly authorized disposable sandbox, including idempotent replay and recovery checks. Production promotion continues through its protected schema and readiness gates.

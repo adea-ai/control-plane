@@ -1,10 +1,10 @@
-# M11 Neon creation and cleanup reconciliation
+# M11 PostgreSQL creation and cleanup reconciliation
 
 ## Finding and scope
 
 On source `6d789a55c03cb306139fe7c0a0b10555229a9535`, trusted-main
 [run 37570244992](https://github.com/adea-ai/control-plane/actions/runs/37570244992)
-shard 3 timed out after 10 seconds in Create Neon branch. Its lookup and deletion
+shard 3 timed out after 10 seconds in Create database sandbox. Its lookup and deletion
 steps were skipped because cleanup required a successful creation acknowledgement.
 The exact target is `preview/main-37570244992-1-s3`, attempt 1. Its existence was
 unverified at preparation time. The run subsequently completed as cancelled;
@@ -28,7 +28,7 @@ within each group; this is not a guarantee that every pending source gets tested
 The cleanup repository event accepts an original run ID, attempt, shard, and source
 SHA as client payload. GitHub loads its workflow from the default branch; the job
 also requires `refs/heads/main`. Unlike manual workflow dispatch, the caller cannot
-select a branch's workflow definition. Before querying Neon it requires a completed
+select a branch's workflow definition. Before querying PostgreSQL it requires a completed
 push-to-main run of this exact workflow and repository, the recorded SHA and
 attempt, a complete jobs response, and exactly one completed matching shard and
 creator step. Active, ambiguous, mismatched, or incomplete ownership fails closed.
@@ -46,7 +46,7 @@ For the recorded failure, after this workflow lands on main:
 ```sh
 gh api --method POST repos/adea-ai/control-plane/dispatches --input - <<'JSON'
 {
-  "event_type": "neon-preview-cleanup",
+  "event_type": "postgres-preview-cleanup",
   "client_payload": {
     "cleanup_run_id": "37570244992",
     "cleanup_run_attempt": "1",
@@ -59,7 +59,7 @@ JSON
 
 After deleting a resolved target, bounded GET retries require HTTP 404 for that
 exact branch ID. This proves branch metadata absence at observation time, not
-physical storage reclamation or completion of every asynchronous Neon operation.
+physical storage reclamation or completion of every asynchronous PostgreSQL operation.
 An absent manual lookup after an uncertain creator keeps the original creation
 acknowledgement unknown; it does not prove that creation never happened.
 
@@ -72,14 +72,14 @@ Node VM tests with synthetic API responses. Coverage includes terminal ownership
 wrong SHA/repository/workflow/attempt, live and ambiguous creators, unsafe branch
 metadata, pagination, transport failures, authorization failures, bounded retries,
 and post-delete metadata verification. These are synthetic checks, not a live
-Neon deletion receipt or complete M11 operational acceptance.
+PostgreSQL deletion receipt or complete M11 operational acceptance.
 
 The first hosted CI head caught another repository assertion that still required
 push-only events (Core and Smoke both reported `tests/repository.test.mjs:779`).
 That assertion now allows cleanup dispatch only from main, forbids PR events,
 requires the verification job to remain push-only, and forbids provisioning or
 database work in the manual job. The focused command
-`bun test ./tests/neon-workflow.test.mjs ./tests/repository.test.mjs --test-name-pattern Neon`
+`bun test ./tests/postgres-workflow.test.mjs ./tests/repository.test.mjs --test-name-pattern PostgreSQL`
 passed 46 tests in 13.63 seconds. No production workflow behavior changed in this
 follow-up; hosted CI must pass on its new head before merge.
 
@@ -103,9 +103,9 @@ retention, recovery, observability, rotation, and actual operational evidence.
 
 ## Primary references
 
-- [Neon creation](https://api-docs.neon.tech/reference/createprojectbranch)
-- [Neon branch listing](https://api-docs.neon.tech/reference/listprojectbranches)
-- [Neon branch details](https://api-docs.neon.tech/reference/getprojectbranch)
-- [Neon deletion and asynchronous operations](https://api-docs.neon.tech/reference/deleteprojectbranch)
+- [PostgreSQL creation](https://api-docs.db.example.invalid/reference/createprojectbranch)
+- [database sandbox listing](https://api-docs.db.example.invalid/reference/listprojectbranches)
+- [database sandbox details](https://api-docs.db.example.invalid/reference/getprojectbranch)
+- [PostgreSQL deletion and asynchronous operations](https://api-docs.db.example.invalid/reference/deleteprojectbranch)
 - [GitHub workflow anchors and aliases](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations)
 - [GitHub repository dispatch uses the default branch](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#repository_dispatch)

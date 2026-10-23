@@ -1,10 +1,10 @@
-# M11 staging standby — 2026-09-07
+# M11 sandbox standby — 2026-09-07
 
-After the bounded certification of `a76f27453e558525a05089e3c88085153a63a528`, staging compute was
+After the bounded certification of `a76f27453e558525a05089e3c88085153a63a528`, sandbox compute was
 stood down. This is cleanup evidence, not full M11 or production certification.
 
 - Project: `18c6a1fd-6b4b-421e-9ec9-fd1550ce9a3f`.
-- Staging environment: `3beb119e-1b23-4fa6-9af3-2c6b9976708f`.
+- sandbox environment: `3beb119e-1b23-4fa6-9af3-2c6b9976708f`.
 - Removed API deployment: `3105c082-1ffb-467e-8fd0-b518812668a9`.
 - Removed worker deployment: `fc592d2a-7321-4c22-8be6-66b75ac9d805`.
 - Removed Restate deployment: `b89c1933-5d0f-4a29-9f15-e1bc6e0ddde0`.
@@ -14,7 +14,7 @@ stood down. This is cleanup evidence, not full M11 or production certification.
 - The 500 MB `restate-data` volume remains READY at `/restate-data`, approximately 50.9 MB used.
 - Production configuration for API, worker, and Restate was compared with pre-shutdown snapshots
   and remained unchanged. No production deployment was removed.
-- Services, secrets, Neon databases, R2 objects, and the Restate volume were not deleted. Staging
+- Services, secrets, PostgreSQL databases, R2 objects, and the Restate volume were not deleted. sandbox
   can be explicitly reactivated for later cloud certification; removed deployment revisions are
   not running workloads and are not a backup of data.
 

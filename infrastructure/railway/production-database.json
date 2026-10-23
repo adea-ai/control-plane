@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "provider": "railway-postgres",
+  "status": "verified",
+  "identity": {
+    "serviceId": "67fdd979-8a5b-4c02-b4c5-799a2e5cb3f0",
+    "environmentId": "52f5b0ac-2af0-4792-aa56-30d80e5db31e",
+    "database": "railway",
+    "migration": {
+      "hostname": "altaria.proxy.rlwy.net",
+      "port": 44407
+    },
+    "runtime": {
+      "hostname": "postgres.railway.internal",
+      "port": 5432
+    },
+    "runtimeVerification": {
+      "hostname": "altaria.proxy.rlwy.net",
+      "port": 44407
+    },
+    "tls": {
+      "serverName": "postgres.railway.internal",
+      "caSha256": "3022dc74d0ca3f397259f884ae46f49ce41a51b6208a71a6a30d7fcf142f9c90"
+    }
+  }
+}

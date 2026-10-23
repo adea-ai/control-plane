@@ -7,7 +7,7 @@ import {
 import { RepositoryGraphAdministrationService } from './graphs/graph-administration.service.js'
 import { RepositoryWorkspaceCatalogService } from './catalog/workspace-catalog.service.js'
 import { VaultCredentialAdministrationService } from './credentials/credential-administration.service.js'
-import { CredentialVault, NeonEncryptedSecretProvider } from '@control-plane/credential-vault'
+import { CredentialVault, PostgresEncryptedSecretProvider } from '@control-plane/credential-vault'
 import type { StructuredLogger } from '@control-plane/bootstrap'
 import {
   decidedRetentionPolicy,
@@ -86,9 +86,9 @@ function createCredentialAdministration(
   database: PostgresConnection['database']
 ): VaultCredentialAdministrationService | undefined {
   if (!configuration.secretEncryptionKey) return undefined
-  let provider: NeonEncryptedSecretProvider
+  let provider: PostgresEncryptedSecretProvider
   try {
-    provider = new NeonEncryptedSecretProvider({
+    provider = new PostgresEncryptedSecretProvider({
       store: new PostgresEncryptedSecretStore(database),
       encryptionKey: configuration.secretEncryptionKey,
       keyReference: MANAGED_CLOUD_SECRET_KEY_REFERENCE,

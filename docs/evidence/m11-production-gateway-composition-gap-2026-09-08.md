@@ -27,14 +27,14 @@ dependency latency or production identity-backend composition.
 
 ## Inventory timeout test uses the production budget
 
-The intermittent Neon failure recurred at `08605c3`. The retained diagnostic
+The intermittent PostgreSQL failure recurred at `08605c3`. The retained diagnostic
 reported `INVENTORY_TIMEOUT_BEFORE_WRITES:CONNECTION_CLOSED:650ms`; 30 other
 database tests passed. This confirms rejection before the intended post-write
 stall, not successful rollback coverage. The error code alone cannot prove which
 network/backend component closed the connection, but the 500 ms override creates
 a timing assumption that ordinary remote inventory writes need not satisfy.
 
-Evidence: [diagnostic Neon failure](https://github.com/adea-ai/control-plane/actions/runs/34245541340/job/102127072133).
+Evidence: [diagnostic PostgreSQL failure](https://github.com/adea-ai/control-plane/actions/runs/34245541340/job/102127072133).
 
 The inventory regression now uses the unmodified production default of 10 seconds
 and injects 11-second idle-callback / active-query stalls. Both cases must still
@@ -42,7 +42,7 @@ complete their writes, reject, roll back registry/outbox/projection/checkpoint
 changes, release ownership locking and recover through the same pool. Only this
 combined test receives a 60-second runner budget. The separate small driver probe
 retains its 500 ms deadline. No production timeout, database setting, retry or
-acceptance assertion is relaxed. Live Neon acceptance must be rerun on this
+acceptance assertion is relaxed. Live PostgreSQL acceptance must be rerun on this
 candidate before treating the timing hypothesis as resolved.
 
 ## Accumulated inventory bounds checked before writes
@@ -67,7 +67,7 @@ Validation: 23 focused inventory tests passed, followed by format, lint, types,
 41 builds, 1,226 unit/E2E/smoke tests, 31 PostgreSQL database tests, the complete
 integration matrix and local connection-loss/restart/backup-restore drills.
 
-## Actual Neon verification passed on the diagnostic candidate
+## Actual PostgreSQL verification passed on the diagnostic candidate
 
 Candidate `26d65c7` completed the real preview verification: 41 builds, migration
 validation/application, all 31 database tests, the other integration packages
@@ -87,57 +87,57 @@ failure was repaired or that the deadline test is free of timing sensitivity.
 Local verification on the same code passed format, lint, type checks, the full
 1,224-test unit/E2E/smoke suite, all 31 database tests, and connection-loss,
 restart and backup/restore drills. Remote disruption/restore is deliberately
-skipped by the runner; local drill results must not be presented as Neon recovery
+skipped by the runner; local drill results must not be presented as PostgreSQL recovery
 evidence. The remote WebSocket drill still uses scripted node/approval inputs,
 not a live native provider or production identity authority. Production Gateway
 composition and the remaining milestone gates below remain open.
 
-## Preview credentials enabled; first real Neon run failed
+## Preview credentials enabled; first real PostgreSQL run failed
 
 The subsequent authorized configuration created `control_plane_admin` on the
-staging branch only, with login and database creation but without superuser,
+sandbox branch only, with login and database creation but without superuser,
 role creation or row-security bypass. Membership in the existing application
 and migration roles permits inherited privileges and role switching, but not
 membership administration. Login was verified before transferring the generated
-password through stdin to `NEON_CI_ADMIN_PASSWORD`; no password was printed or
+password through stdin to `SANDBOX_ADMIN_PASSWORD`; no password was printed or
 written to a local file. Production has no corresponding admin role.
 
 Rerun attempt 2 at candidate `7b70bed` passed the credential gate, created the
-staging-descended PR preview, prepared ownership, and actually executed migration
+sandbox-descended PR preview, prepared ownership, and actually executed migration
 and transaction verification. It failed with 30 database tests passing and one
 failing: the inventory timeout case rejected before its `wrote` flag became true.
 The original assertion hid the rejection cause. A diagnostic follow-up records
 only a bounded error code and elapsed milliseconds, never SQL, parameters or
 credentials, to distinguish deadline expiry from other failures before changing
-the test. This is not a successful Neon acceptance run.
+the test. This is not a successful PostgreSQL acceptance run.
 
 Evidence: [actual preview test failure](https://github.com/adea-ai/control-plane/actions/runs/34243349876/job/102120100565).
-The staging role and repository secret remain owned by preview CI; the PR branch
+The sandbox role and repository secret remain owned by preview CI; the PR branch
 remains under the workflow's close/expiry lifecycle. Production was untouched.
 
-## Live Neon metadata and skipped preview verification
+## Live PostgreSQL metadata and skipped preview verification
 
-Read-only revalidation on September 8 resolved the repository's `NEON_PROJECT_ID`
-to the `control-plane` project `muddy-firefly-58711535`. The authenticated Neon
-CLI reports `pg_version: 18`, with separate `production` and `staging` branches.
+Read-only revalidation on September 8 resolved the repository's `RAILWAY_PROJECT_ID`
+to the `control-plane` project `muddy-firefly-58711535`. The authenticated PostgreSQL
+CLI reports `pg_version: 18`, with separate `production` and `sandbox` branches.
 This confirms the configured project's major version, not the actual Railway
 connection destination, server patch version, pooled-session behavior or a
-successful execution of the inventory deadline against Neon.
+successful execution of the inventory deadline against PostgreSQL.
 
-Crucially, the green `Migrate Neon Branch` job for candidate `35e9416` was a
-credential-gated no-op. The job's step results show `Create Neon branch`,
+Crucially, the green `Migrate PostgreSQL Branch` job for candidate `35e9416` was a
+credential-gated no-op. The job's step results show `Create database sandbox`,
 `Prepare isolated preview database ownership`, and `Verify migrations and
 transactions` all skipped. Repository secret metadata lists
-`NEON_CI_APP_PASSWORD` and `NEON_CI_MIGRATION_PASSWORD`, but not
-`NEON_CI_ADMIN_PASSWORD`. Secret values were not read or printed. The effective
-three-credential gate was unsatisfied; a successful job conclusion is not Neon
+`SANDBOX_APP_PASSWORD` and `SANDBOX_MIGRATION_PASSWORD`, but not
+`SANDBOX_ADMIN_PASSWORD`. Secret values were not read or printed. The effective
+three-credential gate was unsatisfied; a successful job conclusion is not PostgreSQL
 migration or transaction acceptance evidence.
 
 Evidence: [exact job and skipped steps](https://github.com/adea-ai/control-plane/actions/runs/34243104995/job/102118094553).
 No branch, role, credential, database setting or local environment file was
 changed during this check. Provisioning and validating the scoped preview-admin
 credential, then executing the actual preview matrix, remains required. Prior
-summaries calling this green job a Neon migration pass are superseded by this
+summaries calling this green job a PostgreSQL migration pass are superseded by this
 step-level verification. Local PostgreSQL integration/recovery evidence remains
 valid and separate.
 
@@ -158,7 +158,7 @@ values are rejected before a transaction starts. The earlier unpatched experimen
 below remains historical evidence, not the current implementation.
 
 This depends on PostgreSQL transaction-timeout support and the pinned client
-patch. The repository PostgreSQL 18.3 baseline supports the setting; actual Neon
+patch. The repository PostgreSQL 18.3 baseline supports the setting; actual PostgreSQL
 server/pool acceptance remains required. Unsupported servers fail closed. The
 deadline covers the server transaction after setup, not pool acquisition,
 normalization, network failure detection or JavaScript callback completion.
@@ -658,7 +658,7 @@ ownership or inventory ingestion/freshness, regardless of a passing drill.
    operational sinks; add bounded health/disappearance refresh and cleanup.
 4. Wire configuration through the executable, including dependency readiness
    and graceful drain. Test the actual executable, not only injected `start`.
-5. Run the pinned Railway/Neon/Restate candidate with real authenticated native
+5. Run the pinned Railway/PostgreSQL/Restate candidate with real authenticated native
    runtime traffic and the #188 fault matrix. Keep native execution-host work
    in `m11-native-remote-host-gap-2026-09-08.md` as a separate prerequisite.
 

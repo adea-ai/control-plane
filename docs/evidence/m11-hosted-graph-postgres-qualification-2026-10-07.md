@@ -1,8 +1,8 @@
-# Hosted graph qualification on the Neon lane — 2026-10-07
+# Hosted graph qualification on the PostgreSQL lane — 2026-10-07
 
 ## Finding and scope
 
-The complete post-merge Neon run 37643352492 on
+The complete post-merge PostgreSQL run 37643352492 on
 `f693e1153b00e1c5af539ec76818b8fc263d6d95` passed 245 tests but skipped the Hosted
 PostgreSQL/Restate graph scenario and its hooks. The generic database runner did not supply
 `RUN_HOSTED_GRAPH_RESTATE_INTEGRATION` or a Restate environment. A successful aggregate therefore
@@ -13,10 +13,10 @@ the historical 2026-10-03 host-launcher evidence is not a replacement for a curr
 
 Shard 3 delegates this one file to the required **Verify Hosted PostgreSQL and Restate graph**
 step. Every integration file retains its existing shard owner. The dedicated qualifier uses that
-shard's existing least-privilege Neon URLs and the digest-pinned Restate image from supported
+shard's existing least-privilege PostgreSQL URLs and the digest-pinned Restate image from supported
 Compose configuration. It creates one bounded, labeled Restate container on the disposable Linux
 GitHub runner, with an ephemeral journal and a fresh request-signing identity. It creates no extra
-Neon branch and adds no integration-file retry or job-timeout increase.
+database sandbox and adds no integration-file retry or job-timeout increase.
 
 The root command is:
 
@@ -62,7 +62,7 @@ or deployed graph execution. The optional system-timeout regression uses GNU `gt
 `timeout`; it is explicitly skipped when neither is available on a developer machine, while
 the executable-double lifecycle cases still run. Ubuntu CI supplies GNU timeout. Real qualification is pending a complete trusted-main run containing
 the new step and its cleanup receipt. The Hosted application runs through its production `start()`
-launcher on the runner, with real Docker Restate and Neon PostgreSQL. This is not the Hosted
+launcher on the runner, with real Docker Restate and Railway PostgreSQL. This is not the Hosted
 Compose application image, native Pi/ACP/provider execution, capacity, measured RPO/RTO, financial
 hard-budget enforcement, or complete frozen-candidate M11 acceptance. Those original gates remain
 open. No new acceptance waiver is introduced.

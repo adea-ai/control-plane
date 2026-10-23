@@ -45,7 +45,7 @@ old fixed PostgreSQL limits and verifies the scaled deadlines, hard cap and unch
 receipts record the exact PID and directory without database URLs or credentials.
 
 All four scenarios belong to `tests/memory-process-loss.integration.test.mjs`, a repository-owned
-integration suite because it spans application roots. Both unsharded integration and Neon shard 3
+integration suite because it spans application roots. Both unsharded integration and PostgreSQL shard 3
 select it; unit discovery excludes it. The first ready head passed all four SIGKILL cases in
 PostgreSQL CI run 37176101531, but failed `turbo boundaries` on three imports from application
 packages to repository fixtures. Moving the scenarios to the repository suite preserves the
