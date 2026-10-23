@@ -3,7 +3,11 @@ import { execFile } from 'node:child_process'
 import { mkdir, readFile, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
-import { pinnedAcpBuild, verifyPinnedCodexNativeBinary } from '@control-plane/acp-adapter'
+import {
+  pinnedAcpBuild,
+  verifyPinnedCodexNativeBinary,
+  type AcpDriverOptions,
+} from '@control-plane/acp-adapter'
 import { createExecutionId } from '@control-plane/control-api'
 import { createLocalAcpRuntime, createRepositoryAcpTaskPromptResolver } from './acp-runtime.js'
 import type { LocalManagedPiRuntimeRepositories } from './managed-pi-runtime.js'
@@ -14,6 +18,8 @@ export interface InstalledLocalAcpOptions extends LocalModelRouteOptions {
   readonly nodeExecutable: string
   readonly cwd: string
   readonly codexHome: string
+  /** Optional qualified native route gate, carried to the driver unchanged. */
+  readonly nativeRouteGate?: AcpDriverOptions['nativeRouteGate']
 }
 
 async function boundedFile(path: string, limit: number): Promise<Buffer> {
@@ -92,6 +98,7 @@ export function createInstalledLocalAcpRuntime(
     },
     externalSessionId: () => `ses_${createExecutionId().slice(4)}`,
     interactionId: () => `int_${createExecutionId().slice(4)}`,
+    ...(options.nativeRouteGate === undefined ? {} : { nativeRouteGate: options.nativeRouteGate }),
     resolvePrompt: createRepositoryAcpTaskPromptResolver(
       repositories.contextPackages,
       repositories.catalog,

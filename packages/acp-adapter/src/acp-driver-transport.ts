@@ -166,7 +166,8 @@ export async function inspectDriver(
   const capabilities = versionSupported
     ? mapAcpCapabilities(
         initialize,
-        state.transport.replay !== undefined && (state.transport.replaySupport?.() ?? true)
+        state.transport.replay !== undefined && (state.transport.replaySupport?.() ?? true),
+        state.nativeRouteGate?.capabilities
       )
     : []
   const limitations = [
