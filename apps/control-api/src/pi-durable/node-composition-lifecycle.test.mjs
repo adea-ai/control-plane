@@ -204,6 +204,79 @@ test('after close, recovery and terminal settlement refuse, and no interval reac
   }
 }, 30000)
 
+test('same-version handoff drains accepted lead recovery and fences every later pass', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pi-lead-upgrade-close-'))
+  const entered = Promise.withResolvers()
+  const release = Promise.withResolvers()
+  const journal = journalReadCounter()
+  let hold = false
+  let scans = 0
+  let adapterCloses = 0
+  let composition
+  let recovery
+  let handoff
+  let watchdog
+  try {
+    composition = await createNodePiDurableLeadComposition(
+      baseOptions(directory, {
+        onAdapterReady: journal.attach,
+        childProgress: {
+          scan: async (adapter) => {
+            scans += 1
+            if (hold) {
+              entered.resolve()
+              await release.promise
+            }
+            adapter.journal.list()
+          },
+        },
+      })
+    )
+    const closeAdapter = composition.adapter.close.bind(composition.adapter)
+    composition.adapter.close = () => {
+      adapterCloses += 1
+      return closeAdapter()
+    }
+    hold = true
+    recovery = composition.recover()
+    recovery.catch(() => undefined)
+    await Promise.race([
+      entered.promise,
+      new Promise((_, reject) => {
+        watchdog = setTimeout(() => reject(new Error('UPGRADE_RECOVERY_NOT_ENTERED')), 1000)
+      }),
+    ])
+    clearTimeout(watchdog)
+    handoff = composition.closeForSameVersionUpgrade()
+    handoff.catch(() => undefined)
+    // The adapter and manifest cannot close underneath an accepted lead recovery.
+    expect(adapterCloses).toBe(0)
+    release.resolve()
+    await recovery
+    const manifest = await handoff
+    expect(manifest.schemaVersion).toBe('pi-local-upgrade-manifest/v1')
+    expect(adapterCloses).toBe(1)
+    expect(composition.drainIncomplete).toBe(false)
+    await expect(composition.recover()).rejects.toThrow('PI_LEAD_COMPOSITION_CLOSED')
+    await expect(composition.settleTerminalAccounting()).rejects.toThrow(
+      'PI_LEAD_TERMINAL_SETTLEMENT_CLOSED'
+    )
+    expect(() => composition.admission.options.database.prepare('SELECT 1')).toThrow()
+    const scansAtHandoff = scans
+    const readsAtHandoff = journal.reads
+    await pause(12 * fastInterval)
+    expect(scans).toBe(scansAtHandoff)
+    expect(journal.reads).toBe(readsAtHandoff)
+  } finally {
+    clearTimeout(watchdog)
+    release.resolve()
+    await recovery?.catch(() => undefined)
+    await handoff?.catch(() => undefined)
+    await composition?.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+}, 30000)
+
 test('a recovery interval that is not a positive integer is refused before any store is opened', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'pi-lead-interval-'))
   try {
@@ -439,10 +512,14 @@ test('close bounds the drain so a wedged recovery cannot wedge process teardown'
     release = resolve
   })
   let composition
+  const ledger = fakeLedger()
+  const journal = journalReadCounter()
   try {
     composition = await createNodePiDurableLeadComposition(
       baseOptions(directory, {
         drainTimeoutMs: 150,
+        ledger,
+        onAdapterReady: journal.attach,
         childProgress: {
           scan: async () => {
             if (hang) await gate
@@ -453,12 +530,34 @@ test('close bounds the drain so a wedged recovery cannot wedge process teardown'
     hang = true
     // An accepted recovery that never settles.
     const recovery = composition.recover()
-    recovery.catch(() => undefined)
+    const outcome = recovery.then(
+      () => undefined,
+      (error) => error
+    )
     const closing = composition.close()
     // The close must complete on its own instead of waiting for the wedged recovery forever.
     await closing
     expect(composition.drainIncomplete).toBe(true)
+    await expect(composition.closeForSameVersionUpgrade()).rejects.toThrow(
+      'PI_LEAD_UPGRADE_DRAIN_INCOMPLETE'
+    )
     await expect(composition.recover()).rejects.toThrow('PI_LEAD_COMPOSITION_CLOSED')
+    const database = composition.admission.options.database
+    const prepare = database.prepare.bind(database)
+    let lateStoreReads = 0
+    database.prepare = (...args) => {
+      lateStoreReads += 1
+      return prepare(...args)
+    }
+    const readsAtClose = journal.reads
+    // Resume the accepted callback only after teardown timed out and closed its stores.
+    hang = false
+    release()
+    expect((await outcome)?.message).toBe('PI_LEAD_TERMINAL_SETTLEMENT_CLOSED')
+    await pause(12 * fastInterval)
+    expect(lateStoreReads).toBe(0)
+    expect(journal.reads).toBe(readsAtClose)
+    expect(ledger.settles).toBe(0)
   } finally {
     hang = false
     release?.()

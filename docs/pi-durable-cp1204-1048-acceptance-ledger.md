@@ -5,7 +5,11 @@ remains unproved, and which gate proves what. It is a custody record for the
 integrated outcome, not a claim that any live deployment, native effect,
 installed profile or production activation is qualified.
 
-## Custody and preservation
+## Historical custody and preservation
+
+The table and W1 integration account below record the earlier integration checkpoint.
+Its preserved heads and conflict count are historical; they are not the final
+current-main reconciliation inputs or a fresh validation receipt.
 
 | Item                             | Value                                                                                                                            |
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -16,57 +20,71 @@ installed profile or production activation is qualified.
 | History rewrite                  | none. Both published heads are ancestors of the published head                                                                   |
 | Merge conflicts                  | two, both single-line list additions in the shared test-group inventory; resolved as the union of both sides, no design decision |
 
-The `#1048` branch already contained the `#1204` head as an ancestor, so the
-integrated outcome is published on the `#1048` branch. The `#1204` branch is
-preserved unchanged at its published head.
+At that checkpoint, the `#1048` branch already contained the recorded `#1204`
+head as an ancestor, so the integrated outcome was published on the `#1048`
+branch. The `#1204` branch was preserved unchanged at its then-published head.
+
+## Current integration inputs and evidence boundary
+
+The reconciliation retains the published #1048 history and integrates current
+`main` at `ab931d068142a0c5629ed4d6cc2c96a1b377a986`, the #1204 SDK/lifecycle
+source input at `3a8bee3aa630acb7def053e42df6e3ea1a5aa827`, and the policy
+input at `f561ca52c2f6cef6a3c76465d581dc7d567a9a6b`. These identify source
+inputs, not a new published head or validation result. The scope below is
+regenerated from the resolved integration index; the final commit must carry
+this ledger and pass its unchanged scope check before publication is qualified.
+
+The retained source includes the HTTP child-publication reader, Hosted accepted
+model forwarding, and Node child-delivery/startup/close reconciliation. Their
+presence does not establish installed SDK adoption, a deployed lifecycle,
+independent restore-generation authority, or complete native/full-writer
+acceptance. Earlier qualification receipts below remain historical; no full
+current-candidate test pass is claimed here.
 
 ## The current published scope
 
-The published scope is the diff from the base `f4f17194e04bcf8af65e8b5ff7aed7926b51ca88`
+The published scope is the diff from the base `ab931d068142a0c5629ed4d6cc2c96a1b377a986`
 to the published head, which is the head that carries this section. The complete changed scope is
-**183 paths: 66 added, 117 modified**; no path was deleted.
+**179 paths: 63 added, 116 modified**; no path was deleted.
 `tests/pi-durable-cp1048-evidence-discipline.test.mjs` checks this list, these counts and this
 area table against the repository, so the published scope cannot drift away from the code
 without that lane failing.
 
 | Area                          | Added | Modified | Total |
 | ----------------------------- | ----- | -------- | ----- |
-| `(repository root)`           | 0     | 4        | 4     |
-| `.github`                     | 0     | 1        | 1     |
-| `apps/control-api`            | 16    | 23       | 39    |
+| `(repository root)`           | 0     | 1        | 1     |
+| `apps/control-api`            | 16    | 24       | 40    |
 | `apps/hosted-control-plane`   | 2     | 5        | 7     |
-| `apps/workflow-worker`        | 0     | 6        | 6     |
+| `apps/workflow-worker`        | 0     | 4        | 4     |
+| `docs`                        | 7     | 3        | 10    |
 | `docs/architecture`           | 0     | 2        | 2     |
-| `docs/evidence`               | 7     | 3        | 10    |
+| `docs/evals`                  | 0     | 1        | 1     |
+| `docs/requirements`           | 0     | 1        | 1     |
 | `packages/acp-adapter`        | 0     | 2        | 2     |
 | `packages/config`             | 0     | 2        | 2     |
 | `packages/contracts`          | 1     | 4        | 5     |
-| `packages/control-sdk`        | 1     | 4        | 5     |
-| `packages/database`           | 3     | 4        | 7     |
-| `packages/domain`             | 0     | 3        | 3     |
+| `packages/control-sdk`        | 2     | 5        | 7     |
+| `packages/database`           | 1     | 2        | 3     |
+| `packages/domain`             | 0     | 4        | 4     |
 | `packages/orchestration`      | 0     | 2        | 2     |
 | `packages/pi-durable-adapter` | 16    | 18       | 34    |
 | `packages/policy`             | 0     | 3        | 3     |
 | `packages/profile-adapters`   | 3     | 6        | 9     |
 | `packages/runtime-sdk`        | 0     | 1        | 1     |
 | `packages/sqlite-persistence` | 0     | 3        | 3     |
-| `packages/telemetry`          | 0     | 2        | 2     |
-| `scripts`                     | 1     | 3        | 4     |
-| `tests`                       | 16    | 16       | 32    |
+| `scripts`                     | 0     | 4        | 4     |
+| `tests`                       | 15    | 19       | 34    |
 
 The complete path list, as published:
 
 ```text
-M  .github/workflows/task-cache-qualification.yml
-M  .release-please-manifest.json
-M  CHANGELOG.md
-M  apps/control-api/CHANGELOG.md
 M  apps/control-api/package.json
 M  apps/control-api/src/app.module.ts
 M  apps/control-api/src/executions/execution-acceptance.service.ts
 M  apps/control-api/src/index.ts
 A  apps/control-api/src/models/production-cancellation-authority.test.mjs
 M  apps/control-api/src/models/production-child-configuration.test.mjs
+M  apps/control-api/src/models/production-model-composition-terminal-surface.test.mjs
 M  apps/control-api/src/models/production-model-composition.ts
 A  apps/control-api/src/pi-durable/cancellation-authority.test-fixture.mjs
 M  apps/control-api/src/pi-durable/child-progress-scanner.test.mjs
@@ -90,6 +108,7 @@ M  apps/control-api/src/pi-durable/node-candidate.fixture.mjs
 A  apps/control-api/src/pi-durable/node-canonical-classification.test.mjs
 M  apps/control-api/src/pi-durable/node-composition-lifecycle.test.mjs
 M  apps/control-api/src/pi-durable/node-composition.ts
+M  apps/control-api/src/pi-durable/pi-durable-lead-target.test.mjs
 M  apps/control-api/src/pi-durable/pi-durable-lead.service.ts
 M  apps/control-api/src/pi-durable/pi-durable-lead.test.mjs
 A  apps/control-api/src/pi-durable/postgres-cancellation-request-reader.fixture.mjs
@@ -106,8 +125,6 @@ M  apps/hosted-control-plane/src/index.test.mjs
 M  apps/hosted-control-plane/src/index.ts
 M  apps/hosted-control-plane/src/reconciliation-wiring.test.mjs
 A  apps/hosted-control-plane/src/reconciliation-workflow-submitter.ts
-M  apps/workflow-worker/CHANGELOG.md
-M  apps/workflow-worker/package.json
 M  apps/workflow-worker/src/cloud-composition.ts
 M  apps/workflow-worker/src/index.test.mjs
 M  apps/workflow-worker/src/runtime-attempt-router.test.mjs
@@ -115,6 +132,7 @@ M  apps/workflow-worker/src/runtime-attempt-router.ts
 M  bun.lock
 M  docs/architecture/control-plane-architecture.md
 M  docs/architecture/control-plane-architecture.v1.json
+M  docs/evals/skill-evals/skill-eval-harness.mts
 M  docs/harnesses.md
 A  docs/pi-durable-cancellation-owner-proposal.md
 A  docs/pi-durable-committed-cancellation-authority.md
@@ -125,7 +143,7 @@ A  docs/pi-durable-cp1204-1048-acceptance-ledger.md
 M  docs/pi-durable-report-back.md
 M  docs/pi-durable-runtime.md
 A  docs/profile-recovery-acceptance-map.md
-M  package.json
+M  docs/requirements/cp186-195-reconciliation-2026-10-21.md
 M  packages/acp-adapter/src/acp-remote-crypto.ts
 M  packages/acp-adapter/src/acp-remote-transport.ts
 M  packages/config/src/managed-cloud.test.mjs
@@ -136,19 +154,18 @@ M  packages/contracts/src/decision-resolution.ts
 M  packages/contracts/src/index.ts
 A  packages/contracts/src/pi-child-publication.ts
 M  packages/control-sdk/openapi/control-plane.v3.json
+M  packages/control-sdk/scripts/openapi.mjs
 M  packages/control-sdk/src/client.ts
 M  packages/control-sdk/src/compatibility.test.mjs
+A  packages/control-sdk/src/openapi-model-id-parity.test.mjs
 M  packages/control-sdk/src/operations.ts
 A  packages/control-sdk/src/pi-child-publication.test.mjs
-A  packages/database/drizzle/0074_dear_talisman.sql
-A  packages/database/drizzle/meta/0074_snapshot.json
-M  packages/database/drizzle/meta/_journal.json
 A  packages/database/src/execution-repository.test.mjs
 M  packages/database/src/execution-repository.ts
 M  packages/database/src/integration.test.mjs
-M  packages/database/src/schema/executions.ts
 M  packages/domain/src/command-inbox.test.mjs
 M  packages/domain/src/command-inbox.ts
+M  packages/domain/src/execution-lifecycle.test.mjs
 M  packages/domain/src/execution-lifecycle.ts
 M  packages/orchestration/src/delegation.test.mjs
 M  packages/orchestration/src/delegation.ts
@@ -202,12 +219,11 @@ M  packages/runtime-sdk/src/pi-durable-lead.test.mjs
 M  packages/sqlite-persistence/src/delegation-repository.ts
 M  packages/sqlite-persistence/src/delegation-terminal-receipt.test.mjs
 M  packages/sqlite-persistence/src/delegation-terminal-receipt.ts
-M  packages/telemetry/CHANGELOG.md
-M  packages/telemetry/package.json
 M  scripts/integration-shards.mjs
+M  scripts/requirements-ledger.mjs
 M  scripts/run-bun-test-group.mjs
 M  scripts/run-integration-tests.mjs
-A  scripts/task-cache-qualification.mjs
+M  tests/fixtures/pi-lead-restart/host.mjs
 A  tests/fixtures/pinned-process.mjs
 A  tests/fixtures/profile-recovery-cleanup.mjs
 A  tests/fixtures/runner-cleanup-signal.child.mjs
@@ -217,6 +233,7 @@ M  tests/integration-shards.test.mjs
 M  tests/j1-unfinished-child-process-restart.test.mjs
 M  tests/j1-unfinished-child-process.fixture.mjs
 M  tests/m11-architecture-audit.test.mjs
+M  tests/m11-requirements-ledger.test.mjs
 M  tests/m11-standalone-e2e.test.mjs
 M  tests/pi-child-continuation-process.fixture.mjs
 M  tests/pi-child-continuation-sqlite.test.mjs
@@ -231,6 +248,7 @@ A  tests/process-evidence.fixture.mjs
 A  tests/profile-recovery-cleanup.test.mjs
 A  tests/profile-recovery-crash-restore.test.mjs
 A  tests/profile-recovery-fenced-rollback.test.mjs
+M  tests/profile-recovery-pi-lead-restart.test.mjs
 A  tests/profile-recovery-postgres-restore.integration.test.mjs
 A  tests/profile-recovery-rebind-fencing.test.mjs
 A  tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs
@@ -238,25 +256,25 @@ A  tests/profile-recovery-self-hosted-simple.integration.test.mjs
 A  tests/profile-recovery-selfhosted-server-wake-replay.boundary.test.mjs
 M  tests/repository.test.mjs
 A  tests/runner-cleanup.test.mjs
-A  tests/task-cache-qualification.test.mjs
 M  tests/workspace-tooling.test.mjs
 ```
 
 Constraints observed in that scope, re-derived from the diff rather than from a summary:
 
-- The only migration in the scope is `packages/database/drizzle/0074_dear_talisman.sql`,
-  with its metadata snapshot and its drizzle journal entry. No `#0075` migration exists
-  in any ref of this repository, and the `#0074`/`#0075` migration and journal holds are
-  preserved: the corrections in this outcome touch no migration file, no drizzle metadata,
-  no schema module and no journal module.
+- Main's `0074` and `0075` migrations, their snapshots and the Drizzle journal are
+  preserved unchanged. No migration SQL, metadata snapshot or journal differs from the
+  current main base in this scope. The earlier checkpoint's statement that `0075` did
+  not exist is superseded by the landed main migration chain; this reconciliation
+  does not apply any migration or establish migration-backed runtime acceptance.
 - No path in the scope grants an independent restore-generation authority. The two modules
   that bind a generation bind a caller-supplied value, and the only `PiCancellationOwnerPort`
   implementation remains unavailable. The rollback fences the branch does have — the
   journal epoch, the effect-gate revision, the process claim and the ordinary-cancellation
   authority checks — are preserved unchanged.
-- The scope adds no live, native or production surface: the native cancellation boundary
-  refuses before any native effect, the hosted composition additions are source and
-  fixture only, and no deployment, credential or activation path is introduced.
+- The native cancellation boundary remains fail closed before the unqualified native
+  effect. Hosted forwarding and lifecycle changes are integrated source paths with
+  repository fixtures; no live deployment, credential, provider activation or installed
+  profile is exercised or qualified by their presence.
 
 ## The acceptance items and their proofs
 
@@ -288,17 +306,17 @@ architecture. See
 
 These are **not** closed by this ledger and must not be read as closed.
 
-| Gate                                                 | Why it stays open                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native zero-effect acceptance                        | The boundary refuses a rewound request before any native effect. Nothing here observes a native effect or proves the effect is zero.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| SDK adoption and upstream publication                | The outcome is repository source and tests. No SDK release, upstream publication or consumer adoption is performed or claimed.                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Installed cross-repo and profile acceptance          | The proofs are repository tests against a disposable local PostgreSQL and the local composition. No installed profile, cross-repo consumer or production topology is exercised.                                                                                                                                                                                                                                                                                                                                                                                         |
-| Production activation                                | No production action is taken. `compose.yaml` supplies a disposable local service; nothing is deployed, activated or released.                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| The aggregate unit lane                              | The lane hits a Bun 1.4.3 panic (`range end index 1884 out of range for slice of length 1024`) and 7 test failures: the runtime-gateway host credential startup case, the two qualified-cancellation deadline and revocation cases, the crash-at-admission-boundary case, and the three canonical recovery-outage cases. **The same 7 failures and the same panic reproduce with the writer-coverage file held aside**, so they are pre-existing on the integrated tree and not caused by this qualification. The Bun panic is W4's active CP #1030 isolation scope.    |
-| The durable writers outside the target-accepting set | The effect gate store, the journal, the lease, the adapter, the cancellation history classifier, the Cloudflare owner and session stores, the control API lead admission, preparation, running-lifecycle, management-call and lead-receipt stores, the three production selection stores, the shared live fence harness, the upgrade manifest and the resume permit do not carry an independent restore generation, so the restore-generation property is not proven for them. They are named and classified in the writer-coverage qualification rather than excluded. |
-| The independent restore-generation authority         | Nothing outside the restored snapshot holds the current restore generation. `restoreGeneration` is a caller-supplied reference, the only `PiCancellationOwnerPort` implementation throws `PI_CANCELLATION_AUTHORITY_UNAVAILABLE`, and no production consumer reads a current fence to compare it against the target's generation. A rollback that restores the generation and recomputes the matching digest is therefore indistinguishable from a genuine request. Closing this needs production authority beyond the current scope.                                   |
-| The source-plan and Railway lifecycle scope          | Held by W4 for CP #1030. No source-plan path is in this change set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| The Linux-pidfd proof family                         | `tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs` fails closed on macOS because the pinned-process fixture needs a Linux pidfd, and the ownership record cannot be taken without it. That file and its fixture are byte-identical to the published #1048 head. The CI runs this lane on `ubuntu-latest`, where the proof is intended to run.                                                                                                                                                                                                     |
+| Gate                                                 | Why it stays open                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Native zero-effect acceptance                        | The boundary refuses a rewound request before any native effect. Nothing here observes a native effect or proves the effect is zero.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| SDK adoption and upstream publication                | The outcome is repository source and tests. No SDK release, upstream publication or consumer adoption is performed or claimed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Installed cross-repo and profile acceptance          | The proofs are repository tests against a disposable local PostgreSQL and the local composition. No installed profile, cross-repo consumer or production topology is exercised.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Production activation                                | No production action is taken. `compose.yaml` supplies a disposable local service; nothing is deployed, activated or released.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| The aggregate unit lane                              | The historical integrated-tree run recorded a Bun 1.4.3 panic (`range end index 1884 out of range for slice of length 1024`) and 7 test failures: the runtime-gateway host credential startup case, the two qualified-cancellation deadline and revocation cases, the crash-at-admission-boundary case, and the three canonical recovery-outage cases. **The same 7 failures and the same panic reproduce with the writer-coverage file held aside**, so they are pre-existing on the integrated tree and not caused by this qualification. That receipt recorded W4's CP #1030 isolation scope; it is not a fresh ownership or final-candidate result. The complete current aggregate lane remains unverified by this ledger. |
+| The durable writers outside the target-accepting set | The effect gate store, the journal, the lease, the adapter, the cancellation history classifier, the Cloudflare owner and session stores, the control API lead admission, preparation, running-lifecycle, management-call and lead-receipt stores, the three production selection stores, the shared live fence harness, the upgrade manifest and the resume permit do not carry an independent restore generation, so the restore-generation property is not proven for them. They are named and classified in the writer-coverage qualification rather than excluded.                                                                                                                                                        |
+| The independent restore-generation authority         | Nothing outside the restored snapshot holds the current restore generation. `restoreGeneration` is a caller-supplied reference, the only `PiCancellationOwnerPort` implementation throws `PI_CANCELLATION_AUTHORITY_UNAVAILABLE`, and no production consumer reads a current fence to compare it against the target's generation. A rollback that restores the generation and recomputes the matching digest is therefore indistinguishable from a genuine request. Closing this needs production authority beyond the current scope.                                                                                                                                                                                          |
+| The source-plan and Railway lifecycle scope          | The historical handoff assigned this to W4 for CP #1030. That is not a current custody or deployed-lifecycle receipt; this reconciliation does not establish source-plan or Railway runtime acceptance.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| The Linux-pidfd proof family                         | `tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs` fails closed on macOS because the pinned-process fixture needs a Linux pidfd, and the ownership record cannot be taken without it. That file and its fixture are byte-identical to the published #1048 head. The CI runs this lane on `ubuntu-latest`, where the proof is intended to run.                                                                                                                                                                                                                                                                                                                                                            |
 
 ## The qualified gates and their evidence
 

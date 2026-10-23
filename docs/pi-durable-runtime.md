@@ -56,18 +56,23 @@ intent/receipt store, composes the actual adapter, drains retained parent inbox
 evidence independently of model inference and scans retained runtime admissions.
 The caller owns closing this composition and its external repositories.
 
-Closing waits for the accepted recoveries so the stores stay live until they
-settle, and the periodic recovery pass settles before the terminal settlements
-are closed. That wait is bounded: a recovery that never settles must not hold
-process teardown open forever. When the bound is reached the close continues,
-`drainIncomplete` reports that the teardown gave up waiting, and the stores
-still close. The bound is the composition's `drainTimeoutMs` option and
-defaults to 30 seconds.
+Closing fences new public recoveries and stops the periodic recovery timer. It
+waits for accepted recoveries and the current periodic pass before closing the
+terminal settlements and runtime. These recovery waits use `drainTimeoutMs`,
+which defaults to 30 seconds. When a wait expires, `drainIncomplete` records
+that accepted work did not settle and teardown proceeds.
 
-`drainIncomplete` is on the host-facing production composition surface, beside
-the terminal settlement getters, so the host can read it after the close to
-know the drain was not clean. It is a teardown outcome, not a request refusal:
-the close itself always completes.
+The subsequent terminal-settlement and runtime close waits are outside that
+bound. They can delay or reject close; `drainTimeoutMs` is not an end-to-end
+shutdown deadline. The host-facing production composition exposes
+`drainIncomplete` beside its terminal-settlement getters so the host can read
+that recovery-drain outcome after close.
+
+The lead factory's `closeForSameVersionUpgrade` uses the complete lead close,
+including its recovery fence, timer, settlements and admission database. It
+refuses a manifest with `PI_LEAD_UPGRADE_DRAIN_INCOMPLETE` when accepted recovery
+did not settle in time. A successful manifest remains same-version local store
+integrity evidence, not independent restore-generation or execution authority.
 
 The retained parent inbox is scanned under the same 4096 bound the child
 progress scanner enforces; a larger inbox is refused rather than replayed. One

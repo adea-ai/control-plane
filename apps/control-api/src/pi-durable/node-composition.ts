@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   createNodePiDurableRuntime,
+  createPiDurableLocalUpgradeManifest,
   createPiDurableUsageAuthority,
   type NodePiDurableCompositionOptions,
   type PiDurableUsageAuthorityOptions,
@@ -282,6 +283,23 @@ export async function createNodePiDurableLeadComposition(
     const assertOpen = () => {
       if (closePromise !== undefined) throw new Error('PI_LEAD_COMPOSITION_CLOSED')
     }
+    const close = () => {
+      closePromise ??= (async () => {
+        clearInterval(recoveryTimer)
+        // Accepted recovery calls keep the stores live until they settle, including failures.
+        // These recovery waits are bounded; terminal and runtime teardown have separate waits.
+        if (!(await settleWithin(Promise.allSettled(publicRecoveries)))) drainIncomplete = true
+        if (!(await settleWithin(preparationRecovery))) drainIncomplete = true
+        await terminalSettlement.close()
+        await childTerminalSettlement?.close()
+        try {
+          await initializedRuntime.close()
+        } finally {
+          database.close()
+        }
+      })()
+      return closePromise
+    }
     return {
       ...runtime,
       admission,
@@ -334,24 +352,14 @@ export async function createNodePiDurableLeadComposition(
       get childTerminalSettlementBlocked() {
         return childTerminalSettlement?.blocked ?? false
       },
-      close() {
-        closePromise ??= (async () => {
-          clearInterval(recoveryTimer)
-          // Accepted recovery calls keep the stores live until they settle, including failures.
-          // The wait is bounded: a recovery that never settles must not wedge process teardown.
-          if (!(await settleWithin(Promise.allSettled(publicRecoveries)))) drainIncomplete = true
-          if (!(await settleWithin(preparationRecovery))) drainIncomplete = true
-          await terminalSettlement.close()
-          await childTerminalSettlement?.close()
-          try {
-            await initializedRuntime.close()
-          } finally {
-            database.close()
-          }
-        })()
-        return closePromise
+      close,
+      /** A handoff is valid only after the complete lead composition drained and closed. */
+      async closeForSameVersionUpgrade() {
+        await close()
+        if (drainIncomplete) throw new Error('PI_LEAD_UPGRADE_DRAIN_INCOMPLETE')
+        return createPiDurableLocalUpgradeManifest(options.directory)
       },
-      /** True when a close gave up waiting for an accepted recovery. The teardown still completed. */
+      /** True once close stops waiting for accepted recovery, even if later teardown is pending. */
       get drainIncomplete() {
         return drainIncomplete
       },
