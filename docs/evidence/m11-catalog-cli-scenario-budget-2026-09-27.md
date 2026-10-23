@@ -65,7 +65,7 @@ The canonical `bun run test` then passed:
 - Unit coverage: **82.38% lines, 84.14% functions**, above both existing 80% gates.
 
 The skipped case is cloud PostgreSQL persistence-profile conformance, explicitly
-owned by the separate Neon integration lane. This run does not certify it.
+owned by the separate PostgreSQL integration lane. This run does not certify it.
 Lane-duration budget enforcement is CI-only and was not executed locally.
 
 Full `bun run format:check` passed 1,084 files. Full `bun run lint` passed all

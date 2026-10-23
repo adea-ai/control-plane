@@ -1,9 +1,9 @@
 # M11 local integration checkpoint
 
-Neon preview follow-up: PR #412 initially exhausted the project's ten branch slots. With explicit
-approval, only PR #399's superseded preview was deleted; staging and production were untouched.
+PostgreSQL preview follow-up: PR #412 initially exhausted the project's ten branch slots. With explicit
+approval, only PR #399's superseded preview was deleted; sandbox and production were untouched.
 The new preview then exposed an administrator membership with SET disabled for the migration role.
-Enabling SET only for the preview administrator allowed the complete Neon migration/integration
+Enabling SET only for the preview administrator allowed the complete PostgreSQL migration/integration
 job to pass (run 34164593317, job 101874347822). Preview CI now performs that narrowly scoped setup
 using the create-branch action's administrator URL and matching host; application credentials are
 not elevated. This is preview evidence, not production deployment or managed recovery certification.
@@ -86,7 +86,7 @@ no provider, database or deployed resource was started for this refresh.
 
 Optional Runtime Worker startup follow-up: direct startup previously reported ready without an
 injected worker in production, and a failed worker readiness probe skipped worker cleanup. Both
-behaviors were reproduced by failing regressions. Staging/production now require an injected
+behaviors were reproduced by failing regressions. sandbox/production now require an injected
 worker and register its cleanup before probing; local bootstrap remains available. The full
 lint/type/format/test command passed with 800 unit tests and 3,293 assertions. No external worker,
 database, provider or deployment was started for these tests. This closes a false-readiness and
@@ -107,7 +107,7 @@ Validated candidate: `dac6dd6a15272a345aa57f4ad586ed9a5d8de7c4` on local branch
 | #396 command retention                               | `d85e0b8f7f0c6bef4548507afe5c23e4180c3f5f` |
 
 All local merges completed without conflicts. No branch was merged into `main`, no release
-was published, and no deployment or Neon permissions changed.
+was published, and no deployment or PostgreSQL permissions changed.
 
 ## Checks on the candidate
 
@@ -124,13 +124,13 @@ that expected rejection is not an observed authentication failure for valid requ
 
 ## Remaining acceptance
 
-At the initial checkpoint no PostgreSQL integration, live Hosted Compose, Railway/Neon/R2, fresh Linux VPS, load/soak,
+At the initial checkpoint no PostgreSQL integration, live Hosted Compose, Railway/PostgreSQL/R2, fresh Linux VPS, load/soak,
 adversarial live-provider, human calibration or independent final audit was run on this
 combined candidate. Earlier branch-specific evidence must not be relabeled as exact-candidate
 evidence. The existing requirements ledger candidate remains a historical audit record, not
 this integration checkpoint. M11 issues #188 and #190–#197 remain open acceptance work.
 
-Neon CI requires the build prerequisite already included from #392 and separately has a
+PostgreSQL CI requires the build prerequisite already included from #392 and separately has a
 role-membership blocker on that PR. Local integration success does not waive remote CI.
 Permission approval remains outstanding. Execution-lifetime retention, physical cleanup and
 legacy remediation remain separate from the accepted-command retention boundary tests.
@@ -156,7 +156,7 @@ is not a pass, and no database-process interruption is claimed in this follow-up
 
 Compose project `m11-integration-db` was removed with its container, network and
 volume; label-filtered container and volume inventories were empty afterward.
-No remote credentials or Neon permission changes were used. Cloud/VPS, full recovery,
+No remote credentials or PostgreSQL permission changes were used. Cloud/VPS, full recovery,
 physical retention and independent final acceptance remain open.
 
 ## PostgreSQL disruption follow-up
@@ -174,7 +174,7 @@ recovery, or a measured production RTO certification. The script enforces its
 configured recovery bound but does not emit an exact recovery duration.
 The test container, network and volume (including data from the failed first
 attempt) were removed; label-filtered inventories were empty. No shared database,
-Neon role or production service was modified.
+PostgreSQL role or production service was modified.
 
 ## Named release-command follow-up
 
@@ -262,7 +262,7 @@ Seven new regression cases cover partial-write cleanup, corruption, unrelated or
 future-version databases, missing columns, missing constraints and missing indexes.
 Invalid-candidate cases preserve original records through close/reopen. The owning
 package passed 20 tests on its branch; independent follow-up review cleared the
-two findings concerning staging cleanup and canonical schema checks. This does not
+two findings concerning sandbox cleanup and canonical schema checks. This does not
 prove cross-process restore locking, filesystem replacement rollback or future
 schema migration; documented operator quiescence and trusted-checkpoint duties remain.
 
@@ -277,18 +277,18 @@ unavailable sources were retrieved. Its classification remains partially verifie
 exhaustive extraction, implementation mapping and topology reconciliation remain open.
 
 Remote run `34148375633`, job `101825207041`, for PR #401 at `5a14a88` failed
-creating its Neon branch with HTTP 422, before migrations or integration tests.
+creating its database sandbox with HTTP 422, before migrations or integration tests.
 The observed log does not establish the cause of that rejection. It is distinct
 from the earlier #392 SET ROLE failure, and neither is counted as passing CI.
 No external database permissions were changed, no main merge was performed, and
 the integration branch remains local only. Full M11 acceptance is still unproven.
 
-## Neon preview capacity diagnosis
+## PostgreSQL preview capacity diagnosis
 
 Read-only authenticated CLI inspection on 2026-09-07 resolved the repository's
-`NEON_PROJECT_ID` to the Control Plane project. Its project record reports
+`RAILWAY_PROJECT_ID` to the Control Plane project. Its project record reports
 `owner.branches_limit = 10`; the branch inventory contains exactly 10 branches:
-production, staging and previews for PRs #392, #393, #394, #395, #396, #397, #399
+production, sandbox and previews for PRs #392, #393, #394, #395, #396, #397, #399
 and #400. Six previews belong to this milestone's proposed changes. There is no
 preview for #401. PRs #397 and #400 remain open, and the M11 PRs remain open;
 none of these previews is established as stale cleanup material.
@@ -305,7 +305,7 @@ That decision is separate from the previously observed migrator role-membership 
 At `7c32969` (runtime code unchanged from `f0cf911`), `bun run test:integration`
 completed with isolated Compose project `m11-candidate-pg-20260907` and fixed
 loopback port 55009. It used only repository fixture credentials and PostgreSQL
-18.3, not Neon or any shared database. All 24 integration tests passed: database
+18.3, not PostgreSQL or any shared database. All 24 integration tests passed: database
 22, profile-portability migration 1 and isolated-test harness 1. The previously
 skipped SQLite-to-PostgreSQL-to-SQLite catalog migration therefore has fresh
 passing evidence on this candidate. All 33 orchestration tasks succeeded.
@@ -320,7 +320,7 @@ complete domain migration or measured production recovery guarantees.
 The command exited zero and stopped its service. Explicit follow-up removed its
 container, network and disposable volume; label-filtered inventories were empty
 and port 55009 had no listener. Unrelated database and release containers were
-left untouched. The Neon capacity and role-authorization gates remain separate.
+left untouched. The PostgreSQL capacity and role-authorization gates remain separate.
 
 ## Real SQLite measurement harness
 
@@ -419,14 +419,14 @@ adopted Code Foundry v1.4.1 callers). The canonical local gate chain passed afte
 Authenticated GitHub inspection then confirmed that cleanup run `34152272912` failed because
 PR #404's preview did not exist. The pinned deletion action has no missing-branch no-op option.
 
-The local workflow now resolves a unique exact preview name through the paginated Neon list API
+The local workflow now resolves a unique exact preview name through the paginated PostgreSQL list API
 before invoking that same pinned action with a validated branch ID. Verified absence skips deletion;
 API failures, malformed responses, unsafe targets and incomplete pagination still fail. Eight focused
 workflow tests pass, including six cleanup cases, and the full lint/type/format/test chain passes
 (773 unit tests; 87.29% line and 83.85% function coverage). The CI guide now matches the adopted
 runtime pin and direct-main PR topology. These are local checks, not hosted cleanup certification.
 
-No Neon branches or role grants were changed. The prior read-only inventory still showed ten
+No database sandboxes or role grants were changed. The prior read-only inventory still showed ten
 branches, including the preview for closed PR #400; removing that exact preview remains pending
 user approval. The independent `SET ROLE control_plane_migrator` failure remains unresolved.
 
@@ -556,7 +556,7 @@ Issues #188 and #190–#197 remain open; their current criteria still require fu
 security, eval, maintainability, performance, operations, source reconciliation, Skill and independent
 frozen-candidate verification. The candidate's recent local work has not been pushed or deployed.
 
-PRs #392–#396, #399 and #401 remain open with failing `Migrate Neon Branch` checks despite green
+PRs #392–#396, #399 and #401 remain open with failing `Migrate PostgreSQL Branch` checks despite green
 `Validation / Gate` checks. OpenCode scanning is skipped on those ordinary feature PRs by the
 workflow's release-PR/manual-dispatch trigger, not because a completed scan found no issues.
 
@@ -567,7 +567,7 @@ a passing scan; the log does not establish the underlying provider/runtime cause
 scanner source is `137698ef3545204af8fad00fc8bd64d663c8122e` and model is
 `opencode-go/muse-spark-1.3-contributor`. No paid scan was retried or model/budget changed.
 
-The release PR's separate [Neon run 34152342719](https://github.com/adea-ai/control-plane/actions/runs/34152342719/job/101837056645)
+The release PR's separate [PostgreSQL run 34152342719](https://github.com/adea-ai/control-plane/actions/runs/34152342719/job/101837056645)
 failed before migration with `Cannot find module '@control-plane/config'`. That is the build-order
 failure already addressed in the candidate, distinct from the previously evidenced SET ROLE and
 preview-capacity failures on other heads. A green aggregate gate does not override any of these
@@ -654,7 +654,7 @@ existing durable remote runtime with PostgreSQL attempt/command/event/interactio
 the managed-Pi command factory, outcome polling and scoped discovery routing. Tests verify concrete
 adapter/router selection, production startup/shutdown without the certification R2 writer, and
 failure before connection allocation when an absent runtime is requested outside remote mode.
-Disabled and staging-only certification tests remain passing. No Railway mode, remote credential,
+Disabled and sandbox-only certification tests remain passing. No Railway mode, remote credential,
 runtime identity, gateway or production service was changed. This does not add ACP or graph execution.
 
 The architecture binding registry and generated map now reflect this explicit mode without upgrading
@@ -670,7 +670,7 @@ bootstrap, reapplies the existing isolated migration/grant contract, and exercis
 evaluation/context-authoring/validation replay and a new evaluation write. It checks that the
 application identity is `control_plane_app`, with no superuser, database-creation, role-creation or
 public-schema creation privileges. This closes the earlier local admin-only restore limitation,
-not the managed Neon/hosted acceptance gap. The full local gates (790 unit tests) and PostgreSQL
+not the managed PostgreSQL/hosted acceptance gap. The full local gates (790 unit tests) and PostgreSQL
 integration/recovery command passed. The disposable `m11-role-recovery-20260907` database,
 network and volume were removed and port 55139 was verified closed; no remote roles were changed.
 
@@ -718,7 +718,7 @@ reordered keys replay successfully while changed metric values still conflict.
 Final lint/type/format/test gates passed with 790 unit tests, and the full PostgreSQL integration
 command passed including both updated recovery drills. The disposable
 `m11-observed-recovery-20260907` container, network and volume were removed and port 55129 was
-verified closed. No provider, Neon or production resource was changed. PostgreSQL restore continues
+verified closed. No provider, PostgreSQL or production resource was changed. PostgreSQL restore continues
 to exclude privileges and checks data as admin; application-role recovery, production composition,
 retention policy, actual agent executions and calibrated full-corpus acceptance remain open. These
 scripted controls prove storage behavior, not agent quality or whole-milestone completion.

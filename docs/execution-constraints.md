@@ -1,6 +1,6 @@
 # Execution constraints
 
-AgentProfile versions carry a provider-neutral `ExecutionConstraintSet`. The same immutable value is the input to ExecutionPlan compilation. Stable domain code does not import MCP, LiteLLM, Cedar, Railway, Neon, R2, AWS, database drivers, workflow-runtime SDKs, or connector SDKs; gateways and adapters resolve concrete implementations later.
+AgentProfile versions carry a provider-neutral `ExecutionConstraintSet`. The same immutable value is the input to ExecutionPlan compilation. Stable domain code does not import MCP, LiteLLM, Cedar, Railway, PostgreSQL, R2, AWS, database drivers, workflow-runtime SDKs, or connector SDKs; gateways and adapters resolve concrete implementations later.
 
 ## Tool authority
 

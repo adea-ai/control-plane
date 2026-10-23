@@ -185,13 +185,29 @@ from `start()` via `compositionOptions`. The route record (public keys, ids, val
 explicit host-supplied composition input — no ambient credential or key material — and the
 in-memory default remains test-only.
 
-**Production wire boundary (#1023 remains open):** the Local composition constructs the durable
-device endpoint, but `AcpRemoteWire` still has no concrete production implementation or call site
-that sends its sealed commands and inventory requests through `apps/runtime-gateway`. The secure
-route tests connect callbacks directly to `device.handleCommand` and `device.handleInventory`; they
-prove endpoint behavior, not an authenticated controller-to-device production exchange. The
-runtime-gateway WebSocket server handles runtime-node connections, but these paths do not join it
-to a controller-side ACP wire. Therefore #1023's production transport acceptance is still open.
+**Production wire boundary (the wire and the device agent now exist; the live exchange stays open
+for #1023):** `createGatewayOwnedAcpRemoteWire` (`packages/acp-adapter/src/acp-remote-wire.ts`) is
+the first production `AcpRemoteWire`. It carries ONE opaque sealed command through the runtime
+gateway as a `runtime.acp-remote-sealed` carrier command whose payload holds the sealed blob under
+one opaque key, so the gateway relays ciphertext it cannot read, and it brings the device's opaque
+sealed reply back. The device side is `handleAcpRemoteCarrierCommand`
+(`packages/acp-adapter/src/acp-remote-device-agent.ts`): it checks that the carrier did not redirect
+the sealed command to another route, runs it, and persists the sealed reply as the carrier command's
+single per-command result artifact (`runtime-results/<attemptId>/result.json`), so the gateway's
+existing `RuntimeCommandArtifactVerifier` verifies it with no protocol change. The gateway side is
+`createAcpRemoteGatewayChannel` (`apps/runtime-gateway/src/acp-remote-gateway-channel.ts`), which
+rides the gateway's ordinary durable command path and reads that reply artifact back. The contract
+between the two sides is declared once, in `@control-plane/runtime-gateway-protocol`, so the compiler
+checks both ends.
+
+What remains OPEN: no product composition binds the gateway channel to the wire, because the
+repository still holds no production runtime-node WebSocket client for a device to answer over; the
+live acceptance of an authenticated controller-to-device exchange is not proven (the executable
+evidence is offline and synthetic); and no hosted composition constructs a device endpoint. The
+offline evidence is `packages/acp-adapter/src/acp-remote-wire.test.mjs` and
+`apps/runtime-gateway/src/acp-remote-gateway-channel.test.mjs`. The reroute fence itself is
+unchanged: an offline or revoked device is a typed local denial with `fallback: 'none'`, never a
+substitute location.
 
 **SQLite credential-fence contract:** SQLite runtime-command settlement now requires an authority
 that validates credential id and version, the command's node and workspace, and current revocation

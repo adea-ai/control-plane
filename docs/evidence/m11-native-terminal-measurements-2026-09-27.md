@@ -133,7 +133,7 @@ original seven open M11 issues remain open.
 
 The bounded Luna lane is complete. All test/build handles finished; test-owned
 native processes and temporary SQLite data were stopped/removed by the fixture
-lifecycle. No database/server or staging/production deployment was started.
+lifecycle. No database/server or sandbox/production deployment was started.
 The root and reusable worker worktrees remain owned by the unfinished milestone.
 Unrelated long-lived test processes were identified as outside this lane and
 left untouched. Resource-manager/process-table reconciliation is recorded in

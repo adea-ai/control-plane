@@ -42,7 +42,7 @@ runner with bounded fake Docker/Bun executables.
   52 assertions, 5.68 seconds after the review repairs. Four additional source-function
   regressions first reproduced readiness overshoot and missing nested command bounds. Each runner child has a two-second deadline;
   each invocation owns one temporary directory and removes it in `finally`.
-- `bun test tests/neon-workflow.test.mjs --test-name-pattern 'runs pull-request PostgreSQL'`:
+- `bun test tests/postgres-workflow.test.mjs --test-name-pattern 'runs pull-request PostgreSQL'`:
   1 passed, 33 filtered out, 0 failed, 11 assertions.
 - `bun test tests/repository.test.mjs --test-name-pattern 'integration-test runner|schedules every test file|primary test job'`:
   1 passed, 29 filtered out, 0 failed. Only the documented runner case matched
@@ -52,7 +52,7 @@ runner with bounded fake Docker/Bun executables.
   4 passed, 26 filtered out, 0 failed after the inventory repair.
 - Scoped Oxfmt check, Oxlint with `--deny-warnings`, and `git diff --check` passed.
 - Existing cached Code Foundry 1.44.3 `doctor`: passed from the source checkout.
-- Full `bun test tests/neon-workflow.test.mjs`: 34 passed, 0 failed,
+- Full `bun test tests/postgres-workflow.test.mjs`: 34 passed, 0 failed,
   270 assertions, 12.67 seconds (before the final error-propagation lint repair).
 
 ## CodeQL follow-up

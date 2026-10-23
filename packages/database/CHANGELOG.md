@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.52.4](https://github.com/adea-ai/control-plane/compare/database-v1.52.3...database-v1.52.4) (2026-10-22)
+
+
+### Tests
+
+* **#1018:** prove the concurrent retry and a client reconnect on PostgreSQL ([#1252](https://github.com/adea-ai/control-plane/issues/1252)) ([9789445](https://github.com/adea-ai/control-plane/commit/9789445e7f73dbe5ad3d06bee5873be54ad750fc))
+
+## [1.52.3](https://github.com/adea-ai/control-plane/compare/database-v1.52.2...database-v1.52.3) (2026-10-22)
+
+
+### Maintenance
+
+* **railway:** finish production PostgreSQL reference cleanup ([#1259](https://github.com/adea-ai/control-plane/issues/1259)) ([bc15dfb](https://github.com/adea-ai/control-plane/commit/bc15dfbe7ef59723acb3d0da438515f7ea30417d))
+
+## [1.52.2](https://github.com/adea-ai/control-plane/compare/database-v1.52.1...database-v1.52.2) (2026-10-22)
+
+
+### Bug Fixes
+
+* **railway:** verify production PostgreSQL identity and scoped migrations ([#1256](https://github.com/adea-ai/control-plane/issues/1256)) ([86b7515](https://github.com/adea-ai/control-plane/commit/86b751520c569106644c518dd5fd0819056cd169))
+
 ## [1.52.1](https://github.com/adea-ai/control-plane/compare/database-v1.52.0...database-v1.52.1) (2026-10-20)
 
 
@@ -82,7 +103,7 @@
 
 ### Bug Fixes
 
-* **database:** handle absent app schema in Neon probe ([#1105](https://github.com/adea-ai/control-plane/issues/1105)) ([d0f8aa6](https://github.com/adea-ai/control-plane/commit/d0f8aa650d07d6a831ec4a652ec8236c74d2828b))
+* **database:** handle absent app schema in PostgreSQL probe ([#1105](https://github.com/adea-ai/control-plane/issues/1105)) ([d0f8aa6](https://github.com/adea-ai/control-plane/commit/d0f8aa650d07d6a831ec4a652ec8236c74d2828b))
 
 ## [1.46.0](https://github.com/adea-ai/control-plane/compare/database-v1.45.1...database-v1.46.0) (2026-10-12)
 
@@ -94,7 +115,7 @@
 
 ### Performance
 
-* **ci:** bound trusted-main Neon verification ([#1103](https://github.com/adea-ai/control-plane/issues/1103)) ([66ef7d8](https://github.com/adea-ai/control-plane/commit/66ef7d835dc64b8442467af612d4acfc4eb9526f))
+* **ci:** bound trusted-main PostgreSQL verification ([#1103](https://github.com/adea-ai/control-plane/issues/1103)) ([66ef7d8](https://github.com/adea-ai/control-plane/commit/66ef7d835dc64b8442467af612d4acfc4eb9526f))
 
 ## [1.45.1](https://github.com/adea-ai/control-plane/compare/database-v1.45.0...database-v1.45.1) (2026-10-12)
 
@@ -187,7 +208,7 @@
 
 ### Bug Fixes
 
-* **ci:** scale explicit integration test budgets for the remote Neon lane ([#847](https://github.com/adea-ai/control-plane/issues/847)) ([887db8a](https://github.com/adea-ai/control-plane/commit/887db8a518800246465a1ebd801d222af45386f2))
+* **ci:** scale explicit integration test budgets for the remote PostgreSQL lane ([#847](https://github.com/adea-ai/control-plane/issues/847)) ([887db8a](https://github.com/adea-ai/control-plane/commit/887db8a518800246465a1ebd801d222af45386f2))
 
 ## [1.39.0](https://github.com/adea-ai/control-plane/compare/database-v1.38.0...database-v1.39.0) (2026-10-02)
 
@@ -229,7 +250,7 @@
 
 ### Bug Fixes
 
-* **database:** preserve Neon integration session credentials and scoped cleanup ([#787](https://github.com/adea-ai/control-plane/issues/787)) ([f078c0b](https://github.com/adea-ai/control-plane/commit/f078c0b6c25544d6ca771d64e0613ef65bd3f328))
+* **database:** preserve PostgreSQL integration session credentials and scoped cleanup ([#787](https://github.com/adea-ai/control-plane/issues/787)) ([f078c0b](https://github.com/adea-ai/control-plane/commit/f078c0b6c25544d6ca771d64e0613ef65bd3f328))
 
 ## [1.35.5](https://github.com/adea-ai/control-plane/compare/database-v1.35.4...database-v1.35.5) (2026-09-30)
 
@@ -587,7 +608,7 @@
 
 ### Maintenance
 
-* **infra:** align Neon branch names with Railway environment names ([#368](https://github.com/adea-ai/control-plane/issues/368)) ([fb698a2](https://github.com/adea-ai/control-plane/commit/fb698a2f86d2cf6a3e5b9ceaf0938c55d573c204))
+* **infra:** align database sandbox names with Railway environment names ([#368](https://github.com/adea-ai/control-plane/issues/368)) ([fb698a2](https://github.com/adea-ai/control-plane/commit/fb698a2f86d2cf6a3e5b9ceaf0938c55d573c204))
 
 ## [1.7.1](https://github.com/adea-ai/control-plane/compare/database-v1.7.0...database-v1.7.1) (2026-09-05)
 

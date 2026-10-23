@@ -66,7 +66,7 @@ assessment callers retain the combined `add(verdict)` operation.
   acceptance review.
 
 Tests use isolated databases migrated through the canonical chain and the
-application role. No production or staging mutation is part of this checkpoint.
+application role. No production or sandbox mutation is part of this checkpoint.
 Local tests do not prove deployment or host/operator authorization.
 
 ## Additional owner-scoped fixture checkpoint

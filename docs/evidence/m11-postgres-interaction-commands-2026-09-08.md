@@ -15,7 +15,7 @@ first accepted timestamp. Reads validate the stored request scope and indexed
 workspace/project fields. Reservation rejects preconfirmed receipts.
 
 `bun run test:integration` passed against a task-owned PostgreSQL 18.3 container,
-not production or Neon. The new repository integration test verifies concurrent
+not production or PostgreSQL. The new repository integration test verifies concurrent
 reservation, repository reconstruction, duplicate reservation after acceptance,
 first-ACK preservation, missing receipt rejection, preconfirmation rejection,
 and caller/project scope separation. Existing PostgreSQL service-restart and
@@ -240,7 +240,7 @@ explicit construction assertions. Local continues using SQLite.
 The full integration command passed, including migration, remote transport drill,
 database outage, restart, and backup/restore. Workspace lint, types, formatting,
 and tests passed, followed by focused Cloud and Hosted composition checks. No live
-Neon or deployment mutation was performed. Public cancellation through PostgreSQL
+PostgreSQL or deployment mutation was performed. Public cancellation through PostgreSQL
 with real Restate/native runtime, terminal races, retention and all-profile
 convergence still require acceptance evidence.
 

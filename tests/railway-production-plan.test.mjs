@@ -219,7 +219,7 @@ describe('Railway production image ownership', () => {
     )
   })
 
-  test('keeps staging on the main GitHub source without a production image input', () => {
+  test('keeps sandbox fixtures on the main GitHub source without a production image input', () => {
     assert.deepEqual(
       resolveApplicationSource({
         production: false,
@@ -325,7 +325,7 @@ describe('Railway production image ownership', () => {
 
   test('withholds a plan that targets another environment or includes a source change', () => {
     const wrongEnvironment = createCommandRunner({
-      planOutput: 'Project control-plane\nEnvironment staging\nPlan: no changes\n',
+      planOutput: 'Project control-plane\nEnvironment sandbox\nPlan: no changes\n',
     })
     assert.throws(
       () =>

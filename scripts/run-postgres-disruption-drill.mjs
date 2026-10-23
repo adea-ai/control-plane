@@ -11,6 +11,11 @@ import { createIsolatedPostgres } from '../packages/testing/src/postgres.ts'
 import { contextAuthoringRecoveryFixture } from './context-authoring-recovery-fixture.mjs'
 import { validationRecoveryFixture } from './validation-recovery-fixture.mjs'
 import { evaluationRecoveryFixture } from './evaluation-recovery-fixture.mjs'
+import {
+  describePostgresProbeFailure,
+  isProbeTimeout,
+  POSTGRES_RECOVERY_CEILING_SECONDS,
+} from './postgres-probe-diagnostics.mjs'
 
 const expectedRunId = 'eval-run-disruption-drill'
 const expectedDigest = `sha256:${'c'.repeat(64)}`
@@ -32,11 +37,35 @@ function docker(arguments_, options = {}) {
   return result.stdout ?? ''
 }
 
+/**
+ * The state the compose service is in, for a failure that has to explain
+ * itself. A service that is still starting, one that exited, and one that
+ * never existed look the same in a bare timeout message.
+ */
+function readContainerState() {
+  const result = spawnSync('docker', ['compose', 'ps', 'postgres'], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    stdio: 'pipe',
+    timeout: 10_000,
+  })
+  if (result.error) return `unavailable: ${result.error.code ?? result.error.name}`
+  if (result.status !== 0) return `unavailable: exit ${String(result.status)}`
+  return result.stdout ?? ''
+}
+
 async function waitForPostgres() {
-  const deadline = Date.now() + 30_000
+  const deadline = Date.now() + POSTGRES_RECOVERY_CEILING_SECONDS * 1_000
+  const startedAt = Date.now()
+  let attempts = 0
+  let lastStatus = null
+  let lastStderr = ''
+  let lastError = null
+  let hardFailure = false
   while (Date.now() < deadline) {
     const remaining = deadline - Date.now()
     if (remaining <= 0) break
+    attempts += 1
     const result = spawnSync(
       'docker',
       [
@@ -56,13 +85,38 @@ async function waitForPostgres() {
       ],
       { cwd: process.cwd(), encoding: 'utf8', stdio: 'pipe', timeout: Math.min(5000, remaining) }
     )
-    if (result.error) throw result.error
-    if (result.status === 0 && result.stdout.trim() === '1') return
+    if (result.error) {
+      // A probe that timed out is a service that is not answering yet, so the
+      // wait continues inside the recovery ceiling. Any other spawn failure is
+      // a hard error and is reported with the same diagnostics.
+      lastError = result.error
+      if (!isProbeTimeout(result.error)) {
+        hardFailure = true
+        break
+      }
+    } else {
+      lastError = null
+      lastStatus = result.status
+      lastStderr = result.stderr ?? ''
+      if (result.status === 0 && result.stdout.trim() === '1') return
+    }
     await new Promise((resolve) =>
       setTimeout(resolve, Math.min(500, Math.max(0, deadline - Date.now())))
     )
   }
-  throw new Error('PostgreSQL did not recover within 30 seconds')
+  const description = describePostgresProbeFailure({
+    attempts,
+    elapsedMs: Date.now() - startedAt,
+    status: lastStatus,
+    stderr: lastStderr,
+    error: lastError,
+    containerState: readContainerState(),
+  })
+  throw new Error(
+    hardFailure
+      ? `PostgreSQL readiness probe failed (${description})`
+      : `PostgreSQL did not recover within ${POSTGRES_RECOVERY_CEILING_SECONDS} seconds (${description})`
+  )
 }
 
 const database = await createIsolatedPostgres({ migrate: true })

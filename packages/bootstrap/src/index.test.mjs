@@ -34,18 +34,18 @@ const productionEnvironment = {
 }
 
 describe('bootstrapService', () => {
-  test('provides validated managed-cloud dependencies to staging startup', async () => {
+  test('provides validated managed-cloud dependencies to production startup', async () => {
     const logs = []
     let startupConfiguration
     const runtime = await bootstrapService({
       serviceName: 'control-api',
       environment: {
-        APP_ENV: 'staging',
+        APP_ENV: 'production',
         SERVICE_VERSION: '1.2.3',
         COMMIT_SHA: 'abc123',
-        INSTANCE_ID: 'staging-1',
+        INSTANCE_ID: 'production-1',
         DATABASE_URL:
-          'postgresql://app:database-secret@example.neon.tech/control_plane?sslmode=require',
+          'postgresql://app:database-secret@postgres.example.invalid/control_plane?sslmode=require',
         CONTROL_PLANE_SECRET_ENCRYPTION_KEY:
           '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
         CONTROL_PLANE_SERVICE_AUTH_ISSUER: 'https://agent-hq.example',
@@ -94,16 +94,16 @@ describe('bootstrapService', () => {
     await runtime.shutdown('test-complete')
   })
 
-  test('fails closed for a staging service without managed-cloud dependencies', async () => {
+  test('fails closed for a production service without managed-cloud dependencies', async () => {
     const processAdapter = new FakeProcessAdapter()
     await expect(
       bootstrapService({
         serviceName: 'control-api',
         environment: {
-          APP_ENV: 'staging',
+          APP_ENV: 'production',
           SERVICE_VERSION: '1.2.3',
           COMMIT_SHA: 'abc123',
-          INSTANCE_ID: 'staging-1',
+          INSTANCE_ID: 'production-1',
         },
         processAdapter,
         start: async () => undefined,

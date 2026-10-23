@@ -1483,7 +1483,7 @@ describe('Control API', () => {
     await processAdapter.emit('SIGTERM')
   })
 
-  test('probes and closes the Neon connection around managed Cloud startup', async () => {
+  test('probes and closes the PostgreSQL connection around managed Cloud startup', async () => {
     const processAdapter = new FakeProcessAdapter()
     const lifecycle = []
     const started = await start({
@@ -1529,7 +1529,7 @@ describe('Control API', () => {
           database: {},
           check: async () => {
             lifecycle.push('checked')
-            throw new Error('postgresql://app:must-not-leak@example.neon.tech/control_plane')
+            throw new Error('postgresql://app:must-not-leak@postgres.example.invalid/control_plane')
           },
           close: async () => lifecycle.push('closed'),
         }),
@@ -1672,12 +1672,12 @@ function managedCloudEnvironment() {
   const { publicKey } = generateKeyPairSync('ed25519')
   const trustedKey = publicKey.export({ format: 'jwk' }).x
   return {
-    APP_ENV: 'staging',
+    APP_ENV: 'production',
     SERVICE_VERSION: '1.4.0',
     COMMIT_SHA: 'abc123',
-    INSTANCE_ID: 'control-api-staging',
+    INSTANCE_ID: 'control-api-sandbox',
     DATABASE_URL:
-      'postgresql://app:database-secret@example.neon.tech/control_plane?sslmode=require',
+      'postgresql://app:database-secret@postgres.example.invalid/control_plane?sslmode=require',
     CONTROL_PLANE_SECRET_ENCRYPTION_KEY:
       '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
     CONTROL_PLANE_SERVICE_AUTH_ISSUER: 'https://agent-hq.example',
