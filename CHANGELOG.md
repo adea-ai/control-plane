@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.106.12](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.11...workspace-v1.106.12) (2026-10-23)
+
+
+### Tests
+
+* **sqlite-persistence:** cover the child budget admission under an OS crash ([#187](https://github.com/adea-ai/control-plane/issues/187)) ([#1241](https://github.com/adea-ai/control-plane/issues/1241)) ([6d23065](https://github.com/adea-ai/control-plane/commit/6d23065e1778e27236d0cddb0b018a82cb2d34c4))
+
 ## [1.106.11](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.10...workspace-v1.106.11) (2026-10-23)
 
 
