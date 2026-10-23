@@ -28,7 +28,7 @@ import {
   SqlitePiDurableLeadReceiptStore,
 } from './pi-durable-lead.service.ts'
 import { createUnusedPiLeadAllocationReleaser } from './unused-lead-allocation.ts'
-import { PiDurableRuntimeAdapter } from '../../../../packages/pi-durable-adapter/src/adapter.ts'
+import { PiDurableRuntimeAdapter } from '@control-plane/pi-durable-adapter'
 
 const at = '2026-10-08T00:00:00.000Z'
 const expiresAt = '2026-10-08T01:00:00.000Z'
