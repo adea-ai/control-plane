@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.35.0...control-api-v1.36.0) (2026-10-23)
+
+
+### Features
+
+* **pi-durable:** compose child reads and drain recovery ([#1204](https://github.com/adea-ai/control-plane/issues/1204)) ([2f1f9d1](https://github.com/adea-ai/control-plane/commit/2f1f9d1a4da48db09e2c8ee9dc08625fbb2bc7a5))
+
 ## [1.35.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.7...control-api-v1.35.0) (2026-10-23)
 
 

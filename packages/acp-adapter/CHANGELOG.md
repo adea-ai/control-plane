@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.14.0...acp-adapter-v1.15.0) (2026-10-23)
+
+
+### Features
+
+* **pi-durable:** compose child reads and drain recovery ([#1204](https://github.com/adea-ai/control-plane/issues/1204)) ([2f1f9d1](https://github.com/adea-ai/control-plane/commit/2f1f9d1a4da48db09e2c8ee9dc08625fbb2bc7a5))
+
 ## [1.14.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.13.0...acp-adapter-v1.14.0) (2026-10-23)
 
 
