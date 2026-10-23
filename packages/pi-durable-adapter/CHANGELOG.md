@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.10.5...pi-durable-adapter-v0.11.0) (2026-10-23)
+
+
+### Features
+
+* **pi-durable:** compose child reads and drain recovery ([#1204](https://github.com/adea-ai/control-plane/issues/1204)) ([2f1f9d1](https://github.com/adea-ai/control-plane/commit/2f1f9d1a4da48db09e2c8ee9dc08625fbb2bc7a5))
+
 ## [0.10.5](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.10.4...pi-durable-adapter-v0.10.5) (2026-10-22)
 
 

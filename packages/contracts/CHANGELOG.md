@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.23.0](https://github.com/adea-ai/control-plane/compare/contracts-v1.22.0...contracts-v1.23.0) (2026-10-23)
+
+
+### Features
+
+* **pi-durable:** compose child reads and drain recovery ([#1204](https://github.com/adea-ai/control-plane/issues/1204)) ([2f1f9d1](https://github.com/adea-ai/control-plane/commit/2f1f9d1a4da48db09e2c8ee9dc08625fbb2bc7a5))
+
+## [1.22.0](https://github.com/adea-ai/control-plane/compare/contracts-v1.21.6...contracts-v1.22.0) (2026-10-23)
+
+
+### Features
+
+* **runtime:** map a model to its harness in managed cloud routing (CP [#678](https://github.com/adea-ai/control-plane/issues/678)) ([#1210](https://github.com/adea-ai/control-plane/issues/1210)) ([4f9967d](https://github.com/adea-ai/control-plane/commit/4f9967dc50dfb5dc3ffa13a305f4e3623ae20fe1))
+
 ## [1.21.6](https://github.com/adea-ai/control-plane/compare/contracts-v1.21.5...contracts-v1.21.6) (2026-10-22)
 
 

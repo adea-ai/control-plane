@@ -190,13 +190,27 @@ export class SqlitePiDurableLeadReceiptStore implements PiDurableLeadReceiptStor
   constructor(readonly database: DatabaseSync) {
     database.exec(`CREATE TABLE IF NOT EXISTS pi_lead_receipts (
       dispatch_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, record TEXT NOT NULL
-    ); CREATE TABLE IF NOT EXISTS pi_lead_commands (key TEXT PRIMARY KEY, digest TEXT NOT NULL)`)
+    ); CREATE INDEX IF NOT EXISTS pi_lead_receipts_execution_idx
+      ON pi_lead_receipts (json_extract(record, '$.executionId'));
+      CREATE TABLE IF NOT EXISTS pi_lead_commands (key TEXT PRIMARY KEY, digest TEXT NOT NULL)`)
   }
   async get(dispatchId: string): Promise<PiDurableLeadReceipt | undefined> {
     const row = this.database
       .prepare('SELECT record FROM pi_lead_receipts WHERE dispatch_id = ?')
       .get(dispatchId)
     return row ? ReceiptSchema.parse(JSON.parse(String(row['record']))) : undefined
+  }
+  /** The inbox is bound to one parent execution. Resolve only that parent's retained
+   * product binding, including after a restart; never scan unrelated receipts. */
+  async findForChildDelivery(executionId: string): Promise<PiDurableLeadReceipt | undefined> {
+    const id = IdentifierSchemas.executionId.parse(executionId)
+    const rows = this.database
+      .prepare(
+        "SELECT record FROM pi_lead_receipts WHERE json_extract(record, '$.executionId') = ? LIMIT 2"
+      )
+      .all(id)
+    if (rows.length > 1) throw new Error('PI_CHILD_TIMELINE_PARENT_CONFLICT')
+    return rows.length ? ReceiptSchema.parse(JSON.parse(String(rows[0]!['record']))) : undefined
   }
   async insert(receipt: PiDurableLeadReceipt): Promise<boolean> {
     const value = ReceiptSchema.parse(receipt)
@@ -235,6 +249,7 @@ export type PiDurableLeadErrorCode =
   | 'PI_LEAD_PROVIDER_READINESS_REQUIRED'
   | 'PI_LEAD_MISSING'
   | 'PI_LEAD_AUTHORITY_CONFLICT'
+  | 'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN'
   | 'PI_LEAD_COMMAND_CONFLICT'
   | 'PI_LEAD_DISPATCH_CONFLICT'
   | 'PI_LEAD_DEADLINE_EXPIRED'
@@ -657,18 +672,21 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
         requestedAt: request.issuedAt,
       })
     )
-    verifyRuntimeHandle(receipt, status.handle)
+    try {
+      verifyRuntimeHandle(receipt, status.handle)
+      // This guards the response after cancel; it does not authorize the effect.
+      verifyObservedGeneration(receipt, status)
+      await this.options.authority.assertCurrent(admission, principal, 'cancel')
+    } catch {
+      // The adapter may already have retained the cancellation intent or aborted the engine.
+      // A failed post-effect check cannot establish whether that action completed.
+      fail('PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN')
+    }
     // Ordinary lead-stop ends here: it never cascades to child jobs.
     // Child cancellation is a separately explicit authorized operation
     // (delegationService.cancelChildren, invoked directly with its own
     // authorization), never a lead-stop side effect — so independent
     // child work survives a normal parent stop by construction.
-    // The generation check runs on the status the adapter returned from
-    // `cancel`, so it is after the cancellation effect, not before it: it
-    // fences the publication of this response and it is not a pre-effect
-    // cancellation or retry guarantee.
-    verifyObservedGeneration(receipt, status)
-    await this.options.authority.assertCurrent(admission, principal, 'cancel')
     return PiDurableLeadCancelResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
@@ -832,11 +850,14 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
         requestedAt: request.issuedAt,
       })
     )
-    verifyRuntimeHandle(receipt, status.handle)
-    // The same fence as the ordinary path: a late old-attempt generation is
-    // never published, fenced or not.
-    verifyObservedGeneration(receipt, status)
-    await this.#fencedGuard(request.workspaceId, receipt, fenced, principal, 'cancel')
+    try {
+      verifyRuntimeHandle(receipt, status.handle)
+      // A late old-attempt generation cannot be published after cancellation.
+      verifyObservedGeneration(receipt, status)
+      await this.#fencedGuard(request.workspaceId, receipt, fenced, principal, 'cancel')
+    } catch {
+      fail('PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN')
+    }
     return PiDurableLeadCancelResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
@@ -1131,8 +1152,9 @@ function childViews(
   const views: PiDurableLeadChild[] = []
   for (const record of records) {
     if (record.parentExecutionId !== receipt.executionId) fail('PI_LEAD_AUTHORITY_CONFLICT')
-    if (record.parentAttemptId !== undefined && record.parentAttemptId !== receipt.attemptId)
-      continue
+    // The execution can have multiple attempts. A legacy record without an admitted parent
+    // attempt cannot be attributed to this dispatch, so it must not be disclosed here.
+    if (record.parentAttemptId !== receipt.attemptId) continue
     const outcomeState =
       record.state === 'completed' || record.state === 'failed' || record.state === 'cancelled'
         ? record.state

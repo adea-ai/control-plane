@@ -17,6 +17,8 @@ import type {
 import type {
   PiLeadPublicationRequest,
   PiLeadPublicationResponse,
+  PiChildPublicationRequest,
+  PiChildPublicationResponse,
   ModelSelectionFundingRequest,
   ModelSelectionFundingResponse,
   ModelConnectionCreateRequest,
@@ -219,6 +221,11 @@ export class ControlPlaneClient {
   }
   getPiDurableLeadPublication(input: PiLeadPublicationRequest): Promise<PiLeadPublicationResponse> {
     return this.#request(ControlApiOperations.getPiDurableLeadPublication, input)
+  }
+  getPiDurableChildPublication(
+    input: PiChildPublicationRequest
+  ): Promise<PiChildPublicationResponse> {
+    return this.#request(ControlApiOperations.getPiDurableChildPublication, input)
   }
 
   /** Sends the secret once; the response carries metadata only. */

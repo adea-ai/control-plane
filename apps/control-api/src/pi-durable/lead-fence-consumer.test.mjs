@@ -383,6 +383,38 @@ test('v2 cancellation: non-original actor denied, original actor with matching r
     } finally {
       await rescoped.cleanup()
     }
+
+    // Observation and its second authority check retain the canonical product actor pin.
+    const otherActor = await harness(fenceV2())
+    try {
+      bindRetainedMarker(otherActor.authority, {
+        canonicalActorPrincipalId: 'user:4b1a7e26-8c3f-4f4f-9a1e-77d19b7d5e11',
+      })
+      await expect(
+        otherActor.authority.resolveIntent({
+          workspaceId,
+          intentId,
+          principal: caller,
+          operation: 'status',
+        })
+      ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+      await expect(
+        otherActor.authority.assertCurrent(
+          {
+            intentId,
+            workspaceId,
+            admittedAttempt: {
+              executionId: deterministicPiLeadIntentIds(workspaceId, intentId).executionId,
+              attemptId: deterministicPiLeadIntentIds(workspaceId, intentId).attemptId,
+            },
+          },
+          caller,
+          'progress'
+        )
+      ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+    } finally {
+      await otherActor.cleanup()
+    }
   } finally {
     await cleanup()
   }

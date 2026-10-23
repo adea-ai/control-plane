@@ -737,7 +737,8 @@ describe('composed Pi Durable lead HTTP endpoints', () => {
           return result
         }
         const revoked = await inject('cancel', cancel)
-        expect(revoked.statusCode).toBe(403)
+        expect(revoked.statusCode).toBe(503)
+        expect(revoked.json().error.code).toBe('PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN')
         expect(calls).toEqual([])
         context.state.revoked = false
         const stopped = await inject('cancel', cancel)
@@ -787,6 +788,7 @@ describe('composed Pi Durable lead HTTP endpoints', () => {
       record('C', { state: 'running', pendingCancellationAt: at }),
       record('D', { state: 'failed', failureCode: 'CHILD_FAILED' }),
       record('E', { parentAttemptId: 'att_01JABCDEF0123456789ABCDEFZ' }),
+      record('F', { parentAttemptId: undefined }),
     ]
     const read = (context, receipt) =>
       context.inject(
@@ -843,6 +845,47 @@ describe('composed Pi Durable lead HTTP endpoints', () => {
           expect((await read(context, receipt)).json().data.children).toEqual(children)
           expect(listed).toHaveLength(2)
           expect(context.state.starts).toBe(1)
+        },
+        {
+          childDelegations: {
+            async listChildren(parentExecutionId) {
+              listed.push(parentExecutionId)
+              return records().map((child) => ({ ...child, parentExecutionId }))
+            },
+          },
+        }
+      )
+    })
+
+    test('only records attributable to this dispatch attempt are disclosed or counted', () => {
+      const listed = []
+      return fixture(
+        async (context) => {
+          const receipt = (
+            await context.inject(
+              'dispatch',
+              context.envelope('pi-durable.lead.dispatch', { intentId })
+            )
+          ).json().data
+          await context.adapter.drain()
+          const response = await read(context, receipt)
+          expect(response.statusCode).toBe(200)
+          const { children, totalChildren, complete } = response.json().data
+          // Attribution is by the exact admitted parent attempt. A record of another attempt of
+          // the same execution and a legacy record with no parent attempt are both left out.
+          expect(children.map((child) => child.delegationId)).toEqual([
+            childId('A'),
+            childId('B'),
+            childId('C'),
+            childId('D'),
+          ])
+          // The disclosed count is the attributable count: an excluded record is never disclosed
+          // and never inflates the total a caller pages against.
+          expect(totalChildren).toBe(4)
+          expect(complete).toBe(true)
+          // Reading children never starts, advances or publishes anything.
+          expect(context.state.starts).toBe(1)
+          expect(listed).toEqual([receipt.executionId])
         },
         {
           childDelegations: {
@@ -916,7 +959,9 @@ describe('composed Pi Durable lead HTTP endpoints', () => {
           const ids = [...first.children, ...second.children].map((child) => child.delegationId)
           expect(new Set(ids).size).toBe(257)
           expect(ids).toEqual([...ids].toSorted())
-          expect(ids.every((id) => id.startsWith('dlg_01JABCDEF012345678'))).toBe(true)
+          expect(
+            ids.every((delegationId) => delegationId.startsWith('dlg_01JABCDEF012345678'))
+          ).toBe(true)
           // Smaller pages walk the same set in the same order.
           const walked = []
           let after

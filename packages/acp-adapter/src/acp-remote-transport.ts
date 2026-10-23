@@ -756,7 +756,7 @@ export interface SecureAcpDeviceEndpointOptions {
   readonly identity: { readonly keyId: string; readonly signingKey: KeyObject }
   readonly encryption: {
     readonly keyId: string
-    readonly privateKey: CryptoKey
+    readonly privateKey: RecipientKeyPair['keyPair']['privateKey']
     readonly publicKey: string
   }
   /** Device-local ACP executor. It runs only after every fence has passed. */

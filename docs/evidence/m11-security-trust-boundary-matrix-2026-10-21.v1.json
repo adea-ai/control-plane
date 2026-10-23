@@ -1,0 +1,1215 @@
+{
+  "schemaVersion": 1,
+  "artifactId": "cp190-security-trust-boundary-matrix",
+  "issue": 190,
+  "milestone": "M19",
+  "generatedAt": "2026-10-21",
+  "candidate": {
+    "repository": "adea-ai/control-plane",
+    "branch": "f2w4/cp190-trust-boundary",
+    "head": "27f17bd55e0266439b5b3089163195c9e7a669be",
+    "mainBase": "6d16a495186d2a4d84d422c936a02b4abdc93928",
+    "mainBaseNote": "the main commit this branch was cut from; the branch's merge base with main is the audited head recorded in head/mergeBase",
+    "currentMain": "4e126a7c3e55bfb05b8bdfc390705b83f777c6d4",
+    "currentMainNote": "main as read from the authoritative GitHub API at the reconciliation; five commits ahead of the audited head, and the fifth (#1224) is the owner fix for CP190-F04",
+    "workspace": "1.105.5",
+    "pr": 1220,
+    "prHead": "d26b1ff0e7d27b98a7f23440abc5c69824f9a311",
+    "mergeBase": "27f17bd55e0266439b5b3089163195c9e7a669be",
+    "headNote": "head is the merge base of the branch and the audited head; prHead is the pull-request head this matrix was reconciled against, and the reconciliation itself is published on top of it",
+    "reconciledAt": "2026-10-21",
+    "reconciliation": "Reconciled against the repository as it stands now: main is 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4, and the packet's own probe suite was executed against that head."
+  },
+  "provenance": {
+    "author": "Fleet 2 / F2W4 independent reviewer",
+    "independence": "The reviewer did not author any Control Plane source in this lane and approves none of the routed fixes.",
+    "requirementsSource": "docs/requirements/security-trust-atomic-inventory.md (Security & Trust Model revision 78, STA-L* atoms)",
+    "sourceAudit": "docs/requirements/security-trust-source-audit.md (STM-001..STM-035)",
+    "probeRunner": "scripts/security-trust-boundary-probes.mjs",
+    "probeCommand": "bun scripts/security-trust-boundary-probes.mjs",
+    "readOnly": true,
+    "credentialsRead": 0,
+    "productionTrafficSent": 0,
+    "deployedProfileEvidenceUsed": false,
+    "finalCandidateRecheck": {
+      "method": "every branch in the fleet's shared origin was compared against the audited head for the files each finding depends on",
+      "branchesCompared": 45,
+      "ownerFixesAvailable": 1,
+      "filesDifferingOnUnmergedBranches": [
+        "packages/remote-control-relay/src/relay.ts",
+        "packages/deployment/src/checkpoint.ts",
+        "packages/profile-portability/src/migration.ts",
+        "packages/sqlite-persistence/src/provider.ts",
+        "apps/workflow-worker/src/runtime-attempt-router.ts"
+      ],
+      "findingImpact": "none; every difference is cosmetic or belongs to an unrelated change, so all 29 findings stand on the audited head and on every currently available unmerged branch. The one owner fix that exists is on main, not on an unmerged branch, and is recorded under ownerFixReVerification.",
+      "ownerFixVerification": "one owner fix exists and was re-verified by execution: CP190-F04 on main at 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4 (#1224). The other 28 findings are pending; no owner fix for them exists on an available head yet.",
+      "ownerFixesAvailableNote": "One: CP190-F04, on main at 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4 (#1224). The other 28 findings have no owner fix on any available head.",
+      "baseAdvance": {
+        "auditedHead": "27f17bd55e0266439b5b3089163195c9e7a669be",
+        "currentMain": "4e126a7c3e55bfb05b8bdfc390705b83f777c6d4",
+        "commitsAhead": ["2e68492ed", "b1dee8b9c", "df37ca85a", "5e4b8d331", "4e126a7c3"],
+        "dependencyFilesTouched": [
+          "packages/credential-vault/src/vault.ts",
+          "packages/credential-vault/src/index.test.mjs"
+        ],
+        "effect": "The fifth commit is the owner fix for CP190-F04. Of the thirty files the probes read, only packages/credential-vault/src/vault.ts differs between the audited head and current main; the other twenty-nine are byte-identical, so the advance bears on F-04 only.",
+        "mainAdvancedAfterRead": {
+          "head": "f1bd75c5877f31b809c42b8aa43e2d5b08e3ad14",
+          "commit": "f1bd75c58 test(model-gateway): prove the BYO eligibility rules independently (CP #931) (#1225)",
+          "files": ["packages/model-gateway/src/byo-eligibility-rules.test.mjs"],
+          "effect": "Adds one test file. It changes none of the thirty files the probes read and none of this packet's dependency paths, so no finding, severity, probe result or gate changes with it."
+        }
+      },
+      "ownerFixReVerification": {
+        "method": "The packet's own probe suite was executed with main's credential-vault in place of the audited head's, and with every other file identical; the package was rebuilt from main's source and the audited head's source was restored afterwards.",
+        "head": "4e126a7c3e55bfb05b8bdfc390705b83f777c6d4",
+        "exitCode": 2,
+        "result": "24 open, 2 resolved, 0 harness failures",
+        "resolvedProbes": ["CP190-P05", "CP190-P23"],
+        "resolvedProbeNote": "Both are CP190-F04's probes. The suite reports 26 open and exits 0 on the audited head, so the difference is the fix and not the harness.",
+        "claimLimit": "This records that the F-04 defect is fixed on that head. It is not a close of the finding, not a deployed-credential-leak claim, and not a release or acceptance claim; the finding is still recorded against the audited head, where it reproduces."
+      }
+    }
+  },
+  "domains": [
+    {
+      "domain": "workspace",
+      "controls": [
+        {
+          "control": "Service credential scope is compared against signed claims",
+          "obligations": ["STA-L08-01", "STA-L38-03"],
+          "entrypoints": ["apps/control-api/src/auth/service-authentication.ts:302-328"],
+          "evidence": [
+            "apps/control-api/src/application.test.mjs:1095",
+            "apps/control-api/src/application.test.mjs:1154"
+          ],
+          "status": "verified"
+        },
+        {
+          "control": "Local private API derives workspace and project scope",
+          "obligations": ["STA-L08-01", "STA-L46-06", "STA-L46-17"],
+          "entrypoints": ["apps/control-api/src/auth/private-api-authentication.ts:86-94"],
+          "evidence": [],
+          "status": "finding",
+          "finding": "CP190-F05"
+        },
+        {
+          "control": "Durable records carry explicit workspace scope at the database layer",
+          "obligations": ["STA-L38-01", "STA-L38-06"],
+          "entrypoints": ["packages/sqlite-persistence/src/migrations.ts:37-154"],
+          "evidence": ["packages/sqlite-persistence/src/index.test.mjs:337"],
+          "status": "verified"
+        },
+        {
+          "control": "Portable export secret references carry no workspace scope",
+          "obligations": ["STA-L08-01", "STA-L76-03"],
+          "entrypoints": ["packages/profile-portability/src/manifest.ts:79-90"],
+          "evidence": [],
+          "status": "finding",
+          "finding": "CP190-F10"
+        }
+      ]
+    },
+    {
+      "domain": "project",
+      "controls": [
+        {
+          "control": "Local filesystem/project operations require a current LocalProjectGrant",
+          "obligations": ["STA-L17-01", "STA-L42-09", "STA-L69-02"],
+          "entrypoints": [
+            "apps/runtime-gateway/src/runtime-inventory-ingestion.ts:387",
+            "apps/workflow-worker/src/runtime-attempt-router.ts:179-184",
+            "packages/managed-pi-adapter/src/managed-pi-gateway-driver.ts:108-120",
+            "packages/acp-adapter/src/acp-gateway-driver.ts:127-139"
+          ],
+          "evidence": [
+            "tests/m11-security-probes.test.mjs:504",
+            "tests/m11-security-probes.test.mjs:511",
+            "tests/m11-security-probes.test.mjs:518"
+          ],
+          "status": "finding",
+          "finding": "CP190-F03"
+        },
+        {
+          "control": "Canonical path containment for filesystem/project operations",
+          "obligations": ["STA-L42-10", "STA-L69-01"],
+          "entrypoints": [
+            "packages/secrets/src/index.ts:137-161",
+            "packages/deployment/src/process-runtime.ts:58-86",
+            "packages/object-store/src/filesystem.ts:468-493"
+          ],
+          "evidence": [
+            "tests/m11-security-probes.test.mjs:335",
+            "tests/m11-security-probes.test.mjs:385",
+            "tests/m11-security-probes.test.mjs:409"
+          ],
+          "status": "partial",
+          "finding": "CP190-F03"
+        }
+      ]
+    },
+    {
+      "domain": "runtime",
+      "controls": [
+        {
+          "control": "Runtime Gateway node identity is operator-signed and verified against durable records",
+          "obligations": ["STA-L15-01", "STA-L46-01", "STA-L46-04", "STA-L66-01"],
+          "entrypoints": [
+            "apps/runtime-gateway/src/postgres-runtime-node-identity.ts:176-247",
+            "apps/runtime-gateway/src/authentication.ts:176-271",
+            "packages/database/src/runtime-node-identity-repository.ts:218-316"
+          ],
+          "evidence": [
+            "apps/runtime-gateway/src/postgres-runtime-node-identity.test.mjs:182",
+            "tests/runtime-node-credential-revocation.integration.test.mjs"
+          ],
+          "status": "verified",
+          "note": "The gateway service verifies only. The repository also ships an issuer CLI (CP190-F16)."
+        },
+        {
+          "control": "Runtime Gateway commands are workspace/node/generation bound on every frame",
+          "obligations": ["STA-L29-01", "STA-L68-02"],
+          "entrypoints": [
+            "apps/runtime-gateway/src/authentication.ts:117-127",
+            "apps/runtime-gateway/src/websocket-lifecycle.ts:302-314",
+            "packages/runtime-gateway-protocol/src/protocol.ts:186-224"
+          ],
+          "evidence": ["tests/m5-runtime-gateway.test.mjs"],
+          "status": "verified"
+        },
+        {
+          "control": "Remote command expiry is bounded to 24 hours",
+          "obligations": ["STA-L61-08"],
+          "entrypoints": [
+            "apps/runtime-gateway/src/context-command-delivery.ts:52-53",
+            "apps/runtime-gateway/src/runtime-command-delivery.ts:69-91"
+          ],
+          "evidence": [],
+          "status": "finding",
+          "finding": "CP190-F07"
+        },
+        {
+          "control": "Direct-local execution cannot bypass Control Plane policy because components are co-located",
+          "obligations": ["STA-L27-03", "STA-L77-01", "STA-L65-01"],
+          "entrypoints": [
+            "apps/local-control-plane/src/acp-runtime.ts:30-53",
+            "packages/acp-adapter/src/stdio-client.ts:124-137",
+            "packages/deployment/src/process-runtime.ts:37-87"
+          ],
+          "evidence": ["apps/local-control-plane/src/acp-runtime.test.mjs:39"],
+          "status": "finding",
+          "finding": "CP190-F24"
+        }
+      ]
+    },
+    {
+      "domain": "session",
+      "controls": [
+        {
+          "control": "Native external sessions are listed as scoped opaque references",
+          "obligations": ["STA-L44-05", "STA-L75-01"],
+          "entrypoints": ["packages/acp-adapter/src/external-sessions.ts"],
+          "evidence": ["packages/acp-adapter/src/external-sessions.test.mjs:183"],
+          "status": "verified"
+        },
+        {
+          "control": "Remote-control interaction responses are principal-checked",
+          "obligations": ["STA-L42-11", "STA-L66-01"],
+          "entrypoints": [
+            "packages/domain/src/interaction-delivery.ts:36-68",
+            "packages/workflow-runtime/src/restate-endpoint.ts:56-69"
+          ],
+          "evidence": [],
+          "status": "finding",
+          "finding": "CP190-F26"
+        }
+      ]
+    },
+    {
+      "domain": "tools",
+      "controls": [
+        {
+          "control": "Tool invocation requires a matching grant, policy decision, approval and rate limit",
+          "obligations": ["STA-L42-05", "STA-L42-06", "STA-L42-09", "STA-L42-11"],
+          "entrypoints": [
+            "packages/tool-execution/src/tool-registry.ts:287-307",
+            "packages/tool-execution/src/tool-execution.ts:117-182",
+            "packages/tool-execution/src/tool-execution.ts:351-446"
+          ],
+          "evidence": [
+            "packages/tool-execution/src/tool-execution.test.mjs:581",
+            "packages/tool-execution/src/tool-execution.test.mjs:613"
+          ],
+          "status": "verified"
+        },
+        {
+          "control": "Accepted plan tool grants are cross-checked at invocation time",
+          "obligations": ["STA-L42-01", "STA-L42-07"],
+          "entrypoints": [
+            "apps/local-control-plane/src/local-graph-tool-authority.ts:88-123",
+            "apps/hosted-control-plane/src/hosted-graph-tool-operations.ts:727",
+            "apps/control-api/src/pi-durable/current-tool-authority.ts:120-201"
+          ],
+          "evidence": [],
+          "status": "finding",
+          "finding": "CP190-F18"
+        }
+      ]
+    },
+    {
+      "domain": "models",
+      "controls": [
+        {
+          "control": "Model credentials are supplied as a separate credential reference, never as model context",
+          "obligations": ["STA-L10-01", "STA-L42-08", "STA-L56-03"],
+          "entrypoints": [
+            "packages/model-gateway/src/index.ts:187",
+            "packages/model-gateway/src/litellm-http.ts:246-273"
+          ],
+          "evidence": [
+            "packages/model-gateway/src/index.test.mjs:127",
+            "packages/model-gateway/src/index.test.mjs:198"
+          ],
+          "status": "verified"
+        },
+        {
+          "control": "Provider output is untrusted data that cannot widen caller authority",
+          "obligations": ["STA-L32-03", "STA-L54-12", "STA-L63-01"],
+          "entrypoints": [
+            "packages/context/src/provider.ts:406-454",
+            "packages/context/src/index.ts:25-43"
+          ],
+          "evidence": ["packages/context/src/provider.test.mjs"],
+          "status": "finding",
+          "finding": "CP190-F20"
+        }
+      ]
+    },
+    {
+      "domain": "artifacts",
+      "controls": [
+        {
+          "control": "Artifact keys are content-addressed and the store root is canonical-pinned",
+          "obligations": ["STA-L18-01", "STA-L70-03"],
+          "entrypoints": [
+            "packages/object-store/src/filesystem.ts:362",
+            "packages/object-store/src/filesystem.ts:468-493"
+          ],
+          "evidence": [
+            "tests/m11-security-probes.test.mjs:987",
+            "tests/m11-security-probes.test.mjs:1011"
+          ],
+          "status": "verified"
+        },
+        {
+          "control": "Sandbox outputs become artifacts only through an authorised promotion gate",
+          "obligations": ["STA-L56-07"],
+          "entrypoints": ["packages/sandbox/src/index.ts:230-251"],
+          "evidence": ["tests/m11-security-probes.test.mjs:967"],
+          "status": "verified"
+        },
+        {
+          "control": "Local backups and portable exports exclude protected secret material",
+          "obligations": ["STA-L76-01", "STA-L76-03"],
+          "entrypoints": [
+            "packages/deployment/src/checkpoint.ts:119-170",
+            "packages/profile-portability/src/migration.ts:230",
+            "packages/profile-portability/src/migration.ts:344-364"
+          ],
+          "evidence": ["packages/deployment/src/checkpoint.test.mjs:103"],
+          "status": "finding",
+          "finding": "CP190-F08"
+        }
+      ]
+    },
+    {
+      "domain": "admin",
+      "controls": [
+        {
+          "control": "Administrative routes require a scoped service credential of the service class",
+          "obligations": ["STA-L21-01", "STA-L42-01", "STA-L59-13"],
+          "entrypoints": [
+            "apps/control-api/src/auth/service-authentication.ts:228-328",
+            "apps/control-api/src/credentials/credential-administration.controller.ts:22-65"
+          ],
+          "evidence": ["apps/control-api/src/application.test.mjs:1118"],
+          "status": "verified"
+        },
+        {
+          "control": "The control plane composes a deny-by-default policy decision point",
+          "obligations": ["STA-L42-02", "STA-L40-18"],
+          "entrypoints": [
+            "packages/policy/src/index.ts:209-248",
+            "apps/control-api/src/cloud-composition.ts:100-104"
+          ],
+          "evidence": [
+            "tests/m11-security-probes.test.mjs:210",
+            "packages/credential-vault/src/durable-vault.test.mjs:70"
+          ],
+          "status": "finding",
+          "finding": "CP190-F19"
+        },
+        {
+          "control": "Deployed public ingress is bounded against request floods",
+          "obligations": ["STA-L54-11", "STA-L57-01"],
+          "entrypoints": ["apps/control-api/src/application.ts:22-27"],
+          "evidence": [],
+          "status": "finding",
+          "finding": "CP190-F14"
+        }
+      ]
+    }
+  ],
+  "auditAreas": [
+    {
+      "area": "native grant and effect authorization",
+      "result": "gap",
+      "findings": ["CP190-F03", "CP190-F18", "CP190-F19"]
+    },
+    {
+      "area": "secret-canary sinks",
+      "result": "gap",
+      "findings": ["CP190-F04", "CP190-F06", "CP190-F08", "CP190-F10", "CP190-F20"]
+    },
+    {
+      "area": "direct-local IPC and path handling",
+      "result": "gap",
+      "findings": ["CP190-F03", "CP190-F05", "CP190-F23", "CP190-F24"],
+      "notes": "The direct-local working directory is bounded by operator configuration, not by a grant: the managed-Pi child runs in a per-attempt directory under the data directory and the composed spawn policy leaves the working-directory dimension unconstrained, while the ACP child runs in an operator-configured absolute directory."
+    },
+    {
+      "area": "remote Runtime Gateway versus product relay",
+      "result": "gap",
+      "findings": ["CP190-F01", "CP190-F02", "CP190-F07", "CP190-F16", "CP190-F17"],
+      "notes": "Traced per payload type. create_execution is idempotent through the CommandInbox because the acceptance request extends the context schema that carries idempotencyKey. submit_input carries no idempotency key. The metadata effect is an injected callback with no shipped implementation, and no file scanned by CP190-P21 (apps/ and packages/, excluding the relay package, tests and declarations) builds the relay host adapter. The relay receipt layer adds no idempotency beyond the command identifier and only in-memory receipt repositories ship."
+    },
+    {
+      "area": "HPKE AAD, recipient, replay and expiry",
+      "result": "verified",
+      "notes": "RFC 9180 DHKEM(X25519, HKDF-SHA256)/HKDF-SHA256/AES-128-GCM; AAD binds version, suite, key id, workspace, host, command id, payload type and schema, issued/expiry and content digest; 1 MiB cap; wrong recipient, tamper, downgrade and digest mismatch all fail closed.",
+      "findings": ["CP190-F02"]
+    },
+    {
+      "area": "SQLite, backup and import",
+      "result": "gap",
+      "findings": ["CP190-F08", "CP190-F09", "CP190-F10", "CP190-F29"],
+      "notes": "The provider path creates and restricts its parent directory to 0700 before the database and its sidecars exist, so there is no supported traversal path. The adapter-owned pi-durable directory is the conditional case."
+    },
+    {
+      "area": "provider and secrets",
+      "result": "gap",
+      "findings": ["CP190-F04", "CP190-F06", "CP190-F20", "CP190-F21", "CP190-F22"]
+    },
+    {
+      "area": "sandbox",
+      "result": "gap",
+      "findings": ["CP190-F11", "CP190-F12", "CP190-F13"]
+    },
+    {
+      "area": "supply chain",
+      "result": "verified",
+      "notes": "Frozen lockfile with integrity hashes, digest-pinned base images and actions, pinned patched dependency with upstream provenance, Trivy image scan with CycloneDX SBOM, build provenance attestation, least-privilege workflow permissions, persist-credentials disabled, pull_request_target workflows never check out PR code.",
+      "findings": []
+    },
+    {
+      "area": "managed-cloud trust",
+      "result": "partial",
+      "findings": ["CP190-F14", "CP190-F15", "CP190-F25", "CP190-F26", "CP190-F28"]
+    }
+  ],
+  "findings": [
+    {
+      "id": "CP190-F01",
+      "title": "The relay host processor applies no authentication of its own to metadata-only commands",
+      "severity": "medium",
+      "releaseImpact": "Does not block the current release. The Control Plane ships the transport and validation layer only: no file scanned by CP190-P21 (apps/ and packages/, excluding the relay package, tests and declarations) builds the relay host adapter or the metadata processor, the test fake FakeOpaqueRelay is present and no scanned file outside the relay package names the client interface or the fake (a textual check, not proof that no other client exists), and the approve, deny, cancel, resume and status effects are injected callbacks with no shipped implementation. What remains is that the processor offers no defence in depth of its own, so a claim that the Control Plane verifies the metadata transport cannot be made.",
+      "obligations": ["STA-L46-09", "STA-L66-01", "STA-L68-02", "STA-L52-04"],
+      "entrypoints": [
+        "packages/remote-control-relay/src/relay.ts:379-424",
+        "packages/remote-control-relay/src/protocol.ts:68-81",
+        "packages/remote-control-relay/src/adapter.ts:154-173"
+      ],
+      "probes": ["CP190-P01", "CP190-P02", "CP190-P21", "CP190-P26"],
+      "routedTo": "W1 (packages/remote-control-relay) with the Agent HQ product relay owner",
+      "regression": "The processor must not be able to accept a metadata command that its caller has not authenticated, and a composition must refuse to start a relay adapter whose client does not assert authentication. Regression test: a metadata command with no authenticated-transport provenance is rejected by the processor, and the composition fails closed when the supplied client declares no authentication.",
+      "reachability": "configured-only",
+      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default.",
+      "reachabilityNote": "Traced end to end: the only consumer of a metadata command is RemoteControlHostAdapter.#pollOnce (packages/remote-control-relay/src/adapter.ts:154-173), which is itself an injected option of the Local and Hosted compositions (apps/local-control-plane/src/composition.ts:249-250,508-512; apps/hosted-control-plane/src/composition.ts:220-223,371-375) and is reported as 'disabled' when absent (:152, :164). No file scanned by CP190-P21 (apps/ and packages/, excluding the relay package, tests and declarations) constructs RelayMetadataCommandProcessor or RemoteControlHostAdapter, and the test fake FakeOpaqueRelay is present (packages/remote-control-relay/src/relay.ts:45) while no scanned file outside the relay package names OutboundOpaqueRelayClient or FakeOpaqueRelay. That is a textual check: it does not prove that no other, structurally conforming client exists. The metadata effect callback is injected (packages/remote-control-relay/src/relay.ts:376-379), so the Control Plane ships no approve, deny or cancel effect at all: those names are schema operations, not shipped behaviour. An integrator must supply the relay client, the effect and the adapter. **No deployed attacker-controlled ingress exists and no deployed unauthenticated approval path is claimed.** The residual is that the processor adds no provenance check of its own and relies on its caller having authenticated the transport, which docs/remote-control-relay.md assigns to the concrete relay client.",
+      "counterevidence": "docs/remote-control-relay.md states that metadata-only operations use a separate strict, authenticated command schema and that authentication of that metadata transport remains the responsibility of the concrete relay client. The obligation is documented and delegated, so this is a contract and defence-in-depth gap rather than a deployed unauthenticated-approval path."
+    },
+    {
+      "id": "CP190-F02",
+      "title": "The relay receipt layer adds no idempotency beyond the command identifier, and only in-memory receipt repositories ship",
+      "severity": "medium",
+      "releaseImpact": "Does not block the current release. The durable idempotency guarantee for create_execution comes from the CommandInbox, not from the relay receipt, and the metadata effect is an injected callback whose own idempotency is outside the Control Plane.",
+      "obligations": ["STA-L16-01", "STA-L68-03", "STA-L78-01", "STA-L61-08"],
+      "entrypoints": [
+        "packages/remote-control-relay/src/relay.ts:296-303",
+        "packages/remote-control-relay/src/relay.ts:417-437",
+        "packages/remote-control-relay/src/execution.ts:187-197",
+        "packages/remote-control-relay/src/relay.ts:376",
+        "packages/remote-control-relay/src/execution.ts:135"
+      ],
+      "probes": ["CP190-P03", "CP190-P04", "CP190-P22", "CP190-P26"],
+      "routedTo": "W1 (packages/remote-control-relay)",
+      "regression": "Bind the effect and its receipt atomically, or bind the receipt to a stable effect key that the injected callback also uses. Do not move the receipt before the effect. Regression test: a receipt-store write that fails must leave the effect unapplied; a receipt and its effect must be indivisible; and a redelivery after a restart must be rejected as a duplicate by the durable receipt.",
+      "reachability": "configured-only",
+      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default.",
+      "reachabilityNote": "Traced per payload type. create_execution: the relay parses ExecutionAcceptanceRequestSchema (packages/remote-control-relay/src/execution.ts:209-223,260-268), which extends CommandContextSchema and therefore carries the caller's idempotencyKey (packages/contracts/src/control-api.ts:45,668); ExecutionAcceptanceService then admits it through the CommandInbox (apps/control-api/src/executions/execution-acceptance.service.ts:51,58; packages/domain/src/command-inbox.ts:53-58,684-705), so a redelivery of the same command is deduped there. submit_input: RelaySubmitInputRequestSchema carries no idempotency key at all (packages/remote-control-relay/src/execution.ts:38-52), so any dedupe must come from the interaction domain. Metadata operations: the effect is an injected callback (packages/remote-control-relay/src/relay.ts:376-379) with no shipped implementation. The effect-before-receipt order is correct and must not be inverted; the defect is that the two writes are not atomic and that only in-memory receipt repositories ship (packages/remote-control-relay/src/relay.ts:227,343; packages/remote-control-relay/src/execution.ts:135), while docs/remote-control-relay.md already records the durable repository as a composition requirement.",
+      "counterevidence": "create_execution goes through ExecutionAcceptanceService and the CommandInbox idempotency key, so it is not duplicated by the callback ordering. The processor offers no cross-commandId idempotency, but the commandId is a relay-chosen identifier and the effect's own idempotency is the injected callback's property."
+    },
+    {
+      "id": "CP190-F03",
+      "title": "The direct-local runtime path never consults a LocalProjectGrant, and the production discovery state is a hard-coded constant",
+      "severity": "high",
+      "releaseImpact": "Blocks the Local filesystem/project acceptance claim: the discovery projection reports a grant state that no authority issued, and the direct-local working directory is bounded by operator configuration rather than by a grant.",
+      "obligations": ["STA-L17-01", "STA-L42-09", "STA-L42-10", "STA-L69-02", "STA-L27-03"],
+      "entrypoints": [
+        "apps/runtime-gateway/src/runtime-inventory-ingestion.ts:387",
+        "apps/workflow-worker/src/runtime-attempt-router.ts:179-184",
+        "packages/acp-adapter/src/acp-driver-execution.ts",
+        "packages/managed-pi-adapter/src/index.ts:322",
+        "packages/managed-pi-adapter/src/process-client.ts"
+      ],
+      "probes": ["CP190-P08", "CP190-P09", "CP190-P10", "CP190-P24"],
+      "routedTo": "W1 (runtime composition and adapter boundary) with the Agent HQ desktop grant owner",
+      "regression": "The direct-local driver must require a current grant, and every path must be contained against a canonical grant root after symlink resolution. Regression test: a direct-local dispatch with a revoked or absent grant is rejected; a symlinked path that escapes the grant root is rejected; and the direct-local working directory is derived from the grant rather than from operator configuration alone.",
+      "reachability": "deployed-now",
+      "reachabilityClass": "Reachable in a shipped profile today, subject to the preconditions stated in the finding.",
+      "reachabilityNote": "Traced for the actual managed-Pi driver. ManagedPiDriver (packages/managed-pi-adapter/src/index.ts:322) parses the execution plan, enforces the runtime version range and the capability evaluation, and forwards to the client; it contains no grant reference and no path check. The child then runs with its working directory set to a per-attempt directory under the data directory (apps/local-control-plane/src/managed-pi-runtime.ts:66; packages/managed-pi-adapter/src/process-client.ts:288-298), created 0700 with the system prompt written 0600. The composed spawn policy names only allowedExecutables (apps/local-control-plane/src/index.ts:300), and NodeProcessSpawnPolicy documents absent dimensions as unconstrained (packages/deployment/src/process-runtime.ts:10), so the working-directory dimension is unconstrained by policy. The ACP path differs: the child runs in the operator-configured absolute CONTROL_PLANE_CODEX_ACP_CWD and the policy mirrors that directory (apps/local-control-plane/src/installed-acp-runtime.ts:88-95), with absolute-path validation as the only constraint. The gateway path is the only one that checks a grant (packages/managed-pi-adapter/src/managed-pi-gateway-driver.ts:108-120; packages/acp-adapter/src/acp-gateway-driver.ts:127-139), and the only production writer of the grant state is a hard-coded constant (apps/runtime-gateway/src/runtime-inventory-ingestion.ts:387) consumed at apps/workflow-worker/src/runtime-attempt-router.ts:179-184. Because the grant carries no path semantics, there is no grant-scoped project root for STA-L42-10 to attach to, and the Control Plane mediates no filesystem operation on the harness's behalf, so the residual Control Plane risk is a dispatch-authority and acceptance gap while the ambient-access denial remains a desktop-host obligation outside this repository.",
+      "counterevidence": "None offered. The citation error in the previous revision is corrected here: the managed-Pi direct driver is packages/managed-pi-adapter/src/index.ts:322 (export class ManagedPiDriver), not a separate managed-pi-driver.ts module, which does not exist. packages/acp-adapter/src/acp-driver-execution.ts does exist and holds no grant reference."
+    },
+    {
+      "id": "CP190-F04",
+      "title": "The credential-vault returned-value screen does not descend into Error, Map, Set or byte containers",
+      "severity": "low",
+      "releaseImpact": "No deployed credential leakage is claimed or demonstrated. The one composed leased path normalizes the callback result before it is screened, and the two callers that return a raw result are not composed into any application.",
+      "obligations": ["STA-L40-17", "STA-L40-18", "STA-L76-03"],
+      "entrypoints": [
+        "packages/credential-vault/src/vault.ts:457-462",
+        "packages/credential-vault/src/vault.ts:550-557"
+      ],
+      "probes": ["CP190-P05", "CP190-P23"],
+      "routedTo": "W1 (packages/credential-vault)",
+      "regression": "The returned-value screen must descend into Error message, stack and cause, Map, Set, Buffer and typed arrays, or reject a non-plain result. Regression test: a leased callback that returns new Error(secret) must raise SECRET_EGRESS_BLOCKED; a leased callback that throws must still surface the bounded PROVIDER_OPERATION_FAILED code; and the model-selection normalizer must continue to reject a non-plain carrier.",
+      "reachability": "library-contract",
+      "reachabilityClass": "A library-level contract gap. No composed path in this repository reaches it, so no deployed behaviour is claimed.",
+      "reachabilityNote": "Bounded to the returned value of a leased callback. packages/credential-vault/src/vault.ts:456-467 screens the value the callback returns with containsSecret, and containsSecret (:550-557) walks own enumerable string-keyed properties only, so a returned Error, Map, Set or byte container carrying the secret is not detected. Ordinary thrown errors are already sanitized: the catch at :462-466 converts any non-CredentialVaultError throw into PROVIDER_OPERATION_FAILED. The composed leased path is protected by a second control: the model-selection service returns safeCredentialResult(await operation(secret)) (packages/model-gateway/src/selection-service.ts:269), and safeCredentialResult (:341-380) rejects any object whose prototype is not Object.prototype or null, rejects symbol keys, rejects sparse arrays and rejects cycles, so a non-plain carrier cannot survive it. The two callers that return the raw result are the credential broker (packages/credential-vault/src/tool-broker.ts:91-99) and the MCP adapter (packages/tool-execution/src/mcp-adapter.ts:257-277, which reduces thrown transport errors to a bounded code but returns the invoke output raw); neither is composed into any application, and no application composes a VaultToolCredentialBroker. The composed profiles also do not lease: the Control API vault composes no policy decision point (apps/control-api/src/cloud-composition.ts:100-104), so leases deny before a secret is resolved (packages/credential-vault/src/vault.ts:326-332).",
+      "counterevidence": "The previous revision implied a deployed credential-leakage path. It does not: thrown errors are sanitized, the Control API vault denies leases without a policy decision point, and the demonstrated case is a library contract gap in the returned-value screen only.",
+      "ownerFix": {
+        "state": "landed and re-verified by execution; the finding is not closed by this lane",
+        "head": "4e126a7c3e55bfb05b8bdfc390705b83f777c6d4",
+        "commit": "4e126a7c3 Harden credential vault callback result inspection (#1224)",
+        "paths": [
+          "packages/credential-vault/src/vault.ts",
+          "packages/credential-vault/src/index.test.mjs"
+        ],
+        "pathsNote": "The second path is the exact regression file this packet proposes for F-04 in the report's section 4.",
+        "reVerification": "Probe suite executed against that head: 24 open, 2 resolved (CP190-P05, CP190-P23), 0 harness failures, exit code 2.",
+        "findingStillHoldsAt": "27f17bd55e0266439b5b3089163195c9e7a669be",
+        "closureOwner": "The controller confirms the fix head and closes the finding; this lane neither closes it nor edits either path."
+      }
+    },
+    {
+      "id": "CP190-F05",
+      "title": "The Local private API derives workspace and project scope from the request body",
+      "severity": "medium",
+      "releaseImpact": "Does not block the current release. It leaves the Local cross-workspace fail-closed claim unproven, because the Control Plane does not verify the requested scope against an authorized set.",
+      "obligations": ["STA-L08-01", "STA-L46-06", "STA-L46-17", "STA-L38-03"],
+      "entrypoints": ["apps/control-api/src/auth/private-api-authentication.ts:86-94"],
+      "probes": ["CP190-P07"],
+      "routedTo": "W1 (apps/control-api authentication)",
+      "regression": "Bind the Local principal to an authorized workspace and project set and compare the envelope against it. Regression test: a valid local token with a foreign workspaceId must be rejected.",
+      "reachability": "deployed-now",
+      "reachabilityClass": "Reachable in a shipped profile today, subject to the preconditions stated in the finding.",
+      "reachabilityNote": "Present in the shipped Local profile. The default bind is loopback (apps/local-control-plane/src/index.ts:82-88), the bearer token is a 0600 file in a 0700 directory (apps/control-api/src/auth/private-api-authentication.ts:14-43) and the caller must be svc_agent-hq, so a bearer holder is the trusted local product. The gap is authorization completeness, not a demonstrated cross-tenant read: the hosted authenticator performs the missing comparison (apps/control-api/src/auth/service-authentication.ts:310-313) and the Local one does not.",
+      "counterevidence": "None offered; the severity is reduced from medium-high because the Local profile binds loopback by default, the credential is an owner-only file and the caller is the trusted local product. The finding stands as an authorization-completeness gap."
+    },
+    {
+      "id": "CP190-F06",
+      "title": "Log, event and checkpoint redaction is key-name based and misses compound credential key names",
+      "severity": "medium",
+      "releaseImpact": "A secret stored under a key such as sessionToken is written to logs and events. STA-L76-03 acceptance stays open.",
+      "obligations": ["STA-L40-17", "STA-L76-03", "STA-L59-14"],
+      "entrypoints": [
+        "packages/telemetry/src/redaction.ts:3-73",
+        "packages/events/src/index.ts:119-124",
+        "packages/langgraph-adapter/src/index.ts:912-916"
+      ],
+      "probes": ["CP190-P06"],
+      "routedTo": "W1 (packages/telemetry, packages/events)",
+      "regression": "Extend the sensitive key set to compound credential names, or apply the production value-based canary guard at every sink. Regression test: a secret under sessionToken, passphrase or bearerToken must not appear in a redacted log payload.",
+      "reachability": "deployed-now",
+      "reachabilityClass": "Reachable in a shipped profile today, subject to the preconditions stated in the finding."
+    },
+    {
+      "id": "CP190-F07",
+      "title": "Runtime Gateway runtime commands are not bounded to the 24 hour remote-command maximum",
+      "severity": "medium",
+      "releaseImpact": "A runtime command stays dispatchable for an unbounded lifetime and survives credential rotation. STA-L61-08 acceptance stays open.",
+      "obligations": ["STA-L61-08", "STA-L68-01"],
+      "entrypoints": [
+        "apps/runtime-gateway/src/runtime-command-delivery.ts:69-91",
+        "apps/runtime-gateway/src/context-command-delivery.ts:52-53"
+      ],
+      "probes": ["CP190-P11"],
+      "routedTo": "W1 (apps/runtime-gateway)",
+      "regression": "Apply the same 24 hour bound to the runtime command family. Regression test: enqueuing a runtime command with a one-year lifetime must fail with EXPIRY_TOO_LONG.",
+      "reachability": "configured-only",
+      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default."
+    },
+    {
+      "id": "CP190-F08",
+      "title": "A Local filesystem checkpoint copies the private-file secrets directory in cleartext",
+      "severity": "medium",
+      "releaseImpact": "Operator backups carry plaintext provider secrets. STA-L76-01 and STA-L76-03 acceptance stay open for the Local profile.",
+      "obligations": ["STA-L76-01", "STA-L76-03", "STA-L61-02"],
+      "entrypoints": [
+        "packages/deployment/src/checkpoint.ts:119-170",
+        "scripts/control-plane-checkpoint.mjs:24-28",
+        "apps/local-control-plane/src/composition.ts:385-395"
+      ],
+      "probes": ["CP190-P12"],
+      "routedTo": "W1 (packages/deployment, scripts/control-plane-checkpoint.mjs)",
+      "regression": "Exclude the secrets directory from the checkpoint inventory or seal it under the vault key. Regression test: a checkpoint of a data directory containing secrets/provider-key must not contain the secret bytes.",
+      "reachability": "deployed-now",
+      "reachabilityClass": "Reachable in a shipped profile today, subject to the preconditions stated in the finding."
+    },
+    {
+      "id": "CP190-F09",
+      "title": "SQLite WAL and SHM sidecars keep the pre-restriction file mode inside an owner-only parent directory",
+      "severity": "low",
+      "releaseImpact": "No cross-UID readability is demonstrated and none is claimed. The parent data directory is created and restricted to 0700 before the database and its sidecars exist, so there is no supported traversal path in the provider.",
+      "obligations": ["STA-L76-01", "STA-L23-03"],
+      "entrypoints": ["packages/sqlite-persistence/src/provider.ts:209-221"],
+      "probes": ["CP190-P13"],
+      "routedTo": "W1 (packages/sqlite-persistence)",
+      "regression": "Restrict the sidecar files to owner-only, so the file mode does not depend on the parent directory mode. Regression test: after opening a provider in a 0755 directory the -wal and -shm files must be mode 0600.",
+      "reachability": "defense-in-depth",
+      "reachabilityClass": "A hardening gap. The described attack is not demonstrated as reachable; the stated control prevents it in the current configuration.",
+      "reachabilityNote": "packages/sqlite-persistence/src/provider.ts:209-210 creates the parent directory and chmods it to 0700 before the database is opened at :211 and before the WAL pragma at :216, and :221 then restricts the main file to 0600. The sidecars keep the pre-restriction mode, but another UID cannot traverse the 0700 parent, and no supported path defeats that control. The residual is defence in depth: the sidecar files are not owner-only, so a later relaxation of the directory mode, a copy of a sidecar on its own, or a backup that captures a sidecar would expose recent writes that the 0600 main file would have protected. The adapter-owned directory case is reported separately as CP190-F29.",
+      "counterevidence": "The previous revision implied a cross-UID read. The parent directory is 0700 before any file is created, so the sidecar mode is a defense-in-depth gap only."
+    },
+    {
+      "id": "CP190-F10",
+      "title": "The portable import path scans with an empty sensitive-value list and portable secret references are not workspace scoped",
+      "severity": "medium",
+      "releaseImpact": "A profile export can carry another workspace's secret locator, and the import path does not re-check secret values. STA-L08-01 and STA-L76-03 acceptance stay open.",
+      "obligations": ["STA-L08-01", "STA-L76-03"],
+      "entrypoints": [
+        "packages/profile-portability/src/migration.ts:230",
+        "packages/profile-portability/src/migration.ts:344-364",
+        "packages/profile-portability/src/manifest.ts:79-90"
+      ],
+      "probes": ["CP190-P14", "CP190-P15"],
+      "routedTo": "W1 (packages/profile-portability)",
+      "regression": "Scan the import path with the same sensitive values used at export and scope secret references to a workspace. Regression test: a manifest whose record value carries a secret under a non-prohibited key must be rejected on import.",
+      "reachability": "deployed-now",
+      "reachabilityClass": "Reachable in a shipped profile today, subject to the preconditions stated in the finding."
+    },
+    {
+      "id": "CP190-F11",
+      "title": "Sandbox credential bindings are injected after the ambient-credential denial runs",
+      "severity": "medium",
+      "releaseImpact": "The ambient credential denial never sees credential-bound names, so a raw secret reaches the sandbox environment. STA-L77-01 acceptance stays open.",
+      "obligations": ["STA-L46-17", "STA-L77-01", "STA-L10-01"],
+      "entrypoints": [
+        "packages/sandbox/src/index.ts:198-215",
+        "packages/sandbox/src/index.ts:367-379"
+      ],
+      "probes": ["CP190-P16"],
+      "routedTo": "W1 (packages/sandbox)",
+      "regression": "Apply the ambient credential denial to the effective environment, including credential bindings, or deny any credential-shaped bound name. Regression test: a credential bound to AWS_SESSION must be denied or must not reach the provider environment.",
+      "reachability": "configured-only",
+      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default."
+    },
+    {
+      "id": "CP190-F12",
+      "title": "The sandbox metadata-service deny list is incomplete",
+      "severity": "medium",
+      "releaseImpact": "Non-default cloud metadata endpoints are reachable from a sandbox command. STA-L77-01 acceptance stays open.",
+      "obligations": ["STA-L77-01", "STA-L26-02"],
+      "entrypoints": ["packages/sandbox/src/index.ts:605-607"],
+      "probes": ["CP190-P17"],
+      "routedTo": "W1 (packages/sandbox)",
+      "regression": "Deny the link-local metadata range and the known provider metadata endpoints. Regression test: a command targeting 169.254.170.2 must be denied with POLICY_DENIED.",
+      "reachability": "configured-only",
+      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default."
+    },
+    {
+      "id": "CP190-F13",
+      "title": "The sandbox provider contract is not composed into any application and no live provider exists",
+      "severity": "high",
+      "releaseImpact": "There is no sandbox boundary in any shipped profile. STA-L77-01 and STA-L83-02 acceptance stay open and the live E2B gate remains unproven.",
+      "obligations": ["STA-L77-01", "STA-L83-02", "STA-L26-02"],
+      "entrypoints": ["packages/sandbox/src/index.ts:174-280", "packages/sandbox/package.json"],
+      "probes": ["CP190-P18"],
+      "routedTo": "W1 (profile composition) and the operations owner for the E2B template and cleanup thresholds",
+      "regression": "Compose a SandboxProvider in the hosted profile and record the live template, resource, network and cleanup evidence. Regression test: a hosted composition must resolve a sandbox provider, and a composition without one must fail closed.",
+      "reachability": "evidence-gap",
+      "reachabilityClass": "The control is a contract with no composed implementation, so there is nothing to attack and nothing to accept."
+    },
+    {
+      "id": "CP190-F14",
+      "title": "The only public control-plane service has no HTTP request rate limit and no inbound deadline",
+      "severity": "medium",
+      "releaseImpact": "An authenticated principal can saturate the PostgreSQL pool. Abuse-boundary acceptance for the cloud profile stays open.",
+      "obligations": ["STA-L54-11", "STA-L57-01", "STA-L78-01"],
+      "entrypoints": [
+        "apps/control-api/src/application.ts:22-27",
+        "packages/database/src/connection.ts:19-31"
+      ],
+      "probes": ["CP190-P19"],
+      "routedTo": "W1 (apps/control-api) with the operations owner for the deployed limit values",
+      "regression": "Add a per-principal request quota and an inbound request deadline to the Fastify adapter. Regression test: a principal exceeding the quota receives a bounded 429 without reaching the database.",
+      "reachability": "deployed-now",
+      "reachabilityClass": "Reachable in a shipped profile today, subject to the preconditions stated in the finding."
+    },
+    {
+      "id": "CP190-F15",
+      "title": "The Restate ingress submission carries no request credential",
+      "severity": "medium",
+      "releaseImpact": "Workflow submission trusts network placement only. STA-L24-01 and STA-L40-09 acceptance stay open for the self-hosted profile, where the ingress binds to all interfaces.",
+      "obligations": ["STA-L40-09", "STA-L24-01", "STA-L23-05"],
+      "entrypoints": [
+        "apps/control-api/src/executions/execution-acceptance.service.ts:291-303",
+        "scripts/validate-railway.mjs:121",
+        "infrastructure/compose/compose.yaml:152"
+      ],
+      "probes": ["CP190-P20"],
+      "routedTo": "W1 (execution acceptance) and the deployment owner for the self-hosted ingress binding",
+      "regression": "Authenticate the ingress submission with the Restate request identity, and bind the self-hosted ingress to the private interface. Regression test: a submission without the request identity must be rejected.",
+      "reachability": "configured-only",
+      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default."
+    },
+    {
+      "id": "CP190-F16",
+      "title": "The Control Plane repository ships a RuntimeNode credential issuer CLI",
+      "severity": "medium",
+      "releaseImpact": "Credential-class separation: issuer signing code is co-located with the verifier-only gateway's repository and image build context. That an issuer private key is present on Control Plane infrastructure is not shown by the source and is an evidence gap. Rotation and credential-class separation acceptance stay open.",
+      "obligations": ["STA-L15-01", "STA-L46-04", "STA-L46-05", "STA-L59-03"],
+      "entrypoints": [
+        "scripts/runtime-node-identity-admin.mjs:303-399",
+        "scripts/runtime-node-identity-admin.mjs:540-549"
+      ],
+      "probes": [],
+      "routedTo": "W1 (runtime node identity operations)",
+      "regression": "Proposed evidence request, not a gate: inspect the built image manifest for the issuer CLI and any issuer key path without reading key material. If the image carries the issuer CLI, move issuance to a separate operator surface and keep the gateway verifier-only.",
+      "reachability": "configured-only",
+      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default.",
+      "reachabilityNote": "Source shows: scripts/runtime-node-identity-admin.mjs signs credentials with an Ed25519 private key read from an operator-supplied absolute path (--issuer-private-key; the file must be a private regular file owned by the invoking user), and both infrastructure/containers/Dockerfile and Dockerfile.hosted copy scripts/ into the build context (Dockerfile:7, Dockerfile.hosted:7 and :94). docs/runtime-node-identity-operations.md states that key registration and credential issuance are deliberately offline operator actions and that the issuer private half is kept offline or in the operator's protected key service; only the public PEM belongs on the gateway. Source does not show: where any issuer private key is stored, or that one exists on Control Plane infrastructure. That placement is an evidence gap. No key material was read.",
+      "evidenceGap": "Deployed placement of the issuer private key is not established by the repository."
+    },
+    {
+      "id": "CP190-F17",
+      "title": "The synthetic RuntimeNode authority merges credential classes and drops the binding fence",
+      "severity": "medium",
+      "releaseImpact": "Gateway authentication tests do not exercise the production issuer and device separation. STA-L46-01 and STA-L46-04 acceptance rest on code reading, not on the test suite.",
+      "obligations": ["STA-L46-01", "STA-L46-04", "STA-L15-01"],
+      "entrypoints": [
+        "apps/runtime-gateway/src/synthetic-node-identity.ts:104-133",
+        "apps/runtime-gateway/src/runtime-node-identity-port.ts:8-11"
+      ],
+      "probes": [],
+      "routedTo": "W1 (apps/runtime-gateway)",
+      "regression": "Give the synthetic authority a distinct issuer key and enforce the node, workspace and generation fence. Regression test: a device-signed credential presented with an issuer key id must be rejected, and a consumed credential for another workspace must be refused.",
+      "reachability": "evidence-gap",
+      "reachabilityClass": "The control is a contract with no composed implementation, so there is nothing to attack and nothing to accept."
+    },
+    {
+      "id": "CP190-F18",
+      "title": "The pi-durable tool path does not cross-check the accepted plan tool grants",
+      "severity": "medium",
+      "releaseImpact": "A tool call can present a self-consistent grant for a tool and operation the accepted plan does not grant. STA-L42-01 and STA-L42-07 acceptance stay open.",
+      "obligations": ["STA-L42-01", "STA-L42-07", "STA-L42-02"],
+      "entrypoints": [
+        "apps/control-api/src/pi-durable/current-tool-authority.ts:120-201",
+        "apps/local-control-plane/src/local-graph-tool-authority.ts:88-123",
+        "apps/hosted-control-plane/src/hosted-graph-tool-operations.ts:727"
+      ],
+      "probes": [],
+      "routedTo": "W1 (apps/control-api pi-durable tool authority)",
+      "regression": "Cross-check the accepted plan constraints.tools.grants on the pi-durable path. Regression test: a grant for a tool absent from the accepted plan must be denied.",
+      "reachability": "deployed-now",
+      "reachabilityClass": "Reachable in a shipped profile today, subject to the preconditions stated in the finding."
+    },
+    {
+      "id": "CP190-F19",
+      "title": "No policy decision point is composed into any application, so the credential lease positive path does not exist",
+      "severity": "medium",
+      "releaseImpact": "The deny-by-default behaviour is proven, but the narrowly authorized executor path in STA-L40-18 cannot be demonstrated in this repository.",
+      "obligations": ["STA-L42-02", "STA-L40-18", "STA-L25-02"],
+      "entrypoints": [
+        "packages/policy/src/index.ts:209-248",
+        "apps/control-api/src/cloud-composition.ts:100-104",
+        "apps/local-control-plane/src/index.ts:153-162"
+      ],
+      "probes": [],
+      "routedTo": "W1 (profile compositions) and the Cedar policy owner",
+      "regression": "Compose the decision point where a credential lease is required and record the permit matrix. Regression test: a leased connector credential in a composed profile must be allowed only for its own workspace and operation.",
+      "reachability": "evidence-gap",
+      "reachabilityClass": "The control is a contract with no composed implementation, so there is nothing to attack and nothing to accept."
+    },
+    {
+      "id": "CP190-F20",
+      "title": "Provider contributions and ProjectState items carry free-form content with no secret filter and no untrusted-data marking",
+      "severity": "medium",
+      "releaseImpact": "A provider or retrieved memory value can carry a credential into a ContextPackage, a ProjectState item or model context. STA-L40-17 and STA-L54-12 acceptance stay open.",
+      "obligations": ["STA-L40-17", "STA-L54-12", "STA-L32-03", "STA-L19-01"],
+      "entrypoints": [
+        "packages/context/src/index.ts:25-43",
+        "packages/contracts/src/context-providers.ts:53-85",
+        "packages/domain/src/project-state.ts:86-120"
+      ],
+      "probes": [],
+      "routedTo": "W1 (packages/context, packages/domain)",
+      "regression": "Filter provider and ProjectState content against the protected value set and mark retrieved content as untrusted data. Regression test: a contribution whose content carries a canary must be rejected or redacted before admission.",
+      "reachability": "deployed-now",
+      "reachabilityClass": "Reachable in a shipped profile today, subject to the preconditions stated in the finding."
+    },
+    {
+      "id": "CP190-F21",
+      "title": "The environment and private-file secret providers ignore the SecretUse context",
+      "severity": "medium",
+      "releaseImpact": "A secret resolved through the env or file provider is not bound to a workspace, operation or purpose. STA-L40-18 and STA-L42-08 acceptance stay open.",
+      "obligations": ["STA-L40-18", "STA-L42-08", "STA-L15-01"],
+      "entrypoints": [
+        "packages/secrets/src/index.ts:89",
+        "packages/secrets/src/index.ts:134",
+        "packages/secrets/src/index.ts:219"
+      ],
+      "probes": [],
+      "routedTo": "W1 (packages/secrets)",
+      "regression": "Accept and enforce the SecretUse context in every provider. Regression test: resolving the same reference under two different use contexts must not produce the same unbound lease.",
+      "reachability": "deployed-now",
+      "reachabilityClass": "Reachable in a shipped profile today, subject to the preconditions stated in the finding."
+    },
+    {
+      "id": "CP190-F22",
+      "title": "The Hosted server profile composes no credential vault and the host-secure handle provider has no resolver",
+      "severity": "medium",
+      "releaseImpact": "The self-hosted server profile has no dynamic credential lifecycle and no OS-secure handle path. STA-L15-01, STA-L40-11 and STA-L40-14 acceptance stay open.",
+      "obligations": ["STA-L15-01", "STA-L40-11", "STA-L40-14", "STA-L40-16"],
+      "entrypoints": [
+        "apps/hosted-control-plane/src/composition.ts",
+        "packages/secrets/src/index.ts:211-238"
+      ],
+      "probes": [],
+      "routedTo": "W1 (apps/hosted-control-plane composition) and the desktop owner for the OS resolver",
+      "regression": "Compose the vault for the hosted server profile and wire a concrete host-secure resolver for packaged Local. Regression test: a hosted server composition must resolve a credential lifecycle, and a packaged Local profile must resolve an opaque handle.",
+      "reachability": "configured-only",
+      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default."
+    },
+    {
+      "id": "CP190-F23",
+      "title": "The spawn policy check is not pinned to the executed path",
+      "severity": "low-medium",
+      "releaseImpact": "A symlink swap between the allowlist check and the spawn can launch an unlisted executable. STA-L69-01 and STA-L77-01 acceptance stay open.",
+      "obligations": ["STA-L69-01", "STA-L77-01", "STA-L27-03"],
+      "entrypoints": [
+        "packages/deployment/src/process-runtime.ts:58-86",
+        "packages/acp-adapter/src/stdio-client.ts:124-137",
+        "packages/managed-pi-adapter/src/process-client.ts:818-830"
+      ],
+      "probes": [],
+      "routedTo": "W1 (packages/deployment spawn policy)",
+      "regression": "Execute the resolved canonical path and re-verify the device and inode identity, as the secrets provider already does. Regression test: swapping the allowlisted executable for a symlink after the check must not launch the replacement.",
+      "reachability": "defense-in-depth",
+      "reachabilityClass": "A hardening gap. The described attack is not demonstrated as reachable; the stated control prevents it in the current configuration.",
+      "reachabilityNote": "The check and the spawn are two separate steps, so a symlink swap in the window between them could launch an unlisted executable. The window is narrow, it requires local write access to the executable path, and no supported path widens it, so this is defence in depth rather than a demonstrated privilege gain."
+    },
+    {
+      "id": "CP190-F24",
+      "title": "The exported direct-local ACP runtime factory applies no spawn policy by default",
+      "severity": "medium",
+      "releaseImpact": "An embedder can start an arbitrary absolute executable at an arbitrary absolute working directory. STA-L27-03 and STA-L77-01 acceptance stay open for embedders.",
+      "obligations": ["STA-L27-03", "STA-L77-01", "STA-L42-09"],
+      "entrypoints": [
+        "apps/local-control-plane/src/acp-runtime.ts:30-53",
+        "packages/acp-adapter/src/stdio-client.ts:124"
+      ],
+      "probes": [],
+      "routedTo": "W1 (apps/local-control-plane ACP runtime)",
+      "regression": "Require an explicit spawn policy in the exported factory. Regression test: creating the factory without a spawn policy must fail closed.",
+      "reachability": "configured-only",
+      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default."
+    },
+    {
+      "id": "CP190-F25",
+      "title": "Marketplace registry egress accepts any HTTPS URL with no metadata-range denial",
+      "severity": "medium",
+      "releaseImpact": "A misconfigured registry base URL can reach a metadata endpoint. STA-L31-02 and STA-L33-01 acceptance stay open.",
+      "obligations": ["STA-L31-02", "STA-L33-01", "STA-L40-16"],
+      "entrypoints": ["apps/control-api/src/marketplace/registry.ts:383-387"],
+      "probes": [],
+      "routedTo": "W1 (apps/control-api marketplace)",
+      "regression": "Deny the link-local and metadata ranges on the registry fetch path. Regression test: a registry base URL resolving to 169.254.169.254 must be refused.",
+      "reachability": "configured-only",
+      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default."
+    },
+    {
+      "id": "CP190-F26",
+      "title": "The Restate interaction response handler resolves by name without a responding-principal check",
+      "severity": "medium",
+      "releaseImpact": "An approval or input delivered over the workflow ingress is not re-checked against the authorized principal set on that path. STA-L66-01 and STA-L42-11 acceptance stay open.",
+      "obligations": ["STA-L66-01", "STA-L42-11", "STA-L59-09"],
+      "entrypoints": [
+        "packages/workflow-runtime/src/restate-endpoint.ts:56-69",
+        "packages/domain/src/interaction-delivery.ts:36-68",
+        "apps/workflow-worker/src/remote-workflow-runtime.ts:102-133"
+      ],
+      "probes": [],
+      "routedTo": "W1 (packages/workflow-runtime and the workflow worker)",
+      "regression": "Re-check the responding principal against the interaction allowed principal set before resolving. Regression test: a response from a principal outside allowedPrincipalIds must be rejected.",
+      "reachability": "configured-only",
+      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default."
+    },
+    {
+      "id": "CP190-F27",
+      "title": "Tool rate-limit events are only deleted for the tuple being checked",
+      "severity": "low-medium",
+      "releaseImpact": "Rows for abandoned principal, tool or operation tuples accumulate without bound. Retention acceptance stays open.",
+      "obligations": ["STA-L54-11", "STA-L61-03", "STA-L86-01"],
+      "entrypoints": ["packages/database/src/tool-rate-limiter.ts:68-78"],
+      "probes": [],
+      "routedTo": "W1 (packages/database retention)",
+      "regression": "Sweep expired tool rate-limit rows in the retention pass. Regression test: the retention sweep must remove expired tool_rate_limit_events rows for a tuple that is never called again.",
+      "reachability": "deployed-now",
+      "reachabilityClass": "Reachable in a shipped profile today, subject to the preconditions stated in the finding."
+    },
+    {
+      "id": "CP190-F28",
+      "title": "Staging and production share one R2 bucket and are separated by a key prefix in source; whether their credentials are distinct is not shown",
+      "severity": "medium",
+      "releaseImpact": "Environment separation of object keys rests on a prefix, which is visible in source. Whether staging and production hold distinct bucket-scoped credentials is not shown by the source and is an evidence gap. STA-L31-01, STA-L31-02 and STA-L40-11 acceptance stay open.",
+      "obligations": ["STA-L31-01", "STA-L31-02", "STA-L40-11"],
+      "entrypoints": [
+        ".railway/railway.ts:82-89",
+        ".railway/railway.ts:133-139",
+        "packages/object-store/src/index.ts:140-142"
+      ],
+      "probes": [],
+      "routedTo": "W1 (deployment) with the operations owner",
+      "regression": "Proposed evidence request, not a gate: the operations owner states whether staging and production credentials are distinct. If they are shared, provision distinct bucket-scoped credentials and add a cross-environment read-denied test.",
+      "reachability": "configured-only",
+      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default.",
+      "reachabilityNote": "Source shows: .railway/railway.ts:82-89 and :133-139 declare R2_BUCKET 'ctrl-plane' for both environments and add R2_PREFIX 'staging/' only when not production, and packages/object-store/src/index.ts:140-142 applies the prefix to every address. R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY are declared with preserve() in both, meaning the value is kept in Railway and not set by source. Source does not show: whether the preserved values or their bucket scopes are shared or distinct between environments. Matching variable names are not evidence of matching values. That is an evidence gap. No credential value was read.",
+      "evidenceGap": "Whether staging and production R2 credentials are distinct in value or scope is not established by the repository."
+    },
+    {
+      "id": "CP190-F29",
+      "title": "The pi-durable adapter creates its own data directory without an owner-only mode",
+      "severity": "low-medium",
+      "releaseImpact": "No cross-UID read is demonstrated and none is claimed. In the composed managed-cloud path an ancestor directory is created owner-only, which blocks traversal today. The control that the adapter relies on is therefore owned by a different component than the data.",
+      "obligations": ["STA-L76-01", "STA-L76-02", "STA-L23-03"],
+      "entrypoints": [
+        "packages/pi-durable-adapter/src/journal.ts:31",
+        "packages/pi-durable-adapter/src/lease.ts:20",
+        "apps/control-api/src/pi-durable/node-composition.ts:89"
+      ],
+      "probes": ["CP190-P25"],
+      "reachability": "defense-in-depth",
+      "reachabilityClass": "A hardening gap. The described attack is not demonstrated as reachable; a stated control prevents it in the current configuration.",
+      "reachabilityNote": "packages/pi-durable-adapter/src/journal.ts:31 and packages/pi-durable-adapter/src/lease.ts:20 create their directories with mkdirSync(..., { recursive: true }) and no mode, so the directory takes the process umask default, and the database file is never chmod'ed. apps/control-api/src/pi-durable/node-composition.ts:89 does the same for the admission database. In the composed managed-cloud path the ancestor is created owner-only (apps/control-api/src/models/production-model-composition.ts:230), which blocks traversal, so the guarantee is inherited from an unrelated composition rather than enforced by the component that owns the data. Any other wiring would place a 0644 database in a 0755 directory, which is a supported traversal path; no such wiring ships.",
+      "counterevidence": "No counterevidence was offered. The finding is bounded by the inherited ancestor mode and by the absence of any wiring that defeats it.",
+      "routedTo": "W1 (packages/pi-durable-adapter and the apps/control-api pi-durable composition)",
+      "regression": "The adapter must create its own directory owner-only and restrict the database file, rather than inheriting the guarantee from an ancestor. Regression test: construct the adapter with a fresh directory under a 0755 parent and assert the created directory is 0700 and the database file is 0600."
+    }
+  ],
+  "openGates": [
+    "No permitted live profile evidence exists for the managed cloud, Local, or self-hosted profiles, so whole-cloud and whole-runtime trust acceptance stays held.",
+    "Agent HQ owns LocalProjectGrant issuance, desktop key storage, Event Gateway authorization, durable ContentSyncDevice and ContentKeyEpoch flows, and the product relay credential; none of those controls can be closed from this repository.",
+    "No live E2B sandbox provider, template, cleanup threshold or credential-denial evidence exists.",
+    "No live managed-cloud vault rotation and restore evidence exists for the selected credential-vault provider.",
+    "Packaged Local OS-secure handle resolution and packaged binary signing evidence remain absent.",
+    "Malware scanner composition, quarantine and fail-closed outage evidence remain a product-owned gate.",
+    "No targeted penetration exercise or independent security-review evidence has been produced against a permitted live profile. Issue #190 asks for independent review and targeted manual penetration and does not require a human reviewer; the probes in this lane are credential-free synthetic evidence only.",
+    "This reviewer approves none of the routed fixes; each routed owner must verify its own fix on its own exact head and an independent reviewer must then re-verify."
+  ],
+  "custody": {
+    "sharedIndex": "/tmp/opencode-three-fleet-20261020-fresh/data/cross-fleet-ownership.json",
+    "sharedIndexSha256": "561ccd22bdd6d5a4abb1ebbecc489d8ee055c046074df680262547ad52784f05",
+    "checkedPaths": [
+      "scripts/security-trust-boundary-probes.mjs",
+      "docs/evidence/m11-security-trust-boundary-audit-2026-10-21.md",
+      "docs/evidence/m11-security-trust-boundary-matrix-2026-10-21.v1.json"
+    ],
+    "exactPathOwnerFound": false,
+    "openPullRequestsChecked": [1048, 1204, 1210, 1214, 1215, 1216, 1217, 1218, 1219, 1222, 1223],
+    "registeredWorktreesChecked": 11,
+    "claudeCustody": "unverified in the shared index; the three paths are new and unique, and no existing file was modified, so a custody reversal can drop the branch without touching another owner",
+    "existingFilesModified": [],
+    "sharedIndexReReadable": true,
+    "sharedIndexNote": "The records of the original index conflict and the custody observation is unverified. The audit report records a search of the shared ownership index at the audited head with the SHA-256 in sharedIndexSha256AtAuditedHead; an earlier revision of this note said the index was not readable at the audited head and that the claim was scoped to the checkouts actually inspected. Both cannot hold, the index is an external, continuously rewritten file, and this repository cannot re-establish either statement. The later re-read below is likewise the author's recorded observation. It found the two proposed F-04 paths named as the scope of Fleet 2's F2W6 (branch f2w6/credential-vault-f04), and the owner fix is on main at 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4 (#1224). No finding depends on this custody record.",
+    "registeredWorktreesInspected": [
+      "adea-ai/control-plane (the shared main checkout)",
+      "the F2W4 CP190 checkout (this branch)"
+    ],
+    "openPullRequestsNote": "One reconciled list, captured at the audited head, excluding the pull request under review (#1220). The two irreconcilable lists in the audit document were collapsed into this one.",
+    "sharedIndexSha256AtAuditedHead": "561ccd22bdd6d5a4abb1ebbecc489d8ee055c046074df680262547ad52784f05",
+    "reReadAt": "2026-10-21",
+    "sharedIndexReRead": {
+      "readAt": "2026-10-21",
+      "sha256AtRead": "710d4f61af9ee26b08449a9bc940ee0f90d14acbfa877e53c9e08b8dc1abb263",
+      "occurrencesOfProposedPaths": 4,
+      "occurrencesOfPackagePath": 8,
+      "result": "The index now names both proposed F-04 paths as the scope of Fleet 2's F2W6 (branch f2w6/credential-vault-f04, base 27f17bd55). The owner fix is on main at 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4 (#1224), changing packages/credential-vault/src/vault.ts and adding packages/credential-vault/src/index.test.mjs.",
+      "note": "This lane made no change to either path. The index is read only; the shared index is written by its own writer."
+    },
+    "sharedIndexReadabilityAtAuditedHead": "conflicting-records-unverified"
+  },
+  "severitySummary": {
+    "high": 2,
+    "medium": 22,
+    "low": 2,
+    "low-medium": 3,
+    "total": 29,
+    "note": "Critical 0. Two high findings remain: CP190-F03 and CP190-F13. No finding claims a demonstrated deployed credential leak, a deployed unauthenticated approval path, or a cross-UID read.",
+    "beforeCalibration": {
+      "critical": 1,
+      "high": 2,
+      "medium-high": 2,
+      "medium": 21,
+      "low-medium": 2
+    }
+  },
+  "calibration": {
+    "reviewedBy": "root, against the original 40444c70a5d688628f4ddbc792c91ce957a2c2e9 report",
+    "reviewedAt": "2026-10-21",
+    "rule": "A finding states what the code does and what that makes reachable. It never asserts a deployed impact that the counterevidence contradicts.",
+    "changes": [
+      {
+        "finding": "CP190-F01",
+        "from": "critical",
+        "to": "medium",
+        "because": "The relay-client authentication obligation is documented (docs/remote-control-relay.md) and the adapters are opt-in; no concrete configured attacker-controlled ingress supports the deployed unauthenticated-approval claim.",
+        "evidence": [
+          "docs/remote-control-relay.md (metadata transport authentication is the concrete relay client's responsibility)",
+          "apps/local-control-plane/src/composition.ts:249-250,508-512 (opt-in adapter)",
+          "apps/hosted-control-plane/src/composition.ts:220-223,371-375 (opt-in adapter)",
+          "packages/remote-control-relay/src/relay.ts:45 (the test fake FakeOpaqueRelay is present; not proof that it is the only client)"
+        ]
+      },
+      {
+        "finding": "CP190-F02",
+        "from": "high",
+        "to": "medium",
+        "because": "create_execution uses the normal CommandInbox idempotency, so the generic callback-before-receipt ordering does not establish that all three processors duplicate live effects; and receipt-before-effect would be unsafe, so the ordering itself is not the defect.",
+        "evidence": [
+          "apps/control-api/src/executions/execution-acceptance.service.ts:51,58 (CommandInbox-backed acceptance)",
+          "packages/domain/src/command-inbox.ts:53-58,684-705 (idempotency key binding)",
+          "packages/remote-control-relay/src/adapter.ts:37,79 (the metadata effect callback is injected)"
+        ]
+      },
+      {
+        "finding": "CP190-F04",
+        "from": "medium-high",
+        "to": "low",
+        "because": "Ordinary thrown errors are sanitized and the Control API vault denies leases without a policy decision point, so this is a bounded library callback-result egress contract gap and not a demonstrated deployed credential leakage.",
+        "evidence": [
+          "packages/credential-vault/src/vault.ts:462-466 (a thrown error becomes PROVIDER_OPERATION_FAILED)",
+          "packages/credential-vault/src/vault.ts:550-557 (containsSecret walks own enumerable string keys only)",
+          "apps/control-api/src/cloud-composition.ts:100-104 (no policy decision point composed)",
+          "packages/credential-vault/src/vault.ts:326-332 (leases deny without a decision point)"
+        ]
+      },
+      {
+        "finding": "CP190-F05",
+        "from": "medium-high",
+        "to": "medium",
+        "because": "The Local profile binds loopback by default and the bearer credential is an owner-only file for the trusted local product, so the finding is an authorization-completeness gap rather than a demonstrated cross-tenant read.",
+        "evidence": [
+          "apps/local-control-plane/src/index.ts:82-88 (default loopback bind)",
+          "apps/control-api/src/auth/private-api-authentication.ts:14-43 (0600 token in a 0700 directory)",
+          "apps/control-api/src/auth/service-authentication.ts:310-313 (the hosted comparison that is missing locally)"
+        ]
+      },
+      {
+        "finding": "CP190-F09",
+        "from": "medium",
+        "to": "low",
+        "because": "The parent data directory is chmod 0700 before SQLite and its WAL/SHM sidecars are created, so the sidecar mode alone does not establish that another UID can read; the residual is defense in depth.",
+        "evidence": [
+          "packages/sqlite-persistence/src/provider.ts:209-210 (parent chmod 0700 precedes creation)",
+          "packages/sqlite-persistence/src/provider.ts:211,216 (database and WAL created afterwards)",
+          "packages/sqlite-persistence/src/provider.ts:221 (main file restricted to 0600)"
+        ]
+      },
+      {
+        "finding": "CP190-F03",
+        "from": "high",
+        "to": "high",
+        "because": "Severity unchanged; the previous revision cited a module that does not exist. The managed-Pi direct driver is packages/managed-pi-adapter/src/index.ts:322.",
+        "evidence": [
+          "packages/managed-pi-adapter/src/index.ts:322 (export class ManagedPiDriver)",
+          "packages/acp-adapter/src/acp-driver-execution.ts (exists; holds no grant reference)"
+        ]
+      }
+    ],
+    "probeInterpretations": [
+      "CP190-P05 now asserts both halves of the boundary: a thrown error is sanitized to PROVIDER_OPERATION_FAILED, and a returned Error carrier is not screened.",
+      "CP190-P09 and CP190-P10 now read packages/managed-pi-adapter/src/index.ts and fail loudly when the file is missing or empty, so a nonexistent path can never be reported as a missing grant check.",
+      "CP190-P13 now records both the mitigating parent-directory control and the non-owner-only sidecar mode, and classifies the result as defense in depth.",
+      "CP190-P02, CP190-P03 and CP190-P04 now state the reachability bound and the documented delegation, and no longer imply a deployed unauthenticated approval path or a universal duplicate-effect path.",
+      "CP190-P21 classifies the relay path: it scans apps/ and packages/ recursively (outside the relay package, tests and declarations), finds no construction of the relay host adapter or the metadata processor and no call to createRelayExecutionMetadataCommandProcessor, and shows that the test fake FakeOpaqueRelay is present, that no scanned file outside the relay package names the client interface or the fake (a textual check, not proof that no other client exists) and that the metadata effect is injected, so the finding is a contract and defence-in-depth gap rather than a deployed approval path.",
+      "CP190-P22 classifies the relay idempotency: it proves that the acceptance request carries the caller's idempotency key while submit_input carries none, so the durable guarantee is the CommandInbox's, not the receipt's.",
+      "CP190-P23 classifies the vault egress gap: it proves that the composed model-selection path normalizes the leased result and rejects a non-plain carrier, so only the uncomposed raw-result callers can reach the screen with an exotic container.",
+      "CP190-P24 classifies the direct-local path: it proves that the managed-Pi driver checks no grant and that the composed spawn policy leaves the working directory unconstrained, so the bound is operator configuration.",
+      "CP190-P25 splits the SQLite observation: it proves that the provider creates an owner-only parent before any file exists, and that the pi-durable adapter creates its own directory without a mode."
+    ],
+    "rounds": [
+      {
+        "round": 1,
+        "reviewedBy": "root, against the original 40444c70a5d688628f4ddbc792c91ce957a2c2e9 report",
+        "changes": [
+          "F-01 Critical -> Medium",
+          "F-02 High -> Medium",
+          "F-04 Medium-High -> Low",
+          "F-05 Medium-High -> Medium",
+          "F-09 Medium -> Low",
+          "F-03 citation corrected to packages/managed-pi-adapter/src/index.ts:322"
+        ]
+      },
+      {
+        "round": 2,
+        "reviewedBy": "root, against the calibrated 43295261c6a8a5ef112e1e319961f3601f6de71b report",
+        "method": "Each finding was traced from its entrypoint through the authority and effect path to the point where a control is applied, and each probe was re-read as a synthetic demonstration rather than as deployed behaviour.",
+        "changes": [
+          "F-01: the reachability statement now names the traced path and states that the Control Plane ships no metadata effect implementation at all; the earlier wording implied a live approve, deny or cancel effect that the package does not contain.",
+          "F-02: the reachability statement now separates create_execution, which is idempotent through the CommandInbox because the acceptance request extends the context schema that carries idempotencyKey, from submit_input, whose schema carries no idempotency key at all.",
+          "F-03: the reachability statement now traces the actual managed-Pi driver and shows that the child working directory is a per-attempt directory under the data directory, that the spawn policy leaves the working-directory dimension unconstrained, and that the ACP path instead uses an operator-configured absolute directory.",
+          "F-04: the reachability statement now names the positive control that the earlier revision missed, safeCredentialResult in the model-selection service, which rejects a non-plain carrier before the vault screen sees it, and names the two uncomposed raw-result callers.",
+          "F-09: split. The provider limb stays a defence-in-depth observation with no traversal path, and the adapter-owned directory is reported separately as CP190-F29 with the conditional path stated.",
+          "CP190-F29 added: the pi-durable adapter creates its own directory without an owner-only mode, so its protection is inherited from an ancestor rather than enforced locally.",
+          "Five static reachability probes added: CP190-P21 to CP190-P25."
+        ],
+        "findingsRestated": ["CP190-F01", "CP190-F02", "CP190-F03", "CP190-F04", "CP190-F09"],
+        "findingsAdded": ["CP190-F29"],
+        "probesAdded": ["CP190-P21", "CP190-P22", "CP190-P23", "CP190-P24", "CP190-P25"],
+        "severityChanges": []
+      },
+      {
+        "round": 3,
+        "reviewedBy": "advisory review of exact head 573f50c0c255073ca80372aad926c0bcea1ced81, repaired by the CP #1220 evidence owner on 2026-10-23",
+        "method": "Each flagged statement was re-read against the cited source and issue #190. No live profile was contacted and no secret or key material was read.",
+        "changes": [
+          "Penetration gate: the wording no longer requires a human reviewer; issue #190 asks for independent review and targeted manual penetration and does not say the reviewer must be human.",
+          "F-16: restated; the source shows an issuer CLI that signs with an operator-supplied private key file and an image build that copies scripts/, but does not show where any issuer private key is stored. The deployed placement is recorded as an evidence gap.",
+          "F-28: restated; the source shows one bucket with a non-production key prefix, but the credential values and scopes are held outside the repository, so shared or distinct credentials is recorded as an evidence gap.",
+          "F-03: the entrypoint packages/managed-pi-adapter/src/managed-pi-driver.ts, which does not exist, is replaced by packages/managed-pi-adapter/src/index.ts:322.",
+          "Shared ownership index: the conflicting statements about its readability at the audited head are recorded as unverified.",
+          "CP190-P21: the scan was top-level apps/*/src/*.ts only; it now covers apps/ and packages/ recursively (excluding the relay package, tests and declarations) and the statements that relied on it name what was scanned."
+        ],
+        "findingsRestated": ["CP190-F16", "CP190-F28", "CP190-F03", "CP190-F01"],
+        "findingsAdded": [],
+        "probesAdded": [],
+        "severityChanges": []
+      },
+      {
+        "round": 4,
+        "reviewedBy": "root, full review of exact head c21628c6d888a9ae82bde9e10debeb9ffeddf322; repaired by the CP #1220 evidence owner on 2026-10-23",
+        "method": "The P21 client check was re-read against what it can show.",
+        "changes": [
+          "CP190-P21: the onlyFake check only tested that the FakeOpaqueRelay class is present, so it showed presence and not that it is the only client implementation. It is renamed fakePresent, the probe also counts scanned files outside the relay package that name OutboundOpaqueRelayClient or FakeOpaqueRelay, and the output and every dependent statement say that the check is textual and cannot exclude a structurally conforming client.",
+          "CP190-P02: the same presence-only check (onlyFakeClient) is renamed and its output no longer says the fake is the only relay client."
+        ],
+        "findingsRestated": ["CP190-F01"],
+        "findingsAdded": [],
+        "probesAdded": [],
+        "severityChanges": []
+      }
+    ]
+  },
+  "targetedEvidenceQuestions": [
+    {
+      "id": "Q-F04",
+      "finding": "CP190-F04",
+      "question": "Which profile, if any, is expected to lease a connector credential in the release candidate, and what result shapes can a tool executor return from a leased callback?",
+      "why": "The returned-value screen only matters once a profile composes a policy decision point. The answer sets whether the egress contract is a release blocker or a library hardening item.",
+      "owner": "W1 (profile compositions) with the credential-vault owner"
+    },
+    {
+      "id": "Q-F09",
+      "finding": "CP190-F09",
+      "question": "Does any supported deployment capture the SQLite -wal or -shm sidecar independently of the database file, and can the data directory mode be relaxed by configuration?",
+      "why": "The parent directory is 0700 before creation, so the sidecar mode is defense in depth. It becomes material only if a backup or a configuration change separates a sidecar from its parent.",
+      "owner": "W1 (packages/sqlite-persistence) with the operations owner"
+    },
+    {
+      "id": "Q-F01",
+      "finding": "CP190-F01",
+      "question": "Which concrete relay client will be configured for a release profile, and how does that client authenticate the transport and the store it reads from?",
+      "why": "The documented delegation is only as strong as the concrete client. Until one is named, the host processor's lack of its own check is a defence-in-depth gap and not a deployed path.",
+      "owner": "W1 with the Agent HQ product relay owner"
+    },
+    {
+      "id": "Q-F02",
+      "finding": "CP190-F02",
+      "question": "Does the injected metadata accept callback provide its own idempotency for approve, deny, cancel and resume, and is the command-result repository bound to the durable persistence provider in the intended composition?",
+      "why": "create_execution is already idempotent through the CommandInbox. The receipt path matters for the metadata operations, whose effect idempotency is the injected callback's property.",
+      "owner": "W1 (packages/remote-control-relay)"
+    },
+    {
+      "id": "Q-F03",
+      "finding": "CP190-F03",
+      "question": "Where is the LocalProjectGrant issued and validated on the product side, and which Control Plane component is intended to consume it for a direct-local dispatch?",
+      "why": "The Control Plane has no grant authority of its own. The answer decides whether the fix is a grant check in the direct drivers or a different composition boundary.",
+      "owner": "W1 with the Agent HQ desktop owner"
+    },
+    {
+      "id": "Q-F05",
+      "finding": "CP190-F05",
+      "question": "Which component is authoritative for the Local workspace and project authorization set that the private API should compare a request against?",
+      "why": "The hosted path compares signed claims. The Local path needs the equivalent authoritative set before the body-derived scope can be replaced.",
+      "owner": "W1 (apps/control-api authentication) with the Agent HQ product owner"
+    },
+    {
+      "id": "Q-F13",
+      "finding": "CP190-F13",
+      "question": "Which profile is expected to compose a SandboxProvider, and what E2B template, network, resource and cleanup policy is the intended baseline?",
+      "why": "Without a composed provider there is no sandbox boundary to accept, and the live E2B gate cannot be closed.",
+      "owner": "W1 (profile composition) with the operations owner"
+    },
+    {
+      "id": "Q-F20",
+      "finding": "CP190-F20",
+      "question": "Is the value-based SecretCanaryGuard intended to run at every content sink, and what is the authoritative protected-value set?",
+      "why": "The production guard exists but has no call site, and the key-name redaction misses compound credential names. The answer decides filter placement and ownership.",
+      "owner": "W1 (packages/telemetry, packages/events, packages/context)"
+    },
+    {
+      "id": "Q-F29",
+      "finding": "CP190-F29",
+      "question": "Which composition owns the pi-durable data directory, and is it ever created outside an owner-only ancestor?",
+      "why": "The adapter inherits the guarantee today. If a profile can point the adapter at a directory that is not inside an owner-only ancestor, the adapter-owned directory becomes a supported traversal path.",
+      "owner": "W1 (packages/pi-durable-adapter and the apps/control-api pi-durable composition)"
+    }
+  ],
+  "ownershipCustody": {
+    "checkedAt": "2026-10-21",
+    "purpose": "Exact-path custody result for the only proposed future source and test edit, reported without taking the paths.",
+    "proposedPaths": [
+      "packages/credential-vault/src/vault.ts",
+      "packages/credential-vault/src/index.test.mjs"
+    ],
+    "sharedCrossFleetIndex": {
+      "path": "/tmp/opencode-three-fleet-20261020-fresh/data/cross-fleet-ownership.json",
+      "sha256": "561ccd22bdd6d5a4abb1ebbecc489d8ee055c046074df680262547ad52784f05",
+      "occurrencesOfProposedPaths": 0,
+      "occurrencesOfPackagePath": 0
+    },
+    "openPullRequests": {
+      "numbers": [1048, 1204, 1210, 1214, 1215, 1216, 1217, 1218, 1219, 1220, 1222, 1223],
+      "pathsTouchingProposedPaths": 0,
+      "note": "Several branches change packages/credential-vault/CHANGELOG.md and packages/credential-vault/package.json for release metadata; none changes the two proposed source or test paths."
+    },
+    "registeredWorktrees": {
+      "dirtyPathsTouchingProposedPaths": 0
+    },
+    "result": "no exact-path owner found for either proposed path in the shared index, in any open pull request or in any registered worktree, at the audited head",
+    "interpretation": "Absence of an exact-path claim is not ownership approval. Root must verify and admit the exact paths before any edit. This lane made no change to either path, and it must not make one until that admission exists. The admission has since happened upstream and the fix has landed on main; this lane still edits neither path and did not take them.",
+    "notes": "Unchanged by the second calibration round. The two proposed F-04 paths still have no exact-path owner in the shared index, in any open pull request or in any registered worktree, and this lane made no change to either path. Superseded on the ownership question by the later admission recorded in laterResult; the no-change statement still holds.",
+    "laterResult": "Both proposed paths were subsequently admitted to Fleet 2's F2W6 (branch f2w6/credential-vault-f04, base 27f17bd55), and the owner fix is on main at 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4 (#1224): it changes packages/credential-vault/src/vault.ts and adds packages/credential-vault/src/index.test.mjs, the exact regression file this packet proposes."
+  }
+}

@@ -141,6 +141,7 @@ export const INTEGRATION_SHARDS = [
           'src/validation-replay.integration.test.mjs',
           'src/budget-admission.integration.test.mjs',
           'src/marketplace-installation.integration.test.mjs',
+          'src/pi-durable/postgres-cancellation-requests.integration.test.mjs',
         ],
       },
       {

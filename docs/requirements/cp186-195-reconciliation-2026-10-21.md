@@ -217,7 +217,7 @@ the complete inventory of such paths, with the full Git blob identity at the
 lane's recorded head and in this tree. It is derived from the recorded heads, not
 inferred from file names or from the earlier summary of this section.
 
-Lanes with such a path: 6 of 7 (W1, W2, W3, W5, W6, W7). W4 has none.
+Lanes with such a path: 7 of 7 (W1, W2, W3, W4, W5, W6, W7).
 
 | Worker | Path                                                                          | Blob at the lane head                      | Blob in this tree                          |
 | ------ | ----------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------ |
@@ -227,6 +227,9 @@ Lanes with such a path: 6 of 7 (W1, W2, W3, W5, W6, W7). W4 has none.
 | W2     | `docs/requirements/cp186-195-reconciliation-2026-10-21.md`                    | `5789b8d62607d437c201f8467e4845cc33af83c7` | not recorded (this record)                 |
 | W3     | `docs/evidence/m11-architecture-audit-binding-detector-handoff-2026-10-21.md` | `f325249cdbf7116d3eeff8a04a51d325be8029cf` | `c0be0e08052cda90938af8fef6ced862e5fb15d3` |
 | W3     | `scripts/architecture-audit.mjs`                                              | `e9e869d59ea264e362a0379dc8f7aea898130fd7` | `f06e80b58866215590c1f2c2e6b2770c52110ec1` |
+| W4     | `docs/evidence/m11-security-trust-boundary-audit-2026-10-21.md`               | `7ef3444c8d54597c805c93bab3ec8503c2070ae6` | `523da79e1b8ef1c71962bf8b0d334252f5e3307b` |
+| W4     | `docs/evidence/m11-security-trust-boundary-matrix-2026-10-21.v1.json`         | `cfdf3613a46c0185908fbf8b0fcf158b06d09183` | `bfc515d12fd9d61fe80a786fe68bac29fc37dd64` |
+| W4     | `scripts/security-trust-boundary-probes.mjs`                                  | `dc86ce24c65c5ffd18214f02cebcd25aa4153187` | `78f5dfac4db2f872791ca6d1745ac22287fde352` |
 | W5     | `docs/adversarial-corpus-v1.md`                                               | `866d865fc4738cfea360ba49813e2274ecd3bff4` | `fc2e8e8ef2e0c2cfd169cd322281b07a09040ee0` |
 | W6     | `docs/evals/skill-evals/blinded-comparison-packet.md`                         | `5c026a799de13883c18607b41ace410607fbfaef` | `cfea41d1675cbd389417717792387b4667e4512d` |
 | W6     | `docs/evals/skill-evals/README.md`                                            | `3be94bdd89aa009d476aafe446da0cc418e691d7` | `920ee64a37d4178ba10e34aee1edbb6f833dd6c0` |
@@ -238,8 +241,7 @@ Paths whose content is identical, and so are not mismatches:
 - W6 `.agents/skills/control-plane-audit/SKILL.md`, blob `61b1a77fa5be40dfe320c37313c60ad20e704455`. An earlier version of this table listed it as differing; it does not differ.
 
 Paths that exist at a lane's head and are absent from this tree: W3
-`scripts/m11-architecture-audit-regression.test.mjs`; W4 the
-audit record, the matrix and `scripts/security-trust-boundary-probes.mjs`; W5 the
+`scripts/m11-architecture-audit-regression.test.mjs`; W5 the
 evaluation program record and the baseline scorecard. These are lane artifacts that are not in this tree.
 
 W1 and W6 were omitted from the earlier table because their recorded heads could

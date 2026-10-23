@@ -7,6 +7,7 @@ import {
 } from './graphs.js'
 import { ServiceCallerAssertionSchema, ServiceScopeSchema } from './authentication.js'
 import { executionScopeFields, validateExecutionScopeFields } from './execution-scope.js'
+import { ModelIdSchema } from './decision-resolution.js'
 import { CorrelationMetadataSchema } from './envelopes.js'
 import { IdentifierSchemas } from './identifiers.js'
 import { CursorSchema } from './pagination.js'
@@ -675,6 +676,12 @@ export const ExecutionAcceptanceRequestSchema = CommandContextSchema.extend({
     executionPlan: ExecutionPlanPublicReferenceSchema.extend({
       schemaVersion: z.number().int().positive(),
     }),
+    /**
+     * The model the caller accepted for this execution (M12/#678). It is
+     * recorded in the execution read model so routing can map it to a harness
+     * through the deployment's per-model map. Absent keeps today's behavior.
+     */
+    modelId: ModelIdSchema.optional(),
     marketplacePluginReferences: z
       .array(
         z

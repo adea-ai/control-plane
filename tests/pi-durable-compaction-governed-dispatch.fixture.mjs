@@ -171,6 +171,7 @@ export function governedDispatchChildren(hooks) {
     repositories,
     workspaceId,
     actorPrincipalId,
+    transportPrincipalId,
     leasePrincipalRef,
     scopeAuthority,
     state,
@@ -519,6 +520,13 @@ export function governedDispatchChildren(hooks) {
       usageOutcomes: usageOutcomesFor,
       modelAuthority: { leasePrincipalRef, modelAlias: 'reasoning.standard' },
       runtime: {
+        childTimelineDelivery: {
+          principalId: transportPrincipalId,
+          notify: async (selectors) => {
+            evidence.timelineWakes ??= []
+            evidence.timelineWakes.push(selectors)
+          },
+        },
         childProgress: {
           scan: async (adapter) => {
             // The composition scans at startup, before it is installed on the host.

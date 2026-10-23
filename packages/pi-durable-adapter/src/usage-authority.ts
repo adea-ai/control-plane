@@ -11,7 +11,12 @@ import {
   type PinnedModelPrice,
   type UsageLedgerEntry,
 } from '@control-plane/usage-ledger'
-import { PiDurableAdmissionSchema, type DurableExecutionAuthority } from './contracts.js'
+import {
+  PiDurableAdmissionSchema,
+  type DurableExecutionAuthority,
+  type PiDurableInferenceResumePermit,
+} from './contracts.js'
+import { isIssuedInferenceResumePermit } from './resume-permit.js'
 
 export interface PiDurableUsageAuthorityOptions {
   readonly ledger: DurableUsageLedger
@@ -172,12 +177,15 @@ export function createPiDurableUsageAuthority(options: PiDurableUsageAuthorityOp
   return {
     async authorizeInference(
       authority: DurableExecutionAuthority,
-      key: string
+      key: string,
+      safeResume?: PiDurableInferenceResumePermit
     ): Promise<{
       maxOutputTokens: number
       maximumInputTokens: number
       assertActive: () => Promise<void>
     }> {
+      if (safeResume && !isIssuedInferenceResumePermit(safeResume, key))
+        throw new Error('PI_INFERENCE_RESUME_PERMIT_INVALID')
       const binding = scope(authority, key)
       const { budget } = binding
       const resolved = await options.resolvePrice(authority)
@@ -207,20 +215,34 @@ export function createPiDurableUsageAuthority(options: PiDurableUsageAuthorityOp
       if (existing) assertHold(quote, existing)
       else if (quote.maximumMicrounits > remaining.money)
         throw new Error('PI_CONSERVATIVE_PRICE_BUDGET_EXHAUSTED')
+      if (
+        existing &&
+        (existing.attemptId !== budget.attemptId ||
+          existing.reservationKey !== budget.reservationKey)
+      )
+        throw new Error('PI_INFERENCE_RESERVATION_BINDING_MISMATCH')
+      if (
+        safeResume &&
+        entries.some(
+          (entry) => entry.kind === 'model_usage' && entry.modelCallId === binding.modelCallId
+        )
+      )
+        throw new Error('PI_INFERENCE_ALREADY_SETTLED')
       await assertActive()
-      await options.ledger.reserveModelRequestForDispatch({
-        workspaceId: budget.workspaceId,
-        executionId: budget.executionId,
-        attemptId: budget.attemptId,
-        reservationKey: budget.reservationKey,
-        modelCallId: binding.modelCallId,
-        maximumMicrounits: quote.maximumMicrounits,
-        maximumTokens: quote.maximumTokens,
-        fundingSource: quote.fundingSource,
-        priceSnapshotDigest: quote.priceSnapshotDigest,
-        requestDigest: quote.requestDigest,
-        source: { sourceId: binding.sourceId, idempotencyKey: `${binding.sourceId}:dispatch` },
-      })
+      if (!(existing && safeResume))
+        await options.ledger.reserveModelRequestForDispatch({
+          workspaceId: budget.workspaceId,
+          executionId: budget.executionId,
+          attemptId: budget.attemptId,
+          reservationKey: budget.reservationKey,
+          modelCallId: binding.modelCallId,
+          maximumMicrounits: quote.maximumMicrounits,
+          maximumTokens: quote.maximumTokens,
+          fundingSource: quote.fundingSource,
+          priceSnapshotDigest: quote.priceSnapshotDigest,
+          requestDigest: quote.requestDigest,
+          source: { sourceId: binding.sourceId, idempotencyKey: `${binding.sourceId}:dispatch` },
+        })
       await assertActive()
       return {
         maxOutputTokens: quote.maximumOutputTokens,
