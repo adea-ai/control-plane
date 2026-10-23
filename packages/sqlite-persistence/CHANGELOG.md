@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.42.4](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.42.3...sqlite-persistence-v1.42.4) (2026-10-23)
+
+
+### Tests
+
+* **sqlite-persistence:** cover the child budget admission under an OS crash ([#187](https://github.com/adea-ai/control-plane/issues/187)) ([#1241](https://github.com/adea-ai/control-plane/issues/1241)) ([6d23065](https://github.com/adea-ai/control-plane/commit/6d23065e1778e27236d0cddb0b018a82cb2d34c4))
+
 ## [1.42.3](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.42.2...sqlite-persistence-v1.42.3) (2026-10-22)
 
 

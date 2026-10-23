@@ -1,5 +1,5 @@
 {
-  ".": "1.106.11",
+  ".": "1.106.12",
   "apps/control-api": "1.34.7",
   "apps/hosted-control-plane": "1.21.4",
   "apps/local-control-plane": "1.36.5",
@@ -38,7 +38,7 @@
   "packages/runtime-sdk": "1.17.1",
   "packages/sandbox": "1.2.2",
   "packages/secrets": "1.4.1",
-  "packages/sqlite-persistence": "1.42.3",
+  "packages/sqlite-persistence": "1.42.4",
   "packages/telemetry": "1.8.2",
   "packages/testing": "1.2.5",
   "packages/tool-execution": "1.5.3",
