@@ -394,8 +394,11 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
   async cancelFenced(
     handle: RuntimeExecutionHandle,
     input: Parameters<RuntimeAdapter['cancel']>[1],
-    authorize: (retained: RetainedAdmission) => Promise<void>
+    authorize: (
+      retained: RetainedAdmission
+    ) => Promise<void | { readonly earliestAuthorityExpiresAt: string }>
   ) {
+    let earliestAuthorityExpiresAt: string | undefined
     const revalidate = async (authority: DurableExecutionAuthority) => {
       this.#assertUnexpired(authority)
       try {
@@ -405,12 +408,21 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       }
       // Scope lookup is awaited and can outlive either authority grant.
       this.#assertUnexpired(authority)
-      await authorize(structuredClone(this.#stored(this.#record(handle))))
+      const snapshot = await authorize(structuredClone(this.#stored(this.#record(handle))))
+      if (snapshot !== undefined) {
+        const expiry = z.iso.datetime().parse(snapshot.earliestAuthorityExpiresAt)
+        earliestAuthorityExpiresAt =
+          earliestAuthorityExpiresAt === undefined
+            ? expiry
+            : new Date(
+                Math.min(Date.parse(earliestAuthorityExpiresAt), Date.parse(expiry))
+              ).toISOString()
+      }
       this.#assertUnexpired(authority)
     }
     // Revalidate the current fence immediately before the adapter claims and mutates its journal.
     // This narrows the async handoff race; separate authority stores prevent an atomic snapshot.
-    return this.#cancel(handle, input, revalidate, revalidate)
+    return this.#cancel(handle, input, revalidate, revalidate, () => earliestAuthorityExpiresAt)
   }
 
   /** Retained admission and handle for a run this process started. Reads the journal only: it never
@@ -438,7 +450,8 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     handle: RuntimeExecutionHandle,
     input: Parameters<RuntimeAdapter['cancel']>[1],
     authorize: (authority: DurableExecutionAuthority) => Promise<void>,
-    reauthorizeBeforeClaim?: (authority: DurableExecutionAuthority) => Promise<void>
+    reauthorizeBeforeClaim?: (authority: DurableExecutionAuthority) => Promise<void>,
+    earliestAuthorityExpiry?: () => string | undefined
   ) {
     const request = RuntimeCancelRequestSchema.parse(input)
     let record = this.#record(handle)
@@ -480,6 +493,35 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         targetKind,
         generation: activeInference ?? null,
       })
+    // Only an explicitly opted-in qualification engine exposes this capability.
+    // Capture native pins before the final asynchronous authority callback: a
+    // participating canonical writer must commit F/ACK before publishing R.
+    const nativeTargetDigest = digest({
+      handle: this.#stored(record).handle,
+      epoch: record.epoch,
+      admission: this.#stored(record).admission,
+      cancellationIntent,
+    })
+    const guardedCancellation = reauthorizeBeforeClaim ? active?.guardedCancellation : undefined
+    const verifiedExpiry = earliestAuthorityExpiry?.()
+    if (guardedCancellation && verifiedExpiry === undefined)
+      fail('PI_NATIVE_CANCELLATION_EXPIRY_UNAVAILABLE', 'conflict')
+    const nativePreparation = guardedCancellation
+      ? await guardedCancellation.prepare({
+          sessionId: this.#stored(record).handle.externalSessionId!,
+          requestId: key,
+          requestDigest: digest(request),
+          targetDigest: nativeTargetDigest,
+          expiresAt: new Date(
+            Math.min(
+              Date.parse(this.#stored(record).admission.authority.expiresAt),
+              Date.parse(verifiedExpiry!)
+            )
+          ).toISOString(),
+          turnKey: cancellationIntent.turnKey,
+          inferenceId: cancellationIntent.generation?.inferenceId ?? null,
+        })
+      : undefined
     if (reauthorizeBeforeClaim) {
       await reauthorizeBeforeClaim(this.#stored(record))
       this.#assertOpen()
@@ -489,6 +531,28 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
         canonicalJsonStringify(current.detail) !== canonicalJsonStringify(record.detail)
       )
         fail('PI_EXECUTION_STALE', 'conflict')
+    }
+    const nativeReceipt =
+      nativePreparation && guardedCancellation
+        ? await guardedCancellation.commit(nativePreparation)
+        : undefined
+    if (nativeReceipt) {
+      if (
+        nativeReceipt.requestId !== key ||
+        nativeReceipt.requestDigest !== digest(request) ||
+        nativeReceipt.metadata?.['targetDigest'] !== nativeTargetDigest
+      )
+        fail('PI_NATIVE_CANCELLATION_RECEIPT_INVALID', 'conflict')
+      // N already committed; never reinterpret a lost/racing publication as
+      // zero native effect or rewrite a successor. The retained SDK receipt is
+      // historical evidence for a separately authorized recovery path.
+      const current = this.#record(handle)
+      if (
+        current.epoch !== record.epoch ||
+        canonicalJsonStringify(current.detail) !== canonicalJsonStringify(record.detail)
+      )
+        fail('PI_NATIVE_CANCELLATION_PUBLICATION_UNKNOWN', 'conflict')
+      record = current
     }
     const epoch = this.#claim(record)
     const cancellationPending =
@@ -514,13 +578,14 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           observedAt: this.#now(),
           actions: { ...actions, [key]: digest(request) },
           cancellationIntent: retainedCancellationIntent,
+          ...(nativeReceipt ? { nativeCancellationReceipt: structuredClone(nativeReceipt) } : {}),
           inferencePending: state === 'cancelling',
         },
       },
       { type: 'status', data: { state }, at: this.#now() }
     )
     // Retain and fence cancellation before abort can complete, fail or crash.
-    if (active) {
+    if (active && !nativeReceipt) {
       try {
         await active.cancel(this.#stored(record).handle.externalSessionId!)
       } catch {

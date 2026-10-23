@@ -159,7 +159,9 @@ export interface PiDurableLeadFenceAdapter {
   cancelFenced(
     handle: RuntimeExecutionHandle,
     input: { readonly idempotencyKey: string; readonly requestedAt: string },
-    authorize: (retained: RetainedLeadAdmission) => Promise<void>
+    authorize: (
+      retained: RetainedLeadAdmission
+    ) => Promise<void | { readonly earliestAuthorityExpiresAt: string }>
   ): Promise<z.output<typeof RuntimeExecutionStatusSchema>>
 }
 
@@ -726,9 +728,12 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     const command = { idempotencyKey: request.idempotencyKey, requestedAt: request.issuedAt }
     let status: z.output<typeof RuntimeExecutionStatusSchema>
     if (lookup.kind === 'fenced') {
-      status = await this.#fence().cancelFenced(requireHandle(receipt), command, () =>
-        this.#recheckFenced(lookup, principal, 'cancel')
-      )
+      status = await this.#fence().cancelFenced(requireHandle(receipt), command, async () => {
+        await this.#recheckFenced(lookup, principal, 'cancel')
+        // assertFencedBinding proved this exact immutable deadline against the
+        // current product, execution, attempt and optional preparation minimum.
+        return { earliestAuthorityExpiresAt: receipt.deadlineAt }
+      })
     } else {
       await this.options.authority.assertCurrent(lookup.admission, principal, 'cancel')
       status = RuntimeExecutionStatusSchema.parse(

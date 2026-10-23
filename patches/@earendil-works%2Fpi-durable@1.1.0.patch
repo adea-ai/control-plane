@@ -1,0 +1,493 @@
+diff --git a/dist/harness/guarded-abort.js b/dist/harness/guarded-abort.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..270db6b63727857c4db78171de317f04527bcc54
+--- /dev/null
++++ b/dist/harness/guarded-abort.js
+@@ -0,0 +1,38 @@
++// Additive Control Plane compatibility extension to Pi Durable 1.1.0.
++// Scope: one owning Session mutation line; no external/all-writer authority is supplied.
++import { copyJson } from "@earendil-works/chord";
++import { defineDoc } from "../documents.js";
++export const GuardedAbortReceiptsDoc = defineDoc({
++    kind: "pi.guarded-abort-receipts", scope: "session", version: 1,
++    initial: () => ({ receipts: [] }),
++});
++export function reference(value) {
++    if (typeof value !== "string" || value.length === 0 || value.length > 8192 || value.trim() !== value) throw new TypeError("Invalid guarded abort reference");
++    return value;
++}
++export function detached(value) {
++    const result = copyJson(value);
++    const freeze = (item) => {
++        if (item !== null && typeof item === "object") {
++            for (const child of Object.values(item)) freeze(child);
++            Object.freeze(item);
++        }
++        return item;
++    };
++    return freeze(result);
++}
++export function normalizeAbortRequest(request) {
++    if (request === null || typeof request !== "object" || Object.getPrototypeOf(request) !== Object.prototype) throw new TypeError("Invalid guarded abort request");
++    if (Object.keys(request).some((key) => !["requestId", "requestDigest", "metadata", "prepare"].includes(key))) throw new TypeError("Unknown guarded abort request field");
++    if (typeof request.prepare !== "function") throw new TypeError("Guarded abort requires prepare");
++    const metadata = detached(request.metadata ?? {});
++    if (metadata === null || Array.isArray(metadata) || typeof metadata !== "object") throw new TypeError("Guarded abort metadata must be an object");
++    return { requestId: reference(request.requestId), requestDigest: reference(request.requestDigest), metadata, prepare: request.prepare };
++}
++export function sameJson(left, right) {
++    if (left === right) return true;
++    if (left === null || right === null || typeof left !== "object" || typeof right !== "object") return false;
++    if (Array.isArray(left) !== Array.isArray(right)) return false;
++    const keys = Object.keys(left);
++    return keys.length === Object.keys(right).length && keys.every((key) => Object.hasOwn(right, key) && sameJson(left[key], right[key]));
++}
+diff --git a/dist/harness/harness.js b/dist/harness/harness.js
+index fda8aa1e318bdecd77d11ca019217d6c43cfef01..1ae24ef0dbc6676e774cccb862d0143b0f128377 100644
+--- a/dist/harness/harness.js
++++ b/dist/harness/harness.js
+@@ -62,6 +62,12 @@ class ConversationImpl {
+     fork(at, options, context) {
+         return this.#host.create({ kind: "fork", parentId: this.id, at, ownership: options.ownership }, options, context);
+     }
++    commitGuarded(change, finalGuard, context) {
++        return this.#host.harness.commitGuarded(change, finalGuard, context, { conversationId: this.id });
++    }
++    commitAbort(request, context) { return this.#host.tasks.commitConversationAbort(this.id, request, context); }
++    readAbortReceipt(requestId, context) { return this.#host.tasks.readConversationAbortReceipt(this.id, requestId, context); }
++    drainAbortReceipt(requestId, context) { return this.#host.tasks.drainConversationAbortReceipt(this.id, requestId, context); }
+     abort(context, options) {
+         this.#host.tasks.resume();
+         return this.#host.tasks.abortConversation(this.id, options?.background === true, context);
+@@ -302,4 +308,3 @@ export const Harness = {
+         return harness;
+     },
+ };
+-//# sourceMappingURL=harness.js.map
+\ No newline at end of file
+diff --git a/dist/harness/scheduler.d.ts b/dist/harness/scheduler.d.ts
+index c485fb9c12cceec9448762f7bc05b67d6ca916d2..fb07f5e45830c6da045ae9bd3ef74da45805f3ff 100644
+--- a/dist/harness/scheduler.d.ts
++++ b/dist/harness/scheduler.d.ts
+@@ -79,6 +79,9 @@ export declare class TaskScheduler {
+      * crosses background boundaries, and the wait also covers every task it reached.
+      */
+     abortConversation(conversationId: ConversationId, background: boolean, context: Context): Promise<void>;
++    commitConversationAbort(conversationId: ConversationId, request: import("./types.ts").GuardedAbortRequest, context: Context): Promise<import("./types.ts").AbortCommitReceipt>;
++    readConversationAbortReceipt(conversationId: ConversationId, requestId: string, context: Context): Promise<import("./types.ts").AbortCommitReceipt | undefined>;
++    drainConversationAbortReceipt(conversationId: ConversationId, requestId: string, context: Context): Promise<import("./types.ts").AbortCommitReceipt>;
+     /**
+      * Scheduling state and every live task with its derived state, read on the Session line. Runs no task code: a
+      * pending migration shows as `ready` with `migrates`, and only a migration the scheduler already tried, or one that
+@@ -90,4 +93,3 @@ export declare class TaskScheduler {
+     }>;
+ }
+ export {};
+-//# sourceMappingURL=scheduler.d.ts.map
+\ No newline at end of file
+diff --git a/dist/harness/scheduler.js b/dist/harness/scheduler.js
+index 6cfe05a35de48c02e98ad07806fb74f2ee80de59..96ae5602026a2a1d72c7204f42f76a3d7fe07cd8 100644
+--- a/dist/harness/scheduler.js
++++ b/dist/harness/scheduler.js
+@@ -1,5 +1,6 @@
+ import { copyJson } from "@earendil-works/chord";
+ import { awaitWithContext, withAbortSignal } from "@earendil-works/chord/context";
++import { GuardedAbortReceiptsDoc, detached, normalizeAbortRequest, reference, sameJson } from "./guarded-abort.js";
+ import { agentHooks } from "./agent.js";
+ import { readContextFrom } from "./context.js";
+ import { closedError, scanAll, Waiters } from "./util.js";
+@@ -183,6 +184,75 @@ export class TaskScheduler {
+      * ordinary traversal from the conversation reaches; resolves once the scope is idle. With `background`, traversal
+      * crosses background boundaries, and the wait also covers every task it reached.
+      */
++    async commitConversationAbort(conversationId, draft, context) {
++        const request = normalizeAbortRequest(draft);
++        if (typeof this.#storage.commitGuarded !== "function") throw new Error("PI_GUARDED_COMMIT_UNAVAILABLE");
++        let finalGuard;
++        let newlyCommitted = false;
++        const receipt = await this.#session.commitWith(async (tx) => {
++            const ledger = await tx.doc(GuardedAbortReceiptsDoc);
++            const existing = ledger.receipts.find((item) => item.conversationId === conversationId && item.requestId === request.requestId);
++            if (existing !== undefined) {
++                if (existing.requestDigest !== request.requestDigest || !sameJson(existing.metadata, request.metadata)) throw new Error("PI_GUARDED_ABORT_REQUEST_CONFLICT");
++                return detached(existing);
++            }
++            const target = await tx.conversation(conversationId);
++            if (target === undefined) throw new Error(`Conversation ${conversationId} does not exist`);
++            await this.#loadScopes(true);
++            const scope = { conversation: conversationId };
++            const tasks = [];
++            for (const record of this.#live.values()) {
++                if (record.background) continue;
++                const inside = this.#inScope(parentOf(record), scope, false);
++                if (inside === undefined) throw new Error("PI_GUARDED_ABORT_SCOPE_INCOMPLETE");
++                if (inside) tasks.push(record);
++            }
++            const queuedInputs = [];
++            const queued = await scanAll((cursor) => this.#storage.scanSubmissions({ status: "queued" }, SCAN_PAGE_SIZE, cursor, context));
++            for (const input of queued) {
++                if (input.type !== "input") continue;
++                const inside = this.#inScope({ conversation: input.conversationId }, scope, false);
++                if (inside === undefined) throw new Error("PI_GUARDED_ABORT_SCOPE_INCOMPLETE");
++                if (inside) queuedInputs.push(input);
++            }
++            const conversations = [target];
++            for (const id of this.#edges.keys()) {
++                if (id === conversationId || this.#inScope({ conversation: id }, scope, false) !== true) continue;
++                const record = await this.#storage.conversation(id, context);
++                if (record === undefined) throw new Error("PI_GUARDED_ABORT_SCOPE_INCOMPLETE");
++                conversations.push(record);
++            }
++            const snapshot = detached({ conversationId, background: false, tasks, queuedInputs, conversations });
++            finalGuard = await request.prepare(tx, snapshot);
++            if (typeof finalGuard !== "function") throw new TypeError("Guarded abort prepare must return a synchronous final guard");
++            for (const record of tasks) if (!record.abortRequested) tx.setTask({ ...record, abortRequested: true });
++            for (const id of new Set(queuedInputs.map((input) => input.conversationId))) await this.#withdrawInputs(tx, id);
++            const retained = detached({ version: 1, requestId: request.requestId, requestDigest: request.requestDigest, conversationId, background: false, taskIds: tasks.map((task) => task.id), queuedInputIds: queuedInputs.map((input) => input.id), metadata: request.metadata });
++            ledger.receipts.push(retained);
++            newlyCommitted = true;
++            return retained;
++        }, context, { conversationId }, () => {
++            if (typeof finalGuard !== "function") throw new Error("PI_GUARDED_ABORT_PREPARATION_MISSING");
++            return finalGuard();
++        });
++        // A denied commit never enables scheduling. Receipt replay is observation only.
++        if (newlyCommitted) this.resume();
++        return detached(receipt);
++    }
++    async readConversationAbortReceipt(conversationId, requestId, context) {
++        reference(requestId);
++        const ledger = await this.#session.snapshot(GuardedAbortReceiptsDoc, context);
++        const receipt = ledger?.receipts.find((item) => item.conversationId === conversationId && item.requestId === requestId);
++        return receipt === undefined ? undefined : detached(receipt);
++    }
++    async drainConversationAbortReceipt(conversationId, requestId, context) {
++        const receipt = await this.readConversationAbortReceipt(conversationId, requestId, context);
++        if (receipt === undefined) throw new Error("PI_GUARDED_ABORT_RECEIPT_MISSING");
++        // Do not resume scheduling, rediscover a successor scope, or repeat an abort.
++        // After reopen the host separately owns normal scheduler activation.
++        for (const id of receipt.taskIds) await this.waitForTask(id, context);
++        return receipt;
++    }
+     async abortConversation(conversationId, background, context) {
+         const reached = await this.#session.commitWith(async (tx) => {
+             const queued = await this.#loadScopes(true);
+@@ -1269,4 +1339,3 @@ function jsonEqual(left, right) {
+         return false;
+     return keys.every((key) => Object.hasOwn(right, key) && jsonEqual(left[key], right[key]));
+ }
+-//# sourceMappingURL=scheduler.js.map
+\ No newline at end of file
+diff --git a/dist/harness/types.d.ts b/dist/harness/types.d.ts
+index b8c1e3749a808e9c91a8d9e0e987b0680cdcbe67..9453da5e3c18d4b12be5f6539fe6910199fb060d 100644
+--- a/dist/harness/types.d.ts
++++ b/dist/harness/types.d.ts
+@@ -454,7 +454,41 @@ export type ContextView = {
+     readonly messages: readonly Message[];
+ };
+ /** Stateless handle for one conversation, bound to the Harness that returned it. Compare handles by `id`. */
++/** Additive guarded-abort compatibility API. Only one owning Session line is covered. */
++export type AbortScopeSnapshot = {
++    readonly conversationId: ConversationId;
++    readonly background: false;
++    readonly tasks: readonly TaskRecord<JsonValue, JsonValue, JsonValue>[];
++    readonly queuedInputs: readonly SubmissionRecord[];
++    readonly conversations: readonly ConversationRecord[];
++};
++export type AbortCommitReceipt = {
++    readonly version: 1;
++    readonly requestId: string;
++    readonly requestDigest: string;
++    readonly conversationId: ConversationId;
++    readonly background: false;
++    readonly taskIds: readonly TaskId[];
++    readonly queuedInputIds: readonly SubmissionId[];
++    readonly metadata: JsonObject;
++};
++export type GuardedAbortRequest = {
++    readonly requestId: string;
++    readonly requestDigest: string;
++    readonly metadata?: JsonObject;
++    /** Runs before native writes on the mutation line. Return a synchronous final guard using detached scalars (Tx drafts are revoked before it runs); no outside effect may rely on this preparation. */
++    readonly prepare: (tx: Tx, scope: AbortScopeSnapshot) => (() => void) | Promise<() => void>;
++};
+ export interface Conversation {
++    /** Node guarded-storage capability required; no write means no final guard invocation. */
++    commitGuarded<T>(change: (tx: Tx) => T | Promise<T>, finalGuard: () => void, context: Context): Promise<T>;
++    /** Commits exact native abort/input mutations and an immutable receipt before enabling scheduling; does not wait for drain. */
++    commitAbort(request: GuardedAbortRequest, context: Context): Promise<AbortCommitReceipt>;
++    /** Historical evidence only: does not authorize effects or enable scheduling. */
++    readAbortReceipt(requestId: string, context: Context): Promise<AbortCommitReceipt | undefined>;
++    /** Observes only the receipt's recorded task IDs. No re-selection, abort or scheduler activation. */
++    drainAbortReceipt(requestId: string, context: Context): Promise<AbortCommitReceipt>;
++
+     readonly id: ConversationId;
+     /** Resolved with the current registry snapshot and settings. */
+     agent(context: Context): Promise<Agent>;
+@@ -597,4 +631,3 @@ export interface CompactionHooks {
+         readonly summary: string;
+     }>;
+ }
+-//# sourceMappingURL=types.d.ts.map
+\ No newline at end of file
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 3ac769a57ec284452ad9a380f39eb429e9d2c7e9..ec573050b95c393b349d092f34a3d9a4506dd1a8 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -13,7 +13,7 @@ export { ProviderDoc, type ProviderState } from "./harness/provider.ts";
+ export { createRegistry } from "./harness/registry.ts";
+ export type { TaskGraph, TaskGraphNode, TaskGraphState, TaskGraphWatch } from "./harness/task-graph.ts";
+ export { ToolTask, type ToolTaskCheckpoint, type ToolTaskInput, type ToolTaskResult } from "./harness/tool.ts";
+-export type { Agent, AgentChange, AgentState, AnyTask, CompactionHooks, CompactionPolicy, CompactionReason, CompactionResult, ContextView, Conversation, ConversationAbortOptions, ConversationCreateOptions, ConversationHandle, ConversationInit, ConversationRetryPolicy, ConversationStreamOptions, ConversationWatch, EnvTarget, Extension, GenerationHooks, HarnessInspection, HarnessOptions, HarnessSettings, HookApi, HookRegistration, HookResult, HooksOf, InputSubmissionDraft, ModelRef, ProgressPolicy, PromptInput, PromptSection, QueueMode, Registry, RegistryReader, RegistrySnapshot, Settings, SettledSubmissionRecord, SettledTask, Submission, SubmissionDraft, TaskInspection, ToolControl, ToolDiagnostic, ToolExecutionApi, ToolExecutionMode, ToolExecutionResult, ToolHooks, ToolRegistration, UserInput, Wrap, } from "./harness/types.ts";
++export type { AbortScopeSnapshot, AbortCommitReceipt, GuardedAbortRequest, Agent, AgentChange, AgentState, AnyTask, CompactionHooks, CompactionPolicy, CompactionReason, CompactionResult, ContextView, Conversation, ConversationAbortOptions, ConversationCreateOptions, ConversationHandle, ConversationInit, ConversationRetryPolicy, ConversationStreamOptions, ConversationWatch, EnvTarget, Extension, GenerationHooks, HarnessInspection, HarnessOptions, HarnessSettings, HookApi, HookRegistration, HookResult, HooksOf, InputSubmissionDraft, ModelRef, ProgressPolicy, PromptInput, PromptSection, QueueMode, Registry, RegistryReader, RegistrySnapshot, Settings, SettledSubmissionRecord, SettledTask, Submission, SubmissionDraft, TaskInspection, ToolControl, ToolDiagnostic, ToolExecutionApi, ToolExecutionMode, ToolExecutionResult, ToolHooks, ToolRegistration, UserInput, Wrap, } from "./harness/types.ts";
+ export { UsageDoc, type UsageState } from "./harness/usage.ts";
+ export type { ConversationView } from "./harness/view.ts";
+ export { createSession } from "./session/session.ts";
+@@ -21,4 +21,3 @@ export { MemoryStorage } from "./storage/memory.ts";
+ export { defineTask } from "./tasks.ts";
+ export type { CheckpointInfo, CommitChange, CommitPublication, CommonDocDefinition, ContextEdit, ConversationDocFamilyToken, ConversationDocToken, ConversationId, ConversationOwnership, ConversationQuery, ConversationRecord, Cursor, DocDefinition, DocFamilyDefinition, DocFamilyToken, DocToken, DocumentAddress, DocumentCommitChange, DocumentContent, DocumentCopySource, DocumentCreate, DocumentId, DocumentObserver, DocumentPoint, DocumentQuery, DocumentReader, DocumentRecord, DocumentSemantics, DocumentState, DocumentWatch, Entry, EntryDraft, EntryId, EntryQuery, EntryRecord, HookRunner, Id, JoinPolicy, JsonObject, LatestConversationSemantics, NextTaskState, Page, PhaseHandler, RewindableConversationDocFamilyToken, RewindableConversationDocToken, RewindableConversationSemantics, RunningTask, ScanOrder, Seq, Session, SessionDocFamilyToken, SessionDocToken, Storage, StorageWrite, StoredDocument, SubmissionCreate, SubmissionId, SubmissionQuery, SubmissionRecord, SubmissionSettlement, TableCommitChange, Task, TaskDefinition, TaskDocFamilyToken, TaskDocToken, TaskId, TaskOptions, TaskOutcome, TaskOutcomeError, TaskOwnership, TaskQuery, TaskRecord, TaskRuntime, TaskState, Tx, TypedEntry, TypedEntryDraft, WatchEnd, WatchHandle, } from "./types.ts";
+ export { ROOT_CONVERSATION_ID } from "./types.ts";
+-//# sourceMappingURL=index.d.ts.map
+\ No newline at end of file
+diff --git a/dist/session/session.d.ts b/dist/session/session.d.ts
+index 047094deafdcde19fdd7d9d485fcb993185a8b73..8586b83ee3150d22611a43c172cb2502ab86ed3e 100644
+--- a/dist/session/session.d.ts
++++ b/dist/session/session.d.ts
+@@ -20,7 +20,8 @@ export declare class SessionImpl implements Session {
+      * bootstrap and task replacement. `scope` sets the default `tx.createTask()` conversation and the task attributed to
+      * appended entries.
+      */
+-    commitWith<T>(change: (tx: Transaction) => T | Promise<T>, context: Context, scope?: TransactionScope): Promise<T>;
++    commitWith<T>(change: (tx: Transaction) => T | Promise<T>, context: Context, scope?: TransactionScope, finalGuard?: () => void): Promise<T>;
++    commitGuarded<T>(change: (tx: Tx) => T | Promise<T>, finalGuard: () => void, context: Context, scope?: TransactionScope): Promise<T>;
+     /** Internal: run a read-only job on the mutation line so multi-read derivations observe one committed state. */
+     readOnLine<T>(job: () => Promise<T>): Promise<T>;
+     /**
+@@ -67,4 +68,3 @@ export declare class SessionImpl implements Session {
+     /** Drop every loaded tracker on the mutation line; later access cold-loads from Storage. */
+     unloadDocuments(): Promise<void>;
+ }
+-//# sourceMappingURL=session.d.ts.map
+\ No newline at end of file
+diff --git a/dist/session/session.js b/dist/session/session.js
+index 2de82eeb85ee9e7e958f979393ced20a0623b09a..922bfdf938283e92922ed31f2b7007664014223f 100644
+--- a/dist/session/session.js
++++ b/dist/session/session.js
+@@ -50,14 +50,19 @@ export class SessionImpl {
+      * bootstrap and task replacement. `scope` sets the default `tx.createTask()` conversation and the task attributed to
+      * appended entries.
+      */
+-    commitWith(change, context, scope) {
++    commitGuarded(change, finalGuard, context, scope) {
++        if (typeof finalGuard !== "function") return Promise.reject(new TypeError("Guard must be a synchronous function"));
++        if (typeof this.#storage.commitGuarded !== "function") return Promise.reject(new StorageRejected("PI_GUARDED_COMMIT_UNAVAILABLE"));
++        return this.commitWith(change, context, scope, finalGuard);
++    }
++    commitWith(change, context, scope, finalGuard) {
+         try {
+             this.#assertUsable();
+         }
+         catch (error) {
+             return Promise.reject(error);
+         }
+-        return this.#enqueue(() => this.#runCommit(change, context, scope));
++        return this.#enqueue(() => this.#runCommit(change, context, scope, finalGuard));
+     }
+     /** Internal: run a read-only job on the mutation line so multi-read derivations observe one committed state. */
+     readOnLine(job) {
+@@ -247,7 +252,7 @@ export class SessionImpl {
+             this.#documents.clear();
+         });
+     }
+-    async #runCommit(change, context, scope) {
++    async #runCommit(change, context, scope, finalGuard) {
+         this.#assertHealthy();
+         context.abortSignal?.throwIfAborted();
+         const tx = new Transaction(this.#host, context, scope);
+@@ -267,7 +272,12 @@ export class SessionImpl {
+         let seq;
+         try {
+             // Once admitted, caller cancellation does not interrupt Storage settlement.
+-            seq = await this.#storage.commit(writes, withoutAbortSignal(context));
++            if (finalGuard === undefined) {
++                seq = await this.#storage.commit(writes, withoutAbortSignal(context));
++            } else {
++                if (typeof this.#storage.commitGuarded !== "function") throw new StorageRejected("PI_GUARDED_COMMIT_UNAVAILABLE");
++                seq = await this.#storage.commitGuarded(writes, finalGuard, withoutAbortSignal(context));
++            }
+         }
+         catch (error) {
+             tx.discard();
+@@ -396,4 +406,3 @@ function observedOperations(observed, change) {
+ function cancellationError(signal) {
+     return signal.reason instanceof Error ? signal.reason : new DOMException("The operation was aborted", "AbortError");
+ }
+-//# sourceMappingURL=session.js.map
+\ No newline at end of file
+diff --git a/dist/storage/sqlite/database.d.ts b/dist/storage/sqlite/database.d.ts
+index 853b8a3b81792db0420f4811d6b82ddc3d6a0542..e265d36157e1df8b8dc9dc754f46c5435b7035a9 100644
+--- a/dist/storage/sqlite/database.d.ts
++++ b/dist/storage/sqlite/database.d.ts
+@@ -31,7 +31,8 @@ export interface SqliteExecutor {
+  * guaranteed rollback.
+  */
+ export interface SqliteDatabase extends SqliteExecutor {
++    /** Optional capability: finalGuard runs synchronously after callback settlement, immediately before native COMMIT, and rejection rolls back. */
++    transactionGuarded?<T>(callback: (transaction: SqliteExecutor) => Promise<T>, finalGuard: () => void): Promise<T>;
+     transaction<T>(callback: (transaction: SqliteExecutor) => Promise<T>): Promise<T>;
+     close(): Promise<void>;
+ }
+-//# sourceMappingURL=database.d.ts.map
+\ No newline at end of file
+diff --git a/dist/storage/sqlite/node.d.ts b/dist/storage/sqlite/node.d.ts
+index 45c897fecc3db4f999dfea916d77f6ba74bb8217..1d8c520401aa9a392a2f2ff75fe4155bc03246ce 100644
+--- a/dist/storage/sqlite/node.d.ts
++++ b/dist/storage/sqlite/node.d.ts
+@@ -30,6 +30,7 @@ export declare class NodeSqliteDatabase extends NodeSqliteExecutor implements Sq
+     private closed;
+     constructor(database: DatabaseSync);
+     transaction<T>(callback: (transaction: SqliteExecutor) => Promise<T>): Promise<T>;
++    transactionGuarded<T>(callback: (transaction: SqliteExecutor) => Promise<T>, finalGuard: () => void): Promise<T>;
+     close(): Promise<void>;
+     protected runOperation<T>(operation: () => T): Promise<T>;
+ }
+@@ -38,4 +39,3 @@ export declare function openNodeSqliteDatabase(path: string, options?: NodeSqlit
+ /** Open or create file-backed durable storage using Node's built-in SQLite. */
+ export declare function openNodeSqliteStorage(path: string, options?: NodeSqliteStorageOptions): Promise<SqliteStorage>;
+ export {};
+-//# sourceMappingURL=node.d.ts.map
+\ No newline at end of file
+diff --git a/dist/storage/sqlite/node.js b/dist/storage/sqlite/node.js
+index 77708886e3e8382bc022c0ac037eb0e251421031..3c50d87a77c14ac4c3656aa4a5b818f2320a34bf 100644
+--- a/dist/storage/sqlite/node.js
++++ b/dist/storage/sqlite/node.js
+@@ -1,6 +1,7 @@
+ import { mkdir } from "node:fs/promises";
+ import { dirname } from "node:path";
+ import { DatabaseSync } from "node:sqlite";
++import { StorageRejected } from "../../errors.js";
+ import { SqliteStorage } from "./storage.js";
+ const DEFAULT_WAL_AUTO_CHECKPOINT_PAGES = 1_000;
+ const DEFAULT_BUSY_TIMEOUT_MS = 5_000;
+@@ -130,6 +131,37 @@ export class NodeSqliteDatabase extends NodeSqliteExecutor {
+             }
+         });
+     }
++    transactionGuarded(callback, finalGuard) {
++        if (typeof finalGuard !== "function") return Promise.reject(new TypeError("Guard must be a synchronous function"));
++        return this.access.runAsync(async () => {
++            this.database.exec("BEGIN IMMEDIATE");
++            const scope = { active: true };
++            let guardRejected = false;
++            try {
++                const result = await callback(new NodeSqliteTransaction(this.database, this.statements, scope));
++                scope.active = false;
++                try {
++                    const returned = finalGuard();
++                    if (returned !== undefined) {
++                        if (returned !== null && (typeof returned === "object" || typeof returned === "function") && typeof returned.then === "function") Promise.resolve(returned).catch(ignore);
++                        throw new TypeError("Final guard must return undefined synchronously");
++                    }
++                } catch (error) {
++                    guardRejected = true;
++                    throw error;
++                }
++                // No await, callback or user work between the guard and physical COMMIT.
++                this.database.exec("COMMIT");
++                return result;
++            } catch (error) {
++                scope.active = false;
++                try { this.database.exec("ROLLBACK"); }
++                catch (rollbackError) { throw new AggregateError([error, rollbackError], "SQLite guarded transaction failed and rollback failed"); }
++                if (guardRejected) throw new StorageRejected(error instanceof Error ? error.message : String(error), { cause: error });
++                throw error;
++            }
++        });
++    }
+     close() {
+         return this.access.run(() => {
+             if (this.closed)
+@@ -176,4 +208,3 @@ export async function openNodeSqliteDatabase(path, options = {}) {
+ export async function openNodeSqliteStorage(path, options = {}) {
+     return SqliteStorage.open(await openNodeSqliteDatabase(path, options));
+ }
+-//# sourceMappingURL=node.js.map
+\ No newline at end of file
+diff --git a/dist/storage/sqlite/storage.d.ts b/dist/storage/sqlite/storage.d.ts
+index 8c323ba29c48bcc50cae0ae2c07153782a977c9b..edf79b3f70ace2c9816d5cadb7ce2713bbaf6941 100644
+--- a/dist/storage/sqlite/storage.d.ts
++++ b/dist/storage/sqlite/storage.d.ts
+@@ -14,6 +14,7 @@ export declare class SqliteStorage implements Storage {
+     /** Initialize storage over an owned SQLite database facade. */
+     static open(db: SqliteDatabase): Promise<SqliteStorage>;
+     commit(writes: readonly StorageWrite[], _context: Context): Promise<Seq>;
++    commitGuarded(writes: readonly StorageWrite[], finalGuard: () => void, context: Context): Promise<Seq>;
+     mintId<I extends Id<string>>(): Promise<I>;
+     conversation(id: ConversationId, _context: Context): Promise<ConversationRecord | undefined>;
+     scanConversations(query: ConversationQuery, limit: number, cursor: Cursor | undefined, _context: Context): Promise<Page<ConversationRecord, Cursor>>;
+@@ -62,4 +63,3 @@ export declare class SqliteStorage implements Storage {
+     private assertOpen;
+ }
+ export {};
+-//# sourceMappingURL=storage.d.ts.map
+\ No newline at end of file
+diff --git a/dist/storage/sqlite/storage.js b/dist/storage/sqlite/storage.js
+index 22f69a83a71a269ff2155e731eb6eb2f498c96db..3b424e937842619b136bd8716e479f492db955f1 100644
+--- a/dist/storage/sqlite/storage.js
++++ b/dist/storage/sqlite/storage.js
+@@ -100,11 +100,19 @@ export class SqliteStorage {
+             throw error;
+         }
+     }
+-    async commit(writes, _context) {
++    async commitGuarded(writes, finalGuard, context) {
++        if (typeof this.db.transactionGuarded !== "function") throw new StorageRejected("PI_GUARDED_COMMIT_UNAVAILABLE");
++        if (typeof finalGuard !== "function") throw new StorageRejected("Final guard must be a synchronous function");
++        return this.commit(writes, context, finalGuard);
++    }
++    async commit(writes, _context, finalGuard) {
+         this.assertOpen();
+         const documentActions = this.prepareDocumentActions(writes);
+         const candidateNextId = this.candidateNextId(writes);
+-        const seq = await this.db.transaction(async (transaction) => {
++        const transact = finalGuard === undefined
++            ? (callback) => this.db.transaction(callback)
++            : (callback) => this.db.transactionGuarded(callback, finalGuard);
++        const seq = await transact(async (transaction) => {
+             const metadata = await transaction.get("SELECT next_id, next_seq FROM durable_metadata WHERE singleton = 1");
+             if (metadata === undefined)
+                 throw new Error("Durable SQLite metadata is missing");
+@@ -669,4 +677,3 @@ export class SqliteStorage {
+             throw new Error("SqliteStorage is closed");
+     }
+ }
+-//# sourceMappingURL=storage.js.map
+\ No newline at end of file
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+index 254dcd8026e463ada2d0865ac8210cb0b6e1692b..99c4edc7466a7cd944287c1bb5be2d7b92f12a75 100644
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -776,6 +776,8 @@ export interface DocumentObserver {
+ }
+ /** Owner of one mutation line, its records, and its tracked documents. */
+ export interface Session extends DocumentObserver {
++    /** Optional backend capability is required. A final synchronous guard runs after preparation immediately before native commit. Read-only callbacks with no writes do not invoke it. */
++    commitGuarded<T>(change: (tx: Tx) => T | Promise<T>, finalGuard: () => void, context: Context): Promise<T>;
+     /** Run one atomic transaction on the Session mutation line. */
+     commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T>;
+     /** Seal admission, settle admitted commits, then close storage. */
+@@ -808,6 +810,8 @@ export interface Session extends DocumentObserver {
+  * Session serializes commits.
+  */
+ export interface Storage {
++    /** Optional fail-closed capability: rollback all writes if the final synchronous guard rejects. Unsupported backends must not ignore it. */
++    commitGuarded?(writes: readonly StorageWrite[], finalGuard: () => void, context: Context): Promise<Seq>;
+     /**
+      * Atomically persist one batch and return its sequence. Once resolved, later reads through this storage observe it.
+      */
+@@ -857,4 +861,3 @@ export interface Storage {
+     close(context: Context): Promise<void>;
+ }
+ export {};
+-//# sourceMappingURL=types.d.ts.map
+\ No newline at end of file

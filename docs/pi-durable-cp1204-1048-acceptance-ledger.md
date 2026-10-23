@@ -59,7 +59,7 @@ current-candidate test pass is claimed here.
 
 The published scope is the diff from the base `ab931d068142a0c5629ed4d6cc2c96a1b377a986`
 to the published head, which is the head that carries this section. The complete changed scope is
-**210 paths: 72 added, 138 modified**; no path was deleted.
+**215 paths: 77 added, 138 modified**; no path was deleted.
 `tests/pi-durable-cp1048-evidence-discipline.test.mjs` checks this list, these counts and this
 area table against the repository, so the published scope cannot drift away from the code
 without that lane failing.
@@ -67,10 +67,10 @@ without that lane failing.
 | Area                          | Added | Modified | Total |
 | ----------------------------- | ----- | -------- | ----- |
 | `(repository root)`           | 0     | 4        | 4     |
-| `apps/control-api`            | 16    | 24       | 40    |
+| `apps/control-api`            | 17    | 24       | 41    |
 | `apps/hosted-control-plane`   | 2     | 5        | 7     |
 | `apps/workflow-worker`        | 0     | 6        | 6     |
-| `docs`                        | 7     | 3        | 10    |
+| `docs`                        | 8     | 3        | 11    |
 | `docs/architecture`           | 0     | 2        | 2     |
 | `docs/evals`                  | 0     | 1        | 1     |
 | `docs/evidence`               | 3     | 0        | 3     |
@@ -82,12 +82,13 @@ without that lane failing.
 | `packages/database`           | 1     | 4        | 5     |
 | `packages/domain`             | 0     | 6        | 6     |
 | `packages/orchestration`      | 0     | 2        | 2     |
-| `packages/pi-durable-adapter` | 21    | 18       | 39    |
+| `packages/pi-durable-adapter` | 22    | 18       | 40    |
 | `packages/policy`             | 0     | 5        | 5     |
 | `packages/profile-adapters`   | 3     | 6        | 9     |
 | `packages/runtime-sdk`        | 0     | 1        | 1     |
 | `packages/sqlite-persistence` | 0     | 5        | 5     |
 | `packages/tool-execution`     | 0     | 2        | 2     |
+| `patches`                     | 2     | 0        | 2     |
 | `scripts`                     | 1     | 4        | 5     |
 | `tests`                       | 15    | 20       | 35    |
 
@@ -117,6 +118,7 @@ M  apps/control-api/src/pi-durable/lead-fence-consumer.test.mjs
 A  apps/control-api/src/pi-durable/lead-fence-cross-store-interleavings.test.mjs
 A  apps/control-api/src/pi-durable/lead-fence-late-authority.test.mjs
 M  apps/control-api/src/pi-durable/lead-fence-live-harness.mjs
+A  apps/control-api/src/pi-durable/lead-fence-native-guard.test.mjs
 A  apps/control-api/src/pi-durable/lead-fence-service.test.mjs
 M  apps/control-api/src/pi-durable/lead-fenced-observation.test.mjs
 M  apps/control-api/src/pi-durable/lead-terminal-settlement.test.mjs
@@ -163,6 +165,7 @@ A  docs/pi-durable-complete-writer-coverage.md
 A  docs/pi-durable-cp1048-path-ledger.md
 A  docs/pi-durable-cp1048-reconciliation.md
 A  docs/pi-durable-cp1204-1048-acceptance-ledger.md
+A  docs/pi-durable-native-guarded-abort-compatibility.md
 M  docs/pi-durable-report-back.md
 M  docs/pi-durable-runtime.md
 A  docs/profile-recovery-acceptance-map.md
@@ -225,6 +228,7 @@ M  packages/pi-durable-adapter/src/journal.ts
 A  packages/pi-durable-adapter/src/native-cancellation-boundary.test.mjs
 A  packages/pi-durable-adapter/src/native-cancellation-boundary.ts
 A  packages/pi-durable-adapter/src/native-fence-public-api-probe.test.mjs
+A  packages/pi-durable-adapter/src/native-guarded-abort-compat.test.mjs
 A  packages/pi-durable-adapter/src/pi-engine-request-valued.fixture.mjs
 M  packages/pi-durable-adapter/src/pi-engine-tools.loopback.fixture.mjs
 M  packages/pi-durable-adapter/src/pi-engine-tools.test.mjs
@@ -264,6 +268,8 @@ M  packages/sqlite-persistence/src/durability-repositories.test.mjs
 M  packages/sqlite-persistence/src/durability-repositories.ts
 M  packages/tool-execution/src/tool-execution.test.mjs
 M  packages/tool-execution/src/tool-execution.ts
+A  patches/@earendil-works%2Fpi-durable@1.1.0.patch
+A  patches/pi-durable-1.1.0-NOTICE.md
 M  scripts/integration-shards.mjs
 M  scripts/requirements-ledger.mjs
 M  scripts/run-bun-test-group.mjs

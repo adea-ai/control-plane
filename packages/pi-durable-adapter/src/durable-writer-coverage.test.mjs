@@ -93,7 +93,8 @@ const durableJournalMutation =
   /\.(?:admit|claim|claimProcess|transition|transitionCurrent|update|updateCurrentMetadata|updateUnderProcessClaim|releaseRecoveryClaim|releaseRecoveryDenial|releaseProcess|sessionCreate|sessionUpdate)\(/
 const durableStoreSeam =
   /export interface Durable[A-Za-z]*Store|export interface Pi[A-Za-z]*(?:Owner|Boundary)Port/
-const durableFileWrite = /writeFileSync|fsyncSync|INSERT INTO|INSERT OR IGNORE|UPDATE pi_/
+const durableFileWrite =
+  /writeFileSync|fsyncSync|INSERT INTO|INSERT OR IGNORE|UPDATE pi_|\.commitAbort\(/
 // Test files and test fixtures are named by convention; they are excluded
 // from the production writer universe and asserted separately.
 const testSupportName = /\.(?:test|fixture)\.(?:ts|mjs)$|-fixture\.(?:ts|mjs)$/
@@ -141,6 +142,7 @@ const ownEpochOrIdentity = new Set([
   `${adapterSource}/effect-gate.ts`,
   `${adapterSource}/journal.ts`,
   `${adapterSource}/lease.ts`,
+  `${adapterSource}/pi-engine.ts`,
   'packages/pi-cloudflare-host/src/owner.ts',
 ])
 const ownRecordOnly = new Set([
@@ -629,7 +631,7 @@ test('the writers with no generation authority are named, and the gap stays open
     ...ownRecordOnly,
     ...readersOrInProcessIdentities,
   ].toSorted()
-  expect(writersWithoutGenerationAuthority).toHaveLength(20)
+  expect(writersWithoutGenerationAuthority).toHaveLength(21)
   expect(writersWithoutGenerationAuthority).not.toContain(`${adapterSource}/cancellation-owner.ts`)
   expect(writersWithoutGenerationAuthority).not.toContain(
     `${adapterSource}/native-cancellation-boundary.ts`
@@ -687,6 +689,7 @@ test('every module that writes the durable state is accounted for', () => {
     'packages/pi-durable-adapter/src/journal.ts',
     'packages/pi-durable-adapter/src/lease.ts',
     'packages/pi-durable-adapter/src/native-cancellation-boundary.ts',
+    'packages/pi-durable-adapter/src/pi-engine.ts',
   ])
 
   for (const writer of writers) expect(classified.has(writer)).toBe(true)

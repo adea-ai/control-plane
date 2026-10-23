@@ -1,5 +1,11 @@
 # Pi cancellation owner proposal
 
+The approved downstream SDK source/test continuation is described in
+[guarded-abort compatibility](pi-durable-native-guarded-abort-compatibility.md).
+It adds a bounded native capability and fixture-only integration; it does not
+activate production or close the independent-generation/all-writer gaps. Earlier
+statements below about the absent public API refer to unpatched upstream 1.1.0.
+
 Status: **source design with dormant prototypes, not production implementation or qualification**. The next bounded
 cut is [Minimal next source-design cut](#minimal-next-source-design-cut-proposed-2026-10-23).
 The existing reference contract is in

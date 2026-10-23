@@ -179,7 +179,13 @@ independent production provider, advance generations, fence old writers or turn
 an asynchronous read into atomic admission.
 
 The source inventory retains every previously classified component and adds
-these two: 22 components, of which the two original cancellation contracts bind
-caller-supplied generation and the remaining 20 include writers and readers with
+these two plus the newly classified native engine: 23 components, of which the two original cancellation contracts bind
+caller-supplied generation and the remaining 21 include writers and readers with
 no qualified independent production authority. The native zero-effect tests and
 full-writer restore-generation acceptance remain open.
+
+The source-derived enumeration now also recognizes native `commitAbort` writes
+in `pi-engine.ts`, classified under local epoch/identity authority. Its explicit
+qualification option and the downstream SDK guard prove a bounded owning-Session
+transaction, not external restore generation or full production writer coverage.
+See [native compatibility](pi-durable-native-guarded-abort-compatibility.md).

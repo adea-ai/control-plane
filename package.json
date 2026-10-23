@@ -129,6 +129,7 @@
   },
   "packageManager": "bun@1.4.4",
   "patchedDependencies": {
-    "postgres@3.4.9": "patches/postgres@3.4.9.patch"
+    "postgres@3.4.9": "patches/postgres@3.4.9.patch",
+    "@earendil-works/pi-durable@1.1.0": "patches/@earendil-works%2Fpi-durable@1.1.0.patch"
   }
 }

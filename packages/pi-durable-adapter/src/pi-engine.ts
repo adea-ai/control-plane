@@ -20,6 +20,7 @@ import {
   defineTool,
   GenerationTask,
   Harness,
+  InboxDoc,
   hook,
   type Conversation,
   type Cursor,
@@ -27,12 +28,14 @@ import {
 } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { z } from 'zod'
-import { compareCodePointOrder } from '@control-plane/contracts'
+import { canonicalJsonStringify, compareCodePointOrder } from '@control-plane/contracts'
 import {
   PiDurableDelegateChildOutcomeSchema,
   type PiDurableDelegateChildOutcome,
   type PiDurableGovernedDelegateChildEnginePort,
   type PiDurableGovernedManagementCallEnginePort,
+  type PiGuardedCancellationPreparation,
+  type PiGuardedCancellationEngine,
 } from './contracts.js'
 import {
   ManagementCallArgumentsSchema,
@@ -45,6 +48,21 @@ import {
 export const PI_DURABLE_RUNTIME_VERSION = '1.1.0'
 
 export interface PiDurableEngineOptions {
+  /** Explicit disposable qualification only. Normal production construction omits it. */
+  readonly nativeCancellationQualification?: {
+    readonly now: () => string
+    readonly onOwnerReady: (owner: {
+      readonly sessionId: string
+      readonly installFence: (input: { readonly mutationId: string }) => Promise<void>
+      /** Test-only public-native operations for exact queued-input race qualification. */
+      readonly queueInputForQualification: (input: {
+        readonly requestId: string
+        readonly content: string
+      }) => Promise<number>
+      readonly queuedInputIdsForQualification: () => Promise<readonly number[]>
+    }) => void
+    readonly onOwnerClosed: (sessionId: string) => void
+  }
   readonly directory: string
   readonly model: { readonly provider: string; readonly modelId: string }
   readonly maxOutputTokens: number
@@ -230,6 +248,17 @@ const EngineState = defineDoc<{
     modelId: '',
     inputs: {},
   }),
+})
+
+// A restriction union for this explicitly opted-in native owner only. It is not
+// independent restore generation or complete product/CP writer registration.
+const QualificationFence = defineDoc<{ revision: number; mutations: string[] }>({
+  kind: 'adea.pi.native-cancellation-qualification-fence',
+  scope: 'conversation',
+  version: 1,
+  history: 'latest',
+  fork: 'initial',
+  initial: () => ({ revision: 0, mutations: [] }),
 })
 
 function digest(value: string): string {
@@ -763,6 +792,38 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
             throw new Error('PI_STORED_TOOL_POLICY_MISMATCH')
           if (governedTools) state.governedTools = governedTools
         }, BACKGROUND_CONTEXT)
+        options.nativeCancellationQualification?.onOwnerReady({
+          sessionId,
+          queueInputForQualification: async ({ requestId, content }) =>
+            root.commit(async (tx) => {
+              const inbox = await tx.doc(InboxDoc, root.id)
+              const record = await tx.createSubmission({
+                conversationId: root.id,
+                requestId,
+                type: 'input',
+                status: 'queued',
+              })
+              inbox.items.push({ id: record.id, mode: 'followUp', content })
+              return record.id
+            }, BACKGROUND_CONTEXT),
+          queuedInputIdsForQualification: async () =>
+            (await harness.snapshot(InboxDoc, root.id, BACKGROUND_CONTEXT))?.items.map(
+              (item) => item.id
+            ) ?? [],
+          installFence: async ({ mutationId }) => {
+            if (!mutationId || mutationId.length > 8192)
+              throw new Error('PI_NATIVE_CANCELLATION_MUTATION_INVALID')
+            await root.commit(async (tx) => {
+              const fence = await tx.doc(QualificationFence, root.id)
+              if (!fence.mutations.includes(mutationId)) {
+                if (!Number.isSafeInteger(fence.revision + 1))
+                  throw new Error('PI_NATIVE_CANCELLATION_EPOCH_EXHAUSTED')
+                fence.mutations.push(mutationId)
+                fence.revision += 1
+              }
+            }, BACKGROUND_CONTEXT)
+          },
+        })
         return harness
       } catch (error) {
         await storage.close(BACKGROUND_CONTEXT)
@@ -778,8 +839,127 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
     }
   }
 
+  const prepared = new WeakMap<
+    PiGuardedCancellationPreparation,
+    {
+      root: Conversation
+      revision: number
+      scopeDigest: string
+    }
+  >()
+  const guardedCancellation: PiGuardedCancellationEngine | undefined =
+    options.nativeCancellationQualification
+      ? {
+          async prepare(input) {
+            const pins = Object.freeze({ ...input })
+            if (
+              !pins.requestId ||
+              !/^sha256:[a-f0-9]{64}$/.test(pins.requestDigest) ||
+              !/^sha256:[a-f0-9]{64}$/.test(pins.targetDigest) ||
+              !Number.isFinite(Date.parse(pins.expiresAt))
+            )
+              throw new Error('PI_NATIVE_CANCELLATION_BINDING_INVALID')
+            const harness = await open(pins.sessionId)
+            const root = await harness.root(BACKGROUND_CONTEXT)
+            const inspection = await harness.inspect(BACKGROUND_CONTEXT)
+            const queuedInputs = inspection.submissions.filter(
+              (queued) =>
+                queued.type === 'input' &&
+                queued.status === 'queued' &&
+                queued.conversationId === root.id
+            )
+            // Public inspection is read-only. Any queue change between this read
+            // and N causes the exact native snapshot comparison below to refuse.
+            const snapshot = await root.commit(async (tx) => {
+              const fence = await tx.doc(QualificationFence, root.id)
+              const tasks = []
+              let cursor
+              do {
+                const page = await tx.scanTasks({}, 256, cursor)
+                tasks.push(...page.items)
+                cursor = page.next
+              } while (cursor)
+              const conversations = await tx.scanConversations({}, 2)
+              if (
+                conversations.next ||
+                conversations.items.length !== 1 ||
+                conversations.items[0]?.id !== root.id
+              )
+                throw new Error('PI_NATIVE_CANCELLATION_SCOPE_UNAVAILABLE')
+              const live = tasks.filter(
+                (task) => !task.background && task.state.status !== 'terminal'
+              )
+              if (
+                turns.get(pins.sessionId) !== pins.turnKey ||
+                live.some((task) => task.conversationId !== root.id) ||
+                (pins.inferenceId !== null &&
+                  !live.some((task) => `pi-generation:${String(task.id)}` === pins.inferenceId))
+              )
+                throw new Error('PI_LEAD_AUTHORITY_CONFLICT')
+              return {
+                revision: fence.revision,
+                scopeDigest: digest(
+                  canonicalJsonStringify({
+                    tasks: live.toSorted((a, b) => a.id - b.id),
+                    queuedInputs: queuedInputs.toSorted((a, b) => a.id - b.id),
+                  })
+                ),
+              }
+            }, BACKGROUND_CONTEXT)
+            prepared.set(pins, { root, ...snapshot })
+            return pins
+          },
+          async commit(preparation) {
+            const candidate = prepared.get(preparation)
+            if (!candidate) throw new Error('PI_NATIVE_CANCELLATION_PREPARATION_INVALID')
+            const receipt = await candidate.root.commitAbort(
+              {
+                requestId: preparation.requestId,
+                requestDigest: preparation.requestDigest,
+                metadata: {
+                  targetDigest: preparation.targetDigest,
+                  expiresAt: preparation.expiresAt,
+                  fenceRevision: candidate.revision,
+                  inferenceId: preparation.inferenceId,
+                  turnKey: preparation.turnKey,
+                  scopeDigest: candidate.scopeDigest,
+                },
+                prepare: async (tx, scope) => {
+                  const fence = await tx.doc(QualificationFence, candidate.root.id)
+                  if (
+                    fence.revision !== candidate.revision ||
+                    scope.conversations.length !== 1 ||
+                    scope.conversations[0]?.id !== candidate.root.id ||
+                    turns.get(preparation.sessionId) !== preparation.turnKey ||
+                    digest(
+                      canonicalJsonStringify({
+                        tasks: scope.tasks.toSorted((a, b) => a.id - b.id),
+                        queuedInputs: scope.queuedInputs.toSorted((a, b) => a.id - b.id),
+                      })
+                    ) !== candidate.scopeDigest
+                  )
+                    throw new Error('PI_LEAD_AUTHORITY_CONFLICT')
+                  return () => {
+                    if (turns.get(preparation.sessionId) !== preparation.turnKey)
+                      throw new Error('PI_LEAD_AUTHORITY_CONFLICT')
+                    const now = Date.parse(options.nativeCancellationQualification!.now())
+                    if (!Number.isFinite(now) || now >= Date.parse(preparation.expiresAt))
+                      throw new Error('PI_AUTHORITY_EXPIRED')
+                  }
+                },
+              },
+              BACKGROUND_CONTEXT
+            )
+            // N is committed. D is intentionally not awaited while holding its line;
+            // the caller can retain its exact receipt before any later drain result.
+            return receipt
+          },
+        }
+      : undefined
+
   return {
     storePath,
+    ...(guardedCancellation ? { guardedCancellation } : {}),
     async run(request: PiDurableEngineRun): Promise<PiDurableEngineResult> {
       const startedAt = performance.now()
       if (!request.requestId) throw new Error('PI_REQUEST_ID_REQUIRED')
@@ -879,9 +1059,13 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
     async close(): Promise<void> {
       closed = true
       await Promise.all(
-        [...opened.values()].map(async (pending) => {
+        [...opened.entries()].map(async ([sessionId, pending]) => {
           const harness = await pending.catch(() => undefined)
-          if (harness) await harness.close(BACKGROUND_CONTEXT)
+          try {
+            if (harness) await harness.close(BACKGROUND_CONTEXT)
+          } finally {
+            options.nativeCancellationQualification?.onOwnerClosed(sessionId)
+          }
         })
       )
       opened.clear()

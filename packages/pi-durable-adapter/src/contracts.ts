@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { Models } from '@earendil-works/pi-ai/models'
+import type { AbortCommitReceipt } from '@earendil-works/pi-durable'
 import type { CurrentExecutionScopeAuthority } from '@control-plane/execution-plan'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import type { DurableToolCallRequest } from '@control-plane/tool-sdk'
@@ -179,7 +180,27 @@ export interface PiEngineResult {
   }[]
 }
 
+/** Opt-in native qualification only; production factories do not supply this capability. */
+export interface PiGuardedCancellationInput {
+  readonly sessionId: string
+  readonly requestId: string
+  readonly requestDigest: string
+  readonly targetDigest: string
+  readonly expiresAt: string
+  readonly turnKey: string
+  readonly inferenceId: string | null
+}
+
+/** Identity-bound by the engine; a structurally identical object is not a prepared operation. */
+export interface PiGuardedCancellationPreparation extends PiGuardedCancellationInput {}
+
+export interface PiGuardedCancellationEngine {
+  prepare(input: PiGuardedCancellationInput): Promise<PiGuardedCancellationPreparation>
+  commit(preparation: PiGuardedCancellationPreparation): Promise<AbortCommitReceipt>
+}
+
 export interface DurablePiEngine {
+  readonly guardedCancellation?: PiGuardedCancellationEngine
   run(input: { sessionId: string; requestId: string; input: string }): Promise<PiEngineResult>
   cancel(sessionId: string): Promise<void>
   close(): Promise<void>
