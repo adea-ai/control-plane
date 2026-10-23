@@ -293,6 +293,9 @@ function parseProvenanceLedger(markdown) {
       .slice(1, -1)
       .map((cell) => cell.trim())
     if (cells.length !== 6 || cells[0] === 'Skill' || /^-+$/u.test(cells[0] ?? '')) continue
+    if (rows.has(cells[0])) {
+      throw new Error(`duplicate provenance ledger row for '${cells[0]}'`)
+    }
     rows.set(cells[0], {
       origin: cells[1],
       upstreamSource: cells[2],
@@ -1118,7 +1121,7 @@ export async function validateSkillLibrary(options = {}) {
   try {
     schema = JSON.parse(await readFile(schemaPath, 'utf8'))
   } catch (error) {
-    throw new Error(`${inventorySchemaFile} could not be read: ${error.message}`)
+    throw new Error(`${inventorySchemaFile} could not be read: ${error.message}`, { cause: error })
   }
   const schemaErrors = []
   schemaErrorsFor(schema, manifest, schema, 'skill-library', schemaErrors)
@@ -1132,12 +1135,13 @@ export async function validateSkillLibrary(options = {}) {
   // The provenance ledger mirrors the frontmatter facts, so the two are
   // compared instead of being trusted independently.
   const ledgerPath = join(root, provenanceLedgerFile)
-  let ledger = null
+  let ledgerMarkdown
   try {
-    ledger = parseProvenanceLedger(await readFile(ledgerPath, 'utf8'))
+    ledgerMarkdown = await readFile(ledgerPath, 'utf8')
   } catch (error) {
-    throw new Error(`${provenanceLedgerFile} could not be read: ${error.message}`)
+    throw new Error(`${provenanceLedgerFile} could not be read: ${error.message}`, { cause: error })
   }
+  const ledger = parseProvenanceLedger(ledgerMarkdown)
   const ledgerErrors = []
   for (const skill of skills) {
     const row = ledger.get(skill.name)

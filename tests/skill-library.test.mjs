@@ -542,6 +542,23 @@ describe('M11.11 skill routing, boundary, and lifecycle contracts', () => {
     )
   })
 
+  test('rejects duplicate provenance rows, whether conflicting or identical', async () => {
+    const duplicateLedgers = [
+      `${fixtureLedger({ owner: 'Someone Else' })}\n${fixtureLedger()}`,
+      `${fixtureLedger()}\n${fixtureLedger()}`,
+    ]
+
+    for (const ledger of duplicateLedgers) {
+      await withSkillFixture({ ledger: fixtureLedger() }, async (root) => {
+        await validateSkillLibrary({ repositoryRoot: root, refresh: true })
+        await writeFile(join(root, 'docs', 'skills', 'provenance.md'), ledger)
+        await expect(validateSkillLibrary({ repositoryRoot: root })).rejects.toThrow(
+          /duplicate provenance ledger row/i
+        )
+      })
+    }
+  })
+
   test('accepts a provenance ledger that agrees with the skill frontmatter', async () => {
     await withSkillFixture({ ledger: fixtureLedger() }, async (root) => {
       await validateSkillLibrary({ repositoryRoot: root, refresh: true })
