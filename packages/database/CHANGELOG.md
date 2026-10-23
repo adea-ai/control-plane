@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.52.5](https://github.com/adea-ai/control-plane/compare/database-v1.52.4...database-v1.52.5) (2026-10-23)
+
+
+### Tests
+
+* **database:** give workspace-catalog and model-selection integration cases their own database and setup ([#1287](https://github.com/adea-ai/control-plane/issues/1287)) ([1c45801](https://github.com/adea-ai/control-plane/commit/1c45801d83c50ba04debb5d332235c70322763dd))
+
 ## [1.52.4](https://github.com/adea-ai/control-plane/compare/database-v1.52.3...database-v1.52.4) (2026-10-22)
 
 
