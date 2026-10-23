@@ -478,6 +478,12 @@ test('a long plain token is read once and the excerpt is still bounded', () => {
   expect(elapsedMs).toBeLessThan(10_000)
 })
 
+test('many URI query credentials do not overflow the argument stack', () => {
+  const sanitized = sanitizeProbeOutput(`postgresql://localhost/db?${'pwd=s&'.repeat(150_000)}`)
+  expect(sanitized.length).toBeLessThanOrEqual(PROBE_EXCERPT_LIMIT)
+  expect(sanitized).not.toContain('pwd=s')
+})
+
 // A long run of hexadecimal characters is an opaque token and is redacted
 // whole, so it cannot reach the excerpt in pieces either.
 test('a long opaque token is redacted whole', () => {

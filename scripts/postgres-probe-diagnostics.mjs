@@ -417,8 +417,8 @@ export function sanitizeProbeOutput(text, limit = PROBE_EXCERPT_LIMIT) {
     if (scheme !== null) {
       const credential = readUriCredential(source, uriSearch, index + scheme.length + 3)
       if (credential.matched) {
-        uriSpans.push(...credential.spans)
         for (const span of credential.spans) {
+          uriSpans.push(span)
           if (span.queryKeyStart !== undefined) uriQueryKeyStarts.add(span.queryKeyStart)
         }
       }
