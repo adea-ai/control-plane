@@ -66,19 +66,57 @@ function trackRunnerChild(child, command, ownerToken) {
     completionTimer: undefined,
     failWith: undefined,
     abandon: undefined,
+    closed: false,
   })
-  const release = () => {
-    activeChildren.delete(child)
-    const state = childStates.get(child)
-    if (state?.completionTimer !== undefined) clearTimeout(state.completionTimer)
-  }
-  child.once('close', release)
-  child.once('error', release)
+  // `close` reports the child's own streams, not its descendants: a child that
+  // runs with inherited stdio closes the moment it exits, and a descendant that
+  // closed its pipe ends is not waited for either. Ownership therefore outlives
+  // `close` for as long as a descendant still carries the child's token.
+  child.once('close', () => releaseUnlessOwnedDescendantsRemain(child))
+  child.once('error', () => releaseChild(child))
   // The direct child can exit while a descendant still holds the inherited
   // pipes, so `close` never arrives. Its exit starts the same bounded wait that
   // a termination does; a normal exit closes the pipes at once and clears it.
   child.once('exit', () => armCompletionBound(child))
   return child
+}
+
+/** Stops tracking a child and cancels its completion bound. */
+function releaseChild(child) {
+  activeChildren.delete(child)
+  const state = childStates.get(child)
+  if (state?.completionTimer !== undefined) clearTimeout(state.completionTimer)
+}
+
+/**
+ * Ends the ownership of a child that closed, unless a process that carries its
+ * token is still alive.
+ *
+ * A survivor keeps the child tracked, so an interruption or the exit of the
+ * runner still reaps it, and keeps the completion bound running, which reaps it
+ * once the bound is reached. Only a token-bearing process is kept: nothing else
+ * is attributable to the child.
+ */
+function releaseUnlessOwnedDescendantsRemain(child) {
+  const state = childStates.get(child)
+  if (state !== undefined && pidsCarryingOwnerToken(state.ownerToken, child.pid).length > 0) {
+    state.closed = true
+    armCompletionBound(child)
+    return
+  }
+  releaseChild(child)
+}
+
+/**
+ * Releases the children that closed and no longer have an owned descendant.
+ */
+function releaseSettledChildren() {
+  for (const child of activeChildren) {
+    const state = childStates.get(child)
+    if (state?.closed && pidsCarryingOwnerToken(state.ownerToken, child.pid).length === 0) {
+      releaseChild(child)
+    }
+  }
 }
 
 /**
@@ -299,6 +337,19 @@ function armCompletionBound(child) {
       }
     }
     const survivors = survivingOwnedPids(remnants)
+    if (state.closed) {
+      // The child's own promise settled when it closed; the bound only reaps
+      // what it left behind, and ownership ends once nothing of it is alive.
+      if (survivors.length === 0) releaseChild(child)
+      if (remnants.length > 0) {
+        console.error(
+          `${state.command} closed but left owned descendant(s) ${remnants.join(', ')} running; ${
+            survivors.length > 0 ? `still alive: ${survivors.join(', ')}` : 'reaped'
+          }.`
+        )
+      }
+      return
+    }
     const report =
       remnants.length === 0
         ? 'an owned descendant may still hold the inherited pipes'
@@ -329,7 +380,9 @@ function terminateActiveChildren() {
   for (const child of activeChildren) descendants.push(...terminateChild(child))
   // The owned trees are VERIFIED, not assumed: the direct child's exit is not
   // proof that its descendants were reaped.
-  return survivingOwnedPids(descendants)
+  const survivors = survivingOwnedPids(descendants)
+  releaseSettledChildren()
+  return survivors
 }
 
 function run(command, arguments_, options = {}) {
