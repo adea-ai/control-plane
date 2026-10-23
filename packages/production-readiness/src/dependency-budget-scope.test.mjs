@@ -17,7 +17,7 @@
 //     identities, the workspace packages must be absent, and the committed
 //     ceiling must still be 285.
 //
-// The checker is copied into a temporary directory and imported from there,
+// One copy of the checker is imported from a temporary directory per test file,
 // which is the pattern the repository's own lane test uses when it copies
 // the checker into a temporary repository. Importing it in place would cross
 // a workspace boundary; the copy is the same file, so the exported functions
@@ -53,7 +53,14 @@ const LISTING_FILE = 'ADEA_DEPS_LISTING_FILE'
  * The copy is what keeps the import inside the workspace boundary; the
  * functions under test are the ones the repository ships.
  */
-async function loadChecker() {
+// These exports are pure fixture functions. Sharing their module preserves the
+// shipped source identity so coverage aggregates all exercised branches once.
+let checkerModulePromise
+function loadChecker() {
+  return (checkerModulePromise ??= loadShippedChecker())
+}
+
+async function loadShippedChecker() {
   const directory = mkdtempSync(join(tmpdir(), 'control-plane-deps-checker-'))
   const file = join(directory, 'check-budgets.mjs')
   try {
@@ -256,6 +263,15 @@ test('a wrong package identity fails even when the count does not change', () =>
 
 test('the committed dependency ceiling is unchanged', () => {
   assert.equal(budgets.dependencies.externalPackageCeiling, 285)
+})
+
+test('concurrent checker consumers share one shipped module identity', async () => {
+  const [first, second, third] = await Promise.all([loadChecker(), loadChecker(), loadChecker()])
+  assert.equal(first, second)
+  assert.equal(second, third)
+  assert.equal(first.countExternalPackages('node_modules\n└── example@1.0.0'), 1)
+  assert.equal(second.countExternalPackages('node_modules\n└── other@2.0.0'), 1)
+  assert.equal(first.countExternalPackages('node_modules\n└── example@1.0.0'), 1)
 })
 
 test("the checker's own identity rule normalizes a package identity", async () => {
