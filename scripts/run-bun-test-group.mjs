@@ -75,6 +75,7 @@ const repositoryGroups = {
     'tests/m11-admission-rollout-admin.test.mjs',
     'tests/m11-acp-installation.test.mjs',
     'tests/m11-architecture-audit.test.mjs',
+    'tests/m11-architecture-audit-regression.test.mjs',
     'tests/m11-context-command-contract.test.mjs',
     'tests/m11-graph-composition.test.mjs',
     'tests/m11-managed-graph-runtime.test.mjs',
