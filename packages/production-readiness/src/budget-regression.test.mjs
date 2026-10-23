@@ -7,7 +7,7 @@
 //     artifacts, 37% of the built bytes, and nothing in the repository
 //     consumes them; the build configuration now stops emitting them, which
 //     brings the measured dist total back inside the committed 12 MB budget;
-//   - three workspace packages declared external dependencies that none of
+//   - two workspace packages declared external dependencies that none of
 //     their sources import, so the installed closure carried subtrees nothing
 //     needed; those declarations are gone and this check keeps them gone.
 //
