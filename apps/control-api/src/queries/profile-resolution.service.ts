@@ -2,6 +2,7 @@ import { NotFoundException, ServiceUnavailableException } from '@nestjs/common'
 import {
   ProfileResolutionRequestSchema,
   ProfileResolutionResponseSchema,
+  compareCodePointOrder,
 } from '@control-plane/contracts'
 import type {
   AgentProfileRepository,
@@ -66,7 +67,16 @@ export class RepositoryProfileResolutionService implements ProfileResolutionServ
       Promise.all(
         profile.definition.skills.map(async (reference) => {
           const skillVersion = await this.catalog.getSkillVersion(reference.skillVersionId)
-          if (skillVersion === undefined || skillVersion.skillId !== reference.skillId)
+          // The profile pins an exact skill version by content digest. A
+          // version whose content no longer matches that digest is not the
+          // version the profile pinned, and a version that is not published is
+          // not executable, so neither may resolve through this profile.
+          if (
+            skillVersion === undefined ||
+            skillVersion.skillId !== reference.skillId ||
+            skillVersion.manifest.contentDigest !== reference.contentDigest ||
+            skillVersion.lifecycle !== 'published'
+          )
             return undefined
           const skillOwner = await this.catalog.getSkill(skillVersion.skillId)
           return skillOwner?.skillId === skillVersion.skillId &&
@@ -146,9 +156,18 @@ export class RepositoryProfileResolutionService implements ProfileResolutionServ
       const profile = await this.catalog.getAgentProfileVersion(profileVersionId)
       return profile?.profileId === profileId ? profile : undefined
     }
+    // The default version is selected by version, then revision, then by
+    // identifier. The identifier tie-break keeps the selection independent of
+    // the order a store returns versions in, so the same profile resolves to
+    // the same version in every composition.
     return (await this.catalog.listAgentProfileVersions(profileId))
       .filter((profile) => profile.lifecycle === 'published')
-      .toSorted((left, right) => right.version - left.version || right.revision - left.revision)[0]
+      .toSorted(
+        (left, right) =>
+          right.version - left.version ||
+          right.revision - left.revision ||
+          compareCodePointOrder(left.profileVersionId, right.profileVersionId)
+      )[0]
   }
 }
 

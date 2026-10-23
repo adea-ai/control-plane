@@ -57,7 +57,8 @@ jobs:
           path: m11-evidence/load.jsonl
           if-no-files-found: error
           retention-days: 30
-      - run: bun audit
+      - name: Audit dependencies, retrying only a transient bulk-advisory 503
+        run: bun packages/production-readiness/src/npm-audit-bounded-retry.mjs
 
   integration-recovery:
     name: Integration and recovery

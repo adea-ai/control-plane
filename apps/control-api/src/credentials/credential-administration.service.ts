@@ -23,7 +23,7 @@ import {
 import {
   CredentialVault,
   CredentialVaultError,
-  NeonEncryptedSecretProvider,
+  PostgresEncryptedSecretProvider,
   createCredentialId,
   type CredentialCommandScope,
   type CredentialMetadata,
@@ -387,9 +387,9 @@ export interface CredentialAdministrationComposition {
 export function createCredentialAdministrationService(
   options: CredentialAdministrationComposition
 ): VaultCredentialAdministrationService {
-  let provider: NeonEncryptedSecretProvider
+  let provider: PostgresEncryptedSecretProvider
   try {
-    provider = new NeonEncryptedSecretProvider({
+    provider = new PostgresEncryptedSecretProvider({
       store: options.secretStore,
       encryptionKey: options.encryptionKey,
       keyReference: options.keyReference,

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.0](https://github.com/adea-ai/control-plane/compare/domain-v1.32.0...domain-v1.33.0) (2026-10-23)
+
+
+### Features
+
+* **database:** add ProjectState digest compatibility ([#612](https://github.com/adea-ai/control-plane/issues/612)) ([#1223](https://github.com/adea-ai/control-plane/issues/1223)) ([5123466](https://github.com/adea-ai/control-plane/commit/512346603a7ca0c0d9f9b90ed40cf48d6dc2d474))
+
 ## [1.32.0](https://github.com/adea-ai/control-plane/compare/domain-v1.31.1...domain-v1.32.0) (2026-10-17)
 
 

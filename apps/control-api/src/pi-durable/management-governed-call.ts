@@ -20,7 +20,7 @@ import {
 
 export type PiDurableManagementCallRequest = Readonly<Record<string, unknown>>
 
-export type PiDurableManagementCallBoundary = 'admission' | 'approval' | 'effect'
+export type PiDurableManagementCallBoundary = 'admission' | 'approval' | 'effect' | 'publication'
 
 export interface PiDurableManagementCallAuthority {
   /** Repeatable current-authority check; must never consume approval or mint a grant. */
@@ -232,6 +232,37 @@ export function createPiDurableGovernedManagementCall(options: PiDurableManageme
     }
   }
 
+  /**
+   * Re-reads the current approval and grant at the moment a decision is issued.
+   * The claim between the admission check and the issuance is an await, so the
+   * approval the decision names can be revoked in that window; a decision must
+   * never be signed over an approval that no longer holds. A request that
+   * carries no approval has no approval to re-read.
+   */
+  async function issuanceChecks(request: PiDurableManagementCallRequest): Promise<boolean> {
+    if (!requiresApproval(request)) return true
+    try {
+      await options.authority.assertCurrent(request, 'approval')
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * The publication boundary: the effect may already have happened, so the
+   * outcome stays retained as the evidence, but current authority is rechecked
+   * before that outcome is exposed to a caller.
+   */
+  async function publicationChecks(request: PiDurableManagementCallRequest): Promise<boolean> {
+    try {
+      await options.authority.assertCurrent(request, 'publication')
+      return true
+    } catch {
+      return false
+    }
+  }
+
   async function settle(
     record: PiDurableManagementCallRecord,
     outcome: PiDurableManagementCallOutcome
@@ -269,8 +300,14 @@ export function createPiDurableGovernedManagementCall(options: PiDurableManageme
         return Object.freeze({ code: 'authority_binding_mismatch', state: 'refused' as const })
       if (record?.state === 'settled' && record.outcome) {
         // Replay keeps repeatable authority current but never re-issues or
-        // re-dispatches.
+        // re-dispatches. The retained outcome is exposed only while the current
+        // authority still holds at the publication boundary.
         if (!(await repeatableChecks(request)))
+          return Object.freeze({ code: 'authority_unavailable', state: 'refused' as const })
+        if (
+          record.outcome.state !== 'reconciliation_required' &&
+          !(await publicationChecks(request))
+        )
           return Object.freeze({ code: 'authority_unavailable', state: 'refused' as const })
         return record.outcome
       }
@@ -284,7 +321,14 @@ export function createPiDurableGovernedManagementCall(options: PiDurableManageme
       }
       if (!(await options.store.insert(claim))) continue
 
-      // Winner: mint exactly one decision and retain it BEFORE dispatch.
+      // Winner: mint exactly one decision and retain it BEFORE dispatch. The
+      // approval is re-read at issuance, because the claim above is an await
+      // and the approval the decision names can be revoked in that window.
+      if (!(await issuanceChecks(request)))
+        return settle(
+          claim,
+          Object.freeze({ code: 'authority_unavailable', state: 'refused' as const })
+        )
       let decision: PiDurableManagementCallDecision
       try {
         decision = await options.issue({ request, targetId })
@@ -344,7 +388,7 @@ export function createPiDurableGovernedManagementCall(options: PiDurableManageme
         return settle(retained, unknownOutcome)
       }
       if (!result || typeof result !== 'object') return settle(retained, unknownOutcome)
-      return settle(
+      const settled = await settle(
         retained,
         result.ok
           ? Object.freeze({ state: 'succeeded' as const, value: result.value })
@@ -354,6 +398,14 @@ export function createPiDurableGovernedManagementCall(options: PiDurableManageme
               state: 'refused' as const,
             })
       )
+      // The external call may already have happened. Its outcome stays retained
+      // as the evidence, and current authority is rechecked as a distinct
+      // publication boundary before that outcome is exposed. An unresolved
+      // effect is always reported: reconciliation is the operator's to do, and
+      // a revoked authority must not hide it.
+      if (settled.state !== 'reconciliation_required' && !(await publicationChecks(request)))
+        return Object.freeze({ code: 'authority_unavailable', state: 'refused' as const })
+      return settled
     }
     return unknownOutcome
   }

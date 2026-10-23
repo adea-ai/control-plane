@@ -15,10 +15,10 @@
 
 Successful deployment status and these log observations do not establish M11 profile acceptance or production availability. The snapshot does not include post-deploy migration, representative execution, recovery, rollback, or full readiness evidence.
 
-## Staging
+## sandbox
 
 - No successful active deployment was present in the current status readback. The API and worker showed failed historical status dated 2026-09-16; Restate's last successful status was dated 2026-08-28.
 - Deployment inventory includes later attempts through 2026-09-28 that were removed. Those removed attempts are not active deployment evidence.
-- Staging remains on-demand: do not keep compute live between qualification runs; retain the Restate volume.
+- sandbox remains on-demand: do not keep compute live between qualification runs; retain the Restate volume.
 
-This is a point-in-time snapshot, not a mutation of Railway or Neon. No variable values, credentials, or secret material are included.
+This is a point-in-time snapshot, not a mutation of Railway or PostgreSQL. No variable values, credentials, or secret material are included.

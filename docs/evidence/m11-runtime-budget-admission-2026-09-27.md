@@ -95,4 +95,4 @@ runtime accounting metadata must not authorize HQ charges or zero-cost settlemen
 This original native checkpoint alone does not certify PostgreSQL runtime admission, Railway,
 Restate, a real model/provider, E2B, whole-process recovery, deployed ACP/graph
 execution, capacity/retention/restore or independent human acceptance. No issue
-closure, staging wake, production deployment or merge is implied.
+closure, sandbox wake, production deployment or merge is implied.

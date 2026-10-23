@@ -1,11 +1,33 @@
 import { describe, expect, test } from 'bun:test'
+import { execFileSync } from 'node:child_process'
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { URL } from 'node:url'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
+  fetchProvenanceObjects,
+  provenanceTargets,
+} from '../scripts/fetch-requirements-provenance.mjs'
+import {
+  collectCanonicalCrosswalk,
+  collectFigureInventory,
+  compareGitHubIssueSnapshot,
   listGitHubIssues,
+  pinnedFormatterVersion,
+  refreshGitHubIssueSnapshot,
   refreshPriorMilestoneAudits,
-  validateRequirementsLedger,
+  renderCanonicalCrosswalk,
+  renderFigureInventory,
   renderRequirementsReport,
+  runningFormatterVersion,
+  validateCanonicalCrosswalk,
+  validateFigureInventory,
+  validateFormatterVersion,
+  validateReconciliationRecord,
+  validateRequirementsLedger,
+  validateWorkerContentBinding,
+  validateWorkerEvidence,
 } from '../scripts/requirements-ledger.mjs'
 
 const ledgerUrl = new URL(
@@ -13,6 +35,15 @@ const ledgerUrl = new URL(
   import.meta.url
 )
 const reportUrl = new URL('../docs/requirements/control-plane-requirements.md', import.meta.url)
+const crosswalkUrl = new URL(
+  '../docs/requirements/control-plane-requirements-crosswalk.v1.json',
+  import.meta.url
+)
+const figureInventoryUrl = new URL(
+  '../docs/requirements/canonical-figure-inventory.v1.json',
+  import.meta.url
+)
+const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const ledger = JSON.parse(await readFile(ledgerUrl, 'utf8'))
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const emptyIssueLedger = () => ({
@@ -138,14 +169,14 @@ describe('M11.1 requirements ledger', () => {
     delete changed.sources[0].atomicInventory
     const { errors } = await validateRequirementsLedger(changed)
     expect(errors).toContain('project-index: atomicInventory is required')
-  })
+  }, 60000)
 
   test('atomic clause counts are checked beyond the bounded requirement rows', async () => {
     const changed = clone(ledger)
     changed.sources[0].atomicInventory.atoms -= 1
     const { errors } = await validateRequirementsLedger(changed)
     expect(errors).toContain('project-index: atomic inventory count differs from declared atoms')
-  })
+  }, 60000)
 
   test('atomic inventory provenance must match the captured source revision and bytes', async () => {
     const changed = clone(ledger)
@@ -154,7 +185,7 @@ describe('M11.1 requirements ledger', () => {
     const { errors } = await validateRequirementsLedger(changed)
     expect(errors).toContain('project-index: atomic inventory revision differs from source')
     expect(errors).toContain('project-index: atomic inventory content hash differs from source')
-  })
+  }, 60000)
 
   test('retention evidence distinguishes fail-closed deletion from scheduler doubles', async () => {
     const row = ledger.requirements.find(({ id }) => id === 'CP-CONS-003')
@@ -314,6 +345,31 @@ describe('M11.1 requirements ledger', () => {
     expect(report).toContain(
       'does not re-certify that baseline or establish whole-milestone completion'
     )
+  }, 60000)
+
+  test('reviewed display titles preserve current presentation without relaxing live issue membership', () => {
+    const input = {
+      ...emptyIssueLedger(),
+      priorMilestoneAudits: [
+        {
+          issue: 100,
+          displayTitle: 'Current infrastructure qualification',
+          assessment: 'preserved',
+        },
+      ],
+    }
+    const refreshed = refreshPriorMilestoneAudits(input, [
+      canonicalIssue(100, 9, { title: 'Historical title' }),
+    ])
+    expect(refreshed.priorIssueInventory[0].title).toBe('Current infrastructure qualification')
+    expect(refreshed.priorMilestoneAudits[0].assessment).toBe('preserved')
+    expect(() => refreshPriorMilestoneAudits(input, [])).toThrow('Issue inventory drift')
+    expect(() =>
+      refreshPriorMilestoneAudits(
+        { ...input, priorMilestoneAudits: [{ issue: 100, displayTitle: 'bad\nlabel' }] },
+        [canonicalIssue(100, 9)]
+      )
+    ).toThrow('Invalid audited issue display title')
   })
 
   test('covers every normative source and prior milestone', async () => {
@@ -336,7 +392,7 @@ describe('M11.1 requirements ledger', () => {
         `issue #${issue}`
       ).toBe(true)
     }
-  })
+  }, 60000)
 
   test('ties checked-in partial source-audit ranges to their ledger rows', async () => {
     const auditedSources = ledger.sources.filter(({ sourceAudit }) => sourceAudit !== undefined)
@@ -389,7 +445,7 @@ describe('M11.1 requirements ledger', () => {
     expect(escapingPathResult.errors).toContain(
       'runtime-node-spec: source-audit path must be under docs/requirements'
     )
-  })
+  }, 60000)
 
   test('fails closed when authoritative inventory or provenance disappears', async () => {
     const pendingReview = clone(ledger)
@@ -471,7 +527,7 @@ describe('M11.1 requirements ledger', () => {
         })
       ).errors
     ).toContain(`${unknownLane.requirements[0].id}: invalid validation lane miscellaneous`)
-  })
+  }, 60000)
 
   test('loads live issue state without requiring the gh CLI', async () => {
     const requests = []
@@ -1015,18 +1071,94 @@ describe('M11.1 requirements ledger', () => {
     )
   })
 
-  test('reports only the explicit provenance warning when history is shallow', async () => {
+  test('reports only explicit unverified-provenance warnings when history is shallow', async () => {
     const result = await validateRequirementsLedger(ledger, {
       repositoryRoot: new URL('..', import.meta.url),
+      shallowRepository: true,
     })
 
-    expect(result.warnings.length).toBeLessThanOrEqual(1)
+    // A shallow checkout lacks the candidate, the reconciliation ancestry and the
+    // lanes' own branches. Each absence is reported as unverified provenance and
+    // never as an error or as proof.
+    expect(result.errors).toEqual([])
+    const allowed = [
+      `candidate commit ${ledger.candidate.commit} is unavailable in this shallow checkout; committed-artifact provenance must be reproduced from a full clone`,
+      /^reconciliation base [0-9a-f]{40} ancestry is unverified in this shallow checkout; reproduce the ancestry check from a full clone$/,
+      /^W\d+ \([^)]+\): worker head [0-9a-f]{40} is unavailable in this shallow checkout; \d+ recorded evidence paths are unverified and must be reproduced from a full clone$/,
+    ]
     for (const warning of result.warnings) {
-      expect(warning).toBe(
-        `candidate commit ${ledger.candidate.commit} is unavailable in this shallow checkout; committed-artifact provenance must be reproduced from a full clone`
-      )
+      expect(
+        allowed.some((pattern) =>
+          typeof pattern === 'string' ? pattern === warning : pattern.test(warning)
+        ),
+        warning
+      ).toBe(true)
     }
-  })
+  }, 60000)
+
+  test('keeps the reconciliation ancestry unverified in a shallow checkout and fatal in a full clone', async () => {
+    const detached = clone(ledger)
+    detached.reconciliation.reconciliationBase = 'c'.repeat(40)
+    detached.reconciliation.candidateProof.coversReconciliationBase = false
+
+    const shallow = await validateRequirementsLedger(detached, {
+      repositoryRoot,
+      shallowRepository: true,
+    })
+    expect(shallow.errors).not.toContain(
+      'reconciliation.reconciliationBase must be an ancestor of the current head'
+    )
+    expect(shallow.warnings).toContain(
+      `reconciliation base ${'c'.repeat(40)} ancestry is unverified in this shallow checkout; reproduce the ancestry check from a full clone`
+    )
+
+    const full = await validateRequirementsLedger(detached, {
+      repositoryRoot,
+      shallowRepository: false,
+    })
+    expect(full.errors).toContain(
+      'reconciliation.reconciliationBase must be an ancestor of the current head'
+    )
+    expect(full.warnings.filter((warning) => warning.startsWith('reconciliation base'))).toEqual([])
+  }, 60000)
+
+  test('keeps an unresolvable worker head unverified in a shallow checkout and fatal in a full clone', async () => {
+    const unresolved = clone(ledger)
+    const worker = unresolved.workerEvidence.find(({ status }) => status === 'received')
+    worker.head = 'd'.repeat(40)
+    for (const entry of worker.evidence) entry.commit = worker.head
+
+    const shallow = await validateRequirementsLedger(unresolved, {
+      repositoryRoot,
+      shallowRepository: true,
+    })
+    expect(shallow.errors.filter((error) => error.startsWith(`${worker.id}:`))).toEqual([])
+    expect(shallow.warnings).toContain(
+      `${worker.id} (${worker.lane}): worker head ${worker.head} is unavailable in this shallow checkout; ${worker.evidence.length} recorded evidence paths are unverified and must be reproduced from a full clone`
+    )
+    // Unverified evidence is not presented as divergent or as verified content.
+    expect(shallow.provenance.some((finding) => finding.startsWith(`${worker.id} `))).toBe(false)
+
+    // Checks that need no history still apply to an unverified lane.
+    const mismatched = clone(unresolved)
+    mismatched.workerEvidence.find(({ id }) => id === worker.id).evidence[0].commit = 'e'.repeat(40)
+    const mismatchedResult = await validateRequirementsLedger(mismatched, {
+      repositoryRoot,
+      shallowRepository: true,
+    })
+    expect(mismatchedResult.errors).toContain(
+      `${worker.id}: worker evidence commit must match the worker head for ${worker.evidence[0].path}`
+    )
+
+    const full = await validateRequirementsLedger(unresolved, {
+      repositoryRoot,
+      shallowRepository: false,
+    })
+    expect(full.errors).toContain(
+      `${worker.id}: worker head ${worker.head} is unavailable in the repository`
+    )
+    expect(full.warnings.some((warning) => warning.startsWith(`${worker.id} `))).toBe(false)
+  }, 60000)
 
   test('distinguishes shallow history from a missing full-clone candidate', async () => {
     const fictionalCandidate = clone(ledger)
@@ -1093,9 +1225,968 @@ describe('M11.1 requirements ledger', () => {
     const localComposition = ledger.priorMilestoneAudits.find(({ id }) => id === 'M10-ISSUE-203')
     expect(localComposition.assessment).toContain('Restate is optional compatibility mode')
     expect(localComposition.assessment).toContain('remains an M11 gate')
-  })
+  }, 60000)
 
   test('keeps the generated report in sync', async () => {
     expect(await readFile(reportUrl, 'utf8')).toBe(await renderRequirementsReport(ledger))
+  }, 60000)
+
+  test('does not truncate the generated report through the formatter pipe', async () => {
+    // The report is larger than the runtime's child-process pipe buffer. A
+    // truncated pipe reports success, so the report length is asserted directly.
+    const report = await renderRequirementsReport(ledger)
+    expect(Buffer.byteLength(report)).toBeGreaterThan(512 * 1024)
+    expect(Buffer.byteLength(await readFile(reportUrl, 'utf8'))).toBe(Buffer.byteLength(report))
+    expect(report.endsWith('\n')).toBe(true)
+  }, 60000)
+
+  test('records the repository-pinned formatter version', async () => {
+    const lockfile = await readFile(new URL('../bun.lock', import.meta.url), 'utf8')
+    const pinned = pinnedFormatterVersion(lockfile)
+    expect(pinned).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/)
+    expect(validateFormatterVersion(lockfile, `Version: ${pinned}`)).toBeNull()
+    expect(validateFormatterVersion(lockfile, 'Version: 0.0.1')).toContain(
+      'does not match the repository-pinned oxfmt'
+    )
+    expect(runningFormatterVersion('Version: 0.72.0')).toBe('0.72.0')
+    expect(validateFormatterVersion('no lockfile entry', 'Version: 0.72.0')).toContain(
+      'does not pin an oxfmt version'
+    )
+  })
+
+  test('crosswalks every normative source, requirement and issue audit', async () => {
+    const { errors, crosswalk } = await collectCanonicalCrosswalk(ledger, repositoryRoot)
+    expect(errors).toEqual([])
+    expect(crosswalk.sources.map(({ sourceId }) => sourceId)).toEqual(
+      ledger.sources.map(({ id }) => id)
+    )
+    expect(crosswalk.requirements.map(({ id }) => id)).toEqual(
+      ledger.requirements.map(({ id }) => id)
+    )
+    expect(crosswalk.priorIssueAudits.map(({ issue }) => issue)).toEqual(
+      ledger.priorMilestoneAudits.map(({ issue }) => issue)
+    )
+    expect(crosswalk.deploymentProfiles.map(({ id }) => id)).toEqual(
+      ledger.deploymentProfiles.map(({ id }) => id)
+    )
+    for (const source of crosswalk.sources) {
+      expect(source.currentRevision, source.sourceId).toBeNumber()
+      expect(source.currentTextSha256, source.sourceId).toMatch(/^[a-f0-9]{64}$/)
+      expect(source.atomicClauses, source.sourceId).toBeNumber()
+      expect(source.unlinkedClauseDisposition, source.sourceId).not.toBeNull()
+    }
+    // The crosswalk joins rows; it never reclassifies one.
+    for (const [index, requirement] of crosswalk.requirements.entries()) {
+      expect(requirement.classification).toBe(ledger.requirements[index].classification)
+      expect(requirement.normativeState).toBe(ledger.requirements[index].normativeState)
+    }
+  }, 60000)
+
+  test('fails closed when the generated crosswalk drifts from the ledger', async () => {
+    expect(await validateCanonicalCrosswalk(ledger, repositoryRoot)).toEqual([])
+    const drifted = clone(ledger)
+    drifted.requirements[0].classification = 'verified'
+    expect(await validateCanonicalCrosswalk(drifted, repositoryRoot)).toContain(
+      'Canonical requirements crosswalk drifted; run bun run requirements:write'
+    )
+  }, 60000)
+
+  test('inventories embedded objects by identity and never by caption', async () => {
+    const { errors, inventory } = await collectFigureInventory(ledger, repositoryRoot)
+    expect(errors).toEqual([])
+    expect(inventory.sources.map(({ sourceId }) => sourceId)).toEqual(
+      ledger.sources.map(({ id }) => id)
+    )
+    for (const source of inventory.sources) {
+      // Nested tabs and current image bytes were never inventoried, so they are
+      // recorded as absent instead of being inferred from caption text.
+      expect(source.nestedTabsInventoried, source.sourceId).toBe(false)
+      expect(source.imageBytesRefreshedAtCurrentRevision, source.sourceId).toBe(false)
+      for (const object of source.currentObjects) {
+        expect(object.objectId, source.sourceId).toMatch(/^kix\./)
+        expect(object.sha256, source.sourceId).toBeNull()
+        expect(object.recordedTextAnchor, source.sourceId).toBeUndefined()
+      }
+    }
+    const security = inventory.sources.find(({ sourceId }) => sourceId === 'security-trust-model')
+    expect(security.identityReconciliation.added.length).toBe(3)
+    expect(security.identityReconciliation.absent).toEqual(['kix.a77to4b9gn0r'])
+    const architecture = inventory.sources.find(
+      ({ sourceId }) => sourceId === 'system-architecture'
+    )
+    expect(architecture.identityReconciliation.added.length).toBe(2)
+    expect(architecture.identityReconciliation.absent).toEqual(['kix.ows2808gmq16'])
+    expect(inventory.summary.currentRootTabObjects).toBe(12)
+    expect(inventory.summary.historicalObjects).toBe(9)
+  }, 60000)
+
+  test('fails closed when the generated figure inventory drifts', async () => {
+    expect(await validateFigureInventory(ledger, repositoryRoot)).toEqual([])
+    const drifted = clone(ledger)
+    drifted.sources[0].embeddedObjects.nestedTabsInventoried = true
+    expect(await validateFigureInventory(drifted, repositoryRoot)).toContain(
+      'Canonical figure inventory drifted; run bun run requirements:write'
+    )
+  }, 60000)
+
+  test('requires every gap reference to resolve to a recorded open issue', async () => {
+    const { errors } = await validateRequirementsLedger(ledger, {
+      repositoryRoot,
+    })
+    expect(errors).toEqual([])
+    const missing = clone(ledger)
+    missing.githubIssueSnapshot.issues = missing.githubIssueSnapshot.issues.filter(
+      ({ number }) => number !== 188
+    )
+    const missingResult = await validateRequirementsLedger(missing, { repositoryRoot })
+    expect(missingResult.errors).toContain(
+      'CP-ART-001: gap reference #188 is missing from githubIssueSnapshot'
+    )
+    const closed = clone(ledger)
+    const closedIssue = closed.githubIssueSnapshot.issues.find(({ number }) => number === 195)
+    closedIssue.state = 'CLOSED'
+    const closedResult = await validateRequirementsLedger(closed, { repositoryRoot })
+    expect(closedResult.errors).toContain(
+      'CP-PRD-RETRIEVAL-001: gap reference #195 is closed and cannot carry an open gap'
+    )
+  }, 60000)
+
+  test('requires an accountable disposition for every orphaned atomic clause', async () => {
+    const { errors } = await validateRequirementsLedger(ledger, { repositoryRoot })
+    expect(errors).toEqual([])
+    const orphaned = clone(ledger)
+    orphaned.atomDispositions = orphaned.atomDispositions.filter(
+      ({ sourceId }) => sourceId !== 'system-architecture'
+    )
+    const orphanedResult = await validateRequirementsLedger(orphaned, { repositoryRoot })
+    expect(orphanedResult.errors).toContain(
+      'system-architecture: unmapped atomic clauses require an explicit disposition'
+    )
+    const miscounted = clone(ledger)
+    const disposition = miscounted.atomDispositions.find(
+      ({ sourceId }) => sourceId === 'system-architecture'
+    )
+    disposition.unmappedAtoms = 1
+    const miscountedResult = await validateRequirementsLedger(miscounted, { repositoryRoot })
+    expect(miscountedResult.errors).toContain(
+      'system-architecture: atom disposition covers 1 unmapped clauses but the register has 546'
+    )
+  }, 60000)
+
+  test('rejects a stale candidate that is presented as current proof', async () => {
+    const { errors } = await validateRequirementsLedger(ledger, { repositoryRoot })
+    expect(errors).toEqual([])
+    const stale = clone(ledger)
+    stale.reconciliation.candidateProof.coversReconciliationBase = true
+    const staleResult = await validateRequirementsLedger(stale, { repositoryRoot })
+    expect(staleResult.errors).toContain(
+      'reconciliation.candidateProof.coversReconciliationBase is inaccurate'
+    )
+    const missingDisposition = clone(ledger)
+    delete missingDisposition.reconciliation.candidateProof.disposition
+    const missingResult = await validateRequirementsLedger(missingDisposition, {
+      repositoryRoot,
+    })
+    expect(missingResult.errors).toContain(
+      'reconciliation.candidateProof.disposition is required for a stale candidate'
+    )
+  }, 60000)
+
+  test('requires an exact resolvable head for every received worker contribution', async () => {
+    const { errors } = await validateRequirementsLedger(ledger, { repositoryRoot })
+    expect(errors).toEqual([])
+    const pendingId = ledger.workerEvidence[0].id
+    const pendingWithHead = clone(ledger)
+    const pendingWorker = pendingWithHead.workerEvidence.find(({ id }) => id === pendingId)
+    pendingWorker.status = 'pending'
+    pendingWorker.head = 'a'.repeat(40)
+    const pendingResult = await validateRequirementsLedger(pendingWithHead, { repositoryRoot })
+    expect(pendingResult.errors).toContain(`${pendingId}: a pending worker must not record a head`)
+    const missingHead = clone(ledger)
+    const missingHeadWorker = missingHead.workerEvidence.find(({ id }) => id === pendingId)
+    missingHeadWorker.status = 'received'
+    missingHeadWorker.head = null
+    const missingResult = await validateRequirementsLedger(missingHead, { repositoryRoot })
+    expect(missingResult.errors).toContain(
+      `${pendingId}: a received worker must record an exact full Git head`
+    )
+    const unknownHead = clone(ledger)
+    unknownHead.workerEvidence.find(({ id }) => id === pendingId).status = 'received'
+    unknownHead.workerEvidence.find(({ id }) => id === pendingId).head = 'b'.repeat(40)
+    const unknownResult = await validateRequirementsLedger(unknownHead, {
+      repositoryRoot,
+      shallowRepository: false,
+    })
+    expect(unknownResult.errors).toContain(
+      `${pendingId}: worker head ${'b'.repeat(40)} is unavailable in the repository`
+    )
+  }, 60000)
+
+  test('proves received worker evidence against the tree of its own head', async () => {
+    const received = ledger.workerEvidence.filter(({ status }) => status === 'received')
+    expect(received.length).toBeGreaterThan(0)
+    for (const worker of received) {
+      expect(worker.head, worker.id).toMatch(/^[0-9a-f]{40}$/)
+      expect(worker.evidence.length, worker.id).toBeGreaterThan(0)
+      for (const entry of worker.evidence) {
+        expect(entry.commit, `${worker.id}:${entry.path}`).toBe(worker.head)
+      }
+    }
+    const absent = clone(ledger)
+    const worker = absent.workerEvidence.find(({ status }) => status === 'received')
+    worker.evidence.push({ path: 'docs/requirements/does-not-exist.md', commit: worker.head })
+    const absentResult = await validateRequirementsLedger(absent, {
+      repositoryRoot,
+      shallowRepository: false,
+    })
+    expect(absentResult.errors).toContain(
+      `${worker.id}: worker evidence path is absent at head ${worker.head}: docs/requirements/does-not-exist.md`
+    )
+  }, 60000)
+
+  test('gives every superseded row an explicit supersession disposition', async () => {
+    for (const row of [...ledger.requirements, ...ledger.priorMilestoneAudits]) {
+      if (row.classification !== 'superseded') continue
+      expect(row.gap, row.id).toBeUndefined()
+      expect(row.supersession, row.id).toBeDefined()
+      expect(typeof row.supersession.issue, row.id).toBe('number')
+      expect(row.supersession.severity, row.id).toMatch(/^(critical|high|medium|low)$/)
+      expect(typeof row.supersession.owner, row.id).toBe('string')
+      expect(typeof row.supersession.disposition, row.id).toBe('string')
+    }
+    const missing = clone(ledger)
+    delete missing.requirements.find(({ id }) => id === 'CP-TDD-005').supersession
+    const missingResult = await validateRequirementsLedger(missing, { repositoryRoot })
+    expect(missingResult.errors).toContain(
+      'CP-TDD-005: row.supersession is required for superseded rows'
+    )
+  }, 60000)
+
+  test('records the live GitHub issue identity without promoting it', async () => {
+    const snapshot = ledger.githubIssueSnapshot
+    expect(snapshot.repository).toBe('adea-ai/control-plane')
+    expect(snapshot.issues.map(({ number }) => number)).toEqual([
+      186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197,
+    ])
+    for (const issue of snapshot.issues) {
+      expect(issue.url).toBe(`https://github.com/adea-ai/control-plane/issues/${issue.number}`)
+      expect(issue.milestone).toBe(11)
+      expect(issue.repositoryDocumentationLabel).toStartWith('M11.')
+    }
+    expect(snapshot.issues.find(({ number }) => number === 192).state).toBe('CLOSED')
+    // #189 and #193 are recorded closed in the 2026-09-30 repository documentation
+    // but are open on GitHub; the live state wins and nothing is promoted.
+    expect(snapshot.issues.find(({ number }) => number === 189).state).toBe('OPEN')
+    expect(snapshot.issues.find(({ number }) => number === 193).state).toBe('OPEN')
+  })
+
+  test('refreshes the recorded issue snapshot from live identities', () => {
+    const liveIssues = ledger.githubIssueSnapshot.issues.map((issue) => ({
+      number: issue.number,
+      title: issue.title,
+      state: issue.state,
+      closedAt: issue.closedAt,
+      milestone: { number: issue.milestone, title: 'M19 — Feature Completion & Production Audit' },
+      url: issue.url,
+    }))
+    const refreshed = refreshGitHubIssueSnapshot(ledger, liveIssues, {
+      retrievedAt: '2026-10-22',
+    })
+    expect(refreshed.githubIssueSnapshot.retrievedAt).toBe('2026-10-22')
+    expect(refreshed.githubIssueSnapshot.issues).toHaveLength(
+      ledger.githubIssueSnapshot.issues.length
+    )
+    expect(() => refreshGitHubIssueSnapshot(ledger, liveIssues.slice(1))).toThrow(
+      'is missing from the current GitHub inventory'
+    )
+    const renamed = structuredClone(liveIssues)
+    renamed[0].title = 'renamed upstream'
+    renamed[0].state = 'CLOSED'
+    renamed[0].closedAt = '2026-10-22T00:00:00Z'
+    const divergences = compareGitHubIssueSnapshot(ledger, renamed)
+    expect(divergences).toContain('#186 is CLOSED on GitHub but the snapshot records OPEN')
+    expect(divergences).toContain('#186 title differs from the recorded snapshot title')
+  }, 60000)
+
+  test('keeps the generated crosswalk and figure inventory in sync', async () => {
+    expect(await readFile(crosswalkUrl, 'utf8')).toBe(
+      await renderCanonicalCrosswalk(ledger, repositoryRoot)
+    )
+    expect(await readFile(figureInventoryUrl, 'utf8')).toBe(
+      await renderFigureInventory(ledger, repositoryRoot)
+    )
+  }, 60000)
+
+  test('binds every worker evidence entry to the recorded worker head', async () => {
+    const changed = clone(ledger)
+    const worker = changed.workerEvidence.find(({ status }) => status === 'received')
+    worker.evidence[0].commit = 'f'.repeat(40)
+    const { errors } = await validateRequirementsLedger(changed, { repositoryRoot })
+    expect(errors).toContain(
+      `${worker.id}: worker evidence commit must match the worker head for ${worker.evidence[0].path}`
+    )
+  }, 60000)
+
+  test('reports worker evidence whose content differs from this tree', () => {
+    // A fixture repository carries the history the claim depends on, so the check
+    // does not depend on which lane branches a checkout happens to have fetched.
+    const directory = mkdtempSync(join(tmpdir(), 'requirements-worker-'))
+    try {
+      const git = (...args) =>
+        execFileSync(
+          'git',
+          ['-c', 'user.name=fixture', '-c', 'user.email=fixture@example.test', ...args],
+          {
+            cwd: directory,
+            encoding: 'utf8',
+          }
+        ).trim()
+      git('init', '-q')
+      writeFileSync(resolve(directory, 'rewritten.md'), 'recorded content\n')
+      writeFileSync(resolve(directory, 'unchanged.md'), 'same content\n')
+      git('add', '.')
+      git('commit', '-q', '-m', 'recorded worker head')
+      const head = git('rev-parse', 'HEAD')
+      writeFileSync(resolve(directory, 'rewritten.md'), 'later content\n')
+      git('commit', '-q', '-am', 'later rewrite')
+      const fixture = {
+        workerEvidence: [
+          {
+            id: 'W1',
+            lane: 'fixture-lane',
+            status: 'received',
+            head,
+            issueRefs: [1],
+            evidence: [
+              { path: 'rewritten.md', commit: head },
+              { path: 'unchanged.md', commit: head },
+            ],
+          },
+        ],
+      }
+      const { errors, provenance } = validateWorkerEvidence(fixture, directory, false)
+      expect(errors).toEqual([])
+      expect(provenance).toHaveLength(1)
+      expect(provenance[0]).toStartWith('W1 (fixture-lane): 1 of 2 evidence paths')
+      expect(provenance[0]).toContain('rewritten.md')
+      expect(provenance[0]).not.toContain('unchanged.md')
+      expect(provenance[0]).toContain('a matching path is not the reviewed artifact')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('reports the profile join that the requirement rows contradict', async () => {
+    const { provenance } = await validateRequirementsLedger(ledger, { repositoryRoot })
+    const cloud = provenance.find((finding) => finding.startsWith('deployment profile cloud:'))
+    expect(cloud).toBeDefined()
+    expect(cloud).toContain('AHQ-CP-005')
+    expect(cloud).toContain('CP-TDD-004')
+    expect(cloud).toContain('not a coverage claim')
+    // No requirement row names the remaining profiles, so there is nothing to
+    // contradict and nothing is reported.
+    expect(provenance.some((finding) => finding.startsWith('deployment profile local:'))).toBe(
+      false
+    )
+  }, 60000)
+
+  test('fails closed when a historical figure identity leaves the canonical audit', async () => {
+    const changed = clone(ledger)
+    const source = changed.sources.find(({ id }) => id === 'security-trust-model')
+    const object = source.embeddedObjects.historicalObservations[0].objects[0]
+    expect(object.objectId).toBe('kix.vlyjrmx8itur')
+    object.sha256 = 'a'.repeat(64)
+    const { errors } = await validateRequirementsLedger(changed, { repositoryRoot })
+    expect(errors).toContain(
+      'security-trust-model: historical figure object kix.vlyjrmx8itur records a digest that differs from the canonical figure audit'
+    )
+    const renamed = clone(ledger)
+    renamed.sources.find(
+      ({ id }) => id === 'control-plane-tdd'
+    ).embeddedObjects.historicalObservations[0].objects[0].objectId = 'kix.notrecorded00'
+    const renamedResult = await validateRequirementsLedger(renamed, { repositoryRoot })
+    expect(renamedResult.errors).toContain(
+      'control-plane-tdd: historical figure object kix.notrecorded00 is absent from the canonical figure audit'
+    )
+  }, 60000)
+
+  test('accepts a worker ID beyond the ninth lane', async () => {
+    const changed = clone(ledger)
+    const worker = changed.workerEvidence.find(({ status }) => status === 'received')
+    worker.id = 'W10'
+    const { errors } = await validateRequirementsLedger(changed, { repositoryRoot })
+    expect(errors).not.toContain('W10: worker ID is invalid')
+  }, 60000)
+
+  test('reads the generated artifacts from the requested repository root', async () => {
+    // The generated artifacts are compared against the root the caller names, not
+    // against the checkout the script happens to live in.
+    const directory = mkdtempSync(join(tmpdir(), 'requirements-root-'))
+    try {
+      mkdirSync(resolve(directory, 'docs/requirements'), { recursive: true })
+      copyFileSync(
+        resolve(repositoryRoot, 'docs/requirements/canonical-source-freshness-2026-10-03.v1.json'),
+        resolve(directory, 'docs/requirements/canonical-source-freshness-2026-10-03.v1.json')
+      )
+      expect(await validateFigureInventory(ledger, directory)).toContain(
+        'canonical figure inventory is missing or malformed'
+      )
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }, 60000)
+
+  test('never reads the receipts of the checkout that holds the script for another root', async () => {
+    // Two roots carry different receipts. Each validator must answer for the root
+    // it is given, in either call order, and a root without receipts must not
+    // borrow them from the script's own checkout.
+    const alternate = mkdtempSync(join(tmpdir(), 'requirements-two-root-'))
+    const empty = mkdtempSync(join(tmpdir(), 'requirements-no-receipts-'))
+    try {
+      cpSync(
+        resolve(repositoryRoot, 'docs/requirements'),
+        resolve(alternate, 'docs/requirements'),
+        {
+          recursive: true,
+        }
+      )
+      const receiptPath = (root, name) => resolve(root, `docs/requirements/${name}`)
+      const freshnessName = 'canonical-source-freshness-2026-10-03.v1.json'
+      const lineageName = 'canonical-source-lineage-2026-10-03.v1.json'
+      const freshness = JSON.parse(
+        await readFile(receiptPath(repositoryRoot, freshnessName), 'utf8')
+      )
+      const lineage = JSON.parse(await readFile(receiptPath(repositoryRoot, lineageName), 'utf8'))
+      const sentinel = 987654
+      freshness.sources[0].observedCurrentRevision = sentinel
+      lineage.sources[0].currentRevision = sentinel
+      writeFileSync(receiptPath(alternate, freshnessName), JSON.stringify(freshness))
+      writeFileSync(receiptPath(alternate, lineageName), JSON.stringify(lineage))
+      const sourceId = freshness.sources[0].sourceId
+
+      const revisionOf = (inventory) =>
+        inventory.sources.find((source) => source.sourceId === sourceId).currentRevision
+      const crosswalkRevisionOf = (crosswalk) =>
+        crosswalk.sources.find((source) => source.sourceId === sourceId).currentRevision
+
+      const own = (await collectFigureInventory(ledger, repositoryRoot)).inventory
+      const other = (await collectFigureInventory(ledger, alternate)).inventory
+      const ownAgain = (await collectFigureInventory(ledger, repositoryRoot)).inventory
+      expect(revisionOf(other)).toBe(sentinel)
+      expect(revisionOf(own)).not.toBe(sentinel)
+      expect(revisionOf(ownAgain)).toBe(revisionOf(own))
+
+      const ownCrosswalk = (await collectCanonicalCrosswalk(ledger, repositoryRoot)).crosswalk
+      const otherCrosswalk = (await collectCanonicalCrosswalk(ledger, alternate)).crosswalk
+      const ownCrosswalkAgain = (await collectCanonicalCrosswalk(ledger, repositoryRoot)).crosswalk
+      expect(crosswalkRevisionOf(otherCrosswalk)).toBe(sentinel)
+      expect(crosswalkRevisionOf(ownCrosswalk)).not.toBe(sentinel)
+      expect(crosswalkRevisionOf(ownCrosswalkAgain)).toBe(crosswalkRevisionOf(ownCrosswalk))
+
+      const missingInventory = await collectFigureInventory(ledger, empty)
+      expect(missingInventory.errors).toHaveLength(1)
+      expect(missingInventory.errors[0]).toStartWith(
+        'canonical source freshness receipt is unavailable:'
+      )
+      const missingCrosswalk = await collectCanonicalCrosswalk(ledger, empty)
+      expect(
+        missingCrosswalk.errors.some((error) =>
+          error.startsWith('canonical source lineage is unavailable:')
+        )
+      ).toBe(true)
+      expect(
+        missingCrosswalk.errors.some((error) =>
+          error.startsWith('canonical source freshness receipt is unavailable:')
+        )
+      ).toBe(true)
+    } finally {
+      rmSync(alternate, { recursive: true, force: true })
+      rmSync(empty, { recursive: true, force: true })
+    }
+  }, 120000)
+})
+
+describe('CP #195 reconciliation record provenance (#186/#195)', () => {
+  const recordUrl = new URL(
+    '../docs/requirements/cp186-195-reconciliation-2026-10-21.md',
+    import.meta.url
+  )
+  const loadRecord = async () => readFile(recordUrl, 'utf8')
+  const loadCrosswalk = async () => {
+    const { errors, crosswalk } = await collectCanonicalCrosswalk(ledger, repositoryRoot)
+    expect(errors).toEqual([])
+    return crosswalk
+  }
+
+  test('the reconciliation record matches the artifacts it cites', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    expect(validateReconciliationRecord(record, ledger, crosswalk)).toEqual([])
+  }, 60000)
+
+  test('fails closed when the record drifts from the crosswalk coverage', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    const drifted = record.replace(/(\| Captured atomic clauses\s*\|\s*)6093/, '$16094')
+    expect(drifted).not.toBe(record)
+    expect(validateReconciliationRecord(drifted, ledger, crosswalk)).toContain(
+      'reconciliation record "Captured atomic clauses" says 6094, the crosswalk says 6093'
+    )
+  }, 60000)
+
+  test('fails closed when the record drops a coverage row', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    const drifted = record
+      .split('\n')
+      .filter((line) => !line.startsWith('| External acceptance gates recorded '))
+      .join('\n')
+    expect(validateReconciliationRecord(drifted, ledger, crosswalk)).toContain(
+      'reconciliation record is missing the "External acceptance gates recorded" row'
+    )
+  }, 60000)
+
+  test('fails closed when deployment profile count or classification claims drift', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    const countDrift = record.replace(
+      '| Deployment profiles                                          | 4 (all `partially_verified`) |',
+      '| Deployment profiles                                          | 400 (all `partially_verified`) |'
+    )
+    expect(countDrift).not.toBe(record)
+    expect(validateReconciliationRecord(countDrift, ledger, crosswalk)).toContain(
+      'reconciliation record "Deployment profiles" says 400 (all `partially_verified`), the crosswalk inventory says 4 (all `partially_verified`)'
+    )
+
+    const classificationDrift = record.replace('4 (all `partially_verified`)', '4 (all `verified`)')
+    expect(classificationDrift).not.toBe(record)
+    expect(validateReconciliationRecord(classificationDrift, ledger, crosswalk)).toContain(
+      'reconciliation record "Deployment profiles" says 4 (all `verified`), the crosswalk inventory says 4 (all `partially_verified`)'
+    )
+
+    const inconsistentSummary = clone(crosswalk)
+    inconsistentSummary.summary.deploymentProfiles = 400
+    expect(validateReconciliationRecord(record, ledger, inconsistentSummary)).toContain(
+      'crosswalk summary reports 400 deployment profiles, but its inventory has 4'
+    )
+  }, 60000)
+
+  test('checks mixed deployment profile classifications against each inventory count', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    const mixed = clone(crosswalk)
+    mixed.deploymentProfiles[0].classification = 'verified'
+    const mixedRecord = record.replace(
+      '4 (all `partially_verified`)',
+      '4 (3 `partially_verified`, 1 `verified`)'
+    )
+    expect(validateReconciliationRecord(mixedRecord, ledger, mixed)).toEqual([])
+    expect(
+      validateReconciliationRecord(
+        mixedRecord.replace('3 `partially_verified`', '2 `partially_verified`'),
+        ledger,
+        mixed
+      )
+    ).toContain(
+      'reconciliation record "Deployment profiles" says 4 (2 `partially_verified`, 1 `verified`), the crosswalk inventory says 4 (3 `partially_verified`, 1 `verified`)'
+    )
+  }, 60000)
+
+  test('fails closed when worker aggregate counts drift from the worker inventory', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    for (const [actual, claimed] of [
+      ['7 (0 integrated; 7 received)', '99 (0 integrated; 7 received)'],
+      ['7 (0 integrated; 7 received)', '7 (7 integrated; 0 received)'],
+      ['7 (0 integrated; 7 received)', '7 (0 integrated; 6 received; 1 blocked)'],
+    ]) {
+      const drifted = record.replace(actual, claimed)
+      expect(drifted).not.toBe(record)
+      expect(validateReconciliationRecord(drifted, ledger, crosswalk)).toContain(
+        `reconciliation record "Worker lanes recorded" says ${claimed}, the crosswalk inventory says 7 (0 integrated; 7 received)`
+      )
+    }
+
+    const inconsistentSummary = clone(crosswalk)
+    inconsistentSummary.summary.workers = 99
+    expect(validateReconciliationRecord(record, ledger, inconsistentSummary)).toContain(
+      'crosswalk summary reports 99 workers, but its inventory has 7'
+    )
+    inconsistentSummary.summary.workers = 7
+    inconsistentSummary.summary.workersIntegrated = 99
+    expect(validateReconciliationRecord(record, ledger, inconsistentSummary)).toContain(
+      'crosswalk summary reports 99 integrated workers, but its inventory has 0'
+    )
+  }, 60000)
+
+  test('checks mixed worker status counts against the worker inventory', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    const mixed = clone(crosswalk)
+    mixed.workers[0].status = 'integrated'
+    mixed.summary.workersIntegrated = 1
+    const mixedRecord = record.replace(
+      '7 (0 integrated; 7 received)',
+      '7 (1 integrated; 6 received)'
+    )
+    expect(validateReconciliationRecord(mixedRecord, ledger, mixed)).toEqual([])
+    expect(
+      validateReconciliationRecord(mixedRecord.replace('6 received', '5 received'), ledger, mixed)
+    ).toContain(
+      'reconciliation record "Worker lanes recorded" says 7 (1 integrated; 5 received), the crosswalk inventory says 7 (1 integrated; 6 received)'
+    )
+  }, 60000)
+
+  test('fails closed when the record drifts from a recorded worker head', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    const worker = ledger.workerEvidence[0]
+    const drifted = record.replace(worker.head, '0'.repeat(40))
+    expect(drifted).not.toBe(record)
+    expect(validateReconciliationRecord(drifted, ledger, crosswalk)).toContain(
+      `reconciliation record ${worker.id} does not carry the recorded head ${worker.head}`
+    )
+  }, 60000)
+
+  test('fails closed when the record drifts from an open acceptance gate', async () => {
+    const record = await loadRecord()
+    const crosswalk = await loadCrosswalk()
+    const gate = ledger.reconciliation.externalGates[0]
+    const drifted = record.replace(
+      new RegExp(`(\\| ${gate.id}[^\\n]*?\\| )blocked( \\|)`),
+      '$1satisfied$2'
+    )
+    expect(drifted).not.toBe(record)
+    expect(validateReconciliationRecord(drifted, ledger, crosswalk)).toContain(
+      `reconciliation record ${gate.id} says satisfied, the ledger says ${gate.status}`
+    )
+  }, 60000)
+})
+
+describe('requirements provenance fetch (#186/#195)', () => {
+  const sha = (character) => character.repeat(40)
+  const fixture = {
+    candidate: { commit: sha('1') },
+    reconciliation: { reconciliationBase: sha('2') },
+    workerEvidence: [
+      { id: 'W1', lane: 'one', status: 'received', head: sha('3') },
+      { id: 'W2', lane: 'two', status: 'pending', head: null },
+      { id: 'W3', lane: 'three', status: 'integrated', head: sha('4') },
+    ],
+  }
+  // A scripted Git: `known` objects resolve, `remote` objects can be fetched.
+  const scriptedGit = ({ known, remote, mismatched = [] }) => {
+    const calls = []
+    const spawn = (_command, args) => {
+      calls.push(args.join(' '))
+      if (args[0] === 'rev-parse') {
+        const name = args[3].replace('^{commit}', '')
+        if (!known.has(name)) return { status: 1, stdout: '' }
+        return { status: 0, stdout: `${mismatched.includes(name) ? sha('f') : name}\n` }
+      }
+      const name = args.at(-1)
+      if (!remote.has(name))
+        return { status: 128, stderr: `fatal: remote error: upload-pack: not our ref ${name}\n` }
+      known.add(name)
+      return { status: 0, stderr: '' }
+    }
+    return { spawn, calls }
+  }
+
+  test('targets the candidate, the reconciliation base and every non-pending lane head', () => {
+    expect(provenanceTargets(fixture).map(({ sha: value }) => value)).toEqual([
+      sha('1'),
+      sha('2'),
+      sha('3'),
+      sha('4'),
+    ])
+    expect(provenanceTargets(ledger).length).toBeGreaterThanOrEqual(
+      ledger.workerEvidence.filter(({ status }) => status !== 'pending').length
+    )
+  })
+
+  test('fetches an absent object by its exact name and reports each outcome', () => {
+    const { spawn, calls } = scriptedGit({
+      known: new Set([sha('1')]),
+      remote: new Set([sha('3')]),
+    })
+    const results = fetchProvenanceObjects(fixture, { root: '/unused', spawnSync: spawn })
+    expect(results.map(({ status }) => status)).toEqual([
+      'present',
+      'unavailable',
+      'fetched',
+      'unavailable',
+    ])
+    expect(results[1].reason).toContain('not our ref')
+    // Only absent objects are fetched, one exact name at a time, without a depth.
+    expect(calls.filter((call) => call.startsWith('fetch'))).toEqual([
+      `fetch --quiet --no-tags origin ${sha('2')}`,
+      `fetch --quiet --no-tags origin ${sha('3')}`,
+      `fetch --quiet --no-tags origin ${sha('4')}`,
+    ])
+  })
+
+  test('never accepts an object that does not carry the recorded name', () => {
+    const { spawn } = scriptedGit({
+      known: new Set(),
+      remote: new Set([sha('1')]),
+      mismatched: [sha('1')],
+    })
+    const [candidate] = fetchProvenanceObjects(fixture, { root: '/unused', spawnSync: spawn })
+    expect(candidate.status).toBe('unavailable')
+    expect(candidate.reason).toBe('the fetched object does not carry the recorded name')
+  })
+})
+
+describe('worker evidence content binding record (#186/#195)', () => {
+  const blob = (character) => character.repeat(40)
+  const recordPath = 'docs/requirements/cp186-195-reconciliation-2026-10-21.md'
+  const inventory = {
+    complete: true,
+    entries: [
+      { worker: 'W1', path: 'a.md', headBlob: blob('1'), treeBlob: blob('2'), state: 'differs' },
+      {
+        worker: 'W2',
+        path: recordPath,
+        headBlob: blob('3'),
+        treeBlob: blob('4'),
+        state: 'differs',
+      },
+      {
+        worker: 'W3',
+        path: 'same.md',
+        headBlob: blob('5'),
+        treeBlob: blob('5'),
+        state: 'identical',
+      },
+      {
+        worker: 'W4',
+        path: 'gone.md',
+        headBlob: blob('6'),
+        treeBlob: null,
+        state: 'absent-in-tree',
+      },
+    ],
+  }
+  const recordWith = ({ rows, lanes = 'Lanes with such a path: 2 of 7 (W1, W2).' }) =>
+    [
+      '### Worker evidence content binding',
+      '',
+      lanes,
+      '',
+      '| Worker | Path | Blob at the lane head | Blob in this tree |',
+      '| ------ | ---- | --------------------- | ----------------- |',
+      ...rows,
+      '',
+      '## Next section',
+    ].join('\n')
+  const goodRows = [
+    `| W1 | \`a.md\` | \`${blob('1')}\` | \`${blob('2')}\` |`,
+    `| W2 | \`${recordPath}\` | \`${blob('3')}\` | not recorded (this record) |`,
+  ]
+
+  test('accepts a table that lists exactly the differing paths with their lane blobs', () => {
+    const result = validateWorkerContentBinding(recordWith({ rows: goodRows }), inventory, {
+      workerCount: 7,
+    })
+    expect(result.errors).toEqual([])
+    expect(result.provenance).toEqual([])
+  })
+
+  test('rejects an omitted path, an invented row and a wrong lane blob', () => {
+    const omitted = validateWorkerContentBinding(
+      recordWith({ rows: goodRows.slice(1), lanes: 'Lanes with such a path: 1 of 7 (W2).' }),
+      inventory,
+      { workerCount: 7 }
+    )
+    expect(omitted.errors).toContain(
+      'reconciliation record omits the differing worker evidence path W1 a.md'
+    )
+    const invented = validateWorkerContentBinding(
+      recordWith({
+        rows: [...goodRows, `| W3 | \`same.md\` | \`${blob('5')}\` | \`${blob('5')}\` |`],
+        lanes: 'Lanes with such a path: 2 of 7 (W1, W2).',
+      }),
+      inventory,
+      { workerCount: 7 }
+    )
+    expect(invented.errors).toContain(
+      'reconciliation record lists W3 same.md as differing, but its content is not different from the recorded head'
+    )
+    const wrongBlob = validateWorkerContentBinding(
+      recordWith({
+        rows: [`| W1 | \`a.md\` | \`${blob('9')}\` | \`${blob('2')}\` |`, goodRows[1]],
+      }),
+      inventory,
+      { workerCount: 7 }
+    )
+    expect(wrongBlob.errors).toContain(
+      `reconciliation record W1 a.md lists lane blob ${blob('9')}, the recorded head carries ${blob('1')}`
+    )
+  })
+
+  test('rejects a wrong lane count and a missing statement', () => {
+    const wrongCount = validateWorkerContentBinding(
+      recordWith({ rows: goodRows, lanes: 'Lanes with such a path: 4 of 7 (W1, W2).' }),
+      inventory,
+      { workerCount: 7 }
+    )
+    expect(wrongCount.errors).toContain(
+      'reconciliation record says 4 lanes have a differing path, the recorded heads show 2'
+    )
+    const wrongTotal = validateWorkerContentBinding(recordWith({ rows: goodRows }), inventory, {
+      workerCount: 9,
+    })
+    expect(wrongTotal.errors).toContain(
+      'reconciliation record says 7 lanes in total, the ledger records 9'
+    )
+    const missing = validateWorkerContentBinding(
+      recordWith({ rows: goodRows, lanes: 'Several lanes.' }),
+      inventory,
+      { workerCount: 7 }
+    )
+    expect(missing.errors).toContain(
+      'reconciliation record must state "Lanes with such a path: N of M"'
+    )
+    expect(validateWorkerContentBinding('## nothing', inventory).errors).toEqual([
+      'reconciliation record is missing the "Worker evidence content binding" section',
+    ])
+  })
+
+  test('rejects a duplicated row whichever order the wrong blob comes in', () => {
+    const wrongRow = `| W1 | \`a.md\` | \`${blob('9')}\` | \`${blob('2')}\` |`
+    for (const rows of [
+      [wrongRow, ...goodRows],
+      [...goodRows, wrongRow],
+    ]) {
+      const result = validateWorkerContentBinding(recordWith({ rows }), inventory, {
+        workerCount: 7,
+      })
+      expect(result.errors).toContain(
+        'reconciliation record lists W1 a.md more than once; a duplicated row can hide a wrong blob'
+      )
+    }
+    // The same rows are rejected without history, so a shallow checkout cannot hide them.
+    const shallow = validateWorkerContentBinding(
+      recordWith({ rows: [wrongRow, ...goodRows] }),
+      { entries: [], complete: false },
+      { workerCount: 7 }
+    )
+    expect(shallow.errors).toContain(
+      'reconciliation record lists W1 a.md more than once; a duplicated row can hide a wrong blob'
+    )
+  })
+
+  test('fails closed on a missing record', () => {
+    for (const given of [inventory, { entries: [], complete: false }]) {
+      const result = validateWorkerContentBinding(undefined, given, { workerCount: 7 })
+      expect(result.errors).toEqual([
+        'reconciliation record is missing, so its worker content binding cannot be checked',
+      ])
+      expect(result.compared).toBe(false)
+    }
+  })
+
+  test('checks the section structure even when the history is incomplete', () => {
+    const incomplete = { entries: [], complete: false }
+    expect(validateWorkerContentBinding('## nothing', incomplete).errors).toEqual([
+      'reconciliation record is missing the "Worker evidence content binding" section',
+    ])
+    const noStatement = validateWorkerContentBinding(
+      recordWith({ rows: goodRows, lanes: 'Several lanes.' }),
+      incomplete,
+      { workerCount: 7 }
+    )
+    expect(noStatement.errors).toEqual([
+      'reconciliation record must state "Lanes with such a path: N of M"',
+    ])
+    const contradictory = validateWorkerContentBinding(
+      recordWith({ rows: goodRows, lanes: 'Lanes with such a path: 4 of 9 (W1, W2).' }),
+      incomplete,
+      { workerCount: 7 }
+    )
+    expect(contradictory.errors).toEqual([
+      'reconciliation record says 4 lanes have a differing path, its table lists 2',
+      'reconciliation record says 9 lanes in total, the ledger records 7',
+    ])
+  })
+
+  test('skips only the blob comparison when the history is incomplete', () => {
+    const incomplete = { entries: [], complete: false }
+    const result = validateWorkerContentBinding(recordWith({ rows: goodRows }), incomplete, {
+      workerCount: 7,
+    })
+    expect(result.errors).toEqual([])
+    expect(result.compared).toBe(false)
+    expect(
+      validateWorkerContentBinding(recordWith({ rows: goodRows }), inventory, { workerCount: 7 })
+        .compared
+    ).toBe(true)
+  })
+
+  test('reports a stale tree-side blob as provenance and exempts the record itself', () => {
+    const stale = validateWorkerContentBinding(
+      recordWith({
+        rows: [`| W1 | \`a.md\` | \`${blob('1')}\` | \`${blob('8')}\` |`, goodRows[1]],
+      }),
+      inventory,
+      { workerCount: 7 }
+    )
+    expect(stale.errors).toEqual([])
+    expect(stale.provenance).toEqual([
+      `reconciliation record W1 a.md lists tree blob ${blob('8')}, this tree carries ${blob('2')}`,
+    ])
+  })
+
+  test('builds its inventory from the blobs of the recorded head and the tree', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'requirements-binding-'))
+    try {
+      const git = (...args) =>
+        execFileSync(
+          'git',
+          ['-c', 'user.name=fixture', '-c', 'user.email=fixture@example.test', ...args],
+          { cwd: directory, encoding: 'utf8' }
+        ).trim()
+      git('init', '-q')
+      writeFileSync(resolve(directory, 'rewritten.md'), 'recorded\n')
+      writeFileSync(resolve(directory, 'same.md'), 'same\n')
+      writeFileSync(resolve(directory, 'removed.md'), 'removed\n')
+      git('add', '.')
+      git('commit', '-q', '-m', 'lane head')
+      const head = git('rev-parse', 'HEAD')
+      writeFileSync(resolve(directory, 'rewritten.md'), 'later\n')
+      git('rm', '-q', 'removed.md')
+      git('commit', '-q', '-am', 'later')
+      const fixture = {
+        workerEvidence: [
+          {
+            id: 'W1',
+            lane: 'fixture',
+            status: 'received',
+            head,
+            issueRefs: [1],
+            evidence: ['rewritten.md', 'same.md', 'removed.md'].map((path) => ({
+              path,
+              commit: head,
+            })),
+          },
+        ],
+      }
+      const result = validateWorkerEvidence(fixture, directory, false)
+      expect(result.inventory.complete).toBe(true)
+      expect(result.inventory.entries.map(({ path, state }) => [path, state])).toEqual([
+        ['rewritten.md', 'differs'],
+        ['same.md', 'identical'],
+        ['removed.md', 'absent-in-tree'],
+      ])
+      const unresolved = validateWorkerEvidence(
+        { workerEvidence: [{ ...fixture.workerEvidence[0], head: 'a'.repeat(40) }] },
+        directory,
+        true
+      )
+      expect(unresolved.inventory.complete).toBe(false)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 })

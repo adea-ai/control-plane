@@ -9,6 +9,7 @@ import {
 } from '@control-plane/runtime-sdk'
 import { z } from 'zod'
 import { type AcpSnapshot, type AcpUpdate } from './acp-schemas.js'
+import type { NativeRouteGate } from './native-route-gate.js'
 
 export interface AcpTransportCall {
   readonly method: string
@@ -84,6 +85,13 @@ export interface AcpDriverOptions {
   readonly protocolVersion?: number
   readonly requestTimeoutMs?: number
   readonly externalSessions?: AcpExternalSessionsOptions
+  /**
+   * Optional native route gate (M13.03.1). When present the driver consults
+   * the evaluated qualification instead of declaring capabilities, usage
+   * claims or governed native paths directly; an unqualified route stays
+   * fail-closed. Omitted only by drivers that are not native executor routes.
+   */
+  readonly nativeRouteGate?: NativeRouteGate
 }
 
 export interface AcpAdapterOptions {

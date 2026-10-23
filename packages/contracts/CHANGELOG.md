@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.21.6](https://github.com/adea-ai/control-plane/compare/contracts-v1.21.5...contracts-v1.21.6) (2026-10-22)
+
+
+### Bug Fixes
+
+* **railway:** verify production PostgreSQL identity and scoped migrations ([#1256](https://github.com/adea-ai/control-plane/issues/1256)) ([86b7515](https://github.com/adea-ai/control-plane/commit/86b751520c569106644c518dd5fd0819056cd169))
+
+## [1.21.5](https://github.com/adea-ai/control-plane/compare/contracts-v1.21.4...contracts-v1.21.5) (2026-10-22)
+
+
+### Bug Fixes
+
+* **pi-durable:** fence cancellation retries and uncertain effects ([#935](https://github.com/adea-ai/control-plane/issues/935)) ([#1246](https://github.com/adea-ai/control-plane/issues/1246)) ([62d530f](https://github.com/adea-ai/control-plane/commit/62d530f5a4c012e978f38e6880181b8f5fbfebe5))
+
 ## [1.21.4](https://github.com/adea-ai/control-plane/compare/contracts-v1.21.3...contracts-v1.21.4) (2026-10-17)
 
 

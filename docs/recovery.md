@@ -4,7 +4,7 @@ Control Plane recovery is profile-specific but preserves one semantic rule: comm
 
 ## Ownership by milestone
 
-- **M9** proves the managed-cloud Railway + Neon + R2 + Restate recovery path.
+- **M9** proves the managed-cloud Railway + PostgreSQL + R2 + Restate recovery path.
 - **M10** adds Local embedded-SQLite and Hosted SQLite/PostgreSQL/Restate recovery, backup, restart, and upgrade/rollback behavior.
 - **M11** independently reruns the recovery matrix across all accepted profiles and records measured RPO/RTO or equivalent recovery evidence.
 
@@ -13,7 +13,7 @@ recovery code, a compatibility layer, or the current first-party Cloud runbook.
 
 ## Managed-cloud recovery target (M9)
 
-The accepted cloud profile is Railway compute, separate Control Plane Neon PostgreSQL, Cloudflare R2, and Restate.
+The accepted cloud profile is Railway compute, separate Control Plane Railway PostgreSQL, Cloudflare R2, and Restate.
 
 Required M9 evidence includes:
 
@@ -22,16 +22,16 @@ Required M9 evidence includes:
 - `packages/events/src/delivery.test.mjs`;
 - failed Railway deploy rollback/forward repair;
 - service restart/redeploy and draining behavior;
-- Neon connection loss/reconnect;
+- PostgreSQL connection loss/reconnect;
 - explicit migration failure behavior;
-- Neon backup/PITR or equivalent restore procedure validated against an isolated destination;
+- PostgreSQL backup/PITR or equivalent restore procedure validated against an isolated destination;
 - Restate restart/redeploy while durable work exists;
 - Runtime Gateway reconnect where a non-co-located RuntimeNode is used;
 - R2 operation failure/recovery where cloud object storage is used;
 - no duplicate logical execution, effect, Artifact, usage, or billing record after redelivery/restart;
 - content-redacted logs/traces throughout incidents.
 
-M9.6 #73 did not close from configuration shape alone; its live staging restart/recovery evidence is
+M9.6 #73 did not close from configuration shape alone; its live sandbox restart/recovery evidence is
 recorded in `docs/evidence/m9-cloud-certification-2026-08-28.md`.
 
 ## Local recovery target (M10)
@@ -103,11 +103,11 @@ complete stored evidence, proves application access is denied before bootstrap, 
 isolated database migration/bootstrap contract. It then verifies application-role receipt reads,
 immutable evaluation/context-authoring/validation replay, and a new evaluation write. The role must
 not have public-schema creation, superuser, database-creation or role-creation privileges. This is
-a local role-separated recovery check, not a managed Neon PITR or full hosted application restart
+a local role-separated recovery check, not a managed PostgreSQL PITR or full hosted application restart
 certification. Do not substitute broad production grants or administrator application credentials
 for the deployed environment's approved role/bootstrap procedure.
 
-Existing PostgreSQL/LangGraph/Temporal-era integration and recovery scripts are historical executable evidence. They do not by themselves certify the accepted Railway/Neon/R2/Restate cloud profile or the M10 Local/Hosted profiles.
+Existing PostgreSQL/LangGraph/Temporal-era integration and recovery scripts are historical executable evidence. They do not by themselves certify the accepted Railway/PostgreSQL/R2/Restate cloud profile or the M10 Local/Hosted profiles.
 
 M9.7–M9.9 established the executable Cloud recovery matrix. M10 must extend that matrix for Local and
 Hosted so M11 can run one explicit profile-aware suite rather than treating historical AWS/Temporal
