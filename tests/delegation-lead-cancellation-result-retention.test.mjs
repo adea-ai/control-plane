@@ -18,14 +18,22 @@ import { SqliteContextPackageRepository } from '../packages/sqlite-persistence/s
 import { SqliteDelegationRepository } from '../packages/sqlite-persistence/src/delegation-repository.ts'
 import { SqliteDelegationEventPublisher } from '../packages/sqlite-persistence/src/delegation-event-publisher.ts'
 
-// CP #1024: "retain results after lead cancellation/restart" in the ordering no
-// other module proves - the child's terminal RESULT is retained first, the lead
-// is cancelled afterwards. The cascade stop republishes the retained completion
-// and must never overwrite it with a cancellation, both before and after a real
-// restart where the canonical database closes and reopens from the same file,
-// including the window where the completion publication is still pending after
-// a crash. Every fixture is synthetic and offline; nothing here certifies a live
-// qualified child callback.
+// CP #1024 (service-level only): how `DelegationService` handles a lead stop that arrives AFTER a
+// child's terminal result is already retained, over the real SQLite repositories and a real
+// database close/reopen. `cancelChildren` republishes the retained completion and must never
+// overwrite it with a cancellation.
+//
+// Two cases, each distinct:
+//  1. The completion was already PUBLISHED. The test preserves that published result across the
+//     lead stop and the restart.
+//  2. A crash left the completion publication PENDING (result and lifecycle transition committed).
+//     The test shows the lead stop after restart repairs that pending publication.
+//
+// Scope limit: this covers the persistent cascade handling in `DelegationService` and the SQLite
+// delegation store only. It does not exercise production lead-cancellation wiring (no real lead
+// cancellation request path), it does not check that the result artifact is still available or
+// readable (only the retained `terminalResultRef` string), and it is not full #1024 acceptance.
+// Every fixture is synthetic and offline; nothing here certifies a live qualified child callback.
 
 const stopAt = '2026-08-25T18:03:00.000Z'
 const runningAt = '2026-08-25T18:02:10.000Z'
@@ -104,7 +112,7 @@ async function expectRetainedCompletion(stores) {
   expect((await stores.executions.getAttempt(ids.childAttemptId)).state).toBe('completed')
 }
 
-test('a lead cancellation after a retained completion republishes it and survives a restart', async () => {
+test('a lead stop after an already-published completion keeps that result through a restart', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'lead-cancellation-result-'))
   const path = join(directory, 'state.sqlite')
   let provider = new SqlitePersistenceProvider({ path })
@@ -139,7 +147,7 @@ test('a lead cancellation after a retained completion republishes it and survive
   }
 })
 
-test('a crash while the completion publication is pending keeps the result through lead cancellation and restart', async () => {
+test('a lead stop after a restart repairs a completion publication left pending by a crash', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'lead-cancellation-result-'))
   const path = join(directory, 'state.sqlite')
   let provider = new SqlitePersistenceProvider({ path })

@@ -1,15 +1,22 @@
-// CP #937 / #1018 (M13.04.1): the retry-after-compaction admission intersection.
+// CP #937 / #1018 (M13.04.1): child retry admission fences across a SQLite database reopen.
 //
-// Existing coverage proves each acceptance state separately: retry races without native
-// compaction (`child-budget-admission.test.mjs`), and native compaction without a retry
-// (`pi-durable-adapter`'s `compaction-child-admission.test.mjs`). This module proves the missing
-// combined state: a child retry that commits only AFTER a native Pi compaction and a SQLite
-// database reopen must preserve the sibling identity, total, parallel and budget admission
-// fences exactly as at initial admission. It is a new unit module only — no runtime source and
-// no existing test is touched.
+// Existing coverage proves retry races without a reopen (`child-budget-admission.test.mjs`) and
+// native compaction without a retry (`pi-durable-adapter`'s `compaction-child-admission.test.mjs`).
+// This module proves the CP half of the combined state: a child retry that commits only AFTER a
+// SQLite database reopen must preserve the sibling identity, total, parallel and budget admission
+// fences exactly as at initial admission.
 //
-// The native harness `retry` setting below is the model-call retry (kept off for determinism);
-// the retry under test is the CP delegation retry committed after the compaction and reopen.
+// SCOPE LIMIT, deliberately kept open: the native Pi compaction below runs in its OWN temporary
+// native store, with its own session, and is NOT mapped to the CP parent execution, attempt or
+// child delegation. It shows that an unrelated native compaction in the same process does not
+// disturb these CP fences; it does not prove that compacting the native session that belongs to
+// the CP parent leaves child retry admission intact. That mapped retry x compaction intersection
+// stays UNPROVEN and needs a joined fixture (the runtime-mapped session of
+// `pi-durable-adapter`'s `compaction-child-admission.test.mjs`) before #937/#1018 can claim it.
+//
+// This is a new unit-lane module only: no runtime source and no existing test is touched. The
+// native harness `retry` setting below is the model-call retry (kept off for determinism); the
+// retry under test is the CP delegation retry committed after the reopen.
 
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -67,19 +74,22 @@ const budgetOf = (store, executionId) =>
   store.usageStore.transaction(ids.workspaceId, (tx) => tx.getBudget(executionId))
 
 /**
- * One deterministic native Pi compaction: a real parent turn, an explicit `root.compact`, and a
- * persisted summary in its own native session file, mirroring the manual-compaction shape the
- * suite already qualifies.
+ * One deterministic native Pi compaction in an INDEPENDENT temporary native store: a real turn, an
+ * explicit `root.compact`, and a persisted summary in that store's own session. It has no
+ * relationship to the CP parent execution or child delegation under test (see the scope limit in
+ * the module header), so it must not be read as compacting the CP parent's mapped session.
  */
-async function compactNativeSession() {
+async function compactIndependentNativeSession() {
   const directory = await mkdtemp(join(tmpdir(), 'pi-retry-compaction-'))
   const storage = await openNodeSqliteStorage(join(directory, 'pi.sqlite'))
   const models = createModels()
   const faux = fauxProvider()
   models.setProvider(faux.provider)
   faux.setResponses([
-    fauxAssistantMessage('The parent turn is recorded before the child retry compaction.'),
-    fauxAssistantMessage('The recorded parent turn remains preserved in this summary.'),
+    fauxAssistantMessage(
+      'A turn is recorded in the independent native store before it is compacted.'
+    ),
+    fauxAssistantMessage('The recorded turn remains preserved in this summary.'),
   ])
   const harness = await Harness.open(
     storage,
@@ -106,19 +116,19 @@ async function compactNativeSession() {
       {
         type: 'input',
         requestId: 'retry-compaction:turn:1',
-        content: 'Record the parent turn before compaction.',
+        content: 'Record a turn before compaction.',
       },
       BACKGROUND_CONTEXT
     )
     expect((await firstTurn.wait(BACKGROUND_CONTEXT)).status).toBe('done')
-    const taskId = await root.compact('Preserve the recorded parent turn.', BACKGROUND_CONTEXT)
+    const taskId = await root.compact('Preserve the recorded turn.', BACKGROUND_CONTEXT)
     const task = await harness.waitForTask(taskId, BACKGROUND_CONTEXT)
     expect(task.state.status).toBe('terminal')
     expect(task.state.outcome.status).toBe('completed')
     const compacted = await root.context(BACKGROUND_CONTEXT)
     const summary = compacted.entries.find((entry) => entry.kind === CompactionEntry.kind)
     expect(summary).toBeDefined()
-    expect(JSON.stringify(summary)).toContain('recorded parent turn')
+    expect(JSON.stringify(summary)).toContain('recorded turn')
   } finally {
     await harness.close(BACKGROUND_CONTEXT)
     await storage.close(BACKGROUND_CONTEXT)
@@ -134,7 +144,7 @@ async function reopenDatabase(f) {
   return provider
 }
 
-/** Admits the retryable child, dispatches it and records it running — all before the compaction. */
+/** Admits the retryable child, dispatches it and records it running — all before the reopen. */
 async function admitRunningChild(f, child) {
   const store = admissionStore(f.provider)
   const admitted = retryable(child)
@@ -177,7 +187,7 @@ async function expectNoAllocationRows(store, sibling) {
   await expect(budgetOf(store, sibling.childIds.childExecutionId)).resolves.toBeUndefined()
 }
 
-test('a child retry after native compaction and a database reopen keeps the sibling identity and parallel admission fences', async () => {
+test('a child retry after an independent native compaction and a database reopen keeps the sibling identity and parallel admission fences', async () => {
   const f = await fixture({ maximumTotal: 2, maximumParallel: 1 })
   let reopenedProvider
   try {
@@ -191,7 +201,7 @@ test('a child retry after native compaction and a database reopen keeps the sibl
     )
     expect(parentBudgetBefore?.reservations).toHaveLength(1)
 
-    await compactNativeSession()
+    await compactIndependentNativeSession()
     reopenedProvider = await reopenDatabase(f)
     const store = admissionStore(reopenedProvider)
 
@@ -222,7 +232,7 @@ test('a child retry after native compaction and a database reopen keeps the sibl
   }
 })
 
-test('a child retry after native compaction and a database reopen keeps the total child admission fence', async () => {
+test('a child retry after an independent native compaction and a database reopen keeps the total child admission fence', async () => {
   const f = await fixture({ maximumTotal: 1, maximumParallel: 2 })
   let reopenedProvider
   try {
@@ -236,7 +246,7 @@ test('a child retry after native compaction and a database reopen keeps the tota
     )
     expect(parentBudgetBefore?.reservations).toHaveLength(1)
 
-    await compactNativeSession()
+    await compactIndependentNativeSession()
     reopenedProvider = await reopenDatabase(f)
     const store = admissionStore(reopenedProvider)
 
@@ -267,7 +277,7 @@ test('a child retry after native compaction and a database reopen keeps the tota
   }
 })
 
-test('a child retry after native compaction and a database reopen keeps the parent and child budget admission fences', async () => {
+test('a child retry after an independent native compaction and a database reopen keeps the parent and child budget admission fences', async () => {
   const f = await fixture({ maximumTotal: 2, maximumParallel: 2 })
   let reopenedProvider
   try {
@@ -292,7 +302,7 @@ test('a child retry after native compaction and a database reopen keeps the pare
     expect(childBudgetBefore?.maximumMicrounits).toBe(planCeiling)
     expect(childBudgetBefore?.maximumTokens).toBe(planTokens)
 
-    await compactNativeSession()
+    await compactIndependentNativeSession()
     reopenedProvider = await reopenDatabase(f)
     const store = admissionStore(reopenedProvider)
 
