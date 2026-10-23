@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  containsSecret,
   CredentialVault,
   CredentialVaultError,
   InMemorySecretProvider,
-  NeonEncryptedSecretProvider,
+  PostgresEncryptedSecretProvider,
 } from './index.ts'
 
 const ids = {
@@ -264,7 +265,7 @@ describe('connector credential vault', () => {
     ).resolves.toBe(true)
   })
 
-  test('encrypts Neon-backed secrets without leaking plaintext or provider types into vault contracts', async () => {
+  test('encrypts PostgreSQL-backed secrets without leaking plaintext or provider types into vault contracts', async () => {
     const records = new Map()
     const store = {
       async put(input) {
@@ -277,7 +278,7 @@ describe('connector credential vault', () => {
         records.delete(`${input.locator}:${input.version}`)
       },
     }
-    const provider = new NeonEncryptedSecretProvider({
+    const provider = new PostgresEncryptedSecretProvider({
       store,
       encryptionKey: 'a'.repeat(64),
       keyReference: 'control-plane-secret-key-v1',
@@ -312,7 +313,7 @@ describe('connector credential vault', () => {
         records.delete(`${input.locator}:${input.version}`)
       },
     }
-    const provider = new NeonEncryptedSecretProvider({
+    const provider = new PostgresEncryptedSecretProvider({
       store,
       encryptionKey: 'a'.repeat(64),
       keyReference: 'control-plane-secret-key-v1',
@@ -397,4 +398,222 @@ test('credential expiry is checked again at use even when the lease has not yet 
     )
   ).rejects.toMatchObject({ code: 'CREDENTIAL_EXPIRED' })
   expect(invoked).toBe(false)
+})
+
+describe('secret egress inspection of callback results', () => {
+  // Every value below is a synthetic sentinel. No real credential, key, or
+  // provider response is used anywhere in this suite.
+  const synthetic = 'egress-canary-9f4a2c7e'
+
+  test('finds the secret in the containers a callback can return', () => {
+    expect(containsSecret(new Error(`failed with ${synthetic}`), synthetic)).toBe(true)
+    expect(containsSecret(new Error('failed', { cause: synthetic }), synthetic)).toBe(true)
+    expect(containsSecret(new AggregateError([new Error(synthetic)], 'failed'), synthetic)).toBe(
+      true
+    )
+    expect(containsSecret(new Map([['detail', synthetic]]), synthetic)).toBe(true)
+    expect(containsSecret(new Map([['token', 'opaque']]), synthetic)).toBe(true)
+    expect(containsSecret(new Set([synthetic]), synthetic)).toBe(true)
+    expect(containsSecret(Buffer.from(synthetic, 'utf8'), synthetic)).toBe(true)
+    expect(containsSecret(new Uint8Array(Buffer.from(synthetic, 'utf8')), synthetic)).toBe(true)
+    expect(containsSecret(new TextEncoder().encode(synthetic).buffer, synthetic)).toBe(true)
+    expect(containsSecret([{ nested: new Error(synthetic) }], synthetic)).toBe(true)
+    expect(containsSecret({ payload: new Map([['k', new Set([synthetic])]]) }, synthetic)).toBe(
+      true
+    )
+    // A property that is not enumerable still holds the value.
+    expect(
+      containsSecret(
+        Object.defineProperty({}, 'hidden', { value: synthetic, enumerable: false }),
+        synthetic
+      )
+    ).toBe(true)
+    expect(containsSecret({ [Symbol('held')]: synthetic }, synthetic)).toBe(true)
+  })
+
+  test('finds the secret in an ordinary property name', () => {
+    expect(containsSecret({ [synthetic]: 'value' }, synthetic)).toBe(true)
+    expect(containsSecret({ [`prefix-${synthetic}`]: 'value' }, synthetic)).toBe(true)
+    const map = new Map()
+    map[synthetic] = 'value'
+    expect(containsSecret(map, synthetic)).toBe(true)
+    const buffer = Buffer.from('accepted', 'utf8')
+    buffer[synthetic] = 'value'
+    expect(containsSecret(buffer, synthetic)).toBe(true)
+    // A name that does not carry the secret is left alone.
+    expect(containsSecret({ status: 'ok', 'user-id': 'u-1' }, synthetic)).toBe(false)
+  })
+
+  test('finds the secret in own properties of a Map or a Set', () => {
+    const map = new Map([['status', 'ok']])
+    map.payload = synthetic
+    expect(containsSecret(map, synthetic)).toBe(true)
+
+    const set = new Set(['accepted'])
+    set.payload = synthetic
+    expect(containsSecret(set, synthetic)).toBe(true)
+
+    const sensitive = new Map()
+    sensitive.token = 'opaque'
+    expect(containsSecret(sensitive, synthetic)).toBe(true)
+
+    const cleanMap = new Map([['status', 'ok']])
+    cleanMap.note = 'accepted'
+    expect(containsSecret(cleanMap, synthetic)).toBe(false)
+    const cleanSet = new Set(['accepted'])
+    cleanSet.note = 'accepted'
+    expect(containsSecret(cleanSet, synthetic)).toBe(false)
+  })
+
+  test('finds the secret in own properties of a binary container', () => {
+    const buffer = Buffer.from('accepted', 'utf8')
+    buffer.payload = synthetic
+    expect(containsSecret(buffer, synthetic)).toBe(true)
+
+    const view = new Uint8Array([1, 2, 3])
+    view.payload = synthetic
+    expect(containsSecret(view, synthetic)).toBe(true)
+
+    const cleanBuffer = Buffer.from('accepted', 'utf8')
+    cleanBuffer.note = 'accepted'
+    expect(containsSecret(cleanBuffer, synthetic)).toBe(false)
+  })
+
+  test('finds the secret in a symbol key description', () => {
+    expect(containsSecret({ [Symbol(synthetic)]: 'value' }, synthetic)).toBe(true)
+    expect(containsSecret({ [Symbol('held')]: 'value' }, synthetic)).toBe(false)
+  })
+
+  test('reads binary containers without running caller accessors', () => {
+    let accessorCalls = 0
+    class Hostile extends Uint8Array {
+      get buffer() {
+        accessorCalls += 1
+        return super.buffer
+      }
+      get byteLength() {
+        accessorCalls += 1
+        return super.byteLength
+      }
+    }
+    const hostile = new Hostile(4)
+    expect(containsSecret(hostile, synthetic)).toBe(false)
+    // The subclass's accessors never ran: the bytes are read intrinsically.
+    expect(accessorCalls).toBe(0)
+
+    const binary = Buffer.from('accepted', 'utf8')
+    Object.defineProperty(binary, 'payload', {
+      get() {
+        accessorCalls += 1
+        return synthetic
+      },
+      enumerable: true,
+      configurable: true,
+    })
+    expect(containsSecret(binary, synthetic)).toBe(true)
+    // The accessor was not invoked; the shape is unverifiable instead.
+    expect(accessorCalls).toBe(0)
+  })
+
+  test('rejects a binary container above the enumeration bound', () => {
+    expect(containsSecret(new Uint8Array(70_000), synthetic)).toBe(true)
+    expect(containsSecret(new Uint8Array(70_000).fill(0x61), synthetic)).toBe(true)
+  })
+
+  test('reports containers that do not carry the secret as clean', () => {
+    expect(containsSecret(new Error('request failed'), synthetic)).toBe(false)
+    expect(containsSecret(new Error('failed', { cause: 'upstream timeout' }), synthetic)).toBe(
+      false
+    )
+    expect(containsSecret(new Map([['status', 200]]), synthetic)).toBe(false)
+    expect(containsSecret(new Set(['accepted']), synthetic)).toBe(false)
+    expect(containsSecret(Buffer.from('accepted', 'utf8'), synthetic)).toBe(false)
+    expect(containsSecret(new Uint8Array([1, 2, 3]), synthetic)).toBe(false)
+    expect(containsSecret({ status: 'ok', attempt: 2 }, synthetic)).toBe(false)
+  })
+
+  test('fails closed for cycles, accessors, and unsupported objects', () => {
+    const cyclic = { name: 'loop' }
+    cyclic.self = cyclic
+    expect(containsSecret(cyclic, synthetic)).toBe(true)
+
+    let getterCalls = 0
+    const withGetter = {
+      get payload() {
+        getterCalls += 1
+        return synthetic
+      },
+    }
+    expect(containsSecret(withGetter, synthetic)).toBe(true)
+    // The getter is never invoked, so it cannot leak through a side effect.
+    expect(getterCalls).toBe(0)
+
+    class Opaque {
+      constructor(value) {
+        this.payload = value
+      }
+      read() {
+        return this.payload
+      }
+    }
+    expect(containsSecret(new Opaque(synthetic), synthetic)).toBe(true)
+    expect(containsSecret(() => synthetic, synthetic)).toBe(true)
+  })
+
+  test('blocks a callback result that carries the secret in a container', async () => {
+    const { vault } = await fixture()
+    const containers = [
+      new Error(`upstream rejected ${secret}`),
+      new Map([['detail', secret]]),
+      new Set([secret]),
+      Buffer.from(secret, 'utf8'),
+      new Uint8Array(Buffer.from(secret, 'utf8')),
+    ]
+    // Each attempt needs its own lease: a lease is consumed by the first use.
+    for (const [index, container] of containers.entries()) {
+      const lease = await vault.lease(
+        leaseRequest({ credentialLeaseId: `crl_01JABCDEF0123456789ABCDEF${'GHJKMNP'[index]}` })
+      )
+      await expect(
+        vault.use(
+          lease.capabilityRef,
+          {
+            workspaceId: ids.workspace,
+            operation: 'issues.create',
+            resourceRef: 'tool:github.issues',
+          },
+          async () => container
+        )
+      ).rejects.toMatchObject({ code: 'SECRET_EGRESS_BLOCKED' })
+      // The blocked attempt still consumed its lease.
+      await expect(
+        vault.use(
+          lease.capabilityRef,
+          {
+            workspaceId: ids.workspace,
+            operation: 'issues.create',
+            resourceRef: 'tool:github.issues',
+          },
+          async () => true
+        )
+      ).rejects.toMatchObject({ code: 'LEASE_CONSUMED' })
+    }
+  })
+
+  test('returns a container that does not carry the secret unchanged', async () => {
+    const { vault } = await fixture()
+    const lease = await vault.lease(leaseRequest())
+    const result = new Map([['status', 'accepted']])
+    await expect(
+      vault.use(
+        lease.capabilityRef,
+        {
+          workspaceId: ids.workspace,
+          operation: 'issues.create',
+          resourceRef: 'tool:github.issues',
+        },
+        async () => result
+      )
+    ).resolves.toBe(result)
+  })
 })

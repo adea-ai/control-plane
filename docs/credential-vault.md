@@ -10,7 +10,7 @@ The accepted M9 managed-cloud profile uses Railway variables for **service/boots
 
 Railway environment variables are **not** the storage model for arbitrary user-scoped OAuth refresh tokens, API keys, or connector credentials. Dynamic credentials require the audited credential-vault secret provider boundary.
 
-`NeonEncryptedSecretProvider`, backed by the repo-owned `credential_secrets` table through `PostgresEncryptedSecretStore`, is the managed-cloud implementation behind the stable vault contract. The AES-256-GCM encryption key is supplied as a Railway secret and referenced by key identifier; secret values and key material are never committed. AWS Secrets Manager is not an active provider.
+`PostgresEncryptedSecretProvider`, backed by the repo-owned `credential_secrets` table through `PostgresEncryptedSecretStore`, is the managed-cloud implementation behind the stable vault contract. The AES-256-GCM encryption key is supplied as a Railway secret and referenced by key identifier; secret values and key material are never committed. AWS Secrets Manager is not an active provider.
 
 M10 then adds Local/Hosted secret-provider adapters without changing credential identity, scope, lease, rotation, revocation, or audit semantics.
 
@@ -84,7 +84,7 @@ Invariants:
 
 `POST /v1/credentials/{create,rotate,revoke}` require `credential:write`; `POST
 /v1/credentials/{get,list}` require `credential:read`. See [`api.md`](api.md#workspace-connector-credentials).
-Managed Cloud composes the API with `NeonEncryptedSecretProvider`, `PostgresEncryptedSecretStore`
+Managed Cloud composes the API with `PostgresEncryptedSecretProvider`, `PostgresEncryptedSecretStore`
 and the key reference `control-plane-secret-encryption-key/v1` when
 `CONTROL_PLANE_SECRET_ENCRYPTION_KEY` is configured; otherwise the routes fail closed with
 `CREDENTIAL_VAULT_NOT_CONFIGURED`. Local and Hosted compositions do not yet compose a secret

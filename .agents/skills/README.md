@@ -2,20 +2,34 @@
 
 Registry for the repository's audit-skill stack. Each skill ends with an
 `## Evidence contract` section defining its inputs, safe assumptions, allowed
-mutations, outputs, verification commands, failure/skip reporting, cleanup, and
-completion-claim guard.
+mutations, outputs, verification commands, failure/skip reporting, stop
+conditions, cleanup, and completion-claim guard, followed by a
+`### Boundary contract` section declaring its secret, dirty-worktree,
+migration, generated-file, and provider boundaries.
 
-| Skill | Version | Purpose | Trigger boundary | Owner | Evidence contract |
-| --- | --- | --- | --- | --- | --- |
-| code-review | 1.0.0 | Two-axis (standards + spec) review of a diff since a fixed point, run as parallel sub-agents | Use for branch/PR/work-in-progress review; NOT for fixing, approving, or merging — read-only advisory | Control Plane maintainers | [`code-review/SKILL.md` → Evidence contract](./code-review/SKILL.md#evidence-contract) |
-| code-simplification | 1.0.0 | Behavior-preserving clarity refactors guided by five principles and Chesterton's Fence | Use when code works but is hard to read or maintain; NOT when behavior must change, the code isn't understood yet, or the path is performance-critical | Control Plane maintainers | [`code-simplification/SKILL.md` → Evidence contract](./code-simplification/SKILL.md#evidence-contract) |
-| control-plane-audit | 1.1.0 | Router that selects the smallest relevant evidence lane for milestone-acceptance and production-readiness audits | Use for repository-wide acceptance reviews; NOT for ordinary isolated bug fixes | Control Plane maintainers | [`control-plane-audit/SKILL.md` → Evidence contract](./control-plane-audit/SKILL.md#evidence-contract) |
-| incremental-implementation | 1.0.1 | Delivers multi-file changes as thin vertical slices — implement, test, verify, and checkpoint each increment | Use for any multi-file change or task that feels too big to land at once; NOT for single-file, single-function changes of minimal scope | Control Plane maintainers | [`incremental-implementation/SKILL.md` → Evidence contract](./incremental-implementation/SKILL.md#evidence-contract) |
-| security-and-hardening | 1.0.1 | Threat-model-first hardening: OWASP patterns, SSRF, supply chain, privacy, and the LLM attack surface | Use for untrusted input, auth, sensitive data, external integrations, or privacy compliance; NOT needed for pure configuration, docs, or static content with no security surface | Control Plane maintainers | [`security-and-hardening/SKILL.md` → Evidence contract](./security-and-hardening/SKILL.md#evidence-contract) |
-| test-driven-development | 1.0.1 | RED→GREEN→REFACTOR discipline with a prove-it reproduction test for every bug fix | Use when implementing any logic, fixing any bug, or changing any behavior; NOT for pure configuration, documentation, or static content changes | Control Plane maintainers | [`test-driven-development/SKILL.md` → Evidence contract](./test-driven-development/SKILL.md#evidence-contract) |
-| turborepo | 2.10.11-canary.4 | Monorepo build-system guidance: task pipelines, caching, filtering, environment variables, boundaries | Use for turbo.json, task pipelines, cache, `--filter`/`--affected`, and CI questions; NOT for general package-manager or app-framework issues | vendored — Vercel upstream (pinned) | [`turborepo/SKILL.md` → Evidence contract](./turborepo/SKILL.md#evidence-contract) |
-| typescript-advanced-types | 1.0.0 | Reference for advanced type-level design: generics, conditional, mapped, and template literal types | Use for complex type logic, reusable type utilities, and compile-time safety design; NOT for everyday typing the compiler already infers | Control Plane maintainers | [`typescript-advanced-types/SKILL.md` → Evidence contract](./typescript-advanced-types/SKILL.md#evidence-contract) |
-| verification-before-completion | 1.0.0 | Evidence-before-claims gate: no completion statement without fresh verification output | Use before any success/completion claim, commit, or PR; NOT for performing the work itself | Control Plane maintainers | [`verification-before-completion/SKILL.md` → Evidence contract](./verification-before-completion/SKILL.md#evidence-contract) |
+Each skill's frontmatter `description` follows one routing convention:
+
+```
+Use when <trigger>. Not for <non-trigger>. <optional context>
+```
+
+The trigger and non-trigger clauses are the routing contract. They must be
+unique across the library and must not overlap, so an agent can select one
+skill — or correctly select none. `scripts/validate-skills.mjs` enforces the
+convention, the uniqueness, the registry/skill drift check, and the evidence
+and boundary contracts.
+
+| Skill | Version | Purpose | Trigger | Non-trigger | Owner | Evidence contract |
+| --- | --- | --- | --- | --- | --- | --- |
+| code-review | 1.1.0 | Two-axis (standards + spec) review of a diff since a fixed point, run as parallel sub-agents | the user asks to review a branch, pull request, or work-in-progress diff against a fixed point | fixing the findings, approving the change, or merging it | Control Plane maintainers | [`code-review/SKILL.md` → Evidence contract](./code-review/SKILL.md#evidence-contract) |
+| code-simplification | 1.1.0 | Behavior-preserving clarity refactors guided by five principles and Chesterton's Fence | existing code works but is hard to read, maintain, or extend and behavior must not change | behavior changes, for code whose intent is not yet understood, or for performance-critical paths | Control Plane maintainers | [`code-simplification/SKILL.md` → Evidence contract](./code-simplification/SKILL.md#evidence-contract) |
+| control-plane-audit | 1.2.0 | Router that selects the smallest relevant evidence lane for milestone-acceptance and production-readiness audits | the user asks for a repository-wide milestone acceptance or production-readiness audit across the managed-cloud, Local, and self-hosted profiles | an ordinary isolated bug fix or a single-file change | Control Plane maintainers | [`control-plane-audit/SKILL.md` → Evidence contract](./control-plane-audit/SKILL.md#evidence-contract) |
+| incremental-implementation | 1.1.0 | Delivers multi-file changes as thin vertical slices — implement, test, verify, and checkpoint each increment | a change spans more than one file or is too large to land in one step | a single-file, single-function change of minimal scope | Control Plane maintainers | [`incremental-implementation/SKILL.md` → Evidence contract](./incremental-implementation/SKILL.md#evidence-contract) |
+| security-and-hardening | 1.1.0 | Threat-model-first hardening: OWASP patterns, SSRF, supply chain, privacy, and the LLM attack surface | the code handles untrusted input, authentication, data storage, external integrations, or personal data | pure configuration, documentation, or static content with no security surface | Control Plane maintainers | [`security-and-hardening/SKILL.md` → Evidence contract](./security-and-hardening/SKILL.md#evidence-contract) |
+| test-driven-development | 1.1.0 | RED→GREEN→REFACTOR discipline with a prove-it reproduction test for every bug fix | implementing logic, fixing a bug, or changing any existing behavior | pure configuration, documentation, or static content that has no observable behavior to test | Control Plane maintainers | [`test-driven-development/SKILL.md` → Evidence contract](./test-driven-development/SKILL.md#evidence-contract) |
+| turborepo | 2.10.11-canary.4 | Monorepo build-system guidance: task pipelines, caching, filtering, environment variables, boundaries | the question is about turbo.json, task pipelines, dependsOn, caching, the turbo CLI, --filter or --affected, CI optimization, or monorepo package boundaries | general package-manager, application-framework, or non-Turborepo build questions | vendored — Vercel upstream (pinned) | [`turborepo/SKILL.md` → Evidence contract](./turborepo/SKILL.md#evidence-contract) |
+| typescript-advanced-types | 1.1.0 | Reference for advanced type-level design: generics, conditional, mapped, and template literal types | designing complex TypeScript type logic such as generics, conditional types, mapped types, template literals, or reusable utility types | everyday typing that the compiler already infers correctly | Control Plane maintainers | [`typescript-advanced-types/SKILL.md` → Evidence contract](./typescript-advanced-types/SKILL.md#evidence-contract) |
+| verification-before-completion | 1.1.0 | Evidence-before-claims gate: no completion statement without fresh verification output | about to claim that work is complete, fixed, or passing, including before a commit or pull request | performing the work itself or for restating a status that was never verified | Control Plane maintainers | [`verification-before-completion/SKILL.md` → Evidence contract](./verification-before-completion/SKILL.md#evidence-contract) |
 
 ## M11 audit-lane mapping
 
@@ -51,6 +65,28 @@ Policy ownership is singular: [AGENTS.md](../../AGENTS.md) owns workflow policy,
 reference these canonical owners; they never copy or restate their content, so
 a policy change lands in exactly one place.
 
+## Contract and provenance ownership
+
+Each retained skill owns one contract, declared in its own `SKILL.md`:
+
+- **Routing** — the `Use when …` / `Not for …` clauses in the frontmatter
+  `description`. They are the only agent-visible selection surface, so they
+  must stay unique and non-overlapping across the library.
+- **Evidence** — the `## Evidence contract` section, including stop conditions
+  and cleanup.
+- **Boundaries** — the `### Boundary contract` section, covering secrets, dirty
+  worktrees, migrations, generated files, and providers.
+- **Provenance** — the frontmatter `metadata.provenance` block: `origin`
+  (`repository-owned` or `vendored-upstream`), the upstream `source` and
+  `upstream_version` for vendored skills, and the local integration version.
+
+The machine-readable inventory for these contracts is
+[`docs/skills/skill-library.json`](../../docs/skills/skill-library.json),
+described by [`docs/skills/skill-library.schema.json`](../../docs/skills/skill-library.schema.json).
+The provenance ledger is [`docs/skills/provenance.md`](../../docs/skills/provenance.md).
+A new skill starts from
+[`docs/skills/skill-library.template.md`](../../docs/skills/skill-library.template.md).
+
 ## Maintenance
 
 Owner: Control Plane maintainers. Review this registry and every skill at each
@@ -61,4 +97,5 @@ in [`CHANGELOG.md`](../../docs/skills/CHANGELOG.md). `turborepo` is vendored fro
 2.10.11-canary.4, owner: vendored/Vercel upstream): it is updated only by
 re-vendoring a new pinned upstream version, and local edits to it are limited
 to this registry's integration points (frontmatter metadata and evidence
-contract).
+contract). The procedure, versioning rules, and deprecation lifecycle are in
+[`docs/skills/maintenance-cadence.md`](../../docs/skills/maintenance-cadence.md).

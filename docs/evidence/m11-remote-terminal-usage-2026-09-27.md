@@ -110,6 +110,6 @@ launch/reconnect. Unknown cost must remain unknown, not zero or a plan-derived
 price. All original M11 security, adversarial, reliability, documentation,
 Skills and independent/manual acceptance gates remain in scope.
 
-No production deployment or staging activation was performed. The task-owned
+No production deployment or sandbox activation was performed. The task-owned
 local PostgreSQL fixture was stopped after isolated database disposal (zero
 test databases remained); its volume is retained for unfinished milestone work.

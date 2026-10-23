@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.11.1...acp-adapter-v1.12.0) (2026-10-23)
+
+
+### Features
+
+* **acp-adapter:** add the production secure ACP remote wire and device agent ([#1023](https://github.com/adea-ai/control-plane/issues/1023)) ([#1238](https://github.com/adea-ai/control-plane/issues/1238)) ([52c3b36](https://github.com/adea-ai/control-plane/commit/52c3b36bccd04e3419b28945e8cfc97342b8612a))
+
 ## [1.11.1](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.11.0...acp-adapter-v1.11.1) (2026-10-19)
 
 

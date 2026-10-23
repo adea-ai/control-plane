@@ -67,7 +67,7 @@ export interface EncryptedSecretStore {
   delete(input: { readonly locator: string; readonly version: string }): Promise<void>
 }
 
-export class NeonEncryptedSecretProvider implements SecretProvider {
+export class PostgresEncryptedSecretProvider implements SecretProvider {
   readonly #store: EncryptedSecretStore
   readonly #key: Buffer
   readonly #keyReference: string
@@ -82,7 +82,10 @@ export class NeonEncryptedSecretProvider implements SecretProvider {
     this.#store = options.store
     this.#key = decodeEncryptionKey(options.encryptionKey)
     this.#keyReference = options.keyReference
-    this.#secretPrefix = (options.secretPrefix ?? 'neon://credential-secrets').replace(/\/$/, '')
+    this.#secretPrefix = (options.secretPrefix ?? 'postgres://credential-secrets').replace(
+      /\/$/,
+      ''
+    )
   }
 
   async store(input: { credentialId: string; revision: number; secret: string }) {
@@ -110,7 +113,7 @@ export class NeonEncryptedSecretProvider implements SecretProvider {
       encryptionVersion: 'aad-v1',
     })
     return {
-      backend: 'neon-encrypted' as const,
+      backend: 'postgres-encrypted' as const,
       locator,
       version,
       keyReference: this.#keyReference,

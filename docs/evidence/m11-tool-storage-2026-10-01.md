@@ -20,7 +20,7 @@ version/changelog metadata. This is an implementation checkpoint for issues
 | Path                                   | Current evidence                                                                                                                                                                                                                                                                               | Remaining acceptance                                                                                      |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | SQLite tool registry and calls         | Workspace-bound immutable definitions/versions; semantic-version uniqueness; atomic call/idempotency rows; revision CAS; corrupt-index rejection; cold reopen and concurrent connections. Merged in [811](https://github.com/adea-ai/control-plane/pull/811).                                  | Application bindings, provider effects and deployed Local/Simple scenarios.                               |
-| PostgreSQL tool registry and calls     | Migration 0057, workspace-scoped keys and foreign key, uniqueness fences, CAS, bigint revision parity, malformed-row rejection, independent clients and cold replay. Final real PostgreSQL run: six passes, 70 assertions. Merged in [814](https://github.com/adea-ai/control-plane/pull/814). | Production role grants/composition, Neon or fresh-VPS execution, outage recovery and retention.           |
+| PostgreSQL tool registry and calls     | Migration 0057, workspace-scoped keys and foreign key, uniqueness fences, CAS, bigint revision parity, malformed-row rejection, independent clients and cold replay. Final real PostgreSQL run: six passes, 70 assertions. Merged in [814](https://github.com/adea-ai/control-plane/pull/814). | Production role grants/composition, PostgreSQL or fresh-VPS execution, outage recovery and retention.     |
 | Configured Local/Simple graph assembly | Public execution validation and acceptance share the graph catalog/compiler; execution uses SQLite checkpoints and the durable event queue. Tests execute and cold-continue with a fixture operation port. Merged in [812](https://github.com/adea-ai/control-plane/pull/812).                 | Actual tool/model/runtime/delegation operations, Cloud/Server assembly and deployed scenario equivalence. |
 
 Tool receipts already distinguish an in-progress effect from a completed or
@@ -31,7 +31,7 @@ receipt behavior. It provides no live provider or policy deployment evidence.
 
 The PostgreSQL fixture runs PostgreSQL 18.3 with separate synthetic application,
 migration and administration roles. Its harness explicitly grants application
-access after migration. Those fixture grants do not establish production Neon
+access after migration. Those fixture grants do not establish production PostgreSQL
 privileges. The owned container was removed and its port closed after the run.
 
 ## Validation
@@ -91,7 +91,7 @@ The operation port alone does not provide those behaviors. Model, runtime and
 delegation operations and every supported composition must then use the same
 accepted-plan authority.
 
-All original issue 188 scenarios remain required: frozen Railway/Neon/R2/Restate
+All original issue 188 scenarios remain required: frozen Railway/PostgreSQL/R2/Restate
 execution, clean Local with real managed Pi and supported ACP, fresh-host Compose
 Simple and PostgreSQL Server equivalence, provider variants, consumers, restart
 and fault convergence, and M10 deployment/migration conformance. Reliability,

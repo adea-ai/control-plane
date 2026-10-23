@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.5](https://github.com/adea-ai/control-plane/compare/testing-v1.2.4...testing-v1.2.5) (2026-10-21)
+
+
+### Bug Fixes
+
+* **testing:** load the isolated postgres fixture from an owned temporary file ([#1212](https://github.com/adea-ai/control-plane/issues/1212)) ([df37ca8](https://github.com/adea-ai/control-plane/commit/df37ca85a616d04e8fc9dfd3d68094f6d19ddf67))
+
 ## [1.2.4](https://github.com/adea-ai/control-plane/compare/testing-v1.2.3...testing-v1.2.4) (2026-10-19)
 
 
