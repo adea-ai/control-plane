@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.37.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.5...local-control-plane-v1.37.0) (2026-10-23)
+
+
+### Features
+
+* **context:** qualify decision context consumers ([#558](https://github.com/adea-ai/control-plane/issues/558)) ([#1218](https://github.com/adea-ai/control-plane/issues/1218)) ([77b93eb](https://github.com/adea-ai/control-plane/commit/77b93eb77603b462a01094b6916479318c844018))
+
 ## [1.36.5](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.4...local-control-plane-v1.36.5) (2026-10-22)
 
 
